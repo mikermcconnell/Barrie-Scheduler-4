@@ -1,0 +1,5 @@
+{
+  "name": "BarrieTransit Planner",
+  "description": "A gamified, Duolingo-style transit scheduling prototype for optimizing bus shifts and analyzing coverage gaps in 15-minute increments.",
+  "requestFramePermissions": []
+}
