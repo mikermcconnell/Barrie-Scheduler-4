@@ -234,6 +234,10 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
           <div className="w-3 h-3 rounded bg-brand-green"></div>
           <span>Surplus</span>
         </div>
+        <div className="flex items-center gap-2">
+          <div className="w-4 h-0.5 border-t-2 border-dashed border-orange-400"></div>
+          <span>On Break</span>
+        </div>
       </div>
 
       <ResponsiveContainer width="100%" height="80%">
@@ -314,6 +318,19 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
             name="Active Drivers"
             animationDuration={500}
             zIndex={20}
+          />
+
+          {/* Drivers On Break - Dashed orange line */}
+          <Line
+            type="stepAfter"
+            dataKey="currentBreak"
+            stroke="#F59E0B"
+            strokeWidth={2}
+            strokeDasharray="6 4"
+            dot={false}
+            activeDot={{ r: 4 }}
+            name="On Break"
+            animationDuration={500}
           />
 
           {/* Original Coverage Ghost Line - Only in combined */}
