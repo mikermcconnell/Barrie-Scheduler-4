@@ -2,7 +2,7 @@
 export interface TimeSlot {
   timeLabel: string; // "08:00"
   timestamp: number; // minutes from midnight
-  
+
   // Demand
   northRequirement: number;
   southRequirement: number;
@@ -12,12 +12,13 @@ export interface TimeSlot {
   northCoverage: number;
   southCoverage: number;
   floaterCoverage: number;
-  
+
   // Break Tracking
   driversOnBreak: number;
 
   // Calculated
   totalActiveCoverage: number; // North + South + Floater
+  originalActiveCoverage?: number; // For ghost line comparison
   netDifference: number; // Active - Required
 }
 
@@ -42,6 +43,7 @@ export interface Shift {
   endSlot: number;
   breakStartSlot: number;
   breakDurationSlots: number;
+  dayType?: 'Weekday' | 'Saturday' | 'Sunday';
 }
 
 export interface Requirement {
@@ -49,6 +51,7 @@ export interface Requirement {
   total: number;
   north: number;
   south: number;
+  floater: number;
 }
 
 // --- OTP Analysis Types ---

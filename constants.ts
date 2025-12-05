@@ -12,8 +12,13 @@ export const BASE_REQUIREMENT = 4;
 export const PEAK_REQUIREMENT = 8;
 
 // Break & Shift Rules
-export const SHIFT_DURATION_HOURS = 8;
-export const SHIFT_DURATION_SLOTS = SHIFT_DURATION_HOURS * 4; // 32 slots
-export const BREAK_DURATION_MINUTES = 30;
-export const BREAK_DURATION_SLOTS = 2; // 30 mins / 15 mins
+export const SHIFT_DURATION_HOURS = 8; // Default reference
+export const SHIFT_DURATION_SLOTS = SHIFT_DURATION_HOURS * 4;
+export const BREAK_DURATION_MINUTES = 45;
+export const BREAK_DURATION_SLOTS = 3; // 45 mins / 15 mins
 export const MAX_HOURS_WITHOUT_BREAK = 5;
+
+// New Union Rules
+export const MIN_SHIFT_HOURS = 5;
+export const MAX_SHIFT_HOURS = 11;
+export const BREAK_THRESHOLD_HOURS = 7; // Shifts > 7h need a break

@@ -1,109 +1,115 @@
-import { GoogleGenAI, Type } from "@google/genai";
 import { Requirement, Shift, Zone } from "../types";
-import { SHIFT_DURATION_SLOTS, BREAK_DURATION_SLOTS } from "../constants";
+import {
+  SHIFT_DURATION_SLOTS,
+  BREAK_DURATION_SLOTS,
+  BREAK_THRESHOLD_HOURS
+} from "../constants";
 
-// Initialize the API client
-// Note: process.env.API_KEY is assumed to be available in the execution environment
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-
+/**
+ * Calls our secure serverless API to optimize the schedule.
+ * 
+ * WHY THIS IS BETTER:
+ * - Before: We had the Gemini API key in browser code (anyone could steal it!)
+ * - Now: The API key is only on the Vercel server, safe and hidden
+ * 
+ * HOW IT WORKS:
+ * 1. Browser sends requirements to /api/optimize
+ * 2. Serverless function calls Gemini with YOUR secret key
+ * 3. Serverless function returns the results to the browser
+ * 4. Your API key never touches the browser!
+ */
 export const optimizeScheduleWithGemini = async (requirements: Requirement[]): Promise<Shift[]> => {
   try {
-    // 1. Prepare Data for Prompt
-    // Calculate total hours needed to give the AI a budget
-    let totalDemandHours = 0;
-    requirements.forEach(r => totalDemandHours += (r.total * 0.25));
-    
-    // Ideal pure shifts needed (Total Hours / 8). 
-    // We add 15% buffer for inefficiencies inherent in straight shifts.
-    const idealShiftCount = Math.ceil((totalDemandHours / 8) * 1.15);
+    // Always try the API first - works with both `vercel dev` locally and deployed
+    console.log("Calling Gemini optimization API...");
 
-    // Identify Peaks and Valleys for the prompt
-    // This helps the AI understand the "shape" better than just raw numbers
-    const peaks = requirements
-        .filter(r => r.total >= 7)
-        .map(r => Math.floor(r.slotIndex / 4)) // Get Hour
-        .filter((v, i, a) => a.indexOf(v) === i); // Unique hours
-
-    const valleys = requirements
-        .filter(r => r.total <= 4 && r.slotIndex > 32 && r.slotIndex < 80) // Mid-day valleys only
-        .map(r => Math.floor(r.slotIndex / 4))
-        .filter((v, i, a) => a.indexOf(v) === i);
-
-    const demandSummary = requirements
-      .filter((_, i) => i % 4 === 0)
-      .map(r => `Hour ${r.slotIndex / 4}: Need ${r.total}`)
-      .join(", ");
-
-    // 2. Define the Output Schema (JSON)
-    const shiftSchema = {
-      type: Type.ARRAY,
-      items: {
-        type: Type.OBJECT,
-        properties: {
-          driverName: { type: Type.STRING, description: "Name like 'Driver 1'" },
-          startSlot: { type: Type.INTEGER, description: "Start time in 15-min slots (0-96)" },
-          breakStartSlot: { type: Type.INTEGER, description: "Break start time (must be within shift)" },
-          zone: { type: Type.STRING, enum: ["North", "South", "Floater"] }
-        },
-        required: ["driverName", "startSlot", "breakStartSlot", "zone"]
-      }
-    };
-
-    // 3. Construct System Instructions & Prompt
-    const systemInstruction = `You are a World-Class Transit Scheduler. 
-    Your goal is to create a roster of Driver Shifts that satisfies demand while MINIMIZING WASTE (Surplus).
-    
-    CRITICAL CONSTRAINTS:
-    1. Shift Duration: EXACTLY ${SHIFT_DURATION_SLOTS} slots (8 hours). No split shifts.
-    2. Break Duration: EXACTLY ${BREAK_DURATION_SLOTS} slots (30 mins).
-    3. Break Window: Breaks MUST start between 12 and 24 slots (3-6 hours) into the shift.
-    
-    OPTIMIZATION STRATEGY (IMPORTANT):
-    - You have a strict budget of roughly ${idealShiftCount} drivers. Do not exceed this unless impossible.
-    - Avoid "Peak Chasing": Do not add a full 8-hour shift just to cover a 15-minute spike if it leaves 7 hours of surplus.
-    - Better to be UNDER by 1 driver for a short time than OVER by 5 drivers for a long time.
-    - Use breaks strategically! Schedule breaks during "Valleys" (times of low demand) to reduce the surplus.
-    - Stagger start times (e.g., 07:15, 07:30) to smooth out the curve.
-    
-    Current Demand Peaks (Hours): ${peaks.join(', ')}
-    Current Demand Valleys (Hours): ${valleys.join(', ')}
-    `;
-
-    const prompt = `
-    Here is the demand curve (Drivers needed per hour):
-    [${demandSummary}]
-
-    Generate the MOST EFFICIENT roster possible. Return strictly JSON.
-    `;
-
-    // 4. Call the API
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: prompt,
-      config: {
-        systemInstruction: systemInstruction,
-        responseMimeType: "application/json",
-        responseSchema: shiftSchema,
-        temperature: 0.1, // Very low temperature for strict adherence to constraints
-      }
+    const response = await fetch('/api/optimize', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ requirements }),
     });
 
-    // 5. Parse and Format Response
-    const generatedShifts = JSON.parse(response.text || "[]");
-    
-    // Post-process to ensure valid Shift objects with IDs
-    return generatedShifts.map((s: any, index: number) => ({
-      id: `gemini-shift-${index}-${Date.now()}`,
-      driverName: s.driverName || `AI Driver ${index + 1}`,
-      zone: s.zone as Zone,
-      startSlot: Number(s.startSlot),
-      endSlot: Number(s.startSlot) + SHIFT_DURATION_SLOTS,
-      breakStartSlot: Number(s.breakStartSlot),
-      breakDurationSlots: BREAK_DURATION_SLOTS
-    }));
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'API request failed');
+    }
+
+    const data = await response.json();
+    return data.shifts || [];
 
   } catch (error) {
-    console.error("Gemini Optimization Failed:", error);
-    return [];
+    console.error("Optimization failed:", error);
+    // Fallback to local optimization if API fails
+    return localOptimizationFallback(requirements);
   }
 };
+
+/**
+ * Local fallback optimization (used when running on localhost)
+ * This is a simple heuristic-based scheduler that doesn't need an API key
+ */
+function localOptimizationFallback(requirements: Requirement[]): Shift[] {
+  const shifts: Shift[] = [];
+
+  // Find peak hours (when demand is highest)
+  const hourlyDemand: { hour: number; demand: number }[] = [];
+  for (let hour = 0; hour < 24; hour++) {
+    const slot = hour * 4;
+    const demand = requirements[slot]?.total || 0;
+    hourlyDemand.push({ hour, demand });
+  }
+
+  // Sort by demand to find peaks
+  const peakHours = hourlyDemand
+    .filter(h => h.demand > 0)
+    .sort((a, b) => b.demand - a.demand);
+
+  // Create shifts to cover demand
+  let shiftCount = 0;
+  const maxShifts = Math.min(15, Math.ceil(peakHours.length * 1.2));
+
+  // Start shifts at high-demand hours
+  const usedStartHours = new Set<number>();
+
+  for (const peak of peakHours) {
+    if (shiftCount >= maxShifts) break;
+
+    // Stagger starts around peak hours
+    const startHour = Math.max(5, peak.hour - 1);
+    if (usedStartHours.has(startHour)) continue;
+    usedStartHours.add(startHour);
+
+    const startSlot = startHour * 4;
+    const duration = SHIFT_DURATION_SLOTS; // 8 hours default
+    const endSlot = Math.min(96, startSlot + duration);
+
+    const zones: Zone[] = [Zone.NORTH, Zone.SOUTH, Zone.FLOATER];
+    const zone = zones[shiftCount % 3];
+
+    // Calculate break (6 hours into shift, if shift is long enough)
+    const hours = duration / 4;
+    let breakStart = 0;
+    let breakDuration = 0;
+
+    if (hours > BREAK_THRESHOLD_HOURS) {
+      breakStart = startSlot + 24; // Break at hour 6
+      breakDuration = BREAK_DURATION_SLOTS;
+    }
+
+    shifts.push({
+      id: `local-shift-${shiftCount}-${Date.now()}`,
+      driverName: `Driver ${shiftCount + 1}`,
+      zone,
+      startSlot,
+      endSlot,
+      breakStartSlot: breakStart,
+      breakDurationSlots: breakDuration
+    });
+
+    shiftCount++;
+  }
+
+  return shifts;
+}

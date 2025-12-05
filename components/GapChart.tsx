@@ -47,23 +47,23 @@ export const GapChart: React.FC<Props> = ({ data }) => {
 
   return (
     <div className="h-[500px] w-full bg-white p-6 rounded-3xl border-2 border-gray-200 shadow-sm relative overflow-hidden">
-        <div className="flex justify-between items-center mb-6">
-            <h2 className="text-2xl font-extrabold text-gray-700">Gap Analysis & Coverage</h2>
-            <div className="flex gap-4 text-sm font-bold text-gray-500">
-                <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full bg-brand-blue"></div>
-                    <span>Demand</span>
-                </div>
-                <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full bg-brand-green"></div>
-                    <span>Actual Supply</span>
-                </div>
-                <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full bg-brand-red"></div>
-                    <span>Deficit</span>
-                </div>
-            </div>
+      <div className="flex justify-between items-center mb-6">
+        <h2 className="text-2xl font-extrabold text-gray-700">Gap Analysis & Coverage</h2>
+        <div className="flex gap-4 text-sm font-bold text-gray-500">
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded-full bg-brand-blue"></div>
+            <span>Demand</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded-full bg-brand-green"></div>
+            <span>Actual Supply</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded-full bg-brand-red"></div>
+            <span>Deficit</span>
+          </div>
         </div>
+      </div>
 
       <ResponsiveContainer width="100%" height="85%">
         <ComposedChart
@@ -72,28 +72,28 @@ export const GapChart: React.FC<Props> = ({ data }) => {
           barGap={0}
         >
           <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
-          <XAxis 
-            dataKey="timeLabel" 
+          <XAxis
+            dataKey="timeLabel"
             tick={{ fill: '#9CA3AF', fontSize: 12, fontWeight: 700 }}
             axisLine={false}
             tickLine={false}
             interval={7} // Show every 2 hours roughly
           />
-          <YAxis 
+          <YAxis
             tick={{ fill: '#9CA3AF', fontSize: 12, fontWeight: 700 }}
             axisLine={false}
             tickLine={false}
           />
           <Tooltip content={<CustomTooltip />} cursor={{ fill: '#f3f4f6', opacity: 0.4 }} />
-          
+
           <ReferenceLine y={0} stroke="#E5E7EB" />
 
           {/* Net Difference Bars */}
           <Bar dataKey="netDifference" barSize={8} radius={[4, 4, 4, 4]}>
             {displayData.map((entry, index) => (
-              <Cell 
-                key={`cell-${index}`} 
-                fill={entry.netDifference < 0 ? '#FF4B4B' : '#58CC02'} 
+              <Cell
+                key={`cell-${index}`}
+                fill={entry.netDifference < 0 ? '#FF4B4B' : '#58CC02'}
                 fillOpacity={0.8}
               />
             ))}
@@ -131,7 +131,19 @@ export const GapChart: React.FC<Props> = ({ data }) => {
             activeDot={{ r: 6 }}
             name="Active Coverage"
           />
-          
+
+          {/* Original Coverage Line (Ghost) */}
+          <Line
+            type="monotone"
+            dataKey="originalActiveCoverage"
+            stroke="#9CA3AF"
+            strokeWidth={2}
+            strokeDasharray="3 3"
+            dot={false}
+            activeDot={false}
+            name="Original"
+          />
+
         </ComposedChart>
       </ResponsiveContainer>
     </div>

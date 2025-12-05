@@ -1,62 +1,56 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>BarrieTransit Planner</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
-    <script>
-      tailwind.config = {
-        theme: {
-          extend: {
-            fontFamily: {
-              sans: ['Nunito', 'sans-serif'],
-            },
-            colors: {
-              brand: {
-                green: '#58CC02',
-                greenDark: '#46A302',
-                red: '#FF4B4B',
-                redDark: '#D33131',
-                blue: '#1CB0F6',
-                yellow: '#FFC800',
-                offWhite: '#F7F7F7',
-              }
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bus Scheduler</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Nunito', 'sans-serif'],
+          },
+          colors: {
+            brand: {
+              green: '#58CC02',
+              greenDark: '#46A302',
+              red: '#FF4B4B',
+              redDark: '#D33131',
+              blue: '#1CB0F6',
+              yellow: '#FFC800',
+              offWhite: '#F7F7F7',
             }
           }
         }
       }
-    </script>
-    <style>
-      body {
-        background-color: #F7F7F7;
-      }
-      /* Duolingo-style button press effect */
-      .btn-bouncy {
-        transition: transform 0.1s, border-bottom-width 0.1s;
-      }
-      .btn-bouncy:active {
-        transform: translateY(4px);
-        border-bottom-width: 0px;
-        margin-bottom: 4px; /* Maintain layout space */
-      }
-    </style>
-  <script type="importmap">
-{
-  "imports": {
-    "react/": "https://aistudiocdn.com/react@^19.2.0/",
-    "react": "https://aistudiocdn.com/react@^19.2.0",
-    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
-    "recharts": "https://aistudiocdn.com/recharts@^3.5.1",
-    "lucide-react": "https://aistudiocdn.com/lucide-react@^0.555.0",
-    "@google/genai": "https://esm.run/@google/genai",
-    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/package/xlsx.mjs"
-  }
-}
-</script>
+    }
+  </script>
+  <style>
+    body {
+      background-color: #F7F7F7;
+    }
+
+    /* Duolingo-style button press effect */
+    .btn-bouncy {
+      transition: transform 0.1s, border-bottom-width 0.1s;
+    }
+
+    .btn-bouncy:active {
+      transform: translateY(4px);
+      border-bottom-width: 0px;
+      margin-bottom: 4px;
+      /* Maintain layout space */
+    }
+  </style>
 </head>
-  <body>
-    <div id="root"></div>
-  </body>
+
+<body>
+  <div id="root"></div>
+  <script type="module" src="/index.tsx"></script>
+</body>
+
 </html>
