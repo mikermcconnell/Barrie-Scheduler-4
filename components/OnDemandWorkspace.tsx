@@ -409,46 +409,46 @@ export const OnDemandWorkspace: React.FC = () => {
                 <div className="flex items-center gap-3">
                     {/* Cloud Actions Group */}
                     {user && (
-                        <div className="flex items-center gap-2 mr-4 p-1 bg-gray-50 rounded-xl border border-gray-100">
+                        <div className="flex items-center gap-2 mr-4 p-1 bg-gray-50 rounded-lg border border-gray-100">
                             <button
                                 onClick={() => {
                                     const csv = generateRideCoCSV(shifts);
                                     downloadCSV(csv, `RideCo_Shifts_${new Date().toISOString().split('T')[0]}.csv`);
                                 }}
-                                className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-gray-600 hover:text-gray-900 hover:bg-white hover:shadow-sm rounded-lg transition-all"
+                                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-gray-500 hover:text-gray-900 hover:bg-white hover:shadow-sm rounded-md transition-all"
                                 title="Export as RideCo Template"
                             >
-                                <CloudDownload size={16} className="rotate-180" />
+                                <CloudDownload size={14} className="rotate-180" />
                                 Export
                             </button>
-                            <div className="w-px h-6 bg-gray-200"></div>
+                            <div className="w-px h-4 bg-gray-200"></div>
                             <button
                                 onClick={() => setShowFileManager(true)}
                                 disabled={isLoadingFromCloud}
-                                className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-gray-600 hover:text-gray-900 hover:bg-white hover:shadow-sm rounded-lg transition-all"
+                                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-gray-500 hover:text-gray-900 hover:bg-white hover:shadow-sm rounded-md transition-all"
                             >
                                 {isLoadingFromCloud ? (
-                                    <Loader2 className="animate-spin" size={16} />
+                                    <Loader2 className="animate-spin" size={14} />
                                 ) : (
-                                    <CloudDownload size={16} />
+                                    <CloudDownload size={14} />
                                 )}
                                 Load
                             </button>
-                            <div className="w-px h-6 bg-gray-200"></div>
+                            <div className="w-px h-4 bg-gray-200"></div>
                             <button
                                 onClick={handleSaveDraft}
                                 disabled={isSaving}
-                                className={`flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg transition-all ${saveSuccess
+                                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${saveSuccess
                                     ? 'bg-green-50 text-green-700'
-                                    : 'text-gray-600 hover:text-brand-blue hover:bg-white hover:shadow-sm'
+                                    : 'text-gray-500 hover:text-brand-blue hover:bg-white hover:shadow-sm'
                                     }`}
                             >
                                 {isSaving ? (
-                                    <Loader2 className="animate-spin" size={16} />
+                                    <Loader2 className="animate-spin" size={14} />
                                 ) : saveSuccess ? (
-                                    <Check size={16} />
+                                    <Check size={14} />
                                 ) : (
-                                    <Save size={16} />
+                                    <Save size={14} />
                                 )}
                                 {isSaving ? 'Saving...' : saveSuccess ? 'Saved' : 'Save Draft'}
                             </button>

@@ -206,13 +206,13 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
             tick={{ fill: '#9CA3AF', fontSize: 12, fontWeight: 700 }}
             axisLine={false}
             tickLine={false}
-            interval={7}
+            interval={3}
           />
           <YAxis
             tick={{ fill: '#9CA3AF', fontSize: 12, fontWeight: 700 }}
             axisLine={false}
             tickLine={false}
-            domain={[0, domainMax]}
+            domain={[minValue, domainMax]}
             allowDataOverflow={true}
           />
           <Tooltip content={<CustomTooltip viewMode={zoneFilter} />} cursor={{ fill: '#f3f4f6', opacity: 0.4 }} />
