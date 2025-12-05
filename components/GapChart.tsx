@@ -164,7 +164,7 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
         {(zoneFilter === 'North' || zoneFilter === 'South') && (
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 rounded-full bg-purple-200 border border-purple-400"></div>
-            <span>Relief</span>
+            <span>Floater Break Relief</span>
           </div>
         )}
         <div className="flex items-center gap-2">
