@@ -278,6 +278,18 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
             ))}
           </Bar>
 
+          {/* Demand/Requirement Line - Blue stepped line */}
+          <Line
+            type="stepAfter"
+            dataKey="currentReq"
+            stroke="#1CB0F6"
+            strokeWidth={2}
+            dot={false}
+            activeDot={{ r: 4 }}
+            name="Demand"
+            animationDuration={500}
+          />
+
           {/* Coverage Line - Detailed Line on top */}
           <Line
             type="monotone"
