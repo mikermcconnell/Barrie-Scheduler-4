@@ -103,7 +103,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             generationConfig: {
                 responseMimeType: "application/json",
                 responseSchema: shiftSchema as any,
-                temperature: 0.1, // Lower temperature for stricter logic adherence
+                temperature: 0.3, // User prefers 0.3 for better results
             }
         });
 
