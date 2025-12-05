@@ -111,8 +111,53 @@ export const ShiftEditor: React.FC<Props> = ({
           <Plus size={20} /> Add Driver
         </button>
       </div>
+      <div className="space-y-2">
+        {sortedShifts.map((shift) => (
+          <div
+            key={shift.id}
+            onClick={() => onEditShift?.(shift.id)}
+            className="group bg-white border border-gray-100 p-3 rounded-2xl flex items-center gap-4 hover:shadow-md hover:border-blue-200 transition-all cursor-pointer"
+          >
+            {/* Zone Stripe */}
+            <div className={`w-1 self-stretch rounded-full ${shift.zone === 'North' ? 'bg-blue-500' :
+                shift.zone === 'South' ? 'bg-green-500' :
+                  'bg-purple-500'
+              }`} />
+
+            {/* Info */}
+            <div className="flex-1">
+              <div className="flex items-center gap-3 mb-0.5">
+                <h3 className="font-bold text-gray-800 text-sm">{shift.driverName}</h3>
+                <span className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded-md ${shift.zone === 'North' ? 'bg-blue-50 text-blue-700' :
+                    shift.zone === 'South' ? 'bg-green-50 text-green-700' :
+                      'bg-purple-50 text-purple-700'
+                  }`}>
+                  {shift.zone}
+                </span>
+              </div>
+              <div className="flex items-center gap-3 text-xs font-medium text-gray-400">
+                <span>{formatSlotToTime(shift.startSlot)} - {formatSlotToTime(shift.endSlot)}</span>
+                <span className="text-gray-300">•</span>
+                <span>{((shift.endSlot - shift.startSlot) / 4).toFixed(1)}h</span>
+              </div>
+            </div>
+
+            {/* Delete Action */}
+            <button
+              onClick={(e) => { e.stopPropagation(); onDeleteShift(shift.id); }}
+              className="p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
+            >
+              <Trash2 size={16} />
+            </button>
+          </div>
+        ))}
+
+        {sortedShifts.length === 0 && (
+          <div className="text-center py-8 text-gray-400">
+            <p className="text-sm">No drivers in this zone.</p>
+          </div>
         )}
+      </div>
     </div>
-    </div >
   );
 };

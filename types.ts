@@ -41,6 +41,8 @@ export enum Zone {
   FLOATER = 'Floater'
 }
 
+export type ZoneFilterType = 'All' | 'North' | 'South' | 'Floater';
+
 export interface Shift {
   id: string;
   driverName: string;
