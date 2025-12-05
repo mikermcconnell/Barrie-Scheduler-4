@@ -50,15 +50,26 @@ export async function optimizeImplementation(requirements: any[], apiKey: string
     - "North Demand" MUST be covered by "North" shifts.
     - "South Demand" MUST be covered by "South" shifts.
     - "Floater Demand" MUST be covered by "Floater" shifts.
-    - DO NOT use Floater shifts to cover North or South demand. They have their own dedicated demand curve.
+    
+    EFFICIENCY & OPTIMIZATION STRATEGIES:
+    1. **MINIMIZE TOTAL HOURS**: Over-supply is a failure. You must hug the demand curve as tightly as possible.
+       - A perfect roster has ZERO gaps and the LOWEST possible total hours.
+       - Do NOT add "safety buffer" shifts. If demand is 2, supply should be 2, not 3.
+    
+    2. **USE SHORTER SHIFTS FOR PEAKS**:
+       - The shift length range is 5-10 hours.
+       - Use 5-hour or 6-hour shifts to cover short demand peaks (e.g., morning/afternoon rush).
+       - Only use 8-10 hour shifts for base load (all-day demand).
+       - AVOID assigning an 8-hour driver to cover a 2-hour peak. This causes massive waste.
     
     CRITICAL COVERAGE RULES:
-    1. ZERO GAPS TOLERATED per zone.
-    2. CHECK EVERY SLOT [i]:
-       - Count of North Shifts >= North Demand[i]
-       - Count of South Shifts >= South Demand[i]
-       - Count of Floater Shifts >= Floater Demand[i]
-    3. SHIFT STARTS: Start shifts EXACTLY when demand spikes in their respective zone.
+    1. EFFICIENCY FIRST: You are allowed to have MINOR GAPS (-1 driver) for short periods (max 30 mins) if it prevents adding a huge wasteful shift.
+    2. MINIMIZE SURPLUS: It is better to have a random 15-min gap than to have 8 hours of unused drivers.
+    3. CHECK EVERY SLOT [i]:
+       - Ideally: Count >= Demand[i]
+       - Acceptable: Count = Demand[i] - 1 (for < 3 consecutive slots)
+       - Unacceptable: Count < Demand[i] - 1 OR Count < Demand[i] for > 45 mins.
+    4. SHIFT STARTS: Start shifts EXACTLY when demand spikes in their respective zone.
     `;
 
     const prompt = `
