@@ -62,12 +62,36 @@ export const OptimizationReviewModal: React.FC<Props> = ({
                     curr.zone !== opt.zone;
 
                 if (isDiff) {
+                    let specificReason = 'Efficiency Update';
+                    let impactType = 'Optimization';
+
+                    if (curr.zone !== opt.zone) {
+                        specificReason = `Zone Change: ${curr.zone} -> ${opt.zone}`;
+                        impactType = 'Rebalancing';
+                    } else if (Math.abs(curr.startSlot - opt.startSlot) > 0 && (curr.endSlot - curr.startSlot) === (opt.endSlot - opt.startSlot)) {
+                        // Shift moved, duration same
+                        const diff = opt.startSlot - curr.startSlot;
+                        const timeDiff = diff * 15;
+                        specificReason = `Shift Moved ${diff > 0 ? '+' : ''}${timeDiff} min`;
+                        impactType = 'Gap Fix';
+                    } else if ((curr.endSlot - curr.startSlot) !== (opt.endSlot - opt.startSlot)) {
+                        // Duration changed
+                        const oldDur = (curr.endSlot - curr.startSlot) * 15;
+                        const newDur = (opt.endSlot - opt.startSlot) * 15;
+                        const diff = newDur - oldDur;
+                        specificReason = diff > 0 ? `Extended Shift (+${diff}m)` : `Shortened Shift (${diff}m)`;
+                        impactType = diff > 0 ? 'Coverage Boost' : 'Reduce Surplus';
+                    } else if (curr.breakStartSlot !== opt.breakStartSlot) {
+                        specificReason = 'Break Rescheduled';
+                        impactType = 'Break Compliance';
+                    }
+
                     changesList.push({
                         id: `mod-${curr.id}`,
                         shiftId: curr.id,
                         type: 'MODIFY',
-                        description: `Adjust ${curr.driverName}`,
-                        impact: 'Efficiency Tweak',
+                        description: `${curr.driverName}: ${specificReason}`,
+                        impact: impactType,
                         original: curr,
                         optimized: opt
                     });
@@ -199,8 +223,8 @@ export const OptimizationReviewModal: React.FC<Props> = ({
                                         <div className="flex-1">
                                             <div className="flex justify-between items-center mb-1">
                                                 <span className={`text-xs font-bold uppercase px-2 py-0.5 rounded-full ${change.type === 'ADD' ? 'bg-green-100 text-green-700' :
-                                                        change.type === 'REMOVE' ? 'bg-red-100 text-red-700' :
-                                                            'bg-purple-100 text-purple-700'
+                                                    change.type === 'REMOVE' ? 'bg-red-100 text-red-700' :
+                                                        'bg-purple-100 text-purple-700'
                                                     }`}>
                                                     {change.type}
                                                 </span>
