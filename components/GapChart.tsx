@@ -3,6 +3,7 @@ import {
   ComposedChart,
   Line,
   Bar,
+  Area,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -94,9 +95,16 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
       (zoneFilter === 'South' ? d.southCoverage :
         (zoneFilter === 'Floater' ? d.floaterCoverage : d.totalActiveCoverage)),
 
-    currentNet: zoneFilter === 'North' ? (d.northCoverage - d.northRequirement) :
-      (zoneFilter === 'South' ? (d.southCoverage - d.southRequirement) :
+    currentNet: zoneFilter === 'North' ? ((d.northCoverage + (d.northRelief || 0)) - d.northRequirement) :
+      (zoneFilter === 'South' ? ((d.southCoverage + (d.southRelief || 0)) - d.southRequirement) :
         (zoneFilter === 'Floater' ? (d.floaterCoverage - d.floaterRequirement) : d.netDifference)),
+
+    currentBreak: zoneFilter === 'North' ? d.northBreaks :
+      (zoneFilter === 'South' ? d.southBreaks :
+        (zoneFilter === 'Floater' ? d.floaterBreaks : d.driversOnBreak)),
+
+    currentRelief: zoneFilter === 'North' ? (d.northRelief || 0) :
+      (zoneFilter === 'South' ? (d.southRelief || 0) : 0),
   }));
 
   return (
@@ -106,9 +114,9 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
           <h2 className="text-2xl font-extrabold text-gray-700 flex items-center gap-2">
             Gap Analysis
             <span className={`text-sm px-3 py-1 rounded-full border ${zoneFilter === 'North' ? 'bg-blue-50 text-blue-600 border-blue-200' :
-                zoneFilter === 'South' ? 'bg-green-50 text-green-600 border-green-200' :
-                  zoneFilter === 'Floater' ? 'bg-purple-50 text-purple-600 border-purple-200' :
-                    'bg-gray-100 text-gray-500 border-gray-200'
+              zoneFilter === 'South' ? 'bg-green-50 text-green-600 border-green-200' :
+                zoneFilter === 'Floater' ? 'bg-purple-50 text-purple-600 border-purple-200' :
+                  'bg-gray-100 text-gray-500 border-gray-200'
               }`}>
               {zoneFilter === 'All' ? 'System Wide' : `${zoneFilter} Only`}
             </span>
@@ -153,9 +161,19 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
           <div className="w-3 h-3 rounded-full bg-brand-green"></div>
           <span>{zoneFilter === 'Floater' ? 'Active Floaters' : 'Active Drivers'}</span>
         </div>
+        {(zoneFilter === 'North' || zoneFilter === 'South') && (
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded-full bg-purple-200 border border-purple-400"></div>
+            <span>Relief</span>
+          </div>
+        )}
         <div className="flex items-center gap-2">
           <div className="w-3 h-3 rounded-full bg-brand-red"></div>
           <span>Gap</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-3 h-1 border-t-2 border-dashed border-orange-400"></div>
+          <span>On Break</span>
         </div>
       </div>
 
@@ -193,18 +211,16 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
             ))}
           </Bar>
 
-          {/* Drivers on Break Line (Only in combined) */}
-          {zoneFilter === 'All' && (
-            <Line
-              type="stepAfter"
-              dataKey="driversOnBreak"
-              stroke="#FDBA74"
-              strokeWidth={2}
-              strokeDasharray="5 5"
-              dot={false}
-              name="On Break"
-            />
-          )}
+          {/* Drivers on Break Line (Now for all zones) */}
+          <Line
+            type="stepAfter"
+            dataKey="currentBreak"
+            stroke="#FDBA74"
+            strokeWidth={2}
+            strokeDasharray="5 5"
+            dot={false}
+            name="On Break"
+          />
 
           {/* Requirement Line */}
           <Line
@@ -218,16 +234,40 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
             animationDuration={500}
           />
 
-          {/* Coverage Line - ALWAYS GREEN NOW per user request */}
+          {/* Stacked Areas for Coverage + Relief */}
+          <Area
+            type="monotone"
+            dataKey="currentCover"
+            stackId="1"
+            stroke="none"
+            fill="#58CC02"
+            fillOpacity={0.4}
+            name="Active Coverage"
+            animationDuration={500}
+          />
+          <Area
+            type="monotone"
+            dataKey="currentRelief"
+            stackId="1"
+            stroke="#9333EA"
+            fill="#E9D5FF"
+            fillOpacity={0.8}
+            strokeWidth={1}
+            name="Relief Coverage"
+            animationDuration={500}
+          />
+
+          {/* Coverage Line - Detailed Line on top */}
           <Line
             type="monotone"
             dataKey="currentCover"
             stroke="#58CC02"
-            strokeWidth={4}
+            strokeWidth={3}
             dot={false}
             activeDot={{ r: 6 }}
-            name="Active Coverage"
+            name="Active Drivers"
             animationDuration={500}
+            zIndex={20}
           />
 
           {/* Original Coverage Ghost Line - Only in combined */}

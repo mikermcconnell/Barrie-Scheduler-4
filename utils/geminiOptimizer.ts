@@ -18,17 +18,24 @@ import {
  * 3. Serverless function returns the results to the browser
  * 4. Your API key never touches the browser!
  */
-export const optimizeScheduleWithGemini = async (requirements: Requirement[]): Promise<Shift[]> => {
+export const optimizeScheduleWithGemini = async (
+  requirements: Requirement[],
+  mode: 'full' | 'refine' = 'full',
+  currentShifts: any[] = []
+): Promise<Shift[]> => {
   try {
-    // Always try the API first - works with both `vercel dev` locally and deployed
-    console.log("Calling Gemini optimization API...");
+    console.log(`Calling Gemini Optimization API (Model: gemini-3-pro-preview)... Mode: ${mode}`);
 
     const response = await fetch('/api/optimize', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ requirements }),
+      body: JSON.stringify({
+        requirements,
+        mode,
+        currentShifts
+      }),
     });
 
     if (!response.ok) {

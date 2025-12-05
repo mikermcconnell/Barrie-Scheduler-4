@@ -6,6 +6,7 @@ import { GapChart } from './GapChart';
 import { FileUpload } from './FileUpload';
 import { ShiftEditor } from './ShiftEditor';
 import { ShiftEditorModal } from './ShiftEditorModal';
+import { OptimizationReviewModal } from './OptimizationReviewModal';
 import { FileManager } from './FileManager';
 import { useAuth } from './AuthContext';
 import { parseScheduleMaster, parseRideCo } from '../utils/csvParsers';
@@ -16,6 +17,7 @@ import {
     saveSchedule,
     updateSchedule
 } from '../utils/dataService';
+import { generateRideCoCSV, downloadCSV } from '../utils/exportService';
 import { SummaryMetrics, Shift, Requirement, Zone } from '../types';
 import {
     Wand2, Users, BarChart3, Sparkles, AlertTriangle, Loader2,
@@ -61,47 +63,74 @@ export const OnDemandWorkspace: React.FC = () => {
     // UI State
     const [isOptimized, setIsOptimized] = useState(false);
     const [isAnimating, setIsAnimating] = useState(false);
+    const [optimizationMode, setOptimizationMode] = useState<'full' | 'refine' | null>(null);
+    const [reviewModalData, setReviewModalData] = useState<{ current: Shift[], optimized: Shift[] } | null>(null);
 
     // Derived State
     // Now guaranteed to have valid inputs on first render
     const timeSlots = useMemo(() => calculateSchedule(shifts, requirements), [shifts, requirements]);
     const metrics = useMemo(() => calculateMetrics(timeSlots), [timeSlots]);
 
-    const handleOptimization = async () => {
-        if (isOptimized) {
-            // Reset to basic mock data
-            setIsAnimating(true);
-            setTimeout(() => {
-                setShifts(generateShifts(requirements, false));
-                setIsOptimized(false);
-                setIsAnimating(false);
-            }, 500);
-            return;
+    const handleRegenerate = async () => {
+        if (shifts.length > 0) {
+            if (!confirm('This will replace your current schedule with a brand new one generated from scratch. All custom changes will be lost. Continue?')) {
+                return;
+            }
         }
 
+        setOptimizationMode('full');
         setIsAnimating(true);
 
         try {
-            // Call Gemini API
-            const aiShifts = await optimizeScheduleWithGemini(requirements);
+            // Call Gemini API - Full Mode
+            const aiShifts = await optimizeScheduleWithGemini(requirements, 'full');
 
             if (aiShifts.length > 0) {
                 setShifts(aiShifts);
                 setIsOptimized(true);
             } else {
-                // Fallback if API fails or returns empty (e.g. key missing in dev)
-                console.warn("Gemini API returned no shifts, falling back to local heuristic.");
-                setShifts(generateShifts(requirements, true));
-                setIsOptimized(true);
+                console.warn("Gemini API returned no shifts.");
+                alert("Optimization failed to return shifts.");
             }
         } catch (e) {
             console.error("Optimization error", e);
-            // Fallback
-            setShifts(generateShifts(requirements, true));
-            setIsOptimized(true);
+            alert("Optimization failed.");
         } finally {
             setIsAnimating(false);
+            setOptimizationMode(null);
         }
+    };
+
+    const handleRefine = async () => {
+        setOptimizationMode('refine');
+        setIsAnimating(true);
+
+        try {
+            // Call Gemini API - Refine Mode
+            const aiShifts = await optimizeScheduleWithGemini(requirements, 'refine', shifts);
+
+            if (aiShifts.length > 0) {
+                // Open Review Modal instead of applying directly
+                setReviewModalData({
+                    current: shifts,
+                    optimized: aiShifts
+                });
+            } else {
+                alert("No refinements found.");
+            }
+        } catch (e) {
+            console.error("Refinement error", e);
+            alert("Refinement failed.");
+        } finally {
+            setIsAnimating(false);
+            setOptimizationMode(null);
+        }
+    };
+
+    const applyRefinements = (finalShifts: Shift[]) => {
+        setShifts(finalShifts);
+        setReviewModalData(null);
+        setIsOptimized(true);
     };
 
     const handleShiftUpdate = (updatedShift: Shift) => {
@@ -333,6 +362,17 @@ export const OnDemandWorkspace: React.FC = () => {
                 />
             )}
 
+            {/* Review Modal */}
+            {reviewModalData && (
+                <OptimizationReviewModal
+                    currentShifts={reviewModalData.current}
+                    optimizedShifts={reviewModalData.optimized}
+                    requirements={requirements}
+                    onApply={applyRefinements}
+                    onCancel={() => setReviewModalData(null)}
+                />
+            )}
+
             {/* Title & Actions */}
             <div className="flex flex-col md:flex-row justify-between items-end mb-8 gap-4">
                 <div className="flex-1">
@@ -370,6 +410,17 @@ export const OnDemandWorkspace: React.FC = () => {
                     {/* Cloud Actions */}
                     {user && (
                         <div className="flex gap-2 mr-2">
+                            <button
+                                onClick={() => {
+                                    const csv = generateRideCoCSV(shifts);
+                                    downloadCSV(csv, `RideCo_Shifts_${new Date().toISOString().split('T')[0]}.csv`);
+                                }}
+                                className="flex items-center gap-2 px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-xl transition-colors"
+                                title="Export as RideCo Template"
+                            >
+                                <CloudDownload size={18} className="rotate-180" /> {/* Flip for upload/export visual */}
+                                Export as RideCo Template
+                            </button>
                             <button
                                 onClick={() => setShowFileManager(true)}
                                 disabled={isLoadingFromCloud}
@@ -419,31 +470,60 @@ export const OnDemandWorkspace: React.FC = () => {
                         </div>
                     )}
                     <div className="flex flex-col items-end gap-2">
-                        <button
-                            onClick={handleOptimization}
-                            disabled={isAnimating}
-                            className={`
-                    btn-bouncy flex items-center gap-3 px-6 py-3 rounded-2xl font-extrabold text-white shadow-sm border-b-4
-                    ${isOptimized
-                                    ? 'bg-gray-400 border-gray-600 hover:bg-gray-500'
-                                    : 'bg-gradient-to-r from-brand-green to-emerald-500 border-brand-greenDark hover:brightness-110'
-                                }
-                    transition-all
-                `}
-                        >
-                            {isAnimating ? (
-                                <Sparkles className="animate-spin text-yellow-200" size={20} />
-                            ) : (
-                                <Wand2 size={20} />
-                            )}
-                            {isAnimating ? 'Gemini AI Thinking...' : isOptimized ? 'Reset Roster' : 'Gemini Optimize'}
-                        </button>
+                        <div className="flex items-center gap-2">
+                            {/* Refine Button */}
+                            <button
+                                onClick={handleRefine}
+                                disabled={isAnimating || shifts.length === 0}
+                                className={`
+                                btn-bouncy flex items-center gap-2 px-5 py-3 rounded-2xl font-extrabold text-white shadow-sm border-b-4
+                                ${isAnimating && optimizationMode === 'refine'
+                                        ? 'bg-purple-400 border-purple-600'
+                                        : shifts.length === 0
+                                            ? 'bg-gray-300 border-gray-400 cursor-not-allowed opacity-50'
+                                            : 'bg-purple-500 border-purple-700 hover:bg-purple-600'
+                                    }
+                                transition-all
+                            `}
+                                title="Refine current shifts"
+                            >
+                                {isAnimating && optimizationMode === 'refine' ? (
+                                    <Sparkles className="animate-spin text-white" size={20} />
+                                ) : (
+                                    <Sparkles size={20} />
+                                )}
+                                Refine
+                            </button>
+
+                            {/* Regenerate Button */}
+                            <button
+                                onClick={handleRegenerate}
+                                disabled={isAnimating}
+                                className={`
+                                btn-bouncy flex items-center gap-2 px-5 py-3 rounded-2xl font-extrabold text-white shadow-sm border-b-4
+                                ${isAnimating && optimizationMode === 'full'
+                                        ? 'bg-gray-400 border-gray-600 hover:bg-gray-500'
+                                        : 'bg-gradient-to-r from-brand-green to-emerald-500 border-brand-greenDark hover:brightness-110'
+                                    }
+                                transition-all
+                            `}
+                                title="Generate fresh schedule"
+                            >
+                                {isAnimating && optimizationMode === 'full' ? (
+                                    <Loader2 className="animate-spin" size={20} />
+                                ) : (
+                                    <Wand2 size={20} />
+                                )}
+                                Regenerate
+                            </button>
+                        </div>
+
 
                         {/* Notification when optimizing */}
                         {isAnimating && (
                             <div className="flex items-center gap-2 text-xs font-bold text-gray-500 animate-pulse bg-yellow-50 px-3 py-1 rounded-lg border border-yellow-200">
                                 <Loader2 size={12} className="animate-spin" />
-                                Please wait, this could take a few minutes...
+                                {optimizationMode === 'full' ? 'Generating fresh schedule...' : 'Refining existing shifts...'}
                             </div>
                         )}
                     </div>

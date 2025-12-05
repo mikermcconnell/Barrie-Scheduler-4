@@ -5,7 +5,7 @@ import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai';
  * Core Optimization Logic - Decoupled from Vercel Request/Response
  * This allows for local testing without the Vercel CLI.
  */
-export async function optimizeImplementation(requirements: any[], apiKey: string) {
+export async function optimizeImplementation(requirements: any[], apiKey: string, mode: 'full' | 'refine' = 'full', currentShifts: any[] = []) {
     // Initialize Gemini
     const genAI = new GoogleGenerativeAI(apiKey);
 
@@ -28,6 +28,7 @@ export async function optimizeImplementation(requirements: any[], apiKey: string
         items: {
             type: SchemaType.OBJECT,
             properties: {
+                id: { type: SchemaType.STRING, description: "Unique ID (Preserve if refining)" },
                 driverName: { type: SchemaType.STRING, description: "Name like 'Driver 1'" },
                 startSlot: { type: SchemaType.INTEGER, description: "Start time in 15-min slots (0-96)" },
                 durationSlots: { type: SchemaType.INTEGER, description: "Total shift length in slots (20-44 slots / 5-11 hours)" },
@@ -38,8 +39,29 @@ export async function optimizeImplementation(requirements: any[], apiKey: string
         }
     };
 
-    const systemInstruction = `You are a World-Class Transit Scheduler. 
-    Your goal is to create a roster of Driver Shifts that INDEPENDENTLY satisfies the demand for three distinct zones: North, South, and Floater.
+    let systemInstruction = `You are an expert Transit Scheduler AI. 
+    Your goal is to OPTIMIZE a driver schedule for a simplified On-Demand Transit system.`;
+
+    if (mode === 'refine' && currentShifts.length > 0) {
+        systemInstruction += `
+    
+    MODE: REFINE & POLISH
+    - You are provided with an EXISTING roster of shifts.
+    - Your goal is to IMPROVE efficiency (reduce surplus, fix gaps) with MINIMAL changes.
+    - DO NOT regenerate the schedule from scratch.
+    - KEEP existing shift IDs where possible.
+    - Only modify start/end times or breaks if it significantly improves efficiency.
+    - If a shift is close to perfect, keep it exactly as is.
+    - Return the FULL list of shifts (including unmodified ones).`;
+    } else {
+        systemInstruction += `
+    
+    MODE: FULL OPTIMIZATION
+    - You are generating a schedule FROM SCRATCH based on demand.
+    - Ignore any previous shifts (start fresh).`;
+    }
+
+    systemInstruction += `
     
     Union Rules:
     - Shift Length: 5-10 hours (20-40 slots)
@@ -54,25 +76,31 @@ export async function optimizeImplementation(requirements: any[], apiKey: string
     EFFICIENCY & OPTIMIZATION STRATEGIES:
     1. **MINIMIZE TOTAL HOURS**: Over-supply is a failure. You must hug the demand curve as tightly as possible.
        - A perfect roster has ZERO gaps and the LOWEST possible total hours.
-       - Do NOT add "safety buffer" shifts. If demand is 2, supply should be 2, not 3.
     
     2. **USE SHORTER SHIFTS FOR PEAKS**:
        - The shift length range is 5-10 hours.
        - Use 5-hour or 6-hour shifts to cover short demand peaks (e.g., morning/afternoon rush).
        - Only use 8-10 hour shifts for base load (all-day demand).
-       - AVOID assigning an 8-hour driver to cover a 2-hour peak. This causes massive waste.
+    
+    3. **BREAK STRATEGY & RELIEF (CRITICAL)**:
+       - **STAGGER BREAKS**: Do NOT schedule breaks for multiple drivers at the same time.
+         - Bad: 3 drivers on break at 12:00.
+         - Good: Driver A at 11:30, Driver B at 12:30, Driver C at 13:30.
+       - **FLOATER RELIEF**: Use Floater shifts to "bridge" the gaps created by North/South breaks.
+         - Logic: Floater covers North (while North Driver is on break) -> then moves to South (while South Driver is on break).
     
     CRITICAL COVERAGE RULES:
     1. EFFICIENCY FIRST: You are allowed to have MINOR GAPS (-1 driver) for short periods (max 30 mins) if it prevents adding a huge wasteful shift.
     2. MINIMIZE SURPLUS: It is better to have a random 15-min gap than to have 8 hours of unused drivers.
-    3. CHECK EVERY SLOT [i]:
+    3. MINIMIZE CONCURRENT BREAKS: Target max 1 driver on break at a time per zone.
+    4. CHECK EVERY SLOT [i]:
        - Ideally: Count >= Demand[i]
        - Acceptable: Count = Demand[i] - 1 (for < 3 consecutive slots)
        - Unacceptable: Count < Demand[i] - 1 OR Count < Demand[i] for > 45 mins.
-    4. SHIFT STARTS: Start shifts EXACTLY when demand spikes in their respective zone.
+    5. SHIFT STARTS: Start shifts EXACTLY when demand spikes in their respective zone.
     `;
 
-    const prompt = `
+    let prompt = `
     North Zone Demand (Require "North" Shifts):
     ${JSON.stringify(northDemandCurve)}
 
@@ -82,14 +110,38 @@ export async function optimizeImplementation(requirements: any[], apiKey: string
     Floater Zone Demand (Require "Floater" Shifts):
     ${JSON.stringify(new Array(96).fill(0).map((_, i) => Math.max(0, totalDemandCurve[i] - northDemandCurve[i] - southDemandCurve[i])))} 
     (Note: If specific Floater demand was provided, use that. Otherwise, calculate the remainder.)
-
-    INSTRUCTIONS:
-    1. Generate a roster that strictly satisfies the specific curve for each zone type.
-    2. Do NOT cross-subsidize. A surplus in Floaters does NOT help South gaps.
-    3. Return strictly JSON.
     `;
 
-    console.log("🤖 Calling Gemini API (gemini-3-pro-preview)...");
+    if (mode === 'refine' && currentShifts.length > 0) {
+        prompt += `
+        
+        EXISTING SCHEDULE TO REFINE:
+        ${JSON.stringify(currentShifts.map(s => ({
+            id: s.id,
+            driverName: s.driverName,
+            zone: s.zone,
+            startSlot: s.startSlot,
+            durationSlots: s.endSlot - s.startSlot,
+            breakStartSlot: s.breakStartSlot
+        })))}
+        
+        INSTRUCTIONS for REFINE:
+        - Analyze the existing schedule against the demand curves.
+        - Fix any gaps by slightly adjusting start times.
+        - Reduce surplus by shortening shifts or removing truly redundant ones.
+        - Adjust break times to ensure staggered coverage.
+        - RETURN THE FULL REFINED LIST.
+        `;
+    } else {
+        prompt += `
+        INSTRUCTIONS:
+        1. Generate a roster that strictly satisfies the specific curve for each zone type.
+        2. Do NOT cross-subsidize. A surplus in Floaters does NOT help South gaps.
+        3. Return strictly JSON.
+        `;
+    }
+
+    console.log(`🤖 Calling Gemini API (gemini-3-pro-preview) in ${mode.toUpperCase()} mode...`);
 
     // Call Gemini API
     const model = genAI.getGenerativeModel({
@@ -98,7 +150,7 @@ export async function optimizeImplementation(requirements: any[], apiKey: string
         generationConfig: {
             responseMimeType: "application/json",
             responseSchema: shiftSchema as any,
-            temperature: 0.3, // User prefers 0.3 for better results
+            temperature: mode === 'refine' ? 0.2 : 0.3, // Lower temp for refinement to stay closer to original
         }
     });
 
@@ -141,7 +193,7 @@ export async function optimizeImplementation(requirements: any[], apiKey: string
         }
 
         return {
-            id: `gemini-shift-${index}-${Date.now()}`,
+            id: s.id || `gemini-shift-${index}-${Date.now()}`, // Preserve ID if returned (refine mode), else new
             driverName: s.driverName || `AI Driver ${index + 1}`,
             zone: s.zone,
             startSlot: start,
@@ -174,7 +226,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         // Get the requirements data sent from the browser
-        const { requirements } = req.body;
+        const { requirements, mode, currentShifts } = req.body; // Expanded destructuring
 
         if (!requirements || !Array.isArray(requirements)) {
             console.error("❌ Invalid requirements payload");

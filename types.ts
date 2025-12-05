@@ -16,9 +16,14 @@ export interface TimeSlot {
 
   // Break Tracking
   driversOnBreak: number;
+  northBreaks: number;
+  southBreaks: number;
+  floaterBreaks: number;
 
   // Calculated
   totalActiveCoverage: number; // North + South + Floater
+  northRelief: number; // Floater contribution to North
+  southRelief: number; // Floater contribution to South
   originalActiveCoverage?: number; // For ghost line comparison
   netDifference: number; // Active - Required
 }

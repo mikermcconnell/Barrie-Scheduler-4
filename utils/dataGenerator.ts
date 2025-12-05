@@ -180,7 +180,11 @@ export const calculateSchedule = (shifts: Shift[], requirements: Requirement[]):
     if (!req) continue;
 
     let activeCount = 0;
+    // Break Counts
     let breakCount = 0;
+    let northBreaks = 0;
+    let southBreaks = 0;
+    let floaterBreaks = 0;
 
     let northCount = 0;
     let southCount = 0;
@@ -192,6 +196,18 @@ export const calculateSchedule = (shifts: Shift[], requirements: Requirement[]):
 
         if (isOnBreak) {
           breakCount++;
+          // Track zone specific breaks
+          switch (shift.zone) {
+            case Zone.NORTH:
+              northBreaks++;
+              break;
+            case Zone.SOUTH:
+              southBreaks++;
+              break;
+            case Zone.FLOATER:
+              floaterBreaks++;
+              break;
+          }
         } else {
           activeCount++;
 
@@ -210,6 +226,23 @@ export const calculateSchedule = (shifts: Shift[], requirements: Requirement[]):
       }
     });
 
+    // Calculate Floater Relief Logic
+    const floaterDemand = req.floater || 0;
+    const floaterSurplus = Math.max(0, floaterCount - floaterDemand);
+
+    // North Relief
+    const northDemand = req.north;
+    const northDeficit = Math.max(0, northDemand - northCount);
+    const northRelief = Math.min(northDeficit, floaterSurplus);
+
+    // Remaining available for South
+    const remainingFloaterSurplus = floaterSurplus - northRelief;
+
+    // South Relief
+    const southDemand = req.south;
+    const southDeficit = Math.max(0, southDemand - southCount);
+    const southRelief = Math.min(southDeficit, remainingFloaterSurplus);
+
     slots.push({
       timeLabel: formatTime(minutesFromMidnight),
       timestamp: minutesFromMidnight,
@@ -220,7 +253,16 @@ export const calculateSchedule = (shifts: Shift[], requirements: Requirement[]):
       northCoverage: northCount,
       southCoverage: southCount,
       floaterCoverage: floaterCount,
+      // Break Data
       driversOnBreak: breakCount,
+      northBreaks,
+      southBreaks,
+      floaterBreaks,
+
+      // Relief Data
+      northRelief,
+      southRelief,
+
       totalActiveCoverage: activeCount,
       netDifference: activeCount - req.total
     });
