@@ -66,9 +66,10 @@ const CustomTooltip = ({ active, payload, label, viewMode }: any) => {
             <span>{net > 0 ? '+' : ''}{net}</span>
           </div>
 
-          {viewMode === 'All' && (
-            <p className="text-orange-400 text-xs pt-1">Drivers on Break: {data.driversOnBreak}</p>
-          )}
+        </div>
+        <div className="flex justify-between gap-4 text-orange-400">
+          <span>On Break:</span>
+          <span>{(data as any).currentBreak}</span>
         </div>
       </div>
     );
@@ -123,6 +124,12 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
   }, [displayData, zoneFilter]);
 
   const domainMax = Math.ceil((maxValue + 1) / 5) * 5;
+
+  // Calculate min value for gaps (negative net)
+  const minValue = React.useMemo(() => {
+    const minNet = Math.min(...chartData.map(d => d.currentNet));
+    return minNet < 0 ? Math.floor(minNet / 1) * 1 : 0; // Ensure we capture the full negative depth
+  }, [chartData]);
 
   return (
     <div className="h-[550px] w-full bg-white p-6 rounded-3xl border-2 border-gray-200 shadow-sm relative overflow-hidden transition-all duration-300">
