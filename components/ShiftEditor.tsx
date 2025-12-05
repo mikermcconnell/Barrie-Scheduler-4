@@ -1,9 +1,10 @@
 import React from 'react';
-import { Shift, Zone } from '../types';
+import { Shift, Zone, SummaryMetrics } from '../types';
 import { formatSlotToTime } from '../utils/dataGenerator';
 import { Coffee, Trash2, Plus, Minus, User, Sparkles, MapPin } from 'lucide-react';
 import { TIME_SLOTS_PER_DAY } from '../constants';
 import { ZoneFilterType } from './OnDemandWorkspace';
+import { SummaryCards } from './SummaryCards';
 
 interface Props {
   shifts: Shift[];
@@ -13,6 +14,7 @@ interface Props {
   onEditShift?: (id: string) => void;
   zoneFilter: ZoneFilterType;
   onZoneFilterChange: (filter: ZoneFilterType) => void;
+  metrics: SummaryMetrics;
 }
 
 export const ShiftEditor: React.FC<Props> = ({
@@ -22,7 +24,8 @@ export const ShiftEditor: React.FC<Props> = ({
   onAddShift,
   onEditShift,
   zoneFilter,
-  onZoneFilterChange
+  onZoneFilterChange,
+  metrics
 }) => {
 
   // Filter Shifts based on Active Zone Filter
@@ -64,6 +67,10 @@ export const ShiftEditor: React.FC<Props> = ({
 
   return (
     <div className="bg-white rounded-3xl border-2 border-gray-200 p-6 shadow-sm">
+      <div className="mb-6">
+        <SummaryCards metrics={metrics} />
+      </div>
+
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
         <div>
           <h2 className="text-2xl font-extrabold text-gray-700">Driver Roster</h2>
@@ -112,7 +119,7 @@ export const ShiftEditor: React.FC<Props> = ({
             <div
               key={shift.id}
               onClick={() => onEditShift && onEditShift(shift.id)}
-              className={`group relative bg-gray-50 hover:bg-white rounded-2xl border-2 ${isAI ? 'border-purple-100' : 'border-gray-100'} hover:border-brand-blue transition-all p-4 flex flex-col md:flex-row gap-4 items-center justify-between cursor-pointer`}
+              className={`group relative bg-gray-50 hover: bg-white rounded-2xl border-2 ${isAI ? 'border-purple-100' : 'border-gray-100'} hover: border-brand-blue transition-all p-4 flex flex-col md: flex-row gap-4 items-center justify-between cursor-pointer`}
             >
 
               {/* Driver Info */}
@@ -123,9 +130,9 @@ export const ShiftEditor: React.FC<Props> = ({
                 <div>
                   <h4 className="font-extrabold text-gray-700">{shift.driverName}</h4>
                   <div className="flex items-center gap-2">
-                    <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded-md ${shift.zone === Zone.NORTH ? 'bg-blue-100 text-blue-600' :
-                        shift.zone === Zone.SOUTH ? 'bg-green-100 text-green-600' :
-                          'bg-purple-100 text-purple-600'
+                    <span className={`text-[10px]font-bold uppercase px-1.5 py-0.5 rounded-md ${shift.zone === Zone.NORTH ? 'bg-blue-100 text-blue-600' :
+                      shift.zone === Zone.SOUTH ? 'bg-green-100 text-green-600' :
+                        'bg-purple-100 text-purple-600'
                       }`}>
                       {shift.zone}
                     </span>
