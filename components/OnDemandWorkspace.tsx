@@ -21,7 +21,7 @@ import { generateRideCoCSV, downloadCSV } from '../utils/exportService';
 import { SummaryMetrics, Shift, Requirement, Zone } from '../types';
 import {
     Wand2, Users, BarChart3, Sparkles, AlertTriangle, Loader2,
-    FolderOpen, Save, CloudDownload, Check, Edit3
+    FolderOpen, Save, CloudDownload, Check, Edit3, RotateCcw
 } from 'lucide-react';
 import { SHIFT_DURATION_SLOTS, BREAK_DURATION_SLOTS } from '../constants';
 
@@ -47,6 +47,8 @@ export const OnDemandWorkspace: React.FC = () => {
 
     // File Upload State
     const [uploadedFiles, setUploadedFiles] = useState<{ master: File | null, rideco: File | null }>({ master: null, rideco: null });
+    // Cache file content to enable "Reset to Upload"
+    const [cachedFiles, setCachedFiles] = useState<{ master: string | null, rideco: string | null }>({ master: null, rideco: null });
 
     // Cloud File Manager State
     const [showFileManager, setShowFileManager] = useState(false);
@@ -214,12 +216,25 @@ export const OnDemandWorkspace: React.FC = () => {
     const processFiles = async () => {
         setIsAnimating(true);
         try {
-            if (uploadedFiles.master) {
-                const text = await uploadedFiles.master.text();
-                const newSchedules = parseScheduleMaster(text);
+            setUploadedFiles({ master: null, rideco: null });
+
+            // Cache the content for reset functionality (if available)
+            setCachedFiles(prev => ({
+                master: uploadedFiles.master ? prev.master : prev.master, // Don't overwrite if not present? Actually we should probably just set what we processed.
+                rideco: uploadedFiles.rideco ? prev.rideco : prev.rideco
+            }));
+
+            // Actually, we must read the text above. We should store it.
+            // Let's refactor the reading part slightly to ensure we capture the text.
+            const masterText = uploadedFiles.master ? await uploadedFiles.master.text() : null;
+            const ridecoText = uploadedFiles.rideco ? await uploadedFiles.rideco.text() : null;
+
+            setCachedFiles({ master: masterText, rideco: ridecoText });
+
+            if (masterText) {
+                const newSchedules = parseScheduleMaster(masterText);
                 setSchedules(newSchedules);
 
-                // Default to Weekday if available, else first key
                 const defaultDay = newSchedules['Weekday'] ? 'Weekday' : Object.keys(newSchedules)[0];
                 if (defaultDay) {
                     setSelectedDayType(defaultDay);
@@ -227,19 +242,15 @@ export const OnDemandWorkspace: React.FC = () => {
                 }
             }
 
-            if (uploadedFiles.rideco) {
-                const text = await uploadedFiles.rideco.text();
-                const newShifts = parseRideCo(text);
+            if (ridecoText) {
+                const newShifts = parseRideCo(ridecoText);
                 if (newShifts.length > 0) {
                     setAllShifts(newShifts);
-                    // Filter for current selected day
                     const currentDay = selectedDayType || 'Weekday';
                     const filtered = newShifts.filter(s => !s.dayType || s.dayType === currentDay);
                     setShifts(filtered);
                 }
             }
-
-            setUploadedFiles({ master: null, rideco: null });
         } catch (e) {
             console.error(e);
             alert('Error processing files.');
@@ -284,6 +295,7 @@ export const OnDemandWorkspace: React.FC = () => {
             if (fileType === 'schedule_master') {
                 // Parse as master schedule
                 console.log('Parsing as Master Schedule...');
+                setCachedFiles(prev => ({ ...prev, master: content }));
                 const newSchedules = parseScheduleMaster(content);
                 console.log('Parsed schedules:', Object.keys(newSchedules));
                 setSchedules(newSchedules);
@@ -297,6 +309,7 @@ export const OnDemandWorkspace: React.FC = () => {
             } else if (fileType === 'rideco') {
                 // Parse as RideCo shifts
                 console.log('Parsing as RideCo shifts...');
+                setCachedFiles(prev => ({ ...prev, rideco: content }));
                 const newShifts = parseRideCo(content);
                 console.log('Parsed shifts count:', newShifts.length);
                 if (newShifts.length > 0) {
@@ -503,12 +516,24 @@ export const OnDemandWorkspace: React.FC = () => {
 
                     <div className="flex flex-col items-end gap-2">
                         <div className="flex items-center gap-3">
+                            {/* Reset to Upload - Only if we have cached files */}
+                            {(cachedFiles.rideco || cachedFiles.master) && (
+                                <button
+                                    onClick={handleResetToUpload}
+                                    disabled={isAnimating}
+                                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-gray-500 bg-gray-100 hover:bg-gray-200 hover:text-gray-700 active:scale-95 transition-all"
+                                    title="Reset to uploaded files"
+                                >
+                                    <RotateCcw size={18} />
+                                </button>
+                            )}
+
                             {/* Refine Button - Primary Action */}
                             <button
                                 onClick={handleRefine}
                                 disabled={isAnimating || shifts.length === 0}
                                 className={`
-                                flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-md hover:shadow-lg active:scale-95
+                                flex items-center gap-2 px-5 py-2 rounded-xl font-bold text-white shadow-md hover:shadow-lg active:scale-95 whitespace-nowrap
                                 ${isAnimating && optimizationMode === 'refine'
                                         ? 'bg-indigo-400 cursor-wait'
                                         : shifts.length === 0
@@ -524,7 +549,7 @@ export const OnDemandWorkspace: React.FC = () => {
                                 ) : (
                                     <Sparkles size={18} />
                                 )}
-                                Refine Text
+                                Refine
                             </button>
 
                             {/* Regenerate Button - Distinct but Secondary */}
@@ -532,7 +557,7 @@ export const OnDemandWorkspace: React.FC = () => {
                                 onClick={handleRegenerate}
                                 disabled={isAnimating}
                                 className={`
-                                flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold shadow-sm border active:scale-95
+                                flex items-center gap-2 px-5 py-2 rounded-xl font-bold shadow-sm border active:scale-95 whitespace-nowrap
                                 ${isAnimating && optimizationMode === 'full'
                                         ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-wait'
                                         : 'bg-green-500 text-white border-green-600 hover:bg-green-600 hover:border-green-700'
@@ -546,7 +571,7 @@ export const OnDemandWorkspace: React.FC = () => {
                                 ) : (
                                     <Wand2 size={18} />
                                 )}
-                                Regenerate Text
+                                Regenerate
                             </button>
                         </div>
 

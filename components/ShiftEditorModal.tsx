@@ -84,7 +84,9 @@ export const ShiftEditorModal: React.FC<Props> = ({ shift, allShifts, requiremen
             const eighthHour = shiftStart + 32;
 
             if (breakStart < fifthHour || breakStart > eighthHour) {
-                setValidationMsg(`Break must be between 5th and 8th hour`);
+                const fifthHourTime = formatSlotToTime(fifthHour);
+                const eighthHourTime = formatSlotToTime(eighthHour);
+                setValidationMsg(`Break must be between 5th and 8th hour (${fifthHourTime} - ${eighthHourTime})`);
                 return;
             }
         }
@@ -281,10 +283,14 @@ export const ShiftEditorModal: React.FC<Props> = ({ shift, allShifts, requiremen
                                 ref={trackRef}
                                 className="relative h-14 bg-gray-100 rounded-xl border border-gray-200 select-none cursor-pointer"
                             >
-                                {/* Grid Lines */}
-                                <div className="absolute inset-0 flex justify-between px-2 pointer-events-none">
+                                {/* Grid Lines - Fixed Alignment */}
+                                <div className="absolute inset-0 pointer-events-none">
                                     {Array.from({ length: 25 }).map((_, i) => (
-                                        <div key={i} className="h-full border-l border-gray-200 flex flex-col justify-end pb-1">
+                                        <div
+                                            key={i}
+                                            className="absolute top-0 bottom-0 border-l border-gray-200 flex flex-col justify-end pb-1"
+                                            style={{ left: `${(i / 24) * 100}%` }}
+                                        >
                                             <span className="text-[10px] font-bold text-gray-300 pl-1">{i}</span>
                                         </div>
                                     ))}
