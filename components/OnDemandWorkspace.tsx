@@ -23,6 +23,9 @@ import {
 } from 'lucide-react';
 import { SHIFT_DURATION_SLOTS, BREAK_DURATION_SLOTS } from '../constants';
 
+// Define the Shared Filter Type
+export type ZoneFilterType = 'All' | 'North' | 'South' | 'Floater';
+
 export const OnDemandWorkspace: React.FC = () => {
     const { user } = useAuth();
 
@@ -36,6 +39,9 @@ export const OnDemandWorkspace: React.FC = () => {
 
     const [activeTab, setActiveTab] = useState<'overview' | 'editor'>('overview');
     const [editingShiftId, setEditingShiftId] = useState<string | null>(null);
+
+    // Shared Zone Filter State (Lifted Up)
+    const [zoneFilter, setZoneFilter] = useState<ZoneFilterType>('All');
 
     // File Upload State
     const [uploadedFiles, setUploadedFiles] = useState<{ master: File | null, rideco: File | null }>({ master: null, rideco: null });
@@ -448,7 +454,11 @@ export const OnDemandWorkspace: React.FC = () => {
 
             {/* Real-time Visualization (Always Visible) */}
             <div className="mb-8">
-                <GapChart data={timeSlots} />
+                <GapChart
+                    data={timeSlots}
+                    zoneFilter={zoneFilter}
+                    onZoneFilterChange={setZoneFilter}
+                />
             </div>
 
             {/* Tabs */}
@@ -547,6 +557,9 @@ export const OnDemandWorkspace: React.FC = () => {
                             console.log('OnDemandWorkspace received edit request for:', id);
                             setEditingShiftId(id);
                         }}
+                        // Pass Synced Filter State
+                        zoneFilter={zoneFilter}
+                        onZoneFilterChange={setZoneFilter}
                     />
                 </div>
             )}

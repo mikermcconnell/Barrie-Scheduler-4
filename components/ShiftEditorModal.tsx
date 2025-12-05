@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Shift, Requirement, TimeSlot } from '../types';
+import { Shift, Requirement, TimeSlot, Zone } from '../types';
 import { GapChart } from './GapChart';
 import { calculateSchedule, formatSlotToTime } from '../utils/dataGenerator';
 import {
@@ -10,6 +10,7 @@ import {
     TIME_SLOTS_PER_DAY
 } from '../constants';
 import { X, Save, AlertTriangle, CheckCircle2, Clock, Coffee, GripHorizontal, ChevronLeft, ChevronRight, GripVertical, Plus, Trash2 } from 'lucide-react';
+import { ZoneFilterType } from './OnDemandWorkspace';
 
 interface Props {
     shift: Shift;
@@ -25,6 +26,26 @@ export const ShiftEditorModal: React.FC<Props> = ({ shift, allShifts, requiremen
     const trackRef = useRef<HTMLDivElement>(null);
     const [isDragging, setIsDragging] = useState<'shift' | 'break' | 'start' | 'end' | 'breakStart' | 'breakEnd' | null>(null);
     const [dragOffset, setDragOffset] = useState(0);
+
+    // Initialize local chart filter based on the shift's zone
+    // This satisfies the user request: "if it's a north zone shift, have the north gap analysis chart"
+    const [localZoneFilter, setLocalZoneFilter] = useState<ZoneFilterType>(() => {
+        // Map Shift 'Zone' enum to ZoneFilterType
+        // The enum values match the string types (North, South, Floater), so this cast is safe mostly
+        // but explicit mapping is better for safety.
+        if (shift.zone === Zone.NORTH) return 'North';
+        if (shift.zone === Zone.SOUTH) return 'South';
+        if (shift.zone === Zone.FLOATER) return 'Floater';
+        return 'All';
+    });
+
+    // Update filter if shift zone changes during edit (e.g. if we add zone changing later, good to have)
+    useEffect(() => {
+        if (currentShift.zone === Zone.NORTH) setLocalZoneFilter('North');
+        else if (currentShift.zone === Zone.SOUTH) setLocalZoneFilter('South');
+        else if (currentShift.zone === Zone.FLOATER) setLocalZoneFilter('Floater');
+    }, [currentShift.zone]);
+
 
     // Calculate chart data with ghost line
     const chartData = useMemo(() => {
@@ -237,9 +258,14 @@ export const ShiftEditorModal: React.FC<Props> = ({ shift, allShifts, requiremen
                 <div className="flex-1 flex flex-col bg-gray-50/50 overflow-hidden">
 
                     {/* Chart Section */}
+                    {/* Updated to use local zone filter from shift */}
                     <div className="flex-1 p-6 min-h-0">
                         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm h-full p-4">
-                            <GapChart data={chartData} />
+                            <GapChart
+                                data={chartData}
+                                zoneFilter={localZoneFilter}
+                                onZoneFilterChange={setLocalZoneFilter}
+                            />
                         </div>
                     </div>
 

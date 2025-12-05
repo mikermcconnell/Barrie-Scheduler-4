@@ -1,8 +1,9 @@
 import React from 'react';
 import { Shift, Zone } from '../types';
 import { formatSlotToTime } from '../utils/dataGenerator';
-import { Coffee, Trash2, Plus, Minus, User, Sparkles } from 'lucide-react';
+import { Coffee, Trash2, Plus, Minus, User, Sparkles, MapPin } from 'lucide-react';
 import { TIME_SLOTS_PER_DAY } from '../constants';
+import { ZoneFilterType } from './OnDemandWorkspace';
 
 interface Props {
   shifts: Shift[];
@@ -10,12 +11,28 @@ interface Props {
   onDeleteShift: (id: string) => void;
   onAddShift: () => void;
   onEditShift?: (id: string) => void;
+  zoneFilter: ZoneFilterType;
+  onZoneFilterChange: (filter: ZoneFilterType) => void;
 }
 
-export const ShiftEditor: React.FC<Props> = ({ shifts, onUpdateShift, onDeleteShift, onAddShift, onEditShift }) => {
+export const ShiftEditor: React.FC<Props> = ({
+  shifts,
+  onUpdateShift,
+  onDeleteShift,
+  onAddShift,
+  onEditShift,
+  zoneFilter,
+  onZoneFilterChange
+}) => {
+
+  // Filter Shifts based on Active Zone Filter
+  const filteredShifts = shifts.filter(s => {
+    if (zoneFilter === 'All') return true;
+    return s.zone === zoneFilter;
+  });
 
   // Sort shifts by start time
-  const sortedShifts = [...shifts].sort((a, b) => a.startSlot - b.startSlot);
+  const sortedShifts = [...filteredShifts].sort((a, b) => a.startSlot - b.startSlot);
 
   const handleTimeChange = (e: React.MouseEvent, shift: Shift, field: 'startSlot' | 'endSlot' | 'breakStartSlot', delta: number) => {
     e.stopPropagation(); // Prevent opening modal
@@ -47,11 +64,39 @@ export const ShiftEditor: React.FC<Props> = ({ shifts, onUpdateShift, onDeleteSh
 
   return (
     <div className="bg-white rounded-3xl border-2 border-gray-200 p-6 shadow-sm">
-      <div className="flex justify-between items-center mb-6">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
         <div>
           <h2 className="text-2xl font-extrabold text-gray-700">Driver Roster</h2>
           <p className="text-gray-400 font-bold text-sm">Real-time Shift Adjustments</p>
         </div>
+
+        <div className="flex items-center gap-2 bg-gray-100 p-1 rounded-xl">
+          <button
+            onClick={() => onZoneFilterChange('All')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${zoneFilter === 'All' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+          >
+            All
+          </button>
+          <button
+            onClick={() => onZoneFilterChange('North')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${zoneFilter === 'North' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+          >
+            North
+          </button>
+          <button
+            onClick={() => onZoneFilterChange('South')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${zoneFilter === 'South' ? 'bg-white text-green-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+          >
+            South
+          </button>
+          <button
+            onClick={() => onZoneFilterChange('Floater')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${zoneFilter === 'Floater' ? 'bg-white text-purple-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+          >
+            Floater
+          </button>
+        </div>
+
         <button
           onClick={onAddShift}
           className="btn-bouncy bg-brand-green text-white px-4 py-2 rounded-xl font-bold border-b-4 border-brand-greenDark hover:brightness-110 flex items-center gap-2"
@@ -66,15 +111,7 @@ export const ShiftEditor: React.FC<Props> = ({ shifts, onUpdateShift, onDeleteSh
           return (
             <div
               key={shift.id}
-              onClick={() => {
-                console.log('Shift clicked:', shift.id);
-                if (onEditShift) {
-                  console.log('Calling onEditShift');
-                  onEditShift(shift.id);
-                } else {
-                  console.warn('onEditShift is undefined');
-                }
-              }}
+              onClick={() => onEditShift && onEditShift(shift.id)}
               className={`group relative bg-gray-50 hover:bg-white rounded-2xl border-2 ${isAI ? 'border-purple-100' : 'border-gray-100'} hover:border-brand-blue transition-all p-4 flex flex-col md:flex-row gap-4 items-center justify-between cursor-pointer`}
             >
 
@@ -86,7 +123,12 @@ export const ShiftEditor: React.FC<Props> = ({ shifts, onUpdateShift, onDeleteSh
                 <div>
                   <h4 className="font-extrabold text-gray-700">{shift.driverName}</h4>
                   <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold text-gray-400 uppercase">{shift.zone}</span>
+                    <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded-md ${shift.zone === Zone.NORTH ? 'bg-blue-100 text-blue-600' :
+                        shift.zone === Zone.SOUTH ? 'bg-green-100 text-green-600' :
+                          'bg-purple-100 text-purple-600'
+                      }`}>
+                      {shift.zone}
+                    </span>
                     {isAI && <span className="text-[10px] font-bold text-white bg-purple-400 px-1.5 py-0.5 rounded-full">AI</span>}
                   </div>
                 </div>
@@ -167,9 +209,9 @@ export const ShiftEditor: React.FC<Props> = ({ shifts, onUpdateShift, onDeleteSh
           )
         })}
 
-        {shifts.length === 0 && (
+        {sortedShifts.length === 0 && (
           <div className="text-center py-10 text-gray-400">
-            <p>No shifts scheduled. Add a driver to start.</p>
+            <p>No {zoneFilter !== 'All' ? zoneFilter : ''} shifts found.</p>
           </div>
         )}
       </div>
