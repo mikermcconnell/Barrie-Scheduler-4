@@ -264,7 +264,13 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
           <ReferenceLine y={0} stroke="#E5E7EB" />
 
           {/* Net Difference Bars */}
-          <Bar dataKey="currentNet" barSize={8} radius={[4, 4, 4, 4]}>
+          <Bar
+            dataKey="currentNet"
+            barSize={8}
+            radius={[4, 4, 4, 4]}
+            name="Relief Coverage"
+            animationDuration={500}
+          >
             {chartData.map((entry, index) => (
               <Cell
                 key={`cell-${index}`}
@@ -272,36 +278,34 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
                 fillOpacity={0.8}
               />
             ))}
-            name="Relief Coverage"
+          </Bar>
+
+          {/* Coverage Line - Detailed Line on top */}
+          <Line
+            type="monotone"
+            dataKey="currentCover"
+            stroke="#58CC02"
+            strokeWidth={3}
+            dot={false}
+            activeDot={{ r: 6 }}
+            name="Active Drivers"
             animationDuration={500}
+            zIndex={20}
           />
 
-            {/* Coverage Line - Detailed Line on top */}
+          {/* Original Coverage Ghost Line - Only in combined */}
+          {zoneFilter === 'All' && (
             <Line
               type="monotone"
-              dataKey="currentCover"
-              stroke="#58CC02"
-              strokeWidth={3}
+              dataKey="originalActiveCoverage"
+              stroke="#9CA3AF"
+              strokeWidth={2}
+              strokeDasharray="3 3"
               dot={false}
-              activeDot={{ r: 6 }}
-              name="Active Drivers"
-              animationDuration={500}
-              zIndex={20}
+              activeDot={false}
+              name="Original"
             />
-
-            {/* Original Coverage Ghost Line - Only in combined */}
-            {zoneFilter === 'All' && (
-              <Line
-                type="monotone"
-                dataKey="originalActiveCoverage"
-                stroke="#9CA3AF"
-                strokeWidth={2}
-                strokeDasharray="3 3"
-                dot={false}
-                activeDot={false}
-                name="Original"
-              />
-            )}
+          )}
 
         </ComposedChart>
       </ResponsiveContainer>
