@@ -107,6 +107,23 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
       (zoneFilter === 'South' ? (d.southRelief || 0) : 0),
   }));
 
+  // Calculate stable Y-Axis max (round up to nearest 5)
+  const maxValue = React.useMemo(() => {
+    return Math.max(...displayData.map(d => {
+      const req = zoneFilter === 'North' ? d.northRequirement :
+        (zoneFilter === 'South' ? d.southRequirement :
+          (zoneFilter === 'Floater' ? d.floaterRequirement || 0 : d.totalRequirement));
+
+      const cov = zoneFilter === 'North' ? d.northCoverage :
+        (zoneFilter === 'South' ? d.southCoverage :
+          (zoneFilter === 'Floater' ? d.floaterCoverage : d.totalActiveCoverage));
+
+      return Math.max(req, cov);
+    }));
+  }, [displayData, zoneFilter]);
+
+  const domainMax = Math.ceil((maxValue + 1) / 5) * 5;
+
   return (
     <div className="h-[550px] w-full bg-white p-6 rounded-3xl border-2 border-gray-200 shadow-sm relative overflow-hidden transition-all duration-300">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
@@ -195,6 +212,8 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
             tick={{ fill: '#9CA3AF', fontSize: 12, fontWeight: 700 }}
             axisLine={false}
             tickLine={false}
+            domain={[0, domainMax]}
+            allowDataOverflow={true}
           />
           <Tooltip content={<CustomTooltip viewMode={zoneFilter} />} cursor={{ fill: '#f3f4f6', opacity: 0.4 }} />
 
