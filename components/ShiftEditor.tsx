@@ -128,7 +128,13 @@ export const ShiftEditor: React.FC<Props> = ({
                   {isAI ? <Sparkles size={20} /> : <User size={20} />}
                 </div>
                 <div>
-                  <h4 className="font-extrabold text-gray-700">{shift.driverName}</h4>
+                  <input
+                    type="text"
+                    value={shift.driverName}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => onUpdateShift({ ...shift, driverName: e.target.value })}
+                    className="font-extrabold text-gray-700 bg-transparent border-b border-transparent hover:border-gray-300 focus:border-brand-blue focus:outline-none w-full"
+                  />
                   <div className="flex items-center gap-2">
                     <span className={`text-[10px]font-bold uppercase px-1.5 py-0.5 rounded-md ${shift.zone === Zone.NORTH ? 'bg-blue-100 text-blue-600' :
                       shift.zone === Zone.SOUTH ? 'bg-green-100 text-green-600' :
@@ -199,13 +205,13 @@ export const ShiftEditor: React.FC<Props> = ({
               </div>
 
               {/* Actions */}
-              <div className="flex flex-col gap-2 absolute -right-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity">
+              <div className="flex flex-col gap-2 absolute -right-2 top-2">
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
                     onDeleteShift(shift.id);
                   }}
-                  className="bg-white text-gray-400 hover:text-red-500 hover:bg-red-50 p-2 rounded-full border border-gray-200 shadow-sm"
+                  className="bg-white text-gray-400 hover:text-red-500 hover:bg-red-50 p-2 rounded-full border border-gray-200 shadow-sm transition-colors"
                   title="Delete Shift"
                 >
                   <Trash2 size={16} />

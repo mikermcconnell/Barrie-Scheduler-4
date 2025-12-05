@@ -219,9 +219,12 @@ export const ShiftEditorModal: React.FC<Props> = ({ shift, allShifts, requiremen
                 <div className="flex justify-between items-center px-8 py-6 border-b border-gray-100 bg-white">
                     <div>
                         <div className="flex items-center gap-3 mb-1">
-                            <h2 className="text-3xl font-extrabold text-gray-800">
-                                {currentShift.driverName}
-                            </h2>
+                            <input
+                                type="text"
+                                value={currentShift.driverName}
+                                onChange={(e) => setCurrentShift({ ...currentShift, driverName: e.target.value })}
+                                className="text-3xl font-extrabold text-gray-800 bg-transparent border-b-2 border-transparent hover:border-gray-200 focus:border-brand-blue focus:outline-none transition-all w-full max-w-md"
+                            />
                             <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${currentShift.zone === 'North' ? 'bg-blue-100 text-blue-700' :
                                 currentShift.zone === 'South' ? 'bg-green-100 text-green-700' :
                                     'bg-purple-100 text-purple-700'
@@ -400,7 +403,7 @@ export const ShiftEditorModal: React.FC<Props> = ({ shift, allShifts, requiremen
 
                                         <button
                                             onClick={toggleBreak}
-                                            className="absolute -top-2 -right-2 bg-white text-red-400 border border-red-100 p-1 rounded-full shadow-sm opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-50"
+                                            className="absolute -top-2 -right-2 bg-white text-red-400 border border-red-100 p-1 rounded-full shadow-sm hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-all"
                                             title="Remove Break"
                                         >
                                             <X size={12} strokeWidth={3} />

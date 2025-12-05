@@ -158,10 +158,34 @@ export const OnDemandWorkspace: React.FC = () => {
         if (zone === 'North') startZone = Zone.NORTH;
         if (zone === 'South') startZone = Zone.SOUTH;
 
+        // Auto-increment Name Logic
+        // 1. Filter existing shifts matching the zone
+        // 2. Extract numbers from names like "{Zone} {N}"
+        // 3. Find max and increment
+        const zoneName = startZone; // "North", "South", "Floater"
+        const existingNames = shifts
+            .filter(s => s.zone === startZone)
+            .map(s => s.driverName);
+
+        let maxNum = 0;
+        const regex = new RegExp(`^${zoneName}\\s+(\\d+)$`, 'i');
+
+        existingNames.forEach(name => {
+            const match = name.match(regex);
+            if (match) {
+                const num = parseInt(match[1], 10);
+                if (!isNaN(num) && num > maxNum) {
+                    maxNum = num;
+                }
+            }
+        });
+
+        const newName = `${zoneName} ${maxNum + 1}`;
+
         // Default shift: 8am - 4pm
         const newShift: Shift = {
             id: `shift-${Math.random().toString(36).substr(2, 9)}`,
-            driverName: `New Driver`,
+            driverName: newName,
             zone: startZone,
             startSlot: 32, // 08:00
             endSlot: 32 + SHIFT_DURATION_SLOTS,

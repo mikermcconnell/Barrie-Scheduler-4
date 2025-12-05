@@ -1,9 +1,10 @@
 import React, { useState, useMemo } from 'react';
 import { Shift, Requirement, TimeSlot, Zone } from '../types';
 import { GapChart } from './GapChart';
-import { calculateSchedule, formatSlotToTime } from '../utils/dataGenerator';
+import { calculateSchedule, formatSlotToTime, calculateMetrics } from '../utils/dataGenerator';
 import { Check, X, ArrowRight, AlertTriangle, Sparkles, CheckSquare, Square } from 'lucide-react';
 import { ZoneFilterType } from './OnDemandWorkspace';
+import { SummaryCards } from './SummaryCards';
 
 interface Props {
     currentShifts: Shift[];
@@ -149,6 +150,7 @@ export const OptimizationReviewModal: React.FC<Props> = ({
     }, [currentShifts, changes, selectedChangeIds]);
 
     const previewSlots = useMemo(() => calculateSchedule(previewShifts, requirements), [previewShifts, requirements]);
+    const metrics = useMemo(() => calculateMetrics(previewSlots), [previewSlots]);
 
     const toggleChange = (id: string) => {
         const next = new Set(selectedChangeIds);
@@ -264,6 +266,11 @@ export const OptimizationReviewModal: React.FC<Props> = ({
                                     Previewing {selectedChangeIds.size} Changes
                                 </span>
                             </div>
+
+                            <div className="mb-6">
+                                <SummaryCards metrics={metrics} />
+                            </div>
+
                             {/* Gap Chart */}
                             <GapChart
                                 data={previewSlots}

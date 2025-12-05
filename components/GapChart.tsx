@@ -1,25 +1,6 @@
-import React from 'react';
-import {
-  ComposedChart,
-  Line,
-  Bar,
-  Area,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  ReferenceLine,
-  Cell
-} from 'recharts';
-import { TimeSlot } from '../types';
-import { MapPin } from 'lucide-react';
-import { ZoneFilterType } from './OnDemandWorkspace';
-
-interface Props {
-  data: TimeSlot[];
-  zoneFilter: ZoneFilterType;
-  onZoneFilterChange: (filter: ZoneFilterType) => void;
+data: TimeSlot[];
+zoneFilter: ZoneFilterType;
+onZoneFilterChange: (filter: ZoneFilterType) => void;
 }
 
 const CustomTooltip = ({ active, payload, label, viewMode }: any) => {
@@ -210,10 +191,10 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
           <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
           <XAxis
             dataKey="timeLabel"
-            tick={{ fill: '#9CA3AF', fontSize: 12, fontWeight: 700 }}
             axisLine={false}
             tickLine={false}
-            interval={3}
+            interval={0}
+            tick={<CustomXAxisTick />}
           />
           <YAxis
             tick={{ fill: '#9CA3AF', fontSize: 12, fontWeight: 700 }}
@@ -235,80 +216,36 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
                 fillOpacity={0.8}
               />
             ))}
-          </Bar>
-
-          {/* Drivers on Break Line (Now for all zones) */}
-          <Line
-            type="stepAfter"
-            dataKey="currentBreak"
-            stroke="#FDBA74"
-            strokeWidth={2}
-            strokeDasharray="5 5"
-            dot={false}
-            name="On Break"
-          />
-
-          {/* Requirement Line */}
-          <Line
-            type="monotone"
-            dataKey="currentReq"
-            stroke="#1CB0F6" // Brand Blue
-            strokeWidth={4}
-            dot={{ r: 4, fill: '#1CB0F6', strokeWidth: 0 }}
-            activeDot={{ r: 6 }}
-            name="Requirement"
-            animationDuration={500}
-          />
-
-          {/* Stacked Areas for Coverage + Relief */}
-          <Area
-            type="monotone"
-            dataKey="currentCover"
-            stackId="1"
-            stroke="none"
-            fill="#58CC02"
-            fillOpacity={0.4}
-            name="Active Coverage"
-            animationDuration={500}
-          />
-          <Area
-            type="monotone"
-            dataKey="currentRelief"
-            stackId="1"
-            stroke="#9333EA"
-            fill="#E9D5FF"
-            fillOpacity={0.8}
-            strokeWidth={1}
             name="Relief Coverage"
             animationDuration={500}
           />
 
-          {/* Coverage Line - Detailed Line on top */}
-          <Line
-            type="monotone"
-            dataKey="currentCover"
-            stroke="#58CC02"
-            strokeWidth={3}
-            dot={false}
-            activeDot={{ r: 6 }}
-            name="Active Drivers"
-            animationDuration={500}
-            zIndex={20}
-          />
-
-          {/* Original Coverage Ghost Line - Only in combined */}
-          {zoneFilter === 'All' && (
+            {/* Coverage Line - Detailed Line on top */}
             <Line
               type="monotone"
-              dataKey="originalActiveCoverage"
-              stroke="#9CA3AF"
-              strokeWidth={2}
-              strokeDasharray="3 3"
+              dataKey="currentCover"
+              stroke="#58CC02"
+              strokeWidth={3}
               dot={false}
-              activeDot={false}
-              name="Original"
+              activeDot={{ r: 6 }}
+              name="Active Drivers"
+              animationDuration={500}
+              zIndex={20}
             />
-          )}
+
+            {/* Original Coverage Ghost Line - Only in combined */}
+            {zoneFilter === 'All' && (
+              <Line
+                type="monotone"
+                dataKey="originalActiveCoverage"
+                stroke="#9CA3AF"
+                strokeWidth={2}
+                strokeDasharray="3 3"
+                dot={false}
+                activeDot={false}
+                name="Original"
+              />
+            )}
 
         </ComposedChart>
       </ResponsiveContainer>
