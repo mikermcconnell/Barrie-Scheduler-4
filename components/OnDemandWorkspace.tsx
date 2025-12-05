@@ -407,48 +407,50 @@ export const OnDemandWorkspace: React.FC = () => {
                 </div>
 
                 <div className="flex items-center gap-3">
-                    {/* Cloud Actions */}
+                    {/* Cloud Actions Group */}
                     {user && (
-                        <div className="flex gap-2 mr-2">
+                        <div className="flex items-center gap-2 mr-4 p-1 bg-gray-50 rounded-xl border border-gray-100">
                             <button
                                 onClick={() => {
                                     const csv = generateRideCoCSV(shifts);
                                     downloadCSV(csv, `RideCo_Shifts_${new Date().toISOString().split('T')[0]}.csv`);
                                 }}
-                                className="flex items-center gap-2 px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-xl transition-colors"
+                                className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-gray-600 hover:text-gray-900 hover:bg-white hover:shadow-sm rounded-lg transition-all"
                                 title="Export as RideCo Template"
                             >
-                                <CloudDownload size={18} className="rotate-180" /> {/* Flip for upload/export visual */}
-                                Export as RideCo Template
+                                <CloudDownload size={16} className="rotate-180" />
+                                Export
                             </button>
+                            <div className="w-px h-6 bg-gray-200"></div>
                             <button
                                 onClick={() => setShowFileManager(true)}
                                 disabled={isLoadingFromCloud}
-                                className="flex items-center gap-2 px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-xl transition-colors"
+                                className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-gray-600 hover:text-gray-900 hover:bg-white hover:shadow-sm rounded-lg transition-all"
                             >
                                 {isLoadingFromCloud ? (
-                                    <Loader2 className="animate-spin" size={18} />
+                                    <Loader2 className="animate-spin" size={16} />
                                 ) : (
-                                    <CloudDownload size={18} />
+                                    <CloudDownload size={16} />
                                 )}
-                                Load Files
+                                Load
                             </button>
+                            <div className="w-px h-6 bg-gray-200"></div>
                             <button
                                 onClick={handleSaveDraft}
                                 disabled={isSaving}
-                                className={`flex items-center gap-2 px-4 py-2.5 font-bold rounded-xl transition-all ${saveSuccess
-                                    ? 'bg-green-500 text-white'
-                                    : 'bg-brand-blue hover:bg-blue-600 text-white'
+                                className={`flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg transition-all ${saveSuccess
+                                    ? 'bg-green-50 text-green-700'
+                                    : 'text-gray-600 hover:text-brand-blue hover:bg-white hover:shadow-sm'
                                     }`}
                             >
                                 {isSaving ? (
-                                    <Loader2 className="animate-spin" size={18} />
+                                    <Loader2 className="animate-spin" size={16} />
                                 ) : saveSuccess ? (
-                                    <Check size={18} />
+                                    <Check size={16} />
                                 ) : (
-                                    <Save size={18} />
+                                    <Save size={16} />
                                 )}
-                                {isSaving ? 'Saving...' : saveSuccess ? 'Saved!' : 'Save Draft'}
+                                {isSaving ? 'Saving...' : saveSuccess ? 'Saved' : 'Save Draft'}
                             </button>
                         </div>
                     )}
@@ -459,7 +461,7 @@ export const OnDemandWorkspace: React.FC = () => {
                                 <button
                                     key={day}
                                     onClick={() => handleDayTypeChange(day)}
-                                    className={`px-3 py-1.5 text-sm font-bold rounded-md transition-all ${selectedDayType === day
+                                    className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all ${selectedDayType === day
                                         ? 'bg-white text-brand-blue shadow-sm'
                                         : 'text-gray-500 hover:text-gray-700'
                                         }`}
@@ -469,50 +471,51 @@ export const OnDemandWorkspace: React.FC = () => {
                             ))}
                         </div>
                     )}
+
                     <div className="flex flex-col items-end gap-2">
-                        <div className="flex items-center gap-2">
-                            {/* Refine Button */}
+                        <div className="flex items-center gap-3">
+                            {/* Refine Button - Primary Action */}
                             <button
                                 onClick={handleRefine}
                                 disabled={isAnimating || shifts.length === 0}
                                 className={`
-                                btn-bouncy flex items-center gap-2 px-5 py-3 rounded-2xl font-extrabold text-white shadow-sm border-b-4
+                                flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-md hover:shadow-lg active:scale-95
                                 ${isAnimating && optimizationMode === 'refine'
-                                        ? 'bg-purple-400 border-purple-600'
+                                        ? 'bg-indigo-400 cursor-wait'
                                         : shifts.length === 0
-                                            ? 'bg-gray-300 border-gray-400 cursor-not-allowed opacity-50'
-                                            : 'bg-purple-500 border-purple-700 hover:bg-purple-600'
+                                            ? 'bg-gray-300 cursor-not-allowed shadow-none'
+                                            : 'bg-indigo-600 hover:bg-indigo-700'
                                     }
-                                transition-all
+                                transition-all duration-200
                             `}
                                 title="Refine current shifts"
                             >
                                 {isAnimating && optimizationMode === 'refine' ? (
-                                    <Sparkles className="animate-spin text-white" size={20} />
+                                    <Sparkles className="animate-spin text-white" size={18} />
                                 ) : (
-                                    <Sparkles size={20} />
+                                    <Sparkles size={18} />
                                 )}
-                                Refine
+                                Refine & Polish
                             </button>
 
-                            {/* Regenerate Button */}
+                            {/* Regenerate Button - Distinct but Secondary */}
                             <button
                                 onClick={handleRegenerate}
                                 disabled={isAnimating}
                                 className={`
-                                btn-bouncy flex items-center gap-2 px-5 py-3 rounded-2xl font-extrabold text-white shadow-sm border-b-4
+                                flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold shadow-sm border active:scale-95
                                 ${isAnimating && optimizationMode === 'full'
-                                        ? 'bg-gray-400 border-gray-600 hover:bg-gray-500'
-                                        : 'bg-gradient-to-r from-brand-green to-emerald-500 border-brand-greenDark hover:brightness-110'
+                                        ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-wait'
+                                        : 'bg-white text-gray-700 border-gray-200 hover:border-gray-300 hover:bg-gray-50'
                                     }
-                                transition-all
+                                transition-all duration-200
                             `}
                                 title="Generate fresh schedule"
                             >
                                 {isAnimating && optimizationMode === 'full' ? (
-                                    <Loader2 className="animate-spin" size={20} />
+                                    <Loader2 className="animate-spin" size={18} />
                                 ) : (
-                                    <Wand2 size={20} />
+                                    <Wand2 size={18} />
                                 )}
                                 Regenerate
                             </button>
