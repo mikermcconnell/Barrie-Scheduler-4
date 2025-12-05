@@ -2,13 +2,11 @@ import React from 'react';
 import {
   ResponsiveContainer,
   ComposedChart,
-  Area,
   Bar,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
-  Legend,
   ReferenceLine,
   Cell,
   Line

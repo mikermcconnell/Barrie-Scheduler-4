@@ -19,7 +19,7 @@ import {
     listAll
 } from 'firebase/storage';
 import { db, storage } from './firebase';
-import type { Shift } from '../types';
+import type { Shift, Requirement } from '../types';
 
 // Types for saved data
 export interface SavedSchedule {
@@ -28,7 +28,7 @@ export interface SavedSchedule {
     description?: string;
     status: 'draft' | 'published' | 'archived';
     shiftData: Shift[];
-    masterScheduleData: any[];
+    masterScheduleData: Requirement[];
     createdAt: Date;
     updatedAt: Date;
 }

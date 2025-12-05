@@ -236,7 +236,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         console.log(`📦 Processing ${requirements.length} requirements...`);
 
         // DELEGATE TO CORE IMPLEMENTATION
-        const processedShifts = await optimizeImplementation(requirements, apiKey);
+        const processedShifts = await optimizeImplementation(requirements, apiKey, mode || 'full', currentShifts || []);
 
         // Send back the optimized shifts
         return res.status(200).json({ shifts: processedShifts });

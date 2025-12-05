@@ -12,9 +12,18 @@ import { useAuth } from './AuthContext';
 import { parseScheduleMaster, parseRideCo } from '../utils/csvParsers';
 import {
     SavedFile,
-
-// Define the Shared Filter Type
-
+    SavedSchedule,
+    downloadFileContent,
+    saveSchedule,
+    updateSchedule
+} from '../utils/dataService';
+import { generateRideCoCSV, downloadCSV } from '../utils/exportService';
+import { SummaryMetrics, Shift, Requirement, Zone, ZoneFilterType } from '../types';
+import {
+    Wand2, Users, BarChart3, Sparkles, AlertTriangle, Loader2,
+    FolderOpen, Save, CloudDownload, Check, Edit3, RotateCcw
+} from 'lucide-react';
+import { SHIFT_DURATION_SLOTS, BREAK_DURATION_SLOTS } from '../constants';
 
 export const OnDemandWorkspace: React.FC = () => {
         const { user } = useAuth();

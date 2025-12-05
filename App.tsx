@@ -4,7 +4,8 @@ import { FixedRouteWorkspace } from './components/FixedRouteWorkspace';
 import { AuthProvider, useAuth } from './components/AuthContext';
 import { AuthModal } from './components/AuthModal';
 import { FileManager } from './components/FileManager';
-import { LayoutDashboard, Bus, Settings, Bell, ArrowRight, Map, CheckCircle2, User, LogOut, FolderOpen, ChevronDown, Loader2 } from 'lucide-react';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { LayoutDashboard, Bus, Settings, Bell, ArrowRight, Map, CheckCircle2, User, LogOut, FolderOpen, ChevronDown, Loader2, Wifi } from 'lucide-react';
 
 type View = 'home' | 'ondemand' | 'fixed';
 
@@ -215,16 +216,24 @@ const AppContent: React.FC = () => {
                 System Operational
               </div>
               <div className="flex items-center gap-2">
-                <CheckCircle2 size={16} className="text-brand-green" />
-                Data Synced (2 mins ago)
+                <Wifi size={16} className="text-brand-green" />
+                Live Connection
               </div>
             </div>
           </div>
         )}
 
         {/* Dynamic Workspace Rendering */}
-        {currentView === 'ondemand' && <OnDemandWorkspace />}
-        {currentView === 'fixed' && <FixedRouteWorkspace />}
+        {currentView === 'ondemand' && (
+          <ErrorBoundary fallbackTitle="Workspace Error">
+            <OnDemandWorkspace />
+          </ErrorBoundary>
+        )}
+        {currentView === 'fixed' && (
+          <ErrorBoundary fallbackTitle="Workspace Error">
+            <FixedRouteWorkspace />
+          </ErrorBoundary>
+        )}
 
       </main>
     </div>
