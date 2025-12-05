@@ -19,7 +19,7 @@ import {
 import { SummaryMetrics, Shift, Requirement, Zone } from '../types';
 import {
     Wand2, Users, BarChart3, Sparkles, AlertTriangle, Loader2,
-    FolderOpen, Save, CloudDownload, Check
+    FolderOpen, Save, CloudDownload, Check, Edit3
 } from 'lucide-react';
 import { SHIFT_DURATION_SLOTS, BREAK_DURATION_SLOTS } from '../constants';
 
@@ -53,6 +53,10 @@ export const OnDemandWorkspace: React.FC = () => {
     const [isSaving, setIsSaving] = useState(false);
     const [saveSuccess, setSaveSuccess] = useState(false);
     const [isLoadingFromCloud, setIsLoadingFromCloud] = useState(false);
+
+    // Draft Name State (Supporting "Save As" via Rename)
+    const [draftName, setDraftName] = useState<string>(`On-Demand Schedule - ${new Date().toLocaleDateString()}`);
+    const [originalDraftName, setOriginalDraftName] = useState<string | null>(null);
 
     // UI State
     const [isOptimized, setIsOptimized] = useState(false);
@@ -270,6 +274,8 @@ export const OnDemandWorkspace: React.FC = () => {
         if (schedule.masterScheduleData) {
             setRequirements(schedule.masterScheduleData);
         }
+        setDraftName(schedule.name);
+        setOriginalDraftName(schedule.name);
         setCurrentDraftId(schedule.id);
         setShowFileManager(false);
     };
@@ -286,20 +292,23 @@ export const OnDemandWorkspace: React.FC = () => {
 
         try {
             const scheduleData = {
-                name: `On-Demand Schedule - ${new Date().toLocaleDateString()}`,
+                name: draftName,
                 description: `${shifts.length} shifts, Day Type: ${selectedDayType}`,
                 status: 'draft' as const,
                 shiftData: shifts,
                 masterScheduleData: requirements,
             };
 
-            if (currentDraftId) {
+            // Logic: "Save As" if the ID exists BUT the name has changed
+            // This allows creating new versions simply by renaming
+            if (currentDraftId && draftName === originalDraftName) {
                 // Update existing draft
                 await updateSchedule(user.uid, currentDraftId, scheduleData);
             } else {
                 // Create new draft
                 const newId = await saveSchedule(user.uid, scheduleData);
                 setCurrentDraftId(newId);
+                setOriginalDraftName(draftName); // Sync baseline to the new name
             }
 
             setSaveSuccess(true);
@@ -326,9 +335,20 @@ export const OnDemandWorkspace: React.FC = () => {
 
             {/* Title & Actions */}
             <div className="flex flex-col md:flex-row justify-between items-end mb-8 gap-4">
-                <div>
-                    <h2 className="text-3xl font-extrabold text-gray-800">Transit On-Demand Workspace</h2>
-                    <p className="text-gray-500 font-bold mt-2">Manage Master Schedules vs. MVT Driver Shifts</p>
+                <div className="flex-1">
+                    <div className="group flex items-center gap-3">
+                        <div className="relative">
+                            <input
+                                type="text"
+                                value={draftName}
+                                onChange={(e) => setDraftName(e.target.value)}
+                                className="text-3xl font-extrabold text-gray-800 bg-transparent border-b-2 border-transparent hover:border-gray-200 focus:border-brand-blue focus:outline-none transition-all w-full md:w-[600px] py-1"
+                            />
+                            <Edit3 size={16} className="absolute -right-6 top-1/2 -translate-y-1/2 text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
+                        </div>
+                    </div>
+
+                    <p className="text-gray-500 font-bold mt-1">Manage Master Schedules vs. MVT Driver Shifts</p>
                     {/* Show loaded cloud files */}
                     {(loadedCloudFiles.master || loadedCloudFiles.rideco) && (
                         <div className="flex gap-4 mt-2">

@@ -39,41 +39,43 @@ export async function optimizeImplementation(requirements: any[], apiKey: string
     };
 
     const systemInstruction = `You are a World-Class Transit Scheduler. 
-    Your goal is to create a roster of Driver Shifts that satisfies specific 15-minute demand slots efficiently while respecting ZONE restrictions.
+    Your goal is to create a roster of Driver Shifts that INDEPENDENTLY satisfies the demand for three distinct zones: North, South, and Floater.
     
     Union Rules:
     - Shift Length: 5-10 hours (20-40 slots)
     - Breaks: 45min (3 slots) if shift > 6h
-
-    ZONE LOGIC:
-    - "North" shifts can ONLY cover North demand.
-    - "South" shifts can ONLY cover South demand.
-    - "Floater" shifts can cover BOTH North and South demand.
+    
+    STRICT ZONE LOGIC (DO NOT MIX):
+    - You must treat this as THREE separate optimization problems running in parallel.
+    - "North Demand" MUST be covered by "North" shifts.
+    - "South Demand" MUST be covered by "South" shifts.
+    - "Floater Demand" MUST be covered by "Floater" shifts.
+    - DO NOT use Floater shifts to cover North or South demand. They have their own dedicated demand curve.
     
     CRITICAL COVERAGE RULES:
-    1. ZERO GAPS TOLERATED. 
+    1. ZERO GAPS TOLERATED per zone.
     2. CHECK EVERY SLOT [i]:
-       - (Count of North Shifts + Count of Floater Shifts) MUST be >= North Demand[i]
-       - (Count of South Shifts + Count of Floater Shifts) MUST be >= South Demand[i]
-       - (Total Shifts) MUST be >= Total Demand[i]
-    3. SHIFT STARTS: You can start shifts at ANY slot. Do NOT wait for the hour mark. Start EXACTLY when demand spikes.
+       - Count of North Shifts >= North Demand[i]
+       - Count of South Shifts >= South Demand[i]
+       - Count of Floater Shifts >= Floater Demand[i]
+    3. SHIFT STARTS: Start shifts EXACTLY when demand spikes in their respective zone.
     `;
 
     const prompt = `
-    Overall Demand (Total Drivers Needed): 
-    ${JSON.stringify(totalDemandCurve)}
-    
-    North Zone Demand (Components of Total):
+    North Zone Demand (Require "North" Shifts):
     ${JSON.stringify(northDemandCurve)}
 
-    South Zone Demand (Components of Total):
+    South Zone Demand (Require "South" Shifts):
     ${JSON.stringify(southDemandCurve)}
+    
+    Floater Zone Demand (Require "Floater" Shifts):
+    ${JSON.stringify(new Array(96).fill(0).map((_, i) => Math.max(0, totalDemandCurve[i] - northDemandCurve[i] - southDemandCurve[i])))} 
+    (Note: If specific Floater demand was provided, use that. Otherwise, calculate the remainder.)
 
     INSTRUCTIONS:
-    1. The arrays above show the number of drivers needed for each 15-minute slot.
-    2. Assign zones ("North", "South", "Floater") to shifts to satisfy the specific North/South curves.
-    3. Use "Floater" shifts strategically to cover overlap or peaks in either zone.
-    4. Generate the MOST EFFICIENT roster possible. Return strictly JSON.
+    1. Generate a roster that strictly satisfies the specific curve for each zone type.
+    2. Do NOT cross-subsidize. A surplus in Floaters does NOT help South gaps.
+    3. Return strictly JSON.
     `;
 
     console.log("🤖 Calling Gemini API (gemini-3-pro-preview)...");
