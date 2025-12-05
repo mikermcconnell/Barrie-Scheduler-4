@@ -45,11 +45,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // Initialize Gemini
         const genAI = new GoogleGenerativeAI(apiKey);
 
-        // Build the demand array for the AI (96 slots)
-        const demandCurve = new Array(96).fill(0);
+        // Build the demand arrays for the AI (96 slots)
+        const totalDemandCurve = new Array(96).fill(0);
+        const northDemandCurve = new Array(96).fill(0);
+        const southDemandCurve = new Array(96).fill(0);
+
         requirements.forEach((r: any) => {
             if (r.slotIndex >= 0 && r.slotIndex < 96) {
-                demandCurve[r.slotIndex] = r.total;
+                totalDemandCurve[r.slotIndex] = r.total;
+                northDemandCurve[r.slotIndex] = r.north;
+                southDemandCurve[r.slotIndex] = r.south;
             }
         });
 
@@ -71,26 +76,40 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         };
 
         const systemInstruction = `You are a World-Class Transit Scheduler. 
-    Your goal is to create a roster of Driver Shifts that satisfies specific 15-minute demand slots efficiently.
+    Your goal is to create a roster of Driver Shifts that satisfies specific 15-minute demand slots efficiently while respecting ZONE restrictions.
     
     Union Rules:
     - Shift Length: 5-10 hours (20-40 slots)
     - Breaks: 45min (3 slots) if shift > 6h
 
-    CRITICAL RULES:
-    1. ZERO GAPS TOLERATED. If demand > 0, you MUST have a driver.
-    2. SHIFT STARTS: You can start shifts at ANY slot (e.g., 5:15 AM = slot 21). Do NOT wait for the hour mark.
-    3. If demand starts at slot 21, your shift MUST start at slot 21 (or earlier). Starting at slot 24 (6:00 AM) is a FAILURE.
+    ZONE LOGIC:
+    - "North" shifts can ONLY cover North demand.
+    - "South" shifts can ONLY cover South demand.
+    - "Floater" shifts can cover BOTH North and South demand.
+    
+    CRITICAL COVERAGE RULES:
+    1. ZERO GAPS TOLERATED. 
+    2. CHECK EVERY SLOT [i]:
+       - (Count of North Shifts + Count of Floater Shifts) MUST be >= North Demand[i]
+       - (Count of South Shifts + Count of Floater Shifts) MUST be >= South Demand[i]
+       - (Total Shifts) MUST be >= Total Demand[i]
+    3. SHIFT STARTS: You can start shifts at ANY slot. Do NOT wait for the hour mark. Start EXACTLY when demand spikes.
     `;
 
         const prompt = `
-    Demand Curve (96 slots, from 00:00 to 23:45): 
-    ${JSON.stringify(demandCurve)}
+    Overall Demand (Total Drivers Needed): 
+    ${JSON.stringify(totalDemandCurve)}
+    
+    North Zone Demand (Components of Total):
+    ${JSON.stringify(northDemandCurve)}
+
+    South Zone Demand (Components of Total):
+    ${JSON.stringify(southDemandCurve)}
 
     INSTRUCTIONS:
-    1. The array above shows the number of drivers needed for each 15-minute slot.
-    2. CHECK EVERY SLOT. If demand[i] > 0, ensure you have enough active drivers at slot i.
-    3. PRIORITIZE COVERAGE. It is better to have an extra driver than a missing one.
+    1. The arrays above show the number of drivers needed for each 15-minute slot.
+    2. Assign zones ("North", "South", "Floater") to shifts to satisfy the specific North/South curves.
+    3. Use "Floater" shifts strategically to cover overlap or peaks in either zone.
     4. Generate the MOST EFFICIENT roster possible. Return strictly JSON.
     `;
 
