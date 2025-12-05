@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Shift, Requirement, TimeSlot, Zone } from '../types';
+import { Shift, Requirement, TimeSlot, Zone, ZoneFilterType } from '../types';
 import { GapChart } from './GapChart';
 import { calculateSchedule, formatSlotToTime } from '../utils/dataGenerator';
 import {
@@ -10,7 +10,6 @@ import {
     TIME_SLOTS_PER_DAY
 } from '../constants';
 import { X, Save, AlertTriangle, CheckCircle2, Clock, Coffee, GripHorizontal, ChevronLeft, ChevronRight, GripVertical, Plus, Trash2 } from 'lucide-react';
-import { ZoneFilterType } from './OnDemandWorkspace';
 
 interface Props {
     shift: Shift;
@@ -277,8 +276,10 @@ export const ShiftEditorModal: React.FC<Props> = ({ shift, allShifts, requiremen
                     {/* Controls Section (Fixed at Bottom) */}
                     <div className="bg-white border-t border-gray-200 p-8 shadow-[0_-4px_20px_rgba(0,0,0,0.02)] z-10">
 
-                        {/* Timeline Visualizer */}
-                        <div className="mb-10 px-4">
+                        {/* Timeline Visualizer - Aligned with Chart */}
+                        {/* Chart has: margin={{ top: 20, right: 30, left: 0, bottom: 20 }} and padding inside container */}
+                        {/* Y-axis takes ~30-40px, plus container padding. Right side has 30px margin */}
+                        <div className="mb-10" style={{ marginLeft: 38, marginRight: 30 }}>
                             <div
                                 ref={trackRef}
                                 className="relative h-14 bg-gray-100 rounded-xl border border-gray-200 select-none cursor-pointer"
