@@ -222,17 +222,17 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
         </div>
         {(zoneFilter === 'North' || zoneFilter === 'South') && (
           <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-purple-200 border border-purple-400"></div>
-            <span>Floater Break Relief</span>
+            <div className="w-3 h-3 rounded bg-purple-500"></div>
+            <span>Floater Relief (+/-)</span>
           </div>
         )}
         <div className="flex items-center gap-2">
-          <div className="w-3 h-3 rounded-full bg-brand-red"></div>
+          <div className="w-3 h-3 rounded bg-brand-red"></div>
           <span>Gap</span>
         </div>
         <div className="flex items-center gap-2">
-          <div className="w-3 h-1 border-t-2 border-dashed border-orange-400"></div>
-          <span>On Break</span>
+          <div className="w-3 h-3 rounded bg-brand-green"></div>
+          <span>Surplus</span>
         </div>
       </div>
 
@@ -261,12 +261,12 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
 
           <ReferenceLine y={0} stroke="#E5E7EB" />
 
-          {/* Net Difference Bars */}
+          {/* Net Difference Bars (Gap/Surplus) */}
           <Bar
             dataKey="currentNet"
             barSize={8}
             radius={[4, 4, 4, 4]}
-            name="Relief Coverage"
+            name="Net Coverage"
             animationDuration={500}
           >
             {chartData.map((entry, index) => (
@@ -277,6 +277,19 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
               />
             ))}
           </Bar>
+
+          {/* Floater Relief Bars - Purple, only in North/South views */}
+          {(zoneFilter === 'North' || zoneFilter === 'South') && (
+            <Bar
+              dataKey="currentRelief"
+              barSize={6}
+              radius={[3, 3, 3, 3]}
+              name="Floater Relief"
+              fill="#9333EA"
+              fillOpacity={0.7}
+              animationDuration={500}
+            />
+          )}
 
           {/* Demand/Requirement Line - Blue stepped line */}
           <Line
