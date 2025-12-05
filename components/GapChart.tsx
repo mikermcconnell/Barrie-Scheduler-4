@@ -1,6 +1,62 @@
-data: TimeSlot[];
-zoneFilter: ZoneFilterType;
-onZoneFilterChange: (filter: ZoneFilterType) => void;
+import React from 'react';
+import {
+  ResponsiveContainer,
+  ComposedChart,
+  Area,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ReferenceLine,
+  Cell,
+  Line
+} from 'recharts';
+import { TimeSlot, ZoneFilterType } from '../types';
+import { MapPin } from 'lucide-react';
+
+const CustomXAxisTick = ({ x, y, payload }: any) => {
+  // We expect payload.value to be the time label (e.g. "08:00")
+  // or we can use the index if needed. 
+  // Given interval={0}, we get every data point.
+  // Our data points are every 15 minutes.
+
+  // We want to show labels ONLY on the hour (08:00, 09:00)
+  // We want to show a small tick mark on half-hours (08:30)
+  // We want to show nothing for :15 and :45
+
+  // Check the label format
+  const timeLabel = payload.value; // "HH:MM"
+  const [hours, minutes] = timeLabel.split(':').map(Number);
+
+  if (minutes === 0) {
+    // Major Tick (Hour)
+    return (
+      <g transform={`translate(${x},${y})`}>
+        <line y2={6} stroke="#9CA3AF" />
+        <text x={0} y={0} dy={20} textAnchor="middle" fill="#9CA3AF" fontSize={12} fontWeight={700}>
+          {timeLabel}
+        </text>
+      </g>
+    );
+  } else if (minutes === 30) {
+    // Minor Tick (Half Hour) - No Label
+    return (
+      <g transform={`translate(${x},${y})`}>
+        <line y2={4} stroke="#E5E7EB" />
+      </g>
+    );
+  }
+
+  // Hide others
+  return null;
+};
+
+interface Props {
+  data: TimeSlot[];
+  zoneFilter: ZoneFilterType;
+  onZoneFilterChange: (filter: ZoneFilterType) => void;
 }
 
 const CustomTooltip = ({ active, payload, label, viewMode }: any) => {
