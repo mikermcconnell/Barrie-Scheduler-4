@@ -35,7 +35,7 @@ const AppContent: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen pb-20 font-sans text-gray-800 bg-[#F7F7F7]">
+    <div className="flex flex-col h-screen font-sans text-gray-800 bg-[#F7F7F7] overflow-hidden">
 
       {/* Auth Modal */}
       <AuthModal isOpen={showAuthModal} onClose={() => setShowAuthModal(false)} />
@@ -56,7 +56,7 @@ const AppContent: React.FC = () => {
       )}
 
       {/* Global Header */}
-      <nav className="bg-white border-b-2 border-gray-200 px-6 py-4 sticky top-0 z-40 shadow-sm">
+      <nav className="bg-white border-b-2 border-gray-200 px-6 py-4 sticky top-0 z-40 shadow-sm flex-shrink-0">
         <div className="max-w-7xl mx-auto flex justify-between items-center">
           <div
             className="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity"
@@ -145,7 +145,7 @@ const AppContent: React.FC = () => {
 
       {/* Breadcrumb / Navigation State */}
       {currentView !== 'home' && (
-        <div className="bg-white border-b border-gray-100 px-6 py-2">
+        <div className="bg-white border-b border-gray-100 px-6 py-2 flex-shrink-0">
           <div className="max-w-7xl mx-auto flex items-center gap-2 text-sm font-bold text-gray-400">
             <span className="hover:text-gray-600 cursor-pointer" onClick={() => setCurrentView('home')}>Home</span>
             <ArrowRight size={14} />
@@ -156,11 +156,11 @@ const AppContent: React.FC = () => {
         </div>
       )}
 
-      <main className="max-w-7xl mx-auto px-6 py-8">
+      <main className="flex-1 overflow-hidden relative flex flex-col max-w-7xl mx-auto w-full px-6 py-8">
 
         {/* Workspace Selector (Home View) */}
         {currentView === 'home' && (
-          <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 overflow-y-auto h-full">
             <div className="text-center mb-12 mt-8">
               <h2 className="text-4xl font-extrabold text-gray-800 mb-4">Select Workspace</h2>
               <p className="text-xl text-gray-500 font-semibold max-w-2xl mx-auto">
@@ -168,7 +168,7 @@ const AppContent: React.FC = () => {
               </p>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-4xl mx-auto">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-4xl mx-auto pb-12">
               {/* On Demand Card */}
               <button
                 onClick={() => setCurrentView('ondemand')}
@@ -210,7 +210,7 @@ const AppContent: React.FC = () => {
               </button>
             </div>
 
-            <div className="mt-16 flex justify-center gap-8 text-gray-400 font-bold text-sm">
+            <div className="mt-8 flex justify-center gap-8 text-gray-400 font-bold text-sm pb-8">
               <div className="flex items-center gap-2">
                 <CheckCircle2 size={16} className="text-brand-green" />
                 System Operational

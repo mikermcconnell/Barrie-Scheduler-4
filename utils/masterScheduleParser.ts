@@ -41,13 +41,28 @@ export interface MasterRouteTable {
 // --- Helpers ---
 
 const toMinutes = (timeStr: string | number): number | null => {
-    if (!timeStr) return null;
+    if (timeStr === null || timeStr === undefined || timeStr === '') return null;
+
     if (typeof timeStr === 'number') {
         // Excel decimal days (e.g. 0.5 = 12:00 PM)
+        // Fix: If > 2, assume it's a Serial Date + Time. Strip the integer part.
+        // exception: If it's effectively an integer (e.g. 15), treat as minutes (recovery) IF context implies? 
+        // But this function is generic. 
+        // Heuristic: If > 2.0 and has decimal, it's a date.
+        // If < 2.0, it's a time fraction.
+
+        if (timeStr > 2) {
+            const fraction = timeStr % 1;
+            // If fraction is very small? 
+            return Math.round(fraction * 24 * 60);
+        }
         return Math.round(timeStr * 24 * 60);
     }
 
     const str = String(timeStr).trim().toLowerCase();
+
+    // Skip obviously invalid strings (headers)
+    if (str.includes('route') || str.includes('block') || str.includes('notes')) return null;
 
     // Handle "5" or "10" (raw minutes) - usually for recovery
     if (!str.includes(':') && !str.includes('am') && !str.includes('pm')) {
@@ -130,25 +145,36 @@ export const validateRouteTable = (table: MasterRouteTable): MasterRouteTable =>
 
 // --- Core Parser ---
 
-export const parseMasterSchedule = (fileData: ArrayBuffer): MasterRouteTable[] => {
+export const parseMasterSchedule = (fileData: ArrayBuffer, mode: 'auto' | 'fixed' | 'tod' = 'auto'): MasterRouteTable[] => {
     const workbook = XLSX.read(fileData, { type: 'array' });
     const tables: MasterRouteTable[] = [];
 
-    // 1. Filter Sheets: Only Numeric (e.g. "400", "8")
-    const validSheets = workbook.SheetNames.filter(name => !isNaN(parseInt(name)));
+    // 1. Filter Sheets
+    let validSheets: string[] = [];
+    const allSheets = workbook.SheetNames;
+
+    if (mode === 'fixed') {
+        validSheets = allSheets.filter(name => !isNaN(parseInt(name)));
+    } else if (mode === 'tod') {
+        validSheets = allSheets.filter(name => name.toLowerCase().includes('tod'));
+    } else {
+        // 'auto' - Prioritize "ToD" sheet, otherwise use Numeric
+        const todSheet = allSheets.find(name => name.toLowerCase().includes('tod'));
+        if (todSheet) {
+            console.log('Found ToD sheet:', todSheet);
+            validSheets = [todSheet];
+        } else {
+            validSheets = allSheets.filter(name => !isNaN(parseInt(name)));
+        }
+    }
 
     validSheets.forEach(sheetName => {
         const sheet = workbook.Sheets[sheetName];
         const data: any[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
 
-        if (data.length < 5) return; // Skip empty/malformed sheets
+        if (data.length < 5) return;
 
         // 2. Identify Structure (North vs South)
-        // Heuristic: Look for "North" and "South" in row 0 or 1
-        // We expect a layout like: | ... North ... | R | ... South ... | R |
-
-        // Find header row (usually row 1 or 2, containing "Park Place" or similar)
-        // Actually, let's find the row with the most filled columns, that's likely the stops header
         let stopHeaderRowIdx = -1;
         let maxCols = 0;
 
@@ -164,28 +190,20 @@ export const parseMasterSchedule = (fileData: ArrayBuffer): MasterRouteTable[] =
         if (stopHeaderRowIdx === -1) return;
 
         const headerRow = data[stopHeaderRowIdx].map(String);
-
-        // Split Columns by Direction
-        // We look for the FIRST "R" or "Recovery" column to split North/South
-        // Or if we know the specific layout from the prompt.
-        // Prompt Impl: 400 North | ... | Arrive | R | 400 South | ... | Arrive | R
-
         let northCols: { name: string, idx: number }[] = [];
         let southCols: { name: string, idx: number }[] = [];
         let northRecoveryIdx = -1;
         let southRecoveryIdx = -1;
 
         const metadataCols = ['block', 'time band', 'time band code', 'stop name', 'weekday', 'sat', 'sun', 'drivers', 'notes'];
+        let splitFound = false;
 
         headerRow.forEach((col, idx) => {
             const val = col.trim();
             const lowerVal = val.toLowerCase();
             if (!val) return;
-
-            // Skip Metadata
             if (metadataCols.includes(lowerVal)) return;
 
-            // Check for Recovery column
             if (val === 'R' || val === 'Recovery' || val === 'Rec' || val === 'Layover') {
                 if (!splitFound) {
                     northRecoveryIdx = idx;
@@ -199,50 +217,72 @@ export const parseMasterSchedule = (fileData: ArrayBuffer): MasterRouteTable[] =
             if (!splitFound) {
                 northCols.push({ name: val, idx });
             } else if (southRecoveryIdx === -1) {
-                // Only add to South if we haven't hit the 2nd Recovery yet
                 southCols.push({ name: val, idx });
             }
         });
 
-        // Debug Log
-        console.log(`[Parser] Sheet: ${sheetName}, Row: ${stopHeaderRowIdx}`);
-        console.log(`[Parser] North Cols: ${northCols.map(c => c.name).join(', ')} (Rec: ${northRecoveryIdx})`);
-        console.log(`[Parser] South Cols: ${southCols.map(c => c.name).join(', ')} (Rec: ${southRecoveryIdx})`);
+        // Attempt to find destination labels in the row ABOVE the header
+        let northDest = "";
+        let southDest = "";
+        if (stopHeaderRowIdx > 0) {
+            const destRow = data[stopHeaderRowIdx - 1];
+            // Check first column of North section and first column of South section
+            if (northCols.length > 0) {
+                const val = String(destRow[northCols[0].idx] || "").trim();
+                if (val.toLowerCase().includes("to ")) northDest = ` (${val})`;
+            }
+            if (southCols.length > 0) {
+                const val = String(destRow[southCols[0].idx] || "").trim();
+                if (val.toLowerCase().includes("to ")) southDest = ` (${val})`;
+            }
+        }
 
-        // Parse Trips
-        const trips: MasterTrip[] = [];
 
-        // Start reading data rows (below header)
+        // Data buckets by Day Type
+        const tripsByDay: Record<string, MasterTrip[]> = {
+            'Weekday': [],
+            'Saturday': [],
+            'Sunday': []
+        };
+        let currentDayScope = 'Weekday';
+
+        // Start reading data rows
         for (let r = stopHeaderRowIdx + 1; r < data.length; r++) {
             const row = data[r];
+            const rowStr = row.map(c => String(c).toLowerCase()).join(' ');
+
+            // Detect Day Switch
+            if (rowStr.includes('saturday')) currentDayScope = 'Saturday';
+            else if (rowStr.includes('sunday')) currentDayScope = 'Sunday';
 
             // --- Parse North Trip ---
             const northStops: Record<string, string> = {};
             let nStart: number | null = null;
             let nEnd: number | null = null;
+            let validNStops = 0;
 
             northCols.forEach(col => {
                 const val = row[col.idx];
-                const cleanVal = typeof val === 'number' ? fromMinutes(toMinutes(val) || 0) : String(val);
-                northStops[col.name] = cleanVal;
+                if (String(val).toLowerCase().includes('route')) return;
 
                 const mins = toMinutes(val);
                 if (mins !== null) {
                     if (nStart === null) nStart = mins;
                     nEnd = mins;
+                    validNStops++;
+                    northStops[col.name] = fromMinutes(mins);
+                } else if (val) {
+                    northStops[col.name] = String(val);
                 }
             });
 
-            // North Recovery
             let nRec = 0;
-            if (northRecoveryIdx !== -1) {
-                nRec = parseInt(String(row[northRecoveryIdx])) || 0;
-            }
+            if (northRecoveryIdx !== -1) nRec = parseInt(String(row[northRecoveryIdx])) || 0;
 
-            if (nStart !== null && nEnd !== null) {
-                trips.push({
+            if (nStart !== null && nEnd !== null && validNStops >= 2 && (nEnd - nStart) > 1) {
+                tripsByDay[currentDayScope].push({
                     id: `N-${r}`,
-                    blockId: 'Unassigned', // Will assign later
+                    blockId: 'Unassigned',
                     direction: 'North',
                     tripNumber: 0,
                     rowId: r,
@@ -259,27 +299,28 @@ export const parseMasterSchedule = (fileData: ArrayBuffer): MasterRouteTable[] =
             const southStops: Record<string, string> = {};
             let sStart: number | null = null;
             let sEnd: number | null = null;
+            let validSStops = 0;
 
             southCols.forEach(col => {
                 const val = row[col.idx];
-                const cleanVal = typeof val === 'number' ? fromMinutes(toMinutes(val) || 0) : String(val);
-                southStops[col.name] = cleanVal;
+                if (String(val).toLowerCase().includes('route')) return;
 
                 const mins = toMinutes(val);
                 if (mins !== null) {
                     if (sStart === null) sStart = mins;
                     sEnd = mins;
+                    validSStops++;
+                    southStops[col.name] = fromMinutes(mins);
+                } else if (val) {
+                    southStops[col.name] = String(val);
                 }
             });
 
-            // South Recovery
             let sRec = 0;
-            if (southRecoveryIdx !== -1) {
-                sRec = parseInt(String(row[southRecoveryIdx])) || 0;
-            }
+            if (southRecoveryIdx !== -1) sRec = parseInt(String(row[southRecoveryIdx])) || 0;
 
-            if (sStart !== null && sEnd !== null) {
-                trips.push({
+            if (sStart !== null && sEnd !== null && validSStops >= 2 && (sEnd - sStart) > 1) {
+                tripsByDay[currentDayScope].push({
                     id: `S-${r}`,
                     blockId: 'Unassigned',
                     direction: 'South',
@@ -295,74 +336,23 @@ export const parseMasterSchedule = (fileData: ArrayBuffer): MasterRouteTable[] =
             }
         }
 
-        // 3. Ping Pong Block Logic
-        // Sort all trips by Start Time first (helper for finding next)
-        // Actually, we need to preserve row structure for the first link? 
-        // NO, the prompt says: "North (Row 1) -> South (Row 1)". So same row link is strongest.
-        // Then "South (Row 1) -> North (Next Available)".
+        // Process Blocks & Create Tables per Day
+        ['Weekday', 'Saturday', 'Sunday'].forEach(day => {
+            const rawTrips = tripsByDay[day];
+            if (rawTrips.length === 0) return;
 
-        let blockCounter = 1;
-        const assignedTripIds = new Set<string>();
+            // --- Block Logic (Per Day) ---
+            let blockCounter = 1;
+            const assignedTripIds = new Set<string>();
+            const northTrips = rawTrips.filter(t => t.direction === 'North').sort((a, b) => a.startTime - b.startTime);
+            const southTrips = rawTrips.filter(t => t.direction === 'South').sort((a, b) => a.startTime - b.startTime);
+            const findSouthByRow = (row: number) => southTrips.find(t => t.rowId === row);
 
-        // Separate lists for easier lookup
-        const northTrips = trips.filter(t => t.direction === 'North').sort((a, b) => a.startTime - b.startTime);
-        const southTrips = trips.filter(t => t.direction === 'South').sort((a, b) => a.startTime - b.startTime);
-
-        // Helper to find trip by row (for that direct horizontal link)
-        const findSouthByRow = (row: number) => southTrips.find(t => t.rowId === row);
-
-        // Iterate through North trips to start blocks
-        northTrips.forEach(startTrip => {
-            if (assignedTripIds.has(startTrip.id)) return;
-
-            // Start a new Block
-            const currentBlockId = `${sheetName}-${blockCounter++}`;
-            let currentTrip: MasterTrip | undefined = startTrip;
-            let sequence = 1;
-
-            while (currentTrip) {
-                // Assign Block
-                currentTrip.blockId = currentBlockId;
-                currentTrip.tripNumber = sequence++;
-                assignedTripIds.add(currentTrip.id);
-
-                // Find Next Trip
-                let nextTrip: MasterTrip | undefined = undefined;
-
-                if (currentTrip.direction === 'North') {
-                    // Rule 1: North -> South is typically SAME ROW
-                    nextTrip = findSouthByRow(currentTrip.rowId);
-
-                    // Validation: Does it fit?
-                    // South Start >= North End + North Recovery
-                    if (nextTrip && assignedTripIds.has(nextTrip.id)) nextTrip = undefined; // Already taken?
-
-                    // If no same-row match (or invalid), we could look for ANY South trip? 
-                    // Buses usually run N -> S immediately. If they deadhead elsewhere it's different.
-                    // User said "Start Stop = End Stop". 
-                    // Let's assume Row Link is dominant.
-                } else {
-                    // Rule 2: South -> North is NEXT AVAILABLE
-                    // South End + South Rec = North Start
-                    const minStartTime = currentTrip.endTime + currentTrip.recoveryTime;
-
-                    // Find first North trip that starts >= minStartTime
-                    nextTrip = northTrips.find(t =>
-                        !assignedTripIds.has(t.id) &&
-                        t.startTime >= minStartTime &&
-                        (t.startTime - minStartTime) < 60 // Heuristic: Don't wait more than an hour?
-                    );
-                }
-
-                currentTrip = nextTrip;
-            }
-        });
-
-        // Capture any stragglers (South starts?) using new blocks
-        southTrips.forEach(t => {
-            if (!assignedTripIds.has(t.id)) {
-                const currentBlockId = `${sheetName}-${blockCounter++}`;
-                let currentTrip: MasterTrip | undefined = t;
+            // North Starts
+            northTrips.forEach(startTrip => {
+                if (assignedTripIds.has(startTrip.id)) return;
+                const currentBlockId = `${sheetName}-${blockCounter++}`; // e.g. "400-1"
+                let currentTrip: MasterTrip | undefined = startTrip;
                 let sequence = 1;
 
                 while (currentTrip) {
@@ -370,34 +360,115 @@ export const parseMasterSchedule = (fileData: ArrayBuffer): MasterRouteTable[] =
                     currentTrip.tripNumber = sequence++;
                     assignedTripIds.add(currentTrip.id);
 
-                    // Try to link South -> North logic
-                    if (currentTrip.direction === 'South') {
-                        const minStartTime = currentTrip.endTime + currentTrip.recoveryTime;
-                        currentTrip = northTrips.find(n =>
-                            !assignedTripIds.has(n.id) &&
-                            n.startTime >= minStartTime &&
-                            n.startTime - minStartTime < 60
-                        );
+                    let nextTrip: MasterTrip | undefined = undefined;
+                    if (currentTrip.direction === 'North') {
+                        nextTrip = findSouthByRow(currentTrip.rowId);
+                        if (nextTrip && assignedTripIds.has(nextTrip.id)) nextTrip = undefined;
                     } else {
-                        // North -> South (Same Row)
-                        currentTrip = findSouthByRow(currentTrip.rowId);
-                        if (currentTrip && assignedTripIds.has(currentTrip.id)) currentTrip = undefined;
+                        const minStartTime = currentTrip.endTime + currentTrip.recoveryTime;
+                        nextTrip = northTrips.find(t => !assignedTripIds.has(t.id) && t.startTime >= minStartTime && (t.startTime - minStartTime) < 60);
                     }
+                    currentTrip = nextTrip;
+                }
+            });
+
+            // South Stragglers
+            southTrips.forEach(t => {
+                if (!assignedTripIds.has(t.id)) {
+                    const currentBlockId = `${sheetName}-${blockCounter++}`;
+                    let currentTrip: MasterTrip | undefined = t;
+                    let sequence = 1;
+                    while (currentTrip) {
+                        currentTrip.blockId = currentBlockId;
+                        currentTrip.tripNumber = sequence++;
+                        assignedTripIds.add(currentTrip.id);
+                        if (currentTrip.direction === 'South') {
+                            const minStartTime = currentTrip.endTime + currentTrip.recoveryTime;
+                            currentTrip = northTrips.find(n => !assignedTripIds.has(n.id) && n.startTime >= minStartTime && n.startTime - minStartTime < 60);
+                        } else {
+                            currentTrip = findSouthByRow(currentTrip.rowId);
+                            if (currentTrip && assignedTripIds.has(currentTrip.id)) currentTrip = undefined;
+                        }
+                    }
+                }
+            });
+
+            // Create Output Tables
+            const dayLabel = day === 'Weekday' ? '' : ` (${day})`;
+
+            if (northCols.length > 0) {
+                const tableNorth: MasterRouteTable = {
+                    routeName: `${sheetName}${dayLabel} (North)${northDest}`, // e.g. "400 (Saturday) (North) (To RVH)"
+                    stops: northCols.map(c => c.name),
+                    trips: rawTrips.filter(t => t.direction === 'North').sort((a, b) => a.startTime - b.startTime) // Sort by TIME
+                };
+                if (tableNorth.trips.length > 0) tables.push(validateRouteTable(tableNorth));
+            }
+
+            if (southCols.length > 0) {
+                const tableSouth: MasterRouteTable = {
+                    routeName: `${sheetName}${dayLabel} (South)${southDest}`,
+                    stops: southCols.map(c => c.name),
+                    trips: rawTrips.filter(t => t.direction === 'South').sort((a, b) => a.startTime - b.startTime) // Sort by TIME
+                };
+                if (tableSouth.trips.length > 0) tables.push(validateRouteTable(tableSouth));
+            }
+        });
+    });
+
+    return tables;
+};
+
+// --- Conversion Logic for OnDemandWorkspace ---
+
+import { Requirement } from '../types';
+import { TIME_SLOTS_PER_DAY } from '../constants';
+
+export const convertMasterRouteTablesToRequirements = (tables: MasterRouteTable[]): Record<string, Requirement[]> => {
+    const schedules: Record<string, Requirement[]> = {};
+
+    tables.forEach(table => {
+        const requirements: Requirement[] = [];
+
+        // Initialize empty requirements for the day
+        for (let i = 0; i < TIME_SLOTS_PER_DAY; i++) {
+            requirements.push({
+                slotIndex: i,
+                north: 0,
+                south: 0,
+                floater: 0,
+                total: 0
+            });
+        }
+
+        // Iterate through all trips to calculate coverage/demand
+        table.trips.forEach(trip => {
+            // Check if trip is valid
+            if (trip.startTime === undefined || trip.endTime === undefined) return;
+
+            // Convert minutes to slots
+            const startSlot = Math.floor(trip.startTime / 15);
+            const endSlot = Math.ceil(trip.endTime / 15); // Use ceiling to cover the full duration? Or floor?
+
+            // Actually, we should count it as active if it covers the slot.
+            // Requirement logic typically: Is a bus required during this 15 min window?
+            // If trip is 8:00 (slot 32) to 8:15 (slot 33), it covers slot 32.
+
+            for (let slot = startSlot; slot < endSlot; slot++) {
+                if (slot >= 0 && slot < TIME_SLOTS_PER_DAY) {
+                    if (trip.direction === 'North') {
+                        requirements[slot].north++;
+                    } else if (trip.direction === 'South') {
+                        requirements[slot].south++;
+                    }
+                    requirements[slot].total++;
                 }
             }
         });
 
-        const table: MasterRouteTable = {
-            routeName: sheetName,
-            stops: [...northCols.map(c => c.name), ...southCols.map(c => c.name)], // Merged stops for table view? Or keep separate?
-            trips: trips.sort((a, b) => {
-                if (a.blockId !== b.blockId) return a.blockId.localeCompare(b.blockId, undefined, { numeric: true });
-                return a.tripNumber - b.tripNumber;
-            })
-        };
-
-        tables.push(validateRouteTable(table));
+        // Use the route name (e.g., "ToD", "Weekday") as the key
+        schedules[table.routeName] = requirements;
     });
 
-    return tables;
+    return schedules;
 };

@@ -103,8 +103,8 @@ export const generateShifts = (requirements: Requirement[], optimized: boolean =
       let maxScore = -Infinity;
 
       for (let start = 0; start <= TIME_SLOTS_PER_DAY - SHIFT_DURATION_SLOTS; start++) {
-        const minBreakOffset = 12;
-        const maxBreakOffset = 20;
+        const minBreakOffset = 16;
+        const maxBreakOffset = 24;
         const end = start + SHIFT_DURATION_SLOTS;
 
         for (let bOffset = minBreakOffset; bOffset <= maxBreakOffset; bOffset++) {
@@ -278,21 +278,29 @@ export const generateMockData = (optimized: boolean = false): TimeSlot[] => {
   return calculateSchedule(shifts, reqs);
 };
 
-export const calculateMetrics = (data: TimeSlot[]): SummaryMetrics => {
+export const calculateMetrics = (data: TimeSlot[], shifts?: Shift[]): SummaryMetrics => {
   let totalReq = 0;
   let totalCov = 0;
   let netDiff = 0;
 
+  // 1. Calculate Demand (Master Hours)
   data.forEach(slot => {
     // 15 min interval = 0.25 hours
     totalReq += slot.totalRequirement * 0.25;
-    totalCov += slot.totalActiveCoverage * 0.25;
+    totalCov += slot.totalActiveCoverage * 0.25; // Legacy fallback
     netDiff += slot.netDifference * 0.25;
   });
 
+  // 2. Calculate Supply (Payable Hours) - PREFERRED METHOD
+  // If shifts are provided, calculate exact payable time (end - start)
+  let payableHours = totalCov;
+  if (shifts) {
+    payableHours = shifts.reduce((sum, s) => sum + ((s.endSlot - s.startSlot) * 0.25), 0);
+  }
+
   return {
     totalMasterHours: parseFloat(totalReq.toFixed(1)),
-    totalShiftHours: parseFloat(totalCov.toFixed(1)),
+    totalShiftHours: parseFloat(payableHours.toFixed(1)),
     netDiffHours: parseFloat(netDiff.toFixed(1)),
     coveragePercent: totalReq > 0 ? Math.round((totalCov / totalReq) * 100) : 100
   };

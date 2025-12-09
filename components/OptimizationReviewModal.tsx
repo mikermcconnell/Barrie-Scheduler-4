@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { Shift, Requirement, TimeSlot, Zone } from '../types';
 import { GapChart } from './GapChart';
 import { calculateSchedule, formatSlotToTime, calculateMetrics } from '../utils/dataGenerator';
-import { Check, X, ArrowRight, AlertTriangle, Sparkles, CheckSquare, Square } from 'lucide-react';
+import { Check, X, ArrowRight, AlertTriangle, Sparkles, CheckSquare, Square, Eye, EyeOff, BarChart } from 'lucide-react';
 import { ZoneFilterType } from './OnDemandWorkspace';
 import { SummaryCards } from './SummaryCards';
 
@@ -26,6 +26,8 @@ interface ShiftChange {
     optimized?: Shift;
 }
 
+type ViewMode = 'original' | 'custom' | 'optimized';
+
 export const OptimizationReviewModal: React.FC<Props> = ({
     currentShifts,
     optimizedShifts,
@@ -35,6 +37,7 @@ export const OptimizationReviewModal: React.FC<Props> = ({
 }) => {
     const [selectedChangeIds, setSelectedChangeIds] = useState<Set<string>>(() => new Set());
     const [zoneFilter, setZoneFilter] = useState<ZoneFilterType>('All');
+    const [viewMode, setViewMode] = useState<ViewMode>('custom');
 
     // 1. Calculate Diffs
     const changes = useMemo(() => {
@@ -123,16 +126,12 @@ export const OptimizationReviewModal: React.FC<Props> = ({
         setSelectedChangeIds(new Set(changes.map(c => c.id)));
     }, [changes]);
 
-    // 2. Generate Preview Data based on selection
-    const previewShifts = useMemo(() => {
+    // 2. Generate Custom Mix Data based on selection
+    const customMixShifts = useMemo(() => {
         // Start with current shifts
         let result = [...currentShifts];
 
         // Apply strict "Change Logic"
-        // REMOVALS: Filter out if selected
-        // ADDITIONS: Add if selected
-        // MODIFICATIONS: Replace if selected
-
         const selectedRemovals = new Set(changes.filter(c => c.type === 'REMOVE' && selectedChangeIds.has(c.id)).map(c => c.shiftId));
         const selectedMods = new Map(changes.filter(c => c.type === 'MODIFY' && selectedChangeIds.has(c.id)).map(c => [c.shiftId, c.optimized!]));
         const selectedAdds = changes.filter(c => c.type === 'ADD' && selectedChangeIds.has(c.id)).map(c => c.optimized!);
@@ -149,14 +148,27 @@ export const OptimizationReviewModal: React.FC<Props> = ({
         return result;
     }, [currentShifts, changes, selectedChangeIds]);
 
-    const previewSlots = useMemo(() => calculateSchedule(previewShifts, requirements), [previewShifts, requirements]);
-    const metrics = useMemo(() => calculateMetrics(previewSlots), [previewSlots]);
+    // 3. Determine Display Data based on View Mode
+    const displayedShifts = useMemo(() => {
+        switch (viewMode) {
+            case 'original': return currentShifts;
+            case 'optimized': return optimizedShifts;
+            case 'custom': return customMixShifts;
+            default: return customMixShifts;
+        }
+    }, [viewMode, currentShifts, optimizedShifts, customMixShifts]);
+
+    const displayedSlots = useMemo(() => calculateSchedule(displayedShifts, requirements), [displayedShifts, requirements]);
+
+    // Pass displayedShifts to calculateMetrics for accurate "MVT Supply" (Payable Hours)
+    const metrics = useMemo(() => calculateMetrics(displayedSlots, displayedShifts), [displayedSlots, displayedShifts]);
 
     const toggleChange = (id: string) => {
         const next = new Set(selectedChangeIds);
         if (next.has(id)) next.delete(id);
         else next.add(id);
         setSelectedChangeIds(next);
+        if (viewMode !== 'custom') setViewMode('custom'); // Auto-switch to custom if user tweaks
     };
 
     const toggleAll = () => {
@@ -165,30 +177,55 @@ export const OptimizationReviewModal: React.FC<Props> = ({
         } else {
             setSelectedChangeIds(new Set(changes.map(c => c.id)));
         }
+        if (viewMode !== 'custom') setViewMode('custom');
     };
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-            <div className="bg-white w-full max-w-6xl h-[90vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden border border-gray-100">
+            {/* Expanded Modal Size */}
+            <div className="bg-white w-full max-w-[95vw] h-[95vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden border border-gray-100">
 
                 {/* Header */}
-                <div className="flex justify-between items-center px-8 py-6 border-b border-gray-100 bg-white">
+                <div className="flex justify-between items-center px-8 py-5 border-b border-gray-100 bg-white">
                     <div>
                         <h2 className="text-2xl font-extrabold text-gray-800 flex items-center gap-2">
                             <Sparkles className="text-purple-600" /> Refined Schedule Review
                         </h2>
-                        <p className="text-gray-500 font-bold text-sm">Gemini AI found {changes.length} optimizations.</p>
+                        <p className="text-gray-500 font-bold text-sm">Gemini AI proposed {changes.length} optimizations.</p>
                     </div>
+
+                    {/* View Toggle (Segmented Control) */}
+                    <div className="flex bg-gray-100 p-1 rounded-xl">
+                        <button
+                            onClick={() => setViewMode('original')}
+                            className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${viewMode === 'original' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                        >
+                            Original
+                        </button>
+                        <button
+                            onClick={() => setViewMode('custom')}
+                            className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${viewMode === 'custom' ? 'bg-white text-brand-blue shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                        >
+                            Custom Mix
+                        </button>
+                        <button
+                            onClick={() => setViewMode('optimized')}
+                            className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${viewMode === 'optimized' ? 'bg-white text-purple-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                        >
+                            Fully Optimized
+                        </button>
+                    </div>
+
                     <button onClick={onCancel} className="p-2 hover:bg-gray-100 rounded-full text-gray-400">
                         <X size={24} />
                     </button>
                 </div>
 
                 {/* Content Grid */}
-                <div className="flex-1 grid grid-cols-1 lg:grid-cols-3 min-h-0 bg-gray-50">
+                <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 min-h-0 bg-gray-50">
 
-                    {/* Left: Change List */}
-                    <div className="lg:col-span-1 bg-white border-r border-gray-200 flex flex-col min-h-0">
+                    {/* Left: Change List (3 cols) - Only active in Custom mode essentially, but visible always */}
+                    <div className="lg:col-span-3 bg-white border-r border-gray-200 flex flex-col min-h-0">
                         <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
                             <span className="font-extrabold text-gray-600 text-sm">Proposed Changes</span>
                             <button
@@ -200,7 +237,16 @@ export const OptimizationReviewModal: React.FC<Props> = ({
                             </button>
                         </div>
 
-                        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                        <div className={`flex-1 overflow-y-auto p-4 space-y-3 ${viewMode !== 'custom' ? 'opacity-50 pointer-events-none grayscale' : ''}`}>
+                            {/* Overlay hint if not in custom mode */}
+                            {viewMode !== 'custom' && (
+                                <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
+                                    <div className="bg-black/70 text-white px-4 py-2 rounded-xl font-bold backdrop-blur-md">
+                                        Viewing {viewMode === 'original' ? 'Original' : 'Optimized'} Preview
+                                    </div>
+                                </div>
+                            )}
+
                             {changes.length === 0 && (
                                 <div className="text-center text-gray-400 py-10 italic">
                                     No changes found. Your schedule is already optimal!
@@ -211,12 +257,12 @@ export const OptimizationReviewModal: React.FC<Props> = ({
                                     key={change.id}
                                     onClick={() => toggleChange(change.id)}
                                     className={`
-                    group p-3 rounded-xl border-2 transition-all cursor-pointer select-none
-                    ${selectedChangeIds.has(change.id)
+                                        group p-3 rounded-xl border-2 transition-all cursor-pointer select-none relative
+                                        ${selectedChangeIds.has(change.id)
                                             ? 'bg-blue-50 border-blue-200 shadow-sm'
                                             : 'bg-white border-gray-100 hover:border-gray-200 opacity-60'
                                         }
-                  `}
+                                    `}
                                 >
                                     <div className="flex items-start gap-3">
                                         <div className={`mt-1 rounded-md p-0.5 ${selectedChangeIds.has(change.id) ? 'text-brand-blue' : 'text-gray-300'}`}>
@@ -257,26 +303,42 @@ export const OptimizationReviewModal: React.FC<Props> = ({
                         </div>
                     </div>
 
-                    {/* Right: Chart Preview */}
-                    <div className="lg:col-span-2 p-6 flex flex-col min-h-0 overflow-y-auto">
-                        <div className="bg-white rounded-3xl border border-gray-200 shadow-sm p-4 mb-4 flex-shrink-0">
-                            <div className="flex justify-between items-center mb-4">
-                                <h3 className="font-extrabold text-gray-700">Live Preview</h3>
-                                <span className="text-xs font-bold bg-yellow-100 text-yellow-700 px-3 py-1 rounded-full animate-pulse">
-                                    Previewing {selectedChangeIds.size} Changes
-                                </span>
+                    {/* Right: Chart Preview (9 cols) */}
+                    <div className="lg:col-span-9 p-6 flex flex-col min-h-0 overflow-y-auto relative">
+                        <div className="bg-white rounded-3xl border border-gray-200 shadow-sm p-6 mb-4 flex-shrink-0">
+                            <div className="flex justify-between items-center mb-6">
+                                <div>
+                                    <h3 className="text-xl font-extrabold text-gray-700 flex items-center gap-2">
+                                        <BarChart size={24} className="text-brand-blue" />
+                                        {viewMode === 'original' ? 'Original Schedule Performance' :
+                                            viewMode === 'optimized' ? 'Fully Optimized Performance' :
+                                                'Projected Performance (Custom Mix)'}
+                                    </h3>
+                                    <p className="text-gray-400 font-medium text-sm">
+                                        {viewMode === 'original' ? 'Baseline metrics before any changes.' :
+                                            viewMode === 'optimized' ? 'Maximum efficiency metrics achievable.' :
+                                                `Metrics based on ${selectedChangeIds.size} selected changes.`}
+                                    </p>
+                                </div>
+                                {viewMode === 'custom' && (
+                                    <span className="text-xs font-bold bg-yellow-100 text-yellow-700 px-3 py-1 rounded-full animate-pulse">
+                                        Previewing Selection
+                                    </span>
+                                )}
                             </div>
 
-                            <div className="mb-6">
+                            <div className="mb-8">
                                 <SummaryCards metrics={metrics} />
                             </div>
 
                             {/* Gap Chart */}
-                            <GapChart
-                                data={previewSlots}
-                                zoneFilter={zoneFilter}
-                                onZoneFilterChange={setZoneFilter}
-                            />
+                            <div className="h-[400px]">
+                                <GapChart
+                                    data={displayedSlots}
+                                    zoneFilter={zoneFilter}
+                                    onZoneFilterChange={setZoneFilter}
+                                />
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -290,12 +352,12 @@ export const OptimizationReviewModal: React.FC<Props> = ({
                         Cancel
                     </button>
                     <button
-                        onClick={() => onApply(previewShifts)}
-                        disabled={selectedChangeIds.size === 0}
+                        onClick={() => onApply(customMixShifts)} // Always apply custom mix (which matches others if all/none selected)
+                        disabled={selectedChangeIds.size === 0 && viewMode === 'custom'}
                         className="px-8 py-3 bg-brand-blue hover:bg-blue-600 text-white font-bold rounded-xl shadow-lg shadow-blue-200 transition-all flex items-center gap-2 disabled:opacity-50 disabled:shadow-none"
                     >
                         <Check size={20} />
-                        Apply {selectedChangeIds.size} Optimizations
+                        Apply Selected Changes
                     </button>
                 </div>
 

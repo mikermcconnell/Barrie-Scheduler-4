@@ -12,7 +12,7 @@ import {
   Line
 } from 'recharts';
 import { TimeSlot, ZoneFilterType } from '../types';
-import { MapPin } from 'lucide-react';
+import { MapPin, ChevronUp, ChevronDown } from 'lucide-react';
 
 const CustomXAxisTick = ({ x, y, payload }: any) => {
   // We expect payload.value to be the time label (e.g. "08:00")
@@ -167,10 +167,18 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
     return Math.min(-3, minNet < 0 ? Math.floor(minNet) : 0);
   }, [chartData]);
 
+  const [isExpanded, setIsExpanded] = React.useState(true);
+
   return (
-    <div className="h-[550px] w-full bg-white p-6 rounded-3xl border-2 border-gray-200 shadow-sm relative overflow-hidden transition-all duration-300">
+    <div className={`w-full bg-white p-6 rounded-3xl border-2 border-gray-200 shadow-sm relative overflow-hidden transition-all duration-300 ${isExpanded ? 'h-[550px]' : 'h-auto'}`}>
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
-        <div>
+        <div className="flex items-center gap-4">
+          <button
+            onClick={() => setIsExpanded(!isExpanded)}
+            className="p-2 rounded-full hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
+          >
+            {isExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+          </button>
           <h2 className="text-2xl font-extrabold text-gray-700 flex items-center gap-2">
             Gap Analysis
             <span className={`text-sm px-3 py-1 rounded-full border ${zoneFilter === 'North' ? 'bg-blue-50 text-blue-600 border-blue-200' :
@@ -184,172 +192,178 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
         </div>
 
         {/* Zone Toggles */}
-        <div className="flex bg-gray-100 p-1 rounded-xl gap-1">
-          <button
-            onClick={() => onZoneFilterChange('All')}
-            className={`px-3 py-2 rounded-lg text-sm font-bold transition-all ${zoneFilter === 'All' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-          >
-            All
-          </button>
-          <button
-            onClick={() => onZoneFilterChange('North')}
-            className={`px-3 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2 ${zoneFilter === 'North' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-          >
-            <MapPin size={14} /> North
-          </button>
-          <button
-            onClick={() => onZoneFilterChange('South')}
-            className={`px-3 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2 ${zoneFilter === 'South' ? 'bg-white text-green-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-          >
-            <MapPin size={14} /> South
-          </button>
-          <button
-            onClick={() => onZoneFilterChange('Floater')}
-            className={`px-3 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2 ${zoneFilter === 'Floater' ? 'bg-white text-purple-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-          >
-            <MapPin size={14} /> Floater
-          </button>
-        </div>
-      </div>
-
-      <div className="flex gap-4 text-xs font-bold text-gray-500 mb-2 justify-end">
-        <div className="flex items-center gap-2">
-          <div className="w-3 h-3 rounded-full bg-brand-blue"></div>
-          <span>Demand</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="w-3 h-3 rounded-full bg-brand-green"></div>
-          <span>{zoneFilter === 'Floater' ? 'Active Floaters' : 'Active Drivers'}</span>
-        </div>
-        {(zoneFilter === 'North' || zoneFilter === 'South') && (
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded bg-purple-500"></div>
-            <span>Floater Relief (+/-)</span>
+        {isExpanded && (
+          <div className="flex bg-gray-100 p-1 rounded-xl gap-1">
+            <button
+              onClick={() => onZoneFilterChange('All')}
+              className={`px-3 py-2 rounded-lg text-sm font-bold transition-all ${zoneFilter === 'All' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              All
+            </button>
+            <button
+              onClick={() => onZoneFilterChange('North')}
+              className={`px-3 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2 ${zoneFilter === 'North' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              <MapPin size={14} /> North
+            </button>
+            <button
+              onClick={() => onZoneFilterChange('South')}
+              className={`px-3 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2 ${zoneFilter === 'South' ? 'bg-white text-green-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              <MapPin size={14} /> South
+            </button>
+            <button
+              onClick={() => onZoneFilterChange('Floater')}
+              className={`px-3 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2 ${zoneFilter === 'Floater' ? 'bg-white text-purple-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              <MapPin size={14} /> Floater
+            </button>
           </div>
         )}
-        <div className="flex items-center gap-2">
-          <div className="w-3 h-3 rounded bg-brand-red"></div>
-          <span>Gap</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="w-3 h-3 rounded bg-brand-green"></div>
-          <span>Surplus</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="w-4 h-0.5 border-t-2 border-dashed border-orange-400"></div>
-          <span>On Break</span>
-        </div>
       </div>
 
-      <ResponsiveContainer width="100%" height="100%">
-        <ComposedChart
-          data={chartData}
-          margin={{ top: 20, right: 30, left: 0, bottom: 20 }}
-          barGap={0}
-        >
-          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
-          <XAxis
-            dataKey="timeLabel"
-            axisLine={false}
-            tickLine={false}
-            interval={0}
-            tick={<CustomXAxisTick />}
-          />
-          <YAxis
-            tick={{ fill: '#9CA3AF', fontSize: 12, fontWeight: 700 }}
-            axisLine={false}
-            tickLine={false}
-            domain={[minValue, domainMax]}
-            allowDataOverflow={true}
-          />
-          <Tooltip content={<CustomTooltip viewMode={zoneFilter} />} cursor={{ fill: '#f3f4f6', opacity: 0.4 }} />
+      {isExpanded && (
+        <>
+          <div className="flex gap-4 text-xs font-bold text-gray-500 mb-2 justify-end">
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-full bg-brand-blue"></div>
+              <span>Demand</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-full bg-brand-green"></div>
+              <span>{zoneFilter === 'Floater' ? 'Active Floaters' : 'Active Drivers'}</span>
+            </div>
+            {(zoneFilter === 'North' || zoneFilter === 'South') && (
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded bg-purple-500"></div>
+                <span>Floater Relief (+/-)</span>
+              </div>
+            )}
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded bg-brand-red"></div>
+              <span>Gap</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded bg-brand-green"></div>
+              <span>Surplus</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-0.5 border-t-2 border-dashed border-orange-400"></div>
+              <span>On Break</span>
+            </div>
+          </div>
 
-          <ReferenceLine y={0} stroke="#E5E7EB" />
-
-          {/* Net Difference Bars (Gap/Surplus) */}
-          <Bar
-            dataKey="currentNet"
-            barSize={8}
-            radius={[4, 4, 4, 4]}
-            name="Net Coverage"
-            animationDuration={500}
-          >
-            {chartData.map((entry, index) => (
-              <Cell
-                key={`cell-${index}`}
-                fill={entry.currentNet < 0 ? '#FF4B4B' : '#58CC02'}
-                fillOpacity={0.8}
+          <ResponsiveContainer width="100%" height="85%">
+            <ComposedChart
+              data={chartData}
+              margin={{ top: 20, right: 30, left: 0, bottom: 20 }}
+              barGap={0}
+            >
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
+              <XAxis
+                dataKey="timeLabel"
+                axisLine={false}
+                tickLine={false}
+                interval={0}
+                tick={<CustomXAxisTick />}
               />
-            ))}
-          </Bar>
+              <YAxis
+                tick={{ fill: '#9CA3AF', fontSize: 12, fontWeight: 700 }}
+                axisLine={false}
+                tickLine={false}
+                domain={[minValue, domainMax]}
+                allowDataOverflow={true}
+              />
+              <Tooltip content={<CustomTooltip viewMode={zoneFilter} />} cursor={{ fill: '#f3f4f6', opacity: 0.4 }} />
 
-          {/* Floater Relief Bars - Purple, only in North/South views */}
-          {(zoneFilter === 'North' || zoneFilter === 'South') && (
-            <Bar
-              dataKey="currentRelief"
-              barSize={6}
-              radius={[3, 3, 3, 3]}
-              name="Floater Relief"
-              fill="#9333EA"
-              fillOpacity={0.7}
-              animationDuration={500}
-            />
-          )}
+              <ReferenceLine y={0} stroke="#E5E7EB" />
 
-          {/* Demand/Requirement Line - Blue stepped line */}
-          <Line
-            type="stepAfter"
-            dataKey="currentReq"
-            stroke="#1CB0F6"
-            strokeWidth={2}
-            dot={false}
-            activeDot={{ r: 4 }}
-            name="Demand"
-            animationDuration={500}
-          />
+              {/* Net Difference Bars (Gap/Surplus) */}
+              <Bar
+                dataKey="currentNet"
+                barSize={8}
+                radius={[4, 4, 4, 4]}
+                name="Net Coverage"
+                animationDuration={500}
+              >
+                {chartData.map((entry, index) => (
+                  <Cell
+                    key={`cell-${index}`}
+                    fill={entry.currentNet < 0 ? '#FF4B4B' : '#58CC02'}
+                    fillOpacity={0.8}
+                  />
+                ))}
+              </Bar>
 
-          {/* Coverage Line - Detailed Line on top */}
-          <Line
-            type="monotone"
-            dataKey="currentCover"
-            stroke="#58CC02"
-            strokeWidth={3}
-            dot={false}
-            activeDot={{ r: 6 }}
-            name="Active Drivers"
-            animationDuration={500}
-            zIndex={20}
-          />
+              {/* Floater Relief Bars - Purple, only in North/South views */}
+              {(zoneFilter === 'North' || zoneFilter === 'South') && (
+                <Bar
+                  dataKey="currentRelief"
+                  barSize={6}
+                  radius={[3, 3, 3, 3]}
+                  name="Floater Relief"
+                  fill="#9333EA"
+                  fillOpacity={0.7}
+                  animationDuration={500}
+                />
+              )}
 
-          {/* Drivers On Break - Dashed orange line */}
-          <Line
-            type="stepAfter"
-            dataKey="currentBreak"
-            stroke="#F59E0B"
-            strokeWidth={2}
-            strokeDasharray="6 4"
-            dot={false}
-            activeDot={{ r: 4 }}
-            name="On Break"
-            animationDuration={500}
-          />
+              {/* Demand/Requirement Line - Blue stepped line */}
+              <Line
+                type="stepAfter"
+                dataKey="currentReq"
+                stroke="#1CB0F6"
+                strokeWidth={2}
+                dot={false}
+                activeDot={{ r: 4 }}
+                name="Demand"
+                animationDuration={500}
+              />
 
-          {/* Original Coverage Ghost Line - Only in combined */}
-          {zoneFilter === 'All' && (
-            <Line
-              type="monotone"
-              dataKey="originalActiveCoverage"
-              stroke="#9CA3AF"
-              strokeWidth={2}
-              strokeDasharray="3 3"
-              dot={false}
-              activeDot={false}
-              name="Original"
-            />
-          )}
+              {/* Coverage Line - Detailed Line on top */}
+              <Line
+                type="monotone"
+                dataKey="currentCover"
+                stroke="#58CC02"
+                strokeWidth={3}
+                dot={false}
+                activeDot={{ r: 6 }}
+                name="Active Drivers"
+                animationDuration={500}
+                zIndex={20}
+              />
 
-        </ComposedChart>
-      </ResponsiveContainer>
+              {/* Drivers On Break - Dashed orange line */}
+              <Line
+                type="stepAfter"
+                dataKey="currentBreak"
+                stroke="#F59E0B"
+                strokeWidth={2}
+                strokeDasharray="6 4"
+                dot={false}
+                activeDot={{ r: 4 }}
+                name="On Break"
+                animationDuration={500}
+              />
+
+              {/* Original Coverage Ghost Line - Only in combined */}
+              {zoneFilter === 'All' && (
+                <Line
+                  type="monotone"
+                  dataKey="originalActiveCoverage"
+                  stroke="#9CA3AF"
+                  strokeWidth={2}
+                  strokeDasharray="3 3"
+                  dot={false}
+                  activeDot={false}
+                  name="Original"
+                />
+              )}
+
+            </ComposedChart>
+          </ResponsiveContainer>
+        </>
+      )}
     </div>
   );
 };

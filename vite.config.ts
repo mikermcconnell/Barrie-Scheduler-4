@@ -60,6 +60,53 @@ export default defineConfig(({ mode }) => {
           }
           return;
         }
+
+        if (req.url === '/api/download-file' && req.method === 'POST') {
+          try {
+            const buffers = [];
+            for await (const chunk of req) {
+              buffers.push(chunk);
+            }
+            const bodyString = Buffer.concat(buffers).toString();
+
+            if (!bodyString) {
+              throw new Error('Empty request body');
+            }
+
+            const { downloadUrl, format = 'text' } = JSON.parse(bodyString);
+
+            if (!downloadUrl) {
+              throw new Error('Missing downloadUrl');
+            }
+
+            console.log('🔄 Proxying file download:', downloadUrl, 'Format:', format);
+            const response = await fetch(downloadUrl);
+
+            if (!response.ok) {
+              throw new Error(`Failed to fetch: ${response.status} ${response.statusText}`);
+            }
+
+            let content;
+            if (format === 'base64') {
+              const arrayBuffer = await response.arrayBuffer();
+              content = Buffer.from(arrayBuffer).toString('base64');
+            } else {
+              content = await response.text();
+            }
+
+            res.statusCode = 200;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ success: true, content, format }));
+
+          } catch (error: any) {
+            console.error('❌ Proxy Download Error:', error);
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: 'Failed to download file', details: error.message }));
+          }
+          return;
+        }
+
         next();
       });
     },

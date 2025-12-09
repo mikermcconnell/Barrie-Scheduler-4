@@ -79,13 +79,13 @@ export const ShiftEditorModal: React.FC<Props> = ({ shift, allShifts, requiremen
             }
             const shiftStart = currentShift.startSlot;
             const breakStart = currentShift.breakStartSlot;
-            const fifthHour = shiftStart + 20;
-            const eighthHour = shiftStart + 32;
+            const fourthHour = shiftStart + 16;
+            const sixthHour = shiftStart + 24;
 
-            if (breakStart < fifthHour || breakStart > eighthHour) {
-                const fifthHourTime = formatSlotToTime(fifthHour);
-                const eighthHourTime = formatSlotToTime(eighthHour);
-                setValidationMsg(`Break must be between 5th and 8th hour (${fifthHourTime} - ${eighthHourTime})`);
+            if (breakStart < fourthHour || breakStart > sixthHour) {
+                const fourthHourTime = formatSlotToTime(fourthHour);
+                const sixthHourTime = formatSlotToTime(sixthHour);
+                setValidationMsg(`Break must be between 4th and 6th hour (${fourthHourTime} - ${sixthHourTime})`);
                 return;
             }
         }
@@ -201,9 +201,9 @@ export const ShiftEditorModal: React.FC<Props> = ({ shift, allShifts, requiremen
             // Remove break
             updated.breakDurationSlots = 0;
         } else {
-            // Add break (default 45 mins, halfway through)
+            // Add break (default 45 mins, 5th hour)
             updated.breakDurationSlots = BREAK_DURATION_SLOTS;
-            updated.breakStartSlot = updated.startSlot + Math.floor((updated.endSlot - updated.startSlot) / 2) - 1;
+            updated.breakStartSlot = updated.startSlot + 20;
         }
         setCurrentShift(updated);
     };

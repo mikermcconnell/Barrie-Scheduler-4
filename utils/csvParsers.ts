@@ -144,8 +144,15 @@ export const parseScheduleMaster = (csvText: string): Record<string, Requirement
     return schedules;
 };
 
-export const parseRideCo = (csvText: string): Shift[] => {
-    const lines = csvText.split(/\r?\n/).map(l => l.split(','));
+export const parseRideCo = (input: string | any[][]): Shift[] => {
+    let lines: any[][];
+
+    if (typeof input === 'string') {
+        lines = input.split(/\r?\n/).map(l => l.split(','));
+    } else {
+        lines = input;
+    }
+
     const shifts: Shift[] = [];
 
     // User specified fixed row structure (0-indexed):

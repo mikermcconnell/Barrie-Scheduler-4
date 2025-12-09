@@ -29,6 +29,7 @@ export interface SavedSchedule {
     status: 'draft' | 'published' | 'archived';
     shiftData: Shift[];
     masterScheduleData: Requirement[];
+    schedulesData?: Record<string, Requirement[]>;
     createdAt: Date;
     updatedAt: Date;
 }
@@ -222,19 +223,29 @@ export const downloadFileArrayBuffer = async (downloadUrl: string): Promise<Arra
     const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
 
     if (isLocalhost) {
-        // Fetch via proxy (if applicable) or try direct if storage is public/CORS allowed
-        // Assuming proxy handles text; for binary we might need Blob response.
-        // If existing proxy only returns JSON/Text, we might have issues on localhost.
-        // However, standard Firebase Storage URLs usually support CORS if configured.
-        // Let's try direct fetch for binary first, falling back or warning.
+        console.log('Using proxy for localhost binary download...');
         try {
-            const response = await fetch(downloadUrl);
-            if (!response.ok) throw new Error('Network response was not ok');
-            return await response.arrayBuffer();
+            const response = await fetch('/api/download-file', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ downloadUrl, format: 'base64' })
+            });
+
+            if (!response.ok) throw new Error(`Proxy download failed: ${response.status}`);
+
+            const data = await response.json();
+            if (!data.success) throw new Error(data.error || 'Download failed');
+
+            // Decode Base64 to ArrayBuffer
+            const binaryString = atob(data.content);
+            const len = binaryString.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+            return bytes.buffer;
         } catch (e) {
-            console.warn("Direct binary download failed on localhost, trying proxy...", e);
-            // If proxy is strictly for text, this fails. 
-            // But for now let's hope direct fetch works for Storage URLs.
+            console.error("Proxy binary download error:", e);
             throw e;
         }
     }

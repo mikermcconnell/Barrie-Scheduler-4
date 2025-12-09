@@ -21,7 +21,8 @@ import {
 export const optimizeScheduleWithGemini = async (
   requirements: Requirement[],
   mode: 'full' | 'refine' = 'full',
-  currentShifts: any[] = []
+  currentShifts: any[] = [],
+  focusInstruction?: string
 ): Promise<Shift[]> => {
   try {
     console.log(`Calling Gemini Optimization API (Model: gemini-3-pro-preview)... Mode: ${mode}`);
@@ -34,7 +35,8 @@ export const optimizeScheduleWithGemini = async (
       body: JSON.stringify({
         requirements,
         mode,
-        currentShifts
+        currentShifts,
+        focusInstruction
       }),
     });
 

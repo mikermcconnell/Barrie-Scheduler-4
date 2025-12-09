@@ -61,12 +61,17 @@ async function callGemini(apiKey: string, prompt: string, systemInstruction: str
     return JSON.parse(text || (schema.type === SchemaType.ARRAY ? "[]" : "{}"));
 }
 
-export async function optimizeImplementation(requirements: any[], apiKey: string, mode: 'full' | 'refine' = 'full', currentShifts: any[] = []) {
+export async function optimizeImplementation(requirements: any[], apiKey: string, mode: 'full' | 'refine' = 'full', currentShifts: any[] = [], focusInstruction?: string) {
 
     // 1. Prepare Data
     const totalDemandCurve = new Array(96).fill(0);
     const northDemandCurve = new Array(96).fill(0);
     const southDemandCurve = new Array(96).fill(0);
+
+    // Support flexible body parsing if needed (though requirements arg usually comes from handler)
+    // If we want to use the destructured args from handler, we just use them directly.
+    // The handler passes `requirements` and `currentShifts`.
+    // Passing `focusInstruction` as the 5th argument is valid.
 
     requirements.forEach((r: any) => {
         if (r.slotIndex >= 0 && r.slotIndex < 96) {
@@ -86,9 +91,9 @@ export async function optimizeImplementation(requirements: any[], apiKey: string
 
     const commonRules = `
     Union Rules:
-    - Shift Length: 5-10 hours (20-40 slots).
-    - Breaks: 45min (3 slots) if shift > 6h.
-    - Breaks must occur between hour 5 and 8 of the shift.
+    - Shift Length: 5-11 hours (20-44 slots).
+    - Breaks: 45min (3 slots) if shift > 7.5h.
+    - Breaks must occur between hour 4 and 6 of the shift.
     - STRICT ZONE LOGIC: North covers North, South covers South, Floater covers Gaps/Breaks.
 
     EFFICIENCY RULES (Follow these STRICTLY):
@@ -113,7 +118,7 @@ export async function optimizeImplementation(requirements: any[], apiKey: string
     let draftPrompt = `DEMAND CURVES:\n${demandContext}\n`;
 
     if (mode === 'refine' && currentShifts.length > 0) {
-        draftPrompt += `\nREFINE EXISTING SHIFTS:\n${JSON.stringify(currentShifts.map(s => ({ ...s, uuid: undefined })))}`; // Strip UI helper fields if any
+        draftPrompt += `\nREFINE EXISTING SHIFTS:\n${JSON.stringify(currentShifts.map(s => ({ ...s, uuid: undefined })))}`;
     } else {
         draftPrompt += `\nGENERATE NEW SCHEDULE FROM SCRATCH based on demand.`;
     }
@@ -157,14 +162,20 @@ export async function optimizeImplementation(requirements: any[], apiKey: string
     DRAFT SCHEDULE (Audit this):
     ${JSON.stringify(draftShifts)}
 
+    ${focusInstruction ? `
+    USER PRIORITY INSTRUCTION (CRITICAL):
+    "${focusInstruction}"
+    (Prioritize this instruction above all generic efficiency rules.)
+    ` : ''}
+
     TASK:
-    Critique this draft for efficiency (waste/gaps) and union rule violations.
-    Then output the corrected final schedule.
+    1. Critique the draft. Find surpluses, unnecessary shifts, or breaks at wrong times.
+    2. Output a REVISED list of shifts that solves these problems.
     `;
 
     let finalShifts = [];
     try {
-        const criticOutput = await callGemini(apiKey, criticPrompt, criticSystemInstruction, criticSchema, "gemini-3-pro-preview", 0.2); // Low temp for precision
+        const criticOutput = await callGemini(apiKey, criticPrompt, criticSystemInstruction, criticSchema, "gemini-3-pro-preview", 0.2);
 
         console.log("📝 [Phase 2] Critic's Analysis:\n" + criticOutput.critique);
         finalShifts = criticOutput.shifts;
@@ -172,7 +183,49 @@ export async function optimizeImplementation(requirements: any[], apiKey: string
 
     } catch (e) {
         console.error("❌ [Phase 2] Failed. Falling back to draft.", e);
-        finalShifts = draftShifts; // Fallback
+        finalShifts = draftShifts;
+    }
+
+    // ---------------------------------------------------------
+    // PHASE 3: THE POLISHER (Final Compliance Check)
+    // ---------------------------------------------------------
+    console.log(`✨ [Phase 3] Polishing Schedule...`);
+
+    const polisherSystemInstruction = `You are the FINAL COMPLIANCE OFFICER.
+    Your job is to take the "Refined Schedule" and apply STRICT UNION RULES and MICRO-OPTIMIZATIONS.
+    
+    ${commonRules}
+    
+    POLISHING TASKS:
+    1. **Strict Break Windows**: ENSURE every break is between the 4th and 6th hour (Slots: Start+16 to Start+24). MOVE them if they are off by even 1 slot.
+    3. **Trim Surpluses**: If a zone has +2 surplus for 30 mins, cut a shift earlier or start it later.
+    4. **Floater Efficiency**: If a Floater is covering a time where NO breaks or gaps exist, move them to a gap.
+    
+    OUTPUT:
+    - Return the FINAL list of shifts.
+    `;
+
+    const polisherPrompt = `
+    DEMAND:
+    ${demandContext}
+
+    REFINED SCHEDULE (Phase 2 Output):
+    ${JSON.stringify(finalShifts)}
+
+    TASK:
+    - Review every single shift for break compliance.
+    - Check every 15-min slot for inefficient surpluses.
+    - Output the polished list.
+    `;
+
+    try {
+        // Reuse generator schema since we just need the list
+        const polishedOutput = await callGemini(apiKey, polisherPrompt, polisherSystemInstruction, generatorSchema, "gemini-3-pro-preview", 0.1); // Low temp for strictness
+        console.log(`✅ [Phase 3] Polished Schedule: ${polishedOutput.length} shifts.`);
+        finalShifts = polishedOutput;
+    } catch (e) {
+        console.error("❌ [Phase 3] Failed. Keeping Phase 2 result.", e);
+        // Fallback to Phase 2 result (finalShifts)
     }
 
     // ---------------------------------------------------------
@@ -195,13 +248,13 @@ function processShifts(shifts: any[]) {
         let breakDuration = 0;
         const hours = duration / 4;
 
-        if (hours > 6) {
+        if (hours > 7.5) {
             breakDuration = 3; // 45 mins
-            // Enforce window (5th-8th hour)
-            const minBreak = start + 20;
-            const maxBreak = start + 32;
+            // Enforce window (4th-6th hour)
+            const minBreak = start + 16;
+            const maxBreak = start + 24;
             if (breakStart < minBreak || breakStart > maxBreak) {
-                breakStart = start + 24; // Default to 6th hour
+                breakStart = start + 20; // Default to 5th hour (middle of 4-6 window)
             }
         } else {
             breakStart = 0;
@@ -237,7 +290,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             return res.status(500).json({ error: 'Server configuration error: Missing API Key' });
         }
 
-        const { requirements, mode, currentShifts } = req.body;
+        const { requirements, mode, currentShifts, focusInstruction } = req.body;
 
         if (!requirements || !Array.isArray(requirements)) {
             console.error("❌ Invalid requirements payload");
@@ -246,7 +299,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         console.log(`📦 Processing ${requirements.length} requirements...`);
 
-        const processedShifts = await optimizeImplementation(requirements, apiKey, mode || 'full', currentShifts || []);
+        const processedShifts = await optimizeImplementation(requirements, apiKey, mode || 'full', currentShifts || [], focusInstruction);
 
         return res.status(200).json({ shifts: processedShifts });
 

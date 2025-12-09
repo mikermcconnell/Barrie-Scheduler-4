@@ -6,10 +6,14 @@ import { GapChart } from './GapChart';
 import { FileUpload } from './FileUpload';
 import { ShiftEditor } from './ShiftEditor';
 import { ShiftEditorModal } from './ShiftEditorModal';
+
 import { OptimizationReviewModal } from './OptimizationReviewModal';
+import { FocusPromptModal } from './FocusPromptModal';
 import { FileManager } from './FileManager';
 import { useAuth } from './AuthContext';
 import { parseScheduleMaster, parseRideCo } from '../utils/csvParsers';
+import { parseMasterSchedule, convertMasterRouteTablesToRequirements } from '../utils/masterScheduleParser';
+import * as XLSX from 'xlsx';
 import {
     SavedFile,
     SavedSchedule,
@@ -45,7 +49,7 @@ export const OnDemandWorkspace: React.FC = () => {
     // File Upload State
     const [uploadedFiles, setUploadedFiles] = useState<{ master: File | null, rideco: File | null }>({ master: null, rideco: null });
     // Cache file content to enable "Reset to Upload"
-    const [cachedFiles, setCachedFiles] = useState<{ master: string | null, rideco: string | null }>({ master: null, rideco: null });
+    const [cachedFiles, setCachedFiles] = useState<{ master: string | ArrayBuffer | null, rideco: string | ArrayBuffer | null }>({ master: null, rideco: null });
 
     // Cloud File Manager State
     const [showFileManager, setShowFileManager] = useState(false);
@@ -112,13 +116,24 @@ export const OnDemandWorkspace: React.FC = () => {
         }
     };
 
-    const handleRefine = async () => {
+    // Focus Text
+    const [focusInstruction, setFocusInstruction] = useState('');
+    const [showFocusPrompt, setShowFocusPrompt] = useState(false);
+
+    const handleRefineClick = () => {
+        setShowFocusPrompt(true);
+    };
+
+    const handleStartOptimization = async (instruction: string) => {
+        setShowFocusPrompt(false);
+        setFocusInstruction(instruction); // Save for reference
+
         setOptimizationMode('refine');
         setIsAnimating(true);
 
         try {
             // Call Gemini API - Refine Mode
-            const aiShifts = await optimizeScheduleWithGemini(requirements, 'refine', shifts);
+            const aiShifts = await optimizeScheduleWithGemini(requirements, 'refine', shifts, instruction);
 
             if (aiShifts.length > 0) {
                 // Open Review Modal instead of applying directly
@@ -155,6 +170,7 @@ export const OnDemandWorkspace: React.FC = () => {
 
     const handleShiftUpdate = (updatedShift: Shift) => {
         setShifts(prev => prev.map(s => s.id === updatedShift.id ? updatedShift : s));
+        setAllShifts(prev => prev.map(s => s.id === updatedShift.id ? updatedShift : s));
     };
 
     const handleDayTypeChange = (dayType: string) => {
@@ -170,6 +186,7 @@ export const OnDemandWorkspace: React.FC = () => {
 
     const handleDeleteShift = (id: string) => {
         setShifts(prev => prev.filter(s => s.id !== id));
+        setAllShifts(prev => prev.filter(s => s.id !== id));
     };
 
     const handleAddShift = (zone: ZoneFilterType = 'All') => {
@@ -203,6 +220,7 @@ export const OnDemandWorkspace: React.FC = () => {
         const newName = `${zoneName} ${maxNum + 1}`;
 
         // Default shift: 8am - 4pm
+        // Default shift: 8am - 4pm
         const newShift: Shift = {
             id: `shift-${Math.random().toString(36).substr(2, 9)}`,
             driverName: newName,
@@ -210,9 +228,11 @@ export const OnDemandWorkspace: React.FC = () => {
             startSlot: 32, // 08:00
             endSlot: 32 + SHIFT_DURATION_SLOTS,
             breakStartSlot: 32 + 16, // Break after 4 hours
-            breakDurationSlots: BREAK_DURATION_SLOTS
+            breakDurationSlots: BREAK_DURATION_SLOTS,
+            dayType: selectedDayType as 'Weekday' | 'Saturday' | 'Sunday'
         };
         setShifts(prev => [...prev, newShift]);
+        setAllShifts(prev => [...prev, newShift]);
         // Switch to editor to see the new shift
         setActiveTab('editor');
     };
@@ -236,35 +256,64 @@ export const OnDemandWorkspace: React.FC = () => {
         try {
             setUploadedFiles({ master: null, rideco: null });
 
-            // Cache the content for reset functionality (if available)
-            setCachedFiles(prev => ({
-                master: uploadedFiles.master ? prev.master : prev.master, // Don't overwrite if not present? Actually we should probably just set what we processed.
-                rideco: uploadedFiles.rideco ? prev.rideco : prev.rideco
-            }));
+            // Helper to read file
+            const readFile = async (file: File | null): Promise<string | ArrayBuffer | null> => {
+                if (!file) return null;
+                if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
+                    return await file.arrayBuffer();
+                }
+                return await file.text();
+            };
 
-            // Actually, we must read the text above. We should store it.
-            // Let's refactor the reading part slightly to ensure we capture the text.
-            const masterText = uploadedFiles.master ? await uploadedFiles.master.text() : null;
-            const ridecoText = uploadedFiles.rideco ? await uploadedFiles.rideco.text() : null;
+            const masterContent = await readFile(uploadedFiles.master);
+            const ridecoContent = await readFile(uploadedFiles.rideco);
 
-            setCachedFiles({ master: masterText, rideco: ridecoText });
+            setCachedFiles({ master: masterContent, rideco: ridecoContent });
 
-            if (masterText) {
-                const newSchedules = parseScheduleMaster(masterText);
-                setSchedules(newSchedules);
+            if (masterContent) {
+                if (typeof masterContent === 'string') {
+                    // CSV/Text
+                    const newSchedules = parseScheduleMaster(masterContent);
+                    setSchedules(newSchedules);
 
-                const defaultDay = newSchedules['Weekday'] ? 'Weekday' : Object.keys(newSchedules)[0];
-                if (defaultDay) {
-                    setSelectedDayType(defaultDay);
-                    setRequirements(newSchedules[defaultDay]);
+                    const defaultDay = newSchedules['Weekday'] ? 'Weekday' : Object.keys(newSchedules)[0];
+                    if (defaultDay) {
+                        setSelectedDayType(defaultDay);
+                        setRequirements(newSchedules[defaultDay]);
+                    }
+                } else {
+                    // Excel (ArrayBuffer)
+                    const tables = parseMasterSchedule(masterContent);
+                    const newSchedules = convertMasterRouteTablesToRequirements(tables);
+                    setSchedules(newSchedules);
+
+                    // Logic to select "ToD" or "Weekday"
+                    const defaultDay = Object.keys(newSchedules)[0]; // Since we prioritized ToD, it should be first
+                    if (defaultDay) {
+                        setSelectedDayType(defaultDay);
+                        setRequirements(newSchedules[defaultDay]);
+                    }
                 }
             }
 
-            if (ridecoText) {
-                const newShifts = parseRideCo(ridecoText);
+            if (ridecoContent) {
+                let newShifts: Shift[] = [];
+
+                if (typeof ridecoContent === 'string') {
+                    // CSV/Text
+                    newShifts = parseRideCo(ridecoContent);
+                } else {
+                    // Excel
+                    const workbook = XLSX.read(ridecoContent, { type: 'array' });
+                    const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+                    const data = XLSX.utils.sheet_to_json(firstSheet, { header: 1, defval: '' }) as any[][];
+                    newShifts = parseRideCo(data);
+                }
+
                 if (newShifts.length > 0) {
                     setAllShifts(newShifts);
                     const currentDay = selectedDayType || 'Weekday';
+                    // We might need to ensure dayType matches what's in the file or UI
                     const filtered = newShifts.filter(s => !s.dayType || s.dayType === currentDay);
                     setShifts(filtered);
                 }
@@ -284,16 +333,36 @@ export const OnDemandWorkspace: React.FC = () => {
         setIsAnimating(true);
         try {
             if (cachedFiles.master) {
-                const newSchedules = parseScheduleMaster(cachedFiles.master);
-                setSchedules(newSchedules);
-                const defaultDay = newSchedules['Weekday'] ? 'Weekday' : Object.keys(newSchedules)[0];
-                if (defaultDay) {
-                    setSelectedDayType(defaultDay);
-                    setRequirements(newSchedules[defaultDay]);
+                if (typeof cachedFiles.master === 'string') {
+                    const newSchedules = parseScheduleMaster(cachedFiles.master);
+                    setSchedules(newSchedules);
+                    const defaultDay = newSchedules['Weekday'] ? 'Weekday' : Object.keys(newSchedules)[0];
+                    if (defaultDay) {
+                        setSelectedDayType(defaultDay);
+                        setRequirements(newSchedules[defaultDay]);
+                    }
+                } else {
+                    const tables = parseMasterSchedule(cachedFiles.master);
+                    const newSchedules = convertMasterRouteTablesToRequirements(tables);
+                    setSchedules(newSchedules);
+                    const defaultDay = Object.keys(newSchedules)[0];
+                    if (defaultDay) {
+                        setSelectedDayType(defaultDay);
+                        setRequirements(newSchedules[defaultDay]);
+                    }
                 }
             }
             if (cachedFiles.rideco) {
-                const newShifts = parseRideCo(cachedFiles.rideco);
+                let newShifts: Shift[] = [];
+                if (typeof cachedFiles.rideco === 'string') {
+                    newShifts = parseRideCo(cachedFiles.rideco);
+                } else {
+                    const workbook = XLSX.read(cachedFiles.rideco, { type: 'array' });
+                    const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+                    const data = XLSX.utils.sheet_to_json(firstSheet, { header: 1, defval: '' }) as any[][];
+                    newShifts = parseRideCo(data);
+                }
+
                 if (newShifts.length > 0) {
                     setAllShifts(newShifts);
                     const currentDay = selectedDayType || 'Weekday';
@@ -389,12 +458,46 @@ export const OnDemandWorkspace: React.FC = () => {
     const handleScheduleSelect = (schedule: SavedSchedule) => {
         // Restore the workspace state from the saved schedule
         if (schedule.shiftData) {
-            setShifts(schedule.shiftData);
             setAllShifts(schedule.shiftData);
         }
-        if (schedule.masterScheduleData) {
-            setRequirements(schedule.masterScheduleData);
+
+        // Restore multi-day schedules if available
+        if (schedule.schedulesData) {
+            setSchedules(schedule.schedulesData);
+
+            // Smartly select the day to show
+            // If currently selected day is available in the loaded schedule, keep it
+            // Otherwise default to Weekday or first available
+            const availableDays = Object.keys(schedule.schedulesData);
+            let dayToSelect = selectedDayType;
+
+            if (!availableDays.includes(dayToSelect)) {
+                dayToSelect = availableDays.includes('Weekday') ? 'Weekday' : availableDays[0];
+            }
+
+            if (dayToSelect && schedule.schedulesData[dayToSelect]) {
+                setSelectedDayType(dayToSelect);
+                setRequirements(schedule.schedulesData[dayToSelect]);
+
+                // Filter shifts for this day
+                if (schedule.shiftData) {
+                    const filtered = schedule.shiftData.filter(s => !s.dayType || s.dayType === dayToSelect);
+                    setShifts(filtered);
+                }
+            } else if (schedule.masterScheduleData) {
+                // Fallback to legacy master data if no specific day matched
+                setRequirements(schedule.masterScheduleData);
+            }
+        } else {
+            // Legacy load handling (older saves without schedulesData)
+            if (schedule.masterScheduleData) {
+                setRequirements(schedule.masterScheduleData);
+            }
+            if (schedule.shiftData) {
+                setShifts(schedule.shiftData); // Just show what was saved
+            }
         }
+
         setDraftName(schedule.name);
         setOriginalDraftName(schedule.name);
         setCurrentDraftId(schedule.id);
@@ -414,10 +517,11 @@ export const OnDemandWorkspace: React.FC = () => {
         try {
             const scheduleData = {
                 name: draftName,
-                description: `${shifts.length} shifts, Day Type: ${selectedDayType}`,
+                description: `${allShifts.length} shifts, Active Day: ${selectedDayType}`,
                 status: 'draft' as const,
-                shiftData: shifts,
-                masterScheduleData: requirements,
+                shiftData: allShifts, // Save ALL shifts from all days
+                masterScheduleData: requirements, // Save current view
+                schedulesData: schedules || undefined, // Save all day requirements
             };
 
             // Logic: "Save As" if the ID exists BUT the name has changed
@@ -443,7 +547,7 @@ export const OnDemandWorkspace: React.FC = () => {
     };
 
     return (
-        <div className="animate-in fade-in zoom-in-95 duration-500">
+        <div className="animate-in fade-in zoom-in-95 duration-500 h-full overflow-y-auto custom-scrollbar pb-24 pr-2">
 
             {/* File Manager Modal */}
             {showFileManager && user && (
@@ -451,6 +555,15 @@ export const OnDemandWorkspace: React.FC = () => {
                     onClose={() => setShowFileManager(false)}
                     onSelectFile={handleCloudFileSelect}
                     onSelectSchedule={handleScheduleSelect}
+                />
+            )}
+
+            {/* Focus Prompt Modal - Step 1 of Refine */}
+            {showFocusPrompt && (
+                <FocusPromptModal
+                    onCancel={() => setShowFocusPrompt(false)}
+                    onOptimize={handleStartOptimization}
+                    initialInstruction={focusInstruction}
                 />
             )}
 
@@ -466,7 +579,7 @@ export const OnDemandWorkspace: React.FC = () => {
             )}
 
             {/* Title & Actions */}
-            <div className="flex flex-col md:flex-row justify-between items-end mb-8 gap-4">
+            <div className="flex flex-col md:flex-row flex-wrap justify-between items-end mb-8 gap-4">
                 <div className="flex-1">
                     <div className="group flex items-center gap-3">
                         <div className="relative">
@@ -580,7 +693,7 @@ export const OnDemandWorkspace: React.FC = () => {
 
                             {/* Refine Button - Primary Action */}
                             <button
-                                onClick={handleRefine}
+                                onClick={handleRefineClick}
                                 disabled={isAnimating || shifts.length === 0}
                                 className={`
                                 flex items-center gap-2 px-5 py-2 rounded-xl font-bold text-white shadow-md hover:shadow-lg active:scale-95 whitespace-nowrap
@@ -595,11 +708,16 @@ export const OnDemandWorkspace: React.FC = () => {
                                 title="Refine current shifts"
                             >
                                 {isAnimating && optimizationMode === 'refine' ? (
-                                    <Sparkles className="animate-spin text-white" size={18} />
+                                    <>
+                                        <Sparkles className="animate-spin text-white" size={18} />
+                                        <span>Processing... (may take a few mins)</span>
+                                    </>
                                 ) : (
-                                    <Sparkles size={18} />
+                                    <>
+                                        <Sparkles size={18} />
+                                        <span>Refine</span>
+                                    </>
                                 )}
-                                Refine
                             </button>
 
                             {/* Regenerate Button - Distinct but Secondary */}
@@ -617,11 +735,16 @@ export const OnDemandWorkspace: React.FC = () => {
                                 title="Generate fresh schedule"
                             >
                                 {isAnimating && optimizationMode === 'full' ? (
-                                    <Loader2 className="animate-spin" size={18} />
+                                    <>
+                                        <Loader2 className="animate-spin" size={18} />
+                                        <span>Generating... (may take a few mins)</span>
+                                    </>
                                 ) : (
-                                    <Wand2 size={18} />
+                                    <>
+                                        <Wand2 size={18} />
+                                        <span>Regenerate</span>
+                                    </>
                                 )}
-                                Regenerate
                             </button>
                         </div>
 
