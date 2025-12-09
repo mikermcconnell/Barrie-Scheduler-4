@@ -163,7 +163,8 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
   // Calculate min value for gaps (negative net)
   const minValue = React.useMemo(() => {
     const minNet = Math.min(...chartData.map(d => d.currentNet));
-    return minNet < 0 ? Math.floor(minNet / 1) * 1 : 0; // Ensure we capture the full negative depth
+    // Ensure we show at least down to -3 to allow visibility of negative gaps, or deeper if data exists
+    return Math.min(-3, minNet < 0 ? Math.floor(minNet) : 0);
   }, [chartData]);
 
   return (
@@ -240,7 +241,7 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
         </div>
       </div>
 
-      <ResponsiveContainer width="100%" height="80%">
+      <ResponsiveContainer width="100%" height="100%">
         <ComposedChart
           data={chartData}
           margin={{ top: 20, right: 30, left: 0, bottom: 20 }}

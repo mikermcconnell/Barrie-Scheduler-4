@@ -1,0 +1,49 @@
+Total Rows: 1000
+--- Row 0 ---
+[
+  'Weekday', '', '',
+  '',        '', '400 North',
+  '',        '', '',
+  '',        '', '400 South',
+  '',        '', '',
+  '',        '', '',
+  '',        '', '',
+  '',        ''
+]
+--- Row 1 ---
+[
+  '',       '', '',
+  '',       '', '',
+  '',       '', '',
+  'Arrive', '', 'DEPART',
+  '',       '', '',
+  'Arrive', '', 'DEPART',
+  '',       '', '',
+  '',       ''
+]
+--- Row 2 ---
+[
+  '',
+  'Time Band Code',
+  'Time Band',
+  'Block',
+  'Stop Name',
+  'Park Place',
+  "Veteran's at Essa",
+  'Rose at Highway 400',
+  'Georgian at Governors',
+  'RVH',
+  'R',
+  'RVH',
+  'Georgian College',
+  'Bayfield at Highway 400',
+  "Veteran's at Essa",
+  'Park Place',
+  'R',
+  'Park Place',
+  '',
+  '',
+  '',
+  '',
+  ''
+]

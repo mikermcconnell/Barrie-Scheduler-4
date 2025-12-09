@@ -353,16 +353,6 @@ export const ShiftEditorModal: React.FC<Props> = ({ shift, allShifts, requiremen
                                             <Coffee size={12} className="text-white/80" />
                                         </div>
 
-                                        {/* Break Resize Start */}
-                                        <div
-                                            className="absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-white/30 rounded-l-md transition-colors z-40 opacity-0 group-hover/break:opacity-100"
-                                            onMouseDown={(e) => handleMouseDown(e, 'breakStart')}
-                                        />
-                                        {/* Break Resize End */}
-                                        <div
-                                            className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-white/30 rounded-r-md transition-colors z-40 opacity-0 group-hover/break:opacity-100"
-                                            onMouseDown={(e) => handleMouseDown(e, 'breakEnd')}
-                                        />
                                     </div>
                                 )}
                             </div>

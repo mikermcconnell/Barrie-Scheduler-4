@@ -2,14 +2,68 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai';
 
 /**
- * Core Optimization Logic - Decoupled from Vercel Request/Response
- * This allows for local testing without the Vercel CLI.
+ * ==========================================
+ * SCHEMAS
+ * ==========================================
  */
-export async function optimizeImplementation(requirements: any[], apiKey: string, mode: 'full' | 'refine' = 'full', currentShifts: any[] = []) {
-    // Initialize Gemini
-    const genAI = new GoogleGenerativeAI(apiKey);
+const shiftItemSchema = {
+    type: SchemaType.OBJECT,
+    properties: {
+        id: { type: SchemaType.STRING, description: "Unique ID (Preserve if refining)" },
+        driverName: { type: SchemaType.STRING, description: "Name like 'Driver 1'" },
+        startSlot: { type: SchemaType.INTEGER, description: "Start time in 15-min slots (0-96)" },
+        durationSlots: { type: SchemaType.INTEGER, description: "Total shift length in slots (20-44 slots / 5-11 hours)" },
+        breakStartSlot: { type: SchemaType.INTEGER, description: "Break start time (must be within shift). Use 0 if no break." },
+        zone: { type: SchemaType.STRING, enum: ["North", "South", "Floater"] }
+    },
+    required: ["driverName", "startSlot", "durationSlots", "breakStartSlot", "zone"]
+};
 
-    // Build the demand arrays for the AI (96 slots)
+// Phase 1: Generator Output (Just the list)
+const generatorSchema = {
+    type: SchemaType.ARRAY,
+    items: shiftItemSchema
+};
+
+// Phase 2: Critic Output (Critique + Revised List)
+const criticSchema = {
+    type: SchemaType.OBJECT,
+    properties: {
+        critique: { type: SchemaType.STRING, description: "Critical analysis of the draft. Identify specific gaps, over-supply, or break conflicts." },
+        shifts: {
+            type: SchemaType.ARRAY,
+            items: shiftItemSchema
+        }
+    },
+    required: ["critique", "shifts"]
+};
+
+/**
+ * ==========================================
+ * CORE LOGIC
+ * ==========================================
+ */
+
+async function callGemini(apiKey: string, prompt: string, systemInstruction: string, schema: any, modelName: string = "gemini-3-pro-preview", temperature: number = 0.3) {
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({
+        model: modelName,
+        systemInstruction: systemInstruction,
+        generationConfig: {
+            responseMimeType: "application/json",
+            responseSchema: schema,
+            temperature: temperature,
+        }
+    });
+
+    const result = await model.generateContent(prompt);
+    const text = result.response.text();
+    return JSON.parse(text || (schema.type === SchemaType.ARRAY ? "[]" : "{}"));
+}
+
+export async function optimizeImplementation(requirements: any[], apiKey: string, mode: 'full' | 'refine' = 'full', currentShifts: any[] = []) {
+
+    // 1. Prepare Data
     const totalDemandCurve = new Array(96).fill(0);
     const northDemandCurve = new Array(96).fill(0);
     const southDemandCurve = new Array(96).fill(0);
@@ -22,189 +76,148 @@ export async function optimizeImplementation(requirements: any[], apiKey: string
         }
     });
 
-    // Define the schema for structured output
-    const shiftSchema = {
-        type: SchemaType.ARRAY,
-        items: {
-            type: SchemaType.OBJECT,
-            properties: {
-                id: { type: SchemaType.STRING, description: "Unique ID (Preserve if refining)" },
-                driverName: { type: SchemaType.STRING, description: "Name like 'Driver 1'" },
-                startSlot: { type: SchemaType.INTEGER, description: "Start time in 15-min slots (0-96)" },
-                durationSlots: { type: SchemaType.INTEGER, description: "Total shift length in slots (20-44 slots / 5-11 hours)" },
-                breakStartSlot: { type: SchemaType.INTEGER, description: "Break start time (must be within shift). Use 0 if no break." },
-                zone: { type: SchemaType.STRING, enum: ["North", "South", "Floater"] }
-            },
-            required: ["driverName", "startSlot", "durationSlots", "breakStartSlot", "zone"]
-        }
-    };
+    const floaterDemandCurve = new Array(96).fill(0).map((_, i) => Math.max(0, totalDemandCurve[i] - northDemandCurve[i] - southDemandCurve[i]));
 
-    let systemInstruction = `You are an expert Transit Scheduler AI. 
-    Your goal is to OPTIMIZE a driver schedule for a simplified On-Demand Transit system.`;
+    const demandContext = `
+    North Zone Demand: ${JSON.stringify(northDemandCurve)}
+    South Zone Demand: ${JSON.stringify(southDemandCurve)}
+    Floater Zone Demand: ${JSON.stringify(floaterDemandCurve)}
+    `;
 
-    if (mode === 'refine' && currentShifts.length > 0) {
-        systemInstruction += `
-    
-    MODE: REFINE & POLISH
-    - You are provided with an EXISTING roster of shifts.
-    - Your goal is to IMPROVE efficiency (reduce surplus, fix gaps) with MINIMAL changes.
-    - DO NOT regenerate the schedule from scratch.
-    - KEEP existing shift IDs where possible.
-    - Only modify start/end times or breaks if it significantly improves efficiency.
-    - If a shift is close to perfect, keep it exactly as is.
-    - Return the FULL list of shifts (including unmodified ones).`;
-    } else {
-        systemInstruction += `
-    
-    MODE: FULL OPTIMIZATION
-    - You are generating a schedule FROM SCRATCH based on demand.
-    - Ignore any previous shifts (start fresh).`;
-    }
-
-    systemInstruction += `
-    
+    const commonRules = `
     Union Rules:
-    - Shift Length: 5-10 hours (20-40 slots)
-    - Breaks: 45min (3 slots) if shift > 6h
-    
-    STRICT ZONE LOGIC (DO NOT MIX):
-    - You must treat this as THREE separate optimization problems running in parallel.
-    - "North Demand" MUST be covered by "North" shifts.
-    - "South Demand" MUST be covered by "South" shifts.
-    - "Floater Demand" MUST be covered by "Floater" shifts.
-    
-    EFFICIENCY & OPTIMIZATION STRATEGIES:
-    1. **MINIMIZE TOTAL HOURS**: Over-supply is a failure. You must hug the demand curve as tightly as possible.
-       - A perfect roster has ZERO gaps and the LOWEST possible total hours.
-    
-    2. **USE SHORTER SHIFTS FOR PEAKS**:
-       - The shift length range is 5-10 hours.
-       - Use 5-hour or 6-hour shifts to cover short demand peaks (e.g., morning/afternoon rush).
-       - Only use 8-10 hour shifts for base load (all-day demand).
-    
-    3. **BREAK STRATEGY & RELIEF (CRITICAL)**:
-       - **STAGGER BREAKS**: Do NOT schedule breaks for multiple drivers at the same time.
-         - Bad: 3 drivers on break at 12:00.
-         - Good: Driver A at 11:30, Driver B at 12:30, Driver C at 13:30.
-       - **FLOATER RELIEF**: Use Floater shifts to "bridge" the gaps created by North/South breaks.
-         - Logic: Floater covers North (while North Driver is on break) -> then moves to South (while South Driver is on break).
-    
-    CRITICAL COVERAGE RULES:
-    1. EFFICIENCY FIRST: You are allowed to have MINOR GAPS (-1 driver) for short periods (max 30 mins) if it prevents adding a huge wasteful shift.
-    2. MINIMIZE SURPLUS: It is better to have a random 15-min gap than to have 8 hours of unused drivers.
-    3. MINIMIZE CONCURRENT BREAKS: Target max 1 driver on break at a time per zone.
-    4. CHECK EVERY SLOT [i]:
-       - Ideally: Count >= Demand[i]
-       - Acceptable: Count = Demand[i] - 1 (for < 3 consecutive slots)
-       - Unacceptable: Count < Demand[i] - 1 OR Count < Demand[i] for > 45 mins.
-    5. SHIFT STARTS: Start shifts EXACTLY when demand spikes in their respective zone.
+    - Shift Length: 5-10 hours (20-40 slots).
+    - Breaks: 45min (3 slots) if shift > 6h.
+    - Breaks must occur between hour 5 and 8 of the shift.
+    - STRICT ZONE LOGIC: North covers North, South covers South, Floater covers Gaps/Breaks.
+
+    EFFICIENCY RULES (Follow these STRICTLY):
+    1. **KILL SURPLUS**: Over-supply is WORSE than a small gap.
+       - A gap of -1 driver for 15-30 minutes (1-2 slots) is ACCEPTABLE if it prevents a long surplus.
+    2. **HUG THE CURVE**: Do not schedule 8 hours of work for a 2-hour peak. Use split shifts or short 5h shifts.
     `;
 
-    let prompt = `
-    North Zone Demand (Require "North" Shifts):
-    ${JSON.stringify(northDemandCurve)}
+    // ---------------------------------------------------------
+    // PHASE 1: THE GENERATOR (Drafting)
+    // ---------------------------------------------------------
+    console.log(`🤖 [Phase 1] Generating Draft Schedule (${mode})...`);
 
-    South Zone Demand (Require "South" Shifts):
-    ${JSON.stringify(southDemandCurve)}
-    
-    Floater Zone Demand (Require "Floater" Shifts):
-    ${JSON.stringify(new Array(96).fill(0).map((_, i) => Math.max(0, totalDemandCurve[i] - northDemandCurve[i] - southDemandCurve[i])))} 
-    (Note: If specific Floater demand was provided, use that. Otherwise, calculate the remainder.)
+    let draftSystemInstruction = `You are an expert Transit Scheduler. Generate a draft schedule.
+    ${commonRules}
+    STRATEGIES:
+    1. Minimize total hours while covering demand.
+    2. Use short shifts (5-6h) for peaks.
+    3. Stagger breaks (don't overlap them in the same zone).
     `;
+
+    let draftPrompt = `DEMAND CURVES:\n${demandContext}\n`;
 
     if (mode === 'refine' && currentShifts.length > 0) {
-        prompt += `
-        
-        EXISTING SCHEDULE TO REFINE:
-        ${JSON.stringify(currentShifts.map(s => ({
-            id: s.id,
-            driverName: s.driverName,
-            zone: s.zone,
-            startSlot: s.startSlot,
-            durationSlots: s.endSlot - s.startSlot,
-            breakStartSlot: s.breakStartSlot
-        })))}
-        
-        INSTRUCTIONS for REFINE:
-        - Analyze the existing schedule against the demand curves.
-        - Fix any gaps by slightly adjusting start times.
-        - Reduce surplus by shortening shifts or removing truly redundant ones.
-        - Adjust break times to ensure staggered coverage.
-        - RETURN THE FULL REFINED LIST.
-        `;
+        draftPrompt += `\nREFINE EXISTING SHIFTS:\n${JSON.stringify(currentShifts.map(s => ({ ...s, uuid: undefined })))}`; // Strip UI helper fields if any
     } else {
-        prompt += `
-        INSTRUCTIONS:
-        1. Generate a roster that strictly satisfies the specific curve for each zone type.
-        2. Do NOT cross-subsidize. A surplus in Floaters does NOT help South gaps.
-        3. Return strictly JSON.
-        `;
+        draftPrompt += `\nGENERATE NEW SCHEDULE FROM SCRATCH based on demand.`;
     }
 
-    console.log(`🤖 Calling Gemini API (gemini-3-pro-preview) in ${mode.toUpperCase()} mode...`);
-
-    // Call Gemini API
-    const model = genAI.getGenerativeModel({
-        model: "gemini-3-pro-preview",
-        systemInstruction: systemInstruction,
-        generationConfig: {
-            responseMimeType: "application/json",
-            responseSchema: shiftSchema as any,
-            temperature: mode === 'refine' ? 0.2 : 0.3, // Lower temp for refinement to stay closer to original
-        }
-    });
-
-    const result = await model.generateContent(prompt);
-    const response = result.response;
-    const text = response.text();
-
-    console.log("✅ Gemini Response Received:", text.substring(0, 100) + "...");
-
-    // Parse the response
-    let generatedShifts = [];
+    // Call Phase 1
+    let draftShifts = [];
     try {
-        generatedShifts = JSON.parse(text || "[]");
+        draftShifts = await callGemini(apiKey, draftPrompt, draftSystemInstruction, generatorSchema, "gemini-3-pro-preview", 0.4);
+        console.log(`✅ [Phase 1] Draft Generated: ${draftShifts.length} shifts.`);
     } catch (e) {
-        console.error("❌ JSON Parse Failed:", e);
-        console.error("Raw Text:", text);
-        throw new Error('Failed to parse AI response: ' + text);
+        console.error("❌ [Phase 1] Failed:", e);
+        throw e;
     }
 
-    // Post-process to ensure valid Shift objects
-    const BREAK_DURATION_SLOTS = 3;
-    const BREAK_THRESHOLD_HOURS = 6;
+    // ---------------------------------------------------------
+    // PHASE 2: THE CRITIC (Refining)
+    // ---------------------------------------------------------
+    console.log(`🕵️ [Phase 2] Critic Reviewing Draft...`);
 
-    const processedShifts = generatedShifts.map((s: any, index: number) => {
+    const criticSystemInstruction = `You are a SENIOR AUDITOR for Transit Schedules.
+    Your job is to CRITIQUE the provided draft schedule and produce a FINAL, PERFECTED version.
+    
+    ${commonRules}
+    
+    CRITIQUE RULES:
+    1. **Over-Supply**: If there are more drivers than demand in a slot, CUT the shift duration or REMOVE the shift.
+       - IMPORTANT: It is better to leave a small gap (-1 driver for < 30mins) than to have 4+ hours of surplus.
+    2. **Under-Supply**: Only EXTEND shifts if the gap is > 30 mins or deep (-2 drivers). Small gaps are fine.
+    3. **Break Conflicts**: If two "North" drivers are on break at the same time, MOVE one break.
+    4. **Floater Logic**: Ensure Floaters are actually working during the times North/South drivers are on break.
+    
+    OUTPUT FORMAT:
+    - First, write a "critique": identifying 2-3 biggest issues in the draft.
+    - Then, return the "shifts": the fully corrected list.
+    `;
+
+    const criticPrompt = `
+    DEMAND:
+    ${demandContext}
+
+    DRAFT SCHEDULE (Audit this):
+    ${JSON.stringify(draftShifts)}
+
+    TASK:
+    Critique this draft for efficiency (waste/gaps) and union rule violations.
+    Then output the corrected final schedule.
+    `;
+
+    let finalShifts = [];
+    try {
+        const criticOutput = await callGemini(apiKey, criticPrompt, criticSystemInstruction, criticSchema, "gemini-3-pro-preview", 0.2); // Low temp for precision
+
+        console.log("📝 [Phase 2] Critic's Analysis:\n" + criticOutput.critique);
+        finalShifts = criticOutput.shifts;
+        console.log(`✅ [Phase 2] Final Schedule: ${finalShifts.length} shifts.`);
+
+    } catch (e) {
+        console.error("❌ [Phase 2] Failed. Falling back to draft.", e);
+        finalShifts = draftShifts; // Fallback
+    }
+
+    // ---------------------------------------------------------
+    // POST-PROCESSING
+    // ---------------------------------------------------------
+    const processedShifts = processShifts(finalShifts);
+    return processedShifts;
+}
+
+/**
+ * Helper to normalize shift data (ensure types, add proper IDs)
+ */
+function processShifts(shifts: any[]) {
+    return shifts.map((s: any, index: number) => {
         const duration = Number(s.durationSlots) || 32;
         const start = Number(s.startSlot);
-        const end = start + duration;
 
+        // Auto-fix breaks if missing/invalid but shift is long
         let breakStart = Number(s.breakStartSlot);
         let breakDuration = 0;
-
         const hours = duration / 4;
-        if (hours > BREAK_THRESHOLD_HOURS) {
-            breakDuration = BREAK_DURATION_SLOTS;
-            if (breakStart < start + 20 || breakStart > start + 32) {
-                breakStart = start + 24;
+
+        if (hours > 6) {
+            breakDuration = 3; // 45 mins
+            // Enforce window (5th-8th hour)
+            const minBreak = start + 20;
+            const maxBreak = start + 32;
+            if (breakStart < minBreak || breakStart > maxBreak) {
+                breakStart = start + 24; // Default to 6th hour
             }
         } else {
             breakStart = 0;
+            breakDuration = 0;
         }
 
         return {
-            id: s.id || `gemini-shift-${index}-${Date.now()}`, // Preserve ID if returned (refine mode), else new
-            driverName: s.driverName || `AI Driver ${index + 1}`,
+            id: s.id || `ai-shift-${index}-${Date.now()}`,
+            driverName: s.driverName || `Driver ${index + 1}`,
             zone: s.zone,
             startSlot: start,
-            endSlot: end,
+            endSlot: start + duration,
             breakStartSlot: breakStart,
             breakDurationSlots: breakDuration
         };
     });
-
-    console.log(`🎉 Successfully processed ${processedShifts.length} shifts`);
-    return processedShifts;
 }
 
 /**
@@ -213,7 +226,6 @@ export async function optimizeImplementation(requirements: any[], apiKey: string
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     console.log("🚀 Optimization Request Received");
 
-    // Only allow POST requests (sending data to the API)
     if (req.method !== 'POST') {
         return res.status(405).json({ error: 'Method not allowed. Use POST.' });
     }
@@ -225,8 +237,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             return res.status(500).json({ error: 'Server configuration error: Missing API Key' });
         }
 
-        // Get the requirements data sent from the browser
-        const { requirements, mode, currentShifts } = req.body; // Expanded destructuring
+        const { requirements, mode, currentShifts } = req.body;
 
         if (!requirements || !Array.isArray(requirements)) {
             console.error("❌ Invalid requirements payload");
@@ -235,15 +246,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         console.log(`📦 Processing ${requirements.length} requirements...`);
 
-        // DELEGATE TO CORE IMPLEMENTATION
         const processedShifts = await optimizeImplementation(requirements, apiKey, mode || 'full', currentShifts || []);
 
-        // Send back the optimized shifts
         return res.status(200).json({ shifts: processedShifts });
 
     } catch (error: any) {
         console.error('❌ CRITICAL SERVER ERROR:', error);
-        // Ensure we send a JSON response even for crashes
         return res.status(500).json({
             error: 'Internal Server Error',
             message: error.message,

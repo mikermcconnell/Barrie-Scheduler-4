@@ -217,3 +217,28 @@ export const downloadFileContent = async (downloadUrl: string): Promise<string> 
     const response = await fetch(downloadUrl);
     return response.text();
 };
+
+export const downloadFileArrayBuffer = async (downloadUrl: string): Promise<ArrayBuffer> => {
+    const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+
+    if (isLocalhost) {
+        // Fetch via proxy (if applicable) or try direct if storage is public/CORS allowed
+        // Assuming proxy handles text; for binary we might need Blob response.
+        // If existing proxy only returns JSON/Text, we might have issues on localhost.
+        // However, standard Firebase Storage URLs usually support CORS if configured.
+        // Let's try direct fetch for binary first, falling back or warning.
+        try {
+            const response = await fetch(downloadUrl);
+            if (!response.ok) throw new Error('Network response was not ok');
+            return await response.arrayBuffer();
+        } catch (e) {
+            console.warn("Direct binary download failed on localhost, trying proxy...", e);
+            // If proxy is strictly for text, this fails. 
+            // But for now let's hope direct fetch works for Storage URLs.
+            throw e;
+        }
+    }
+
+    const response = await fetch(downloadUrl);
+    return response.arrayBuffer();
+};

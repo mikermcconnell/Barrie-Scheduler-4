@@ -1,24 +1,84 @@
 import path from 'path';
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
+import { optimizeImplementation } from './api/optimize';
 
 /**
  * Vite Configuration
- * 
- * SECURITY NOTE:
- * We removed the API key from here! API keys should NEVER be in frontend code.
- * The Gemini API is now called through our serverless functions in /api/
- * which keeps the key secure on the server.
  */
-export default defineConfig({
-  server: {
-    port: 3008,
-    host: '0.0.0.0',
-  },
-  plugins: [react()],
-  resolve: {
-    alias: {
-      '@': path.resolve(__dirname, '.'),
+console.log('✅ vite.config.ts is loading...');
+
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '');
+  console.log('✅ defineConfig called');
+
+  // Define API Middleware Plugin
+  const apiMiddlewarePlugin = () => ({
+    name: 'configure-server',
+    configureServer(server) {
+      console.log('✅ Plugin configureServer called');
+      server.middlewares.use(async (req, res, next) => {
+        console.log('Incoming request:', req.method, req.url);
+
+        if (req.url === '/api/optimize' && req.method === 'POST') {
+          try {
+            const buffers = [];
+            for await (const chunk of req) {
+              buffers.push(chunk);
+            }
+            const bodyString = Buffer.concat(buffers).toString();
+
+            if (!bodyString) {
+              throw new Error('Empty request body');
+            }
+
+            const data = JSON.parse(bodyString);
+            const apiKey = env.GEMINI_API_KEY;
+
+            if (!apiKey) {
+              console.error('Missing GEMINI_API_KEY');
+              res.statusCode = 500;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ error: 'Missing API Key' }));
+              return;
+            }
+
+            console.log('🚀 Processing optimization request for', data.mode);
+            const { requirements, mode, currentShifts } = data;
+
+            const shifts = await optimizeImplementation(requirements, apiKey, mode, currentShifts);
+
+            res.statusCode = 200;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ shifts }));
+
+          } catch (error: any) {
+            console.error('❌ API Error:', error);
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: 'Internal Server Error', message: error.message }));
+          }
+          return;
+        }
+        next();
+      });
+    },
+  });
+
+  return {
+    server: {
+      port: 3008,
+      strictPort: true,
+      host: '0.0.0.0',
+    },
+    plugins: [
+      react(),
+      apiMiddlewarePlugin()
+    ],
+    resolve: {
+      alias: {
+        '@': path.resolve(__dirname, '.'),
+      }
     }
-  }
+  };
 });

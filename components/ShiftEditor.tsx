@@ -142,7 +142,7 @@ export const ShiftEditor: React.FC<Props> = ({
               {/* Delete Button - appears on hover */}
               <button
                 onClick={(e) => { e.stopPropagation(); onDeleteShift(shift.id); }}
-                className="absolute top-2 right-2 p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
+                className="absolute top-2 left-2 p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all opacity-0 group-hover:opacity-100 z-20"
               >
                 <Trash2 size={16} />
               </button>

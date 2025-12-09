@@ -3,9 +3,19 @@ import { Upload, FileSpreadsheet } from 'lucide-react';
 
 interface Props {
   onFileUpload: (files: File[]) => void;
+  title?: string;
+  subtitle?: string;
+  accept?: string;
+  allowMultiple?: boolean;
 }
 
-export const FileUpload: React.FC<Props> = ({ onFileUpload }) => {
+export const FileUpload: React.FC<Props> = ({
+  onFileUpload,
+  title = "Drop Schedule Files Here",
+  subtitle = "Supports Master Schedule (.xlsx)",
+  accept = ".xlsx, .csv",
+  allowMultiple = true
+}) => {
   const [isDragging, setIsDragging] = React.useState(false);
 
   const handleDrag = (e: React.DragEvent) => {
@@ -48,8 +58,8 @@ export const FileUpload: React.FC<Props> = ({ onFileUpload }) => {
         type="file"
         className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
         onChange={handleChange}
-        accept=".xlsx, .csv"
-        multiple
+        accept={accept}
+        multiple={allowMultiple}
       />
       <div className="flex flex-col items-center justify-center space-y-4">
         <div className={`p-4 rounded-full ${isDragging ? 'bg-blue-100' : 'bg-gray-100'}`}>
@@ -57,19 +67,11 @@ export const FileUpload: React.FC<Props> = ({ onFileUpload }) => {
         </div>
         <div>
           <h3 className="text-xl font-extrabold text-gray-700">
-            {isDragging ? 'Drop it like it\'s hot!' : 'Drop Schedule Files Here'}
+            {isDragging ? 'Drop it like it\'s hot!' : title}
           </h3>
           <p className="text-gray-400 font-bold mt-2">
-            Supports Master Schedule (.xlsx) & MVT Export (.csv)
+            {subtitle}
           </p>
-        </div>
-        <div className="flex gap-2">
-          <span className="px-3 py-1 rounded-lg bg-gray-100 text-xs font-bold text-gray-500 flex items-center gap-1">
-            <FileSpreadsheet size={14} /> Master.xlsx
-          </span>
-          <span className="px-3 py-1 rounded-lg bg-gray-100 text-xs font-bold text-gray-500 flex items-center gap-1">
-            <FileSpreadsheet size={14} /> MVT.csv
-          </span>
         </div>
       </div>
     </div>

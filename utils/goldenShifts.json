@@ -1,0 +1,145 @@
+[
+  {
+    "id": "GOLDEN-Weekday-Shift 1",
+    "zone": "North",
+    "rawStart": "05:15",
+    "rawEnd": "12:45",
+    "startSlot": 21,
+    "endSlot": 51,
+    "isOptimalTemplate": true,
+    "sourceFile": "weekday_optimal.xlsx",
+    "dayType": "Weekday"
+  },
+  {
+    "id": "GOLDEN-Weekday-Shift 2",
+    "zone": "North",
+    "rawStart": "15:15",
+    "rawEnd": "00:00",
+    "startSlot": 61,
+    "endSlot": 0,
+    "isOptimalTemplate": true,
+    "sourceFile": "weekday_optimal.xlsx",
+    "dayType": "Weekday"
+  },
+  {
+    "id": "GOLDEN-Weekday-Shift 3",
+    "zone": "South",
+    "rawStart": "05:15",
+    "rawEnd": "15:15",
+    "startSlot": 21,
+    "endSlot": 61,
+    "isOptimalTemplate": true,
+    "sourceFile": "weekday_optimal.xlsx",
+    "dayType": "Weekday"
+  },
+  {
+    "id": "GOLDEN-Weekday-Shift 4",
+    "zone": "South",
+    "rawStart": "05:30",
+    "rawEnd": "15:30",
+    "startSlot": 22,
+    "endSlot": 62,
+    "isOptimalTemplate": true,
+    "sourceFile": "weekday_optimal.xlsx",
+    "dayType": "Weekday"
+  },
+  {
+    "id": "GOLDEN-Weekday-Shift 5",
+    "zone": "South",
+    "rawStart": "07:00",
+    "rawEnd": "17:00",
+    "startSlot": 28,
+    "endSlot": 68,
+    "isOptimalTemplate": true,
+    "sourceFile": "weekday_optimal.xlsx",
+    "dayType": "Weekday"
+  },
+  {
+    "id": "GOLDEN-Weekday-Shift 6",
+    "zone": "South",
+    "rawStart": "15:15",
+    "rawEnd": "00:00",
+    "startSlot": 61,
+    "endSlot": 0,
+    "isOptimalTemplate": true,
+    "sourceFile": "weekday_optimal.xlsx",
+    "dayType": "Weekday"
+  },
+  {
+    "id": "GOLDEN-Weekday-Shift 7",
+    "zone": "South",
+    "rawStart": "15:30",
+    "rawEnd": "00:00",
+    "startSlot": 62,
+    "endSlot": 0,
+    "isOptimalTemplate": true,
+    "sourceFile": "weekday_optimal.xlsx",
+    "dayType": "Weekday"
+  },
+  {
+    "id": "GOLDEN-Weekday-Shift 8",
+    "zone": "South",
+    "rawStart": "17:00",
+    "rawEnd": "22:45",
+    "startSlot": 68,
+    "endSlot": 91,
+    "isOptimalTemplate": true,
+    "sourceFile": "weekday_optimal.xlsx",
+    "dayType": "Weekday"
+  },
+  {
+    "id": "GOLDEN-Weekday-Shift 9",
+    "zone": "Floater",
+    "rawStart": "06:00",
+    "rawEnd": "16:00",
+    "startSlot": 24,
+    "endSlot": 64,
+    "isOptimalTemplate": true,
+    "sourceFile": "weekday_optimal.xlsx",
+    "dayType": "Weekday"
+  },
+  {
+    "id": "GOLDEN-Weekday-Shift 10",
+    "zone": "Floater",
+    "rawStart": "06:00",
+    "rawEnd": "12:00",
+    "startSlot": 24,
+    "endSlot": 48,
+    "isOptimalTemplate": true,
+    "sourceFile": "weekday_optimal.xlsx",
+    "dayType": "Weekday"
+  },
+  {
+    "id": "GOLDEN-Weekday-Shift 11",
+    "zone": "Floater",
+    "rawStart": "14:00",
+    "rawEnd": "00:00",
+    "startSlot": 56,
+    "endSlot": 0,
+    "isOptimalTemplate": true,
+    "sourceFile": "weekday_optimal.xlsx",
+    "dayType": "Weekday"
+  },
+  {
+    "id": "GOLDEN-Weekday-Shift 12",
+    "zone": "Floater",
+    "rawStart": "10:30",
+    "rawEnd": "18:45",
+    "startSlot": 42,
+    "endSlot": 75,
+    "isOptimalTemplate": true,
+    "sourceFile": "weekday_optimal.xlsx",
+    "dayType": "Weekday"
+  },
+  {
+    "id": "GOLDEN-Weekday-Shift 13",
+    "zone": "Floater",
+    "rawStart": "18:00",
+    "rawEnd": "22:00",
+    "startSlot": 72,
+    "endSlot": 88,
+    "isOptimalTemplate": true,
+    "sourceFile": "weekday_optimal.xlsx",
+    "dayType": "Weekday"
+  }
+]

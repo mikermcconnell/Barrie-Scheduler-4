@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useMemo } from 'react';
 import {
     Bus,
@@ -22,693 +21,460 @@ import {
     Settings2,
     CalendarPlus,
     Timer,
-    MousePointerClick
+    MousePointerClick,
+    FileText
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { FileUpload } from './FileUpload';
-import { parseScheduleWithGemini, ParsedTable, ParsedTrip } from '../utils/scheduleParser';
+import { parseMasterSchedule, MasterRouteTable, MasterTrip, validateRouteTable } from '../utils/masterScheduleParser';
 import { OTPAnalysis } from './OTPAnalysis';
-
-// --- Types ---
-
-interface Route {
-    id: string;
-    name: string;
-    number: string;
-    frequencyPeak: number; // minutes
-    frequencyOffPeak: number; // minutes
-    busesRequired: number;
-    status: 'active' | 'issue' | 'planning';
-}
-
-interface RouteSummaryMetrics {
-    totalRevenueHours: number; // Hours
-    totalCycleTime: number; // Hours
-    totalRecoveryTime: number; // Hours
-    avgRecoveryRatio: number; // %
-    totalTrips: number;
-}
-
-// --- Utils ---
-const TimeUtils = {
-    // Converts "06:30 AM" or "14:30" to minutes from midnight
-    toMinutes: (timeStr: string): number | null => {
-        if (!timeStr) return null;
-        const normalized = timeStr.toLowerCase().trim();
-
-        // Handle Recovery Minutes (e.g. "5" or "10")
-        if (!normalized.includes(':') && !isNaN(Number(normalized))) {
-            return Number(normalized);
-        }
-
-        let [hours, minutesPart] = normalized.split(':');
-        if (!minutesPart) return null;
-
-        // Clean minutes part (remove non-digits like " PM")
-        let minutes = parseInt(minutesPart.replace(/\D+$/g, ''));
-        let h = parseInt(hours);
-
-        if (normalized.includes('pm') && h !== 12) h += 12;
-        if (normalized.includes('am') && h === 12) h = 0;
-
-        // Handle raw "14:30" without AM/PM
-        if (!normalized.includes('m') && h < 5 && timeStr.includes(':')) {
-            // Heuristic: If it's small number but has colon, might be 24h past midnight or early morning
-        }
-
-        return (h * 60) + minutes;
-    },
-
-    // Converts minutes to "HH:MM AM/PM"
-    fromMinutes: (totalMinutes: number): string => {
-        let h = Math.floor(totalMinutes / 60);
-        const m = totalMinutes % 60;
-        const period = h >= 12 && h < 24 ? 'PM' : 'AM';
-
-        if (h > 12) h -= 12;
-        if (h === 0 || h === 24) h = 12;
-        if (h > 24) h -= 24; // Handle next day spills slightly
-
-        return `${h}:${m.toString().padStart(2, '0')} ${period}`;
-    },
-
-    // Add minutes to a time string
-    addMinutes: (timeStr: string, minutesToAdd: number): string => {
-        const currentMins = TimeUtils.toMinutes(timeStr);
-        if (currentMins === null) return timeStr;
-        return TimeUtils.fromMinutes(currentMins + minutesToAdd);
-    },
-
-    getDifference: (startStr: string, endStr: string): number => {
-        const start = TimeUtils.toMinutes(startStr);
-        const end = TimeUtils.toMinutes(endStr);
-        if (start === null || end === null) return 0;
-        return end - start;
-    }
-};
+import { useAuth } from './AuthContext';
+import { getAllFiles, uploadFile, downloadFileArrayBuffer, SavedFile } from '../utils/dataService';
 
 // --- Sub-Components ---
 
-// 0. Route Summary Dashboard
-const RouteSummary: React.FC<{ table: ParsedTable }> = ({ table }) => {
-    // Calculate Aggregates
-    const stats: RouteSummaryMetrics = useMemo(() => {
+// --- Utils ---
+const TimeUtils = {
+    toMinutes: (timeStr: string): number | null => {
+        if (!timeStr) return null;
+        if (typeof timeStr === 'number') return Math.round(timeStr * 1440);
+        const normalized = String(timeStr).toLowerCase().trim();
+        if (!normalized.includes(':') && !isNaN(Number(normalized))) return Number(normalized);
+        let [hStr, mStr] = normalized.split(':');
+        if (!mStr) return null;
+        let m = parseInt(mStr.replace(/\D+$/g, ''));
+        let h = parseInt(hStr);
+        if (normalized.includes('pm') && h !== 12) h += 12;
+        if (normalized.includes('am') && h === 12) h = 0;
+        return (h * 60) + m;
+    },
+    fromMinutes: (totalMinutes: number): string => {
+        let h = Math.floor(totalMinutes / 60);
+        const m = Math.round(totalMinutes % 60);
+        if (m === 60) { h++; }
+        const period = h >= 12 && h < 24 ? 'PM' : 'AM';
+        if (h > 12) h -= 12;
+        if (h === 0 || h === 24) h = 12;
+        if (h > 24) h -= 24;
+        return `${h}:${(m % 60).toString().padStart(2, '0')} ${period}`;
+    },
+    addMinutes: (timeStr: string, minutes: number): string => {
+        const m = TimeUtils.toMinutes(timeStr);
+        if (m === null) return timeStr;
+        return TimeUtils.fromMinutes(m + minutes);
+    }
+};
+
+// 0. Route Summary (Updated for MasterTable)
+const RouteSummary: React.FC<{ table: MasterRouteTable }> = ({ table }) => {
+    const stats = useMemo(() => {
         let totalCycle = 0;
         let totalRec = 0;
         let totalTravel = 0;
-        let count = 0;
+        let activeTrips = 0;
 
         table.trips.forEach(trip => {
-            let start = null;
-            let end = null;
-            let tripRec = 0;
-
-            table.stops.forEach(stop => {
-                const val = trip.times[stop];
-                if (!val) return;
-                const isRec = stop.toLowerCase().includes('recovery') || stop.toLowerCase().includes('(rec)');
-                if (isRec) {
-                    tripRec += parseInt(val) || 0;
-                } else if (val.includes(':')) {
-                    const m = TimeUtils.toMinutes(val);
-                    if (m !== null) {
-                        if (start === null) start = m;
-                        end = m;
-                    }
-                }
-            });
-
-            if (start !== null && end !== null) {
-                let cycle = end - start;
-                if (cycle < 0) cycle += 1440; // Midnight crossing
-
-                totalCycle += cycle;
-                totalTravel += (cycle - tripRec);
-                totalRec += tripRec;
-                count++;
-            }
+            // Only count "Revenue" trips for metrics? Or all?
+            // "Master Schedule" usually implies all revenue trips.
+            totalCycle += trip.cycleTime || 0;
+            totalRec += trip.recoveryTime || 0;
+            totalTravel += trip.travelTime || 0;
+            activeTrips++;
         });
 
-        return {
-            totalRevenueHours: totalTravel / 60,
-            totalCycleTime: totalCycle / 60,
-            totalRecoveryTime: totalRec / 60,
-            avgRecoveryRatio: count > 0 ? (totalRec / totalCycle) * 100 : 0,
-            totalTrips: count
-        };
+        // Avoid infinite ratio
+        const avgRatio = totalCycle > 0 ? (totalRec / totalCycle) * 100 : 0;
+
+        return { totalCycle, totalRec, totalTravel, activeTrips, avgRatio };
     }, [table]);
 
     return (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-            <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex flex-col items-center justify-center text-center">
-                <div className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-1">Total Trips</div>
-                <div className="text-2xl font-black text-gray-800">{stats.totalTrips}</div>
+            <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm text-center">
+                <div className="text-gray-400 text-xs font-bold uppercase mb-1">Total Trips</div>
+                <div className="text-2xl font-black text-gray-800">{stats.activeTrips}</div>
             </div>
-            <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex flex-col items-center justify-center text-center">
-                <div className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-1">Rev. Hours</div>
-                <div className="text-2xl font-black text-brand-blue">{stats.totalRevenueHours.toFixed(1)}h</div>
+            <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm text-center">
+                <div className="text-gray-400 text-xs font-bold uppercase mb-1">Rev. Hours</div>
+                <div className="text-2xl font-black text-brand-blue">{(stats.totalTravel / 60).toFixed(1)}h</div>
             </div>
-            <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex flex-col items-center justify-center text-center">
-                <div className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-1">Recovery</div>
-                <div className="text-2xl font-black text-orange-500">{stats.totalRecoveryTime.toFixed(1)}h</div>
+            <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm text-center">
+                <div className="text-gray-400 text-xs font-bold uppercase mb-1">Recovery</div>
+                <div className="text-2xl font-black text-orange-500">{(stats.totalRec / 60).toFixed(1)}h</div>
             </div>
-            <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex flex-col items-center justify-center text-center">
-                <div className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-1">Efficiency</div>
-                <div className={`text-2xl font-black ${stats.avgRecoveryRatio > 20 ? 'text-red-500' : 'text-brand-green'}`}>
-                    {stats.avgRecoveryRatio.toFixed(1)}%
+            <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm text-center">
+                <div className="text-gray-400 text-xs font-bold uppercase mb-1">Avg Rec. Ratio</div>
+                <div className={`text-2xl font-black ${stats.avgRatio < 10 ? 'text-red-500' : 'text-brand-green'}`}>
+                    {stats.avgRatio.toFixed(1)}%
                 </div>
             </div>
         </div>
     );
 };
 
-// 1. Tweak Schedule Component (Recreated)
+// 1. Tweak Schedule (Main)
 const TweakSchedule: React.FC = () => {
-    const [activeSheetName, setActiveSheetName] = useState<string | null>(null);
-    const [activeTableIndex, setActiveTableIndex] = useState<number>(0);
-    const [allRoutesData, setAllRoutesData] = useState<Record<string, ParsedTable[]>>({});
-    const [isParsing, setIsParsing] = useState(false);
-    const [parsingProgress, setParsingProgress] = useState<string>("");
+    const { user } = useAuth();
+    const [schedules, setSchedules] = useState<MasterRouteTable[]>([]);
+    const [activeSheetIdx, setActiveSheetIdx] = useState(0);
     const [editorMode, setEditorMode] = useState(false);
-    const [showSheetSelector, setShowSheetSelector] = useState(false);
-    const [detectedSheets, setDetectedSheets] = useState<string[]>([]);
-    const [selectedSheets, setSelectedSheets] = useState<Set<string>>(new Set());
-    const [fileToProcess, setFileToProcess] = useState<File | null>(null);
+    const [isProcessing, setIsProcessing] = useState(false);
+    const [savedFiles, setSavedFiles] = useState<SavedFile[]>([]);
 
-    const processFile = (file: File) => {
-        setFileToProcess(file);
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            const data = new Uint8Array(e.target?.result as ArrayBuffer);
-            const workbook = XLSX.read(data, { type: 'array' });
-            setDetectedSheets(workbook.SheetNames);
-            setShowSheetSelector(true);
-        };
-        reader.readAsArrayBuffer(file);
-    };
+    // Load saved files
+    React.useEffect(() => {
+        if (user) loadSavedFiles();
+    }, [user]);
 
-    const handleStartParsing = async () => {
-        if (!fileToProcess || selectedSheets.size === 0) return;
-
-        setIsParsing(true);
-        setParsingProgress("Reading Excel file...");
-
+    const loadSavedFiles = async () => {
+        if (!user) return;
         try {
-            const reader = new FileReader();
-            reader.onload = async (e) => {
-                const data = new Uint8Array(e.target?.result as ArrayBuffer);
-                const workbook = XLSX.read(data, { type: 'array' });
-
-                const newRoutesData: Record<string, ParsedTable[]> = {};
-
-                for (const sheetName of Array.from(selectedSheets)) {
-                    setParsingProgress(`Analyzing route: ${sheetName}...`);
-                    const worksheet = workbook.Sheets[sheetName];
-                    const csv = XLSX.utils.sheet_to_csv(worksheet);
-
-                    const tables = await parseScheduleWithGemini(csv);
-                    newRoutesData[sheetName] = tables;
-                }
-
-                setAllRoutesData(newRoutesData);
-                setActiveSheetName(Array.from(selectedSheets)[0]);
-                setEditorMode(true);
-                setIsParsing(false);
-            };
-            reader.readAsArrayBuffer(fileToProcess);
+            const files = await getAllFiles(user.uid);
+            setSavedFiles(files.filter(f => f.type === 'schedule_master'));
         } catch (error) {
-            console.error("Parsing failed", error);
-            setIsParsing(false);
-            alert("Failed to parse schedule. Please check the file format.");
+            console.error("Failed to load saved files:", error);
         }
     };
 
-    const handleSmartAddTrip = () => {
-        if (!activeSheetName) return;
-        const currentTable = allRoutesData[activeSheetName][activeTableIndex];
-        if (!currentTable) return;
+    // File Upload Handler with Prompt
+    const handleFile = async (file: File) => {
+        if (!user) {
+            alert("Please sign in to save and manage schedules.");
+            return;
+        }
 
-        // 1. Find Earliest Available Block
-        const blockAvailability: Record<string, number> = {};
-        const lastTripForBlock: Record<string, ParsedTrip> = {};
+        const defaultName = file.name.replace('.xlsx', '');
+        const name = window.prompt("Enter a name for this Master Schedule (e.g., 'August 2025'):", defaultName);
+        if (!name) return;
 
-        currentTable.trips.forEach(trip => {
-            let lastTimeMins = 0;
-            currentTable.stops.forEach(stop => {
-                const time = trip.times[stop];
-                const m = TimeUtils.toMinutes(time);
-                if (m) lastTimeMins = m;
+        setIsProcessing(true);
+        try {
+            // Upload with custom name by renaming file
+            const renamedFile = new File([file], name + ".xlsx", { type: file.type });
+            await uploadFile(user.uid, renamedFile, 'schedule_master');
+            await loadSavedFiles();
+
+            // Parse
+            const buffer = await file.arrayBuffer();
+            const tables = parseMasterSchedule(buffer);
+            setSchedules(tables);
+
+            if (tables.length > 0) {
+                setEditorMode(true);
+                setActiveSheetIdx(0);
+            } else {
+                alert("No valid numeric sheets found (e.g. '400', '8').");
+            }
+        } catch (err) {
+            console.error(err);
+            alert("Failed to process file.");
+        }
+        setIsProcessing(false);
+    };
+
+    const handleLoadSavedFile = async (file: SavedFile) => {
+        setIsProcessing(true);
+        try {
+            const buffer = await downloadFileArrayBuffer(file.downloadUrl);
+            const tables = parseMasterSchedule(buffer);
+            setSchedules(tables);
+
+            if (tables.length > 0) {
+                setEditorMode(true);
+                setActiveSheetIdx(0);
+            } else {
+                alert("No valid numeric sheets found in saved file.");
+            }
+        } catch (err) {
+            console.error(err);
+            alert("Failed to load saved file.");
+        }
+        setIsProcessing(false);
+    };
+
+    const recalculateTrip = (trip: MasterTrip, cols: string[]) => {
+        let start: number | null = null;
+        let end: number | null = null;
+
+        // Scan stops to find min/max
+        cols.forEach(col => {
+            const val = trip.stops[col];
+            if (!val) return;
+            const m = TimeUtils.toMinutes(val);
+            if (m !== null) {
+                if (start === null || m < start) start = m; // Logic: First stop is start? Or min? usually first.
+                // Actually bus times always increase. First valid time is start.
+                // We should iterate in order.
+            }
+        });
+
+        // Re-scan in order to be safe
+        start = null;
+        end = null;
+        cols.forEach(col => {
+            const m = TimeUtils.toMinutes(trip.stops[col]);
+            if (m !== null) {
+                if (start === null) start = m;
+                end = m;
+            }
+        });
+
+        if (start !== null && end !== null) {
+            trip.startTime = start;
+            trip.endTime = end;
+            trip.travelTime = end - start;
+            trip.cycleTime = trip.travelTime + trip.recoveryTime;
+        }
+    };
+
+    const handleCellEdit = (tripId: string, col: string, val: string) => {
+        const newScheds = [...schedules];
+        const table = newScheds[activeSheetIdx];
+        const trip = table.trips.find(t => t.id === tripId);
+
+        if (!trip) return;
+
+        // 1. Update Cell
+        const oldEndTime = trip.endTime;
+        trip.stops[col] = val;
+
+        // 2. Recalculate this trip's times
+        recalculateTrip(trip, table.stops);
+
+        const newEndTime = trip.endTime;
+        const delta = newEndTime - oldEndTime;
+
+        // 3. Ripple if End Time changed
+        if (delta !== 0) {
+            // Find subsequent trips in block
+            const blockTrips = table.trips.filter(t => t.blockId === trip.blockId).sort((a, b) => a.tripNumber - b.tripNumber);
+            const startIdx = blockTrips.findIndex(t => t.id === trip.id);
+
+            if (startIdx !== -1) {
+                for (let i = startIdx + 1; i < blockTrips.length; i++) {
+                    const nextTrip = blockTrips[i];
+
+                    // Shift entire trip by delta
+                    table.stops.forEach(s => {
+                        const t = nextTrip.stops[s];
+                        if (t) {
+                            nextTrip.stops[s] = TimeUtils.addMinutes(t, delta);
+                        }
+                    });
+
+                    recalculateTrip(nextTrip, table.stops);
+                    // Cycle continues automatically because we updated stops -> recalculated metrics
+                }
+            }
+        }
+
+        // 4. Validate Table (Safety Check)
+        validateRouteTable(table);
+
+        setSchedules(newScheds);
+    };
+
+    const handleExport = () => {
+        if (schedules.length === 0) return;
+        const wb = XLSX.utils.book_new();
+
+        schedules.forEach(table => {
+            const wsData: (string | number)[][] = [];
+
+            // Header: Block | Dir | Start Time | ... | End Time | Recovery
+            const header = ['Block', 'Dir', ...table.stops, 'Recovery'];
+            wsData.push(header);
+
+            table.trips.forEach(trip => {
+                const row = [
+                    trip.blockId,
+                    trip.direction,
+                    ...table.stops.map(s => trip.stops[s] || ''),
+                    trip.recoveryTime
+                ];
+                wsData.push(row);
             });
 
-            if (lastTimeMins > (blockAvailability[trip.block] || 0)) {
-                blockAvailability[trip.block] = lastTimeMins;
-                lastTripForBlock[trip.block] = trip;
-            }
+            const ws = XLSX.utils.aoa_to_sheet(wsData);
+            XLSX.utils.book_append_sheet(wb, ws, table.routeName);
         });
 
-        let bestBlock = Object.keys(blockAvailability).sort((a, b) => blockAvailability[a] - blockAvailability[b])[0];
-        if (!bestBlock) bestBlock = "1";
-
-        const prevTrip = lastTripForBlock[bestBlock];
-        const availableAt = blockAvailability[bestBlock] || (8 * 60); // Default 8am
-
-        // 2. Create New Trip (Start 5 mins after previous arrival)
-        const startMins = availableAt + 5;
-        const newTimes: Record<string, string> = {};
-        let runningMins = startMins;
-
-        currentTable.stops.forEach((stop, idx) => {
-            let duration = 0;
-            if (prevTrip && idx > 0) {
-                const prevStop = currentTable.stops[idx - 1];
-                const t1 = TimeUtils.toMinutes(prevTrip.times[prevStop]);
-                const t2 = TimeUtils.toMinutes(prevTrip.times[stop]);
-
-                const isRec = stop.includes('(Recovery)');
-                if (isRec) {
-                    duration = parseInt(prevTrip.times[stop]) || 0;
-                    newTimes[stop] = duration.toString();
-                    return;
-                } else if (stop.includes('(Dep)') && idx > 0) {
-                    const recStop = currentTable.stops[idx - 1];
-                    if (recStop.includes('(Recovery)')) {
-                        const recTime = parseInt(newTimes[recStop] || "0");
-                        runningMins += recTime;
-                    }
-                } else if (t1 !== null && t2 !== null) {
-                    duration = t2 - t1;
-                }
-            }
-
-            if (!stop.includes('(Recovery)')) {
-                if (duration > 0) runningMins += duration;
-                newTimes[stop] = TimeUtils.fromMinutes(runningMins);
-            }
-        });
-
-        const newTrip: ParsedTrip = {
-            tripId: `new-trip-${Date.now()}`,
-            block: bestBlock,
-            tripName: TimeUtils.fromMinutes(startMins),
-            times: newTimes
-        };
-
-        const updatedRoutes = { ...allRoutesData };
-        updatedRoutes[activeSheetName][activeTableIndex].trips.push(newTrip);
-        setAllRoutesData(updatedRoutes);
+        XLSX.writeFile(wb, "Modified_Master_Schedule.xlsx");
     };
-
-    const handleCellEdit = (tripId: string, stop: string, newValue: string) => {
-        if (!activeSheetName) return;
-        const routes = { ...allRoutesData };
-        const table = routes[activeSheetName][activeTableIndex];
-        const tripIndex = table.trips.findIndex(t => t.tripId === tripId);
-        if (tripIndex === -1) return;
-
-        const trip = table.trips[tripIndex];
-        const oldValue = trip.times[stop];
-
-        trip.times[stop] = newValue;
-
-        // Cascading Update Logic
-        const oldMins = TimeUtils.toMinutes(oldValue);
-        const newMins = TimeUtils.toMinutes(newValue);
-
-        if (oldMins !== null && newMins !== null) {
-            const delta = newMins - oldMins;
-            if (delta !== 0) {
-                let startShifting = false;
-                table.stops.forEach(s => {
-                    if (s === stop) {
-                        startShifting = true;
-                        return;
-                    }
-                    if (startShifting) {
-                        const isRec = s.includes('(Recovery)');
-                        if (!isRec) {
-                            trip.times[s] = TimeUtils.addMinutes(trip.times[s], delta);
-                        }
-                    }
-                });
-
-                const blockId = trip.block;
-                table.trips.forEach((t, idx) => {
-                    if (idx > tripIndex && t.block === blockId) {
-                        table.stops.forEach(s => {
-                            const isRec = s.includes('(Recovery)');
-                            if (!isRec) {
-                                t.times[s] = TimeUtils.addMinutes(t.times[s], delta);
-                            }
-                        });
-                        t.tripName = TimeUtils.addMinutes(t.tripName, delta);
-                    }
-                });
-            }
-        }
-        setAllRoutesData(routes);
-    };
-
-    const handleDeleteTrip = (tripId: string) => {
-        if (!activeSheetName) return;
-        const routes = { ...allRoutesData };
-        const table = routes[activeSheetName][activeTableIndex];
-        table.trips = table.trips.filter(t => t.tripId !== tripId);
-        setAllRoutesData(routes);
-    };
-
-    const calculateTripMetrics = (trip: ParsedTrip, stops: string[]) => {
-        let startTime: number | null = null;
-        let endTime: number | null = null;
-        let recoveryMins = 0;
-
-        stops.forEach(stop => {
-            const val = trip.times[stop];
-            if (!val) return;
-
-            if (stop.includes('(Recovery)')) {
-                recoveryMins += parseInt(val) || 0;
-            } else {
-                const m = TimeUtils.toMinutes(val);
-                if (m !== null) {
-                    if (startTime === null) startTime = m;
-                    endTime = m;
-                }
-            }
-        });
-
-        if (startTime !== null && endTime !== null) {
-            let cycle = endTime - startTime;
-            if (cycle < 0) cycle += 1440;
-            const travel = cycle - recoveryMins;
-            const ratio = cycle > 0 ? (recoveryMins / cycle) * 100 : 0;
-            return { travel, cycle, recovery: recoveryMins, ratio };
-        }
-        return { travel: 0, cycle: 0, recovery: 0, ratio: 0 };
-    };
-
-    if (isParsing) {
-        return (
-            <div className="flex flex-col items-center justify-center h-96 space-y-6 animate-in fade-in duration-500">
-                <div className="relative">
-                    <div className="w-24 h-24 border-8 border-gray-100 rounded-full"></div>
-                    <div className="w-24 h-24 border-8 border-brand-green border-t-transparent rounded-full animate-spin absolute top-0 left-0"></div>
-                    <div className="absolute inset-0 flex items-center justify-center text-brand-green">
-                        <Sparkles size={32} />
-                    </div>
-                </div>
-                <div className="text-center space-y-2">
-                    <h3 className="text-2xl font-extrabold text-gray-800">Digitizing Schedule</h3>
-                    <p className="text-gray-500 font-bold">{parsingProgress || "Gemini AI is analyzing the spreadsheet structure..."}</p>
-                </div>
-            </div>
-        );
-    }
 
     if (!editorMode) {
         return (
-            <div className="max-w-2xl mx-auto mt-10">
-                <div className="text-center mb-8">
-                    <h2 className="text-3xl font-extrabold text-gray-800">Tweak Schedule</h2>
-                    <p className="text-gray-500 font-bold mt-2">Upload a Master Schedule Excel file to begin.</p>
+            <div className="max-w-4xl mx-auto mt-12 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                <div className="text-center mb-10">
+                    <h2 className="text-4xl font-extrabold text-gray-800 mb-3">Master Schedule Management</h2>
+                    <p className="text-gray-500 font-medium text-lg">Upload a new master schedule or load a previous version to begin tweaking.</p>
                 </div>
 
-                {!showSheetSelector ? (
-                    <FileUpload onFileUpload={processFile} />
-                ) : (
-                    <div className="bg-white p-8 rounded-3xl border-2 border-gray-200 shadow-xl">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
+                    {/* Upload Column */}
+                    <div className="bg-white p-8 rounded-3xl border-2 border-dashed border-gray-200 hover:border-brand-green transition-colors">
+                        <div className="mb-6 text-center">
+                            <div className="bg-green-50 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 text-brand-green">
+                                <Plus size={32} />
+                            </div>
+                            <h3 className="text-xl font-bold text-gray-800">Upload New</h3>
+                            <p className="text-sm text-gray-400 mt-1">Parses .xlsx Master Files</p>
+                        </div>
+
+                        {isProcessing ? (
+                            <div className="flex flex-col items-center animate-pulse py-12">
+                                <Loader2 className="animate-spin text-brand-green mb-4" size={48} />
+                                <h2 className="text-xl font-bold text-gray-700">Processing Schedule...</h2>
+                            </div>
+                        ) : (
+                            <FileUpload
+                                onFileUpload={handleFile}
+                                title="Drop Master Schedule"
+                                subtitle="Supports .xlsx only"
+                                accept=".xlsx"
+                                allowMultiple={false}
+                            />
+                        )}
+                    </div>
+
+                    {/* Saved Files Column */}
+                    <div className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm h-full max-h-[500px] flex flex-col">
                         <div className="flex items-center gap-3 mb-6">
-                            <FileSpreadsheet className="text-brand-green" size={32} />
+                            <div className="bg-blue-50 w-12 h-12 rounded-xl flex items-center justify-center text-brand-blue">
+                                <FileSpreadsheet size={24} />
+                            </div>
                             <div>
-                                <h3 className="text-xl font-extrabold text-gray-800">Select Routes</h3>
-                                <p className="text-gray-500 text-sm font-bold">Which sheets do you want to import?</p>
+                                <h3 className="text-xl font-bold text-gray-800">Saved Schedules</h3>
+                                <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Cloud Storage</p>
                             </div>
                         </div>
 
-                        <div className="max-h-60 overflow-y-auto mb-6 pr-2 custom-scrollbar space-y-2">
-                            {/* Routes (Numeric Sheets) */}
-                            {detectedSheets.filter(s => !isNaN(Number(s))).length > 0 && (
-                                <div className="mb-4">
-                                    <h4 className="text-xs font-extrabold text-gray-400 uppercase tracking-wider mb-2">Routes</h4>
-                                    <div className="grid grid-cols-3 gap-2">
-                                        {detectedSheets.filter(s => !isNaN(Number(s))).map(sheet => (
-                                            <div
-                                                key={sheet}
-                                                onClick={() => {
-                                                    const newSet = new Set(selectedSheets);
-                                                    if (newSet.has(sheet)) newSet.delete(sheet);
-                                                    else newSet.add(sheet);
-                                                    setSelectedSheets(newSet);
-                                                }}
-                                                className={`
-                                                p-2 rounded-lg border-2 cursor-pointer flex items-center justify-center transition-all text-center
-                                                ${selectedSheets.has(sheet) ? 'bg-green-50 border-brand-green text-brand-green' : 'bg-gray-50 border-gray-100 text-gray-500 hover:border-gray-300'}
-                                            `}
-                                            >
-                                                <span className="font-black text-lg">{sheet}</span>
-                                                {selectedSheets.has(sheet) && <div className="absolute top-1 right-1"><CheckCircle2 size={12} /></div>}
-                                            </div>
-                                        ))}
+                        <div className="flex-grow overflow-y-auto custom-scrollbar space-y-3 pr-2">
+                            {user ? (
+                                savedFiles.length === 0 ? (
+                                    <div className="text-center py-10 text-gray-400">
+                                        <p className="text-sm">No saved schedules found.</p>
                                     </div>
-                                </div>
-                            )}
-
-                            {/* Other Sheets */}
-                            {detectedSheets.filter(s => isNaN(Number(s))).length > 0 && (
-                                <div>
-                                    <h4 className="text-xs font-extrabold text-gray-400 uppercase tracking-wider mb-2">Other Sheets</h4>
-                                    <div className="space-y-2">
-                                        {detectedSheets.filter(s => isNaN(Number(s))).map(sheet => (
-                                            <div
-                                                key={sheet}
-                                                onClick={() => {
-                                                    const newSet = new Set(selectedSheets);
-                                                    if (newSet.has(sheet)) newSet.delete(sheet);
-                                                    else newSet.add(sheet);
-                                                    setSelectedSheets(newSet);
-                                                }}
-                                                className={`
-                                                p-3 rounded-xl border-2 cursor-pointer flex items-center justify-between transition-all
-                                                ${selectedSheets.has(sheet) ? 'bg-green-50 border-brand-green text-brand-green' : 'bg-gray-50 border-gray-100 text-gray-500 hover:border-gray-300'}
-                                            `}
-                                            >
-                                                <span className="font-bold">{sheet}</span>
-                                                {selectedSheets.has(sheet) && <CheckCircle2 size={20} />}
+                                ) : (
+                                    savedFiles.map(file => (
+                                        <button
+                                            key={file.id}
+                                            onClick={() => handleLoadSavedFile(file)}
+                                            disabled={isProcessing}
+                                            className="w-full text-left p-4 rounded-xl border border-gray-100 hover:border-brand-blue hover:bg-blue-50 transition-all group"
+                                        >
+                                            <div className="flex justify-between items-start mb-1">
+                                                <h4 className="font-bold text-gray-700 group-hover:text-brand-blue">{file.name}</h4>
+                                                <span className="text-[10px] font-bold bg-gray-100 text-gray-500 px-2 py-1 rounded-full uppercase">
+                                                    {(file.size / 1024).toFixed(0)} KB
+                                                </span>
                                             </div>
-                                        ))}
-                                    </div>
+                                            <div className="flex items-center gap-2 text-xs text-gray-400 font-medium">
+                                                <CalendarPlus size={12} />
+                                                <span>{new Date(file.uploadedAt).toLocaleDateString()}</span>
+                                                <span className="text-gray-300">•</span>
+                                                <span>{new Date(file.uploadedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                            </div>
+                                        </button>
+                                    ))
+                                )
+                            ) : (
+                                <div className="text-center py-10 bg-gray-50 rounded-xl border-dashed border-2 border-gray-200">
+                                    <p className="text-sm font-bold text-gray-500 mb-2">Sign in to view saved schedules.</p>
                                 </div>
                             )}
                         </div>
-
-                        <div className="flex gap-2 mb-4">
-                            <button
-                                onClick={() => setSelectedSheets(new Set(detectedSheets))}
-                                className="flex-1 py-2 rounded-xl font-bold text-xs text-gray-500 bg-gray-50 hover:bg-gray-100 transition-colors border border-gray-200 flex items-center justify-center gap-2"
-                            >
-                                <Check size={14} /> Select All
-                            </button>
-                            <button
-                                onClick={() => setSelectedSheets(new Set())}
-                                className="flex-1 py-2 rounded-xl font-bold text-xs text-gray-500 bg-gray-50 hover:bg-gray-100 transition-colors border border-gray-200 flex items-center justify-center gap-2"
-                            >
-                                <XCircle size={14} /> Deselect All
-                            </button>
-                        </div>
-
-                        <button
-                            onClick={handleStartParsing}
-                            disabled={selectedSheets.size === 0}
-                            className={`
-                            w-full py-3 rounded-xl font-extrabold text-white flex items-center justify-center gap-2
-                            ${selectedSheets.size === 0 ? 'bg-gray-300 cursor-not-allowed' : 'bg-brand-green btn-bouncy'}
-                        `}
-                        >
-                            Import {selectedSheets.size} Routes <ArrowRight size={18} />
-                        </button>
                     </div>
-                )}
+                </div>
             </div>
         );
     }
 
-    const activeTable = allRoutesData[activeSheetName || '']?.[activeTableIndex];
+    const table = schedules[activeSheetIdx];
 
     return (
-        <div className="h-full flex flex-col animate-in fade-in duration-500">
-            {/* Header & Controls */}
-            <div className="flex justify-between items-start mb-6">
-                <div>
-                    <div className="flex items-center gap-2 mb-2">
-                        <button onClick={() => setEditorMode(false)} className="text-gray-400 hover:text-gray-600 transition-colors">
-                            <ArrowLeft size={24} />
-                        </button>
-                        <h2 className="text-3xl font-extrabold text-gray-800">
-                            {activeSheetName}
-                            {activeTable && <span className="text-gray-400 text-xl ml-2 font-bold">/ {activeTable.tableName}</span>}
-                        </h2>
-                    </div>
-                    <div className="flex gap-2">
-                        {Object.keys(allRoutesData).map(sheet => (
-                            <button
-                                key={sheet}
-                                onClick={() => { setActiveSheetName(sheet); setActiveTableIndex(0); }}
-                                className={`px-3 py-1 rounded-lg text-sm font-bold transition-all ${activeSheetName === sheet ? 'bg-gray-800 text-white' : 'bg-white text-gray-500 hover:bg-gray-100'}`}
-                            >
-                                {sheet}
-                            </button>
-                        ))}
-                    </div>
-                </div>
-
-                <div className="flex gap-2">
-                    <button
-                        onClick={handleSmartAddTrip}
-                        className="btn-bouncy bg-brand-blue text-white px-4 py-2 rounded-xl font-bold border-b-4 border-blue-600 flex items-center gap-2"
-                    >
-                        <Zap size={18} /> Smart Add Trip
+        <div className="h-full flex flex-col animate-in fade-in">
+            {/* Header */}
+            <div className="flex justify-between items-center mb-6">
+                <div className="flex items-center gap-4">
+                    <button onClick={() => setEditorMode(false)} className="bg-gray-100 p-2 rounded-full hover:bg-gray-200">
+                        <ArrowLeft size={20} /> Back to Upload
                     </button>
-                    <button className="btn-bouncy bg-white text-gray-600 px-4 py-2 rounded-xl font-bold border-b-4 border-gray-200 flex items-center gap-2 hover:bg-gray-50">
-                        <Download size={18} /> Export
-                    </button>
-                </div>
-            </div>
-
-            {activeTable && (
-                <>
-                    <RouteSummary table={activeTable} />
-
-                    {/* Sub-Tabs for Directions (North/South) */}
-                    {allRoutesData[activeSheetName!].length > 1 && (
-                        <div className="flex border-b border-gray-200 mb-4">
-                            {allRoutesData[activeSheetName!].map((table, idx) => (
+                    <div>
+                        <h2 className="text-2xl font-extrabold text-gray-800">Route {table.routeName}</h2>
+                        <div className="flex gap-2 mt-1">
+                            {schedules.map((s, i) => (
                                 <button
-                                    key={idx}
-                                    onClick={() => setActiveTableIndex(idx)}
-                                    className={`px-6 py-3 font-bold text-sm border-b-2 transition-colors ${idx === activeTableIndex ? 'border-brand-green text-brand-green' : 'border-transparent text-gray-400 hover:text-gray-600'}`}
+                                    key={s.routeName}
+                                    onClick={() => setActiveSheetIdx(i)}
+                                    className={`text-xs font-bold px-2 py-1 rounded ${i === activeSheetIdx ? 'bg-black text-white' : 'bg-gray-100 text-gray-500'}`}
                                 >
-                                    {table.tableName}
+                                    {s.routeName}
                                 </button>
                             ))}
                         </div>
-                    )}
-
-                    {/* Spreadsheet Grid */}
-                    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden flex flex-col flex-grow relative">
-                        <div className="overflow-auto custom-scrollbar flex-grow">
-                            <table className="w-full text-left border-collapse">
-                                <thead className="bg-gray-50 sticky top-0 z-10 shadow-sm">
-                                    <tr>
-                                        <th className="p-4 border-b border-r border-gray-200 min-w-[200px] bg-gray-50 sticky left-0 z-20 font-extrabold text-gray-600 text-xs uppercase tracking-wider">
-                                            Stop
-                                        </th>
-                                        {activeTable.trips.map(trip => (
-                                            <th key={trip.tripId} className="p-2 border-b border-gray-200 min-w-[100px] text-center group relative">
-                                                {/* Block Header */}
-                                                <div className="text-[10px] font-bold text-gray-400 uppercase mb-1">
-                                                    Block {trip.block}
-                                                </div>
-                                                <div className="font-extrabold text-gray-800">{trip.tripName}</div>
-
-                                                {/* Column Actions */}
-                                                <button
-                                                    onClick={() => handleDeleteTrip(trip.tripId)}
-                                                    className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-500 transition-all"
-                                                >
-                                                    <Trash2 size={14} />
-                                                </button>
-                                            </th>
-                                        ))}
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {activeTable.stops.map((stop, rIdx) => {
-                                        const isRecovery = stop.toLowerCase().includes('(recovery)');
-
-                                        return (
-                                            <tr key={rIdx} className={`hover:bg-blue-50 transition-colors ${isRecovery ? 'bg-orange-50/30' : ''}`}>
-                                                <td className={`p-3 border-b border-r border-gray-200 bg-white sticky left-0 z-10 font-bold text-sm text-gray-700 ${isRecovery ? 'text-orange-600' : ''}`}>
-                                                    {stop}
-                                                </td>
-                                                {activeTable.trips.map(trip => (
-                                                    <td key={`${trip.tripId}-${rIdx}`} className="p-0 border-b border-gray-100 border-r text-center relative">
-                                                        <input
-                                                            type="text"
-                                                            className={`
-                                                            w-full h-full p-3 text-center text-sm font-semibold focus:outline-none focus:bg-blue-100 transition-colors
-                                                            ${isRecovery ? 'text-orange-600 font-extrabold' : 'text-gray-800'}
-                                                        `}
-                                                            value={trip.times[stop] || ''}
-                                                            onChange={(e) => handleCellEdit(trip.tripId, stop, e.target.value)}
-                                                        />
-                                                    </td>
-                                                ))}
-                                            </tr>
-                                        );
-                                    })}
-
-                                    {/* --- CALCULATED METRICS FOOTER --- */}
-                                    <tr className="bg-gray-100 border-t-4 border-gray-200">
-                                        <td className="p-3 border-r border-gray-200 bg-gray-100 sticky left-0 z-10 font-extrabold text-xs text-gray-500 uppercase tracking-wider">
-                                            Travel Time (min)
-                                        </td>
-                                        {activeTable.trips.map(trip => {
-                                            const m = calculateTripMetrics(trip, activeTable.stops);
-                                            return (
-                                                <td key={`travel-${trip.tripId}`} className="p-3 border-r border-gray-200 text-center font-bold text-sm text-gray-700">
-                                                    {m.travel}
-                                                </td>
-                                            );
-                                        })}
-                                    </tr>
-                                    <tr className="bg-gray-100">
-                                        <td className="p-3 border-r border-gray-200 bg-gray-100 sticky left-0 z-10 font-extrabold text-xs text-gray-500 uppercase tracking-wider">
-                                            Recovery Time (min)
-                                        </td>
-                                        {activeTable.trips.map(trip => {
-                                            const m = calculateTripMetrics(trip, activeTable.stops);
-                                            return (
-                                                <td key={`rec-${trip.tripId}`} className="p-3 border-r border-gray-200 text-center font-bold text-sm text-orange-600">
-                                                    {m.recovery}
-                                                </td>
-                                            );
-                                        })}
-                                    </tr>
-                                    <tr className="bg-gray-100">
-                                        <td className="p-3 border-r border-gray-200 bg-gray-100 sticky left-0 z-10 font-extrabold text-xs text-gray-500 uppercase tracking-wider">
-                                            Cycle Time (min)
-                                        </td>
-                                        {activeTable.trips.map(trip => {
-                                            const m = calculateTripMetrics(trip, activeTable.stops);
-                                            return (
-                                                <td key={`cycle-${trip.tripId}`} className="p-3 border-r border-gray-200 text-center font-extrabold text-sm text-gray-800">
-                                                    {m.cycle}
-                                                </td>
-                                            );
-                                        })}
-                                    </tr>
-                                    <tr className="bg-gray-100 border-b border-gray-200">
-                                        <td className="p-3 border-r border-gray-200 bg-gray-100 sticky left-0 z-10 font-extrabold text-xs text-gray-500 uppercase tracking-wider">
-                                            Recovery Ratio
-                                        </td>
-                                        {activeTable.trips.map(trip => {
-                                            const m = calculateTripMetrics(trip, activeTable.stops);
-                                            let colorClass = "text-brand-green";
-                                            if (m.ratio < 10) colorClass = "text-brand-red";
-                                            else if (m.ratio > 20) colorClass = "text-brand-yellow";
-
-                                            return (
-                                                <td key={`ratio-${trip.tripId}`} className={`p-3 border-r border-gray-200 text-center font-black text-sm ${colorClass}`}>
-                                                    {m.ratio.toFixed(0)}%
-                                                </td>
-                                            );
-                                        })}
-                                    </tr>
-                                </tbody>
-                            </table>
-                        </div>
                     </div>
-                </>
-            )}
+                </div>
+
+                <button
+                    onClick={handleExport}
+                    className="flex items-center gap-2 bg-brand-green text-white px-4 py-2 rounded-xl font-bold shadow-lg shadow-green-900/10 hover:shadow-xl transition-all active:scale-95"
+                >
+                    <Download size={18} /> Export Excel
+                </button>
+            </div>
+
+            <RouteSummary table={table} />
+
+            {/* Grid */}
+            <div className="bg-white border border-gray-200 rounded-2xl shadow-sm flex-grow overflow-hidden flex flex-col">
+                <div className="overflow-auto custom-scrollbar flex-grow">
+                    <table className="w-full text-left border-collapse relative">
+                        <thead className="sticky top-0 z-20 shadow-sm">
+                            <tr className="bg-gray-50 text-gray-500 text-xs font-extrabold uppercase tracking-wider">
+                                <th className="p-3 border-b sticky left-0 bg-gray-50 z-30 min-w-[80px]">Block</th>
+                                <th className="p-3 border-b min-w-[80px]">Dir</th>
+                                {table.stops.map(stop => (
+                                    <th key={stop} className="p-3 border-b min-w-[100px] whitespace-nowrap">{stop}</th>
+                                ))}
+                                <th className="p-3 border-b text-center bg-orange-50 text-orange-600">Recovery</th>
+                                <th className="p-3 border-b text-center bg-blue-50 text-blue-600">Cycle</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                            {table.trips.map(trip => (
+                                <tr key={trip.id} className={`hover:bg-blue-50/50 transition-colors group ${trip.isOverlap ? 'bg-red-50' : ''}`}>
+                                    <td className={`p-3 sticky left-0 group-hover:bg-blue-50/50 z-10 font-black ${trip.isOverlap ? 'bg-red-50 text-red-600' : 'bg-white text-gray-700'}`}>
+                                        {trip.blockId}
+                                        {trip.isOverlap && <AlertCircle size={14} className="inline ml-1 text-red-500" />}
+                                    </td>
+                                    <td className="p-3 font-bold text-gray-400 text-xs">
+                                        <span className={`px-2 py-1 rounded-full ${trip.direction === 'North' ? 'bg-blue-100 text-blue-600' : 'bg-purple-100 text-purple-600'}`}>
+                                            {trip.direction}
+                                        </span>
+                                    </td>
+                                    {table.stops.map(stop => (
+                                        <td key={stop} className="p-3 relative">
+                                            <input
+                                                type="text"
+                                                value={trip.stops[stop] || ''}
+                                                onChange={(e) => handleCellEdit(trip.id, stop, e.target.value)}
+                                                className="w-full bg-transparent font-medium text-gray-700 text-sm focus:outline-none focus:text-brand-blue focus:font-bold"
+                                            />
+                                        </td>
+                                    ))}
+                                    <td className={`p-3 font-bold text-center ${trip.recoveryTime < 0 ? 'bg-red-100 text-red-600' : (trip.isTightRecovery ? 'bg-orange-100 text-orange-600' : 'text-orange-500')}`}>
+                                        {trip.recoveryTime}
+                                    </td>
+                                    <td className="p-3 font-bold text-center text-blue-500 border-l border-dashed border-gray-100">
+                                        {trip.cycleTime}
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
         </div>
     );
 };

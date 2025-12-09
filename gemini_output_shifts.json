@@ -1,0 +1,74 @@
+[
+  {
+    "id": "ai-shift-0-1765207567405",
+    "driverName": "North_1",
+    "zone": "North",
+    "startSlot": 20,
+    "endSlot": 50,
+    "breakStartSlot": 999,
+    "breakDurationSlots": 3
+  },
+  {
+    "id": "ai-shift-1-1765207567405",
+    "driverName": "North_2",
+    "zone": "North",
+    "startSlot": 20,
+    "endSlot": 50,
+    "breakStartSlot": 999,
+    "breakDurationSlots": 3
+  },
+  {
+    "id": "ai-shift-2-1765207567405",
+    "driverName": "South_1",
+    "zone": "South",
+    "startSlot": 20,
+    "endSlot": 60,
+    "breakStartSlot": 999,
+    "breakDurationSlots": 3
+  },
+  {
+    "id": "ai-shift-3-1765207567405",
+    "driverName": "South_2",
+    "zone": "South",
+    "startSlot": 20,
+    "endSlot": 60,
+    "breakStartSlot": 999,
+    "breakDurationSlots": 3
+  },
+  {
+    "id": "ai-shift-4-1765207567405",
+    "driverName": "South_3",
+    "zone": "South",
+    "startSlot": 20,
+    "endSlot": 60,
+    "breakStartSlot": 999,
+    "breakDurationSlots": 3
+  },
+  {
+    "id": "ai-shift-5-1765207567405",
+    "driverName": "South_4",
+    "zone": "South",
+    "startSlot": 20,
+    "endSlot": 60,
+    "breakStartSlot": 999,
+    "breakDurationSlots": 3
+  },
+  {
+    "id": "ai-shift-6-1765207567405",
+    "driverName": "South_5",
+    "zone": "South",
+    "startSlot": 20,
+    "endSlot": 60,
+    "breakStartSlot": 999,
+    "breakDurationSlots": 3
+  },
+  {
+    "id": "ai-shift-7-1765207567405",
+    "driverName": "South_6",
+    "zone": "South",
+    "startSlot": 20,
+    "endSlot": 60,
+    "breakStartSlot": 999,
+    "breakDurationSlots": 3
+  }
+]

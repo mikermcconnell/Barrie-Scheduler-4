@@ -85,7 +85,19 @@ export const OnDemandWorkspace: React.FC = () => {
             const aiShifts = await optimizeScheduleWithGemini(requirements, 'full');
 
             if (aiShifts.length > 0) {
-                setShifts(aiShifts);
+                // Fix: State Persistence Bug
+                // We must update BOTH 'shifts' (view) and 'allShifts' (master storage)
+                // Also, we must tag these new shifts with the current dayType
+                const taggedShifts = aiShifts.map(s => ({ ...s, dayType: selectedDayType }));
+
+                setShifts(taggedShifts);
+
+                setAllShifts(prev => {
+                    // Remove old shifts for this day, keep others (e.g. Saturday)
+                    const others = prev.filter(s => s.dayType !== selectedDayType);
+                    return [...others, ...taggedShifts];
+                });
+
                 setIsOptimized(true);
             } else {
                 console.warn("Gemini API returned no shifts.");
@@ -127,7 +139,16 @@ export const OnDemandWorkspace: React.FC = () => {
     };
 
     const applyRefinements = (finalShifts: Shift[]) => {
-        setShifts(finalShifts);
+        // Fix: State Persistence Bug
+        const taggedShifts = finalShifts.map(s => ({ ...s, dayType: selectedDayType }));
+
+        setShifts(taggedShifts);
+
+        setAllShifts(prev => {
+            const others = prev.filter(s => s.dayType !== selectedDayType);
+            return [...others, ...taggedShifts];
+        });
+
         setReviewModalData(null);
         setIsOptimized(true);
     };
@@ -681,7 +702,13 @@ export const OnDemandWorkspace: React.FC = () => {
                     <SummaryCards metrics={metrics} />
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                         <div className="lg:col-span-2">
-                            <FileUpload onFileUpload={handleFileUpload} />
+                            <FileUpload
+                                onFileUpload={handleFileUpload}
+                                title="Drop Schedule Files Here"
+                                subtitle="Supports Master Schedule (.xlsx) & RideCo/MVT (.csv)"
+                                accept=".xlsx, .csv"
+                                allowMultiple={true}
+                            />
                         </div>
                         <div className="lg:col-span-1">
                             <div className="bg-white p-6 rounded-3xl border-2 border-gray-200 h-full">
