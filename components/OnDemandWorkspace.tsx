@@ -662,7 +662,7 @@ export const OnDemandWorkspace: React.FC = () => {
 
                     {schedules && (
                         <div className="flex bg-gray-100 p-1 rounded-lg mr-4">
-                            {Object.keys(schedules).map(day => (
+                            {['Weekday', 'Saturday', 'Sunday'].filter(day => schedules[day]).map(day => (
                                 <button
                                     key={day}
                                     onClick={() => handleDayTypeChange(day)}

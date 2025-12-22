@@ -122,6 +122,11 @@ export default defineConfig(({ mode }) => {
       react(),
       apiMiddlewarePlugin()
     ],
+    test: {
+      globals: true,
+      environment: 'jsdom',
+      setupFiles: [],
+    },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),

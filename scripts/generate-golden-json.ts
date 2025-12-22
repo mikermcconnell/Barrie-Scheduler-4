@@ -1,7 +1,8 @@
 
-import { parseTransposedShifts } from '../utils/csvParsers';
+import { parseRideCo } from '../utils/csvParsers';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as XLSX from 'xlsx';
 
 const OPTIMAL_DIR = 'data/training_examples';
 const OUTPUT_FILE = 'utils/goldenShifts.json';
@@ -31,7 +32,12 @@ function run() {
         const dayType = getDayType(file);
 
         try {
-            const shifts = parseTransposedShifts(buffer, 'excel');
+            // Parse Excel file using XLSX library
+            const workbook = XLSX.read(buffer, { type: 'buffer' });
+            const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+            const data = XLSX.utils.sheet_to_json(firstSheet, { header: 1, defval: '' }) as any[][];
+
+            const shifts = parseRideCo(data);
             shifts.forEach(s => {
                 // Enrich with metadata
                 (s as any).isOptimalTemplate = true;

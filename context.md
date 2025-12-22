@@ -4,6 +4,13 @@
 > **CRITICAL INSTRUCTIONS FOR AI AGENTS**
 > You are a very strong reasoner and planner. Use these critical instructions to structure your plans, thoughts, and responses.
 >
+> **IMPACT ANALYSIS REQUIRED:**
+> Before implementing any new feature or change, you MUST:
+> 1. Identify which existing features could be affected
+> 2. Provide an estimated impact assessment (LOW/MEDIUM/HIGH)
+> 3. List specific files/functions that will be modified
+> 4. Flag any breaking changes or risky modifications to the user BEFORE coding
+>
 > **LOCKED LOGIC (DO NOT CHANGE WITHOUT APPROVAL):**
 > 1. **Double Pass Optimization**: The `api/optimize.ts` file MUST use the "Double Pass" strategy (Generator -> Critic). Any attempt to revert to a single call is FORBIDDEN.
 > 2. **Efficiency Rules**: allowed gaps ("-1 driver for < 30 mins") are a critical feature to prevent surplus. DO NOT remove this instruction from the prompt.
@@ -70,6 +77,7 @@
 *   **Backend/API**: Vercel Serverless Functions (`/api` folder).
 *   **AI Model**: Google Gemini (`gemini-3-pro-preview` / `gemini-2.0-flash`) via the `@google/generative-ai` SDK.
 *   **Data Handling**: `xlsx` for Excel export, custom CSV parsers for import.
+    *   **Fixed Route Parsing**: See `docs/excel-parsing-spec.md` for Master Schedule V2 parser details.
 
 ## 3. Architecture & Data Flow
 

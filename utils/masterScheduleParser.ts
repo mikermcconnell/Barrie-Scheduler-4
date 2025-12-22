@@ -21,6 +21,7 @@ export interface MasterTrip {
     startTime: number;
     endTime: number;
     recoveryTime: number; // Minutes recovered AFTER this trip
+    recoveryTimes?: Record<string, number>; // Recovery time per stop (granularity)
     travelTime: number; // Minutes driving
     cycleTime: number; // Travel + Recovery
 
@@ -30,13 +31,39 @@ export interface MasterTrip {
 
     // Data
     stops: Record<string, string>;
+
+    // Interline Metadata
+    interlineNext?: { route: string; time: number; stopName?: string }; // Route it turns into
+    interlinePrev?: { route: string; time: number; stopName?: string }; // Route it came from
 }
 
 export interface MasterRouteTable {
     routeName: string; // "400"
     stops: string[]; // All stops in order
+    stopIds: Record<string, string>; // Map stop name -> stop ID (e.g., "Park Place" -> "777")
     trips: MasterTrip[];
 }
+
+// --- Round-Trip View Types ---
+export interface RoundTripRow {
+    blockId: string; // "400-1"
+    trips: MasterTrip[]; // Ordered sequence: N-S-N-S... for full cycle
+    northStops: string[]; // Stop names for North direction
+    southStops: string[]; // Stop names for South direction
+    totalTravelTime: number; // Sum of all travel times
+    totalRecoveryTime: number; // Sum of all recovery times
+    totalCycleTime: number; // Total time from first departure to last arrival + final recovery
+}
+
+export interface RoundTripTable {
+    routeName: string; // "400 (Weekday)"
+    northStops: string[]; // All North direction stops
+    southStops: string[]; // All South direction stops
+    northStopIds: Record<string, string>; // Map north stop name -> ID
+    southStopIds: Record<string, string>; // Map south stop name -> ID
+    rows: RoundTripRow[]; // Each row is one bus/block's full day
+}
+
 
 // --- Helpers ---
 
@@ -237,6 +264,27 @@ export const parseMasterSchedule = (fileData: ArrayBuffer, mode: 'auto' | 'fixed
             }
         }
 
+        // Extract stop IDs from the row BELOW the header (where "Stop ID" row is)
+        const northStopIds: Record<string, string> = {};
+        const southStopIds: Record<string, string> = {};
+        const stopIdRowIdx = stopHeaderRowIdx + 1;
+        if (stopIdRowIdx < data.length) {
+            const stopIdRow = data[stopIdRowIdx];
+            // Check if this row looks like an ID row (first value in stop columns should be numeric or short)
+            northCols.forEach(col => {
+                const idVal = String(stopIdRow[col.idx] || "").trim();
+                // Only consider it a stop ID if it looks numeric or very short (not a time)
+                if (idVal && (/^\d+$/.test(idVal) || idVal.length <= 4)) {
+                    northStopIds[col.name] = idVal;
+                }
+            });
+            southCols.forEach(col => {
+                const idVal = String(stopIdRow[col.idx] || "").trim();
+                if (idVal && (/^\d+$/.test(idVal) || idVal.length <= 4)) {
+                    southStopIds[col.name] = idVal;
+                }
+            });
+        }
 
         // Data buckets by Day Type
         const tripsByDay: Record<string, MasterTrip[]> = {
@@ -342,16 +390,51 @@ export const parseMasterSchedule = (fileData: ArrayBuffer, mode: 'auto' | 'fixed
             if (rawTrips.length === 0) return;
 
             // --- Block Logic (Per Day) ---
+            // Uses EXACT time matching: Trip N endTime === Trip N+1 startTime (0 min tolerance)
+            // Chains N→S→N→S based on terminus time continuity
             let blockCounter = 1;
             const assignedTripIds = new Set<string>();
             const northTrips = rawTrips.filter(t => t.direction === 'North').sort((a, b) => a.startTime - b.startTime);
             const southTrips = rawTrips.filter(t => t.direction === 'South').sort((a, b) => a.startTime - b.startTime);
-            const findSouthByRow = (row: number) => southTrips.find(t => t.rowId === row);
 
-            // North Starts
+            /**
+             * Find next trip in opposite direction where startTime exactly matches current endTime.
+             * This represents a bus immediately continuing from one trip to the next at the terminus.
+             */
+            const findMatchingTrip = (currentTrip: MasterTrip): MasterTrip | undefined => {
+                const targetTime = currentTrip.endTime; // Exact match required
+                const oppositeTrips = currentTrip.direction === 'North' ? southTrips : northTrips;
+
+                return oppositeTrips.find(t =>
+                    !assignedTripIds.has(t.id) &&
+                    t.startTime === targetTime // EXACT match, 0 tolerance
+                );
+            };
+
+            // Start blocks from earliest North trips
             northTrips.forEach(startTrip => {
                 if (assignedTripIds.has(startTrip.id)) return;
+
                 const currentBlockId = `${sheetName}-${blockCounter++}`; // e.g. "400-1"
+                let currentTrip: MasterTrip | undefined = startTrip;
+                let sequence = 1;
+
+                // Chain trips: N→S→N→S... using exact time matching
+                while (currentTrip) {
+                    currentTrip.blockId = currentBlockId;
+                    currentTrip.tripNumber = sequence++;
+                    assignedTripIds.add(currentTrip.id);
+
+                    // Find next matching trip in opposite direction
+                    currentTrip = findMatchingTrip(currentTrip);
+                }
+            });
+
+            // Handle South trips that didn't chain from North (start new blocks)
+            southTrips.forEach(startTrip => {
+                if (assignedTripIds.has(startTrip.id)) return;
+
+                const currentBlockId = `${sheetName}-${blockCounter++}`;
                 let currentTrip: MasterTrip | undefined = startTrip;
                 let sequence = 1;
 
@@ -360,36 +443,7 @@ export const parseMasterSchedule = (fileData: ArrayBuffer, mode: 'auto' | 'fixed
                     currentTrip.tripNumber = sequence++;
                     assignedTripIds.add(currentTrip.id);
 
-                    let nextTrip: MasterTrip | undefined = undefined;
-                    if (currentTrip.direction === 'North') {
-                        nextTrip = findSouthByRow(currentTrip.rowId);
-                        if (nextTrip && assignedTripIds.has(nextTrip.id)) nextTrip = undefined;
-                    } else {
-                        const minStartTime = currentTrip.endTime + currentTrip.recoveryTime;
-                        nextTrip = northTrips.find(t => !assignedTripIds.has(t.id) && t.startTime >= minStartTime && (t.startTime - minStartTime) < 60);
-                    }
-                    currentTrip = nextTrip;
-                }
-            });
-
-            // South Stragglers
-            southTrips.forEach(t => {
-                if (!assignedTripIds.has(t.id)) {
-                    const currentBlockId = `${sheetName}-${blockCounter++}`;
-                    let currentTrip: MasterTrip | undefined = t;
-                    let sequence = 1;
-                    while (currentTrip) {
-                        currentTrip.blockId = currentBlockId;
-                        currentTrip.tripNumber = sequence++;
-                        assignedTripIds.add(currentTrip.id);
-                        if (currentTrip.direction === 'South') {
-                            const minStartTime = currentTrip.endTime + currentTrip.recoveryTime;
-                            currentTrip = northTrips.find(n => !assignedTripIds.has(n.id) && n.startTime >= minStartTime && n.startTime - minStartTime < 60);
-                        } else {
-                            currentTrip = findSouthByRow(currentTrip.rowId);
-                            if (currentTrip && assignedTripIds.has(currentTrip.id)) currentTrip = undefined;
-                        }
-                    }
+                    currentTrip = findMatchingTrip(currentTrip);
                 }
             });
 
@@ -400,6 +454,7 @@ export const parseMasterSchedule = (fileData: ArrayBuffer, mode: 'auto' | 'fixed
                 const tableNorth: MasterRouteTable = {
                     routeName: `${sheetName}${dayLabel} (North)${northDest}`, // e.g. "400 (Saturday) (North) (To RVH)"
                     stops: northCols.map(c => c.name),
+                    stopIds: northStopIds,
                     trips: rawTrips.filter(t => t.direction === 'North').sort((a, b) => a.startTime - b.startTime) // Sort by TIME
                 };
                 if (tableNorth.trips.length > 0) tables.push(validateRouteTable(tableNorth));
@@ -409,6 +464,7 @@ export const parseMasterSchedule = (fileData: ArrayBuffer, mode: 'auto' | 'fixed
                 const tableSouth: MasterRouteTable = {
                     routeName: `${sheetName}${dayLabel} (South)${southDest}`,
                     stops: southCols.map(c => c.name),
+                    stopIds: southStopIds,
                     trips: rawTrips.filter(t => t.direction === 'South').sort((a, b) => a.startTime - b.startTime) // Sort by TIME
                 };
                 if (tableSouth.trips.length > 0) tables.push(validateRouteTable(tableSouth));
@@ -419,10 +475,75 @@ export const parseMasterSchedule = (fileData: ArrayBuffer, mode: 'auto' | 'fixed
     return tables;
 };
 
+// --- Round-Trip View Builder ---
+// Transforms separate North/South tables into a combined view showing full bus journeys
+
+export const buildRoundTripView = (
+    northTable: MasterRouteTable,
+    southTable: MasterRouteTable
+): RoundTripTable => {
+    // Combine all trips and group by blockId
+    const allTrips = [...northTable.trips, ...southTable.trips];
+    const blockGroups: Record<string, MasterTrip[]> = {};
+
+    allTrips.forEach(trip => {
+        if (!blockGroups[trip.blockId]) {
+            blockGroups[trip.blockId] = [];
+        }
+        blockGroups[trip.blockId].push(trip);
+    });
+
+    // Build rows - one per block
+    const rows: RoundTripRow[] = Object.entries(blockGroups)
+        .map(([blockId, trips]) => {
+            // Sort trips by tripNumber to maintain journey sequence
+            const sortedTrips = trips.sort((a, b) => a.tripNumber - b.tripNumber);
+
+            const totalTravelTime = sortedTrips.reduce((sum, t) => sum + t.travelTime, 0);
+            const totalRecoveryTime = sortedTrips.reduce((sum, t) => sum + t.recoveryTime, 0);
+
+            // Calculate total cycle: first departure to last arrival + last recovery
+            const firstTrip = sortedTrips[0];
+            const lastTrip = sortedTrips[sortedTrips.length - 1];
+            const totalCycleTime = firstTrip && lastTrip
+                ? (lastTrip.endTime - firstTrip.startTime) + lastTrip.recoveryTime
+                : 0;
+
+            return {
+                blockId,
+                trips: sortedTrips,
+                northStops: northTable.stops,
+                southStops: southTable.stops,
+                totalTravelTime,
+                totalRecoveryTime,
+                totalCycleTime
+            };
+        })
+        // Sort blocks by first trip start time
+        .sort((a, b) => {
+            const aStart = a.trips[0]?.startTime ?? 0;
+            const bStart = b.trips[0]?.startTime ?? 0;
+            return aStart - bStart;
+        });
+
+    // Extract route name (remove direction suffix)
+    const routeBase = northTable.routeName.replace(/ \(North\).*$/, '');
+
+    return {
+        routeName: routeBase,
+        northStops: northTable.stops,
+        southStops: southTable.stops,
+        northStopIds: northTable.stopIds,
+        southStopIds: southTable.stopIds,
+        rows
+    };
+};
+
 // --- Conversion Logic for OnDemandWorkspace ---
 
 import { Requirement } from '../types';
 import { TIME_SLOTS_PER_DAY } from '../constants';
+
 
 export const convertMasterRouteTablesToRequirements = (tables: MasterRouteTable[]): Record<string, Requirement[]> => {
     const schedules: Record<string, Requirement[]> = {};

@@ -228,10 +228,12 @@ export const parseRideCo = (input: string | any[][]): Shift[] => {
         let breakStartSlot = 0;
         let breakDurationSlots = 0;
 
-        const breakStartStr = breakStartRow[c];
-        const breakEndStr = breakEndRow[c];
+        const breakStartStr = String(breakStartRow[c] || '').trim();
+        const breakEndStr = String(breakEndRow[c] || '').trim();
 
-        if (breakStartStr && breakEndStr && breakStartStr !== 'N/B' && breakEndStr !== 'N/B') {
+        if (breakStartStr && breakEndStr &&
+            !breakStartStr.match(/^n\/b$/i) &&
+            !breakEndStr.match(/^n\/b$/i)) {
             const bStart = parseTimeToSlot(breakStartStr);
             let bEnd = parseTimeToSlot(breakEndStr);
 

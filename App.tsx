@@ -5,9 +5,10 @@ import { AuthProvider, useAuth } from './components/AuthContext';
 import { AuthModal } from './components/AuthModal';
 import { FileManager } from './components/FileManager';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { LayoutDashboard, Bus, Settings, Bell, ArrowRight, Map, CheckCircle2, User, LogOut, FolderOpen, ChevronDown, Loader2, Wifi } from 'lucide-react';
+import { LayoutDashboard, Bus, Settings, Bell, ArrowRight, ArrowLeft, Map, CheckCircle2, User, LogOut, FolderOpen, ChevronDown, ChevronRight, Loader2, Wifi, FileSpreadsheet, Plus, Download, CalendarPlus, Timer, BarChart2, Settings2, Sparkles } from 'lucide-react';
+import { Header, View } from './components/Header';
 
-type View = 'home' | 'ondemand' | 'fixed';
+
 
 const AppContent: React.FC = () => {
   const { user, loading, signOut } = useAuth();
@@ -27,6 +28,8 @@ const AppContent: React.FC = () => {
       </div>
     );
   }
+
+
 
   const handleSignOut = async () => {
     await signOut();
@@ -56,97 +59,17 @@ const AppContent: React.FC = () => {
       )}
 
       {/* Global Header */}
-      <nav className="bg-white border-b-2 border-gray-200 px-6 py-4 sticky top-0 z-40 shadow-sm flex-shrink-0">
-        <div className="max-w-7xl mx-auto flex justify-between items-center">
-          <div
-            className="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity"
-            onClick={() => setCurrentView('home')}
-          >
-            <div className="bg-brand-green p-2 rounded-xl">
-              <LayoutDashboard className="text-white" size={24} />
-            </div>
-            <h1 className="text-2xl font-extrabold text-brand-green tracking-tight">
-              Bus<span className="text-gray-700">Scheduler</span>
-            </h1>
-          </div>
-          <div className="flex gap-3 items-center">
-            {user && (
-              <button
-                onClick={() => setShowFileManager(true)}
-                className="flex items-center gap-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-xl transition-colors font-bold text-gray-600"
-              >
-                <FolderOpen size={18} />
-                <span className="hidden sm:inline">Files</span>
-              </button>
-            )}
-            <button className="p-2 text-gray-400 hover:bg-gray-100 rounded-xl transition-colors">
-              <Bell size={24} />
-            </button>
-            <button className="p-2 text-gray-400 hover:bg-gray-100 rounded-xl transition-colors">
-              <Settings size={24} />
-            </button>
-
-            {/* User Avatar / Sign In */}
-            {user ? (
-              <div className="relative">
-                <button
-                  onClick={() => setShowUserMenu(!showUserMenu)}
-                  className="flex items-center gap-2 p-1 pr-3 bg-gray-100 hover:bg-gray-200 rounded-full transition-colors"
-                >
-                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-brand-green to-emerald-400 border-2 border-white shadow-sm flex items-center justify-center">
-                    {user.photoURL ? (
-                      <img src={user.photoURL} alt="" className="w-full h-full rounded-full object-cover" />
-                    ) : (
-                      <User className="text-white" size={16} />
-                    )}
-                  </div>
-                  <span className="text-sm font-bold text-gray-700 hidden sm:inline max-w-[120px] truncate">
-                    {user.displayName || user.email?.split('@')[0]}
-                  </span>
-                  <ChevronDown size={14} className="text-gray-400" />
-                </button>
-
-                {showUserMenu && (
-                  <>
-                    <div className="fixed inset-0 z-40" onClick={() => setShowUserMenu(false)} />
-                    <div className="absolute right-0 top-full mt-2 bg-white border border-gray-200 rounded-xl shadow-lg py-2 min-w-[200px] z-50">
-                      <div className="px-4 py-2 border-b border-gray-100">
-                        <p className="font-bold text-gray-800 truncate">{user.displayName || 'User'}</p>
-                        <p className="text-xs text-gray-500 truncate">{user.email}</p>
-                      </div>
-                      <button
-                        onClick={() => { setShowFileManager(true); setShowUserMenu(false); }}
-                        className="w-full px-4 py-2 text-left text-sm font-medium text-gray-700 hover:bg-gray-50 flex items-center gap-2"
-                      >
-                        <FolderOpen size={16} /> My Files
-                      </button>
-                      <button
-                        onClick={handleSignOut}
-                        className="w-full px-4 py-2 text-left text-sm font-medium text-red-600 hover:bg-red-50 flex items-center gap-2"
-                      >
-                        <LogOut size={16} /> Sign Out
-                      </button>
-                    </div>
-                  </>
-                )}
-              </div>
-            ) : (
-              <button
-                onClick={() => setShowAuthModal(true)}
-                className="flex items-center gap-2 px-4 py-2 bg-brand-green hover:bg-emerald-600 text-white rounded-xl transition-colors font-bold"
-              >
-                <User size={18} />
-                Sign In
-              </button>
-            )}
-          </div>
-        </div>
-      </nav>
+      <Header
+        currentView={currentView}
+        onNavigate={setCurrentView}
+        onShowFileManager={() => setShowFileManager(true)}
+        onShowAuthModal={() => setShowAuthModal(true)}
+      />
 
       {/* Breadcrumb / Navigation State */}
       {currentView !== 'home' && (
         <div className="bg-white border-b border-gray-100 px-6 py-2 flex-shrink-0">
-          <div className="max-w-7xl mx-auto flex items-center gap-2 text-sm font-bold text-gray-400">
+          <div className="mx-auto flex items-center gap-2 text-sm font-bold text-gray-400 max-w-[1920px] w-full">
             <span className="hover:text-gray-600 cursor-pointer" onClick={() => setCurrentView('home')}>Home</span>
             <ArrowRight size={14} />
             <span className="text-brand-blue bg-blue-50 px-2 py-0.5 rounded-md">
@@ -156,7 +79,7 @@ const AppContent: React.FC = () => {
         </div>
       )}
 
-      <main className="flex-1 overflow-hidden relative flex flex-col max-w-7xl mx-auto w-full px-6 py-8">
+      <main className={`flex-1 overflow-hidden relative flex flex-col mx-auto w-full px-6 py-8 ${currentView === 'home' ? 'max-w-7xl' : 'max-w-[1920px]'}`}>
 
         {/* Workspace Selector (Home View) */}
         {currentView === 'home' && (

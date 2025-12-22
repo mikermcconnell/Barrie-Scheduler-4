@@ -1,15 +1,15 @@
-import React, { Component, ErrorInfo, ReactNode } from 'react';
+import React from 'react';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 
 interface Props {
-    children: ReactNode;
+    children: React.ReactNode;
     fallbackTitle?: string;
 }
 
 interface State {
     hasError: boolean;
     error: Error | null;
-    errorInfo: ErrorInfo | null;
+    errorInfo: React.ErrorInfo | null;
 }
 
 /**
@@ -17,29 +17,34 @@ interface State {
  * Catches JavaScript errors anywhere in the child component tree,
  * logs those errors, and displays a fallback UI instead of crashing.
  */
-export class ErrorBoundary extends Component<Props, State> {
-    public state: State = { hasError: false, error: null, errorInfo: null };
+export class ErrorBoundary extends React.Component<Props, State> {
+    constructor(props: Props) {
+        super(props);
+        this.state = { hasError: false, error: null, errorInfo: null };
+        this.handleReload = this.handleReload.bind(this);
+        this.handleReset = this.handleReset.bind(this);
+    }
 
     static getDerivedStateFromError(error: Error): Partial<State> {
         // Update state so the next render shows the fallback UI
         return { hasError: true, error };
     }
 
-    componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
+    componentDidCatch(error: Error, errorInfo: React.ErrorInfo): void {
         // Log the error to console (could also send to error reporting service)
         console.error('ErrorBoundary caught an error:', error, errorInfo);
         this.setState({ errorInfo });
     }
 
-    handleReload = (): void => {
+    handleReload(): void {
         window.location.reload();
-    };
+    }
 
-    handleReset = (): void => {
+    handleReset(): void {
         this.setState({ hasError: false, error: null, errorInfo: null });
-    };
+    }
 
-    render(): ReactNode {
+    render(): React.ReactNode {
         if (this.state.hasError) {
             return (
                 <div className="min-h-[400px] flex items-center justify-center p-8">
@@ -85,3 +90,4 @@ export class ErrorBoundary extends Component<Props, State> {
         return this.props.children;
     }
 }
+
