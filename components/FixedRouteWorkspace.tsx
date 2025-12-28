@@ -84,25 +84,27 @@ export const FixedRouteWorkspace: React.FC = () => {
                         <p className="text-sm text-gray-500 leading-relaxed">Generate optimized schedules from scratch using AI-powered run cutting.</p>
                     </button>
 
-                    {/* Dwell Assessment Card */}
-                    <button onClick={() => setViewMode('dwell')} className="group bg-white p-6 rounded-xl border border-gray-200 shadow-sm hover:shadow-md hover:border-amber-300 transition-all text-left flex flex-col h-full active:scale-[0.99]">
+                    {/* Dwell Assessment Card - Coming Soon */}
+                    <div className="relative bg-gray-50 p-6 rounded-xl border border-gray-200 shadow-sm text-left flex flex-col h-full opacity-60 cursor-not-allowed">
+                        <div className="absolute top-3 right-3 px-2 py-0.5 bg-gray-200 text-gray-500 text-[10px] font-bold rounded-full uppercase tracking-wide">Coming Soon</div>
                         <div className="flex items-center justify-between mb-4">
-                            <div className="bg-amber-50/50 p-2.5 rounded-lg text-amber-600 group-hover:bg-amber-100 transition-colors"><Timer size={20} /></div>
-                            <ArrowRight size={16} className="text-gray-300 group-hover:text-amber-500 transition-colors" />
+                            <div className="bg-gray-100 p-2.5 rounded-lg text-gray-400"><Timer size={20} /></div>
+                            <ArrowRight size={16} className="text-gray-300" />
                         </div>
-                        <h3 className="text-lg font-bold text-gray-900 mb-1">Dwell Assessment</h3>
-                        <p className="text-sm text-gray-500 leading-relaxed">Analyze stop-level dwell times.</p>
-                    </button>
+                        <h3 className="text-lg font-bold text-gray-500 mb-1">Dwell Assessment</h3>
+                        <p className="text-sm text-gray-400 leading-relaxed">Analyze stop-level dwell times.</p>
+                    </div>
 
-                    {/* OTP Analysis Card */}
-                    <button onClick={() => setViewMode('otp')} className="group bg-white p-6 rounded-xl border border-gray-200 shadow-sm hover:shadow-md hover:border-red-300 transition-all text-left flex flex-col h-full active:scale-[0.99]">
+                    {/* OTP Analysis Card - Coming Soon */}
+                    <div className="relative bg-gray-50 p-6 rounded-xl border border-gray-200 shadow-sm text-left flex flex-col h-full opacity-60 cursor-not-allowed">
+                        <div className="absolute top-3 right-3 px-2 py-0.5 bg-gray-200 text-gray-500 text-[10px] font-bold rounded-full uppercase tracking-wide">Coming Soon</div>
                         <div className="flex items-center justify-between mb-4">
-                            <div className="bg-red-50/50 p-2.5 rounded-lg text-red-600 group-hover:bg-red-100 transition-colors"><BarChart2 size={20} /></div>
-                            <ArrowRight size={16} className="text-gray-300 group-hover:text-red-500 transition-colors" />
+                            <div className="bg-gray-100 p-2.5 rounded-lg text-gray-400"><BarChart2 size={20} /></div>
+                            <ArrowRight size={16} className="text-gray-300" />
                         </div>
-                        <h3 className="text-lg font-bold text-gray-900 mb-1">OTP Analysis</h3>
-                        <p className="text-sm text-gray-500 leading-relaxed">Monitor On-Time Performance metrics.</p>
-                    </button>
+                        <h3 className="text-lg font-bold text-gray-500 mb-1">OTP Analysis</h3>
+                        <p className="text-sm text-gray-400 leading-relaxed">Monitor On-Time Performance metrics.</p>
+                    </div>
                 </div>
             </div>
         );
