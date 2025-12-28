@@ -3,6 +3,15 @@ import React from 'react';
 import { TimeBand } from '../utils/runtimeAnalysis';
 import { Clock, Bus, Plus, Trash2, LayoutGrid } from 'lucide-react';
 
+// Configuration Constants
+export const SCHEDULE_DEFAULTS = {
+    CYCLE_TIME: 60,           // Default cycle time in minutes
+    RECOVERY_RATIO: 15,       // Default recovery ratio percentage
+    START_TIME: '06:00',      // Default block start time
+    END_TIME: '22:00',        // Default block end time
+    ROUTE_NUMBER: '10'        // Default route number
+} as const;
+
 export interface BlockConfig {
     id: string; // "100-1"
     startTime: string; // "06:00"
@@ -66,9 +75,9 @@ export const Step3Build: React.FC<Step3Props> = ({ dayType, bands, config, setCo
     const addBlock = () => {
         const nextNum = config.blocks.length + 1;
         const newBlock: BlockConfig = {
-            id: `${config.routeNumber || '10'}-${nextNum}`,
-            startTime: '06:00',
-            endTime: '22:00'
+            id: `${config.routeNumber || SCHEDULE_DEFAULTS.ROUTE_NUMBER}-${nextNum}`,
+            startTime: SCHEDULE_DEFAULTS.START_TIME,
+            endTime: SCHEDULE_DEFAULTS.END_TIME
         };
         setConfig({
             ...config,
@@ -186,7 +195,7 @@ export const Step3Build: React.FC<Step3Props> = ({ dayType, bands, config, setCo
                                         <div className="relative">
                                             <input
                                                 type="number"
-                                                value={config.recoveryRatio || 15}
+                                                value={config.recoveryRatio ?? SCHEDULE_DEFAULTS.RECOVERY_RATIO}
                                                 onChange={e => setConfig({ ...config, recoveryRatio: parseInt(e.target.value) || 0 })}
                                                 className="w-full pl-3 pr-6 py-1.5 border border-brand-blue/30 bg-blue-50/50 rounded-lg focus:ring-2 focus:ring-brand-blue/20 focus:border-brand-blue font-bold text-brand-blue text-sm"
                                             />

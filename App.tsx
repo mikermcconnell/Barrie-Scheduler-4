@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { OnDemandWorkspace } from './components/OnDemandWorkspace';
 import { FixedRouteWorkspace } from './components/FixedRouteWorkspace';
 import { AuthProvider, useAuth } from './components/AuthContext';
+import { ToastProvider } from './components/ToastContext';
 import { AuthModal } from './components/AuthModal';
 import { FileManager } from './components/FileManager';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -163,11 +164,13 @@ const AppContent: React.FC = () => {
   );
 };
 
-// Main App component with AuthProvider wrapper
+// Main App component with AuthProvider and ToastProvider wrappers
 const App: React.FC = () => {
   return (
     <AuthProvider>
-      <AppContent />
+      <ToastProvider>
+        <AppContent />
+      </ToastProvider>
     </AuthProvider>
   );
 };

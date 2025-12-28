@@ -6,7 +6,7 @@ import { Step2Analysis } from './steps/Step2Analysis';
 import { Step3Build, ScheduleConfig } from './steps/Step3Build';
 import { Step4Schedule } from './steps/Step4Schedule';
 import { parseRuntimeCSV, RuntimeData, SegmentRawData } from './utils/csvParser';
-import { calculateTotalTripTimes, detectOutliers, calculateBands, TripBucketAnalysis, TimeBand, BandSummary, DirectionBandSummary, computeDirectionBandSummary } from './utils/runtimeAnalysis';
+import { calculateTotalTripTimes, detectOutliers, calculateBands, TripBucketAnalysis, TimeBand, DirectionBandSummary, computeDirectionBandSummary } from './utils/runtimeAnalysis';
 import { generateSchedule } from './utils/scheduleGenerator';
 import { MasterRouteTable } from '../../utils/masterScheduleParser';
 import { useWizardProgress, WizardProgress } from '../../hooks/useWizardProgress';
@@ -15,7 +15,14 @@ import { NewScheduleHeader } from './NewScheduleHeader';
 import { ProjectManagerModal } from './ProjectManagerModal';
 import { AutoSaveStatus } from '../../hooks/useAutoSave';
 import { useAuth } from '../AuthContext';
-import { saveProject, getProject, NewScheduleProject } from '../../utils/newScheduleProjectService';
+import { useToast } from '../ToastContext';
+import { saveProject, getProject } from '../../utils/newScheduleProjectService';
+
+// Constants - centralized magic numbers
+const DEFAULT_CYCLE_TIME = 60;
+const DEFAULT_ROUTE_NUMBER = '10';
+const DEFAULT_START_TIME = '06:00';
+const DEFAULT_END_TIME = '22:00';
 
 interface NewScheduleWizardProps {
     onBack: () => void;
@@ -31,13 +38,16 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
     lastSaved
 }) => {
     const { user } = useAuth();
+    const toast = useToast();
+
     const [step, setStep] = useState(1);
     const [maxStepReached, setMaxStepReached] = useState(1);
 
     // Update max step tracking
     useEffect(() => {
         if (step > maxStepReached) setMaxStepReached(step);
-    }, [step]);
+    }, [step, maxStepReached]);
+
     const [dayType, setDayType] = useState<'Weekday' | 'Saturday' | 'Sunday'>('Weekday');
     const [files, setFiles] = useState<File[]>([]);
     const [projectName, setProjectName] = useState('New Schedule Project');
@@ -50,23 +60,35 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
     const [bands, setBands] = useState<TimeBand[]>([]);
     const [bandSummary, setBandSummary] = useState<DirectionBandSummary>({});
     const [segmentsMap, setSegmentsMap] = useState<Record<string, SegmentRawData[]>>({});
+    const [segmentNames, setSegmentNames] = useState<string[]>([]);
 
     // State for Step 3 Config
     const [config, setConfig] = useState<ScheduleConfig>({
-        routeNumber: '10',
-        cycleTime: 60, // Default 60 mins
+        routeNumber: DEFAULT_ROUTE_NUMBER,
+        cycleTime: DEFAULT_CYCLE_TIME,
         blocks: []
     });
 
     // State for Step 4 Schedule
     const [generatedSchedules, setGeneratedSchedules] = useState<MasterRouteTable[]>([]);
 
+    // Helper to extract unique segment names from analysis
+    const extractSegmentNames = (analysisData: TripBucketAnalysis[]): string[] => {
+        const names = new Set<string>();
+        analysisData.forEach(bucket => {
+            bucket.details?.forEach(detail => {
+                names.add(detail.segmentName);
+            });
+        });
+        return Array.from(names);
+    };
+
     // Helper to update analysis and recalc bands
     const handleAnalysisUpdate = (newAnalysis: TripBucketAnalysis[]) => {
-        // Recalculate bands based on new ignore states
         const { buckets, bands: newBands } = calculateBands(newAnalysis);
         setAnalysis(buckets);
         setBands(newBands);
+        setSegmentNames(extractSegmentNames(buckets));
     };
 
     // Wizard Progress Persistence
@@ -82,7 +104,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
             setShowResumeModal(true);
         }
         setHasCheckedProgress(true);
-    }, []);
+    }, [hasCheckedProgress, hasProgress, load, setHasCheckedProgress]);
 
     // Save progress when state changes (after step 1)
     useEffect(() => {
@@ -98,24 +120,27 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                 updatedAt: new Date().toISOString()
             });
         }
-    }, [step, dayType, files.length, analysis, bands, config, generatedSchedules]);
+    }, [step, dayType, files.length, analysis, bands, config, generatedSchedules, save]);
 
     const handleResume = () => {
         if (savedProgress) {
             setStep(savedProgress.step);
             setMaxStepReached(Math.max(savedProgress.step, maxStepReached));
             setDayType(savedProgress.dayType);
-            if (savedProgress.analysis) setAnalysis(savedProgress.analysis);
+            if (savedProgress.analysis) {
+                setAnalysis(savedProgress.analysis);
+                setSegmentNames(extractSegmentNames(savedProgress.analysis));
+            }
             if (savedProgress.bands) setBands(savedProgress.bands);
             if (savedProgress.config) setConfig(savedProgress.config);
             if (savedProgress.generatedSchedules) setGeneratedSchedules(savedProgress.generatedSchedules);
 
-            // Restore Raw Data if available (now supported in persistence)
+            // Restore Raw Data if available
             if (savedProgress.parsedData && savedProgress.parsedData.length > 0) {
                 setParsedData(savedProgress.parsedData);
-            } else {
-                console.warn('Restored project but missing parsedData (raw CSV data). Generation may fail.');
             }
+
+            toast.success('Progress Restored', 'Continuing from where you left off');
         }
         setShowResumeModal(false);
     };
@@ -140,7 +165,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
             bands: step >= 2 ? bands : undefined,
             config: step >= 3 ? config : undefined,
             generatedSchedules: step >= 4 ? generatedSchedules : undefined,
-            parsedData: step >= 1 ? parsedData : undefined, // Save locally
+            parsedData: step >= 1 ? parsedData : undefined,
             updatedAt: new Date().toISOString()
         });
 
@@ -155,22 +180,22 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                     bands: step >= 2 ? bands : undefined,
                     config: step >= 3 ? config : undefined,
                     generatedSchedules: step >= 4 ? generatedSchedules : undefined,
-                    parsedData: step >= 1 ? parsedData : undefined, // Save to cloud storage
+                    parsedData: step >= 1 ? parsedData : undefined,
                     isGenerated: step >= 4,
                     ...(projectId ? { id: projectId } : {})
                 });
                 setProjectId(savedId);
-                // Success Feedback
                 setManualSaveSuccess(true);
                 setTimeout(() => setManualSaveSuccess(false), 2000);
+                toast.success('Saved to Cloud', 'Your progress has been saved');
             } catch (e) {
                 console.error('Failed to save to Firebase:', e);
-                alert('Saved locally. Cloud save failed.'); // Don't interrupt
+                toast.warning('Partial Save', 'Saved locally. Cloud save failed.');
             }
         } else {
-            // alert('Progress saved locally! Sign in to save to cloud.'); // Silent success
             setManualSaveSuccess(true);
             setTimeout(() => setManualSaveSuccess(false), 2000);
+            toast.info('Saved Locally', 'Sign in to save to cloud');
         }
         setIsManualSaving(false);
     };
@@ -178,7 +203,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
     const handleNext = async () => {
         if (step === 1) {
             if (files.length === 0) {
-                alert("Please upload at least one CSV file.");
+                toast.warning('No Files', 'Please upload at least one CSV file');
                 return;
             }
             try {
@@ -188,17 +213,14 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
 
                 // Run initial analysis
                 const rawAnalysis = calculateTotalTripTimes(results);
-
-                // 1. Detect Outliers (Auto-Ignore)
                 const withOutliers = detectOutliers(rawAnalysis);
-
-                // 2. Calculate Initial Bands
                 const { buckets, bands: generatedBands } = calculateBands(withOutliers);
 
                 setAnalysis(buckets);
                 setBands(generatedBands);
+                setSegmentNames(extractSegmentNames(buckets));
 
-                // Build segmentsMap for direction-keyed lookups in Step2Analysis
+                // Build segmentsMap for direction-keyed lookups
                 const groupedSegments: Record<string, SegmentRawData[]> = {};
                 results.forEach(pd => {
                     const dir = pd.detectedDirection || 'North';
@@ -216,22 +238,28 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                 }
 
                 setStep(2);
+                toast.success('Files Parsed', 'Runtime data analyzed successfully');
             } catch (error) {
                 console.error(error);
-                alert("Failed to parse CSV files. Please check the format.");
+                toast.error('Parse Error', 'Failed to parse CSV files. Please check the format.');
             }
         } else if (step === 2) {
             // Initialize one block for convenience if empty
             if (config.blocks.length === 0) {
                 setConfig(prev => ({
                     ...prev,
-                    blocks: [{ id: `${prev.routeNumber}-1`, startTime: '06:00', endTime: '22:00' }]
+                    blocks: [{ id: `${prev.routeNumber}-1`, startTime: DEFAULT_START_TIME, endTime: DEFAULT_END_TIME }]
                 }));
             }
             setStep(3);
         } else if (step === 3) {
-            // Generate !
-            // Sort parsed data by direction: North/A first, then South/B
+            // Validate before generating
+            if (parsedData.length === 0) {
+                toast.error('No Data', 'No data found. Please go back to Step 1 and re-upload your files.');
+                return;
+            }
+
+            // Sort parsed data by direction
             const directionOrder: Record<string, number> = { 'North': 0, 'A': 1, 'Loop': 2, 'South': 3, 'B': 4 };
             const sortedParsedData = [...parsedData].sort((a, b) => {
                 const orderA = a.detectedDirection ? (directionOrder[a.detectedDirection] ?? 2) : 2;
@@ -240,76 +268,38 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
             });
 
             // Group data by direction
-            console.log('Parsed Data at Step 3:', parsedData.length);
-            if (parsedData.length === 0) {
-                alert("CRITICAL ERROR: No data found. Did you refresh the page? Please go back to Step 1 and re-upload your files.");
-                return;
-            }
-
             const groupedData: Record<string, SegmentRawData[]> = {};
             sortedParsedData.forEach(pd => {
-                const dir = pd.detectedDirection || 'North'; // Default to North if unknown
+                const dir = pd.detectedDirection || 'North';
                 if (!groupedData[dir]) groupedData[dir] = [];
                 groupedData[dir].push(...pd.segments);
             });
 
-            // Store segmentsMap for Step2Analysis to use
             setSegmentsMap(groupedData);
 
-            // CRITICAL: Compute bandSummary SYNCHRONOUSLY at generation time
-            // The Step2Analysis component may not be mounted, so we can't rely on
-            // its useEffect to have populated bandSummary state correctly.
-            // This ensures fresh, accurate band data is used for schedule generation.
+            // Compute bandSummary synchronously at generation time
             const freshBandSummary = computeDirectionBandSummary(analysis, bands, groupedData);
 
-            console.log('=== FRESH BAND SUMMARY (Computed at generation time) ===');
-            Object.entries(freshBandSummary).forEach(([dir, dirBands]) => {
-                console.log(`  ${dir}: ${dirBands.length} bands`);
-                dirBands.forEach(b => {
-                    console.log(`    Band ${b.bandId}: avgTotal=${b.avgTotal?.toFixed(1)}, ${b.segments.length} segments, timeSlots=[${b.timeSlots.join(', ')}]`);
-                });
-            });
-
-            // Generate synced schedule
-            console.log('Generating schedule with:', {
-                config,
-                bandsCount: bands.length,
-                directionKeys: Object.keys(groupedData),
-                exampleSegmentCts: Object.values(groupedData).map(v => v.length),
-                analysisHasDetails: analysis.length > 0 ? analysis[0].details?.length : 'no analysis',
-                sampleAnalysisDetails: analysis.length > 0 && analysis[0].details?.length > 0
-                    ? analysis[0].details.slice(0, 2).map(d => d.segmentName)
-                    : 'none'
-            });
-
+            // Generate schedule
             const generatedTables = generateSchedule(
                 config,
                 analysis,
                 bands,
-                freshBandSummary,  // Use freshly computed bandSummary instead of stale state
+                freshBandSummary,
                 groupedData,
                 dayType
             );
 
-            console.log('Generated tables result:', generatedTables.length);
-            console.log('Generated tables detail:', generatedTables.map(t => ({
-                routeName: t.routeName,
-                stopsCount: t.stops?.length || 0,
-                tripsCount: t.trips?.length || 0,
-                sampleStops: t.stops?.slice(0, 3),
-                firstTripStartTime: t.trips?.[0]?.startTime,
-                firstTripStops: t.trips?.[0]?.stops ? Object.keys(t.trips[0].stops).length : 0
-            })));
-
             if (generatedTables.length === 0) {
-                alert(`Schedule Generation Failed.\n\nPossible reasons:\n1. No directions detected in data.\n2. Cycle time is 0.\n3. Input data format mismatch.\n\nDebug Info:\nDirs: ${Object.keys(groupedData).join(', ')}\nBands: ${bands.length}\nConfig: ${JSON.stringify(config)}`);
-                return; // Stay on Step 3
+                toast.error('Generation Failed', 'Could not generate schedule. Check cycle time and data format.');
+                return;
             }
 
             setGeneratedSchedules(generatedTables);
             setStep(4);
+            toast.success('Schedule Generated', `Created ${generatedTables.length} schedule(s)`);
 
-            // Save the generated schedule to Firebase project
+            // Save the generated schedule to Firebase
             if (user?.uid && generatedTables.length > 0) {
                 try {
                     const savedId = await saveProject(user.uid, {
@@ -321,23 +311,41 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                         bands,
                         config,
                         generatedSchedules: generatedTables,
-                        parsedData, // VITAL: Save raw data for regeneration
+                        parsedData,
                         isGenerated: true
                     });
                     setProjectId(savedId);
-                    console.log('Project saved with generated schedule:', savedId);
                 } catch (e) {
-                    console.error('Failed to save generated schedule to project:', e);
+                    console.error('Failed to save generated schedule:', e);
                 }
             }
         } else if (step === 4) {
             // Finalize / Export
             if (onGenerate) {
                 onGenerate(generatedSchedules);
+                toast.success('Exported', 'Schedule exported to dashboard');
             } else {
-                alert("Schedule Ready! (Export callback not connected)");
+                toast.info('Ready', 'Schedule is ready for export');
             }
         }
+    };
+
+    const handleNewProject = () => {
+        if (files.length > 0 || step > 1) {
+            if (!confirm('Start a new project? Current progress will be cleared.')) return;
+        }
+        clear();
+        setStep(1);
+        setMaxStepReached(1);
+        setFiles([]);
+        setParsedData([]);
+        setAnalysis([]);
+        setBands([]);
+        setSegmentNames([]);
+        setConfig({ routeNumber: DEFAULT_ROUTE_NUMBER, cycleTime: DEFAULT_CYCLE_TIME, blocks: [] });
+        setProjectName('New Schedule Project');
+        setProjectId(undefined);
+        toast.info('New Project', 'Starting fresh');
     };
 
     return (
@@ -359,20 +367,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                     projectName={projectName}
                     onRenameProject={setProjectName}
                     onOpenProjects={() => setShowProjectManager(true)}
-                    onNewProject={() => {
-                        if (files.length > 0 || step > 1) {
-                            if (!confirm('Start a new project? Current progress will be cleared.')) return;
-                        }
-                        clear();
-                        setStep(1);
-                        setFiles([]);
-                        setParsedData([]);
-                        setAnalysis([]);
-                        setBands([]);
-                        setConfig({ routeNumber: '10', cycleTime: 60, blocks: [] });
-                        setProjectName('New Schedule Project');
-                        setProjectId(undefined);
-                    }}
+                    onNewProject={handleNewProject}
                     onSaveVersion={handleSaveProgress}
                     onClose={onBack}
                     onStepClick={(s) => setStep(s)}
@@ -418,9 +413,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                                 bands={bands}
                                 analysis={analysis}
                                 segmentNames={segmentNames}
-                                onUpdateSchedules={(newScheds) => {
-                                    setGeneratedSchedules(newScheds);
-                                }}
+                                onUpdateSchedules={setGeneratedSchedules}
                                 projectName={projectName}
                                 autoSaveStatus={autoSaveStatus}
                                 lastSaved={lastSaved}
@@ -487,41 +480,36 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                 currentProjectId={projectId}
                 onClose={() => setShowProjectManager(false)}
                 onLoadProject={async (project) => {
-                    // Load the project data
                     if (user?.uid) {
                         const fullProject = await getProject(user.uid, project.id);
                         if (fullProject) {
                             setProjectId(fullProject.id);
                             setProjectName(fullProject.name);
                             setDayType(fullProject.dayType);
-                            if (fullProject.analysis) setAnalysis(fullProject.analysis);
+                            if (fullProject.analysis) {
+                                setAnalysis(fullProject.analysis);
+                                setSegmentNames(extractSegmentNames(fullProject.analysis));
+                            }
                             if (fullProject.bands) setBands(fullProject.bands);
                             if (fullProject.config) setConfig(fullProject.config);
                             if (fullProject.generatedSchedules) setGeneratedSchedules(fullProject.generatedSchedules);
-
-                            // Restore raw data
                             if (fullProject.parsedData) setParsedData(fullProject.parsedData);
 
-
-                            // If generated, go to step 4 or 3?
-                            // If we have schedules, we can go to 4.
-                            // If just config, 3.
                             const nextStep = (fullProject.isGenerated && fullProject.generatedSchedules?.length > 0) ? 4 : (fullProject.config ? 3 : 2);
                             setStep(nextStep);
                             setMaxStepReached(nextStep);
 
-                            // If returning to Step 3/4 without raw files, we should inform user?
-                            // For now, valid restoration is enough to view Step 4.
+                            toast.success('Project Loaded', fullProject.name);
                         }
                     }
+                    setShowProjectManager(false);
                 }}
                 onLoadGeneratedSchedule={(schedules, name, id) => {
-                    // Set project context for future saves
                     setProjectId(id);
                     setProjectName(name);
-                    // Pass to editor via onGenerate
                     if (onGenerate) {
                         onGenerate(schedules);
+                        toast.success('Schedule Loaded', name);
                     }
                 }}
                 onNewProject={() => {
@@ -531,9 +519,9 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                     setFiles([]);
                     setProjectId(undefined);
                     setProjectName('New Schedule Project');
+                    setShowProjectManager(false);
                 }}
             />
         </>
     );
 };
-

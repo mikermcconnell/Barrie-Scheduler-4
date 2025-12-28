@@ -58,6 +58,15 @@ import { useAddTrip } from '../hooks/useAddTrip';
 import { TravelTimeGrid } from './TravelTimeGrid';
 import { ScenarioComparisonModal } from './ScenarioComparisonModal';
 import { AuditLogPanel, useAuditLog } from './AuditLogPanel';
+import { TripContextMenu, TripContextMenuAction } from './NewSchedule/TripContextMenu';
+import { SegmentTimeEditor } from './NewSchedule/SegmentTimeEditor';
+import {
+    cascadeTripTimes,
+    updateSegmentTime,
+    endBlockAtTrip,
+    setTripStartStop,
+    setTripEndStop
+} from './NewSchedule/utils/timeCascade';
 
 // --- Shared Helpers (Moved from Workspace) ---
 const deepCloneSchedules = (schedules: MasterRouteTable[]): MasterRouteTable[] => {
@@ -335,10 +344,19 @@ interface RoundTripTableViewProps {
     originalSchedules?: MasterRouteTable[];
     onDeleteTrip?: (tripId: string) => void;
     onAddTrip?: (blockId: string, afterTripId: string) => void;
+    onTripRightClick?: (
+        e: React.MouseEvent,
+        tripId: string,
+        tripDirection: 'North' | 'South',
+        blockId: string,
+        stops: string[],
+        stopName?: string,
+        stopIndex?: number
+    ) => void;
     draftName: string;
 }
 
-const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({ schedules, onCellEdit, originalSchedules, onDeleteTrip, onAddTrip, draftName }) => {
+const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({ schedules, onCellEdit, originalSchedules, onDeleteTrip, onAddTrip, onTripRightClick, draftName }) => {
     const roundTripData = useMemo(() => {
         const pairs: { north: MasterRouteTable; south: MasterRouteTable; combined: RoundTripTable }[] = [];
         const routeGroups: Record<string, { north?: MasterRouteTable; south?: MasterRouteTable }> = {};
@@ -705,7 +723,15 @@ const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({ schedules, onCe
                                         const rowBg = rowIdx % 2 === 0 ? 'bg-white' : 'bg-gray-50/50';
 
                                         return (
-                                            <tr key={uniqueRowKey} className={`group hover:bg-gray-100 transition-colors ${rowBg}`}>
+                                            <tr
+                                                key={uniqueRowKey}
+                                                className={`group hover:bg-gray-100 transition-colors ${rowBg}`}
+                                                onContextMenu={(e) => {
+                                                    if (onTripRightClick && northTrip) {
+                                                        onTripRightClick(e, northTrip.id, 'North', row.blockId, combined.northStops);
+                                                    }
+                                                }}
+                                            >
                                                 {/* Sticky Block ID */}
                                                 <td className={`p-3 border-r border-gray-100 sticky left-0 ${rowBg} group-hover:bg-gray-100 z-30 font-medium text-xs text-gray-700 text-center`}>
                                                     <div className="flex items-center justify-center gap-2">
@@ -990,6 +1016,20 @@ interface TimeBandDisplay {
     avg: number;
 }
 
+// Analysis bucket type
+interface TripBucketAnalysisDisplay {
+    timeBucket: string;
+    totalP50: number;
+    totalP80: number;
+    assignedBand?: string;
+    ignored?: boolean;
+    details?: Array<{
+        segmentName: string;
+        p50: number;
+        p80: number;
+    }>;
+}
+
 export interface ScheduleEditorProps {
     schedules: MasterRouteTable[];
     onSchedulesChange: (schedules: MasterRouteTable[]) => void;
@@ -1013,6 +1053,10 @@ export interface ScheduleEditorProps {
 
     // Optional time bands for display
     bands?: TimeBandDisplay[];
+
+    // Optional analysis data for Travel Times view
+    analysis?: TripBucketAnalysisDisplay[];
+    segmentNames?: string[];
 }
 
 export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
@@ -1029,7 +1073,9 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
     onOpenDrafts,
     canUndo, canRedo, undo, redo,
     showSuccessToast,
-    bands
+    bands,
+    analysis,
+    segmentNames
 }) => {
     const [activeRouteIdx, setActiveRouteIdx] = useState(0);
     const [activeDay, setActiveDay] = useState<string>('Weekday');
@@ -1037,6 +1083,18 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
     const [isFullScreen, setIsFullScreen] = useState(false);
     const [showComparisonModal, setShowComparisonModal] = useState(false);
     const [showAuditLog, setShowAuditLog] = useState(false);
+
+    // Context Menu State
+    const [contextMenu, setContextMenu] = useState<{
+        x: number;
+        y: number;
+        tripId: string;
+        tripDirection: 'North' | 'South';
+        blockId: string;
+        stopName?: string;
+        stopIndex?: number;
+        stops: string[];
+    } | null>(null);
 
     // Audit Log
     const { entries: auditEntries, logAction } = useAuditLog();
@@ -1413,6 +1471,82 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
             }
         }
         onSchedulesChange(newScheds);
+    };
+
+    // Context Menu Action Handler
+    const handleContextMenuAction = (action: TripContextMenuAction) => {
+        switch (action.type) {
+            case 'deleteTrip':
+                handleDeleteTrip(action.tripId);
+                break;
+
+            case 'addTripAfter':
+                // Find the trip and open add modal
+                const addResult = findTableAndTrip(schedules, action.tripId);
+                if (addResult) {
+                    // openModal expects (afterTripId, routeData)
+                    openAddTripModal(action.tripId, { north: undefined, south: undefined });
+                }
+                break;
+
+            case 'endBlockHere':
+                if (action.stopIndex !== undefined) {
+                    // Set endStopIndex on this trip
+                    let newScheds = setTripEndStop(schedules, action.tripId, action.stopIndex);
+
+                    // Also remove all subsequent trips in this block
+                    newScheds = endBlockAtTrip(newScheds, action.tripId);
+
+                    logAction('edit', `Ended block at stop ${action.stopName}`, {
+                        tripId: action.tripId,
+                        field: 'endStopIndex',
+                        newValue: action.stopIndex
+                    });
+
+                    onSchedulesChange(newScheds);
+                    showSuccessToast('Block ended - subsequent trips removed');
+                }
+                break;
+
+            case 'startBlockHere':
+                if (action.stopIndex !== undefined) {
+                    const newScheds = setTripStartStop(schedules, action.tripId, action.stopIndex);
+
+                    logAction('edit', `Started block at stop ${action.stopName}`, {
+                        tripId: action.tripId,
+                        field: 'startStopIndex',
+                        newValue: action.stopIndex
+                    });
+
+                    onSchedulesChange(newScheds);
+                    showSuccessToast('Block start point updated');
+                }
+                break;
+        }
+        setContextMenu(null);
+    };
+
+    // Right-click handler for trip rows
+    const handleTripRightClick = (
+        e: React.MouseEvent,
+        tripId: string,
+        tripDirection: 'North' | 'South',
+        blockId: string,
+        stops: string[],
+        stopName?: string,
+        stopIndex?: number
+    ) => {
+        e.preventDefault();
+        setContextMenu({
+            x: e.clientX,
+            y: e.clientY,
+            tripId,
+            tripDirection,
+            blockId,
+            stopName,
+            stopIndex,
+            stops
+        });
     };
 
     const handleBulkAdjustTravelTime = (fromStop: string, toStop: string, delta: number, routeName: string) => {
@@ -1878,6 +2012,22 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                 />
             )}
 
+            {/* Trip Context Menu (right-click) */}
+            {contextMenu && (
+                <TripContextMenu
+                    x={contextMenu.x}
+                    y={contextMenu.y}
+                    tripId={contextMenu.tripId}
+                    tripDirection={contextMenu.tripDirection}
+                    blockId={contextMenu.blockId}
+                    currentStopName={contextMenu.stopName}
+                    currentStopIndex={contextMenu.stopIndex}
+                    stops={contextMenu.stops}
+                    onAction={handleContextMenuAction}
+                    onClose={() => setContextMenu(null)}
+                />
+            )}
+
             {/* Scenario Comparison Modal */}
             <ScenarioComparisonModal
                 isOpen={showComparisonModal}
@@ -1980,6 +2130,8 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                                 onSingleTripAdjust={handleSingleTripTravelAdjust}
                                 onSingleRecoveryAdjust={handleSingleRecoveryAdjust}
                                 bands={bands}
+                                analysis={analysis}
+                                segmentNames={segmentNames}
                             />
                         ) : (
                             activeRoute.combined ? (
@@ -1989,6 +2141,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                                     originalSchedules={originalSchedules}
                                     onDeleteTrip={handleDeleteTrip}
                                     onAddTrip={(_, tripId) => openAddTripModal(tripId, {})}
+                                    onTripRightClick={handleTripRightClick}
                                     draftName={draftName}
                                 />
                             ) : (

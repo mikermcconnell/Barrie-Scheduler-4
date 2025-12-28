@@ -11,6 +11,20 @@ interface TimeBandDisplay {
     avg: number;
 }
 
+// Analysis bucket type
+interface TripBucketAnalysisDisplay {
+    timeBucket: string;
+    totalP50: number;
+    totalP80: number;
+    assignedBand?: string;
+    ignored?: boolean;
+    details?: Array<{
+        segmentName: string;
+        p50: number;
+        p80: number;
+    }>;
+}
+
 interface TravelTimeGridProps {
     schedules: MasterRouteTable[];
     onBulkAdjust?: (fromStop: string, toStop: string, delta: number, routeName: string) => void;
@@ -18,6 +32,8 @@ interface TravelTimeGridProps {
     onSingleTripAdjust?: (tripId: string, fromStop: string, delta: number, routeName: string) => void;
     onSingleRecoveryAdjust?: (tripId: string, stopName: string, delta: number, routeName: string) => void;
     bands?: TimeBandDisplay[];
+    analysis?: TripBucketAnalysisDisplay[];
+    segmentNames?: string[];
 }
 
 // Clean, professional heatmap colors
@@ -30,7 +46,7 @@ const getTravelColor = (minutes: number): string => {
     return 'bg-rose-50 text-rose-700';
 };
 
-export const TravelTimeGrid: React.FC<TravelTimeGridProps> = ({ schedules, onBulkAdjust, onRecoveryAdjust, onSingleTripAdjust, onSingleRecoveryAdjust, bands }) => {
+export const TravelTimeGrid: React.FC<TravelTimeGridProps> = ({ schedules, onBulkAdjust, onRecoveryAdjust, onSingleTripAdjust, onSingleRecoveryAdjust, bands, analysis, segmentNames }) => {
     const [expandedRoute, setExpandedRoute] = useState<string | null>(null);
     const [isFullScreen, setIsFullScreen] = useState(false);
 
@@ -91,6 +107,60 @@ export const TravelTimeGrid: React.FC<TravelTimeGridProps> = ({ schedules, onBul
         });
     }, [schedules]);
 
+    // Calculate band summary with segment breakdowns (p50 and p80)
+    const bandSummary = useMemo(() => {
+        if (!bands || !analysis || !segmentNames) return null;
+
+        const summary: Record<string, {
+            band: TimeBandDisplay;
+            segmentTotals: Record<string, { sumP50: number; sumP80: number; count: number }>;
+            totalSumP50: number;
+            totalSumP80: number;
+            totalCount: number;
+            timeSlots: string[];
+        }> = {};
+
+        // Initialize summary for each band
+        bands.forEach(band => {
+            summary[band.id] = {
+                band,
+                segmentTotals: {},
+                totalSumP50: 0,
+                totalSumP80: 0,
+                totalCount: 0,
+                timeSlots: []
+            };
+            segmentNames.forEach(seg => {
+                summary[band.id].segmentTotals[seg] = { sumP50: 0, sumP80: 0, count: 0 };
+            });
+        });
+
+        // Aggregate data from each bucket into its assigned band
+        analysis.forEach(bucket => {
+            if (bucket.ignored || !bucket.assignedBand) return;
+            const bandData = summary[bucket.assignedBand];
+            if (!bandData) return;
+
+            // Track the time slot
+            const timeSlot = bucket.timeBucket.split(' - ')[0];
+            bandData.timeSlots.push(timeSlot);
+
+            bucket.details?.forEach(detail => {
+                if (bandData.segmentTotals[detail.segmentName]) {
+                    bandData.segmentTotals[detail.segmentName].sumP50 += detail.p50;
+                    bandData.segmentTotals[detail.segmentName].sumP80 += detail.p80;
+                    bandData.segmentTotals[detail.segmentName].count += 1;
+                }
+            });
+
+            bandData.totalSumP50 += bucket.totalP50;
+            bandData.totalSumP80 += bucket.totalP80;
+            bandData.totalCount += 1;
+        });
+
+        return summary;
+    }, [bands, analysis, segmentNames]);
+
     if (schedules.length === 0) {
         return (
             <div className="flex flex-col items-center justify-center py-20 text-gray-400">
@@ -103,28 +173,112 @@ export const TravelTimeGrid: React.FC<TravelTimeGridProps> = ({ schedules, onBul
 
     return (
         <div className={`flex flex-col gap-4 ${isFullScreen ? 'fixed inset-0 z-50 bg-white overflow-auto p-4' : ''}`}>
-            {/* Time Bands Reference Table */}
-            {bands && bands.length > 0 && (
-                <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-                    <div className="px-5 py-4 border-b border-gray-100 bg-gray-50">
-                        <h3 className="text-sm font-semibold text-gray-700">Time Band Travel Times</h3>
-                        <p className="text-xs text-gray-400 mt-0.5">Round trip travel time by time-of-day band</p>
+            {/* Segment Times by Band Table */}
+            {bandSummary && bands && segmentNames && segmentNames.length > 0 && (
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                    <div className="p-4 border-b border-gray-200 bg-gray-50">
+                        <h3 className="font-bold text-gray-900">Segment Times by Band</h3>
+                        <p className="text-xs text-gray-500 mt-1">Average 50th and 80th Percentile travel times per band</p>
                     </div>
-                    <div className="p-5">
-                        <div className="grid grid-cols-5 gap-4">
-                            {bands.map(band => (
-                                <div key={band.id} className="flex flex-col items-center p-4 rounded-lg border border-gray-100 bg-gray-50/50">
-                                    <div
-                                        className="w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-sm mb-2"
-                                        style={{ backgroundColor: band.color }}
-                                    >
-                                        {band.id}
-                                    </div>
-                                    <span className="text-2xl font-bold text-gray-800">{band.avg.toFixed(0)}</span>
-                                    <span className="text-xs text-gray-400">minutes</span>
-                                </div>
-                            ))}
-                        </div>
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                            <thead>
+                                <tr className="bg-gray-100 border-b border-gray-200">
+                                    <th className="px-4 py-3 text-left font-bold text-gray-700 min-w-[100px]">Band</th>
+                                    <th className="px-4 py-3 text-left font-bold text-gray-700 min-w-[180px]">Time Slots</th>
+                                    {segmentNames.map(seg => (
+                                        <th key={seg} className="px-3 py-3 text-center font-medium text-gray-600 min-w-[90px]">
+                                            <div className="flex flex-col items-center">
+                                                {seg.split(' to ').map((s, i) => (
+                                                    <span key={i} className={`text-xs ${i === 1 ? 'text-gray-400' : 'font-semibold'}`}>
+                                                        {i === 1 && '↓ '}
+                                                        {s.length > 15 ? s.substring(0, 12) + '...' : s}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        </th>
+                                    ))}
+                                    <th className="px-4 py-3 text-center font-bold text-gray-700 min-w-[80px] bg-gray-200">
+                                        <div className="flex flex-col">
+                                            <span>Total</span>
+                                            <span className="text-[10px] font-normal text-gray-500">p50 / p80</span>
+                                        </div>
+                                    </th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100">
+                                {bands.map(band => {
+                                    const data = bandSummary[band.id];
+                                    if (!data || data.totalCount === 0) return null;
+
+                                    const avgTotalP50 = data.totalSumP50 / data.totalCount;
+                                    const avgTotalP80 = data.totalSumP80 / data.totalCount;
+
+                                    // Find min/max for color gradients
+                                    const allP50s = segmentNames.map(seg => {
+                                        const s = data.segmentTotals[seg];
+                                        return s && s.count > 0 ? s.sumP50 / s.count : 0;
+                                    });
+                                    const maxP50 = Math.max(...allP50s);
+
+                                    return (
+                                        <tr key={band.id} className="hover:bg-blue-50/30">
+                                            <td className="px-4 py-3">
+                                                <div className="flex items-center gap-3">
+                                                    <span
+                                                        className="px-3 py-1 rounded-lg text-sm font-bold text-white shadow-sm"
+                                                        style={{ backgroundColor: band.color }}
+                                                    >
+                                                        {band.id}
+                                                    </span>
+                                                    <span className="text-xs text-gray-500">{band.avg.toFixed(0)}m</span>
+                                                </div>
+                                            </td>
+                                            <td className="px-4 py-3">
+                                                <div className="flex flex-wrap gap-1">
+                                                    {data.timeSlots.slice(0, 6).map((slot, idx) => (
+                                                        <span key={idx} className="px-1.5 py-0.5 bg-gray-100 rounded text-[10px] font-medium text-gray-600">
+                                                            {slot}
+                                                        </span>
+                                                    ))}
+                                                    {data.timeSlots.length > 6 && (
+                                                        <span className="text-[10px] text-gray-400">+{data.timeSlots.length - 6}</span>
+                                                    )}
+                                                </div>
+                                            </td>
+                                            {segmentNames.map(seg => {
+                                                const segData = data.segmentTotals[seg];
+                                                const avgP50 = segData && segData.count > 0 ? segData.sumP50 / segData.count : 0;
+                                                const avgP80 = segData && segData.count > 0 ? segData.sumP80 / segData.count : 0;
+                                                const intensity = maxP50 > 0 ? avgP50 / maxP50 : 0;
+                                                const bgOpacity = Math.round(intensity * 30 + 10);
+
+                                                return (
+                                                    <td
+                                                        key={seg}
+                                                        className="px-2 py-2 text-center"
+                                                        style={{
+                                                            backgroundColor: `rgba(${Math.round(255 * intensity)}, ${Math.round(200 - 100 * intensity)}, ${Math.round(150 - 100 * intensity)}, 0.${bgOpacity})`
+                                                        }}
+                                                    >
+                                                        <div className="flex flex-col">
+                                                            <span className="font-bold text-gray-800">{Math.round(avgP50)}</span>
+                                                            <span className="text-[10px] text-gray-400">{Math.round(avgP80)}</span>
+                                                        </div>
+                                                    </td>
+                                                );
+                                            })}
+                                            <td className="px-3 py-2 text-center bg-gray-50 border-l border-gray-200">
+                                                <div className="flex flex-col">
+                                                    <span className="font-bold text-gray-900 text-lg">{Math.round(avgTotalP50)}</span>
+                                                    <span className="text-xs text-gray-500">{Math.round(avgTotalP80)}</span>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             )}

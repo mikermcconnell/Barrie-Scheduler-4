@@ -39,6 +39,10 @@ export interface MasterTrip {
 
     // Band Assignment (from New Schedule wizard)
     assignedBand?: string; // 'A', 'B', 'C', 'D', 'E' - determined by departure time
+
+    // Partial Trip Support (start/end at mid-route stops)
+    startStopIndex?: number; // 0-based index of first active stop (undefined = 0)
+    endStopIndex?: number;   // 0-based index of last active stop (undefined = last)
 }
 
 export interface MasterRouteTable {
