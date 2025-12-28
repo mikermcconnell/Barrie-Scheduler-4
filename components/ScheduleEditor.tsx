@@ -179,10 +179,12 @@ const analyzeHeadways = (trips: MasterTrip[]): { avg: number; irregular: string[
     return { avg: 0, irregular: [] };
 };
 
-// Calculate trips per hour for histogram
+// Calculate round trips per hour (count North departures only, since N+S = 1 round trip)
 const calculateTripsPerHour = (trips: MasterTrip[]): Record<number, number> => {
     const hourCounts: Record<number, number> = {};
-    trips.forEach(t => {
+    // Only count North trips - each North departure represents one full round trip
+    const northTrips = trips.filter(t => t.direction === 'North');
+    northTrips.forEach(t => {
         const hour = Math.floor(t.startTime / 60);
         hourCounts[hour] = (hourCounts[hour] || 0) + 1;
     });
@@ -415,155 +417,167 @@ const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({ schedules, onCe
                 const maxTripsInHour = Math.max(...Object.values(tripsPerHour), 1);
 
                 return (
-                    <div key={combined.routeName} className="flex flex-col gap-4 bg-white rounded-xl shadow-sm border border-gray-100 p-1">
+                    <div key={combined.routeName} className="flex flex-col bg-white rounded-xl shadow-sm border border-gray-100">
 
-                        {/* 1. Header Area: Title & High-Level Metrics */}
-                        <div className="flex flex-col gap-3 px-4 py-3 border-b border-gray-100">
-                            {/* Top Row: Service Span + Key Metrics */}
-                            <div className="flex items-center justify-between">
-                                {/* Left: Service Span */}
-                                <div className="flex items-center gap-4">
-                                    <div className="flex items-center gap-2 bg-gray-50 px-3 py-1.5 rounded-lg">
-                                        <Clock size={14} className="text-gray-400" />
-                                        <span className="text-xs font-medium text-gray-600">
-                                            {serviceSpan.start} – {serviceSpan.end}
-                                        </span>
-                                        <span className="text-[10px] text-gray-400">({serviceSpan.hours}h span)</span>
-                                    </div>
-                                    {/* Peak Vehicles */}
-                                    <div className="flex items-center gap-2 bg-blue-50 px-3 py-1.5 rounded-lg">
-                                        <Car size={14} className="text-blue-500" />
-                                        <span className="text-xs font-bold text-blue-700">{peakVehicles}</span>
-                                        <span className="text-[10px] text-blue-400">vehicles</span>
+                        {/* 1. Header Area: Clean Card-Based Metrics */}
+                        <div className="px-6 py-5 border-b border-gray-100">
+                            {/* Metrics Cards Row */}
+                            <div className="flex items-stretch gap-6">
+                                {/* Service Card */}
+                                <div className="flex flex-col justify-center">
+                                    <span className="text-[10px] font-medium text-gray-400 uppercase tracking-wide mb-1">Service Window</span>
+                                    <div className="flex items-baseline gap-2">
+                                        <span className="text-lg font-semibold text-gray-800">{serviceSpan.start} – {serviceSpan.end}</span>
+                                        <span className="text-xs text-gray-400">{serviceSpan.hours}h</span>
                                     </div>
                                 </div>
 
-                                {/* Right: Key Metrics Strip */}
-                                <div className="flex items-center gap-5">
-                                    <div className="flex flex-col items-center">
-                                        <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Trips</span>
-                                        <span className="text-sm font-bold text-gray-700">{totalTrips}</span>
-                                    </div>
-                                    <div className="flex flex-col items-center">
-                                        <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Travel</span>
-                                        <span className="text-sm font-bold text-gray-700">{Math.round(totalTravelSum / 60)}<span className="text-[10px] ml-1 font-normal text-gray-400">h</span></span>
-                                    </div>
-                                    <div className="flex flex-col items-center">
-                                        <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Recovery</span>
-                                        <span className="text-sm font-bold text-gray-700">{Math.round(totalRecoverySum / 60)}<span className="text-[10px] ml-1 font-normal text-gray-400">h</span></span>
-                                    </div>
-                                    <div className="flex flex-col items-center">
-                                        <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Cycle</span>
-                                        <span className="text-sm font-bold text-gray-700">{Math.round(totalCycleSum / 60)}<span className="text-[10px] ml-1 font-normal text-gray-400">h</span></span>
-                                    </div>
-                                    <div className="flex flex-col items-center">
-                                        <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Ratio</span>
-                                        <span className={`text-sm font-bold ${ratioStatus.color}`}>
-                                            {overallRatio.toFixed(1)}%
-                                            <span className="text-[9px] ml-1 font-normal">({ratioStatus.label})</span>
+                                <div className="w-px bg-gray-200" />
+
+                                {/* Fleet Card */}
+                                <div className="flex flex-col justify-center">
+                                    <span className="text-[10px] font-medium text-gray-400 uppercase tracking-wide mb-1">Vehicles</span>
+                                    <span className="text-lg font-semibold text-gray-800">{peakVehicles}</span>
+                                </div>
+
+                                <div className="w-px bg-gray-200" />
+
+                                {/* Trips Card */}
+                                <div className="flex flex-col justify-center">
+                                    <span className="text-[10px] font-medium text-gray-400 uppercase tracking-wide mb-1">Trips</span>
+                                    <span className="text-lg font-semibold text-gray-800">{totalTrips}</span>
+                                </div>
+
+                                <div className="w-px bg-gray-200" />
+
+                                {/* Time Budget Card - Consolidated */}
+                                <div className="flex flex-col justify-center">
+                                    <span className="text-[10px] font-medium text-gray-400 uppercase tracking-wide mb-1">Time Budget</span>
+                                    <div className="flex items-baseline gap-3">
+                                        <span className="text-lg font-semibold text-gray-800">{Math.round(totalCycleSum / 60)}h</span>
+                                        <span className="text-xs text-gray-400">
+                                            {Math.round(totalTravelSum / 60)}h travel + {Math.round(totalRecoverySum / 60)}h recovery
                                         </span>
                                     </div>
-                                    <div className="flex flex-col items-center">
-                                        <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Headway</span>
-                                        <span className="text-sm font-bold text-gray-700">{headwayAnalysis.avg}<span className="text-[10px] ml-1 font-normal text-gray-400">min</span></span>
+                                </div>
+
+                                <div className="w-px bg-gray-200" />
+
+                                {/* Efficiency Card */}
+                                <div className="flex flex-col justify-center">
+                                    <span className="text-[10px] font-medium text-gray-400 uppercase tracking-wide mb-1">Recovery Ratio</span>
+                                    <span className={`text-lg font-semibold ${overallRatio > 25 ? 'text-amber-600' : overallRatio < 10 ? 'text-red-600' : 'text-gray-800'}`}>
+                                        {overallRatio.toFixed(0)}%
+                                    </span>
+                                </div>
+
+                                <div className="w-px bg-gray-200" />
+
+                                {/* Headway Card */}
+                                <div className="flex flex-col justify-center">
+                                    <span className="text-[10px] font-medium text-gray-400 uppercase tracking-wide mb-1">Avg Headway</span>
+                                    <div className="flex items-baseline gap-1">
+                                        <span className="text-lg font-semibold text-gray-800">{headwayAnalysis.avg}</span>
+                                        <span className="text-xs text-gray-400">min</span>
                                     </div>
                                 </div>
-                            </div>
 
-                            {/* Bottom Row: Trip Histogram + Validation Warnings */}
-                            <div className="flex items-end justify-between gap-4">
-                                {/* Trips Per Hour Histogram */}
-                                <div className="flex items-end gap-0.5 h-8">
-                                    <span className="text-[8px] text-gray-400 mr-1 self-center">Trips/hr:</span>
-                                    {Array.from({ length: maxHour - minHour + 1 }, (_, i) => {
-                                        const hour = minHour + i;
-                                        const count = tripsPerHour[hour] || 0;
-                                        const height = count > 0 ? Math.max(4, (count / maxTripsInHour) * 24) : 2;
+                                {/* Spacer */}
+                                <div className="flex-1" />
+
+                                {/* Round Trips/Hour Summary - Text-based */}
+                                <div className="flex flex-col justify-center">
+                                    <span className="text-[10px] font-medium text-gray-400 uppercase tracking-wide mb-1">Frequency</span>
+                                    {(() => {
+                                        // Calculate average and peak (tripsPerHour now counts round trips)
+                                        const hourCounts = Object.values(tripsPerHour).filter(c => c > 0);
+                                        const avgTrips = hourCounts.length > 0
+                                            ? (hourCounts.reduce((a, b) => a + b, 0) / hourCounts.length).toFixed(1)
+                                            : '0';
+
+                                        // Find peak hours (hours with max trips)
+                                        const peakHours = Object.entries(tripsPerHour)
+                                            .filter(([_, count]) => count === maxTripsInHour && count > 0)
+                                            .map(([hour]) => parseInt(hour))
+                                            .sort((a, b) => a - b);
+
+                                        // Format peak hours into ranges
+                                        const formatPeakHours = (hours: number[]) => {
+                                            if (hours.length === 0) return '';
+                                            if (hours.length <= 2) return hours.map(h => `${h}:00`).join(', ');
+                                            // Group consecutive hours
+                                            const ranges: string[] = [];
+                                            let start = hours[0];
+                                            let end = hours[0];
+                                            for (let i = 1; i <= hours.length; i++) {
+                                                if (i < hours.length && hours[i] === end + 1) {
+                                                    end = hours[i];
+                                                } else {
+                                                    ranges.push(start === end ? `${start}:00` : `${start}-${end}:00`);
+                                                    if (i < hours.length) {
+                                                        start = hours[i];
+                                                        end = hours[i];
+                                                    }
+                                                }
+                                            }
+                                            return ranges.slice(0, 2).join(', ');
+                                        };
+
                                         return (
-                                            <div key={hour} className="flex flex-col items-center" title={`${hour}:00 - ${count} trips`}>
-                                                <div
-                                                    className={`w-3 rounded-t transition-all ${count > 0 ? 'bg-blue-400' : 'bg-gray-200'}`}
-                                                    style={{ height: `${height}px` }}
-                                                />
-                                                {hour % 2 === 0 && (
-                                                    <span className="text-[7px] text-gray-400">{hour}</span>
+                                            <div className="flex items-baseline gap-2">
+                                                <span className="text-lg font-semibold text-gray-800">{avgTrips}</span>
+                                                <span className="text-xs text-gray-400">round trips/hr</span>
+                                                {peakHours.length > 0 && maxTripsInHour > 1 && (
+                                                    <span className="text-xs text-gray-400 ml-2">
+                                                        Peak: {maxTripsInHour}/hr <span className="text-gray-300">({formatPeakHours(peakHours)})</span>
+                                                    </span>
                                                 )}
                                             </div>
                                         );
-                                    })}
+                                    })()}
                                 </div>
-
-                                {/* Validation Warnings */}
-                                {warnings.length > 0 && (
-                                    <div className="flex items-center gap-2">
-                                        <div className="flex items-center gap-1 px-2 py-1 rounded bg-amber-50 border border-amber-200">
-                                            <AlertTriangle size={12} className="text-amber-500" />
-                                            <span className="text-[10px] font-medium text-amber-700">
-                                                {warnings.length} warning{warnings.length > 1 ? 's' : ''}
-                                            </span>
-                                        </div>
-                                        {/* Show first warning as preview */}
-                                        <span className="text-[10px] text-gray-500 max-w-xs truncate" title={warnings.map(w => w.message).join('\n')}>
-                                            {warnings[0].message}
-                                        </span>
-                                    </div>
-                                )}
-
-                                {/* Headway Irregularities */}
-                                {headwayAnalysis.irregular.length > 0 && (
-                                    <div className="flex items-center gap-1 px-2 py-1 rounded bg-orange-50 border border-orange-200" title={headwayAnalysis.irregular.join('\n')}>
-                                        <AlertCircle size={12} className="text-orange-500" />
-                                        <span className="text-[10px] font-medium text-orange-700">
-                                            {headwayAnalysis.irregular.length} irregular headway{headwayAnalysis.irregular.length > 1 ? 's' : ''}
-                                        </span>
-                                    </div>
-                                )}
                             </div>
                         </div>
 
                         {/* 2. Block Summary Gantt Chart (Collapsible) */}
-                        <details className="px-4 py-2 border-b border-gray-100">
-                            <summary className="cursor-pointer text-xs font-bold text-gray-500 uppercase tracking-wide flex items-center gap-2 hover:text-gray-700">
+                        <details className="px-6 py-4 border-b border-gray-100">
+                            <summary className="cursor-pointer text-xs font-medium text-gray-500 uppercase tracking-wide flex items-center gap-2 hover:text-gray-700">
                                 <BarChart2 size={14} />
-                                Block Timeline View
+                                Block Timeline
                             </summary>
-                            <div className="mt-3 pb-2">
+                            <div className="mt-4 pb-2">
                                 {/* Time scale header */}
-                                <div className="flex items-center mb-1">
-                                    <div className="w-16 text-[9px] text-gray-400 font-medium">Block</div>
+                                <div className="flex items-center mb-2">
+                                    <div className="w-20 text-[10px] text-gray-400 font-medium">Block</div>
                                     <div className="flex-1 flex">
                                         {Array.from({ length: maxHour - minHour + 1 }, (_, i) => (
-                                            <div key={i} className="flex-1 text-[8px] text-gray-400 text-center border-l border-gray-100">
+                                            <div key={i} className="flex-1 text-[9px] text-gray-400 text-center">
                                                 {minHour + i}:00
                                             </div>
                                         ))}
                                     </div>
                                 </div>
-                                {/* Block rows */}
+                                {/* Block rows - simplified with gray tones */}
                                 {Array.from(new Set(allTrips.map(t => t.blockId))).sort().map(blockId => {
                                     const blockTrips = allTrips.filter(t => t.blockId === blockId).sort((a, b) => a.startTime - b.startTime);
                                     const totalSpanMins = (maxHour - minHour + 1) * 60;
 
                                     return (
-                                        <div key={blockId} className="flex items-center h-6 mb-1">
-                                            <div className="w-16 text-[10px] font-bold text-gray-600">{blockId}</div>
-                                            <div className="flex-1 relative h-4 bg-gray-50 rounded">
+                                        <div key={blockId} className="flex items-center h-7 mb-1">
+                                            <div className="w-20 text-xs font-medium text-gray-600">{blockId}</div>
+                                            <div className="flex-1 relative h-5 bg-gray-100 rounded">
                                                 {blockTrips.map((trip, idx) => {
                                                     const startOffset = ((trip.startTime - minHour * 60) / totalSpanMins) * 100;
                                                     const duration = ((trip.endTime - trip.startTime) / totalSpanMins) * 100;
-                                                    const bandColors: Record<string, string> = {
-                                                        'A': 'bg-red-400', 'B': 'bg-orange-400', 'C': 'bg-yellow-400',
-                                                        'D': 'bg-lime-400', 'E': 'bg-green-400'
-                                                    };
-                                                    const bgColor = trip.assignedBand ? bandColors[trip.assignedBand] || 'bg-blue-400' : 'bg-blue-400';
-                                                    const dirColor = trip.direction === 'North' ? 'border-blue-600' : 'border-indigo-600';
+                                                    // Simplified: use gray shades, direction shown by intensity
+                                                    const bgColor = trip.direction === 'North' ? 'bg-gray-500' : 'bg-gray-400';
 
                                                     return (
                                                         <div
                                                             key={trip.id}
-                                                            className={`absolute h-full ${bgColor} ${dirColor} border-l-2 rounded-r opacity-80 hover:opacity-100 transition-opacity`}
+                                                            className={`absolute h-full ${bgColor} rounded-sm hover:bg-gray-600 transition-colors`}
                                                             style={{ left: `${startOffset}%`, width: `${Math.max(duration, 0.5)}%` }}
-                                                            title={`${trip.direction}: ${Math.floor(trip.startTime / 60)}:${(trip.startTime % 60).toString().padStart(2, '0')} - ${Math.floor(trip.endTime / 60)}:${(trip.endTime % 60).toString().padStart(2, '0')} (Band ${trip.assignedBand || '?'})`}
+                                                            title={`${trip.direction}: ${Math.floor(trip.startTime / 60)}:${(trip.startTime % 60).toString().padStart(2, '0')} – ${Math.floor(trip.endTime / 60)}:${(trip.endTime % 60).toString().padStart(2, '0')}`}
                                                         />
                                                     );
                                                 })}
@@ -571,32 +585,24 @@ const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({ schedules, onCe
                                         </div>
                                     );
                                 })}
-                                {/* Legend */}
-                                <div className="flex items-center gap-4 mt-2 pt-2 border-t border-gray-100">
-                                    <span className="text-[9px] text-gray-400">Direction:</span>
-                                    <div className="flex items-center gap-1">
-                                        <div className="w-2 h-3 bg-blue-400 border-l-2 border-blue-600 rounded-r" />
-                                        <span className="text-[9px] text-gray-500">North</span>
+                                {/* Minimal Legend */}
+                                <div className="flex items-center gap-6 mt-3 pt-3 border-t border-gray-100">
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-4 h-3 bg-gray-500 rounded-sm" />
+                                        <span className="text-xs text-gray-500">Northbound</span>
                                     </div>
-                                    <div className="flex items-center gap-1">
-                                        <div className="w-2 h-3 bg-indigo-400 border-l-2 border-indigo-600 rounded-r" />
-                                        <span className="text-[9px] text-gray-500">South</span>
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-4 h-3 bg-gray-400 rounded-sm" />
+                                        <span className="text-xs text-gray-500">Southbound</span>
                                     </div>
-                                    <span className="text-[9px] text-gray-400 ml-4">Band colors:</span>
-                                    {['A', 'B', 'C', 'D', 'E'].map(band => (
-                                        <div key={band} className="flex items-center gap-0.5">
-                                            <div className={`w-2 h-2 rounded ${band === 'A' ? 'bg-red-400' : band === 'B' ? 'bg-orange-400' : band === 'C' ? 'bg-yellow-400' : band === 'D' ? 'bg-lime-400' : 'bg-green-400'}`} />
-                                            <span className="text-[9px] text-gray-500">{band}</span>
-                                        </div>
-                                    ))}
                                 </div>
                             </div>
                         </details>
 
                         {/* 3. Main Table Area */}
-                        <div className="overflow-x-auto custom-scrollbar relative w-full rounded-lg">
+                        <div className="overflow-auto custom-scrollbar relative w-full flex-1 min-h-0">
                             {/* Scroll fade indicator */}
-                            <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-white to-transparent pointer-events-none z-50" />
+                            <div className="absolute right-0 top-0 bottom-0 w-12 bg-gradient-to-l from-white to-transparent pointer-events-none z-50" />
 
                             <table className="w-full text-left border-collapse text-[11px]" style={{ tableLayout: 'fixed' }}>
                                 <colgroup>
@@ -624,20 +630,20 @@ const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({ schedules, onCe
                                 </colgroup>
                                 <thead className="sticky top-0 z-40">
                                     {/* Direction Group Header Row */}
-                                    <tr className="bg-white">
-                                        <th rowSpan={2} className="p-2 border-b border-gray-100 bg-white sticky left-0 z-50 text-[9px] font-bold text-gray-400 uppercase tracking-wider text-center">Block</th>
+                                    <tr className="bg-gray-50">
+                                        <th rowSpan={2} className="p-3 border-b border-gray-200 bg-gray-50 sticky left-0 z-50 text-[10px] font-semibold text-gray-500 uppercase tracking-wide text-center">Block</th>
 
                                         {/* North Header Span */}
-                                        <th colSpan={1 + (combined.northStops.length - 1) * 3} className="p-2 text-center text-[9px] font-bold text-blue-500 bg-blue-50/10 border-b border-blue-100 uppercase tracking-widest">
+                                        <th colSpan={1 + (combined.northStops.length - 1) * 3} className="p-3 text-center text-[10px] font-semibold text-gray-600 bg-gray-50 border-b border-gray-200 uppercase tracking-wide">
                                             Northbound
                                         </th>
 
                                         {/* South Header Span */}
-                                        <th colSpan={1 + (combined.southStops.length - 1) * 3} className="p-2 text-center text-[9px] font-bold text-indigo-500 bg-indigo-50/10 border-b border-indigo-100 uppercase tracking-widest">
+                                        <th colSpan={1 + (combined.southStops.length - 1) * 3} className="p-3 text-center text-[10px] font-semibold text-gray-600 bg-gray-50 border-b border-gray-200 uppercase tracking-wide">
                                             Southbound
                                         </th>
 
-                                        <th colSpan={6} className="p-2 text-center text-[9px] font-bold text-gray-400 bg-white border-b border-gray-100 uppercase tracking-widest">Metrics</th>
+                                        <th colSpan={6} className="p-3 text-center text-[10px] font-semibold text-gray-500 bg-gray-50 border-b border-gray-200 uppercase tracking-wide">Metrics</th>
                                     </tr>
 
                                     {/* Stop Names Row */}
@@ -645,9 +651,9 @@ const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({ schedules, onCe
                                         {/* North Stops */}
                                         {combined.northStops.map((stop, i) => (
                                             <React.Fragment key={`n-h-${stop}`}>
-                                                {i > 0 && <th className="py-2 px-1 border-b border-gray-100 text-center text-[9px] font-medium text-blue-300 uppercase">Arr</th>}
-                                                {i > 0 && <th className="py-2 px-1 border-b border-gray-100 text-center text-[9px] font-bold text-blue-300">R</th>}
-                                                <th className="py-2 px-1 border-b border-gray-100 text-center text-[10px] font-bold text-gray-600 whitespace-normal uppercase tracking-tight" title={stop}>
+                                                {i > 0 && <th className="py-2 px-1 border-b border-gray-200 text-center text-[9px] font-medium text-gray-400 uppercase">Arr</th>}
+                                                {i > 0 && <th className="py-2 px-1 border-b border-gray-200 text-center text-[9px] font-medium text-gray-400">R</th>}
+                                                <th className="py-2 px-1 border-b border-gray-200 text-center text-[10px] font-semibold text-gray-600 whitespace-normal uppercase tracking-tight" title={stop}>
                                                     {stop}
                                                 </th>
                                             </React.Fragment>
@@ -656,21 +662,21 @@ const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({ schedules, onCe
                                         {/* South Stops */}
                                         {combined.southStops.map((stop, i) => (
                                             <React.Fragment key={`s-h-${stop}`}>
-                                                {i > 0 && <th className="py-2 px-1 border-b border-gray-100 text-center text-[9px] font-medium text-indigo-300 uppercase">Arr</th>}
-                                                {i > 0 && <th className="py-2 px-1 border-b border-gray-100 text-center text-[9px] font-bold text-indigo-300">R</th>}
-                                                <th className="py-2 px-1 border-b border-gray-100 text-center text-[10px] font-bold text-gray-600 whitespace-normal uppercase tracking-tight" title={stop}>
+                                                {i > 0 && <th className="py-2 px-1 border-b border-gray-200 text-center text-[9px] font-medium text-gray-400 uppercase">Arr</th>}
+                                                {i > 0 && <th className="py-2 px-1 border-b border-gray-200 text-center text-[9px] font-medium text-gray-400">R</th>}
+                                                <th className="py-2 px-1 border-b border-gray-200 text-center text-[10px] font-semibold text-gray-600 whitespace-normal uppercase tracking-tight" title={stop}>
                                                     {stop}
                                                 </th>
                                             </React.Fragment>
                                         ))}
 
                                         {/* Metrics Headers */}
-                                        <th className="py-2 px-1 border-b border-gray-100 text-center text-[9px] font-medium text-gray-400 uppercase">Trav</th>
-                                        <th className="py-2 px-1 border-b border-gray-100 text-center text-[9px] font-medium text-gray-400 uppercase">Bnd</th>
-                                        <th className="py-2 px-1 border-b border-gray-100 text-center text-[9px] font-medium text-gray-400 uppercase">Rec</th>
-                                        <th className="py-2 px-1 border-b border-gray-100 text-center text-[9px] font-medium text-gray-400 uppercase">Ratio</th>
-                                        <th className="py-2 px-1 border-b border-gray-100 text-center text-[9px] font-medium text-gray-400 uppercase">Hwy</th>
-                                        <th className="py-2 px-1 border-b border-gray-100 text-center text-[9px] font-medium text-gray-400 uppercase">Cycle</th>
+                                        <th className="py-2 px-1 border-b border-gray-200 text-center text-[9px] font-medium text-gray-400 uppercase">Travel</th>
+                                        <th className="py-2 px-1 border-b border-gray-200 text-center text-[9px] font-medium text-gray-400 uppercase">Band</th>
+                                        <th className="py-2 px-1 border-b border-gray-200 text-center text-[9px] font-medium text-gray-400 uppercase">Rec</th>
+                                        <th className="py-2 px-1 border-b border-gray-200 text-center text-[9px] font-medium text-gray-400 uppercase">Ratio</th>
+                                        <th className="py-2 px-1 border-b border-gray-200 text-center text-[9px] font-medium text-gray-400 uppercase">Hdwy</th>
+                                        <th className="py-2 px-1 border-b border-gray-200 text-center text-[9px] font-medium text-gray-400 uppercase">Cycle</th>
                                     </tr>
                                 </thead>
 
@@ -694,17 +700,17 @@ const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({ schedules, onCe
                                         // Ratio Color Logic using new thresholds
                                         const ratioColorClass = getRatioColor(ratio);
 
-                                        // Band-based row tinting (use north trip's band, or south if north doesn't have one)
+                                        // Clean alternating rows - no band coloring
                                         const assignedBand = northTrip?.assignedBand || southTrip?.assignedBand;
-                                        const bandRowColor = getBandRowColor(assignedBand);
+                                        const rowBg = rowIdx % 2 === 0 ? 'bg-white' : 'bg-gray-50/50';
 
                                         return (
-                                            <tr key={uniqueRowKey} className={`group hover:bg-gray-100/50 transition-colors ${bandRowColor}`}>
+                                            <tr key={uniqueRowKey} className={`group hover:bg-gray-100 transition-colors ${rowBg}`}>
                                                 {/* Sticky Block ID */}
-                                                <td className={`p-3 border-r border-dashed border-gray-100 sticky left-0 ${bandRowColor || 'bg-white'} group-hover:bg-gray-100/50 z-30 font-bold text-[10px] text-gray-800 text-center`}>
-                                                    <div className="flex items-center gap-2">
+                                                <td className={`p-3 border-r border-gray-100 sticky left-0 ${rowBg} group-hover:bg-gray-100 z-30 font-medium text-xs text-gray-700 text-center`}>
+                                                    <div className="flex items-center justify-center gap-2">
                                                         <span>{row.blockId}</span>
-                                                        {onAddTrip && <button onClick={() => onAddTrip(row.blockId, lastTrip?.id || '')} className="opacity-0 group-hover:opacity-100 text-blue-500 hover:text-blue-700 transition-opacity"><Plus size={12} /></button>}
+                                                        {onAddTrip && <button onClick={() => onAddTrip(row.blockId, lastTrip?.id || '')} className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-gray-600 transition-opacity"><Plus size={12} /></button>}
                                                     </div>
                                                 </td>
 
@@ -712,12 +718,12 @@ const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({ schedules, onCe
                                                 {combined.northStops.map((stop, i) => (
                                                     <React.Fragment key={`n-${stop}`}>
                                                         {i > 0 && (
-                                                            <td className="p-1 text-center font-mono text-[10px] text-gray-400 font-medium">
+                                                            <td className="p-1 text-center font-mono text-[10px] text-gray-400">
                                                                 {northTrip?.arrivalTimes?.[stop] || ''}
                                                             </td>
                                                         )}
                                                         {i > 0 && (
-                                                            <td className="p-1 text-center font-mono text-[10px] text-blue-600 font-bold">
+                                                            <td className="p-1 text-center font-mono text-[10px] text-gray-500 font-medium">
                                                                 {northTrip?.recoveryTimes?.[stop] ?? ''}
                                                             </td>
                                                         )}
@@ -744,12 +750,12 @@ const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({ schedules, onCe
                                                 {combined.southStops.map((stop, i) => (
                                                     <React.Fragment key={`s-${stop}`}>
                                                         {i > 0 && (
-                                                            <td className="p-1 text-center font-mono text-[10px] text-gray-400 font-medium">
+                                                            <td className="p-1 text-center font-mono text-[10px] text-gray-400">
                                                                 {southTrip?.arrivalTimes?.[stop] || ''}
                                                             </td>
                                                         )}
                                                         {i > 0 && (
-                                                            <td className="p-1 text-center font-mono text-[10px] text-indigo-600 font-bold">
+                                                            <td className="p-1 text-center font-mono text-[10px] text-gray-500 font-medium">
                                                                 {southTrip?.recoveryTimes?.[stop] ?? ''}
                                                             </td>
                                                         )}
@@ -773,41 +779,28 @@ const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({ schedules, onCe
                                                 ))}
 
                                                 {/* Metrics Columns */}
-                                                <td className="p-2 text-center text-[10px] font-bold text-gray-600 border-l border-dashed border-gray-100">{totalTravel}</td>
+                                                <td className="p-2 text-center text-xs font-medium text-gray-600 border-l border-gray-100">{totalTravel}</td>
                                                 <td className="p-1 text-center">
-                                                    {/* Display assigned band from trip data, or calculate fallback from travel time */}
+                                                    {/* Band indicator - subtle pill */}
                                                     {(() => {
-                                                        const assignedBand = northTrip?.assignedBand || southTrip?.assignedBand;
-                                                        const bandColors: Record<string, string> = {
-                                                            'A': 'bg-red-50 text-red-600',
-                                                            'B': 'bg-orange-50 text-orange-600',
-                                                            'C': 'bg-yellow-50 text-yellow-600',
-                                                            'D': 'bg-lime-50 text-lime-600',
-                                                            'E': 'bg-green-50 text-green-600'
-                                                        };
-                                                        const colorClass = assignedBand ? bandColors[assignedBand] || 'bg-gray-50 text-gray-600' :
-                                                            totalTravel >= 50 ? bandColors['A'] :
-                                                                totalTravel >= 45 ? bandColors['B'] :
-                                                                    totalTravel >= 40 ? bandColors['C'] :
-                                                                        totalTravel >= 35 ? bandColors['D'] : bandColors['E'];
-                                                        const displayBand = assignedBand || (totalTravel >= 50 ? 'A' : totalTravel >= 45 ? 'B' : totalTravel >= 40 ? 'C' : totalTravel >= 35 ? 'D' : 'E');
+                                                        const displayBand = northTrip?.assignedBand || southTrip?.assignedBand || '-';
                                                         return (
-                                                            <span className={`inline-block px-1.5 py-0.5 rounded text-[9px] font-bold ${colorClass}`}>
+                                                            <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-medium bg-gray-100 text-gray-600">
                                                                 {displayBand}
                                                             </span>
                                                         );
                                                     })()}
                                                 </td>
-                                                <td className="p-2 text-center text-[10px] font-medium text-gray-500">{totalRec}</td>
+                                                <td className="p-2 text-center text-xs text-gray-500">{totalRec}</td>
 
-                                                {/* Full Cell Background Ratio - Using new thresholds */}
-                                                <td className={`p-2 text-center text-[10px] font-bold ${ratioColorClass}`}>
+                                                {/* Ratio - only highlight if out of range */}
+                                                <td className={`p-2 text-center text-xs font-medium ${ratio > 25 ? 'text-amber-600' : ratio < 10 ? 'text-red-500' : 'text-gray-600'}`}>
                                                     {ratio.toFixed(0)}%
                                                 </td>
 
-                                                <td className="p-2 text-center text-[10px] text-gray-400">{headway}</td>
+                                                <td className="p-2 text-center text-xs text-gray-400">{headway}</td>
 
-                                                <td className="p-2 text-center font-mono text-[11px] font-bold text-gray-800 relative group/cycle">
+                                                <td className="p-2 text-center text-xs font-semibold text-gray-700 relative group/cycle">
                                                     {Math.round(row.totalCycleTime)}
                                                     {onDeleteTrip && (
                                                         <div className="absolute top-0 right-0 bottom-0 flex flex-col justify-center opacity-0 group-hover/cycle:opacity-100 bg-white shadow-sm px-1 border-l border-gray-100">
@@ -990,6 +983,13 @@ const SingleRouteView: React.FC<SingleRouteViewProps> = ({ table, showSummary = 
 
 // --- Main Editor Component ---
 
+// Time Band type for display
+interface TimeBandDisplay {
+    id: string;
+    color: string;
+    avg: number;
+}
+
 export interface ScheduleEditorProps {
     schedules: MasterRouteTable[];
     onSchedulesChange: (schedules: MasterRouteTable[]) => void;
@@ -1010,6 +1010,9 @@ export interface ScheduleEditorProps {
     redo: () => void;
 
     showSuccessToast: (msg: string) => void;
+
+    // Optional time bands for display
+    bands?: TimeBandDisplay[];
 }
 
 export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
@@ -1025,7 +1028,8 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
     onNewDraft,
     onOpenDrafts,
     canUndo, canRedo, undo, redo,
-    showSuccessToast
+    showSuccessToast,
+    bands
 }) => {
     const [activeRouteIdx, setActiveRouteIdx] = useState(0);
     const [activeDay, setActiveDay] = useState<string>('Weekday');
@@ -1220,10 +1224,10 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                 const currentEndTime = currentItem.trip.endTime;
                 const currentDirection = currentItem.trip.direction;
 
-                // Get recovery time at the last stop
-                const lastStop = currentItem.table.stops[currentItem.table.stops.length - 1];
-                const recoveryAtEnd = currentItem.trip.recoveryTimes?.[lastStop] ?? 0;
-                const expectedStart = currentEndTime + recoveryAtEnd;
+                // For generated schedules, endTime is already the departure time from the last stop
+                // (includes recovery). For imported schedules, endTime may be arrival time.
+                // Use endTime directly as the expected start of the next trip.
+                const expectedStart = currentEndTime;
 
                 const oppositeDirection = currentDirection === 'North' ? 'South' : 'North';
 
@@ -1904,6 +1908,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                     onExport={handleExport}
                     isFullScreen={isFullScreen}
                     onToggleFullScreen={() => setIsFullScreen(!isFullScreen)}
+                    bands={bands}
                 />
 
                 <div className="flex-grow flex overflow-hidden">
@@ -1974,6 +1979,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                                 onRecoveryAdjust={handleBulkAdjustRecoveryTime}
                                 onSingleTripAdjust={handleSingleTripTravelAdjust}
                                 onSingleRecoveryAdjust={handleSingleRecoveryAdjust}
+                                bands={bands}
                             />
                         ) : (
                             activeRoute.combined ? (

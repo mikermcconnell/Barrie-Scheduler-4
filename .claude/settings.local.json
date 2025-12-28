@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push)",
+      "Bash(npm run build:*)",
+      "Bash(npm install:*)",
+      "Bash(npm run dev:*)",
+      "Bash(claude-code --version)",
+      "Bash(npm outdated:*)",
+      "Bash(npm view:*)",
+      "Bash(node --version:*)",
+      "Bash(npm:*)",
+      "Bash(claude mcp add --transport stdio filesystem -- npx -y @modelcontextprotocol/server-filesystem)",
+      "Bash(claude mcp add:*)"
+    ]
+  }
+}

@@ -4,12 +4,20 @@ import { MasterRouteTable, MasterTrip } from '../utils/masterScheduleParser';
 import { TimeUtils } from '../utils/timeUtils';
 import { getRouteColor, getRouteTextColor } from '../utils/routeColors';
 
+// Time Band type
+interface TimeBandDisplay {
+    id: string;
+    color: string;
+    avg: number;
+}
+
 interface TravelTimeGridProps {
     schedules: MasterRouteTable[];
     onBulkAdjust?: (fromStop: string, toStop: string, delta: number, routeName: string) => void;
     onRecoveryAdjust?: (stopName: string, delta: number, routeName: string) => void;
     onSingleTripAdjust?: (tripId: string, fromStop: string, delta: number, routeName: string) => void;
     onSingleRecoveryAdjust?: (tripId: string, stopName: string, delta: number, routeName: string) => void;
+    bands?: TimeBandDisplay[];
 }
 
 // Clean, professional heatmap colors
@@ -22,7 +30,7 @@ const getTravelColor = (minutes: number): string => {
     return 'bg-rose-50 text-rose-700';
 };
 
-export const TravelTimeGrid: React.FC<TravelTimeGridProps> = ({ schedules, onBulkAdjust, onRecoveryAdjust, onSingleTripAdjust, onSingleRecoveryAdjust }) => {
+export const TravelTimeGrid: React.FC<TravelTimeGridProps> = ({ schedules, onBulkAdjust, onRecoveryAdjust, onSingleTripAdjust, onSingleRecoveryAdjust, bands }) => {
     const [expandedRoute, setExpandedRoute] = useState<string | null>(null);
     const [isFullScreen, setIsFullScreen] = useState(false);
 
@@ -94,11 +102,37 @@ export const TravelTimeGrid: React.FC<TravelTimeGridProps> = ({ schedules, onBul
     }
 
     return (
-        <div className={`flex flex-col gap-3 ${isFullScreen ? 'fixed inset-0 z-50 bg-white overflow-auto p-4' : ''}`}>
+        <div className={`flex flex-col gap-4 ${isFullScreen ? 'fixed inset-0 z-50 bg-white overflow-auto p-4' : ''}`}>
+            {/* Time Bands Reference Table */}
+            {bands && bands.length > 0 && (
+                <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                    <div className="px-5 py-4 border-b border-gray-100 bg-gray-50">
+                        <h3 className="text-sm font-semibold text-gray-700">Time Band Travel Times</h3>
+                        <p className="text-xs text-gray-400 mt-0.5">Round trip travel time by time-of-day band</p>
+                    </div>
+                    <div className="p-5">
+                        <div className="grid grid-cols-5 gap-4">
+                            {bands.map(band => (
+                                <div key={band.id} className="flex flex-col items-center p-4 rounded-lg border border-gray-100 bg-gray-50/50">
+                                    <div
+                                        className="w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-sm mb-2"
+                                        style={{ backgroundColor: band.color }}
+                                    >
+                                        {band.id}
+                                    </div>
+                                    <span className="text-2xl font-bold text-gray-800">{band.avg.toFixed(0)}</span>
+                                    <span className="text-xs text-gray-400">minutes</span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Fullscreen Toggle + Legend Row */}
             <div className="flex items-center justify-between bg-white rounded-lg border border-gray-200 px-3 py-2">
                 <div className="flex items-center gap-4 text-[10px]">
-                    <span className="font-medium text-gray-500">Legend:</span>
+                    <span className="font-medium text-gray-500">Hourly Breakdown:</span>
                     <div className="flex items-center gap-1">
                         <div className="w-2 h-2 rounded bg-gray-100 border border-gray-300"></div>
                         <span className="text-gray-500">Travel</span>

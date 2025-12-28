@@ -113,22 +113,23 @@ export const FixedRouteWorkspace: React.FC = () => {
     // 2. Active Workspace Views
     return (
         <div className="flex flex-col h-full">
-            {/* Navigation Header */}
-            <div className="flex items-center gap-4 mb-6 px-4">
-                <button
-                    onClick={() => setViewMode('dashboard')}
-                    className="flex items-center gap-2 text-gray-400 hover:text-gray-600 font-bold transition-colors"
-                >
-                    <ArrowLeft size={20} /> Back to Dashboard
-                </button>
-                <div className="h-6 w-px bg-gray-300"></div>
-                <div className="text-sm font-bold text-gray-500 uppercase tracking-wider">
-                    {viewMode === 'tweaker' && 'Schedule Tweaker'}
-                    {viewMode === 'new-schedule' && 'New Schedules'}
-                    {viewMode === 'dwell' && 'Dwell Assessment'}
-                    {viewMode === 'otp' && 'OTP Assessment'}
+            {/* Navigation Header - hidden for new-schedule since wizard has its own */}
+            {viewMode !== 'new-schedule' && (
+                <div className="flex items-center gap-4 mb-6 px-4">
+                    <button
+                        onClick={() => setViewMode('dashboard')}
+                        className="flex items-center gap-2 text-gray-400 hover:text-gray-600 font-bold transition-colors"
+                    >
+                        <ArrowLeft size={20} /> Back to Dashboard
+                    </button>
+                    <div className="h-6 w-px bg-gray-300"></div>
+                    <div className="text-sm font-bold text-gray-500 uppercase tracking-wider">
+                        {viewMode === 'tweaker' && 'Schedule Tweaker'}
+                        {viewMode === 'dwell' && 'Dwell Assessment'}
+                        {viewMode === 'otp' && 'OTP Assessment'}
+                    </div>
                 </div>
-            </div>
+            )}
 
             <div className="flex-grow overflow-hidden relative bg-white rounded-3xl border-2 border-gray-100 shadow-sm">
                 <div className="absolute inset-0">

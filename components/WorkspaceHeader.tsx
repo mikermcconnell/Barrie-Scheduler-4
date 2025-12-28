@@ -22,6 +22,13 @@ import { AutoSaveStatus } from '../hooks/useAutoSave';
 import { RouteSummary } from './RouteSummary';
 import { getRouteColor, getRouteTextColor } from '../utils/routeColors';
 
+// Time Band type
+interface TimeBandDisplay {
+    id: string;
+    color: string;
+    avg: number;
+}
+
 interface WorkspaceHeaderProps {
     routeGroupName: string;
     dayLabel: string;
@@ -43,6 +50,8 @@ interface WorkspaceHeaderProps {
     // Fullscreen
     isFullScreen?: boolean;
     onToggleFullScreen?: () => void;
+    // Time bands
+    bands?: TimeBandDisplay[];
 }
 
 export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
@@ -63,7 +72,8 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
     onExport,
     onClose,
     isFullScreen,
-    onToggleFullScreen
+    onToggleFullScreen,
+    bands
 }) => {
     const [fileMenuOpen, setFileMenuOpen] = useState(false);
     const [isRenaming, setIsRenaming] = useState(false);
@@ -197,13 +207,25 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
                     </div>
                     <div>
                         <h2 className="text-lg font-bold text-gray-900 leading-tight">{dayLabel} Schedule</h2>
-                        <div className="flex items-center gap-2 mt-0.5">
-                            <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">
-                                {isRoundTrip ? 'Round Trip View' : 'Single/Loop View'}
-                            </span>
-                        </div>
                     </div>
                 </div>
+
+                {/* Time Bands - Always visible */}
+                {bands && bands.length > 0 && (
+                    <>
+                        <div className="h-8 w-px bg-gray-200 mx-2"></div>
+                        <div className="flex items-center gap-3">
+                            <span className="text-[10px] font-medium text-gray-400 uppercase tracking-wide">Time Bands</span>
+                            {bands.map(band => (
+                                <div key={band.id} className="flex items-center gap-1.5">
+                                    <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: band.color }} />
+                                    <span className="text-xs font-medium text-gray-600">{band.id}</span>
+                                    <span className="text-xs text-gray-400">{band.avg.toFixed(0)}m</span>
+                                </div>
+                            ))}
+                        </div>
+                    </>
+                )}
 
                 <div className="h-8 w-px bg-gray-200 mx-2"></div>
 

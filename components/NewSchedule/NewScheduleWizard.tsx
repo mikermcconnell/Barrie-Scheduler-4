@@ -416,6 +416,8 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                             <Step4Schedule
                                 initialSchedules={generatedSchedules}
                                 bands={bands}
+                                analysis={analysis}
+                                segmentNames={segmentNames}
                                 onUpdateSchedules={(newScheds) => {
                                     setGeneratedSchedules(newScheds);
                                 }}
