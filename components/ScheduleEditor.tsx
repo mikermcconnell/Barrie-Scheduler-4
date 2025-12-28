@@ -115,9 +115,10 @@ interface RoundTripTableViewProps {
     originalSchedules?: MasterRouteTable[];
     onDeleteTrip?: (tripId: string) => void;
     onAddTrip?: (blockId: string, afterTripId: string) => void;
+    draftName: string;
 }
 
-const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({ schedules, onCellEdit, originalSchedules, onDeleteTrip, onAddTrip }) => {
+const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({ schedules, onCellEdit, originalSchedules, onDeleteTrip, onAddTrip, draftName }) => {
     const roundTripData = useMemo(() => {
         const pairs: { north: MasterRouteTable; south: MasterRouteTable; combined: RoundTripTable }[] = [];
         const routeGroups: Record<string, { north?: MasterRouteTable; south?: MasterRouteTable }> = {};
@@ -169,109 +170,265 @@ const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({ schedules, onCe
 
                 const hideInterline = combined.routeName.includes('8A') || combined.routeName.includes('8B');
 
+                // Calculate Route Totals for the Header
+                const totalTrips = combined.rows.length;
+                const totalTravelSum = combined.rows.reduce((sum, r) => sum + r.totalTravelTime, 0);
+                const totalRecoverySum = combined.rows.reduce((sum, r) => sum + r.totalRecoveryTime, 0);
+                const avgTravel = totalTrips > 0 ? (totalTravelSum / totalTrips).toFixed(1) : '0';
+                const avgRecovery = totalTrips > 0 ? (totalRecoverySum / totalTrips).toFixed(1) : '0';
+
+                const totalCycleSum = combined.rows.reduce((sum, r) => sum + r.totalCycleTime, 0);
+
+                const overallRatio = totalTravelSum > 0 ? ((totalRecoverySum / totalTravelSum) * 100).toFixed(1) : '0';
+                // const avgCycle = totalTrips > 0 ? Math.round(combined.rows.reduce((sum, r) => sum + r.totalCycleTime, 0) / totalTrips) : 0;
+
+
                 return (
-                    <div key={combined.routeName} className="flex flex-col gap-6">
-                        <div className="bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden">
-                            <div className="bg-gray-50 px-4 py-3 border-b border-gray-200">
-                                <h3 className="font-bold text-gray-900">{combined.routeName} - Round Trip View</h3>
-                            </div>
-                            <div className="overflow-auto custom-scrollbar">
-                                <table className="min-w-full text-left border-collapse">
-                                    <thead className="sticky top-0 z-40 bg-gray-50 shadow-sm">
-                                        <tr>
-                                            <th className="p-3 border-b border-gray-200 bg-gray-50 sticky left-0 z-30 min-w-[80px] text-xs font-semibold text-gray-500 uppercase tracking-wider">Block</th>
-                                            {combined.northStops.map((stop, i) => (
-                                                <React.Fragment key={`n-h-${stop}`}>
-                                                    <th className={`p-3 border-b-2 border-blue-300 min-w-[90px] whitespace-nowrap text-xs font-semibold text-blue-600 uppercase tracking-wider ${i === 0 ? 'border-l-2' : ''}`}>{stop}</th>
-                                                    {northStopsWithRecovery.has(stop) && <th className="p-3 border-b-2 border-blue-300 min-w-[40px] text-center text-xs font-semibold text-blue-500 uppercase tracking-wider bg-blue-50/50">R</th>}
-                                                </React.Fragment>
-                                            ))}
-                                            {combined.southStops.map((stop, i) => (
-                                                <React.Fragment key={`s-h-${stop}`}>
-                                                    <th className={`p-3 border-b-2 border-indigo-300 min-w-[90px] whitespace-nowrap text-xs font-semibold text-indigo-600 uppercase tracking-wider ${i === 0 ? 'border-l-2' : ''}`}>{stop}</th>
-                                                    {southStopsWithRecovery.has(stop) && <th className="p-3 border-b-2 border-indigo-300 min-w-[40px] text-center text-xs font-semibold text-indigo-500 uppercase tracking-wider bg-indigo-50/50">R</th>}
-                                                </React.Fragment>
-                                            ))}
-                                            {/* Metrics headers */}
-                                            <th className="p-2 border-b border-gray-200 text-center text-[10px] w-16 bg-blue-50/20 border-l">N-Trav</th>
-                                            <th className="p-2 border-b border-gray-200 text-center text-[10px] w-16 bg-blue-50/20">N-Rec</th>
-                                            <th className="p-2 border-b border-gray-200 text-center text-[10px] w-16 bg-blue-50/20">Ratio</th>
-                                            <th className="p-2 border-b border-gray-200 text-center text-[10px] w-16 bg-blue-50/20">Hdwy</th>
-                                            <th className="p-2 border-b border-gray-200 text-center text-[10px] w-16 bg-indigo-50/20 border-l">S-Trav</th>
-                                            <th className="p-2 border-b border-gray-200 text-center text-[10px] w-16 bg-indigo-50/20">S-Rec</th>
-                                            <th className="p-2 border-b border-gray-200 text-center text-[10px] w-16 bg-indigo-50/20">Ratio</th>
-                                            <th className="p-2 border-b border-gray-200 text-center text-[10px] w-16 bg-indigo-50/20">Hdwy</th>
-                                            <th className="p-3 border-b border-gray-200 text-center text-xs font-bold w-20 border-l-2">Total Cycle</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-gray-100">
-                                        {combined.rows.map((row, rowIdx) => {
-                                            const northTrip = row.trips.find(t => t.direction === 'North');
-                                            const southTrip = row.trips.find(t => t.direction === 'South');
-                                            const lastTrip = [...row.trips].sort((a, b) => a.startTime - b.startTime).pop();
+                    <div key={combined.routeName} className="flex flex-col gap-4 bg-white rounded-xl shadow-sm border border-gray-100 p-1">
 
-                                            return (
-                                                <tr key={row.blockId} className={`group transition-colors ${rowIdx % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'} hover:bg-blue-50/30`}>
-                                                    <td className="p-3 border-r border-gray-100 sticky left-0 bg-white group-hover:bg-blue-50/10 z-30 font-mono text-sm font-bold text-center min-w-[80px]">
-                                                        <div className="flex flex-col items-center">
-                                                            <span>{row.blockId}</span>
-                                                            {onAddTrip && <button onClick={() => onAddTrip(row.blockId, lastTrip?.id || '')} className="opacity-0 group-hover:opacity-100 absolute -right-2 top-1/2 -translate-y-1/2 bg-blue-600 text-white rounded-full p-0.5"><Plus size={10} /></button>}
+                        {/* 1. Header Area: Title & High-Level Metrics */}
+                        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+                            {/* Left: Branding / Context (REMOVED - handled by WorkspaceHeader) */}
+                            <div></div>
+
+                            {/* Right: Key Metrics Strip */}
+                            <div className="flex items-center gap-6">
+                                <div className="flex flex-col items-center">
+                                    <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Trips</span>
+                                    <span className="text-sm font-bold text-gray-700">{totalTrips}</span>
+                                </div>
+                                <div className="flex flex-col items-center">
+                                    <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Travel</span>
+                                    <span className="text-sm font-bold text-gray-700">{Math.round(totalTravelSum / 60)}<span className="text-[10px] ml-1 font-normal text-gray-400">h</span></span>
+                                </div>
+                                <div className="flex flex-col items-center">
+                                    <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Recovery</span>
+                                    <span className="text-sm font-bold text-gray-700">{Math.round(totalRecoverySum / 60)}<span className="text-[10px] ml-1 font-normal text-gray-400">h</span></span>
+                                </div>
+                                <div className="flex flex-col items-center">
+                                    <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Cycle</span>
+                                    <span className="text-sm font-bold text-gray-700">{Math.round(totalCycleSum / 60)}<span className="text-[10px] ml-1 font-normal text-gray-400">h</span></span>
+                                </div>
+                                <div className="flex flex-col items-center">
+                                    <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Ratio</span>
+                                    <span className={`text-sm font-bold ${Number(overallRatio) > 20 ? 'text-orange-600' : 'text-green-600'}`}>{overallRatio}%</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* 2. Main Table Area */}
+                        <div className="overflow-x-auto custom-scrollbar relative w-full rounded-lg">
+                            {/* Scroll fade indicator */}
+                            <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-white to-transparent pointer-events-none z-50" />
+
+                            <table className="w-full text-left border-collapse text-[11px]" style={{ tableLayout: 'fixed' }}>
+                                <colgroup>
+                                    <col className="w-14" />
+                                    {combined.northStops.map((_, i) => (
+                                        <React.Fragment key={`n-col-${i}`}>
+                                            {i > 0 && <col className="w-12" />}
+                                            {i > 0 && <col className="w-10" />}
+                                            <col />
+                                        </React.Fragment>
+                                    ))}
+                                    {combined.southStops.map((_, i) => (
+                                        <React.Fragment key={`s-col-${i}`}>
+                                            {i > 0 && <col className="w-12" />}
+                                            {i > 0 && <col className="w-10" />}
+                                            <col />
+                                        </React.Fragment>
+                                    ))}
+                                    <col className="w-10" />
+                                    <col className="w-8" />
+                                    <col className="w-10" />
+                                    <col className="w-10" />
+                                    <col className="w-10" />
+                                    <col className="w-10" />
+                                </colgroup>
+                                <thead className="sticky top-0 z-40">
+                                    {/* Direction Group Header Row */}
+                                    <tr className="bg-white">
+                                        <th rowSpan={2} className="p-2 border-b border-gray-100 bg-white sticky left-0 z-50 text-[9px] font-bold text-gray-400 uppercase tracking-wider text-center">Block</th>
+
+                                        {/* North Header Span */}
+                                        <th colSpan={1 + (combined.northStops.length - 1) * 3} className="p-2 text-center text-[9px] font-bold text-blue-500 bg-blue-50/10 border-b border-blue-100 uppercase tracking-widest">
+                                            Northbound
+                                        </th>
+
+                                        {/* South Header Span */}
+                                        <th colSpan={1 + (combined.southStops.length - 1) * 3} className="p-2 text-center text-[9px] font-bold text-indigo-500 bg-indigo-50/10 border-b border-indigo-100 uppercase tracking-widest">
+                                            Southbound
+                                        </th>
+
+                                        <th colSpan={6} className="p-2 text-center text-[9px] font-bold text-gray-400 bg-white border-b border-gray-100 uppercase tracking-widest">Metrics</th>
+                                    </tr>
+
+                                    {/* Stop Names Row */}
+                                    <tr className="bg-white text-gray-500">
+                                        {/* North Stops */}
+                                        {combined.northStops.map((stop, i) => (
+                                            <React.Fragment key={`n-h-${stop}`}>
+                                                {i > 0 && <th className="py-2 px-1 border-b border-gray-100 text-center text-[9px] font-medium text-blue-300 uppercase">Arr</th>}
+                                                {i > 0 && <th className="py-2 px-1 border-b border-gray-100 text-center text-[9px] font-bold text-blue-300">R</th>}
+                                                <th className="py-2 px-1 border-b border-gray-100 text-center text-[10px] font-bold text-gray-600 whitespace-normal uppercase tracking-tight" title={stop}>
+                                                    {stop}
+                                                </th>
+                                            </React.Fragment>
+                                        ))}
+
+                                        {/* South Stops */}
+                                        {combined.southStops.map((stop, i) => (
+                                            <React.Fragment key={`s-h-${stop}`}>
+                                                {i > 0 && <th className="py-2 px-1 border-b border-gray-100 text-center text-[9px] font-medium text-indigo-300 uppercase">Arr</th>}
+                                                {i > 0 && <th className="py-2 px-1 border-b border-gray-100 text-center text-[9px] font-bold text-indigo-300">R</th>}
+                                                <th className="py-2 px-1 border-b border-gray-100 text-center text-[10px] font-bold text-gray-600 whitespace-normal uppercase tracking-tight" title={stop}>
+                                                    {stop}
+                                                </th>
+                                            </React.Fragment>
+                                        ))}
+
+                                        {/* Metrics Headers */}
+                                        <th className="py-2 px-1 border-b border-gray-100 text-center text-[9px] font-medium text-gray-400 uppercase">Trav</th>
+                                        <th className="py-2 px-1 border-b border-gray-100 text-center text-[9px] font-medium text-gray-400 uppercase">Bnd</th>
+                                        <th className="py-2 px-1 border-b border-gray-100 text-center text-[9px] font-medium text-gray-400 uppercase">Rec</th>
+                                        <th className="py-2 px-1 border-b border-gray-100 text-center text-[9px] font-medium text-gray-400 uppercase">Ratio</th>
+                                        <th className="py-2 px-1 border-b border-gray-100 text-center text-[9px] font-medium text-gray-400 uppercase">Hwy</th>
+                                        <th className="py-2 px-1 border-b border-gray-100 text-center text-[9px] font-medium text-gray-400 uppercase">Cycle</th>
+                                    </tr>
+                                </thead>
+
+                                <tbody className="divide-y divide-gray-100">
+                                    {combined.rows.map((row, rowIdx) => {
+                                        const northTrip = row.trips.find(t => t.direction === 'North');
+                                        const southTrip = row.trips.find(t => t.direction === 'South');
+                                        const lastTrip = [...row.trips].sort((a, b) => a.startTime - b.startTime).pop();
+
+                                        // Fix Unique Key: Combined blocks span multiple trips, so blockId alone is duplicated. Use composite key.
+                                        const uniqueRowKey = `${row.blockId}-${northTrip?.id || 'n'}-${southTrip?.id || 's'}-${rowIdx}`;
+
+                                        // Combined Metrics
+                                        const totalTravel = (northTrip?.travelTime || 0) + (southTrip?.travelTime || 0);
+                                        const totalRec = (northTrip?.recoveryTime || 0) + (southTrip?.recoveryTime || 0);
+                                        const ratio = totalTravel > 0 ? (totalRec / totalTravel) * 100 : 0;
+
+                                        // Headway from first trip in block (usually North start)
+                                        const headway = northTrip ? headways[northTrip.id] : (southTrip ? headways[southTrip.id] : '-');
+
+                                        // Ratio Color Logic for Full Cell
+                                        const ratioColorBg = ratio > 20 ? 'bg-orange-50' : 'bg-green-50';
+                                        const ratioColorText = ratio > 20 ? 'text-orange-700' : 'text-green-700';
+
+                                        return (
+                                            <tr key={uniqueRowKey} className="group hover:bg-gray-50/50 transition-colors">
+                                                {/* Sticky Block ID */}
+                                                <td className="p-3 border-r border-dashed border-gray-100 sticky left-0 bg-white group-hover:bg-gray-50/50 z-30 font-bold text-[10px] text-gray-800 text-center">
+                                                    <div className="flex items-center gap-2">
+                                                        <span>{row.blockId}</span>
+                                                        {onAddTrip && <button onClick={() => onAddTrip(row.blockId, lastTrip?.id || '')} className="opacity-0 group-hover:opacity-100 text-blue-500 hover:text-blue-700 transition-opacity"><Plus size={12} /></button>}
+                                                    </div>
+                                                </td>
+
+                                                {/* North Cells */}
+                                                {combined.northStops.map((stop, i) => (
+                                                    <React.Fragment key={`n-${stop}`}>
+                                                        {i > 0 && (
+                                                            <td className="p-1 text-center font-mono text-[10px] text-gray-400 font-medium">
+                                                                {northTrip?.arrivalTimes?.[stop] || ''}
+                                                            </td>
+                                                        )}
+                                                        {i > 0 && (
+                                                            <td className="p-1 text-center font-mono text-[10px] text-blue-600 font-bold">
+                                                                {northTrip?.recoveryTimes?.[stop] ?? ''}
+                                                            </td>
+                                                        )}
+                                                        <td className={`p-0 relative h-10 ${i === 0 ? 'border-l border-dashed border-gray-100' : ''}`}>
+                                                            <input
+                                                                type="text"
+                                                                value={northTrip?.stops[stop] || ''}
+                                                                onChange={(e) => northTrip && onCellEdit(northTrip.id, stop, e.target.value)}
+                                                                className="w-full h-full bg-transparent font-medium text-[11px] text-gray-700 text-center focus:bg-white focus:ring-2 focus:ring-blue-100 focus:outline-none transition-all placeholder-gray-200"
+                                                                placeholder="-"
+                                                                disabled={!northTrip}
+                                                            />
+                                                        </td>
+                                                    </React.Fragment>
+                                                ))}
+
+                                                {/* South Cells */}
+                                                {combined.southStops.map((stop, i) => (
+                                                    <React.Fragment key={`s-${stop}`}>
+                                                        {i > 0 && (
+                                                            <td className="p-1 text-center font-mono text-[10px] text-gray-400 font-medium">
+                                                                {southTrip?.arrivalTimes?.[stop] || ''}
+                                                            </td>
+                                                        )}
+                                                        {i > 0 && (
+                                                            <td className="p-1 text-center font-mono text-[10px] text-indigo-600 font-bold">
+                                                                {southTrip?.recoveryTimes?.[stop] ?? ''}
+                                                            </td>
+                                                        )}
+                                                        <td className={`p-0 relative h-10 ${i === 0 ? 'border-l border-dashed border-gray-100' : ''}`}>
+                                                            <input
+                                                                type="text"
+                                                                value={southTrip?.stops[stop] || ''}
+                                                                onChange={(e) => southTrip && onCellEdit(southTrip.id, stop, e.target.value)}
+                                                                className="w-full h-full bg-transparent font-medium text-[11px] text-gray-700 text-center focus:bg-white focus:ring-2 focus:ring-indigo-100 focus:outline-none transition-all placeholder-gray-200"
+                                                                placeholder="-"
+                                                                disabled={!southTrip}
+                                                            />
+                                                        </td>
+                                                    </React.Fragment>
+                                                ))}
+
+                                                {/* Metrics Columns */}
+                                                <td className="p-2 text-center text-[10px] font-bold text-gray-600 border-l border-dashed border-gray-100">{totalTravel}</td>
+                                                <td className="p-1 text-center">
+                                                    {/* Display assigned band from trip data, or calculate fallback from travel time */}
+                                                    {(() => {
+                                                        const assignedBand = northTrip?.assignedBand || southTrip?.assignedBand;
+                                                        const bandColors: Record<string, string> = {
+                                                            'A': 'bg-red-50 text-red-600',
+                                                            'B': 'bg-orange-50 text-orange-600',
+                                                            'C': 'bg-yellow-50 text-yellow-600',
+                                                            'D': 'bg-lime-50 text-lime-600',
+                                                            'E': 'bg-green-50 text-green-600'
+                                                        };
+                                                        const colorClass = assignedBand ? bandColors[assignedBand] || 'bg-gray-50 text-gray-600' :
+                                                            totalTravel >= 50 ? bandColors['A'] :
+                                                                totalTravel >= 45 ? bandColors['B'] :
+                                                                    totalTravel >= 40 ? bandColors['C'] :
+                                                                        totalTravel >= 35 ? bandColors['D'] : bandColors['E'];
+                                                        const displayBand = assignedBand || (totalTravel >= 50 ? 'A' : totalTravel >= 45 ? 'B' : totalTravel >= 40 ? 'C' : totalTravel >= 35 ? 'D' : 'E');
+                                                        return (
+                                                            <span className={`inline-block px-1.5 py-0.5 rounded text-[9px] font-bold ${colorClass}`}>
+                                                                {displayBand}
+                                                            </span>
+                                                        );
+                                                    })()}
+                                                </td>
+                                                <td className="p-2 text-center text-[10px] font-medium text-gray-500">{totalRec}</td>
+
+                                                {/* Full Cell Background Ratio */}
+                                                <td className={`p-2 text-center text-[10px] font-bold ${ratioColorBg} ${ratioColorText}`}>
+                                                    {ratio.toFixed(0)}%
+                                                </td>
+
+                                                <td className="p-2 text-center text-[10px] text-gray-400">{headway}</td>
+
+                                                <td className="p-2 text-center font-mono text-[11px] font-bold text-gray-800 relative group/cycle">
+                                                    {Math.round(row.totalCycleTime)}
+                                                    {onDeleteTrip && (
+                                                        <div className="absolute top-0 right-0 bottom-0 flex flex-col justify-center opacity-0 group-hover/cycle:opacity-100 bg-white shadow-sm px-1 border-l border-gray-100">
+                                                            {northTrip && <button onClick={() => onDeleteTrip(northTrip.id)} className="text-gray-300 hover:text-red-500 mb-1" title="Delete North"><Trash2 size={10} /></button>}
+                                                            {southTrip && <button onClick={() => onDeleteTrip(southTrip.id)} className="text-gray-300 hover:text-red-500" title="Delete South"><Trash2 size={10} /></button>}
                                                         </div>
-                                                    </td>
-                                                    {/* North Cells */}
-                                                    {combined.northStops.map((stop, i) => (
-                                                        <React.Fragment key={`n-${stop}`}>
-                                                            <td className={`p-0 relative bg-blue-50/30 ${i === 0 ? 'border-l-2 border-blue-200' : ''}`}>
-                                                                <input
-                                                                    type="text"
-                                                                    value={northTrip?.stops[stop] || ''}
-                                                                    onChange={(e) => northTrip && onCellEdit(northTrip.id, stop, e.target.value)}
-                                                                    className="w-full h-full bg-transparent font-mono text-xs text-center p-1 focus:bg-white focus:outline-none"
-                                                                    disabled={!northTrip}
-                                                                />
-                                                            </td>
-                                                            {northStopsWithRecovery.has(stop) && <td className="p-2 text-center bg-blue-50"><span className="text-xs font-bold text-blue-700">{northTrip?.recoveryTimes?.[stop] || ''}</span></td>}
-                                                        </React.Fragment>
-                                                    ))}
-                                                    {/* South Cells */}
-                                                    {combined.southStops.map((stop, i) => (
-                                                        <React.Fragment key={`s-${stop}`}>
-                                                            <td className={`p-0 relative bg-indigo-50/30 ${i === 0 ? 'border-l-2 border-indigo-200' : ''}`}>
-                                                                <input
-                                                                    type="text"
-                                                                    value={southTrip?.stops[stop] || ''}
-                                                                    onChange={(e) => southTrip && onCellEdit(southTrip.id, stop, e.target.value)}
-                                                                    className="w-full h-full bg-transparent font-mono text-xs text-center p-1 focus:bg-white focus:outline-none"
-                                                                    disabled={!southTrip}
-                                                                />
-                                                            </td>
-                                                            {southStopsWithRecovery.has(stop) && <td className="p-2 text-center bg-indigo-50"><span className="text-xs font-bold text-indigo-700">{southTrip?.recoveryTimes?.[stop] || ''}</span></td>}
-                                                        </React.Fragment>
-                                                    ))}
-                                                    {/* Metrics... skipping minimal layout specifics for brevity but keeping structure */}
-                                                    <td className="p-2 text-center text-xs font-mono text-gray-500 border-l">{northTrip?.travelTime}</td>
-                                                    <td className="p-2 text-center text-xs font-mono text-gray-500 relative group/cell">
-                                                        {northTrip?.recoveryTime}
-                                                        {northTrip && onDeleteTrip && <button onClick={() => onDeleteTrip(northTrip.id)} className="absolute top-0 right-0 p-0.5 opacity-0 group-hover/cell:opacity-100"><Trash2 size={10} /></button>}
-                                                    </td>
-                                                    <td className={`p-2 text-center text-xs font-mono ${northTrip?.travelTime ? getRatioColor(northTrip.recoveryTime / northTrip.travelTime * 100) : ''}`}>{northTrip?.travelTime ? ((northTrip.recoveryTime / northTrip.travelTime) * 100).toFixed(0) + '%' : '-'}</td>
-                                                    <td className="p-2 text-center text-xs text-gray-400">{northTrip ? headways[northTrip.id] : '-'}</td>
-
-                                                    <td className="p-2 text-center text-xs font-mono text-gray-500 border-l">{southTrip?.travelTime}</td>
-                                                    <td className="p-2 text-center text-xs font-mono text-gray-500 relative group/cell">
-                                                        {southTrip?.recoveryTime}
-                                                        {southTrip && onDeleteTrip && <button onClick={() => onDeleteTrip(southTrip.id)} className="absolute top-0 right-0 p-0.5 opacity-0 group-hover/cell:opacity-100"><Trash2 size={10} /></button>}
-                                                    </td>
-                                                    <td className={`p-2 text-center text-xs font-mono ${southTrip?.travelTime ? getRatioColor(southTrip.recoveryTime / southTrip.travelTime * 100) : ''}`}>{southTrip?.travelTime ? ((southTrip.recoveryTime / southTrip.travelTime) * 100).toFixed(0) + '%' : '-'}</td>
-                                                    <td className="p-2 text-center text-xs text-gray-400">{southTrip ? headways[southTrip.id] : '-'}</td>
-
-                                                    <td className="p-2 text-center font-mono text-sm font-bold border-l-2">{row.totalCycleTime}m</td>
-                                                </tr>
-                                            );
-                                        })}
-                                    </tbody>
-                                </table>
-                            </div>
+                                                    )}
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
                         </div>
                     </div>
                 );
@@ -309,21 +466,23 @@ const SingleRouteView: React.FC<SingleRouteViewProps> = ({ table, showSummary = 
                     <h3 className="font-bold text-gray-900">{table.routeName}</h3>
                 </div>
                 <div className="overflow-auto custom-scrollbar flex-grow">
-                    <table className="min-w-full text-left border-collapse">
+                    <table className="w-full text-left border-collapse text-[11px]" style={{ tableLayout: 'fixed' }}>
                         <thead className="sticky top-0 z-40 bg-gray-50 shadow-sm">
                             <tr>
-                                <th className="p-3 border-b bg-gray-50 sticky left-0 z-30 min-w-[80px] text-xs font-semibold text-gray-500 uppercase">Block</th>
+                                <th className="p-2 border-b bg-gray-50 sticky left-0 z-30 text-xs font-semibold text-gray-500 uppercase">Block</th>
                                 {table.stops.map(stop => (
                                     <React.Fragment key={stop}>
-                                        <th className="p-3 border-b min-w-[100px] text-xs font-semibold text-gray-700 uppercase">{stop}</th>
-                                        {stopsWithRecovery.has(stop) && <th className="p-3 border-b min-w-[40px] text-center text-xs font-semibold bg-gray-50/50">R</th>}
+                                        <th className="p-2 border-b text-xs font-semibold text-gray-700 uppercase truncate" title={stop}>
+                                            {stop.length > 20 ? stop.slice(0, 18) + '..' : stop}
+                                        </th>
+                                        {stopsWithRecovery.has(stop) && <th className="p-2 border-b text-center text-xs font-semibold bg-gray-50/50">R</th>}
                                     </React.Fragment>
                                 ))}
-                                <th className="p-3 border-b text-center text-xs font-semibold">Trav</th>
-                                <th className="p-3 border-b text-center text-xs font-semibold">Rec</th>
-                                <th className="p-3 border-b text-center text-xs font-semibold">Ratio</th>
-                                <th className="p-3 border-b text-center text-xs font-semibold">Hdwy</th>
-                                <th className="p-3 border-b text-center text-xs font-semibold">Cycle</th>
+                                <th className="p-2 border-b text-center text-xs font-semibold">Trav</th>
+                                <th className="p-2 border-b text-center text-xs font-semibold">Rec</th>
+                                <th className="p-2 border-b text-center text-xs font-semibold">Ratio</th>
+                                <th className="p-2 border-b text-center text-xs font-semibold">Hdwy</th>
+                                <th className="p-2 border-b text-center text-xs font-semibold">Cycle</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100">
@@ -526,9 +685,34 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         }).sort((a, b) => a.name.localeCompare(b.name));
     }, [schedules]);
 
+    console.log('ScheduleEditor consolidatedRoutes:', consolidatedRoutes.length, consolidatedRoutes.map(r => ({
+        name: r.name,
+        days: Object.keys(r.days),
+        hasNorth: !!r.days['Weekday']?.north,
+        hasSouth: !!r.days['Weekday']?.south,
+        hasCombined: !!r.days['Weekday']?.combined,
+        northTrips: r.days['Weekday']?.north?.trips?.length || 0,
+        southTrips: r.days['Weekday']?.south?.trips?.length || 0
+    })));
+
+
+
+    // Auto-select day if current is invalid
+    useEffect(() => {
+        if (!consolidatedRoutes.length) return;
+        const group = consolidatedRoutes[activeRouteIdx];
+        if (!group) return;
+
+        if (!group.days[activeDay]) {
+            // Pick first available day
+            const firstAvailable = Object.keys(group.days)[0];
+            if (firstAvailable) setActiveDay(firstAvailable);
+        }
+    }, [consolidatedRoutes, activeRouteIdx, activeDay]);
 
     // Handlers
     const recalculateTrip = (trip: MasterTrip, cols: string[]) => {
+
         let start: number | null = null;
         let end: number | null = null;
         cols.forEach(col => {
@@ -1322,6 +1506,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                                     originalSchedules={originalSchedules}
                                     onDeleteTrip={handleDeleteTrip}
                                     onAddTrip={(_, tripId) => openAddTripModal(tripId, {})}
+                                    draftName={draftName}
                                 />
                             ) : (
                                 <SingleRouteView

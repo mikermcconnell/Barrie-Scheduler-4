@@ -30,11 +30,15 @@ export interface MasterTrip {
     isTightRecovery?: boolean;
 
     // Data
-    stops: Record<string, string>;
+    stops: Record<string, string>; // Departure times per stop
+    arrivalTimes?: Record<string, string>; // Arrival times per stop (before recovery)
 
     // Interline Metadata
     interlineNext?: { route: string; time: number; stopName?: string }; // Route it turns into
     interlinePrev?: { route: string; time: number; stopName?: string }; // Route it came from
+
+    // Band Assignment (from New Schedule wizard)
+    assignedBand?: string; // 'A', 'B', 'C', 'D', 'E' - determined by departure time
 }
 
 export interface MasterRouteTable {
@@ -484,6 +488,12 @@ export const buildRoundTripView = (
 ): RoundTripTable => {
     // Combine all trips and group by blockId
     const allTrips = [...northTable.trips, ...southTable.trips];
+    console.log('buildRoundTripView called:', {
+        northTrips: northTable.trips.length,
+        southTrips: southTable.trips.length,
+        allTrips: allTrips.length,
+        sampleBlockIds: allTrips.slice(0, 3).map(t => t.blockId)
+    });
     const blockGroups: Record<string, MasterTrip[]> = {};
 
     allTrips.forEach(trip => {
@@ -493,41 +503,60 @@ export const buildRoundTripView = (
         blockGroups[trip.blockId].push(trip);
     });
 
-    // Build rows - one per block
-    const rows: RoundTripRow[] = Object.entries(blockGroups)
-        .map(([blockId, trips]) => {
-            // Sort trips by tripNumber to maintain journey sequence
-            const sortedTrips = trips.sort((a, b) => a.tripNumber - b.tripNumber);
+    // Build rows - one per TRIP PAIR (N+S cycle), not per block
+    // Each row represents one round-trip cycle
+    const rows: RoundTripRow[] = [];
 
-            const totalTravelTime = sortedTrips.reduce((sum, t) => sum + t.travelTime, 0);
-            const totalRecoveryTime = sortedTrips.reduce((sum, t) => sum + t.recoveryTime, 0);
+    Object.entries(blockGroups).forEach(([blockId, trips]) => {
+        // Sort trips by tripNumber to maintain journey sequence
+        const sortedTrips = trips.sort((a, b) => a.tripNumber - b.tripNumber);
 
-            // Calculate total cycle: first departure to last arrival + last recovery
-            const firstTrip = sortedTrips[0];
-            const lastTrip = sortedTrips[sortedTrips.length - 1];
-            const totalCycleTime = firstTrip && lastTrip
-                ? (lastTrip.endTime - firstTrip.startTime) + lastTrip.recoveryTime
-                : 0;
+        // Pair up trips: North1 + South1 = Row1, North2 + South2 = Row2, etc.
+        // Trips alternate N-S-N-S based on tripNumber
+        const northTrips = sortedTrips.filter(t => t.direction === 'North');
+        const southTrips = sortedTrips.filter(t => t.direction === 'South');
 
-            return {
-                blockId,
-                trips: sortedTrips,
+        // Create one row per pair
+        const maxPairs = Math.max(northTrips.length, southTrips.length);
+
+        for (let i = 0; i < maxPairs; i++) {
+            const nTrip = northTrips[i];
+            const sTrip = southTrips[i];
+            const pairTrips = [nTrip, sTrip].filter(Boolean) as MasterTrip[];
+
+            if (pairTrips.length === 0) continue;
+
+            const totalTravelTime = pairTrips.reduce((sum, t) => sum + t.travelTime, 0);
+            const totalRecoveryTime = pairTrips.reduce((sum, t) => sum + t.recoveryTime, 0);
+
+            // Cycle time for this round trip pair
+            const firstTrip = pairTrips[0];
+            const lastTrip = pairTrips[pairTrips.length - 1];
+            const totalCycleTime = lastTrip.endTime - firstTrip.startTime;
+
+            rows.push({
+                blockId: `${blockId}`, // Same block ID, different row per pair
+                trips: pairTrips,
                 northStops: northTable.stops,
                 southStops: southTable.stops,
                 totalTravelTime,
                 totalRecoveryTime,
                 totalCycleTime
-            };
-        })
-        // Sort blocks by first trip start time
-        .sort((a, b) => {
-            const aStart = a.trips[0]?.startTime ?? 0;
-            const bStart = b.trips[0]?.startTime ?? 0;
-            return aStart - bStart;
-        });
+            });
+        }
+    });
+
+    // Sort all rows by first trip start time
+    rows.sort((a, b) => {
+        const aStart = a.trips[0]?.startTime ?? 0;
+        const bStart = b.trips[0]?.startTime ?? 0;
+        return aStart - bStart;
+    });
 
     // Extract route name (remove direction suffix)
     const routeBase = northTable.routeName.replace(/ \(North\).*$/, '');
+
+    console.log('buildRoundTripView returning:', { rowsCount: rows.length, routeBase, firstRowTrips: rows[0]?.trips?.length });
 
     return {
         routeName: routeBase,
