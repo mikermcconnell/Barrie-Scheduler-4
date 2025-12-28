@@ -33,7 +33,11 @@ import {
     Minimize2,
     Undo2,
     Redo2,
-    Minus
+    Minus,
+    Clock,
+    AlertTriangle,
+    Car,
+    GitCompare
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import ExcelJS from 'exceljs';
@@ -52,6 +56,8 @@ import { getRouteColor, getRouteTextColor } from '../utils/routeColors';
 import { AddTripModal, AddTripModalContext } from './AddTripModal';
 import { useAddTrip } from '../hooks/useAddTrip';
 import { TravelTimeGrid } from './TravelTimeGrid';
+import { ScenarioComparisonModal } from './ScenarioComparisonModal';
+import { AuditLogPanel, useAuditLog } from './AuditLogPanel';
 
 // --- Shared Helpers (Moved from Workspace) ---
 const deepCloneSchedules = (schedules: MasterRouteTable[]): MasterRouteTable[] => {
@@ -91,13 +97,225 @@ const calculateHeadways = (trips: MasterTrip[]): Record<string, number> => {
     return headways;
 };
 
+// Recovery ratio color: 15% is sweet spot
+// <10% = red (too little), 10-15% = yellow (marginal), 15-20% = green (ideal), 20-25% = yellow (too much), >25% = red (way too much)
 const getRatioColor = (ratio: number) => {
-    const target = 15;
-    const diff = Math.abs(ratio - target);
-    if (diff < 2) return 'bg-emerald-50 text-emerald-700';
-    if (diff < 5) return 'bg-yellow-50 text-yellow-700';
-    if (diff < 10) return 'bg-orange-100 text-orange-800';
-    return 'bg-red-100 text-red-800 font-bold';
+    if (ratio < 10) return 'bg-red-100 text-red-700'; // Too little recovery
+    if (ratio < 15) return 'bg-yellow-50 text-yellow-700'; // Marginal
+    if (ratio <= 20) return 'bg-emerald-50 text-emerald-700'; // Sweet spot (15-20%)
+    if (ratio <= 25) return 'bg-yellow-50 text-yellow-700'; // Too much
+    return 'bg-red-100 text-red-700'; // Way too much (>25%)
+};
+
+// Get recovery status label
+const getRecoveryStatus = (ratio: number): { label: string; color: string } => {
+    if (ratio < 10) return { label: 'Low', color: 'text-red-600' };
+    if (ratio < 15) return { label: 'Marginal', color: 'text-yellow-600' };
+    if (ratio <= 20) return { label: 'Optimal', color: 'text-emerald-600' };
+    if (ratio <= 25) return { label: 'High', color: 'text-yellow-600' };
+    return { label: 'Excessive', color: 'text-red-600' };
+};
+
+// Calculate peak vehicle requirement
+const calculatePeakVehicles = (trips: MasterTrip[]): number => {
+    const uniqueBlocks = new Set(trips.map(t => t.blockId));
+    return uniqueBlocks.size;
+};
+
+// Calculate service span (first departure to last arrival)
+const calculateServiceSpan = (trips: MasterTrip[]): { start: string; end: string; hours: number } => {
+    if (trips.length === 0) return { start: '-', end: '-', hours: 0 };
+
+    const sortedByStart = [...trips].sort((a, b) => a.startTime - b.startTime);
+    const sortedByEnd = [...trips].sort((a, b) => b.endTime - a.endTime);
+
+    const startMins = sortedByStart[0].startTime;
+    const endMins = sortedByEnd[0].endTime;
+
+    const formatTime = (mins: number) => {
+        const h = Math.floor(mins / 60) % 24;
+        const m = mins % 60;
+        const period = h >= 12 ? 'PM' : 'AM';
+        const h12 = h % 12 || 12;
+        return `${h12}:${m.toString().padStart(2, '0')} ${period}`;
+    };
+
+    return {
+        start: formatTime(startMins),
+        end: formatTime(endMins),
+        hours: Number(((endMins - startMins) / 60).toFixed(1))
+    };
+};
+
+// Check headway consistency and flag irregularities
+const analyzeHeadways = (trips: MasterTrip[]): { avg: number; irregular: string[] } => {
+    const byDir: Record<string, MasterTrip[]> = {};
+    trips.forEach(t => {
+        const dir = t.direction || 'Loop';
+        if (!byDir[dir]) byDir[dir] = [];
+        byDir[dir].push(t);
+    });
+
+    const allHeadways: number[] = [];
+    const irregular: string[] = [];
+
+    Object.entries(byDir).forEach(([dir, dirTrips]) => {
+        const sorted = [...dirTrips].sort((a, b) => a.startTime - b.startTime);
+        for (let i = 1; i < sorted.length; i++) {
+            const headway = sorted[i].startTime - sorted[i - 1].startTime;
+            allHeadways.push(headway);
+        }
+    });
+
+    if (allHeadways.length > 0) {
+        const avg = allHeadways.reduce((a, b) => a + b, 0) / allHeadways.length;
+        allHeadways.forEach((h, idx) => {
+            if (Math.abs(h - avg) > avg * 0.3) { // More than 30% deviation
+                irregular.push(`Trip ${idx + 2}: ${h} min (avg: ${Math.round(avg)})`);
+            }
+        });
+        return { avg: Math.round(avg), irregular };
+    }
+    return { avg: 0, irregular: [] };
+};
+
+// Calculate trips per hour for histogram
+const calculateTripsPerHour = (trips: MasterTrip[]): Record<number, number> => {
+    const hourCounts: Record<number, number> = {};
+    trips.forEach(t => {
+        const hour = Math.floor(t.startTime / 60);
+        hourCounts[hour] = (hourCounts[hour] || 0) + 1;
+    });
+    return hourCounts;
+};
+
+// Band colors for row tinting
+const getBandRowColor = (bandId: string | undefined): string => {
+    const colors: Record<string, string> = {
+        'A': 'bg-red-50/40',
+        'B': 'bg-orange-50/40',
+        'C': 'bg-yellow-50/40',
+        'D': 'bg-lime-50/40',
+        'E': 'bg-green-50/40'
+    };
+    return bandId ? colors[bandId] || '' : '';
+};
+
+// Inline time editing - auto-format helper
+// Converts shorthand input like "630" → "6:30 AM", "1430" → "2:30 PM"
+const parseTimeInput = (input: string): string | null => {
+    // Remove all non-numeric characters except colon
+    const cleaned = input.replace(/[^0-9:]/g, '');
+
+    let hours: number;
+    let minutes: number;
+
+    if (cleaned.includes(':')) {
+        // Already has colon: "6:30" or "14:30"
+        const [h, m] = cleaned.split(':');
+        hours = parseInt(h) || 0;
+        minutes = parseInt(m) || 0;
+    } else if (cleaned.length <= 2) {
+        // Just hours: "6" → 6:00, "14" → 14:00
+        hours = parseInt(cleaned) || 0;
+        minutes = 0;
+    } else if (cleaned.length === 3) {
+        // "630" → 6:30
+        hours = parseInt(cleaned[0]) || 0;
+        minutes = parseInt(cleaned.slice(1)) || 0;
+    } else if (cleaned.length >= 4) {
+        // "0630" or "1430" → 6:30 or 14:30
+        hours = parseInt(cleaned.slice(0, cleaned.length - 2)) || 0;
+        minutes = parseInt(cleaned.slice(-2)) || 0;
+    } else {
+        return null;
+    }
+
+    // Validate
+    if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+        return null;
+    }
+
+    // Format to 12-hour with AM/PM
+    const period = hours >= 12 ? 'PM' : 'AM';
+    const h12 = hours % 12 || 12;
+    return `${h12}:${minutes.toString().padStart(2, '0')} ${period}`;
+};
+
+// Input sanitization - prevent XSS and injection
+const sanitizeInput = (input: string): string => {
+    return input
+        .replace(/[<>]/g, '') // Remove HTML tags
+        .replace(/javascript:/gi, '') // Remove JS protocol
+        .replace(/on\w+=/gi, '') // Remove event handlers
+        .trim()
+        .slice(0, 20); // Limit length
+};
+
+// Validation warnings
+interface ValidationWarning {
+    type: 'error' | 'warning' | 'info';
+    message: string;
+    tripId?: string;
+}
+
+const validateSchedule = (trips: MasterTrip[]): ValidationWarning[] => {
+    const warnings: ValidationWarning[] = [];
+
+    trips.forEach(trip => {
+        const ratio = trip.travelTime > 0 ? (trip.recoveryTime / trip.travelTime) * 100 : 0;
+
+        // Tight recovery warning
+        if (ratio < 10 && trip.recoveryTime < 5) {
+            warnings.push({
+                type: 'warning',
+                message: `Block ${trip.blockId}: Very tight recovery (${trip.recoveryTime} min, ${ratio.toFixed(0)}%)`,
+                tripId: trip.id
+            });
+        }
+
+        // Excessive recovery warning
+        if (ratio > 25) {
+            warnings.push({
+                type: 'warning',
+                message: `Block ${trip.blockId}: Excessive recovery (${trip.recoveryTime} min, ${ratio.toFixed(0)}%)`,
+                tripId: trip.id
+            });
+        }
+
+        // Unrealistic segment time (travel > 90 min one way)
+        if (trip.travelTime > 90) {
+            warnings.push({
+                type: 'info',
+                message: `Block ${trip.blockId}: Long travel time (${trip.travelTime} min)`,
+                tripId: trip.id
+            });
+        }
+    });
+
+    // Check for gaps in service (>90 min between trips in same direction)
+    const byDir: Record<string, MasterTrip[]> = {};
+    trips.forEach(t => {
+        const dir = t.direction || 'Loop';
+        if (!byDir[dir]) byDir[dir] = [];
+        byDir[dir].push(t);
+    });
+
+    Object.entries(byDir).forEach(([dir, dirTrips]) => {
+        const sorted = [...dirTrips].sort((a, b) => a.startTime - b.startTime);
+        for (let i = 1; i < sorted.length; i++) {
+            const gap = sorted[i].startTime - sorted[i - 1].endTime;
+            if (gap > 90) {
+                warnings.push({
+                    type: 'warning',
+                    message: `${dir}: ${gap} min gap between trips`,
+                    tripId: sorted[i].id
+                });
+            }
+        }
+    });
+
+    return warnings;
 };
 
 // --- Subcomponents (Copied to isolate editor) ---
@@ -172,6 +390,7 @@ const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({ schedules, onCe
 
                 // Calculate Route Totals for the Header
                 const totalTrips = combined.rows.length;
+                const allTrips = [...allNorthTrips, ...allSouthTrips];
                 const totalTravelSum = combined.rows.reduce((sum, r) => sum + r.totalTravelTime, 0);
                 const totalRecoverySum = combined.rows.reduce((sum, r) => sum + r.totalRecoveryTime, 0);
                 const avgTravel = totalTrips > 0 ? (totalTravelSum / totalTrips).toFixed(1) : '0';
@@ -179,44 +398,202 @@ const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({ schedules, onCe
 
                 const totalCycleSum = combined.rows.reduce((sum, r) => sum + r.totalCycleTime, 0);
 
-                const overallRatio = totalTravelSum > 0 ? ((totalRecoverySum / totalTravelSum) * 100).toFixed(1) : '0';
-                // const avgCycle = totalTrips > 0 ? Math.round(combined.rows.reduce((sum, r) => sum + r.totalCycleTime, 0) / totalTrips) : 0;
+                const overallRatio = totalTravelSum > 0 ? ((totalRecoverySum / totalTravelSum) * 100) : 0;
+                const ratioStatus = getRecoveryStatus(overallRatio);
 
+                // New metrics
+                const peakVehicles = calculatePeakVehicles(allTrips);
+                const serviceSpan = calculateServiceSpan(allTrips);
+                const headwayAnalysis = analyzeHeadways(allTrips);
+                const tripsPerHour = calculateTripsPerHour(allTrips);
+                const warnings = validateSchedule(allTrips);
+
+                // Get hours range for histogram
+                const hours = Object.keys(tripsPerHour).map(Number).sort((a, b) => a - b);
+                const minHour = hours.length > 0 ? hours[0] : 6;
+                const maxHour = hours.length > 0 ? hours[hours.length - 1] : 22;
+                const maxTripsInHour = Math.max(...Object.values(tripsPerHour), 1);
 
                 return (
                     <div key={combined.routeName} className="flex flex-col gap-4 bg-white rounded-xl shadow-sm border border-gray-100 p-1">
 
                         {/* 1. Header Area: Title & High-Level Metrics */}
-                        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
-                            {/* Left: Branding / Context (REMOVED - handled by WorkspaceHeader) */}
-                            <div></div>
+                        <div className="flex flex-col gap-3 px-4 py-3 border-b border-gray-100">
+                            {/* Top Row: Service Span + Key Metrics */}
+                            <div className="flex items-center justify-between">
+                                {/* Left: Service Span */}
+                                <div className="flex items-center gap-4">
+                                    <div className="flex items-center gap-2 bg-gray-50 px-3 py-1.5 rounded-lg">
+                                        <Clock size={14} className="text-gray-400" />
+                                        <span className="text-xs font-medium text-gray-600">
+                                            {serviceSpan.start} – {serviceSpan.end}
+                                        </span>
+                                        <span className="text-[10px] text-gray-400">({serviceSpan.hours}h span)</span>
+                                    </div>
+                                    {/* Peak Vehicles */}
+                                    <div className="flex items-center gap-2 bg-blue-50 px-3 py-1.5 rounded-lg">
+                                        <Car size={14} className="text-blue-500" />
+                                        <span className="text-xs font-bold text-blue-700">{peakVehicles}</span>
+                                        <span className="text-[10px] text-blue-400">vehicles</span>
+                                    </div>
+                                </div>
 
-                            {/* Right: Key Metrics Strip */}
-                            <div className="flex items-center gap-6">
-                                <div className="flex flex-col items-center">
-                                    <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Trips</span>
-                                    <span className="text-sm font-bold text-gray-700">{totalTrips}</span>
+                                {/* Right: Key Metrics Strip */}
+                                <div className="flex items-center gap-5">
+                                    <div className="flex flex-col items-center">
+                                        <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Trips</span>
+                                        <span className="text-sm font-bold text-gray-700">{totalTrips}</span>
+                                    </div>
+                                    <div className="flex flex-col items-center">
+                                        <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Travel</span>
+                                        <span className="text-sm font-bold text-gray-700">{Math.round(totalTravelSum / 60)}<span className="text-[10px] ml-1 font-normal text-gray-400">h</span></span>
+                                    </div>
+                                    <div className="flex flex-col items-center">
+                                        <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Recovery</span>
+                                        <span className="text-sm font-bold text-gray-700">{Math.round(totalRecoverySum / 60)}<span className="text-[10px] ml-1 font-normal text-gray-400">h</span></span>
+                                    </div>
+                                    <div className="flex flex-col items-center">
+                                        <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Cycle</span>
+                                        <span className="text-sm font-bold text-gray-700">{Math.round(totalCycleSum / 60)}<span className="text-[10px] ml-1 font-normal text-gray-400">h</span></span>
+                                    </div>
+                                    <div className="flex flex-col items-center">
+                                        <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Ratio</span>
+                                        <span className={`text-sm font-bold ${ratioStatus.color}`}>
+                                            {overallRatio.toFixed(1)}%
+                                            <span className="text-[9px] ml-1 font-normal">({ratioStatus.label})</span>
+                                        </span>
+                                    </div>
+                                    <div className="flex flex-col items-center">
+                                        <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Headway</span>
+                                        <span className="text-sm font-bold text-gray-700">{headwayAnalysis.avg}<span className="text-[10px] ml-1 font-normal text-gray-400">min</span></span>
+                                    </div>
                                 </div>
-                                <div className="flex flex-col items-center">
-                                    <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Travel</span>
-                                    <span className="text-sm font-bold text-gray-700">{Math.round(totalTravelSum / 60)}<span className="text-[10px] ml-1 font-normal text-gray-400">h</span></span>
+                            </div>
+
+                            {/* Bottom Row: Trip Histogram + Validation Warnings */}
+                            <div className="flex items-end justify-between gap-4">
+                                {/* Trips Per Hour Histogram */}
+                                <div className="flex items-end gap-0.5 h-8">
+                                    <span className="text-[8px] text-gray-400 mr-1 self-center">Trips/hr:</span>
+                                    {Array.from({ length: maxHour - minHour + 1 }, (_, i) => {
+                                        const hour = minHour + i;
+                                        const count = tripsPerHour[hour] || 0;
+                                        const height = count > 0 ? Math.max(4, (count / maxTripsInHour) * 24) : 2;
+                                        return (
+                                            <div key={hour} className="flex flex-col items-center" title={`${hour}:00 - ${count} trips`}>
+                                                <div
+                                                    className={`w-3 rounded-t transition-all ${count > 0 ? 'bg-blue-400' : 'bg-gray-200'}`}
+                                                    style={{ height: `${height}px` }}
+                                                />
+                                                {hour % 2 === 0 && (
+                                                    <span className="text-[7px] text-gray-400">{hour}</span>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
                                 </div>
-                                <div className="flex flex-col items-center">
-                                    <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Recovery</span>
-                                    <span className="text-sm font-bold text-gray-700">{Math.round(totalRecoverySum / 60)}<span className="text-[10px] ml-1 font-normal text-gray-400">h</span></span>
-                                </div>
-                                <div className="flex flex-col items-center">
-                                    <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Cycle</span>
-                                    <span className="text-sm font-bold text-gray-700">{Math.round(totalCycleSum / 60)}<span className="text-[10px] ml-1 font-normal text-gray-400">h</span></span>
-                                </div>
-                                <div className="flex flex-col items-center">
-                                    <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Ratio</span>
-                                    <span className={`text-sm font-bold ${Number(overallRatio) > 20 ? 'text-orange-600' : 'text-green-600'}`}>{overallRatio}%</span>
-                                </div>
+
+                                {/* Validation Warnings */}
+                                {warnings.length > 0 && (
+                                    <div className="flex items-center gap-2">
+                                        <div className="flex items-center gap-1 px-2 py-1 rounded bg-amber-50 border border-amber-200">
+                                            <AlertTriangle size={12} className="text-amber-500" />
+                                            <span className="text-[10px] font-medium text-amber-700">
+                                                {warnings.length} warning{warnings.length > 1 ? 's' : ''}
+                                            </span>
+                                        </div>
+                                        {/* Show first warning as preview */}
+                                        <span className="text-[10px] text-gray-500 max-w-xs truncate" title={warnings.map(w => w.message).join('\n')}>
+                                            {warnings[0].message}
+                                        </span>
+                                    </div>
+                                )}
+
+                                {/* Headway Irregularities */}
+                                {headwayAnalysis.irregular.length > 0 && (
+                                    <div className="flex items-center gap-1 px-2 py-1 rounded bg-orange-50 border border-orange-200" title={headwayAnalysis.irregular.join('\n')}>
+                                        <AlertCircle size={12} className="text-orange-500" />
+                                        <span className="text-[10px] font-medium text-orange-700">
+                                            {headwayAnalysis.irregular.length} irregular headway{headwayAnalysis.irregular.length > 1 ? 's' : ''}
+                                        </span>
+                                    </div>
+                                )}
                             </div>
                         </div>
 
-                        {/* 2. Main Table Area */}
+                        {/* 2. Block Summary Gantt Chart (Collapsible) */}
+                        <details className="px-4 py-2 border-b border-gray-100">
+                            <summary className="cursor-pointer text-xs font-bold text-gray-500 uppercase tracking-wide flex items-center gap-2 hover:text-gray-700">
+                                <BarChart2 size={14} />
+                                Block Timeline View
+                            </summary>
+                            <div className="mt-3 pb-2">
+                                {/* Time scale header */}
+                                <div className="flex items-center mb-1">
+                                    <div className="w-16 text-[9px] text-gray-400 font-medium">Block</div>
+                                    <div className="flex-1 flex">
+                                        {Array.from({ length: maxHour - minHour + 1 }, (_, i) => (
+                                            <div key={i} className="flex-1 text-[8px] text-gray-400 text-center border-l border-gray-100">
+                                                {minHour + i}:00
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                                {/* Block rows */}
+                                {Array.from(new Set(allTrips.map(t => t.blockId))).sort().map(blockId => {
+                                    const blockTrips = allTrips.filter(t => t.blockId === blockId).sort((a, b) => a.startTime - b.startTime);
+                                    const totalSpanMins = (maxHour - minHour + 1) * 60;
+
+                                    return (
+                                        <div key={blockId} className="flex items-center h-6 mb-1">
+                                            <div className="w-16 text-[10px] font-bold text-gray-600">{blockId}</div>
+                                            <div className="flex-1 relative h-4 bg-gray-50 rounded">
+                                                {blockTrips.map((trip, idx) => {
+                                                    const startOffset = ((trip.startTime - minHour * 60) / totalSpanMins) * 100;
+                                                    const duration = ((trip.endTime - trip.startTime) / totalSpanMins) * 100;
+                                                    const bandColors: Record<string, string> = {
+                                                        'A': 'bg-red-400', 'B': 'bg-orange-400', 'C': 'bg-yellow-400',
+                                                        'D': 'bg-lime-400', 'E': 'bg-green-400'
+                                                    };
+                                                    const bgColor = trip.assignedBand ? bandColors[trip.assignedBand] || 'bg-blue-400' : 'bg-blue-400';
+                                                    const dirColor = trip.direction === 'North' ? 'border-blue-600' : 'border-indigo-600';
+
+                                                    return (
+                                                        <div
+                                                            key={trip.id}
+                                                            className={`absolute h-full ${bgColor} ${dirColor} border-l-2 rounded-r opacity-80 hover:opacity-100 transition-opacity`}
+                                                            style={{ left: `${startOffset}%`, width: `${Math.max(duration, 0.5)}%` }}
+                                                            title={`${trip.direction}: ${Math.floor(trip.startTime / 60)}:${(trip.startTime % 60).toString().padStart(2, '0')} - ${Math.floor(trip.endTime / 60)}:${(trip.endTime % 60).toString().padStart(2, '0')} (Band ${trip.assignedBand || '?'})`}
+                                                        />
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                                {/* Legend */}
+                                <div className="flex items-center gap-4 mt-2 pt-2 border-t border-gray-100">
+                                    <span className="text-[9px] text-gray-400">Direction:</span>
+                                    <div className="flex items-center gap-1">
+                                        <div className="w-2 h-3 bg-blue-400 border-l-2 border-blue-600 rounded-r" />
+                                        <span className="text-[9px] text-gray-500">North</span>
+                                    </div>
+                                    <div className="flex items-center gap-1">
+                                        <div className="w-2 h-3 bg-indigo-400 border-l-2 border-indigo-600 rounded-r" />
+                                        <span className="text-[9px] text-gray-500">South</span>
+                                    </div>
+                                    <span className="text-[9px] text-gray-400 ml-4">Band colors:</span>
+                                    {['A', 'B', 'C', 'D', 'E'].map(band => (
+                                        <div key={band} className="flex items-center gap-0.5">
+                                            <div className={`w-2 h-2 rounded ${band === 'A' ? 'bg-red-400' : band === 'B' ? 'bg-orange-400' : band === 'C' ? 'bg-yellow-400' : band === 'D' ? 'bg-lime-400' : 'bg-green-400'}`} />
+                                            <span className="text-[9px] text-gray-500">{band}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </details>
+
+                        {/* 3. Main Table Area */}
                         <div className="overflow-x-auto custom-scrollbar relative w-full rounded-lg">
                             {/* Scroll fade indicator */}
                             <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-white to-transparent pointer-events-none z-50" />
@@ -314,14 +691,17 @@ const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({ schedules, onCe
                                         // Headway from first trip in block (usually North start)
                                         const headway = northTrip ? headways[northTrip.id] : (southTrip ? headways[southTrip.id] : '-');
 
-                                        // Ratio Color Logic for Full Cell
-                                        const ratioColorBg = ratio > 20 ? 'bg-orange-50' : 'bg-green-50';
-                                        const ratioColorText = ratio > 20 ? 'text-orange-700' : 'text-green-700';
+                                        // Ratio Color Logic using new thresholds
+                                        const ratioColorClass = getRatioColor(ratio);
+
+                                        // Band-based row tinting (use north trip's band, or south if north doesn't have one)
+                                        const assignedBand = northTrip?.assignedBand || southTrip?.assignedBand;
+                                        const bandRowColor = getBandRowColor(assignedBand);
 
                                         return (
-                                            <tr key={uniqueRowKey} className="group hover:bg-gray-50/50 transition-colors">
+                                            <tr key={uniqueRowKey} className={`group hover:bg-gray-100/50 transition-colors ${bandRowColor}`}>
                                                 {/* Sticky Block ID */}
-                                                <td className="p-3 border-r border-dashed border-gray-100 sticky left-0 bg-white group-hover:bg-gray-50/50 z-30 font-bold text-[10px] text-gray-800 text-center">
+                                                <td className={`p-3 border-r border-dashed border-gray-100 sticky left-0 ${bandRowColor || 'bg-white'} group-hover:bg-gray-100/50 z-30 font-bold text-[10px] text-gray-800 text-center`}>
                                                     <div className="flex items-center gap-2">
                                                         <span>{row.blockId}</span>
                                                         {onAddTrip && <button onClick={() => onAddTrip(row.blockId, lastTrip?.id || '')} className="opacity-0 group-hover:opacity-100 text-blue-500 hover:text-blue-700 transition-opacity"><Plus size={12} /></button>}
@@ -345,7 +725,13 @@ const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({ schedules, onCe
                                                             <input
                                                                 type="text"
                                                                 value={northTrip?.stops[stop] || ''}
-                                                                onChange={(e) => northTrip && onCellEdit(northTrip.id, stop, e.target.value)}
+                                                                onChange={(e) => northTrip && onCellEdit(northTrip.id, stop, sanitizeInput(e.target.value))}
+                                                                onBlur={(e) => {
+                                                                    if (northTrip && e.target.value) {
+                                                                        const formatted = parseTimeInput(e.target.value);
+                                                                        if (formatted) onCellEdit(northTrip.id, stop, formatted);
+                                                                    }
+                                                                }}
                                                                 className="w-full h-full bg-transparent font-medium text-[11px] text-gray-700 text-center focus:bg-white focus:ring-2 focus:ring-blue-100 focus:outline-none transition-all placeholder-gray-200"
                                                                 placeholder="-"
                                                                 disabled={!northTrip}
@@ -371,7 +757,13 @@ const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({ schedules, onCe
                                                             <input
                                                                 type="text"
                                                                 value={southTrip?.stops[stop] || ''}
-                                                                onChange={(e) => southTrip && onCellEdit(southTrip.id, stop, e.target.value)}
+                                                                onChange={(e) => southTrip && onCellEdit(southTrip.id, stop, sanitizeInput(e.target.value))}
+                                                                onBlur={(e) => {
+                                                                    if (southTrip && e.target.value) {
+                                                                        const formatted = parseTimeInput(e.target.value);
+                                                                        if (formatted) onCellEdit(southTrip.id, stop, formatted);
+                                                                    }
+                                                                }}
                                                                 className="w-full h-full bg-transparent font-medium text-[11px] text-gray-700 text-center focus:bg-white focus:ring-2 focus:ring-indigo-100 focus:outline-none transition-all placeholder-gray-200"
                                                                 placeholder="-"
                                                                 disabled={!southTrip}
@@ -408,8 +800,8 @@ const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({ schedules, onCe
                                                 </td>
                                                 <td className="p-2 text-center text-[10px] font-medium text-gray-500">{totalRec}</td>
 
-                                                {/* Full Cell Background Ratio */}
-                                                <td className={`p-2 text-center text-[10px] font-bold ${ratioColorBg} ${ratioColorText}`}>
+                                                {/* Full Cell Background Ratio - Using new thresholds */}
+                                                <td className={`p-2 text-center text-[10px] font-bold ${ratioColorClass}`}>
                                                     {ratio.toFixed(0)}%
                                                 </td>
 
@@ -512,7 +904,13 @@ const SingleRouteView: React.FC<SingleRouteViewProps> = ({ table, showSummary = 
                                                         <input
                                                             type="text"
                                                             value={trip.stops[stop] || ''}
-                                                            onChange={(e) => onCellEdit(trip.id, stop, e.target.value)}
+                                                            onChange={(e) => onCellEdit(trip.id, stop, sanitizeInput(e.target.value))}
+                                                            onBlur={(e) => {
+                                                                if (e.target.value) {
+                                                                    const formatted = parseTimeInput(e.target.value);
+                                                                    if (formatted) onCellEdit(trip.id, stop, formatted);
+                                                                }
+                                                            }}
                                                             className={`w-full h-full bg-transparent font-mono text-xs text-center p-1 focus:bg-white focus:outline-none ${timeDiff !== 0 ? 'font-bold' : ''}`}
                                                         />
                                                         {timeDiff !== 0 && (
@@ -633,6 +1031,11 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
     const [activeDay, setActiveDay] = useState<string>('Weekday');
     const [subView, setSubView] = useState<'editor' | 'matrix'>('editor');
     const [isFullScreen, setIsFullScreen] = useState(false);
+    const [showComparisonModal, setShowComparisonModal] = useState(false);
+    const [showAuditLog, setShowAuditLog] = useState(false);
+
+    // Audit Log
+    const { entries: auditEntries, logAction } = useAuditLog();
 
     // Add Trip
     const {
@@ -709,6 +1112,35 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
             if (firstAvailable) setActiveDay(firstAvailable);
         }
     }, [consolidatedRoutes, activeRouteIdx, activeDay]);
+
+    // Keyboard shortcuts: Ctrl+S (save), Ctrl+Z (undo), Ctrl+Y (redo), Escape (exit fullscreen)
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            // Ctrl+S: Save version
+            if (e.ctrlKey && e.key === 's') {
+                e.preventDefault();
+                onSaveVersion();
+                showSuccessToast('Version saved');
+            }
+            // Ctrl+Z: Undo
+            if (e.ctrlKey && e.key === 'z' && !e.shiftKey) {
+                e.preventDefault();
+                if (canUndo) undo();
+            }
+            // Ctrl+Y or Ctrl+Shift+Z: Redo
+            if ((e.ctrlKey && e.key === 'y') || (e.ctrlKey && e.shiftKey && e.key === 'z')) {
+                e.preventDefault();
+                if (canRedo) redo();
+            }
+            // Escape: Exit fullscreen
+            if (e.key === 'Escape' && isFullScreen) {
+                setIsFullScreen(false);
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [canUndo, canRedo, undo, redo, onSaveVersion, showSuccessToast, isFullScreen]);
 
     // Handlers
     const recalculateTrip = (trip: MasterTrip, cols: string[]) => {
@@ -821,9 +1253,21 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         if (!result) return;
         const { table, trip } = result;
 
-        const oldTime = TimeUtils.toMinutes(trip.stops[col]);
+        const oldValue = trip.stops[col];
+        const oldTime = TimeUtils.toMinutes(oldValue);
         const newTime = TimeUtils.toMinutes(val);
         const colIdx = table.stops.indexOf(col);
+
+        // Log the edit to audit log
+        if (oldValue !== val) {
+            logAction('edit', `Edited ${col} time`, {
+                tripId,
+                blockId: trip.blockId,
+                field: col,
+                oldValue: oldValue || '-',
+                newValue: val || '-'
+            });
+        }
 
         trip.stops[col] = val;
 
@@ -951,7 +1395,14 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         if (!confirm("Delete trip?")) return;
         const newScheds = deepCloneSchedules(schedules);
         for (const t of newScheds) {
-            if (t.trips.find(x => x.id === tripId)) {
+            const tripToDelete = t.trips.find(x => x.id === tripId);
+            if (tripToDelete) {
+                // Log deletion to audit log
+                logAction('delete', `Deleted trip from Block ${tripToDelete.blockId}`, {
+                    tripId,
+                    blockId: tripToDelete.blockId,
+                    field: 'trip'
+                });
                 t.trips = t.trips.filter(x => x.id !== tripId);
                 validateRouteTable(t);
                 break;
@@ -967,6 +1418,13 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
 
         const toIdx = targetTable.stops.indexOf(toStop);
         if (toIdx === -1) return;
+
+        // Log bulk adjustment
+        logAction('bulk_adjust', `Bulk travel time ${delta > 0 ? '+' : ''}${delta} min`, {
+            field: `${fromStop} → ${toStop}`,
+            newValue: delta,
+            count: targetTable.trips.length
+        });
 
         targetTable.trips.forEach(trip => {
             for (let i = toIdx; i < targetTable.stops.length; i++) {
@@ -1416,6 +1874,16 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                 />
             )}
 
+            {/* Scenario Comparison Modal */}
+            <ScenarioComparisonModal
+                isOpen={showComparisonModal}
+                onClose={() => setShowComparisonModal(false)}
+                currentSchedules={schedules}
+                baselineSchedules={originalSchedules || null}
+                currentLabel={draftName}
+                baselineLabel="Original"
+            />
+
             <div className={`h-full flex flex-col bg-gray-50/30 overflow-hidden ${isFullScreen ? 'fixed inset-0 z-50 bg-white' : ''}`}>
                 <WorkspaceHeader
                     routeGroupName={activeRouteGroup.name}
@@ -1481,8 +1949,17 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
 
                             {subView === 'editor' && (
                                 <div className="p-4 border-t border-gray-100 flex gap-2 justify-center">
-                                    <button onClick={undo} disabled={!canUndo} className="p-2 bg-gray-100 rounded hover:bg-gray-200 disabled:opacity-50"><Undo2 size={16} /></button>
-                                    <button onClick={redo} disabled={!canRedo} className="p-2 bg-gray-100 rounded hover:bg-gray-200 disabled:opacity-50"><Redo2 size={16} /></button>
+                                    <button onClick={undo} disabled={!canUndo} className="p-2 bg-gray-100 rounded hover:bg-gray-200 disabled:opacity-50" title="Undo (Ctrl+Z)"><Undo2 size={16} /></button>
+                                    <button onClick={redo} disabled={!canRedo} className="p-2 bg-gray-100 rounded hover:bg-gray-200 disabled:opacity-50" title="Redo (Ctrl+Y)"><Redo2 size={16} /></button>
+                                    <div className="w-px bg-gray-200 mx-1" />
+                                    <button
+                                        onClick={() => setShowComparisonModal(true)}
+                                        disabled={!originalSchedules}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-100 text-purple-700 rounded hover:bg-purple-200 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium"
+                                        title="Compare with original"
+                                    >
+                                        <GitCompare size={14} /> Compare
+                                    </button>
                                 </div>
                             )}
                         </div>
@@ -1523,6 +2000,13 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                     </div>
                 </div>
             </div>
+
+            {/* Audit Log Panel */}
+            <AuditLogPanel
+                entries={auditEntries}
+                isOpen={showAuditLog}
+                onToggle={() => setShowAuditLog(!showAuditLog)}
+            />
 
         </>
     );

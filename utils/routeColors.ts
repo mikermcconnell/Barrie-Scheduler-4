@@ -54,8 +54,9 @@ export function getRouteColor(routeName: string): string {
         return ROUTE_COLORS[normalized];
     }
 
-    // Try to extract base route number (e.g., "2A Weekday" -> "2A")
-    const match = normalized.match(/^(\d+[A-Z]?)/);
+    // Try to extract base route number (e.g., "2A Weekday" -> "2A", "Route 400" -> "400")
+    // Look for digits followed optionally by a letter
+    const match = normalized.match(/(\d+[A-Z]?)/);
     if (match && ROUTE_COLORS[match[1]]) {
         return ROUTE_COLORS[match[1]];
     }

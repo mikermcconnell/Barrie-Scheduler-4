@@ -186,13 +186,14 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
                 {/* Route Identity */}
                 <div className="flex items-center gap-3">
                     <div
-                        className="w-9 h-9 rounded-lg flex items-center justify-center text-sm font-bold shadow-sm ring-2 ring-white/20"
+                        className="w-12 h-12 rounded-xl flex flex-col items-center justify-center shadow-sm ring-1 ring-black/5"
                         style={{
                             backgroundColor: getRouteColor(routeGroupName),
                             color: getRouteTextColor(routeGroupName)
                         }}
                     >
-                        {routeGroupName}
+                        <span className="text-[10px] uppercase font-bold opacity-80 leading-none">Route</span>
+                        <span className="text-xl font-bold leading-none mt-0.5">{routeGroupName.replace(/\D/g, '')}</span>
                     </div>
                     <div>
                         <h2 className="text-lg font-bold text-gray-900 leading-tight">{dayLabel} Schedule</h2>
@@ -306,7 +307,8 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
                 <div className="h-8 w-px bg-gray-200"></div>
 
                 {/* Stats */}
-                <RouteSummary table={summaryTable} orientation="header" />
+                {/* Stats - Hide in RoundTrip view as it has its own metrics header */}
+                {!isRoundTrip && <RouteSummary table={summaryTable} orientation="header" />}
             </div>
         </div>
     );

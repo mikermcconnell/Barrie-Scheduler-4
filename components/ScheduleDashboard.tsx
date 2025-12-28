@@ -20,7 +20,7 @@ interface ScheduleDashboardProps {
     onLoadDraft: (draft: ScheduleDraft) => void;
     onLoadFile: (file: SavedFile) => void;
     onDeleteFile?: (file: SavedFile) => void;
-    onUpload: (file: File) => void;
+    onUpload: (files: File[]) => void;
     onViewNewSchedule: () => void;
 }
 

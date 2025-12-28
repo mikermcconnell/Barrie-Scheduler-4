@@ -224,6 +224,7 @@ export const generateSchedule = (
         // This ensures North and South legs use the same band based on initial departure
         let roundTripBandId: string | null = null;
         let roundTripStartTime: number | null = null;
+        let roundTripNorthTravelTime: number = 0; // Track North leg travel to compute South target
 
         // Loop until we exceed the block end time
         while (currentTime < endMins) {
@@ -255,22 +256,30 @@ export const generateSchedule = (
 
             const bandTargetRoundTrip = getBandTargetTime(currentTime);
 
-            // 1. Get segment times - USE BAND TOTAL as the exact travel time
-            // Then distribute proportionally across segments
+            // 1. Get segment times DIRECTLY from the band summary table
+            // Use exact values from "Segment Times by Band" - no scaling
             const finalSegmentRuntimes: number[] = [];
             let pureTravelTime = 0;
             let usedBandData = true;
 
-            // First, get raw segment times to determine proportions
+            // Helper: Get segment time directly from currentBand (already determined for this round trip)
+            const getSegmentTimeFromBand = (fromStop: string, toStop: string): number | null => {
+                if (!currentBand) return null;
+                const segmentName = `${fromStop} to ${toStop}`;
+                const segment = currentBand.segments.find(s => s.segmentName === segmentName);
+                return segment?.avgTime ?? null;
+            };
+
+            // First pass: collect raw segment times and sum
             const rawSegmentTimes: number[] = [];
-            let rawTotal = 0;
+            let rawSum = 0;
 
             for (let i = 0; i < dirTimepoints.length - 1; i++) {
                 const fromStop = dirTimepoints[i];
                 const toStop = dirTimepoints[i + 1];
 
-                // Get segment average from band summary
-                let segTime = getBandSegmentTime(currentTime, fromStop, toStop, currentDir);
+                // Get segment time directly from the current band (NOT by time lookup)
+                let segTime = getSegmentTimeFromBand(fromStop, toStop);
 
                 if (segTime === null) {
                     // Fallback: use raw segment data
@@ -279,39 +288,47 @@ export const generateSchedule = (
                 }
 
                 rawSegmentTimes.push(segTime);
-                rawTotal += segTime;
+                rawSum += segTime;
             }
 
-            // Use the band's avgTotal as the EXACT travel time target
-            // avgTotal is the one-way travel time for this band
-            const bandTravelTarget = currentBand?.avgTotal || rawTotal;
+            // Calculate direction target to ensure North + South = band's avgTotal exactly
+            let directionTarget: number;
+            const bandTotal = Math.round(currentBand?.avgTotal || rawSum);
 
-            // Scale segment times proportionally to match the band target exactly
-            if (rawTotal > 0 && currentBand?.avgTotal) {
-                const scaleFactor = bandTravelTarget / rawTotal;
-                let allocatedTime = 0;
-
-                for (let i = 0; i < rawSegmentTimes.length; i++) {
-                    if (i === rawSegmentTimes.length - 1) {
-                        // Last segment gets remainder to avoid rounding issues
-                        const lastSegTime = Math.round(bandTravelTarget - allocatedTime);
-                        finalSegmentRuntimes.push(lastSegTime);
-                        allocatedTime += lastSegTime;
-                    } else {
-                        const scaledTime = Math.round(rawSegmentTimes[i] * scaleFactor);
-                        finalSegmentRuntimes.push(scaledTime);
-                        allocatedTime += scaledTime;
-                    }
+            if (isRoundTrip) {
+                if (currentDir === 'North') {
+                    // North leg: use floor of half to leave room for South
+                    directionTarget = Math.floor(bandTotal / 2);
+                } else {
+                    // South leg: use remainder to hit exact total
+                    directionTarget = bandTotal - roundTripNorthTravelTime;
                 }
-                pureTravelTime = Math.round(bandTravelTarget);
             } else {
-                // No band data - use raw times
-                rawSegmentTimes.forEach(t => {
-                    const rounded = Math.round(t);
-                    finalSegmentRuntimes.push(rounded);
-                    pureTravelTime += rounded;
-                });
+                // Single direction: use full target
+                directionTarget = bandTotal;
             }
+
+            // Second pass: round each segment, then adjust last segment to hit target exactly
+            let allocatedTime = 0;
+            for (let i = 0; i < rawSegmentTimes.length; i++) {
+                if (i === rawSegmentTimes.length - 1) {
+                    // Last segment: use remainder to hit target exactly
+                    const lastSegTime = Math.max(1, directionTarget - allocatedTime);
+                    finalSegmentRuntimes.push(lastSegTime);
+                    allocatedTime += lastSegTime;
+                } else {
+                    const roundedSegTime = Math.round(rawSegmentTimes[i]);
+                    finalSegmentRuntimes.push(roundedSegTime);
+                    allocatedTime += roundedSegTime;
+                }
+            }
+            pureTravelTime = allocatedTime;
+
+            console.log(`[SEGMENT TIMES] Direction=${currentDir}, Band=${currentBand?.bandId || 'none'}, Target=${directionTarget}:`);
+            dirTimepoints.slice(0, -1).forEach((stop, i) => {
+                console.log(`  ${stop} → ${dirTimepoints[i + 1]}: ${finalSegmentRuntimes[i]} min`);
+            });
+            console.log(`  TOTAL: ${pureTravelTime} min (target was ${directionTarget})`);
 
             console.log(`Trip ${tripSequence} at ${currentTime} mins:`, {
                 band: currentBand?.bandId || 'none',
@@ -350,77 +367,71 @@ export const generateSchedule = (
             }
 
 
-            // 4. Distribute Recovery (End or Proportional)
+            // 4. Distribute Recovery PROPORTIONALLY across all stops (except first)
+            // This gives each timepoint: Arrival → Recovery → Departure
             const recoveryTimes: Record<string, number> = {};
             const stopPaddings: number[] = new Array(dirTimepoints.length).fill(0);
 
-            if (config.recoveryDistribution === 'Proportional' && totalRecovery > 0) {
-                // Distribute proportional to travel time
+            if (totalRecovery > 0) {
+                // Always distribute proportionally to segment travel time
                 let distributedSoFar = 0;
                 finalSegmentRuntimes.forEach((st, idx) => {
-                    const share = Math.round((st / pureTravelTime) * totalRecovery);
-                    stopPaddings[idx + 1] = share;
-                    recoveryTimes[dirTimepoints[idx + 1]] = share;
-                    distributedSoFar += share;
+                    if (idx < finalSegmentRuntimes.length - 1) {
+                        // Intermediate stops: proportional share
+                        const share = Math.round((st / pureTravelTime) * totalRecovery);
+                        stopPaddings[idx + 1] = share;
+                        recoveryTimes[dirTimepoints[idx + 1]] = share;
+                        distributedSoFar += share;
+                    }
                 });
-                // Remainder at end
-                const remainder = totalRecovery - distributedSoFar;
+                // Last stop: gets remainder to ensure total matches
                 const lastIdx = dirTimepoints.length - 1;
-                stopPaddings[lastIdx] += remainder;
-                recoveryTimes[dirTimepoints[lastIdx]] = (recoveryTimes[dirTimepoints[lastIdx]] || 0) + remainder;
-
+                const remainder = totalRecovery - distributedSoFar;
+                stopPaddings[lastIdx] = remainder;
+                recoveryTimes[dirTimepoints[lastIdx]] = remainder;
             } else {
-                // "End" mode
+                // No recovery - set all to 0
                 dirTimepoints.forEach((stop, idx) => {
-                    if (idx > 0 && idx < dirTimepoints.length - 1) recoveryTimes[stop] = 0;
+                    if (idx > 0) recoveryTimes[stop] = 0;
                 });
-                recoveryTimes[dirTimepoints[dirTimepoints.length - 1]] = totalRecovery;
-                stopPaddings[dirTimepoints.length - 1] = totalRecovery;
             }
 
+            console.log(`[RECOVERY DISTRIBUTION] Total=${totalRecovery} min:`, recoveryTimes);
 
-            // 5. Construct Trip Object
-            const stopTimes: Record<string, string> = {};
+
+            // 5. Construct Trip Object with Arrival Times, Recovery Times, and Departure Times
+            const stopTimes: Record<string, string> = {};      // Departure times
+            const arrivalTimes: Record<string, string> = {};   // Arrival times
             let currentStopMins = currentTime;
 
             dirTimepoints.forEach((stop, idx) => {
-                // Arrival
-                // For first stop, arrival = departure (start time)
-                // For others, add travel time from prev
+                // Calculate arrival time at this stop
+                // For first stop, arrival = start time (no travel yet)
+                // For subsequent stops, add travel time from previous stop
                 if (idx > 0) {
                     currentStopMins += finalSegmentRuntimes[idx - 1]; // Add travel time
                 }
 
-                // We store DEPARTURE times in the generic map usually, 
-                // but MasterTrip structure is flexible. 
-                // Let's store Arrival/Departure distinct if needed?
-                // The MasterTrip usually stores strings relative to columns.
-                // Here we just need generic "Time" for the column. 
-                // Typically Scheduler uses Departure time for the column unless Arrive/Depart designated.
-                // We'll just store the departure time (Arrival + Dwell/Recovery).
-
-                // Actually, recovery is usually added AFTER arrival, before next departure.
-                // So "Time" displayed is often Arrival or Departure?
-                // ScheduleEditor displays Arr | R | Dep.
-                // We populate `stopTimes` with the DEPARTURE time from that stop?
-                // Or we separate them?
-
-                // `MasterTrip` has `stopTimes: Record<string, string>`.
-                // It usually implies the Departure time.
-
                 const arrivalMins = currentStopMins;
                 const recovery = recoveryTimes[stop] || 0;
-                const departureMins = arrivalMins + recovery; // Add recovery (which is dwell here)
+                const departureMins = arrivalMins + recovery; // Departure = Arrival + Recovery
 
+                // Store both arrival and departure times
+                arrivalTimes[stop] = toTimeStr(arrivalMins);
                 stopTimes[stop] = toTimeStr(departureMins);
 
-                // Advance currentStopMins to Departure for next segment calculation base?
-                // No, next segment adds to *Departure* of prev stop? 
-                // Yes, travel time is Dep -> Arr.
+                // Advance to departure time for next segment calculation
+                // (travel time is measured from departure to next arrival)
                 currentStopMins = departureMins;
             });
 
-            // Create MasterTrip
+            console.log(`[TRIP TIMES] Stop breakdown:`);
+            dirTimepoints.forEach((stop, idx) => {
+                const rec = recoveryTimes[stop] || 0;
+                console.log(`  ${stop}: Arr=${arrivalTimes[stop]} + Rec=${rec}min → Dep=${stopTimes[stop]}`);
+            });
+
+            // Create MasterTrip with full time breakdown
             const newTrip: MasterTrip = {
                 id: `${block.id}-${tripSequence}`,
                 blockId: block.id,
@@ -429,16 +440,22 @@ export const generateSchedule = (
                 endTime: currentStopMins,
                 tripNumber: tripSequence,
                 rowId: 0,
-                travelTime: pureTravelTime, // Use actual calculated travel time, not cycle-derived
-                stops: stopTimes,
-                // Add extended data for Editor to parse back properly if needed
-                recoveryTime: totalRecovery,
+                travelTime: pureTravelTime,
+                stops: stopTimes,                    // Departure times per stop
+                arrivalTimes: arrivalTimes,          // Arrival times per stop
+                recoveryTimes: recoveryTimes,        // Recovery time (minutes) per stop
+                recoveryTime: totalRecovery,         // Total recovery for the trip
                 cycleTime: tripCycleAllocated,
-                // Store the assigned band (determined by initial round-trip departure time)
                 assignedBand: roundTripBandId || currentBand?.bandId || undefined
             };
 
             resultTrips[currentDir].push(newTrip);
+
+            // Track North travel time for computing South target
+            if (isRoundTrip && currentDir === 'North') {
+                roundTripNorthTravelTime = pureTravelTime;
+                console.log(`[ROUND TRIP] Saved North travel time: ${roundTripNorthTravelTime} min`);
+            }
 
             // 6. Advance
             currentTime = nextTripStart;
@@ -454,6 +471,7 @@ export const generateSchedule = (
                     // Just finished South, now starting new North - clear the saved band
                     roundTripBandId = null;
                     roundTripStartTime = null;
+                    roundTripNorthTravelTime = 0;
                 }
             }
         }

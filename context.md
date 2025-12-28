@@ -14,48 +14,37 @@
 > **LOCKED LOGIC (DO NOT CHANGE WITHOUT APPROVAL):**
 > 1. **Double Pass Optimization**: The `api/optimize.ts` file MUST use the "Double Pass" strategy (Generator -> Critic). Any attempt to revert to a single call is FORBIDDEN.
 > 2. **Efficiency Rules**: allowed gaps ("-1 driver for < 30 mins") are a critical feature to prevent surplus. DO NOT remove this instruction from the prompt.
+> 3. **Segment Rounding**: All segment travel times MUST be rounded to whole minutes BEFORE summing.
+> 4. **Trip Pairing**: Round Trip View displays N1+S1, N2+S2 pairs - NOT all trips in one row.
+> 5. **Cycle Calculation**: Total Cycle = Last Timepoint End - First Timepoint Start (simple subtraction).
 >
 > **Before taking any action (either tool calls *or* responses to the user), you must proactively, methodically, and independently plan and reason about:**
 >
 > 1. **Logical dependencies and constraints**: Analyze the intended action against the following factors. Resolve conflicts in order of importance:
 >    1.1. Policy-based rules, mandatory prerequisites, and constraints.
 >    1.2. Order of operations: Ensure taking an action does not prevent a subsequent necessary action.
->         1.2.1. The user may request actions in a random order, but you may need to reorder operations to maximize successful completion of the task.
 >    1.3. Other prerequisites (information and/or actions needed).
 >    1.4. Explicit user constraints or preferences.
 >
 > 2. **Risk assessment**: What are the consequences of taking the action? Will the new state cause any future issues?
->    2.1. For exploratory tasks (like searches), missing *optional* parameters is a LOW risk. **Prefer calling the tool with the available information over asking the user, unless** your `Rule 1` (Logical Dependencies) reasoning determines that optional information is required for a later step in your plan.
+>    2.1. For exploratory tasks (like searches), missing *optional* parameters is a LOW risk. **Prefer calling the tool with the available information over asking the user.**
 >
 > 3. **Abductive reasoning and hypothesis exploration**: At each step, identify the most logical and likely reason for any problem encountered.
->    3.1. Look beyond immediate or obvious causes. The most likely reason may not be the simplest and may require deeper inference.
->    3.2. Hypotheses may require additional research. Each hypothesis may take multiple steps to test.
->    3.3. Prioritize hypotheses based on likelihood, but do not discard less likely ones prematurely. A low-probability event may still be the root cause.
+>    3.1. Look beyond immediate or obvious causes.
+>    3.2. Hypotheses may require additional research.
+>    3.3. Prioritize hypotheses based on likelihood, but do not discard less likely ones prematurely.
 >
 > 4. **Outcome evaluation and adaptability**: Does the previous observation require any changes to your plan?
->    4.1. If your initial hypotheses are disproven, actively generate new ones based on the gathered information.
 >
-> 5. **Information availability**: Incorporate all applicable and alternative sources of information, including:
->    5.1. Using available tools and their capabilities
->    5.2. All policies, rules, checklists, and constraints
->    5.3. Previous observations and conversation history
->    5.4. Information only available by asking the user
+> 5. **Information availability**: Incorporate all applicable and alternative sources of information.
 >
 > 6. **Precision and Grounding**: Ensure your reasoning is extremely precise and relevant to each exact ongoing situation.
->    6.1. Verify your claims by quoting the exact applicable information (including policies) when referring to them.
 >
 > 7. **Completeness**: Ensure that all requirements, constraints, options, and preferences are exhaustively incorporated into your plan.
->    7.1. Resolve conflicts using the order of importance in #1.
->    7.2. Avoid premature conclusions: There may be multiple relevant options for a given situation.
->         7.2.1. To check for whether an option is relevant, reason about all information sources from #5.
->         7.2.2. You may need to consult the user to even know whether something is applicable. Do not assume it is not applicable without checking.
->    7.3. Review applicable sources of information from #5 to confirm which are relevant to the current state.
 >
 > 8. **Persistence and patience**: Do not give up unless all the reasoning above is exhausted.
->    8.1. Don't be dissuaded by time taken or user frustration.
->    8.2. This persistence must be intelligent: On *transient* errors (e.g. please try again), you *must* retry **unless an explicit retry limit (e.g., max x tries) has been reached**. If such a limit is hit, you *must* stop. On *other* errors, you must change your strategy or arguments, not repeat the same failed call.
 >
-> 9. **Inhibit your response**: only take an action after all the above reasoning is completed. Once you've taken an action, you cannot take it back.
+> 9. **Inhibit your response**: only take an action after all the above reasoning is completed.
 
 ---
 
@@ -64,104 +53,303 @@
 ## 1. Project Overview
 **Bus Scheduler** is a React-based application designed to manage and optimize transit schedules. It supports two primary modes of operation:
 *   **Transit On-Demand**: Managing dynamic driver shifts, analyzing coverage gaps against demand curves, and using AI to optimize rosters.
-*   **Fixed Route**: (Placeholder/Future) Managing traditional fixed-route timetables.
+*   **Fixed Route (ACTIVE DEVELOPMENT)**: Building and managing traditional fixed-route timetables from runtime data.
 
 ## 2. Technology Stack
 *   **Frontend Library**: React 19
 *   **Build Tool**: Vite 7
 *   **Language**: TypeScript 5.9
-*   **Styling**: **Tailwind CSS (via CDN)**.
-    *   *Note*: Tailwind is loaded directly in `index.html`. There is no build-time CSS processing or `tailwind.config.js`. Custom theme colors (brand-green, brand-blue, etc.) are defined in the script tag within `index.html`.
+*   **Styling**: **Tailwind CSS (via CDN)** - loaded in `index.html`, no build-time processing
 *   **Icons**: Lucide React
 *   **Charts**: Recharts
-*   **Backend/API**: Vercel Serverless Functions (`/api` folder).
-*   **AI Model**: Google Gemini (`gemini-3-pro-preview` / `gemini-2.0-flash`) via the `@google/generative-ai` SDK.
-*   **Data Handling**: `xlsx` for Excel export, custom CSV parsers for import.
-    *   **Fixed Route Parsing**: See `docs/excel-parsing-spec.md` for Master Schedule V2 parser details.
+*   **Backend/API**: Vercel Serverless Functions (`/api` folder)
+*   **AI Model**: Google Gemini via `@google/generative-ai` SDK
+*   **Data Handling**: `xlsx` for Excel, custom CSV parsers for import
 
 ## 3. Architecture & Data Flow
 
-### 3.1 Data Model
-*   **Requirement**: Represents demand at a specific 15-minute slot. Tracks `total`, `north`, `south`, and `floater` demand.
-*   **Shift**: A driver's assigned block of time. Key properties: `id`, `driverName`, `zone` (North/South/Floater), `startSlot`, `endSlot`, `breakStartSlot`.
-*   **Zone**: Strict union-based zones. "North" buses stay in North. "South" buses stay in South. "Floaters" can relieve either.
+### 3.1 On-Demand Data Model
+*   **Requirement**: Demand at a 15-minute slot. Tracks `total`, `north`, `south`, `floater`.
+*   **Shift**: Driver's assigned block. Properties: `id`, `driverName`, `zone`, `startSlot`, `endSlot`, `breakStartSlot`.
+*   **Zone**: "North" | "South" | "Floater"
 
-### 3.2 Optimization Pipeline
-1.  **Input**: User uploads specific CSV files ("Master Schedule" for demand, "RideCo Shifts" for supply).
-2.  **Parsing**: `utils/csvParsers.ts` converts CSV rows into `Requirement[]` and `Shift[]` objects.
-3.  **State**: Managed in React components (`OnDemandWorkspace.tsx`).
-4.  **Optimization Request**: User clicks "Regenerate".
-    *   Frontend calls `utils/geminiOptimizer.ts`.
-    *   Request POSTs to `/api/optimize`.
-5.  **Serverless Processing**:
-    *   **Production**: Vercel handles `/api/optimize` via `api/optimize.ts`.
-    *   **Local Dev**: Vite middleware (in `vite.config.ts`) intercepts `/api/optimize` and executes `optimizeImplementation` directly.
-6.  **AI Generation**:
-    *   Gemini API is called with a prompt containing demand curves and constraints (Union rules, break windows).
-    *   Model returns a JSON array of optimized shifts.
-7.  **Output**: State is updated. Charts (`GapChart`) reflect the new coverage.
+### 3.2 Fixed Route Data Model
+```typescript
+interface MasterTrip {
+    id: string;
+    blockId: string;           // "400-1"
+    direction: 'North' | 'South';
+    tripNumber: number;
+    startTime: number;         // Minutes from midnight
+    endTime: number;
+    travelTime: number;        // Pure driving time (rounded)
+    recoveryTime: number;      // Layover at end
+    recoveryTimes?: Record<string, number>;  // Per-stop recovery
+    arrivalTimes?: Record<string, string>;   // Arrival at each stop
+    stops: Record<string, string>;           // Departure from each stop
+    cycleTime: number;
+}
 
-## 4. Development Workflow
+interface RoundTripRow {
+    blockId: string;
+    trips: MasterTrip[];       // One N + one S per row
+    northStops: string[];
+    southStops: string[];
+    totalTravelTime: number;
+    totalRecoveryTime: number;
+    totalCycleTime: number;    // Last endTime - First startTime
+}
 
-### 4.1 Running Locally
-The project uses a standard Vite setup but requires specific configuration for the API:
-```bash
-npm run dev
+interface ScheduleConfig {
+    routeNumber: string;
+    cycleTime: number;                       // User-defined round-trip time
+    recoveryDistribution?: 'End' | 'Proportional';
+    blocks: BlockConfig[];
+}
 ```
-*   **Port**: Defaults to `3008`.
-*   **Environment Variables**: A `.env` file in the root is **REQUIRED** containing `GEMINI_API_KEY`.
-*   **API Proxy**: Use `vite.config.ts` to debug the API middleware if `404` errors occur on `/api/optimize`.
 
-### 4.2 Deployment
-*   Platform: **Vercel**
-*   Configuration: `vercel.json` (defines rewrites/redirects).
-*   API Keys: Set `GEMINI_API_KEY` in Vercel Project Settings.
+### 3.3 Fixed Route Pipeline
+1. **Upload** (`Step1Upload`) - User uploads segment CSV files (North/South)
+2. **Parse** (`csvParser.ts`) - Extract segments, timepoints, time buckets
+3. **Analyze** (`runtimeAnalysis.ts`) - Calculate P50/P80, assign time bands (A-E)
+4. **Configure** (`Step3Build`) - Set cycle time, recovery mode, blocks
+5. **Generate** (`scheduleGenerator.ts`) - Build trips from config + runtime data
+6. **Display** (`ScheduleEditor.tsx`) - Round Trip View with Arr | R | Dep columns
 
-## 5. Directory Structure
+### 3.4 Key Constraints (Fixed Route)
+*   **Segment Rounding**: Round each segment's P50 to nearest minute BEFORE summing
+*   **Cycle Time**: User-defined. Slack = Cycle - Travel Time
+*   **Recovery Distribution**:
+    - `End`: All slack at terminus
+    - `Proportional`: Distribute slack across stops proportional to segment length
+*   **Time Bands**: A (slowest) → E (fastest), based on travel time quintiles
+
+## 4. Directory Structure
 ```
 /
-├── api/                # Vercel Serverless Functions (Backend logic)
-│   └── optimize.ts     # Main Gemini optimization handler
-├── components/         # React Components
-│   ├── OnDemandWorkspace.tsx # Main workspace for On-Demand mode
-│   ├── ShiftEditor.tsx       # UI for manipulating shifts
+├── api/                       # Vercel Serverless Functions
+│   └── optimize.ts            # Gemini optimization handler
+├── components/
+│   ├── NewSchedule/           # Fixed Route Builder (4-step wizard)
+│   │   ├── steps/
+│   │   │   ├── Step1Upload.tsx
+│   │   │   ├── Step2Analysis.tsx
+│   │   │   ├── Step3Build.tsx
+│   │   │   └── Step4Schedule.tsx
+│   │   └── utils/
+│   │       ├── csvParser.ts       # Segment parsing
+│   │       ├── runtimeAnalysis.ts # Time band calculation
+│   │       └── scheduleGenerator.ts # Trip generation
+│   ├── ScheduleEditor.tsx     # Round Trip View table
+│   ├── TravelTimeGrid.tsx     # Runtime breakdown display
+│   ├── OnDemandWorkspace.tsx  # On-Demand shift editor
 │   └── ...
-├── utils/              # Helper logic
-│   ├── csvParsers.ts   # CSV import logic
-│   ├── geminiOptimizer.ts # Frontend client for optimization API
+├── utils/
+│   ├── masterScheduleParser.ts    # Excel parsing + buildRoundTripView
+│   ├── csvParsers.ts              # On-Demand CSV import
 │   └── ...
-├── scripts/            # Verification and utility scripts
-├── .env                # Local secrets (API Key) - DO NOT COMMIT
-├── App.tsx             # Main routing/layout logic
-├── vite.config.ts      # Vite config + Local API Middleware
-└── index.html          # Entry point + Tailwind CDN config
+├── .env                       # GEMINI_API_KEY (DO NOT COMMIT)
+├── App.tsx                    # Main routing
+├── vite.config.ts             # Vite + API middleware
+└── index.html                 # Entry + Tailwind CDN
 ```
 
+## 5. UI Layout Conventions (Fixed Route)
+
+### Round Trip View Table Structure
+```
+| Block | [North Stops: Arr | R | Dep] | [South Stops: Arr | R | Dep] | Travel | Band | Rec | Ratio | Hdwy | Cycle |
+```
+
+*   **Colors**: Blue = North direction, Indigo = South direction, Gray = Metrics
+*   **Arr**: Arrival time (before recovery dwell)
+*   **R**: Recovery minutes at that stop (always shown, even if 0)
+*   **Dep**: Departure time (after recovery)
+*   **Band**: A-E color-coded badge based on travel time
+
 ## 6. Key Features & Constraints
-*   **Union Rules**:
-    *   Shift Length: 5-10 hours.
-    *   Breaks: Mandatory 45m break if shift > 6 hours.
-    *   Break Window: Must occur between the 5th and 8th hour of the shift.
-*   **Zones**:
-    *   **North/South**: Dedicated coverage.
-    *   **Floater**: Swing coverage to fill gaps or cover breaks.
-*   **Theme**: "Duolingo-style" - Friendly, rounded, vibrant colors (`#58CC02` Green, `#1CB0F6` Blue).
 
-## 7. Troubleshooting
+### On-Demand (Union Rules)
+*   Shift Length: 5-10 hours
+*   Breaks: Mandatory 45m if shift > 6 hours
+*   Break Window: Between 5th and 8th hour
 
-### 7.1 Port Conflicts & "Zombie" Servers
-*   **Symptom**: `Error: Port 3008 is already in use` or weird 404s because you're hitting an old server process.
-*   **Prevention**: `strictPort: true` is enabled in `vite.config.ts`. The server will fail to start rather than switching ports.
-*   **Fix**: Run the "Nuclear Option" in PowerShell to kill ALL Node processes:
-    ```powershell
-    taskkill /F /IM node.exe
-    ```
+### Fixed Route
+*   **Cycle Time**: User-defined (typically 60-120 min round trip)
+*   **Blocks**: Each block runs from startTime to endTime, generating multiple trip pairs
+*   **Trip Pairing**: N1+S1, N2+S2, etc. (one row per round trip, not per block)
 
-### 7.2 Local API 404 Errors
-*   **Symptom**: `POST /api/optimize` returns 404 during local development (`npm run dev`), but works on Vercel.
-*   **Cause**: Vite middleware isn't loading correctly.
-*   **Fix**: Ensure the API middleware in `vite.config.ts` is implemented as a **Vite Plugin** (via `plugins: [apiMiddlewarePlugin()]`), NOT nested inside `server.configureServer`. Nested hooks can be ignored by Vite in certain configurations.
-*   **Verification**: Check terminal logs on startup for `✅ Plugin configureServer called`.
+### Theme
+*   "Duolingo-style" - Friendly, rounded, vibrant colors
+*   Primary Green: `#58CC02`
+*   Primary Blue: `#1CB0F6`
 
-### 7.3 Tailwind Not Working
-*   **Check**: `index.html`. Tailwind is loaded via CDN `<script src="https://cdn.tailwindcss.com"></script>`. It is NOT built via npm/PostCSS.
+## 7. Current Feature Status
+
+| Feature | Status | Key Files |
+|---------|--------|-----------|
+| On-Demand Shifts | ✅ Done | `OnDemandWorkspace.tsx`, `ShiftEditor.tsx` |
+| AI Optimization | ✅ Done | `api/optimize.ts`, `geminiOptimizer.ts` |
+| Fixed Route Upload | ✅ Done | `Step1Upload.tsx`, `csvParser.ts` |
+| Runtime Analysis | ✅ Done | `Step2Analysis.tsx`, `runtimeAnalysis.ts` |
+| Schedule Builder | ✅ Done | `Step3Build.tsx` |
+| Schedule Generator | ✅ Done | `scheduleGenerator.ts` |
+| Round Trip View | ✅ Done | `ScheduleEditor.tsx`, `Step4Schedule.tsx` |
+| Arr/R/Dep Columns | ✅ Done | `ScheduleEditor.tsx` |
+| Time Band Column | ✅ Done | `ScheduleEditor.tsx` |
+| Export to Excel | ⏳ Planned | - |
+| Save/Load Schedules | ⏳ Planned | - |
+
+## 8. Troubleshooting
+
+### Port Conflicts
+*   **Symptom**: `Error: Port 3008 is already in use`
+*   **Fix**: `taskkill /F /IM node.exe` (PowerShell)
+
+### Local API 404 Errors
+*   **Cause**: Vite middleware not loading
+*   **Fix**: Ensure API middleware is a Vite Plugin, not nested in `server.configureServer`
+*   **Verification**: Look for `✅ Plugin configureServer called` in terminal
+
+### Tailwind Not Working
+*   **Check**: `index.html` loads Tailwind via CDN `<script src="https://cdn.tailwindcss.com"></script>`
+
+---
+
+## 9. Prompt Refinement Workflow (USER PREFERENCE)
+
+> [!CAUTION]
+> **MANDATORY FOR EVERY PROMPT**: The user has opted into an interactive prompt refinement process. This applies to ALL feature requests, changes, and significant work items - NO EXCEPTIONS.
+
+**BEFORE executing ANY feature request or change, you MUST:**
+
+1. **Analyze the prompt** for completeness (expected outcome, visual context, acceptance criteria)
+
+2. **Ask 1-3 quick clarifying questions** to fill any gaps BEFORE writing code
+
+3. **Restate the refined prompt** clearly for user confirmation
+
+4. **WAIT for user confirmation** (e.g., "go", "yes", or any affirmative) before proceeding
+
+**Example exchange:**
+```
+USER: "Add a save button"
+AGENT: "Quick clarifications:
+  1. Where should it appear?
+  2. What does it save?
+  3. Styling preference?"
+USER: "Header right, saves to localStorage, blue button"
+AGENT: "✅ Refined: Add 'Save' button in header (right), blue styling, saves schedule to localStorage. Proceeding..."
+```
+
+---
+
+## 10. Travel Time Calculation (Option D Implementation)
+
+> [!IMPORTANT]
+> **SOURCE OF TRUTH**: The Step 2 "Segment Times by Band" table is the definitive source for travel times. The schedule generator uses these averaged segment times directly.
+
+### 10.1 Data Flow
+
+```
+CSV Files (North.csv, South.csv)
+    ↓
+csvParser.ts → RuntimeData (segments with times per 30-min bucket)
+    ↓
+runtimeAnalysis.ts → TripBucketAnalysis[] (buckets with bands A-E assigned)
+    ↓
+Step2Analysis.tsx → BandSummary[] (averaged segment times PER BAND)
+    ↓
+NewScheduleWizard.tsx → stores bandSummary in state
+    ↓
+scheduleGenerator.ts → uses bandSummary to look up segment times
+```
+
+### 10.2 Key Data Structures
+
+```typescript
+// Band summary with averaged segment times (computed in Step2Analysis)
+interface BandSummary {
+    bandId: string;           // 'A', 'B', 'C', 'D', 'E'
+    color: string;            // '#ef4444' (red for A)
+    avgTotal: number;         // Average total trip time (e.g., 47m)
+    segments: BandSegmentAverage[];
+    timeSlots: string[];      // Which 30-min slots belong to this band
+}
+
+interface BandSegmentAverage {
+    segmentName: string;      // "Park Place to Veteran's at Essa"
+    avgTime: number;          // Averaged P50 across all slots in this band
+}
+```
+
+### 10.3 Lookup Logic
+
+When generating a trip at time `T`:
+
+1. **Find Bucket**: Look for 30-min bucket containing `T`
+   - Example: 7:00 AM → bucket "07:00 - 07:29"
+   
+2. **Fallback to Closest**: If no exact match, find nearest valid bucket
+   - Example: 6:00 AM has no data → use "06:30 - 06:59" (Band E)
+
+3. **Get Band**: Find which band (A-E) is assigned to that bucket
+   - Example: "07:00 - 07:29" → Band A
+
+4. **Look Up Segment Time**: From bandSummary, get the averaged segment time
+   - Example: Band A → "Park Place to Veteran's at Essa" → 6 min
+
+### 10.4 Example Trip Generation
+
+**Input:**
+- Trip start: 7:00 AM (420 minutes)
+- Bucket "07:00 - 07:29" assigned to Band A
+- Band A avgTotal: 47 minutes
+
+**BandSummary for Band A:**
+```
+segments: [
+    { segmentName: "Park Place to Veteran's at Essa", avgTime: 6 },
+    { segmentName: "Veteran's at Essa to Rose at Highway 400", avgTime: 8 },
+    { segmentName: "Rose at Highway 400 to Georgian at Governors", avgTime: 5 },
+    { segmentName: "Georgian at Governors to RVH Main Entrance", avgTime: 4 }
+]
+```
+
+**Output Trip:**
+- Segment 1: 6 min
+- Segment 2: 8 min
+- Segment 3: 5 min
+- Segment 4: 4 min
+- **Total Travel Time: 23 min** (half of round-trip)
+
+### 10.5 Console Debug Output
+
+When generating schedules, console shows whether band data was used:
+
+```
+Trip 3 at 420 mins: {
+    band: 'A',
+    bandAvgTotal: '47',
+    pureTravelTime: 23,
+    usedBandData: true,    // ← Used Step 2 table data
+    isRoundTrip: true
+}
+```
+
+If `usedBandData: false`, segment name matching failed and raw CSV data was used as fallback.
+
+### 10.6 Time Slot Assignment
+
+The Step 2 table shows which 30-minute time slots belong to each band:
+
+| Band | Time Slots | Avg Total |
+|------|------------|-----------|
+| A | 07:00, 16:00, 16:30, 17:00 | 47m |
+| B | 07:30, 15:30, 17:30 | 45m |
+| C | 08:00, 09:00, 14:30, 15:00 | 43m |
+| D | 09:30, 14:00 | 42m |
+| E | 06:30, 08:30, 10:00-13:30 | 41m |
+
+Trips outside these windows use the **closest** available bucket.
+
