@@ -58,6 +58,18 @@ export const parseTimeToMinutes = (value: any): number | null => {
     // Excel stores times as decimal fractions (0.5 = 12:00 PM)
     // Times past midnight (24:30, 25:00) are stored as values > 1.0
     if (typeof value === 'number') {
+        // Small integers (< 100) are likely block IDs, stop IDs, recovery minutes - NOT times
+        if (Number.isInteger(value) && value < 100) {
+            return null;
+        }
+
+        // Very small decimals (< 0.1 = before 2:24 AM) are suspicious unless they're
+        // clearly from a time column. Skip values that could be residual/error data.
+        // Valid early morning times should be explicitly formatted, not tiny decimals.
+        if (value > 0 && value < 0.1) {
+            return null;  // Skip suspicious early morning decimals
+        }
+
         // Values 0-2: Direct time representation (0 = midnight, 1 = 24:00, 2 = 48:00)
         // This supports transit schedules where times past midnight are common (24:30 = 00:30 next day)
         if (value >= 0 && value < 2) {
@@ -65,6 +77,10 @@ export const parseTimeToMinutes = (value: any): number | null => {
         }
         // Values >= 2: Likely an Excel serial date+time. Extract just the time portion.
         const timePortion = value % 1;
+        // Skip if time portion is very small (suspicious early morning)
+        if (timePortion > 0 && timePortion < 0.1) {
+            return null;
+        }
         return Math.round(timePortion * 24 * 60);
     }
 
@@ -91,11 +107,10 @@ export const parseTimeToMinutes = (value: any): number | null => {
         return hours * 60 + minutes;
     }
 
-    // Handle plain number (recovery time in minutes)
-    const num = parseInt(str);
-    if (!isNaN(num) && num >= 0 && num < 60) {
-        return num;  // Likely a recovery time
-    }
+    // NOTE: Plain numbers (like "8") should NOT be treated as times here.
+    // They could be block IDs, stop IDs, or other data.
+    // Recovery times are handled separately in parseTripRow with isRecovery check.
+    // Only strings with ":" or "am/pm" should be parsed as times.
 
     return null;
 };
