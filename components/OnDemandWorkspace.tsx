@@ -29,11 +29,20 @@ import {
 } from 'lucide-react';
 import { SHIFT_DURATION_SLOTS, BREAK_DURATION_SLOTS } from '../constants';
 
+// Valid day types for shifts
+type DayType = 'Weekday' | 'Saturday' | 'Sunday';
+const VALID_DAY_TYPES: DayType[] = ['Weekday', 'Saturday', 'Sunday'];
+
+// Helper to validate and return a safe day type
+const toValidDayType = (day: string): DayType => {
+    return VALID_DAY_TYPES.includes(day as DayType) ? (day as DayType) : 'Weekday';
+};
+
 export const OnDemandWorkspace: React.FC = () => {
     const { user } = useAuth();
 
     const [schedules, setSchedules] = useState<Record<string, Requirement[]> | null>(null);
-    const [selectedDayType, setSelectedDayType] = useState<string>('Weekday');
+    const [selectedDayType, setSelectedDayType] = useState<DayType>('Weekday');
     // Core State
     // Initialize synchronously to ensure data is present for first render calculation
     const [requirements, setRequirements] = useState<Requirement[]>(() => generateRequirements());
@@ -73,6 +82,28 @@ export const OnDemandWorkspace: React.FC = () => {
     // Now guaranteed to have valid inputs on first render
     const timeSlots = useMemo(() => calculateSchedule(shifts, requirements), [shifts, requirements]);
     const metrics = useMemo(() => calculateMetrics(timeSlots), [timeSlots]);
+
+    // Helper to parse RideCo content (string or ArrayBuffer)
+    const parseRideCoContent = (content: string | ArrayBuffer): Shift[] => {
+        if (typeof content === 'string') {
+            return parseRideCo(content);
+        } else {
+            const workbook = XLSX.read(content, { type: 'array' });
+            const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+            const data = XLSX.utils.sheet_to_json<(string | number)[]>(firstSheet, { header: 1, defval: '' });
+            return parseRideCo(data as string[][]);
+        }
+    };
+
+    // Helper to parse Master Schedule content (string or ArrayBuffer)
+    const parseMasterContent = (content: string | ArrayBuffer): Record<string, Requirement[]> => {
+        if (typeof content === 'string') {
+            return parseScheduleMaster(content);
+        } else {
+            const tables = parseMasterSchedule(content);
+            return convertMasterRouteTablesToRequirements(tables);
+        }
+    };
 
     const handleRegenerate = async () => {
         if (shifts.length > 0) {
@@ -175,11 +206,13 @@ export const OnDemandWorkspace: React.FC = () => {
 
     const handleDayTypeChange = (dayType: string) => {
         if (schedules && schedules[dayType]) {
-            setSelectedDayType(dayType);
+            const validDayType = toValidDayType(dayType);
+            setSelectedDayType(validDayType);
             setRequirements(schedules[dayType]);
 
-            // Filter shifts
-            const filtered = allShifts.filter(s => !s.dayType || s.dayType === dayType);
+            // Filter shifts - only show shifts that explicitly match this day type
+            // Shifts without dayType are assigned to 'Weekday' by default
+            const filtered = allShifts.filter(s => (s.dayType || 'Weekday') === validDayType);
             setShifts(filtered);
         }
     };
@@ -222,14 +255,14 @@ export const OnDemandWorkspace: React.FC = () => {
         // Default shift: 8am - 4pm
         // Default shift: 8am - 4pm
         const newShift: Shift = {
-            id: `shift-${Math.random().toString(36).substr(2, 9)}`,
+            id: `shift-${Math.random().toString(36).substring(2, 11)}`,
             driverName: newName,
             zone: startZone,
             startSlot: 32, // 08:00
             endSlot: 32 + SHIFT_DURATION_SLOTS,
             breakStartSlot: 32 + 16, // Break after 4 hours
             breakDurationSlots: BREAK_DURATION_SLOTS,
-            dayType: selectedDayType as 'Weekday' | 'Saturday' | 'Sunday'
+            dayType: selectedDayType
         };
         setShifts(prev => [...prev, newShift]);
         setAllShifts(prev => [...prev, newShift]);
@@ -253,9 +286,12 @@ export const OnDemandWorkspace: React.FC = () => {
 
     const processFiles = async () => {
         setIsAnimating(true);
-        try {
-            setUploadedFiles({ master: null, rideco: null });
 
+        // Capture current files before clearing (fix race condition)
+        const filesToProcess = { ...uploadedFiles };
+        setUploadedFiles({ master: null, rideco: null });
+
+        try {
             // Helper to read file
             const readFile = async (file: File | null): Promise<string | ArrayBuffer | null> => {
                 if (!file) return null;
@@ -265,56 +301,29 @@ export const OnDemandWorkspace: React.FC = () => {
                 return await file.text();
             };
 
-            const masterContent = await readFile(uploadedFiles.master);
-            const ridecoContent = await readFile(uploadedFiles.rideco);
+            const masterContent = await readFile(filesToProcess.master);
+            const ridecoContent = await readFile(filesToProcess.rideco);
 
             setCachedFiles({ master: masterContent, rideco: ridecoContent });
 
             if (masterContent) {
-                if (typeof masterContent === 'string') {
-                    // CSV/Text
-                    const newSchedules = parseScheduleMaster(masterContent);
-                    setSchedules(newSchedules);
+                const newSchedules = parseMasterContent(masterContent);
+                setSchedules(newSchedules);
 
-                    const defaultDay = newSchedules['Weekday'] ? 'Weekday' : Object.keys(newSchedules)[0];
-                    if (defaultDay) {
-                        setSelectedDayType(defaultDay);
-                        setRequirements(newSchedules[defaultDay]);
-                    }
-                } else {
-                    // Excel (ArrayBuffer)
-                    const tables = parseMasterSchedule(masterContent);
-                    const newSchedules = convertMasterRouteTablesToRequirements(tables);
-                    setSchedules(newSchedules);
-
-                    // Logic to select "ToD" or "Weekday"
-                    const defaultDay = Object.keys(newSchedules)[0]; // Since we prioritized ToD, it should be first
-                    if (defaultDay) {
-                        setSelectedDayType(defaultDay);
-                        setRequirements(newSchedules[defaultDay]);
-                    }
+                const defaultDayKey = newSchedules['Weekday'] ? 'Weekday' : Object.keys(newSchedules)[0];
+                if (defaultDayKey) {
+                    setSelectedDayType(toValidDayType(defaultDayKey));
+                    setRequirements(newSchedules[defaultDayKey]);
                 }
             }
 
             if (ridecoContent) {
-                let newShifts: Shift[] = [];
-
-                if (typeof ridecoContent === 'string') {
-                    // CSV/Text
-                    newShifts = parseRideCo(ridecoContent);
-                } else {
-                    // Excel
-                    const workbook = XLSX.read(ridecoContent, { type: 'array' });
-                    const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-                    const data = XLSX.utils.sheet_to_json(firstSheet, { header: 1, defval: '' }) as any[][];
-                    newShifts = parseRideCo(data);
-                }
+                const newShifts = parseRideCoContent(ridecoContent);
 
                 if (newShifts.length > 0) {
                     setAllShifts(newShifts);
                     const currentDay = selectedDayType || 'Weekday';
-                    // We might need to ensure dayType matches what's in the file or UI
-                    const filtered = newShifts.filter(s => !s.dayType || s.dayType === currentDay);
+                    const filtered = newShifts.filter(s => (s.dayType || 'Weekday') === currentDay);
                     setShifts(filtered);
                 }
             }
@@ -333,40 +342,21 @@ export const OnDemandWorkspace: React.FC = () => {
         setIsAnimating(true);
         try {
             if (cachedFiles.master) {
-                if (typeof cachedFiles.master === 'string') {
-                    const newSchedules = parseScheduleMaster(cachedFiles.master);
-                    setSchedules(newSchedules);
-                    const defaultDay = newSchedules['Weekday'] ? 'Weekday' : Object.keys(newSchedules)[0];
-                    if (defaultDay) {
-                        setSelectedDayType(defaultDay);
-                        setRequirements(newSchedules[defaultDay]);
-                    }
-                } else {
-                    const tables = parseMasterSchedule(cachedFiles.master);
-                    const newSchedules = convertMasterRouteTablesToRequirements(tables);
-                    setSchedules(newSchedules);
-                    const defaultDay = Object.keys(newSchedules)[0];
-                    if (defaultDay) {
-                        setSelectedDayType(defaultDay);
-                        setRequirements(newSchedules[defaultDay]);
-                    }
+                const newSchedules = parseMasterContent(cachedFiles.master);
+                setSchedules(newSchedules);
+                const defaultDayKey = newSchedules['Weekday'] ? 'Weekday' : Object.keys(newSchedules)[0];
+                if (defaultDayKey) {
+                    setSelectedDayType(toValidDayType(defaultDayKey));
+                    setRequirements(newSchedules[defaultDayKey]);
                 }
             }
             if (cachedFiles.rideco) {
-                let newShifts: Shift[] = [];
-                if (typeof cachedFiles.rideco === 'string') {
-                    newShifts = parseRideCo(cachedFiles.rideco);
-                } else {
-                    const workbook = XLSX.read(cachedFiles.rideco, { type: 'array' });
-                    const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-                    const data = XLSX.utils.sheet_to_json(firstSheet, { header: 1, defval: '' }) as any[][];
-                    newShifts = parseRideCo(data);
-                }
+                const newShifts = parseRideCoContent(cachedFiles.rideco);
 
                 if (newShifts.length > 0) {
                     setAllShifts(newShifts);
                     const currentDay = selectedDayType || 'Weekday';
-                    const filtered = newShifts.filter(s => !s.dayType || s.dayType === currentDay);
+                    const filtered = newShifts.filter(s => (s.dayType || 'Weekday') === currentDay);
                     setShifts(filtered);
                 }
             }
@@ -383,14 +373,39 @@ export const OnDemandWorkspace: React.FC = () => {
     const processFilesRef = React.useRef(processFiles);
     processFilesRef.current = processFiles;
 
+    // Track if we have pending files to process (uploaded during animation)
+    const pendingProcessRef = React.useRef(false);
+
     React.useEffect(() => {
-        if (uploadedFiles.master && uploadedFiles.rideco && !isAnimating) {
-            processFilesRef.current();
+        if (uploadedFiles.master && uploadedFiles.rideco) {
+            if (!isAnimating) {
+                processFilesRef.current();
+                pendingProcessRef.current = false;
+            } else {
+                // Mark as pending if currently animating
+                pendingProcessRef.current = true;
+            }
         }
-    }, [uploadedFiles, isAnimating]);
+    }, [uploadedFiles.master, uploadedFiles.rideco]);
+
+    // Process pending files when animation ends
+    React.useEffect(() => {
+        if (!isAnimating && pendingProcessRef.current && uploadedFiles.master && uploadedFiles.rideco) {
+            processFilesRef.current();
+            pendingProcessRef.current = false;
+        }
+    }, [isAnimating, uploadedFiles.master, uploadedFiles.rideco]);
 
     // Get the shift being edited (with safety check to prevent crashes)
     const shiftToEdit = editingShiftId ? shifts.find(s => s.id === editingShiftId) : null;
+
+    // Clear editing state if the shift was deleted while modal was pending
+    React.useEffect(() => {
+        if (editingShiftId && !shiftToEdit) {
+            console.warn('Shift being edited was deleted, closing modal');
+            setEditingShiftId(null);
+        }
+    }, [editingShiftId, shiftToEdit]);
 
     // Handle loading a file from cloud storage
     const handleCloudFileSelect = async (file: SavedFile) => {
@@ -420,10 +435,10 @@ export const OnDemandWorkspace: React.FC = () => {
                 setSchedules(newSchedules);
                 setLoadedCloudFiles(prev => ({ ...prev, master: file }));
 
-                const defaultDay = newSchedules['Weekday'] ? 'Weekday' : Object.keys(newSchedules)[0];
-                if (defaultDay) {
-                    setSelectedDayType(defaultDay);
-                    setRequirements(newSchedules[defaultDay]);
+                const defaultDayKey = newSchedules['Weekday'] ? 'Weekday' : Object.keys(newSchedules)[0];
+                if (defaultDayKey) {
+                    setSelectedDayType(toValidDayType(defaultDayKey));
+                    setRequirements(newSchedules[defaultDayKey]);
                 }
             } else if (fileType === 'rideco') {
                 // Parse as RideCo shifts
@@ -435,7 +450,7 @@ export const OnDemandWorkspace: React.FC = () => {
                     setAllShifts(newShifts);
                     setLoadedCloudFiles(prev => ({ ...prev, rideco: file }));
                     const currentDay = selectedDayType || 'Weekday';
-                    const filtered = newShifts.filter(s => !s.dayType || s.dayType === currentDay);
+                    const filtered = newShifts.filter(s => (s.dayType || 'Weekday') === currentDay);
                     setShifts(filtered);
                 } else {
                     alert('No shifts found in the file. Make sure it\'s a valid RideCo shift template.');
@@ -469,19 +484,20 @@ export const OnDemandWorkspace: React.FC = () => {
             // If currently selected day is available in the loaded schedule, keep it
             // Otherwise default to Weekday or first available
             const availableDays = Object.keys(schedule.schedulesData);
-            let dayToSelect = selectedDayType;
+            let dayToSelectKey: string = selectedDayType;
 
-            if (!availableDays.includes(dayToSelect)) {
-                dayToSelect = availableDays.includes('Weekday') ? 'Weekday' : availableDays[0];
+            if (!availableDays.includes(dayToSelectKey)) {
+                dayToSelectKey = availableDays.includes('Weekday') ? 'Weekday' : availableDays[0];
             }
 
-            if (dayToSelect && schedule.schedulesData[dayToSelect]) {
-                setSelectedDayType(dayToSelect);
-                setRequirements(schedule.schedulesData[dayToSelect]);
+            if (dayToSelectKey && schedule.schedulesData[dayToSelectKey]) {
+                const validDay = toValidDayType(dayToSelectKey);
+                setSelectedDayType(validDay);
+                setRequirements(schedule.schedulesData[dayToSelectKey]);
 
-                // Filter shifts for this day
+                // Filter shifts for this day (default to Weekday if no dayType)
                 if (schedule.shiftData) {
-                    const filtered = schedule.shiftData.filter(s => !s.dayType || s.dayType === dayToSelect);
+                    const filtered = schedule.shiftData.filter(s => (s.dayType || 'Weekday') === validDay);
                     setShifts(filtered);
                 }
             } else if (schedule.masterScheduleData) {
@@ -617,11 +633,12 @@ export const OnDemandWorkspace: React.FC = () => {
                         <div className="flex items-center gap-2 mr-4 p-1 bg-gray-50 rounded-lg border border-gray-100">
                             <button
                                 onClick={() => {
-                                    const csv = generateRideCoCSV(shifts);
-                                    downloadCSV(csv, `RideCo_Shifts_${new Date().toISOString().split('T')[0]}.csv`);
+                                    // Export all shifts, not just the currently filtered day
+                                    const csv = generateRideCoCSV(allShifts);
+                                    downloadCSV(csv, `RideCo_Shifts_All_${new Date().toISOString().split('T')[0]}.csv`);
                                 }}
                                 className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-gray-500 hover:text-gray-900 hover:bg-white hover:shadow-sm rounded-md transition-all"
-                                title="Export as RideCo Template"
+                                title={`Export all ${allShifts.length} shifts as RideCo Template`}
                             >
                                 <CloudDownload size={14} className="rotate-180" />
                                 Export

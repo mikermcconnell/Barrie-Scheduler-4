@@ -144,8 +144,18 @@ export const parseScheduleMaster = (csvText: string): Record<string, Requirement
     return schedules;
 };
 
-export const parseRideCo = (input: string | any[][]): Shift[] => {
-    let lines: any[][];
+// Type for Excel/CSV row data (cells can be strings or numbers)
+type CellValue = string | number | null | undefined;
+type RowData = CellValue[];
+
+// Helper to safely convert cell value to string
+const cellToString = (cell: CellValue): string => {
+    if (cell === null || cell === undefined) return '';
+    return String(cell).trim();
+};
+
+export const parseRideCo = (input: string | RowData[]): Shift[] => {
+    let lines: RowData[];
 
     if (typeof input === 'string') {
         lines = input.split(/\r?\n/).map(l => l.split(','));
@@ -191,10 +201,10 @@ export const parseRideCo = (input: string | any[][]): Shift[] => {
     const breakDurationRow = lines[ROW_BREAK_DURATION];
 
     // Determine start column. Look for "Shift1" or "Shift 1" in Row 10 (Index 9)
-    // Or just assume it starts at column 2 (Index 2) as per previous observation, 
+    // Or just assume it starts at column 2 (Index 2) as per previous observation,
     // but let's try to find "Shift1" to be safe, or default to 2.
     let startColIndex = 2;
-    const shift1Index = shiftNumRow.findIndex(cell => cell.trim().toLowerCase().replace(/\s/g, '') === 'shift1');
+    const shift1Index = shiftNumRow.findIndex(cell => cellToString(cell).toLowerCase().replace(/\s/g, '') === 'shift1');
     if (shift1Index !== -1) {
         startColIndex = shift1Index;
     }
@@ -206,17 +216,17 @@ export const parseRideCo = (input: string | any[][]): Shift[] => {
         if (!startRow[c] || !endRow[c]) continue;
 
         // Parse Zone from Row 14
-        const zoneRaw = zoneRow[c]?.trim();
+        const zoneRaw = cellToString(zoneRow[c]);
         let zone = Zone.FLOATER;
-        if (zoneRaw?.toLowerCase().includes('north')) zone = Zone.NORTH;
-        else if (zoneRaw?.toLowerCase().includes('south')) zone = Zone.SOUTH;
+        if (zoneRaw.toLowerCase().includes('north')) zone = Zone.NORTH;
+        else if (zoneRaw.toLowerCase().includes('south')) zone = Zone.SOUTH;
 
         // Parse Bus Number / Label from Row 15
-        const busNum = busNumRow[c]?.trim() || `Shift ${c}`;
+        const busNum = cellToString(busNumRow[c]) || `Shift ${c}`;
 
         // Parse Times
-        const startStr = startRow[c];
-        const endStr = endRow[c];
+        const startStr = cellToString(startRow[c]);
+        const endStr = cellToString(endRow[c]);
 
         const startSlot = parseTimeToSlot(startStr);
         let endSlot = parseTimeToSlot(endStr);
@@ -228,8 +238,8 @@ export const parseRideCo = (input: string | any[][]): Shift[] => {
         let breakStartSlot = 0;
         let breakDurationSlots = 0;
 
-        const breakStartStr = String(breakStartRow[c] || '').trim();
-        const breakEndStr = String(breakEndRow[c] || '').trim();
+        const breakStartStr = cellToString(breakStartRow[c]);
+        const breakEndStr = cellToString(breakEndRow[c]);
 
         if (breakStartStr && breakEndStr &&
             !breakStartStr.match(/^n\/b$/i) &&
@@ -268,7 +278,7 @@ export const parseRideCo = (input: string | any[][]): Shift[] => {
             breakStartSlot = finalBreakStart;
 
             // Try to use explicit duration first
-            const explicitDurationStr = breakDurationRow[c]?.trim();
+            const explicitDurationStr = cellToString(breakDurationRow[c]);
             if (explicitDurationStr) {
                 const minutes = parseFloat(explicitDurationStr);
                 if (!isNaN(minutes) && minutes > 0) {
@@ -281,7 +291,14 @@ export const parseRideCo = (input: string | any[][]): Shift[] => {
                 breakDurationSlots = bEnd - bStart;
             }
 
-            if (breakDurationSlots < 0) breakDurationSlots += 96; // Handle wrap around calculation
+            // Handle wrap around calculation and validate
+            if (breakDurationSlots < 0) breakDurationSlots += 96;
+            // If still negative or unreasonably large (> 4 hours), treat as no break
+            if (breakDurationSlots < 0 || breakDurationSlots > 16) {
+                console.warn(`Invalid break duration (${breakDurationSlots} slots) for shift ${c}, resetting to 0`);
+                breakDurationSlots = 0;
+                breakStartSlot = startSlot;
+            }
         } else {
             // No break or N/B
             breakDurationSlots = 0;
@@ -289,7 +306,7 @@ export const parseRideCo = (input: string | any[][]): Shift[] => {
         }
 
         shifts.push({
-            id: `imported-${c}-${Math.random().toString(36).substr(2, 5)}`,
+            id: `imported-${c}-${Math.random().toString(36).substring(2, 7)}`,
             driverName: zoneRaw && !zoneRaw.includes('Floater') && !zoneRaw.includes('North') && !zoneRaw.includes('South') ? zoneRaw : busNum, // Use Zone field as name if it looks like a name, otherwise Bus Num
             // Actually user said Row 14 is "zone area". Row 15 is "bus number".
             // Let's use Bus Number as the primary identifier/name for now as it's unique per shift usually.
@@ -307,7 +324,7 @@ export const parseRideCo = (input: string | any[][]): Shift[] => {
         });
 
         // Parse Day Type
-        const dayRaw = dayRow[c]?.trim().toLowerCase();
+        const dayRaw = cellToString(dayRow[c]).toLowerCase();
         let dayType: 'Weekday' | 'Saturday' | 'Sunday' = 'Weekday'; // Default
         if (dayRaw.includes('sat')) dayType = 'Saturday';
         else if (dayRaw.includes('sun')) dayType = 'Sunday';

@@ -77,7 +77,7 @@ export const generateShifts = (requirements: Requirement[], optimized: boolean =
           const breakStartSlot = startSlot + breakStartOffset;
 
           shifts.push({
-            id: `shift-${Math.random().toString(36).substr(2, 9)}`,
+            id: `shift-${Math.random().toString(36).substring(2, 11)}`,
             driverName: `Driver ${driverCount++}`,
             zone: Math.random() > 0.6 ? Zone.FLOATER : (Math.random() > 0.5 ? Zone.NORTH : Zone.SOUTH),
             startSlot,
@@ -143,7 +143,7 @@ export const generateShifts = (requirements: Requirement[], optimized: boolean =
         }
 
         shifts.push({
-          id: `shift-opt-${Math.random().toString(36).substr(2, 9)}`,
+          id: `shift-opt-${Math.random().toString(36).substring(2, 11)}`,
           driverName: `Driver ${driverCount++}`,
           zone: Zone.FLOATER,
           startSlot: bestShift.startSlot,
@@ -302,6 +302,8 @@ export const calculateMetrics = (data: TimeSlot[], shifts?: Shift[]): SummaryMet
     totalMasterHours: parseFloat(totalReq.toFixed(1)),
     totalShiftHours: parseFloat(payableHours.toFixed(1)),
     netDiffHours: parseFloat(netDiff.toFixed(1)),
+    // Coverage uses totalCov (active hours excluding breaks) vs requirements
+    // This is intentional - payableHours includes break time which shouldn't count toward coverage
     coveragePercent: totalReq > 0 ? Math.round((totalCov / totalReq) * 100) : 100
   };
 };
