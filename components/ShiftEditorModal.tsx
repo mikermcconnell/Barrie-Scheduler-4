@@ -13,13 +13,13 @@ import { X, Save, AlertTriangle, CheckCircle2, Clock, Coffee, GripHorizontal, Ch
 
 interface Props {
     shift: Shift;
-    allShifts: Shift[];
+    dayShifts: Shift[]; // Bug Fix: Renamed from allShifts - these are shifts for the current day only
     requirements: Requirement[];
     onSave: (updatedShift: Shift) => void;
     onCancel: () => void;
 }
 
-export const ShiftEditorModal: React.FC<Props> = ({ shift, allShifts, requirements, onSave, onCancel }) => {
+export const ShiftEditorModal: React.FC<Props> = ({ shift, dayShifts, requirements, onSave, onCancel }) => {
     const [currentShift, setCurrentShift] = useState<Shift>({ ...shift });
     const [validationMsg, setValidationMsg] = useState<string | null>(null);
     const trackRef = useRef<HTMLDivElement>(null);
@@ -48,15 +48,15 @@ export const ShiftEditorModal: React.FC<Props> = ({ shift, allShifts, requiremen
 
     // Calculate chart data with ghost line
     const chartData = useMemo(() => {
-        const originalSlots = calculateSchedule(allShifts, requirements);
-        const tempShifts = allShifts.map(s => s.id === shift.id ? currentShift : s);
+        const originalSlots = calculateSchedule(dayShifts, requirements);
+        const tempShifts = dayShifts.map(s => s.id === shift.id ? currentShift : s);
         const newSlots = calculateSchedule(tempShifts, requirements);
 
         return newSlots.map((slot, i) => ({
             ...slot,
             originalActiveCoverage: originalSlots[i].totalActiveCoverage
         }));
-    }, [currentShift, allShifts, requirements, shift.id]);
+    }, [currentShift, dayShifts, requirements, shift.id]);
 
     // Validation Logic
     useEffect(() => {

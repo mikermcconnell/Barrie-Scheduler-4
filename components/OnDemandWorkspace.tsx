@@ -36,9 +36,12 @@ export const OnDemandWorkspace: React.FC = () => {
     const [selectedDayType, setSelectedDayType] = useState<string>('Weekday');
     // Core State
     // Initialize synchronously to ensure data is present for first render calculation
-    const [requirements, setRequirements] = useState<Requirement[]>(() => generateRequirements());
-    const [allShifts, setAllShifts] = useState<Shift[]>(() => generateShifts(generateRequirements(), false));
-    const [shifts, setShifts] = useState<Shift[]>(() => generateShifts(generateRequirements(), false));
+    // Bug Fix: Generate requirements once and reuse for shifts to ensure consistency
+    const [initialRequirements] = useState<Requirement[]>(() => generateRequirements());
+    const [initialShifts] = useState<Shift[]>(() => generateShifts(initialRequirements, false));
+    const [requirements, setRequirements] = useState<Requirement[]>(initialRequirements);
+    const [allShifts, setAllShifts] = useState<Shift[]>(initialShifts);
+    const [shifts, setShifts] = useState<Shift[]>(initialShifts);
 
     const [activeTab, setActiveTab] = useState<'overview' | 'editor'>('overview');
     const [editingShiftId, setEditingShiftId] = useState<string | null>(null);
@@ -199,8 +202,9 @@ export const OnDemandWorkspace: React.FC = () => {
         // 1. Filter existing shifts matching the zone
         // 2. Extract numbers from names like "{Zone} {N}"
         // 3. Find max and increment
+        // Bug Fix: Use allShifts to check ALL days, preventing name collisions across day types
         const zoneName = startZone; // "North", "South", "Floater"
-        const existingNames = shifts
+        const existingNames = allShifts
             .filter(s => s.zone === startZone)
             .map(s => s.driverName);
 
@@ -253,9 +257,10 @@ export const OnDemandWorkspace: React.FC = () => {
 
     const processFiles = async () => {
         setIsAnimating(true);
-        try {
-            setUploadedFiles({ master: null, rideco: null });
+        // Bug Fix: Store files locally before clearing state to prevent data loss on error
+        const filesToProcess = { ...uploadedFiles };
 
+        try {
             // Helper to read file
             const readFile = async (file: File | null): Promise<string | ArrayBuffer | null> => {
                 if (!file) return null;
@@ -265,8 +270,8 @@ export const OnDemandWorkspace: React.FC = () => {
                 return await file.text();
             };
 
-            const masterContent = await readFile(uploadedFiles.master);
-            const ridecoContent = await readFile(uploadedFiles.rideco);
+            const masterContent = await readFile(filesToProcess.master);
+            const ridecoContent = await readFile(filesToProcess.rideco);
 
             setCachedFiles({ master: masterContent, rideco: ridecoContent });
 
@@ -318,9 +323,12 @@ export const OnDemandWorkspace: React.FC = () => {
                     setShifts(filtered);
                 }
             }
+
+            // Bug Fix: Only clear uploaded files after successful processing
+            setUploadedFiles({ master: null, rideco: null });
         } catch (e) {
             console.error(e);
-            alert('Error processing files.');
+            alert('Error processing files. Files have been preserved - please try again.');
         } finally {
             setIsAnimating(false);
         }
@@ -483,6 +491,10 @@ export const OnDemandWorkspace: React.FC = () => {
                 if (schedule.shiftData) {
                     const filtered = schedule.shiftData.filter(s => !s.dayType || s.dayType === dayToSelect);
                     setShifts(filtered);
+                } else {
+                    // Bug Fix: Clear shifts if no shiftData exists to prevent stale data
+                    setShifts([]);
+                    setAllShifts([]);
                 }
             } else if (schedule.masterScheduleData) {
                 // Fallback to legacy master data if no specific day matched
@@ -509,6 +521,12 @@ export const OnDemandWorkspace: React.FC = () => {
         if (!user) {
             alert('Please sign in to save your work.');
             return;
+        }
+
+        // Bug Fix: Warn user if saving an empty schedule
+        if (allShifts.length === 0) {
+            const confirmSave = confirm('You are about to save an empty schedule with no shifts. Continue?');
+            if (!confirmSave) return;
         }
 
         setIsSaving(true);
@@ -617,14 +635,15 @@ export const OnDemandWorkspace: React.FC = () => {
                         <div className="flex items-center gap-2 mr-4 p-1 bg-gray-50 rounded-lg border border-gray-100">
                             <button
                                 onClick={() => {
+                                    // Bug Fix: Include day type in filename for clarity
                                     const csv = generateRideCoCSV(shifts);
-                                    downloadCSV(csv, `RideCo_Shifts_${new Date().toISOString().split('T')[0]}.csv`);
+                                    downloadCSV(csv, `RideCo_Shifts_${selectedDayType}_${new Date().toISOString().split('T')[0]}.csv`);
                                 }}
                                 className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-gray-500 hover:text-gray-900 hover:bg-white hover:shadow-sm rounded-md transition-all"
-                                title="Export as RideCo Template"
+                                title={`Export ${selectedDayType} shifts as RideCo Template (${shifts.length} shifts)`}
                             >
                                 <CloudDownload size={14} className="rotate-180" />
-                                Export
+                                Export {selectedDayType}
                             </button>
                             <div className="w-px h-4 bg-gray-200"></div>
                             <button
@@ -909,7 +928,7 @@ export const OnDemandWorkspace: React.FC = () => {
             {shiftToEdit && (
                 <ShiftEditorModal
                     shift={shiftToEdit}
-                    allShifts={shifts}
+                    dayShifts={shifts}
                     requirements={requirements}
                     onSave={(updated) => {
                         handleShiftUpdate(updated);
