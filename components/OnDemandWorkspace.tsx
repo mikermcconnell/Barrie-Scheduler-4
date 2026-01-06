@@ -31,7 +31,7 @@ import {
 import { SHIFT_DURATION_SLOTS, BREAK_DURATION_SLOTS } from '../constants';
 
 export const OnDemandWorkspace: React.FC = () => {
-    const { user } = useAuth();
+    const { user, loading: authLoading } = useAuth();
 
     const [schedules, setSchedules] = useState<Record<string, Requirement[]> | null>(null);
     const [selectedDayType, setSelectedDayType] = useState<string>('Weekday');
@@ -522,24 +522,67 @@ export const OnDemandWorkspace: React.FC = () => {
     // Auto-load most recent saved schedule on workspace mount
     useEffect(() => {
         const loadMostRecentSchedule = async () => {
+            // Wait for auth to settle before making decisions
+            if (authLoading) {
+                console.log('[AutoLoad] Waiting for auth to settle...');
+                return;
+            }
+
+            // If no user after auth loaded, or already attempted, stop loading
             if (!user || hasAttemptedAutoLoad) {
+                console.log('[AutoLoad] Skipping:', { user: !!user, hasAttemptedAutoLoad });
                 setIsInitialLoading(false);
                 return;
             }
 
+            console.log('[AutoLoad] Starting auto-load for user:', user.uid);
             setHasAttemptedAutoLoad(true);
 
             try {
                 const savedSchedules = await getAllSchedules(user.uid);
+                console.log('[AutoLoad] Found schedules:', savedSchedules.length);
 
                 if (savedSchedules.length > 0) {
                     // Load the most recent schedule (already sorted by updatedAt desc)
                     const mostRecent = savedSchedules[0];
-                    console.log('Auto-loading most recent schedule:', mostRecent.name);
-                    handleScheduleSelect(mostRecent);
+                    console.log('[AutoLoad] Loading most recent:', mostRecent.name, mostRecent.id);
+
+                    // Restore the workspace state from the saved schedule
+                    if (mostRecent.shiftData) {
+                        console.log('[AutoLoad] Setting shifts:', mostRecent.shiftData.length);
+                        setAllShifts(mostRecent.shiftData);
+                    }
+
+                    if (mostRecent.schedulesData) {
+                        setSchedules(mostRecent.schedulesData);
+                        const availableDays = Object.keys(mostRecent.schedulesData);
+                        const dayToSelect = availableDays.includes('Weekday') ? 'Weekday' : availableDays[0];
+
+                        if (dayToSelect && mostRecent.schedulesData[dayToSelect]) {
+                            setSelectedDayType(dayToSelect);
+                            setRequirements(mostRecent.schedulesData[dayToSelect]);
+
+                            if (mostRecent.shiftData) {
+                                const filtered = mostRecent.shiftData.filter(s => !s.dayType || s.dayType === dayToSelect);
+                                setShifts(filtered);
+                            }
+                        }
+                    } else if (mostRecent.masterScheduleData) {
+                        setRequirements(mostRecent.masterScheduleData);
+                        if (mostRecent.shiftData) {
+                            setShifts(mostRecent.shiftData);
+                        }
+                    }
+
+                    setDraftName(mostRecent.name);
+                    setOriginalDraftName(mostRecent.name);
+                    setCurrentDraftId(mostRecent.id);
+                    console.log('[AutoLoad] Complete!');
+                } else {
+                    console.log('[AutoLoad] No saved schedules found, using demo data');
                 }
             } catch (err) {
-                console.error('Failed to auto-load recent schedule:', err);
+                console.error('[AutoLoad] Failed:', err);
                 // Silently fail - user will see demo data
             } finally {
                 setIsInitialLoading(false);
@@ -547,7 +590,7 @@ export const OnDemandWorkspace: React.FC = () => {
         };
 
         loadMostRecentSchedule();
-    }, [user, hasAttemptedAutoLoad]);
+    }, [user, authLoading, hasAttemptedAutoLoad]);
 
     // Save current work as a draft
     const handleSaveDraft = async () => {
@@ -597,13 +640,15 @@ export const OnDemandWorkspace: React.FC = () => {
         }
     };
 
-    // Show loading state while auto-loading most recent schedule
-    if (isInitialLoading && user) {
+    // Show loading state while auth is loading or auto-loading schedule
+    if (authLoading || (isInitialLoading && user)) {
         return (
             <div className="h-full flex items-center justify-center">
                 <div className="flex flex-col items-center gap-4">
                     <Loader2 className="animate-spin text-brand-blue" size={48} />
-                    <p className="text-gray-500 font-bold">Loading your most recent schedule...</p>
+                    <p className="text-gray-500 font-bold">
+                        {authLoading ? 'Checking authentication...' : 'Loading your most recent schedule...'}
+                    </p>
                 </div>
             </div>
         );
