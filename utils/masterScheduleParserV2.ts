@@ -56,9 +56,15 @@ export const parseTimeToMinutes = (value: any): number | null => {
     if (value === null || value === undefined || value === '') return null;
 
     // Excel stores times as decimal fractions (0.5 = 12:00 PM)
+    // Times past midnight (24:30, 25:00) are stored as values > 1.0
     if (typeof value === 'number') {
-        // If > 1, it might be a date+time serial. Extract just the time portion.
-        const timePortion = value > 1 ? value % 1 : value;
+        // Values 0-2: Direct time representation (0 = midnight, 1 = 24:00, 2 = 48:00)
+        // This supports transit schedules where times past midnight are common (24:30 = 00:30 next day)
+        if (value >= 0 && value < 2) {
+            return Math.round(value * 24 * 60);
+        }
+        // Values >= 2: Likely an Excel serial date+time. Extract just the time portion.
+        const timePortion = value % 1;
         return Math.round(timePortion * 24 * 60);
     }
 
@@ -95,9 +101,10 @@ export const parseTimeToMinutes = (value: any): number | null => {
 };
 
 const formatMinutesToTime = (minutes: number): string => {
-    let h = Math.floor(minutes / 60);
-    const m = minutes % 60;
-    const period = h >= 12 && h < 24 ? 'PM' : 'AM';
+    // Normalize hours to 0-23 range (handles times past midnight like 25:00 → 1:00)
+    let h = Math.floor(minutes / 60) % 24;
+    const m = Math.round(minutes % 60);
+    const period = h >= 12 ? 'PM' : 'AM';
 
     if (h > 12) h -= 12;
     if (h === 0) h = 12;
@@ -250,11 +257,14 @@ const parseSheet = (sheet: XLSX.WorkSheet, sheetName: string): ParsedRoute => {
         // Robustness: ensure we check actual columns mapped to stops
         let validTimeCount = 0;
 
-        // Check only columns that map to stops to avoid noise
+        // Check only non-recovery columns for time data
+        // Recovery columns have small values (5, 10, 15) that could be confused with early AM times
+        // For actual stop times, we accept any valid time >= 0 (including 12:00 AM - 1:00 AM)
         const hasTimeData = currentStops.some(stop => {
+            if (stop.isRecovery) return false; // Skip recovery columns for this check
             const cell = row[stop.columnIndex];
             const time = parseTimeToMinutes(cell);
-            return time !== null && time > 60; // Valid time > 1:00 AM
+            return time !== null && time >= 0;
         });
 
         // Fallback: Check raw row if stops aren't reliable? 
@@ -337,11 +347,11 @@ const parseStopNamesRow = (row: any[]): StopInfo[] => {
     }
 
     // Handle duplicates by appending suffix (2), (3) etc.
+    // IMPORTANT: Include recovery columns to distinguish R columns at the same
+    // stop in different directions (e.g., route 8B has the same stop appearing
+    // twice - once per direction, each with its own recovery time)
     const nameCounts: Record<string, number> = {};
     for (const stop of stops) {
-        // Do NOT rename Recovery columns.
-        if (stop.isRecovery) continue;
-
         const baseName = stop.name;
         if (nameCounts[baseName]) {
             nameCounts[baseName]++;
@@ -393,12 +403,14 @@ const parseTripRow = (row: any[], stops: StopInfo[], rowIdx: number): ParsedTrip
             const minutes = parseTimeToMinutes(cellValue);
 
             // Reject very small minute values (0-59) as stop times UNLESS:
-            // 1. The cell was a decimal Excel time (0.xxx format)
+            // 1. The cell was a decimal Excel time (0.xxx format) - includes early AM times
             // 2. The cell contained AM/PM text indicating it's an actual time
+            // 3. The cell is in HH:MM format with colon (e.g., "0:23" for 12:23 AM)
             // Integer values like 1, 2, 3 in stop columns are likely priority/sequence numbers
-            const isExcelTime = typeof cellValue === 'number' && cellValue > 0 && cellValue < 1;
+            const isExcelTime = typeof cellValue === 'number' && cellValue >= 0 && cellValue < 1;
             const hasAmPmIndicator = typeof cellValue === 'string' && /[ap]m?/i.test(cellValue);
-            const isValidStopTime = minutes !== null && (minutes >= 60 || isExcelTime || hasAmPmIndicator);
+            const hasTimeFormat = typeof cellValue === 'string' && /\d{1,2}:\d{2}/.test(cellValue);
+            const isValidStopTime = minutes !== null && (minutes >= 60 || isExcelTime || hasAmPmIndicator || hasTimeFormat);
 
             if (isValidStopTime) {
                 times[stop.name] = formatMinutesToTime(minutes);

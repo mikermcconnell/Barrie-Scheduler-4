@@ -37,7 +37,11 @@ import {
     Clock,
     AlertTriangle,
     Car,
-    GitCompare
+    GitCompare,
+    MoreVertical,
+    Pencil,
+    Upload,
+    Database
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import ExcelJS from 'exceljs';
@@ -46,8 +50,13 @@ import {
     MasterTrip,
     validateRouteTable,
     RoundTripTable,
-    buildRoundTripView
+    buildRoundTripView,
+    InterlineConfig,
+    InterlineRule,
+    applyInterlineRules,
+    clearInterlineMetadata
 } from '../utils/masterScheduleParser';
+import { InterlineConfigPanel } from './InterlineConfigPanel';
 import { RouteSummary } from './RouteSummary';
 import { WorkspaceHeader } from './WorkspaceHeader';
 import { AutoSaveStatus } from '../hooks/useAutoSave';
@@ -60,6 +69,8 @@ import { ScenarioComparisonModal } from './ScenarioComparisonModal';
 import { AuditLogPanel, useAuditLog } from './AuditLogPanel';
 import { TripContextMenu, TripContextMenuAction } from './NewSchedule/TripContextMenu';
 import { SegmentTimeEditor } from './NewSchedule/SegmentTimeEditor';
+import { QuickActionsBar, FilterState, shouldGrayOutTrip, shouldHighlightTrip, matchesSearch } from './NewSchedule/QuickActionsBar';
+import { TimelineView } from './NewSchedule/TimelineView';
 import {
     cascadeTripTimes,
     updateSegmentTime,
@@ -67,6 +78,18 @@ import {
     setTripStartStop,
     setTripEndStop
 } from './NewSchedule/utils/timeCascade';
+import { UploadToMasterModal } from './UploadToMasterModal';
+import { BulkUploadToMasterModal, RouteForUpload } from './BulkUploadToMasterModal';
+import {
+    uploadToMasterSchedule,
+    prepareUpload
+} from '../utils/masterScheduleService';
+import {
+    extractRouteNumber,
+    extractDayType,
+    type DayType,
+    type UploadConfirmation
+} from '../utils/masterScheduleTypes';
 
 // --- Shared Helpers (Moved from Workspace) ---
 const deepCloneSchedules = (schedules: MasterRouteTable[]): MasterRouteTable[] => {
@@ -200,21 +223,33 @@ const calculateTripsPerHour = (trips: MasterTrip[]): Record<number, number> => {
     return hourCounts;
 };
 
-// Band colors for row tinting
+// Band colors for row tinting - subtle transparent versions matching the legend
 const getBandRowColor = (bandId: string | undefined): string => {
     const colors: Record<string, string> = {
-        'A': 'bg-red-50/40',
-        'B': 'bg-orange-50/40',
-        'C': 'bg-yellow-50/40',
-        'D': 'bg-lime-50/40',
-        'E': 'bg-green-50/40'
+        'A': 'bg-red-100/30',      // Red - subtle
+        'B': 'bg-orange-100/30',   // Orange - subtle
+        'C': 'bg-yellow-100/30',   // Yellow - subtle
+        'D': 'bg-lime-100/30',     // Lime green - subtle
+        'E': 'bg-emerald-100/30'   // Green - subtle
     };
     return bandId ? colors[bandId] || '' : '';
 };
 
 // Inline time editing - auto-format helper
 // Converts shorthand input like "630" → "6:30 AM", "1430" → "2:30 PM"
-const parseTimeInput = (input: string): string | null => {
+// If originalValue is provided and input doesn't specify AM/PM, preserves the original period
+const parseTimeInput = (input: string, originalValue?: string): string | null => {
+    const inputLower = input.toLowerCase();
+
+    // Check if user explicitly specified AM or PM in input
+    const hasExplicitAM = inputLower.includes('am') || inputLower.includes('a.m');
+    const hasExplicitPM = inputLower.includes('pm') || inputLower.includes('p.m');
+    const hasExplicitPeriod = hasExplicitAM || hasExplicitPM;
+
+    // Get period from original value if available (for context preservation)
+    const originalPeriod = originalValue?.toLowerCase().includes('pm') ? 'PM' :
+        originalValue?.toLowerCase().includes('am') ? 'AM' : null;
+
     // Remove all non-numeric characters except colon
     const cleaned = input.replace(/[^0-9:]/g, '');
 
@@ -247,9 +282,35 @@ const parseTimeInput = (input: string): string | null => {
         return null;
     }
 
-    // Format to 12-hour with AM/PM
-    const period = hours >= 12 ? 'PM' : 'AM';
-    const h12 = hours % 12 || 12;
+    // Determine AM/PM
+    let period: 'AM' | 'PM';
+
+    if (hasExplicitPM) {
+        // User explicitly typed PM
+        period = 'PM';
+        // Convert 12-hour to 24-hour for correct calculation
+        if (hours < 12) hours += 12;
+    } else if (hasExplicitAM) {
+        // User explicitly typed AM
+        period = 'AM';
+        if (hours === 12) hours = 0;
+    } else if (hours >= 12 && hours <= 23) {
+        // 24-hour format (13:00 - 23:00) is clearly PM
+        period = 'PM';
+    } else if (hours === 0) {
+        // Midnight
+        period = 'AM';
+    } else if (!hasExplicitPeriod && originalPeriod) {
+        // No explicit period, use original value's period for context
+        period = originalPeriod;
+    } else {
+        // Default: assume PM for ambiguous times 1-11 (more common in transit schedules)
+        // This prevents accidentally switching evening times to morning
+        period = hours >= 1 && hours <= 11 ? 'PM' : 'AM';
+    }
+
+    // Format to 12-hour
+    const h12 = hours > 12 ? hours - 12 : (hours === 0 ? 12 : hours);
     return `${h12}:${minutes.toString().padStart(2, '0')} ${period}`;
 };
 
@@ -261,6 +322,119 @@ const sanitizeInput = (input: string): string => {
         .replace(/on\w+=/gi, '') // Remove event handlers
         .trim()
         .slice(0, 20); // Limit length
+};
+
+// Stacked time display helper
+// Converts "6:30 AM" to { time: "6:30", period: "AM" } for stacked rendering
+const parseStackedTime = (timeStr: string | undefined): { time: string; period: string } | null => {
+    if (!timeStr) return null;
+    const match = timeStr.match(/^(\d{1,2}:\d{2})\s*(AM|PM)$/i);
+    if (match) {
+        return { time: match[1], period: match[2].toUpperCase() };
+    }
+    return null;
+};
+
+// Stacked time cell component for consistent rendering
+const StackedTimeCell: React.FC<{ timeStr: string | undefined; className?: string }> = ({ timeStr, className = '' }) => {
+    const parsed = parseStackedTime(timeStr);
+    if (!parsed) {
+        return <span className={className}>{timeStr || '-'}</span>;
+    }
+    return (
+        <div className={`flex flex-col items-center leading-tight ${className}`}>
+            <span className="text-[11px] font-medium text-gray-700">{parsed.time}</span>
+            <span className="text-[8px] font-medium text-gray-400">{parsed.period}</span>
+        </div>
+    );
+};
+
+// Stacked time input - shows stacked format when not editing, normal input when focused
+interface StackedTimeInputProps {
+    value: string;
+    onChange: (value: string) => void;
+    onBlur: (value: string) => void;
+    disabled?: boolean;
+    focusClass?: string;
+    placeholder?: string;
+}
+
+const StackedTimeInput: React.FC<StackedTimeInputProps> = ({
+    value,
+    onChange,
+    onBlur,
+    disabled = false,
+    focusClass = 'focus:ring-blue-100',
+    placeholder = '-'
+}) => {
+    const [isFocused, setIsFocused] = React.useState(false);
+    const [editValue, setEditValue] = React.useState(value);
+    const inputRef = React.useRef<HTMLInputElement>(null);
+
+    // Sync edit value when external value changes
+    React.useEffect(() => {
+        if (!isFocused) {
+            setEditValue(value);
+        }
+    }, [value, isFocused]);
+
+    const parsed = parseStackedTime(value);
+
+    if (!isFocused && parsed) {
+        // Show stacked display - clickable to edit
+        return (
+            <div
+                className="flex flex-col items-center justify-center leading-tight cursor-text w-full h-full py-1"
+                onClick={() => {
+                    if (!disabled) {
+                        setIsFocused(true);
+                        setTimeout(() => inputRef.current?.focus(), 0);
+                    }
+                }}
+            >
+                <span className="text-[11px] font-medium text-gray-700">{parsed.time}</span>
+                <span className="text-[8px] font-medium text-gray-400">{parsed.period}</span>
+                {/* Hidden input for focus management */}
+                <input
+                    ref={inputRef}
+                    type="text"
+                    value={editValue}
+                    onChange={(e) => {
+                        setEditValue(e.target.value);
+                        onChange(sanitizeInput(e.target.value));
+                    }}
+                    onFocus={() => setIsFocused(true)}
+                    onBlur={(e) => {
+                        setIsFocused(false);
+                        onBlur(e.target.value);
+                    }}
+                    className="absolute opacity-0 w-0 h-0"
+                    disabled={disabled}
+                />
+            </div>
+        );
+    }
+
+    // Show regular input - for editing or when value doesn't parse as time
+    return (
+        <input
+            ref={inputRef}
+            type="text"
+            value={isFocused ? editValue : (value || '')}
+            onChange={(e) => {
+                setEditValue(e.target.value);
+                onChange(sanitizeInput(e.target.value));
+            }}
+            onFocus={() => setIsFocused(true)}
+            onBlur={(e) => {
+                setIsFocused(false);
+                onBlur(e.target.value);
+            }}
+            className={`w-full h-full bg-transparent font-medium text-[11px] text-gray-700 text-center focus:bg-white focus:ring-2 ${focusClass} focus:outline-none transition-all placeholder-gray-200 px-2`}
+            placeholder={placeholder}
+            disabled={disabled}
+        />
+    );
 };
 
 // Validation warnings
@@ -341,8 +515,11 @@ const validateSchedule = (trips: MasterTrip[]): ValidationWarning[] => {
 interface RoundTripTableViewProps {
     schedules: MasterRouteTable[];
     onCellEdit: (tripId: string, col: string, val: string) => void;
+    onTimeAdjust?: (tripId: string, stopName: string, delta: number) => void;
+    onRecoveryEdit?: (tripId: string, stopName: string, delta: number) => void;
     originalSchedules?: MasterRouteTable[];
     onDeleteTrip?: (tripId: string) => void;
+    onDuplicateTrip?: (tripId: string) => void;
     onAddTrip?: (blockId: string, afterTripId: string) => void;
     onTripRightClick?: (
         e: React.MouseEvent,
@@ -353,10 +530,16 @@ interface RoundTripTableViewProps {
         stopName?: string,
         stopIndex?: number
     ) => void;
+    onMenuOpen?: (tripId: string, x: number, y: number, direction: 'North' | 'South', blockId: string, stops: string[]) => void;
     draftName: string;
+    filter?: FilterState;
+    targetCycleTime?: number;
+    targetHeadway?: number;
 }
 
-const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({ schedules, onCellEdit, originalSchedules, onDeleteTrip, onAddTrip, onTripRightClick, draftName }) => {
+const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({ schedules, onCellEdit, onTimeAdjust, onRecoveryEdit, originalSchedules, onDeleteTrip, onDuplicateTrip, onAddTrip, onTripRightClick, onMenuOpen, draftName, filter, targetCycleTime, targetHeadway }) => {
+    console.log('RoundTripTableView targetCycleTime:', targetCycleTime, 'targetHeadway:', targetHeadway);
+
     const roundTripData = useMemo(() => {
         const pairs: { north: MasterRouteTable; south: MasterRouteTable; combined: RoundTripTable }[] = [];
         const routeGroups: Record<string, { north?: MasterRouteTable; south?: MasterRouteTable }> = {};
@@ -407,6 +590,7 @@ const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({ schedules, onCe
                 };
 
                 const hideInterline = combined.routeName.includes('8A') || combined.routeName.includes('8B');
+                const isInterlinedRoute = combined.routeName.includes('8A') || combined.routeName.includes('8B');
 
                 // Calculate Route Totals for the Header
                 const totalTrips = combined.rows.length;
@@ -416,7 +600,113 @@ const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({ schedules, onCe
                 const avgTravel = totalTrips > 0 ? (totalTravelSum / totalTrips).toFixed(1) : '0';
                 const avgRecovery = totalTrips > 0 ? (totalRecoverySum / totalTrips).toFixed(1) : '0';
 
-                const totalCycleSum = combined.rows.reduce((sum, r) => sum + r.totalCycleTime, 0);
+                // For interlined routes (8A/8B), calculate effective cycle time that accounts for interline gaps
+                // This matches the per-trip calculation in RouteTableView
+                const calculateEffectiveCycleSum = (): number => {
+                    if (!isInterlinedRoute) {
+                        return combined.rows.reduce((sum, r) => sum + r.totalCycleTime, 0);
+                    }
+
+                    // For 8A/8B, calculate effective cycle for each trip
+                    const is8A = combined.routeName.includes('8A');
+                    const table = is8A ? north : south; // Get the actual table for column mapping
+                    if (!table) return combined.rows.reduce((sum, r) => sum + r.totalCycleTime, 0);
+
+                    // Build column map for this table
+                    const stops = table.stops;
+                    const colMap: Record<number, { type: string; stopName?: string }> = {};
+                    let colNum = 1;
+                    colMap[colNum++] = { type: 'block' };
+                    stops.forEach(stop => {
+                        colMap[colNum++] = { type: 'stop', stopName: stop };
+                        // Check if this stop has recovery data
+                        const hasRecovery = table.trips.some(t => t.recoveryTimes?.[stop] !== undefined && t.recoveryTimes[stop] !== null);
+                        if (hasRecovery) {
+                            colMap[colNum++] = { type: 'recovery', stopName: stop };
+                        }
+                    });
+
+                    // Config for 8A/8B
+                    const config = is8A
+                        ? { firstDep: 2, interlineArr: 12, recoveryCol: 13, resumeCol: 14 }
+                        : { firstDep: 2, interlineArr: 3, recoveryCol: 4, resumeCol: 5 };
+
+                    // Helper to get column value
+                    const getColVal = (trip: MasterTrip, col: number): number | null => {
+                        const info = colMap[col];
+                        if (!info) return null;
+                        if (info.type === 'stop' && info.stopName) {
+                            const timeStr = trip.stops[info.stopName];
+                            return timeStr ? TimeUtils.toMinutes(timeStr) : null;
+                        }
+                        if (info.type === 'recovery' && info.stopName) {
+                            return trip.recoveryTimes?.[info.stopName] ?? null;
+                        }
+                        return null;
+                    };
+
+                    // Helper to get first/last timepoint
+                    const getFirstTime = (trip: MasterTrip): number | null => {
+                        for (const [colStr, info] of Object.entries(colMap)) {
+                            if (info.type === 'stop' && info.stopName) {
+                                const timeStr = trip.stops[info.stopName];
+                                const time = timeStr ? TimeUtils.toMinutes(timeStr) : null;
+                                if (time !== null) return time;
+                            }
+                        }
+                        return null;
+                    };
+
+                    const getLastTime = (trip: MasterTrip): number | null => {
+                        let lastTime: number | null = null;
+                        for (const [colStr, info] of Object.entries(colMap)) {
+                            if (info.type === 'stop' && info.stopName) {
+                                const timeStr = trip.stops[info.stopName];
+                                const time = timeStr ? TimeUtils.toMinutes(timeStr) : null;
+                                if (time !== null) lastTime = time;
+                            }
+                        }
+                        return lastTime;
+                    };
+
+                    // Time diff helper for midnight crossing
+                    const timeDiff = (end: number, start: number): number => {
+                        const diff = end - start;
+                        return diff < 0 ? diff + 1440 : diff;
+                    };
+
+                    // Calculate effective cycle for each trip
+                    let totalEffective = 0;
+                    for (const trip of table.trips) {
+                        let firstDep = getColVal(trip, config.firstDep);
+                        if (firstDep === null) firstDep = getFirstTime(trip);
+
+                        const interlineArr = getColVal(trip, config.interlineArr);
+                        const recovery = getColVal(trip, config.recoveryCol);
+                        const resume = getColVal(trip, config.resumeCol);
+                        const finalArr = getLastTime(trip);
+
+                        // Check if trip ends at interline (no resume)
+                        const endsAtInterline = resume === null && interlineArr !== null;
+
+                        if (endsAtInterline && firstDep !== null && interlineArr !== null) {
+                            // Trip ends at interline
+                            const segment1 = timeDiff(interlineArr, firstDep);
+                            totalEffective += segment1 + (recovery ?? 0);
+                        } else if (firstDep !== null && interlineArr !== null && recovery !== null && resume !== null && finalArr !== null) {
+                            // Full interline trip
+                            const segment1 = timeDiff(interlineArr, firstDep);
+                            const segment2 = timeDiff(finalArr, resume);
+                            totalEffective += segment1 + recovery + segment2;
+                        } else {
+                            // Fallback to raw cycle time
+                            totalEffective += trip.cycleTime;
+                        }
+                    }
+                    return totalEffective;
+                };
+
+                const totalCycleSum = calculateEffectiveCycleSum();
 
                 const overallRatio = totalTravelSum > 0 ? ((totalRecoverySum / totalTravelSum) * 100) : 0;
                 const ratioStatus = getRecoveryStatus(overallRatio);
@@ -468,9 +758,9 @@ const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({ schedules, onCe
 
                                 <div className="w-px bg-gray-200" />
 
-                                {/* Time Budget Card - Consolidated */}
+                                {/* Service Hours Card - Consolidated */}
                                 <div className="flex flex-col justify-center">
-                                    <span className="text-[10px] font-medium text-gray-400 uppercase tracking-wide mb-1">Time Budget</span>
+                                    <span className="text-[10px] font-medium text-gray-400 uppercase tracking-wide mb-1">Service Hours</span>
                                     <div className="flex items-baseline gap-3">
                                         <span className="text-lg font-semibold text-gray-800">{Math.round(totalCycleSum / 60)}h</span>
                                         <span className="text-xs text-gray-400">
@@ -557,74 +847,17 @@ const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({ schedules, onCe
                             </div>
                         </div>
 
-                        {/* 2. Block Summary Gantt Chart (Collapsible) */}
-                        <details className="px-6 py-4 border-b border-gray-100">
-                            <summary className="cursor-pointer text-xs font-medium text-gray-500 uppercase tracking-wide flex items-center gap-2 hover:text-gray-700">
-                                <BarChart2 size={14} />
-                                Block Timeline
-                            </summary>
-                            <div className="mt-4 pb-2">
-                                {/* Time scale header */}
-                                <div className="flex items-center mb-2">
-                                    <div className="w-20 text-[10px] text-gray-400 font-medium">Block</div>
-                                    <div className="flex-1 flex">
-                                        {Array.from({ length: maxHour - minHour + 1 }, (_, i) => (
-                                            <div key={i} className="flex-1 text-[9px] text-gray-400 text-center">
-                                                {minHour + i}:00
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                                {/* Block rows - simplified with gray tones */}
-                                {Array.from(new Set(allTrips.map(t => t.blockId))).sort().map(blockId => {
-                                    const blockTrips = allTrips.filter(t => t.blockId === blockId).sort((a, b) => a.startTime - b.startTime);
-                                    const totalSpanMins = (maxHour - minHour + 1) * 60;
 
-                                    return (
-                                        <div key={blockId} className="flex items-center h-7 mb-1">
-                                            <div className="w-20 text-xs font-medium text-gray-600">{blockId}</div>
-                                            <div className="flex-1 relative h-5 bg-gray-100 rounded">
-                                                {blockTrips.map((trip, idx) => {
-                                                    const startOffset = ((trip.startTime - minHour * 60) / totalSpanMins) * 100;
-                                                    const duration = ((trip.endTime - trip.startTime) / totalSpanMins) * 100;
-                                                    // Simplified: use gray shades, direction shown by intensity
-                                                    const bgColor = trip.direction === 'North' ? 'bg-gray-500' : 'bg-gray-400';
-
-                                                    return (
-                                                        <div
-                                                            key={trip.id}
-                                                            className={`absolute h-full ${bgColor} rounded-sm hover:bg-gray-600 transition-colors`}
-                                                            style={{ left: `${startOffset}%`, width: `${Math.max(duration, 0.5)}%` }}
-                                                            title={`${trip.direction}: ${Math.floor(trip.startTime / 60)}:${(trip.startTime % 60).toString().padStart(2, '0')} – ${Math.floor(trip.endTime / 60)}:${(trip.endTime % 60).toString().padStart(2, '0')}`}
-                                                        />
-                                                    );
-                                                })}
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-                                {/* Minimal Legend */}
-                                <div className="flex items-center gap-6 mt-3 pt-3 border-t border-gray-100">
-                                    <div className="flex items-center gap-2">
-                                        <div className="w-4 h-3 bg-gray-500 rounded-sm" />
-                                        <span className="text-xs text-gray-500">Northbound</span>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                        <div className="w-4 h-3 bg-gray-400 rounded-sm" />
-                                        <span className="text-xs text-gray-500">Southbound</span>
-                                    </div>
-                                </div>
-                            </div>
-                        </details>
 
                         {/* 3. Main Table Area */}
-                        <div className="overflow-auto custom-scrollbar relative w-full flex-1 min-h-0">
+                        <div className="overflow-auto custom-scrollbar relative w-full max-h-[70vh]">
                             {/* Scroll fade indicator */}
                             <div className="absolute right-0 top-0 bottom-0 w-12 bg-gradient-to-l from-white to-transparent pointer-events-none z-50" />
 
                             <table className="w-full text-left border-collapse text-[11px]" style={{ tableLayout: 'fixed' }}>
                                 <colgroup>
-                                    <col className="w-14" />
+                                    <col className="w-16" /> {/* Actions column - first */}
+                                    <col className="w-14" /> {/* Block column */}
                                     {combined.northStops.map((_, i) => (
                                         <React.Fragment key={`n-col-${i}`}>
                                             {i > 0 && <col className="w-12" />}
@@ -646,33 +879,52 @@ const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({ schedules, onCe
                                     <col className="w-10" />
                                     <col className="w-10" />
                                 </colgroup>
-                                <thead className="sticky top-0 z-40">
-                                    {/* Direction Group Header Row */}
-                                    <tr className="bg-gray-50">
-                                        <th rowSpan={2} className="p-3 border-b border-gray-200 bg-gray-50 sticky left-0 z-50 text-[10px] font-semibold text-gray-500 uppercase tracking-wide text-center">Block</th>
-
-                                        {/* North Header Span */}
-                                        <th colSpan={1 + (combined.northStops.length - 1) * 3} className="p-3 text-center text-[10px] font-semibold text-gray-600 bg-gray-50 border-b border-gray-200 uppercase tracking-wide">
-                                            Northbound
-                                        </th>
-
-                                        {/* South Header Span */}
-                                        <th colSpan={1 + (combined.southStops.length - 1) * 3} className="p-3 text-center text-[10px] font-semibold text-gray-600 bg-gray-50 border-b border-gray-200 uppercase tracking-wide">
-                                            Southbound
-                                        </th>
-
-                                        <th colSpan={6} className="p-3 text-center text-[10px] font-semibold text-gray-500 bg-gray-50 border-b border-gray-200 uppercase tracking-wide">Metrics</th>
+                                <thead className="sticky top-0 z-40 bg-white shadow-sm">
+                                    {/* Column Numbers Row */}
+                                    <tr className="bg-gray-50 text-gray-400">
+                                        {(() => {
+                                            let colNum = 1;
+                                            const cells: React.ReactNode[] = [];
+                                            // Actions column
+                                            cells.push(<th key="col-actions" className="py-0.5 px-1 border-b border-gray-200 bg-gray-100 sticky left-0 z-50 text-[8px] font-mono text-gray-400 text-center">{colNum++}</th>);
+                                            // Block column
+                                            cells.push(<th key="col-block" className="py-0.5 px-1 border-b border-gray-200 bg-gray-100 sticky left-16 z-50 text-[8px] font-mono text-gray-400 text-center">{colNum++}</th>);
+                                            // North stops
+                                            combined.northStops.forEach((stop, i) => {
+                                                if (i > 0) {
+                                                    cells.push(<th key={`col-n-arr-${i}`} className="py-0.5 px-1 border-b border-gray-200 text-[8px] font-mono text-gray-400 text-center">{colNum++}</th>);
+                                                    cells.push(<th key={`col-n-rec-${i}`} className="py-0.5 px-1 border-b border-gray-200 text-[8px] font-mono text-gray-400 text-center">{colNum++}</th>);
+                                                }
+                                                cells.push(<th key={`col-n-stop-${i}`} className="py-0.5 px-1 border-b border-gray-200 bg-blue-50/30 text-[8px] font-mono text-blue-600 text-center">{colNum++}</th>);
+                                            });
+                                            // South stops
+                                            combined.southStops.forEach((stop, i) => {
+                                                if (i > 0) {
+                                                    cells.push(<th key={`col-s-arr-${i}`} className="py-0.5 px-1 border-b border-gray-200 text-[8px] font-mono text-gray-400 text-center">{colNum++}</th>);
+                                                    cells.push(<th key={`col-s-rec-${i}`} className="py-0.5 px-1 border-b border-gray-200 text-[8px] font-mono text-gray-400 text-center">{colNum++}</th>);
+                                                }
+                                                cells.push(<th key={`col-s-stop-${i}`} className="py-0.5 px-1 border-b border-gray-200 bg-orange-50/30 text-[8px] font-mono text-orange-600 text-center">{colNum++}</th>);
+                                            });
+                                            // Summary columns: Travel, Band, Rec, Ratio, Hdwy, Cycle, Link
+                                            ['Tr', 'Bd', 'Rc', 'Rt', 'Hw', 'Cy', 'Lk'].forEach((label, i) => {
+                                                cells.push(<th key={`col-sum-${i}`} className="py-0.5 px-1 border-b border-gray-200 bg-gray-50 text-[8px] font-mono text-gray-400 text-center">{colNum++}</th>);
+                                            });
+                                            return cells;
+                                        })()}
                                     </tr>
-
                                     {/* Stop Names Row */}
                                     <tr className="bg-white text-gray-500">
+                                        <th className="p-2 border-b border-gray-200 bg-gray-100 sticky left-0 z-50 text-[9px] font-medium text-gray-400 uppercase text-center align-bottom"></th>
+                                        <th className="p-2 border-b border-gray-200 bg-gray-100 sticky left-16 z-50 text-[10px] font-semibold text-gray-500 uppercase tracking-wide text-center align-bottom">Block</th>
                                         {/* North Stops */}
                                         {combined.northStops.map((stop, i) => (
                                             <React.Fragment key={`n-h-${stop}`}>
-                                                {i > 0 && <th className="py-2 px-1 border-b border-gray-200 text-center text-[9px] font-medium text-gray-400 uppercase">Arr</th>}
-                                                {i > 0 && <th className="py-2 px-1 border-b border-gray-200 text-center text-[9px] font-medium text-gray-400">R</th>}
-                                                <th className="py-2 px-1 border-b border-gray-200 text-center text-[10px] font-semibold text-gray-600 whitespace-normal uppercase tracking-tight" title={stop}>
-                                                    {stop}
+                                                {i > 0 && <th className="py-2 px-1 border-b border-gray-200 bg-white text-center text-[9px] font-medium text-gray-400 uppercase align-bottom">Arr</th>}
+                                                {i > 0 && <th className="py-2 px-1 border-b border-gray-200 bg-white text-center text-[9px] font-medium text-gray-400 align-bottom">R</th>}
+                                                <th className="p-2 border-b border-gray-200 bg-blue-50/50 text-[9px] font-semibold text-blue-700 uppercase tracking-tight text-center align-bottom" style={{ width: '80px', minWidth: '80px', maxWidth: '80px' }} title={stop}>
+                                                    <div className="break-words leading-tight">
+                                                        {stop}
+                                                    </div>
                                                 </th>
                                             </React.Fragment>
                                         ))}
@@ -680,21 +932,23 @@ const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({ schedules, onCe
                                         {/* South Stops */}
                                         {combined.southStops.map((stop, i) => (
                                             <React.Fragment key={`s-h-${stop}`}>
-                                                {i > 0 && <th className="py-2 px-1 border-b border-gray-200 text-center text-[9px] font-medium text-gray-400 uppercase">Arr</th>}
-                                                {i > 0 && <th className="py-2 px-1 border-b border-gray-200 text-center text-[9px] font-medium text-gray-400">R</th>}
-                                                <th className="py-2 px-1 border-b border-gray-200 text-center text-[10px] font-semibold text-gray-600 whitespace-normal uppercase tracking-tight" title={stop}>
-                                                    {stop}
+                                                {i > 0 && <th className="py-2 px-1 border-b border-gray-200 bg-white text-center text-[9px] font-medium text-gray-400 uppercase align-bottom">Arr</th>}
+                                                {i > 0 && <th className="py-2 px-1 border-b border-gray-200 bg-white text-center text-[9px] font-medium text-gray-400 align-bottom">R</th>}
+                                                <th className="p-2 border-b border-gray-200 bg-orange-50/50 text-[9px] font-semibold text-orange-700 uppercase tracking-tight text-center align-bottom" style={{ width: '80px', minWidth: '80px', maxWidth: '80px' }} title={stop}>
+                                                    <div className="break-words leading-tight">
+                                                        {stop}
+                                                    </div>
                                                 </th>
                                             </React.Fragment>
                                         ))}
 
-                                        {/* Metrics Headers */}
-                                        <th className="py-2 px-1 border-b border-gray-200 text-center text-[9px] font-medium text-gray-400 uppercase">Travel</th>
-                                        <th className="py-2 px-1 border-b border-gray-200 text-center text-[9px] font-medium text-gray-400 uppercase">Band</th>
-                                        <th className="py-2 px-1 border-b border-gray-200 text-center text-[9px] font-medium text-gray-400 uppercase">Rec</th>
-                                        <th className="py-2 px-1 border-b border-gray-200 text-center text-[9px] font-medium text-gray-400 uppercase">Ratio</th>
-                                        <th className="py-2 px-1 border-b border-gray-200 text-center text-[9px] font-medium text-gray-400 uppercase">Hdwy</th>
-                                        <th className="py-2 px-1 border-b border-gray-200 text-center text-[9px] font-medium text-gray-400 uppercase">Cycle</th>
+                                        <th className="py-2 px-1 border-b border-gray-200 bg-gray-50 text-center text-[9px] font-medium text-gray-400 uppercase align-bottom">Travel</th>
+                                        <th className="py-2 px-1 border-b border-gray-200 bg-gray-50 text-center text-[9px] font-medium text-gray-400 uppercase align-bottom">Band</th>
+                                        <th className="py-2 px-1 border-b border-gray-200 bg-gray-50 text-center text-[9px] font-medium text-gray-400 uppercase align-bottom">Rec</th>
+                                        <th className="py-2 px-1 border-b border-gray-200 bg-gray-50 text-center text-[9px] font-medium text-gray-400 uppercase align-bottom">Ratio</th>
+                                        <th className="py-2 px-1 border-b border-gray-200 bg-gray-50 text-center text-[9px] font-medium text-gray-400 uppercase align-bottom">Hdwy</th>
+                                        <th className="py-2 px-1 border-b border-gray-200 bg-gray-50 text-center text-[9px] font-medium text-gray-400 uppercase align-bottom">Cycle</th>
+                                        <th className="py-2 px-1 border-b border-gray-200 bg-gray-50 text-center text-[9px] font-medium text-blue-500 uppercase align-bottom" title="Interline connections">Link</th>
                                     </tr>
                                 </thead>
 
@@ -718,56 +972,173 @@ const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({ schedules, onCe
                                         // Ratio Color Logic using new thresholds
                                         const ratioColorClass = getRatioColor(ratio);
 
-                                        // Clean alternating rows - no band coloring
+                                        // Apply band color to row, falling back to alternating gray
                                         const assignedBand = northTrip?.assignedBand || southTrip?.assignedBand;
-                                        const rowBg = rowIdx % 2 === 0 ? 'bg-white' : 'bg-gray-50/50';
+                                        const bandColor = getBandRowColor(assignedBand);
+                                        const rowBg = bandColor || (rowIdx % 2 === 0 ? 'bg-white' : 'bg-gray-50/50');
+
+                                        // Apply filters
+                                        const tripStartTime = northTrip?.startTime || southTrip?.startTime || 0;
+                                        const tripEndTime = northTrip?.endTime || southTrip?.endTime || 0;
+                                        const isGrayedOut = filter ? shouldGrayOutTrip(tripStartTime, tripEndTime, filter) : false;
+                                        const isHighlighted = filter ? shouldHighlightTrip(totalTravel, totalRec, typeof headway === 'number' ? headway : null, filter) : false;
+                                        const matchesSearchFilter = filter ? matchesSearch(row.blockId, [...combined.northStops, ...combined.southStops], filter.search) : true;
+
+                                        // Gray out class
+                                        const grayOutClass = isGrayedOut ? 'opacity-40' : '';
+                                        // Highlight class for filter matches
+                                        const filterHighlightClass = isHighlighted ? 'bg-amber-50 ring-2 ring-inset ring-amber-200' : '';
+                                        // Search match - hide rows that don't match
+                                        const searchHideClass = !matchesSearchFilter ? 'hidden' : '';
 
                                         return (
                                             <tr
                                                 key={uniqueRowKey}
-                                                className={`group hover:bg-gray-100 transition-colors ${rowBg}`}
+                                                className={`group hover:bg-blue-50/50 ${rowBg} ${grayOutClass} ${filterHighlightClass} ${searchHideClass}`}
                                                 onContextMenu={(e) => {
                                                     if (onTripRightClick && northTrip) {
                                                         onTripRightClick(e, northTrip.id, 'North', row.blockId, combined.northStops);
                                                     }
                                                 }}
                                             >
-                                                {/* Sticky Block ID */}
-                                                <td className={`p-3 border-r border-gray-100 sticky left-0 ${rowBg} group-hover:bg-gray-100 z-30 font-medium text-xs text-gray-700 text-center`}>
-                                                    <div className="flex items-center justify-center gap-2">
-                                                        <span>{row.blockId}</span>
-                                                        {onAddTrip && <button onClick={() => onAddTrip(row.blockId, lastTrip?.id || '')} className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-gray-600 transition-opacity"><Plus size={12} /></button>}
+                                                {/* Actions Column - First */}
+                                                <td className={`p-1 border-r border-gray-100 sticky left-0 ${rowBg} group-hover:bg-gray-100 z-30`}>
+                                                    <div className="flex items-center justify-center gap-0.5">
+                                                        {/* Add Trip Button */}
+                                                        {onAddTrip && (
+                                                            <button
+                                                                onClick={() => onAddTrip(row.blockId, lastTrip?.id || '')}
+                                                                className="p-1 rounded hover:bg-green-50 text-gray-400 hover:text-green-600 transition-colors"
+                                                                title="Add trip to block"
+                                                                aria-label="Add trip"
+                                                            >
+                                                                <Plus size={12} />
+                                                            </button>
+                                                        )}
+                                                        {/* Edit Button */}
+                                                        {northTrip && (
+                                                            <button
+                                                                onClick={(e) => {
+                                                                    if (onMenuOpen) {
+                                                                        const rect = e.currentTarget.getBoundingClientRect();
+                                                                        onMenuOpen(northTrip.id, rect.left, rect.bottom + 4, 'North', row.blockId, combined.northStops);
+                                                                    }
+                                                                }}
+                                                                className="p-1 rounded hover:bg-blue-50 text-gray-400 hover:text-blue-600 transition-colors"
+                                                                title="Edit trip"
+                                                                aria-label="Edit trip"
+                                                            >
+                                                                <Pencil size={12} />
+                                                            </button>
+                                                        )}
+                                                        {/* Delete Button */}
+                                                        {onDeleteTrip && northTrip && (
+                                                            <button
+                                                                onClick={() => onDeleteTrip(northTrip.id)}
+                                                                className="p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors"
+                                                                title="Delete trip"
+                                                                aria-label="Delete trip"
+                                                            >
+                                                                <Trash2 size={12} />
+                                                            </button>
+                                                        )}
                                                     </div>
+                                                </td>
+
+                                                {/* Sticky Block ID */}
+                                                <td className={`p-3 border-r border-gray-100 sticky left-16 ${rowBg} group-hover:bg-gray-100 z-30 font-medium text-xs text-gray-700 text-center`}>
+                                                    <span>{row.blockId}</span>
                                                 </td>
 
                                                 {/* North Cells */}
                                                 {combined.northStops.map((stop, i) => (
                                                     <React.Fragment key={`n-${stop}`}>
                                                         {i > 0 && (
-                                                            <td className="p-1 text-center font-mono text-[10px] text-gray-400">
-                                                                {northTrip?.arrivalTimes?.[stop] || ''}
+                                                            <td className="p-0 relative h-8 group/arr text-center font-mono text-[10px] text-gray-400">
+                                                                <div className="flex items-center justify-center h-full">
+                                                                    {onTimeAdjust && northTrip && (
+                                                                        <button
+                                                                            onClick={() => onTimeAdjust(northTrip.id, stop, -1)}
+                                                                            className="absolute left-0 top-0 bottom-0 w-3 opacity-0 group-hover/arr:opacity-100 flex items-center justify-center text-gray-300 hover:text-blue-500 transition-all"
+                                                                            title="-1 min"
+                                                                        >
+                                                                            <ChevronDown size={10} />
+                                                                        </button>
+                                                                    )}
+                                                                    <span className="px-2">{northTrip?.arrivalTimes?.[stop] || ''}</span>
+                                                                    {onTimeAdjust && northTrip && (
+                                                                        <button
+                                                                            onClick={() => onTimeAdjust(northTrip.id, stop, 1)}
+                                                                            className="absolute right-0 top-0 bottom-0 w-3 opacity-0 group-hover/arr:opacity-100 flex items-center justify-center text-gray-300 hover:text-blue-500 transition-all"
+                                                                            title="+1 min"
+                                                                        >
+                                                                            <ChevronUp size={10} />
+                                                                        </button>
+                                                                    )}
+                                                                </div>
                                                             </td>
                                                         )}
                                                         {i > 0 && (
-                                                            <td className="p-1 text-center font-mono text-[10px] text-gray-500 font-medium">
-                                                                {northTrip?.recoveryTimes?.[stop] ?? ''}
+                                                            <td className="p-0 relative h-8 group/rec text-center font-mono text-[10px] text-gray-500 font-medium">
+                                                                <div className="flex items-center justify-center h-full">
+                                                                    {onRecoveryEdit && northTrip && (
+                                                                        <button
+                                                                            onClick={() => onRecoveryEdit(northTrip.id, stop, -1)}
+                                                                            className="absolute left-0 top-0 bottom-0 w-3 opacity-0 group-hover/rec:opacity-100 flex items-center justify-center text-gray-300 hover:text-green-500 transition-all"
+                                                                            title="-1 min recovery"
+                                                                        >
+                                                                            <ChevronDown size={10} />
+                                                                        </button>
+                                                                    )}
+                                                                    <span className="px-2">{northTrip?.recoveryTimes?.[stop] ?? ''}</span>
+                                                                    {onRecoveryEdit && northTrip && (
+                                                                        <button
+                                                                            onClick={() => onRecoveryEdit(northTrip.id, stop, 1)}
+                                                                            className="absolute right-0 top-0 bottom-0 w-3 opacity-0 group-hover/rec:opacity-100 flex items-center justify-center text-gray-300 hover:text-green-500 transition-all"
+                                                                            title="+1 min recovery"
+                                                                        >
+                                                                            <ChevronUp size={10} />
+                                                                        </button>
+                                                                    )}
+                                                                </div>
                                                             </td>
                                                         )}
-                                                        <td className={`p-0 relative h-10 ${i === 0 ? 'border-l border-dashed border-gray-100' : ''}`}>
-                                                            <input
-                                                                type="text"
-                                                                value={northTrip?.stops[stop] || ''}
-                                                                onChange={(e) => northTrip && onCellEdit(northTrip.id, stop, sanitizeInput(e.target.value))}
-                                                                onBlur={(e) => {
-                                                                    if (northTrip && e.target.value) {
-                                                                        const formatted = parseTimeInput(e.target.value);
-                                                                        if (formatted) onCellEdit(northTrip.id, stop, formatted);
-                                                                    }
-                                                                }}
-                                                                className="w-full h-full bg-transparent font-medium text-[11px] text-gray-700 text-center focus:bg-white focus:ring-2 focus:ring-blue-100 focus:outline-none transition-all placeholder-gray-200"
-                                                                placeholder="-"
-                                                                disabled={!northTrip}
-                                                            />
+                                                        <td className={`p-0 relative h-10 group/cell ${i === 0 ? 'border-l border-dashed border-gray-100' : ''}`}>
+                                                            <div className="flex items-center justify-center h-full">
+                                                                {/* Down Arrow */}
+                                                                {onTimeAdjust && northTrip && (
+                                                                    <button
+                                                                        onClick={() => onTimeAdjust(northTrip.id, stop, -1)}
+                                                                        className="absolute left-0 top-0 bottom-0 w-4 opacity-0 group-hover/cell:opacity-100 flex items-center justify-center text-gray-300 hover:text-blue-500 hover:bg-blue-50 transition-all"
+                                                                        title="-1 min"
+                                                                    >
+                                                                        <ChevronDown size={12} />
+                                                                    </button>
+                                                                )}
+                                                                <StackedTimeInput
+                                                                    value={northTrip?.stops[stop] || ''}
+                                                                    onChange={(val) => northTrip && onCellEdit(northTrip.id, stop, val)}
+                                                                    onBlur={(val) => {
+                                                                        if (northTrip && val) {
+                                                                            const originalValue = northTrip.stops[stop];
+                                                                            const formatted = parseTimeInput(val, originalValue);
+                                                                            if (formatted) onCellEdit(northTrip.id, stop, formatted);
+                                                                        }
+                                                                    }}
+                                                                    disabled={!northTrip}
+                                                                    focusClass="focus:ring-blue-100"
+                                                                />
+                                                                {/* Up Arrow */}
+                                                                {onTimeAdjust && northTrip && (
+                                                                    <button
+                                                                        onClick={() => onTimeAdjust(northTrip.id, stop, 1)}
+                                                                        className="absolute right-0 top-0 bottom-0 w-4 opacity-0 group-hover/cell:opacity-100 flex items-center justify-center text-gray-300 hover:text-blue-500 hover:bg-blue-50 transition-all"
+                                                                        title="+1 min"
+                                                                    >
+                                                                        <ChevronUp size={12} />
+                                                                    </button>
+                                                                )}
+                                                            </div>
                                                         </td>
                                                     </React.Fragment>
                                                 ))}
@@ -776,30 +1147,91 @@ const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({ schedules, onCe
                                                 {combined.southStops.map((stop, i) => (
                                                     <React.Fragment key={`s-${stop}`}>
                                                         {i > 0 && (
-                                                            <td className="p-1 text-center font-mono text-[10px] text-gray-400">
-                                                                {southTrip?.arrivalTimes?.[stop] || ''}
+                                                            <td className="p-0 relative h-8 group/arr text-center font-mono text-[10px] text-gray-400">
+                                                                <div className="flex items-center justify-center h-full">
+                                                                    {onTimeAdjust && southTrip && (
+                                                                        <button
+                                                                            onClick={() => onTimeAdjust(southTrip.id, stop, -1)}
+                                                                            className="absolute left-0 top-0 bottom-0 w-3 opacity-0 group-hover/arr:opacity-100 flex items-center justify-center text-gray-300 hover:text-indigo-500 transition-all"
+                                                                            title="-1 min"
+                                                                        >
+                                                                            <ChevronDown size={10} />
+                                                                        </button>
+                                                                    )}
+                                                                    <span className="px-2">{southTrip?.arrivalTimes?.[stop] || ''}</span>
+                                                                    {onTimeAdjust && southTrip && (
+                                                                        <button
+                                                                            onClick={() => onTimeAdjust(southTrip.id, stop, 1)}
+                                                                            className="absolute right-0 top-0 bottom-0 w-3 opacity-0 group-hover/arr:opacity-100 flex items-center justify-center text-gray-300 hover:text-indigo-500 transition-all"
+                                                                            title="+1 min"
+                                                                        >
+                                                                            <ChevronUp size={10} />
+                                                                        </button>
+                                                                    )}
+                                                                </div>
                                                             </td>
                                                         )}
                                                         {i > 0 && (
-                                                            <td className="p-1 text-center font-mono text-[10px] text-gray-500 font-medium">
-                                                                {southTrip?.recoveryTimes?.[stop] ?? ''}
+                                                            <td className="p-0 relative h-8 group/rec text-center font-mono text-[10px] text-gray-500 font-medium">
+                                                                <div className="flex items-center justify-center h-full">
+                                                                    {onRecoveryEdit && southTrip && (
+                                                                        <button
+                                                                            onClick={() => onRecoveryEdit(southTrip.id, stop, -1)}
+                                                                            className="absolute left-0 top-0 bottom-0 w-3 opacity-0 group-hover/rec:opacity-100 flex items-center justify-center text-gray-300 hover:text-green-500 transition-all"
+                                                                            title="-1 min recovery"
+                                                                        >
+                                                                            <ChevronDown size={10} />
+                                                                        </button>
+                                                                    )}
+                                                                    <span className="px-2">{southTrip?.recoveryTimes?.[stop] ?? ''}</span>
+                                                                    {onRecoveryEdit && southTrip && (
+                                                                        <button
+                                                                            onClick={() => onRecoveryEdit(southTrip.id, stop, 1)}
+                                                                            className="absolute right-0 top-0 bottom-0 w-3 opacity-0 group-hover/rec:opacity-100 flex items-center justify-center text-gray-300 hover:text-green-500 transition-all"
+                                                                            title="+1 min recovery"
+                                                                        >
+                                                                            <ChevronUp size={10} />
+                                                                        </button>
+                                                                    )}
+                                                                </div>
                                                             </td>
                                                         )}
-                                                        <td className={`p-0 relative h-10 ${i === 0 ? 'border-l border-dashed border-gray-100' : ''}`}>
-                                                            <input
-                                                                type="text"
-                                                                value={southTrip?.stops[stop] || ''}
-                                                                onChange={(e) => southTrip && onCellEdit(southTrip.id, stop, sanitizeInput(e.target.value))}
-                                                                onBlur={(e) => {
-                                                                    if (southTrip && e.target.value) {
-                                                                        const formatted = parseTimeInput(e.target.value);
-                                                                        if (formatted) onCellEdit(southTrip.id, stop, formatted);
-                                                                    }
-                                                                }}
-                                                                className="w-full h-full bg-transparent font-medium text-[11px] text-gray-700 text-center focus:bg-white focus:ring-2 focus:ring-indigo-100 focus:outline-none transition-all placeholder-gray-200"
-                                                                placeholder="-"
-                                                                disabled={!southTrip}
-                                                            />
+                                                        <td className={`p-0 relative h-10 group/cell ${i === 0 ? 'border-l border-dashed border-gray-100' : ''}`}>
+                                                            <div className="flex items-center justify-center h-full">
+                                                                {/* Down Arrow */}
+                                                                {onTimeAdjust && southTrip && (
+                                                                    <button
+                                                                        onClick={() => onTimeAdjust(southTrip.id, stop, -1)}
+                                                                        className="absolute left-0 top-0 bottom-0 w-4 opacity-0 group-hover/cell:opacity-100 flex items-center justify-center text-gray-300 hover:text-indigo-500 hover:bg-indigo-50 transition-all"
+                                                                        title="-1 min"
+                                                                    >
+                                                                        <ChevronDown size={12} />
+                                                                    </button>
+                                                                )}
+                                                                <StackedTimeInput
+                                                                    value={southTrip?.stops[stop] || ''}
+                                                                    onChange={(val) => southTrip && onCellEdit(southTrip.id, stop, val)}
+                                                                    onBlur={(val) => {
+                                                                        if (southTrip && val) {
+                                                                            const originalValue = southTrip.stops[stop];
+                                                                            const formatted = parseTimeInput(val, originalValue);
+                                                                            if (formatted) onCellEdit(southTrip.id, stop, formatted);
+                                                                        }
+                                                                    }}
+                                                                    disabled={!southTrip}
+                                                                    focusClass="focus:ring-indigo-100"
+                                                                />
+                                                                {/* Up Arrow */}
+                                                                {onTimeAdjust && southTrip && (
+                                                                    <button
+                                                                        onClick={() => onTimeAdjust(southTrip.id, stop, 1)}
+                                                                        className="absolute right-0 top-0 bottom-0 w-4 opacity-0 group-hover/cell:opacity-100 flex items-center justify-center text-gray-300 hover:text-indigo-500 hover:bg-indigo-50 transition-all"
+                                                                        title="+1 min"
+                                                                    >
+                                                                        <ChevronUp size={12} />
+                                                                    </button>
+                                                                )}
+                                                            </div>
                                                         </td>
                                                     </React.Fragment>
                                                 ))}
@@ -824,17 +1256,76 @@ const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({ schedules, onCe
                                                     {ratio.toFixed(0)}%
                                                 </td>
 
-                                                <td className="p-2 text-center text-xs text-gray-400">{headway}</td>
-
-                                                <td className="p-2 text-center text-xs font-semibold text-gray-700 relative group/cycle">
-                                                    {Math.round(row.totalCycleTime)}
-                                                    {onDeleteTrip && (
-                                                        <div className="absolute top-0 right-0 bottom-0 flex flex-col justify-center opacity-0 group-hover/cycle:opacity-100 bg-white shadow-sm px-1 border-l border-gray-100">
-                                                            {northTrip && <button onClick={() => onDeleteTrip(northTrip.id)} className="text-gray-300 hover:text-red-500 mb-1" title="Delete North"><Trash2 size={10} /></button>}
-                                                            {southTrip && <button onClick={() => onDeleteTrip(southTrip.id)} className="text-gray-300 hover:text-red-500" title="Delete South"><Trash2 size={10} /></button>}
-                                                        </div>
+                                                <td className={`p-2 text-center text-xs ${targetHeadway && typeof headway === 'number' && headway !== targetHeadway
+                                                    ? 'text-amber-700 bg-amber-100 font-bold ring-1 ring-amber-300'
+                                                    : 'text-gray-400'
+                                                    }`}>
+                                                    {headway}
+                                                    {targetHeadway && typeof headway === 'number' && headway !== targetHeadway && (
+                                                        <span className="ml-1 text-[9px] font-semibold">({headway > targetHeadway ? '+' : ''}{headway - targetHeadway})</span>
                                                     )}
                                                 </td>
+
+                                                <td className={`p-2 text-center text-xs font-semibold ${targetCycleTime && Math.round(row.totalCycleTime) !== targetCycleTime
+                                                    ? 'text-amber-700 bg-amber-100 font-bold ring-1 ring-amber-300'
+                                                    : 'text-gray-700'
+                                                    }`}>
+                                                    {Math.round(row.totalCycleTime)}
+                                                    {targetCycleTime && Math.round(row.totalCycleTime) !== targetCycleTime && (
+                                                        <span className="ml-1 text-[9px] font-semibold">({Math.round(row.totalCycleTime) > targetCycleTime ? '+' : ''}{Math.round(row.totalCycleTime) - targetCycleTime})</span>
+                                                    )}
+                                                </td>
+
+                                                {/* Interline Badge */}
+                                                <td className="p-1 text-center">
+                                                    {(() => {
+                                                        const nNext = northTrip?.interlineNext;
+                                                        const nPrev = northTrip?.interlinePrev;
+                                                        const sNext = southTrip?.interlineNext;
+                                                        const sPrev = southTrip?.interlinePrev;
+
+                                                        // Show badges for any interline connections
+                                                        const badges: React.ReactNode[] = [];
+
+                                                        if (nNext) {
+                                                            badges.push(
+                                                                <span key="n-next" className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-[9px] font-medium" title={`North continues as ${nNext.route} at ${nNext.stopName}`}>
+                                                                    <ArrowRight size={10} />{nNext.route}
+                                                                </span>
+                                                            );
+                                                        }
+                                                        if (nPrev) {
+                                                            badges.push(
+                                                                <span key="n-prev" className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded text-[9px] font-medium" title={`North came from ${nPrev.route} at ${nPrev.stopName}`}>
+                                                                    <ArrowLeft size={10} />{nPrev.route}
+                                                                </span>
+                                                            );
+                                                        }
+                                                        if (sNext) {
+                                                            badges.push(
+                                                                <span key="s-next" className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-[9px] font-medium" title={`South continues as ${sNext.route} at ${sNext.stopName}`}>
+                                                                    <ArrowRight size={10} />{sNext.route}
+                                                                </span>
+                                                            );
+                                                        }
+                                                        if (sPrev) {
+                                                            badges.push(
+                                                                <span key="s-prev" className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded text-[9px] font-medium" title={`South came from ${sPrev.route} at ${sPrev.stopName}`}>
+                                                                    <ArrowLeft size={10} />{sPrev.route}
+                                                                </span>
+                                                            );
+                                                        }
+
+                                                        return badges.length > 0 ? (
+                                                            <div className="flex flex-wrap gap-0.5 justify-center">
+                                                                {badges}
+                                                            </div>
+                                                        ) : (
+                                                            <span className="text-gray-300">-</span>
+                                                        );
+                                                    })()}
+                                                </td>
+
                                             </tr>
                                         );
                                     })}
@@ -844,7 +1335,7 @@ const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({ schedules, onCe
                     </div>
                 );
             })}
-        </div>
+        </div >
     );
 }
 
@@ -856,10 +1347,11 @@ interface SingleRouteViewProps {
     onRecoveryEdit?: (tripId: string, stopName: string, delta: number) => void;
     onTimeAdjust?: (tripId: string, stopName: string, delta: number) => void;
     onDeleteTrip?: (tripId: string) => void;
+    onDuplicateTrip?: (tripId: string) => void;
     onAddTrip?: (blockId: string, afterTripId: string) => void;
 }
 
-const SingleRouteView: React.FC<SingleRouteViewProps> = ({ table, showSummary = true, originalTable, onCellEdit, onRecoveryEdit, onTimeAdjust, onDeleteTrip, onAddTrip }) => {
+const SingleRouteView: React.FC<SingleRouteViewProps> = ({ table, showSummary = true, originalTable, onCellEdit, onRecoveryEdit, onTimeAdjust, onDeleteTrip, onDuplicateTrip, onAddTrip }) => {
     const stopsWithRecovery = useMemo(() => {
         const set = new Set<string>();
         table.trips.forEach(t => {
@@ -870,6 +1362,154 @@ const SingleRouteView: React.FC<SingleRouteViewProps> = ({ table, showSummary = 
 
     const headways = useMemo(() => calculateHeadways(table.trips), [table.trips]);
 
+    // Build column map: column index (1-based) -> { type: 'block' | 'stop' | 'recovery', stopName?: string }
+    const columnMap = useMemo(() => {
+        const map: { [col: number]: { type: 'block' | 'stop' | 'recovery'; stopName?: string } } = {};
+        let colNum = 1;
+        map[colNum++] = { type: 'block' }; // Column 1 = Block
+        table.stops.forEach(stop => {
+            map[colNum++] = { type: 'stop', stopName: stop };
+            if (stopsWithRecovery.has(stop)) {
+                map[colNum++] = { type: 'recovery', stopName: stop };
+            }
+        });
+        return map;
+    }, [table.stops, stopsWithRecovery]);
+
+    // Helper to get value at a specific column for a trip
+    const getColumnValue = (trip: MasterTrip, col: number): number | null => {
+        const colInfo = columnMap[col];
+        if (!colInfo) return null;
+
+        if (colInfo.type === 'block') {
+            return null; // Block ID is not a numeric time value
+        } else if (colInfo.type === 'stop' && colInfo.stopName) {
+            const timeStr = trip.stops[colInfo.stopName];
+            return timeStr ? TimeUtils.toMinutes(timeStr) : null;
+        } else if (colInfo.type === 'recovery' && colInfo.stopName) {
+            return trip.recoveryTimes?.[colInfo.stopName] ?? null;
+        }
+        return null;
+    };
+
+    // Hardcoded interline cycle configurations by route
+    // Format: { firstDep, interlineArr, recoveryCol, resumeCol }
+    // Formula: (interlineArr - firstDep) + recoveryCol + (lastTimepoint - resumeCol)
+    // Note: lastTimepoint is dynamically found as the last column with a time value
+    const INTERLINE_CYCLE_CONFIG: { [routePattern: string]: { firstDep: number; interlineArr: number; recoveryCol: number; resumeCol: number } } = {
+        '8A': { firstDep: 2, interlineArr: 12, recoveryCol: 13, resumeCol: 14 },
+        '8B': { firstDep: 2, interlineArr: 3, recoveryCol: 4, resumeCol: 5 },
+    };
+
+    // Helper to find the last column with a time value for a trip
+    const getLastTimepointValue = (trip: MasterTrip): number | null => {
+        let lastCol = 0;
+        let lastTime: number | null = null;
+
+        // Iterate through all columns to find the last one with a time value
+        for (const [colStr, colInfo] of Object.entries(columnMap)) {
+            const col = parseInt(colStr);
+            if (colInfo.type === 'stop' && colInfo.stopName) {
+                const timeStr = trip.stops[colInfo.stopName];
+                const time = timeStr ? TimeUtils.toMinutes(timeStr) : null;
+                if (time !== null && col > lastCol) {
+                    lastCol = col;
+                    lastTime = time;
+                }
+            }
+        }
+        return lastTime;
+    };
+
+    // Helper to find the FIRST column with a time value for a trip (for partial trips)
+    const getFirstTimepointValue = (trip: MasterTrip): number | null => {
+        let firstCol = Infinity;
+        let firstTime: number | null = null;
+
+        for (const [colStr, colInfo] of Object.entries(columnMap)) {
+            const col = parseInt(colStr);
+            if (colInfo.type === 'stop' && colInfo.stopName) {
+                const timeStr = trip.stops[colInfo.stopName];
+                const time = timeStr ? TimeUtils.toMinutes(timeStr) : null;
+                if (time !== null && col < firstCol) {
+                    firstCol = col;
+                    firstTime = time;
+                }
+            }
+        }
+        return firstTime;
+    };
+
+    // Calculate effective cycle time for interlined trips using hardcoded column indices
+    const getEffectiveCycleTime = (trip: MasterTrip): { value: number; hasGap: boolean; gap: number } => {
+        // Check if this route has a hardcoded interline config
+        const routeName = table.routeName || '';
+        let config: typeof INTERLINE_CYCLE_CONFIG[string] | null = null;
+
+        for (const [pattern, cfg] of Object.entries(INTERLINE_CYCLE_CONFIG)) {
+            if (routeName.includes(pattern)) {
+                config = cfg;
+                break;
+            }
+        }
+
+        // If no hardcoded config, check if trip has interline markers
+        if (!config) {
+            if (!trip.interlineNext?.stopName) {
+                return { value: trip.cycleTime, hasGap: false, gap: 0 };
+            }
+            // Fall back to original dynamic logic for non-hardcoded routes
+            return { value: trip.cycleTime, hasGap: false, gap: 0 };
+        }
+
+        // Use hardcoded column-based calculation
+        // For partial trips (starting mid-route), use dynamic first timepoint instead of hardcoded column
+        let firstDep = getColumnValue(trip, config.firstDep);
+        if (firstDep === null) {
+            // Trip doesn't start at the expected column - use actual first departure
+            firstDep = getFirstTimepointValue(trip);
+        }
+
+        const interlineArr = getColumnValue(trip, config.interlineArr);
+        const recovery = getColumnValue(trip, config.recoveryCol);
+        const resume = getColumnValue(trip, config.resumeCol);
+        const finalArr = getLastTimepointValue(trip); // Dynamic: last column with time
+
+        // Helper to handle midnight crossing
+        const timeDiff = (end: number, start: number): number => {
+            const diff = end - start;
+            return diff < 0 ? diff + 1440 : diff; // 1440 = 24 hours in minutes
+        };
+
+        // Check if trip ENDS at interline point (no resume column = one-way interline)
+        // These trips hand off to the other route and don't continue
+        const endsAtInterline = resume === null && interlineArr !== null;
+
+        if (endsAtInterline) {
+            // Trip ends at interline: cycle = (interlineArr - firstDep) + recovery
+            // No segment 2 because trip doesn't continue after interline
+            if (firstDep === null || interlineArr === null) {
+                return { value: trip.cycleTime, hasGap: false, gap: 0 };
+            }
+            const segment1 = timeDiff(interlineArr, firstDep);
+            const recoveryVal = recovery ?? 0;
+            const effectiveCycle = segment1 + recoveryVal;
+            return { value: effectiveCycle, hasGap: true, gap: effectiveCycle - trip.cycleTime };
+        }
+
+        // If any required value is missing for full interline calculation, fall back
+        if (firstDep === null || interlineArr === null || recovery === null || resume === null || finalArr === null) {
+            return { value: trip.cycleTime, hasGap: false, gap: 0 };
+        }
+
+        // Full interline: (interlineArr - firstDep) + recovery + (lastTimepoint - resume)
+        const segment1 = timeDiff(interlineArr, firstDep);
+        const segment2 = timeDiff(finalArr, resume);
+        const effectiveCycle = segment1 + recovery + segment2;
+
+        return { value: effectiveCycle, hasGap: true, gap: effectiveCycle - trip.cycleTime };
+    };
+
     return (
         <div className="flex flex-col gap-6 h-full">
             <div className="bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden flex-grow flex flex-col">
@@ -877,23 +1517,48 @@ const SingleRouteView: React.FC<SingleRouteViewProps> = ({ table, showSummary = 
                     <h3 className="font-bold text-gray-900">{table.routeName}</h3>
                 </div>
                 <div className="overflow-auto custom-scrollbar flex-grow">
-                    <table className="w-full text-left border-collapse text-[11px]" style={{ tableLayout: 'fixed' }}>
+                    <table className="w-full text-left border-collapse text-[11px]">
                         <thead className="sticky top-0 z-40 bg-gray-50 shadow-sm">
+                            {/* Column Numbers Row */}
+                            <tr className="bg-gray-100">
+                                {(() => {
+                                    let colNum = 1;
+                                    const cells: React.ReactNode[] = [];
+                                    // Block column
+                                    cells.push(<th key="col-block" className="py-0.5 px-1 border-b border-gray-300 bg-gray-100 sticky left-0 z-30 text-[9px] font-mono font-bold text-gray-500 text-center">{colNum++}</th>);
+                                    // Stop columns with optional recovery
+                                    table.stops.forEach((stop, i) => {
+                                        cells.push(<th key={`col-stop-${i}`} className="py-0.5 px-1 border-b border-gray-300 bg-blue-100 text-[9px] font-mono font-bold text-blue-700 text-center">{colNum++}</th>);
+                                        if (stopsWithRecovery.has(stop)) {
+                                            cells.push(<th key={`col-rec-${i}`} className="py-0.5 px-1 border-b border-gray-300 bg-gray-100 text-[9px] font-mono font-bold text-gray-500 text-center">{colNum++}</th>);
+                                        }
+                                    });
+                                    // Summary columns: Trav, Rec, Ratio, Hdwy, Cycle, Actions
+                                    ['Tr', 'Rc', 'Rt', 'Hw', 'Cy', 'Ac'].forEach((_, i) => {
+                                        cells.push(<th key={`col-sum-${i}`} className="py-0.5 px-1 border-b border-gray-300 bg-gray-100 text-[9px] font-mono font-bold text-gray-500 text-center">{colNum++}</th>);
+                                    });
+                                    return cells;
+                                })()}
+                            </tr>
+                            {/* Header Labels Row */}
                             <tr>
-                                <th className="p-2 border-b bg-gray-50 sticky left-0 z-30 text-xs font-semibold text-gray-500 uppercase">Block</th>
+                                <th className="p-2 border-b bg-gray-50 sticky left-0 z-30 text-xs font-semibold text-gray-500 uppercase align-bottom">Block</th>
                                 {table.stops.map(stop => (
                                     <React.Fragment key={stop}>
-                                        <th className="p-2 border-b text-xs font-semibold text-gray-700 uppercase truncate" title={stop}>
-                                            {stop.length > 20 ? stop.slice(0, 18) + '..' : stop}
+                                        <th className="p-2 border-b text-[10px] font-semibold text-gray-700 uppercase text-center align-bottom" style={{ width: '80px', minWidth: '80px', maxWidth: '80px' }} title={stop}>
+                                            <div className="break-words leading-tight">
+                                                {stop}
+                                            </div>
                                         </th>
-                                        {stopsWithRecovery.has(stop) && <th className="p-2 border-b text-center text-xs font-semibold bg-gray-50/50">R</th>}
+                                        {stopsWithRecovery.has(stop) && <th className="p-2 border-b text-center text-xs font-semibold bg-gray-50/50 align-bottom">R</th>}
                                     </React.Fragment>
                                 ))}
-                                <th className="p-2 border-b text-center text-xs font-semibold">Trav</th>
-                                <th className="p-2 border-b text-center text-xs font-semibold">Rec</th>
-                                <th className="p-2 border-b text-center text-xs font-semibold">Ratio</th>
-                                <th className="p-2 border-b text-center text-xs font-semibold">Hdwy</th>
-                                <th className="p-2 border-b text-center text-xs font-semibold">Cycle</th>
+                                <th className="p-2 border-b text-center text-xs font-semibold align-bottom">Trav</th>
+                                <th className="p-2 border-b text-center text-xs font-semibold align-bottom">Rec</th>
+                                <th className="p-2 border-b text-center text-xs font-semibold align-bottom">Ratio</th>
+                                <th className="p-2 border-b text-center text-xs font-semibold align-bottom">Hdwy</th>
+                                <th className="p-2 border-b text-center text-xs font-semibold align-bottom">Cycle</th>
+                                <th className="p-2 border-b text-center text-xs font-semibold align-bottom">Actions</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100">
@@ -916,9 +1581,37 @@ const SingleRouteView: React.FC<SingleRouteViewProps> = ({ table, showSummary = 
                                         const currentRec = trip.recoveryTimes?.[stop] || 0;
                                         const recDiff = currentRec - originalRec;
 
+                                        // Check if this stop is an interline point
+                                        // Only match the FIRST occurrence (base name or (2) variant) - not (3), (4) etc. which are southbound
+                                        // Also verify the cell time matches the interline time (respects time range from rule)
+                                        const normalizeStop = (s: string) => s.toLowerCase().trim().replace(/\s+/g, ' ');
+                                        const stripSuffix = (s: string) => s.replace(/\s*\(\d+\)$/, '');
+                                        const getSuffix = (s: string) => {
+                                            const match = s.match(/\((\d+)\)$/);
+                                            return match ? parseInt(match[1]) : 0;
+                                        };
+
+                                        const cellTime = TimeUtils.toMinutes(trip.stops[stop]);
+
+                                        // Outgoing: match base name (no suffix) AND verify this cell's time matches the interline time
+                                        const isInterlineOutgoing = trip.interlineNext?.stopName &&
+                                            stripSuffix(normalizeStop(stop)) === stripSuffix(normalizeStop(trip.interlineNext.stopName)) &&
+                                            getSuffix(stop) === 0 && // Only the base stop (no number suffix)
+                                            cellTime !== null &&
+                                            Math.abs(cellTime - trip.interlineNext.time) <= 5; // Time must match within 5 min
+
+                                        // Incoming: match the (2) variant - this is where bus departs after receiving handoff
+                                        // Verify cell time is close to interline time + dwell (within 10 min)
+                                        const isInterlineIncoming = trip.interlinePrev?.stopName &&
+                                            stripSuffix(normalizeStop(stop)) === stripSuffix(normalizeStop(trip.interlinePrev.stopName)) &&
+                                            getSuffix(stop) === 2 && // Only the (2) variant
+                                            cellTime !== null &&
+                                            cellTime >= trip.interlinePrev.time && // Cell time must be after interline time
+                                            cellTime <= trip.interlinePrev.time + 15; // Within 15 min of interline (dwell + buffer)
+
                                         return (
                                             <React.Fragment key={stop}>
-                                                <td className="p-0 border-r relative group/time">
+                                                <td className={`p-0 border-r relative group/time ${isInterlineOutgoing ? 'bg-blue-50' : ''} ${isInterlineIncoming ? 'bg-purple-50' : ''}`}>
                                                     <div className="flex items-center justify-center">
                                                         <input
                                                             type="text"
@@ -926,12 +1619,30 @@ const SingleRouteView: React.FC<SingleRouteViewProps> = ({ table, showSummary = 
                                                             onChange={(e) => onCellEdit(trip.id, stop, sanitizeInput(e.target.value))}
                                                             onBlur={(e) => {
                                                                 if (e.target.value) {
-                                                                    const formatted = parseTimeInput(e.target.value);
+                                                                    const originalValue = trip.stops[stop];
+                                                                    const formatted = parseTimeInput(e.target.value, originalValue);
                                                                     if (formatted) onCellEdit(trip.id, stop, formatted);
                                                                 }
                                                             }}
                                                             className={`w-full h-full bg-transparent font-mono text-xs text-center p-1 focus:bg-white focus:outline-none ${timeDiff !== 0 ? 'font-bold' : ''}`}
                                                         />
+                                                        {/* Interline badge at the stop where it occurs */}
+                                                        {isInterlineOutgoing && (
+                                                            <span
+                                                                className="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2 z-10 inline-flex items-center gap-0.5 px-1 py-0.5 bg-blue-500 text-white rounded text-[8px] font-bold shadow-sm whitespace-nowrap"
+                                                                title={`Continues as ${trip.interlineNext!.route} at ${trip.interlineNext!.stopName}`}
+                                                            >
+                                                                <ArrowRight size={8} />{trip.interlineNext!.route}
+                                                            </span>
+                                                        )}
+                                                        {isInterlineIncoming && (
+                                                            <span
+                                                                className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 z-10 inline-flex items-center gap-0.5 px-1 py-0.5 bg-purple-500 text-white rounded text-[8px] font-bold shadow-sm whitespace-nowrap"
+                                                                title={`Came from ${trip.interlinePrev!.route} at ${trip.interlinePrev!.stopName}`}
+                                                            >
+                                                                <ArrowLeft size={8} />{trip.interlinePrev!.route}
+                                                            </span>
+                                                        )}
                                                         {timeDiff !== 0 && (
                                                             <span className={`absolute top-0 right-0 text-[9px] font-bold px-0.5 rounded-bl ${timeDiff > 0 ? 'text-green-600 bg-green-50' : 'text-red-600 bg-red-50'}`}>
                                                                 {timeDiff > 0 ? '+' : ''}{timeDiff}
@@ -989,13 +1700,48 @@ const SingleRouteView: React.FC<SingleRouteViewProps> = ({ table, showSummary = 
                                         );
                                     })}
                                     <td className="p-2 text-center text-xs font-mono">{trip.travelTime}</td>
-                                    <td className="p-2 text-center text-xs font-mono relative group/cell">
-                                        {trip.recoveryTime}
-                                        {onDeleteTrip && <button onClick={() => onDeleteTrip(trip.id)} className="absolute top-0 right-0 p-0.5 opacity-0 group-hover/cell:opacity-100"><Trash2 size={10} /></button>}
-                                    </td>
+                                    <td className="p-2 text-center text-xs font-mono">{trip.recoveryTime}</td>
                                     <td className={`p-2 text-center text-xs font-mono ${trip.travelTime > 0 ? getRatioColor(trip.recoveryTime / trip.travelTime * 100) : ''}`}>{trip.travelTime > 0 ? ((trip.recoveryTime / trip.travelTime) * 100).toFixed(0) + '%' : '-'}</td>
                                     <td className="p-2 text-center text-xs">{headways[trip.id] ?? '-'}</td>
-                                    <td className="p-2 text-center text-xs font-bold">{trip.cycleTime}</td>
+                                    <td className="p-2 text-center text-xs font-bold">
+                                        {(() => {
+                                            const { value, hasGap, gap } = getEffectiveCycleTime(trip);
+                                            if (hasGap) {
+                                                return (
+                                                    <span className="text-blue-600" title={`${trip.cycleTime} total - ${gap} interline gap = ${value} effective`}>
+                                                        {value}
+                                                        <span className="text-[9px] text-gray-400 ml-0.5">*</span>
+                                                    </span>
+                                                );
+                                            }
+                                            return trip.cycleTime;
+                                        })()}
+                                    </td>
+                                    {/* Actions Column */}
+                                    <td className="p-1 text-center border-l border-gray-100">
+                                        <div className="flex items-center justify-center gap-1">
+                                            {onDuplicateTrip && (
+                                                <button
+                                                    onClick={() => onDuplicateTrip(trip.id)}
+                                                    className="p-1.5 rounded hover:bg-blue-50 text-gray-400 hover:text-blue-600 transition-colors"
+                                                    title="Duplicate trip"
+                                                    aria-label="Duplicate trip"
+                                                >
+                                                    <Copy size={12} />
+                                                </button>
+                                            )}
+                                            {onDeleteTrip && (
+                                                <button
+                                                    onClick={() => onDeleteTrip(trip.id)}
+                                                    className="p-1.5 rounded hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors"
+                                                    title="Delete trip"
+                                                    aria-label="Delete trip"
+                                                >
+                                                    <Trash2 size={12} />
+                                                </button>
+                                            )}
+                                        </div>
+                                    </td>
                                 </tr>
                             ))}
                         </tbody>
@@ -1057,6 +1803,23 @@ export interface ScheduleEditorProps {
     // Optional analysis data for Travel Times view
     analysis?: TripBucketAnalysisDisplay[];
     segmentNames?: string[];
+
+    // Target values for strict mode highlighting (in minutes)
+    targetCycleTime?: number;
+    targetHeadway?: number;
+    // Hide autosave when parent handles it
+    hideAutoSave?: boolean;
+    // Force simple view even when both North/South tables exist
+    forceSimpleView?: boolean;
+
+    // Upload to Master Schedule (optional - only shown if teamId is provided)
+    teamId?: string;
+    userId?: string;
+    uploaderName?: string;
+
+    // Interline configuration (optional - for persistence)
+    initialInterlineConfig?: InterlineConfig;
+    onInterlineConfigChange?: (config: InterlineConfig) => void;
 }
 
 export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
@@ -1075,14 +1838,165 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
     showSuccessToast,
     bands,
     analysis,
-    segmentNames
+    segmentNames,
+    targetCycleTime,
+    targetHeadway,
+    hideAutoSave,
+    forceSimpleView,
+    teamId,
+    userId,
+    uploaderName,
+    initialInterlineConfig,
+    onInterlineConfigChange
 }) => {
     const [activeRouteIdx, setActiveRouteIdx] = useState(0);
     const [activeDay, setActiveDay] = useState<string>('Weekday');
-    const [subView, setSubView] = useState<'editor' | 'matrix'>('editor');
+    const [subView, setSubView] = useState<'editor' | 'matrix' | 'timeline'>('editor');
+    const [selectedTripId, setSelectedTripId] = useState<string | null>(null);
     const [isFullScreen, setIsFullScreen] = useState(false);
     const [showComparisonModal, setShowComparisonModal] = useState(false);
     const [showAuditLog, setShowAuditLog] = useState(false);
+
+    // Upload to Master State
+    const [showUploadModal, setShowUploadModal] = useState(false);
+    const [showBulkUploadModal, setShowBulkUploadModal] = useState(false);
+    const [uploadConfirmation, setUploadConfirmation] = useState<UploadConfirmation | null>(null);
+    const [isUploading, setIsUploading] = useState(false);
+    const [uploadRouteKey, setUploadRouteKey] = useState<{ routeNumber: string; dayType: DayType } | null>(null);
+
+    // Interline Configuration State
+    const [showInterlineConfig, setShowInterlineConfig] = useState(false);
+    const [interlineConfig, setInterlineConfigInternal] = useState<InterlineConfig>(
+        initialInterlineConfig || { rules: [] }
+    );
+
+    // Wrapper to notify parent when interline config changes
+    const setInterlineConfig = (config: InterlineConfig) => {
+        setInterlineConfigInternal(config);
+        onInterlineConfigChange?.(config);
+    };
+
+    // Handler to apply interline rules to schedules
+    const handleApplyInterlineRules = () => {
+        const cloned = deepCloneSchedules(schedules);
+        clearInterlineMetadata(cloned);
+        const result = applyInterlineRules(cloned, interlineConfig.rules);
+        onSchedulesChange(cloned);
+        showSuccessToast(`Applied ${result.applied} interline connection(s)`);
+        setShowInterlineConfig(false);
+    };
+
+    // Auto-initialize and auto-apply interline rules for 8A/8B routes
+    const [hasAutoAppliedInterline, setHasAutoAppliedInterline] = useState(false);
+
+    useEffect(() => {
+        // Only run once when schedules are loaded and we haven't auto-applied yet
+        if (hasAutoAppliedInterline || schedules.length === 0) return;
+
+        // Extract route names
+        const routeNames = new Set<string>();
+        schedules.forEach(t => {
+            const match = t.routeName.match(/^([\dA-Za-z]+)/);
+            if (match) routeNames.add(match[1]);
+        });
+
+        const has8A = routeNames.has('8A');
+        const has8B = routeNames.has('8B');
+
+        // Only proceed if both 8A and 8B exist
+        if (!has8A || !has8B) return;
+
+        // Find the interline stop
+        const allStops = new Set<string>();
+        schedules.forEach(t => t.stops.forEach(s => allStops.add(s)));
+        const stopsArray = Array.from(allStops);
+        const atStop = stopsArray.find(s => s.toLowerCase().includes('barrie allandale transit terminal'))
+            || stopsArray.find(s => s.toLowerCase().includes('allandale'))
+            || stopsArray[0] || '';
+
+        if (!atStop) return;
+
+        // Create default rules if config is empty
+        const needsDefaultRules = interlineConfig.rules.length === 0;
+
+        const defaultRules: InterlineRule[] = needsDefaultRules ? [
+            // Weekday/Saturday rules (8 PM to 1:35 AM)
+            {
+                id: 'rule-8a-8b-weekday',
+                fromRoute: '8A',
+                fromDirection: 'North' as const,
+                toRoute: '8B',
+                toDirection: 'North' as const,
+                atStop,
+                timeRange: { start: 1200, end: 1535 },
+                days: ['Weekday', 'Saturday'] as ('Weekday' | 'Saturday' | 'Sunday')[],
+                enabled: true
+            },
+            {
+                id: 'rule-8b-8a-weekday',
+                fromRoute: '8B',
+                fromDirection: 'North' as const,
+                toRoute: '8A',
+                toDirection: 'North' as const,
+                atStop,
+                timeRange: { start: 1200, end: 1535 },
+                days: ['Weekday', 'Saturday'] as ('Weekday' | 'Saturday' | 'Sunday')[],
+                enabled: true
+            },
+            // Sunday rules (All Day)
+            {
+                id: 'rule-8a-8b-sunday',
+                fromRoute: '8A',
+                fromDirection: 'North' as const,
+                toRoute: '8B',
+                toDirection: 'North' as const,
+                atStop,
+                timeRange: { start: 0, end: 1535 },
+                days: ['Sunday'] as ('Weekday' | 'Saturday' | 'Sunday')[],
+                enabled: true
+            },
+            {
+                id: 'rule-8b-8a-sunday',
+                fromRoute: '8B',
+                fromDirection: 'North' as const,
+                toRoute: '8A',
+                toDirection: 'North' as const,
+                atStop,
+                timeRange: { start: 0, end: 1535 },
+                days: ['Sunday'] as ('Weekday' | 'Saturday' | 'Sunday')[],
+                enabled: true
+            }
+        ] : interlineConfig.rules;
+
+        // Update config with default rules if needed
+        if (needsDefaultRules) {
+            setInterlineConfig({
+                ...interlineConfig,
+                rules: defaultRules,
+                lastUpdated: new Date().toISOString()
+            });
+        }
+
+        // Auto-apply rules (only enabled ones)
+        const enabledRules = defaultRules.filter(r => r.enabled);
+        if (enabledRules.length > 0) {
+            const cloned = deepCloneSchedules(schedules);
+            clearInterlineMetadata(cloned);
+            const result = applyInterlineRules(cloned, enabledRules);
+            if (result.applied > 0) {
+                onSchedulesChange(cloned);
+            }
+        }
+
+        setHasAutoAppliedInterline(true);
+    }, [schedules, interlineConfig.rules.length, hasAutoAppliedInterline]);
+
+    // Quick Actions Bar Filter State
+    const [filter, setFilter] = useState<FilterState>({
+        timeRange: { start: null, end: null },
+        highlight: null,
+        search: ''
+    });
 
     // Context Menu State
     const [contextMenu, setContextMenu] = useState<{
@@ -1147,7 +2061,12 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                 if (day.north && day.south) day.combined = buildRoundTripView(day.north, day.south);
             });
             return group;
-        }).sort((a, b) => a.name.localeCompare(b.name));
+        }).sort((a, b) => {
+            // Sort numerically, largest to smallest
+            const numA = parseInt(a.name.replace(/\D/g, '')) || 0;
+            const numB = parseInt(b.name.replace(/\D/g, '')) || 0;
+            return numB - numA; // Descending order
+        });
     }, [schedules]);
 
     console.log('ScheduleEditor consolidatedRoutes:', consolidatedRoutes.length, consolidatedRoutes.map(r => ({
@@ -1522,8 +2441,58 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                     showSuccessToast('Block start point updated');
                 }
                 break;
+
+            case 'duplicateTrip':
+                handleDuplicateTrip(action.tripId);
+                break;
         }
         setContextMenu(null);
+    };
+
+    // Duplicate trip handler - clones a trip with +1 minute offset
+    const handleDuplicateTrip = (tripId: string) => {
+        const newScheds = deepCloneSchedules(schedules);
+        const result = findTableAndTrip(newScheds, tripId);
+        if (!result) return;
+
+        const { table, trip } = result;
+
+        // Create a new trip as a clone
+        const newTrip: MasterTrip = {
+            ...JSON.parse(JSON.stringify(trip)),
+            id: `${trip.id}-dup-${Date.now()}`,
+            tripNumber: table.trips.length + 1,
+            startTime: trip.startTime + 1, // Offset by 1 minute
+            endTime: trip.endTime + 1,
+        };
+
+        // Shift all stop times by 1 minute
+        Object.keys(newTrip.stops).forEach(stop => {
+            if (newTrip.stops[stop]) {
+                newTrip.stops[stop] = TimeUtils.addMinutes(newTrip.stops[stop], 1);
+            }
+        });
+
+        // Insert after the source trip
+        const tripIndex = table.trips.findIndex(t => t.id === tripId);
+        table.trips.splice(tripIndex + 1, 0, newTrip);
+
+        // Re-sort by start time
+        table.trips.sort((a, b) => a.startTime - b.startTime);
+
+        // Reassign trip numbers
+        table.trips.forEach((t, i) => { t.tripNumber = i + 1; });
+
+        validateRouteTable(table);
+
+        logAction('add', `Duplicated trip from Block ${trip.blockId}`, {
+            tripId: newTrip.id,
+            blockId: newTrip.blockId,
+            field: 'trip'
+        });
+
+        onSchedulesChange(newScheds);
+        showSuccessToast('Trip duplicated');
     };
 
     // Right-click handler for trip rows
@@ -1547,6 +2516,68 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
             stopIndex,
             stops
         });
+    };
+
+    // Menu open handler for kebab button click
+    const handleMenuOpen = (
+        tripId: string,
+        x: number,
+        y: number,
+        tripDirection: 'North' | 'South',
+        blockId: string,
+        stops: string[]
+    ) => {
+        setContextMenu({
+            x,
+            y,
+            tripId,
+            tripDirection,
+            blockId,
+            stops
+        });
+    };
+
+    // Timeline drag handler - updates trip times from timeline view
+    const handleTimelineTripTimeChange = (tripId: string, newStartTime: number, newDuration: number) => {
+        const newScheds = deepCloneSchedules(schedules);
+        const result = findTableAndTrip(newScheds, tripId);
+        if (!result) return;
+
+        const { table, trip } = result;
+        const oldStartTime = trip.startTime;
+        const delta = newStartTime - oldStartTime;
+
+        // Shift all stop times by the delta
+        Object.keys(trip.stops).forEach(stop => {
+            const t = TimeUtils.toMinutes(trip.stops[stop]);
+            if (t !== null) {
+                trip.stops[stop] = TimeUtils.fromMinutes(t + delta);
+            }
+        });
+
+        // Update trip computed values
+        trip.startTime = newStartTime;
+        trip.endTime = newStartTime + newDuration;
+        trip.travelTime = newDuration;
+
+        // Recalculate derived values
+        recalculateTrip(trip, table.stops);
+        validateRouteTable(table);
+
+        logAction('edit', `Timeline: Moved trip to ${TimeUtils.fromMinutes(newStartTime)}`, {
+            tripId,
+            blockId: trip.blockId,
+            field: 'startTime',
+            oldValue: TimeUtils.fromMinutes(oldStartTime),
+            newValue: TimeUtils.fromMinutes(newStartTime)
+        });
+
+        onSchedulesChange(newScheds);
+    };
+
+    // Handle trip selection from timeline
+    const handleTripSelect = (tripId: string) => {
+        setSelectedTripId(tripId);
     };
 
     const handleBulkAdjustTravelTime = (fromStop: string, toStop: string, delta: number, routeName: string) => {
@@ -1990,6 +3021,146 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         link.click();
     };
 
+    // --- Upload to Master Handlers ---
+
+    // Get routes available for upload (combines North/South tables for each route-day)
+    const routesForUpload = useMemo((): RouteForUpload[] => {
+        const result: RouteForUpload[] = [];
+        consolidatedRoutes.forEach(group => {
+            Object.entries(group.days).forEach(([dayType, dayData]) => {
+                const north = dayData.north;
+                const south = dayData.south;
+                if (north || south) {
+                    result.push({
+                        routeNumber: group.name,
+                        dayType: dayType as DayType,
+                        displayName: `Route ${group.name} (${dayType})`,
+                        tripCount: (north?.trips.length || 0) + (south?.trips.length || 0),
+                        northStopCount: north?.stops.length || 0,
+                        southStopCount: south?.stops.length || 0
+                    });
+                }
+            });
+        });
+        return result;
+    }, [consolidatedRoutes]);
+
+    // Get North/South tables for a specific route-day
+    const getTablesForRoute = (routeNumber: string, dayType: DayType): { north: MasterRouteTable | null; south: MasterRouteTable | null } => {
+        const group = consolidatedRoutes.find(g => g.name === routeNumber);
+        if (!group) return { north: null, south: null };
+        const dayData = group.days[dayType];
+        if (!dayData) return { north: null, south: null };
+        return { north: dayData.north || null, south: dayData.south || null };
+    };
+
+    // Initiate single route upload
+    const handleInitiateUpload = async (routeNumber: string, dayType: DayType) => {
+        if (!teamId || !userId) {
+            showSuccessToast('Please join a team to upload to Master Schedule');
+            return;
+        }
+
+        const { north, south } = getTablesForRoute(routeNumber, dayType);
+        if (!north && !south) {
+            showSuccessToast('No schedule data found for this route');
+            return;
+        }
+
+        try {
+            // Use empty table if one direction is missing
+            const northTable = north || { routeName: `${routeNumber} (${dayType}) (North)`, stops: [], stopIds: {}, trips: [] };
+            const southTable = south || { routeName: `${routeNumber} (${dayType}) (South)`, stops: [], stopIds: {}, trips: [] };
+
+            const confirmation = await prepareUpload(teamId, northTable, southTable, routeNumber, dayType);
+            setUploadConfirmation(confirmation);
+            setUploadRouteKey({ routeNumber, dayType });
+            setShowUploadModal(true);
+        } catch (error) {
+            console.error('Error preparing upload:', error);
+            showSuccessToast('Failed to prepare upload');
+        }
+    };
+
+    // Confirm single route upload
+    const handleConfirmUpload = async () => {
+        if (!teamId || !userId || !uploaderName || !uploadRouteKey) return;
+
+        setIsUploading(true);
+        try {
+            const { north, south } = getTablesForRoute(uploadRouteKey.routeNumber, uploadRouteKey.dayType);
+            const northTable = north || { routeName: `${uploadRouteKey.routeNumber} (${uploadRouteKey.dayType}) (North)`, stops: [], stopIds: {}, trips: [] };
+            const southTable = south || { routeName: `${uploadRouteKey.routeNumber} (${uploadRouteKey.dayType}) (South)`, stops: [], stopIds: {}, trips: [] };
+
+            await uploadToMasterSchedule(
+                teamId,
+                userId,
+                uploaderName,
+                northTable,
+                southTable,
+                uploadRouteKey.routeNumber,
+                uploadRouteKey.dayType,
+                'tweaker'
+            );
+
+            showSuccessToast(`Route ${uploadRouteKey.routeNumber} (${uploadRouteKey.dayType}) uploaded to Master`);
+            setShowUploadModal(false);
+            setUploadConfirmation(null);
+            setUploadRouteKey(null);
+        } catch (error) {
+            console.error('Error uploading to master:', error);
+            showSuccessToast('Failed to upload to Master Schedule');
+        } finally {
+            setIsUploading(false);
+        }
+    };
+
+    // Bulk upload handler
+    const handleBulkUpload = async (selectedRoutes: RouteForUpload[]) => {
+        if (!teamId || !userId || !uploaderName) return [];
+
+        const results: Array<{ routeNumber: string; dayType: DayType; success: boolean; error?: string; newVersion?: number }> = [];
+
+        for (const route of selectedRoutes) {
+            try {
+                const { north, south } = getTablesForRoute(route.routeNumber, route.dayType);
+                const northTable = north || { routeName: `${route.routeNumber} (${route.dayType}) (North)`, stops: [], stopIds: {}, trips: [] };
+                const southTable = south || { routeName: `${route.routeNumber} (${route.dayType}) (South)`, stops: [], stopIds: {}, trips: [] };
+
+                const entry = await uploadToMasterSchedule(
+                    teamId,
+                    userId,
+                    uploaderName,
+                    northTable,
+                    southTable,
+                    route.routeNumber,
+                    route.dayType,
+                    'tweaker'
+                );
+
+                results.push({
+                    routeNumber: route.routeNumber,
+                    dayType: route.dayType,
+                    success: true,
+                    newVersion: entry.currentVersion
+                });
+            } catch (error) {
+                results.push({
+                    routeNumber: route.routeNumber,
+                    dayType: route.dayType,
+                    success: false,
+                    error: error instanceof Error ? error.message : 'Unknown error'
+                });
+            }
+        }
+
+        const successCount = results.filter(r => r.success).length;
+        if (successCount > 0) {
+            showSuccessToast(`${successCount} route(s) uploaded to Master Schedule`);
+        }
+
+        return results;
+    };
 
     // Active Data
     const activeRouteGroup = consolidatedRoutes[activeRouteIdx];
@@ -2038,7 +3209,28 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                 baselineLabel="Original"
             />
 
-            <div className={`h-full flex flex-col bg-gray-50/30 overflow-hidden ${isFullScreen ? 'fixed inset-0 z-50 bg-white' : ''}`}>
+            {/* Upload to Master Modal (Single Route) */}
+            <UploadToMasterModal
+                isOpen={showUploadModal}
+                confirmation={uploadConfirmation}
+                onConfirm={handleConfirmUpload}
+                onCancel={() => {
+                    setShowUploadModal(false);
+                    setUploadConfirmation(null);
+                    setUploadRouteKey(null);
+                }}
+                isUploading={isUploading}
+            />
+
+            {/* Bulk Upload to Master Modal */}
+            <BulkUploadToMasterModal
+                isOpen={showBulkUploadModal}
+                routes={routesForUpload}
+                onConfirm={handleBulkUpload}
+                onCancel={() => setShowBulkUploadModal(false)}
+            />
+
+            <div className={`h-full flex flex-col bg-gray-50/30 overflow-hidden ${isFullScreen ? 'fixed inset-0 z-[9999] bg-white' : ''}`}>
                 <WorkspaceHeader
                     routeGroupName={activeRouteGroup.name}
                     dayLabel={activeDay}
@@ -2059,12 +3251,17 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                     isFullScreen={isFullScreen}
                     onToggleFullScreen={() => setIsFullScreen(!isFullScreen)}
                     bands={bands}
+                    canUndo={canUndo}
+                    canRedo={canRedo}
+                    onUndo={undo}
+                    onRedo={redo}
+                    hideAutoSave={hideAutoSave}
                 />
 
                 <div className="flex-grow flex overflow-hidden">
                     {/* Sidebar */}
                     {!isFullScreen && (
-                        <div className="w-80 bg-white border-r border-gray-200 flex flex-col overflow-hidden z-20">
+                        <div className="w-80 min-w-[320px] flex-shrink-0 bg-white border-r border-gray-200 flex flex-col overflow-hidden z-20">
                             {/* Header */}
                             <div className="p-4 border-b border-gray-100 flex justify-between items-center">
                                 <h2 className="text-sm font-bold uppercase tracking-wider">Route Tweaker</h2>
@@ -2087,14 +3284,27 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                                         {i === activeRouteIdx && (
                                             <div className="pl-3 space-y-1">
                                                 {['Weekday', 'Saturday', 'Sunday'].filter(d => Object.keys(route.days).includes(d)).map(day => (
-                                                    <button
-                                                        key={day}
-                                                        onClick={() => setActiveDay(day)}
-                                                        className={`w-full text-left px-3 py-1.5 rounded text-xs flex items-center gap-2 ${activeDay === day ? 'bg-blue-100 font-bold text-blue-800' : 'text-gray-500 hover:bg-gray-50'}`}
-                                                    >
-                                                        <div className={`w-1.5 h-1.5 rounded-full ${activeDay === day ? 'bg-blue-600' : 'bg-gray-300'}`} />
-                                                        {day}
-                                                    </button>
+                                                    <div key={day} className="flex items-center gap-1">
+                                                        <button
+                                                            onClick={() => setActiveDay(day)}
+                                                            className={`flex-1 text-left px-3 py-1.5 rounded text-xs flex items-center gap-2 ${activeDay === day ? 'bg-blue-100 font-bold text-blue-800' : 'text-gray-500 hover:bg-gray-50'}`}
+                                                        >
+                                                            <div className={`w-1.5 h-1.5 rounded-full ${activeDay === day ? 'bg-blue-600' : 'bg-gray-300'}`} />
+                                                            {day}
+                                                        </button>
+                                                        {teamId && (
+                                                            <button
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    handleInitiateUpload(route.name, day as DayType);
+                                                                }}
+                                                                className="p-1.5 rounded text-gray-400 hover:text-green-600 hover:bg-green-50 transition-colors"
+                                                                title={`Upload Route ${route.name} (${day}) to Master`}
+                                                            >
+                                                                <Upload size={12} />
+                                                            </button>
+                                                        )}
+                                                    </div>
                                                 ))}
                                             </div>
                                         )}
@@ -2102,26 +3312,53 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                                 ))}
                             </div>
 
-                            {subView === 'editor' && (
-                                <div className="p-4 border-t border-gray-100 flex gap-2 justify-center">
-                                    <button onClick={undo} disabled={!canUndo} className="p-2 bg-gray-100 rounded hover:bg-gray-200 disabled:opacity-50" title="Undo (Ctrl+Z)"><Undo2 size={16} /></button>
-                                    <button onClick={redo} disabled={!canRedo} className="p-2 bg-gray-100 rounded hover:bg-gray-200 disabled:opacity-50" title="Redo (Ctrl+Y)"><Redo2 size={16} /></button>
-                                    <div className="w-px bg-gray-200 mx-1" />
-                                    <button
-                                        onClick={() => setShowComparisonModal(true)}
-                                        disabled={!originalSchedules}
-                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-100 text-purple-700 rounded hover:bg-purple-200 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium"
-                                        title="Compare with original"
-                                    >
-                                        <GitCompare size={14} /> Compare
-                                    </button>
-                                </div>
-                            )}
+                            {/* Footer Actions */}
+                            <div className="border-t border-gray-100">
+                                {/* Upload to Master Button */}
+                                {teamId && (
+                                    <div className="p-3 border-b border-gray-100">
+                                        <button
+                                            onClick={() => setShowBulkUploadModal(true)}
+                                            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-green-600 text-white font-bold rounded-lg hover:bg-green-700 transition-colors shadow-sm"
+                                        >
+                                            <Database size={16} />
+                                            Upload to Master
+                                        </button>
+                                        <p className="text-xs text-gray-500 text-center mt-2">
+                                            {routesForUpload.length} route{routesForUpload.length !== 1 ? 's' : ''} available
+                                        </p>
+                                    </div>
+                                )}
+
+                                {/* Editor Actions */}
+                                {subView === 'editor' && (
+                                    <div className="p-4 flex gap-2 justify-center">
+                                        <button onClick={undo} disabled={!canUndo} className="p-2 bg-gray-100 rounded hover:bg-gray-200 disabled:opacity-50" title="Undo (Ctrl+Z)"><Undo2 size={16} /></button>
+                                        <button onClick={redo} disabled={!canRedo} className="p-2 bg-gray-100 rounded hover:bg-gray-200 disabled:opacity-50" title="Redo (Ctrl+Y)"><Redo2 size={16} /></button>
+                                        <div className="w-px bg-gray-200 mx-1" />
+                                        <button
+                                            onClick={() => setShowComparisonModal(true)}
+                                            disabled={!originalSchedules}
+                                            className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-100 text-purple-700 rounded hover:bg-purple-200 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium"
+                                            title="Compare with original"
+                                        >
+                                            <GitCompare size={14} /> Compare
+                                        </button>
+                                        <button
+                                            onClick={() => setShowInterlineConfig(true)}
+                                            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-100 text-blue-700 rounded hover:bg-blue-200 text-sm font-medium"
+                                            title="Configure route interlining"
+                                        >
+                                            <ArrowRight size={14} /> Interline
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
                         </div>
                     )}
 
                     {/* Editor Content */}
-                    <div className="flex-grow overflow-auto flex flex-col p-4">
+                    <div className="flex-grow min-w-0 overflow-auto flex flex-col p-4">
                         {subView === 'matrix' ? (
                             <TravelTimeGrid
                                 schedules={[activeRoute.north, activeRoute.south].filter((t): t is MasterRouteTable => !!t)}
@@ -2133,17 +3370,34 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                                 analysis={analysis}
                                 segmentNames={segmentNames}
                             />
+                        ) : subView === 'timeline' ? (
+                            <TimelineView
+                                schedules={[activeRoute.north, activeRoute.south].filter((t): t is MasterRouteTable => !!t)}
+                                onTripTimeChange={handleTimelineTripTimeChange}
+                                onTripSelect={handleTripSelect}
+                                selectedTripId={selectedTripId}
+                            />
                         ) : (
-                            activeRoute.combined ? (
-                                <RoundTripTableView
-                                    schedules={schedules}
-                                    onCellEdit={handleCellEdit}
-                                    originalSchedules={originalSchedules}
-                                    onDeleteTrip={handleDeleteTrip}
-                                    onAddTrip={(_, tripId) => openAddTripModal(tripId, {})}
-                                    onTripRightClick={handleTripRightClick}
-                                    draftName={draftName}
-                                />
+                            (activeRoute.combined && !forceSimpleView) ? (
+                                <>
+                                    {!isFullScreen && <QuickActionsBar filter={filter} onFilterChange={setFilter} />}
+                                    <RoundTripTableView
+                                        schedules={schedules}
+                                        onCellEdit={handleCellEdit}
+                                        onTimeAdjust={handleTimeAdjust}
+                                        onRecoveryEdit={handleRecoveryEdit}
+                                        originalSchedules={originalSchedules}
+                                        onDeleteTrip={handleDeleteTrip}
+                                        onDuplicateTrip={handleDuplicateTrip}
+                                        onAddTrip={(_, tripId) => openAddTripModal(tripId, {})}
+                                        onTripRightClick={handleTripRightClick}
+                                        onMenuOpen={handleMenuOpen}
+                                        draftName={draftName}
+                                        filter={filter}
+                                        targetCycleTime={targetCycleTime}
+                                        targetHeadway={targetHeadway}
+                                    />
+                                </>
                             ) : (
                                 <SingleRouteView
                                     table={activeRoute.north || activeRoute.south!}
@@ -2152,6 +3406,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                                     onRecoveryEdit={handleRecoveryEdit}
                                     onTimeAdjust={handleTimeAdjust}
                                     onDeleteTrip={handleDeleteTrip}
+                                    onDuplicateTrip={handleDuplicateTrip}
                                     onAddTrip={(_, tripId) => openAddTripModal(tripId, {})}
                                 />
                             )
@@ -2159,6 +3414,16 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                     </div>
                 </div>
             </div>
+
+            {/* Interline Config Panel */}
+            <InterlineConfigPanel
+                isOpen={showInterlineConfig}
+                onClose={() => setShowInterlineConfig(false)}
+                config={interlineConfig}
+                onConfigChange={setInterlineConfig}
+                tables={schedules}
+                onApplyRules={handleApplyInterlineRules}
+            />
 
             {/* Audit Log Panel */}
             <AuditLogPanel
