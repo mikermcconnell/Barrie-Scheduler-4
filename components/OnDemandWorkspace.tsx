@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { generateRequirements, generateShifts, calculateSchedule, calculateMetrics } from '../utils/dataGenerator';
 import { optimizeScheduleWithGemini } from '../utils/geminiOptimizer';
 import { SummaryCards } from './SummaryCards';
@@ -19,7 +19,8 @@ import {
     SavedSchedule,
     downloadFileContent,
     saveSchedule,
-    updateSchedule
+    updateSchedule,
+    getAllSchedules
 } from '../utils/dataService';
 import { generateRideCoCSV, downloadCSV } from '../utils/exportService';
 import { SummaryMetrics, Shift, Requirement, Zone, ZoneFilterType } from '../types';
@@ -61,6 +62,8 @@ export const OnDemandWorkspace: React.FC = () => {
     const [isSaving, setIsSaving] = useState(false);
     const [saveSuccess, setSaveSuccess] = useState(false);
     const [isLoadingFromCloud, setIsLoadingFromCloud] = useState(false);
+    const [hasAttemptedAutoLoad, setHasAttemptedAutoLoad] = useState(false);
+    const [isInitialLoading, setIsInitialLoading] = useState(true);
 
     // Draft Name State (Supporting "Save As" via Rename)
     const [draftName, setDraftName] = useState<string>(`On-Demand Schedule - ${new Date().toLocaleDateString()}`);
@@ -516,6 +519,36 @@ export const OnDemandWorkspace: React.FC = () => {
         setShowFileManager(false);
     };
 
+    // Auto-load most recent saved schedule on workspace mount
+    useEffect(() => {
+        const loadMostRecentSchedule = async () => {
+            if (!user || hasAttemptedAutoLoad) {
+                setIsInitialLoading(false);
+                return;
+            }
+
+            setHasAttemptedAutoLoad(true);
+
+            try {
+                const savedSchedules = await getAllSchedules(user.uid);
+
+                if (savedSchedules.length > 0) {
+                    // Load the most recent schedule (already sorted by updatedAt desc)
+                    const mostRecent = savedSchedules[0];
+                    console.log('Auto-loading most recent schedule:', mostRecent.name);
+                    handleScheduleSelect(mostRecent);
+                }
+            } catch (err) {
+                console.error('Failed to auto-load recent schedule:', err);
+                // Silently fail - user will see demo data
+            } finally {
+                setIsInitialLoading(false);
+            }
+        };
+
+        loadMostRecentSchedule();
+    }, [user, hasAttemptedAutoLoad]);
+
     // Save current work as a draft
     const handleSaveDraft = async () => {
         if (!user) {
@@ -563,6 +596,18 @@ export const OnDemandWorkspace: React.FC = () => {
             setIsSaving(false);
         }
     };
+
+    // Show loading state while auto-loading most recent schedule
+    if (isInitialLoading && user) {
+        return (
+            <div className="h-full flex items-center justify-center">
+                <div className="flex flex-col items-center gap-4">
+                    <Loader2 className="animate-spin text-brand-blue" size={48} />
+                    <p className="text-gray-500 font-bold">Loading your most recent schedule...</p>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="animate-in fade-in zoom-in-95 duration-500 h-full overflow-y-auto custom-scrollbar pb-24 pr-2">
