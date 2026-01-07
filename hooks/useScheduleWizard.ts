@@ -15,8 +15,8 @@ import {
     TimeBand,
     DirectionBandSummary,
     computeDirectionBandSummary
-} from '../components/NewSchedule/utils/runtimeAnalysis';
-import { generateSchedule } from '../components/NewSchedule/utils/scheduleGenerator';
+} from '../utils/runtimeAnalysis';
+import { generateSchedule } from '../utils/scheduleGenerator';
 import { ScheduleConfig } from '../components/NewSchedule/steps/Step3Build';
 import { MasterRouteTable } from '../utils/masterScheduleParser';
 import { useWizardProgress, WizardProgress } from './useWizardProgress';

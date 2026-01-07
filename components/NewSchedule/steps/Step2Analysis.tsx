@@ -1,6 +1,6 @@
 
 import React, { useMemo, useState, useEffect } from 'react';
-import { TripBucketAnalysis, TimeBand, BandSummary, DirectionBandSummary } from '../utils/runtimeAnalysis';
+import { TripBucketAnalysis, TimeBand, BandSummary, DirectionBandSummary } from '../../../utils/runtimeAnalysis';
 import { SegmentRawData } from '../utils/csvParser';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, ReferenceLine } from 'recharts';
 import { AlertTriangle, CheckCircle2, TrendingUp, Clock, BarChart2, ChevronDown, ChevronRight, Eye, EyeOff, Table } from 'lucide-react';

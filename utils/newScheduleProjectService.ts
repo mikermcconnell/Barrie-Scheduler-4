@@ -27,7 +27,7 @@ import {
 import { db, storage } from './firebase';
 import type { MasterRouteTable } from './masterScheduleParser';
 import type { RuntimeData } from '../components/NewSchedule/utils/csvParser';
-import type { TripBucketAnalysis, TimeBand } from '../components/NewSchedule/utils/runtimeAnalysis';
+import type { TripBucketAnalysis, TimeBand } from './runtimeAnalysis';
 import type { ScheduleConfig } from '../components/NewSchedule/steps/Step3Build';
 
 // ============ TYPES ============

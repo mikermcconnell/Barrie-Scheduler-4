@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { TimeBand } from '../utils/runtimeAnalysis';
+import { TimeBand } from '../../../utils/runtimeAnalysis';
 import { Clock, Bus, Plus, Trash2, LayoutGrid } from 'lucide-react';
 
 // Configuration Constants

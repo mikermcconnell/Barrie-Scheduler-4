@@ -1,8 +1,8 @@
 
-import { MasterRouteTable, MasterTrip } from '../../../utils/masterScheduleParser';
-import { ScheduleConfig } from '../steps/Step3Build';
+import { MasterRouteTable, MasterTrip } from './masterScheduleParser';
+import { ScheduleConfig } from '../components/NewSchedule/steps/Step3Build';
 import { TimeBand, TripBucketAnalysis, BandSummary, DirectionBandSummary } from './runtimeAnalysis';
-import { SegmentRawData, extractTimepointsFromSegments } from './csvParser';
+import { SegmentRawData, extractTimepointsFromSegments } from '../components/NewSchedule/utils/csvParser';
 
 /**
  * Generates a complete schedule from configuration and runtime analysis data.

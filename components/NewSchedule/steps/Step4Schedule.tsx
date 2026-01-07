@@ -5,7 +5,7 @@ import { ScheduleEditor } from '../../ScheduleEditor';
 import { useUndoRedo } from '../../../hooks/useUndoRedo';
 import { AutoSaveStatus } from '../../../hooks/useAutoSave';
 
-import { TimeBand, TripBucketAnalysis } from '../utils/runtimeAnalysis';
+import { TimeBand, TripBucketAnalysis } from '../../../utils/runtimeAnalysis';
 
 interface Step4ScheduleProps {
     initialSchedules: MasterRouteTable[];

@@ -1,5 +1,5 @@
 
-import { RuntimeData, SegmentRawData } from './csvParser';
+import { RuntimeData, SegmentRawData } from '../components/NewSchedule/utils/csvParser';
 
 export interface SegmentDetail {
     segmentName: string;
