@@ -64,7 +64,33 @@ Before modifying these, **ask for approval**:
 
 ---
 
-## 5. Common Task Patterns
+## 5. Required Tests
+
+**Before completing any task that touches time parsing or schedule parsing, run:**
+
+```bash
+npx vitest run tests/timeUtils.test.ts
+```
+
+### Critical: Post-Midnight Time Parsing Bug
+
+This bug has occurred **3+ times**. The test file `tests/timeUtils.test.ts` exists specifically to prevent regression.
+
+**Root cause:** Excel represents times as day fractions. Post-midnight times (12:30 AM, 1:00 AM) have values >= 1.0:
+- `0.5` = 12:00 PM
+- `1.02` = 12:30 AM (the "1" = next day)
+
+**The fix:** Extract fractional part for values >= 1.0. See:
+- `utils/timeUtils.ts:18-26`
+- `utils/masterScheduleParser.ts:119-129`
+- `utils/masterScheduleParserV2.ts:55-84` (parseTimeToMinutes)
+- `utils/masterScheduleParserV2.ts:425` (isExcelTime check)
+
+**If you modify any time parsing function, you MUST run the tests.**
+
+---
+
+## 6. Common Task Patterns
 
 ### Bug Fix
 ```
@@ -72,6 +98,7 @@ Before modifying these, **ask for approval**:
 2. Identify root cause file:line
 3. Propose fix with impact assessment
 4. Implement after confirmation
+5. Run relevant tests (see Section 5)
 ```
 
 ### New Feature
@@ -81,6 +108,7 @@ Before modifying these, **ask for approval**:
 3. Restate refined requirements
 4. Wait for "go" confirmation
 5. Implement with TodoWrite tracking
+6. Run relevant tests
 ```
 
 ### Refactor
@@ -88,11 +116,12 @@ Before modifying these, **ask for approval**:
 1. Explain current state and proposed change
 2. Flag any behavioral changes
 3. Get approval before proceeding
+4. Run relevant tests after changes
 ```
 
 ---
 
-## 6. Feedback Loop
+## 7. Feedback Loop
 
 After each significant task, the user may provide:
 
@@ -107,8 +136,9 @@ When this happens:
 
 ---
 
-## 7. Session Memory
+## 8. Session Memory
 
 Key learnings from this session (updated as we work):
 
-- *(none yet - will be updated based on feedback)*
+- **Post-midnight time parsing** - Fixed 3x. Always run `tests/timeUtils.test.ts` after touching time parsing.
+- **Interline cycle calculation** - Use dynamic stop-name detection, not hardcoded column indices (different day types have different layouts).

@@ -6,12 +6,14 @@ import {
     Timer,
     BarChart2,
     ArrowRight,
-    ArrowLeft
+    ArrowLeft,
+    FileSpreadsheet
 } from 'lucide-react';
 
 import { OTPAnalysis } from './OTPAnalysis';
 import { ScheduleTweakerWorkspace } from './ScheduleTweakerWorkspace';
 import { NewScheduleWizard } from './NewSchedule/NewScheduleWizard';
+import { MasterScheduleBrowser } from './MasterScheduleBrowser';
 import { ScheduleDraft, SavedFile } from '../utils/dataService';
 
 // --- Placeholder Components ---
@@ -26,7 +28,7 @@ const DwellAssessment: React.FC = () => (
     </div>
 );
 
-type FixedRouteViewMode = 'dashboard' | 'tweaker' | 'new-schedule' | 'dwell' | 'otp';
+type FixedRouteViewMode = 'dashboard' | 'tweaker' | 'new-schedule' | 'dwell' | 'otp' | 'master';
 
 export const FixedRouteWorkspace: React.FC = () => {
     const [viewMode, setViewMode] = useState<FixedRouteViewMode>('dashboard');
@@ -44,6 +46,10 @@ export const FixedRouteWorkspace: React.FC = () => {
 
     const handleOpenNewSchedule = () => {
         setViewMode('new-schedule');
+    };
+
+    const handleOpenMasterSchedule = () => {
+        setViewMode('master');
     };
 
     const handleExportToTweaker = (draft: ScheduleDraft) => {
@@ -82,6 +88,16 @@ export const FixedRouteWorkspace: React.FC = () => {
                         </div>
                         <h3 className="text-lg font-bold text-gray-900 mb-1">New Schedules</h3>
                         <p className="text-sm text-gray-500 leading-relaxed">Generate optimized schedules from scratch using AI-powered run cutting.</p>
+                    </button>
+
+                    {/* Master Schedule Card */}
+                    <button onClick={handleOpenMasterSchedule} className="group bg-white p-6 rounded-xl border border-gray-200 shadow-sm hover:shadow-md hover:border-purple-300 transition-all text-left flex flex-col h-full active:scale-[0.99]">
+                        <div className="flex items-center justify-between mb-4">
+                            <div className="bg-purple-50/50 p-2.5 rounded-lg text-purple-600 group-hover:bg-purple-100 transition-colors"><FileSpreadsheet size={20} /></div>
+                            <ArrowRight size={16} className="text-gray-300 group-hover:text-purple-500 transition-colors" />
+                        </div>
+                        <h3 className="text-lg font-bold text-gray-900 mb-1">Master Schedule</h3>
+                        <p className="text-sm text-gray-500 leading-relaxed">Browse your team's source of truth. View versions and manage all routes.</p>
                     </button>
 
                     {/* Dwell Assessment Card - Coming Soon */}
@@ -125,6 +141,8 @@ export const FixedRouteWorkspace: React.FC = () => {
                     <div className="h-6 w-px bg-gray-300"></div>
                     <div className="text-sm font-bold text-gray-500 uppercase tracking-wider">
                         {viewMode === 'tweaker' && 'Schedule Tweaker'}
+                        {viewMode === 'new-schedule' && 'New Schedule'}
+                        {viewMode === 'master' && 'Master Schedule'}
                         {viewMode === 'dwell' && 'Dwell Assessment'}
                         {viewMode === 'otp' && 'OTP Assessment'}
                     </div>
@@ -135,6 +153,7 @@ export const FixedRouteWorkspace: React.FC = () => {
                 <div className="absolute inset-0">
                     {viewMode === 'tweaker' && (
                         <ScheduleTweakerWorkspace
+                            key={tweakerInitialData?.draft?.id || tweakerInitialData?.file?.id || 'empty'}
                             initialDraft={tweakerInitialData?.draft}
                             initialFile={tweakerInitialData?.file}
                             onClose={() => setViewMode('dashboard')}
@@ -154,6 +173,25 @@ export const FixedRouteWorkspace: React.FC = () => {
                             onGenerate={() => {
                                 // Optional: Could show a toast saying "Available in Projects"
                             }}
+                        />
+                    )}
+
+                    {viewMode === 'master' && (
+                        <MasterScheduleBrowser
+                            onLoadToTweaker={(schedules) => {
+                                // Bridge from Master Schedule -> Tweaker
+                                const draft: ScheduleDraft = {
+                                    id: `master-${Date.now()}`,
+                                    name: schedules[0]?.routeName || 'Loaded from Master',
+                                    schedules: schedules,
+                                    originalSchedules: schedules,
+                                    createdAt: new Date(),
+                                    updatedAt: new Date()
+                                };
+                                setTweakerInitialData({ draft });
+                                setViewMode('tweaker');
+                            }}
+                            onClose={() => setViewMode('dashboard')}
                         />
                     )}
 

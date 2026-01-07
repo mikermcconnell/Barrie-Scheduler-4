@@ -115,14 +115,6 @@ export const NewScheduleHeader: React.FC<NewScheduleHeaderProps> = ({
 
                 {/* Project File Menu */}
                 <div className="flex items-center gap-2">
-                    <button
-                        onClick={onOpenProjects}
-                        className="p-1.5 hover:bg-gray-100 rounded-md text-gray-500 transition-colors"
-                        title="Open Project Manager"
-                    >
-                        <FolderOpen size={18} />
-                    </button>
-
                     {/* Project Name (Editable-ish) */}
                     <div className="flex flex-col">
                         <span className="text-[10px] uppercase font-bold text-gray-400 leading-none tracking-wider">Project</span>
@@ -188,8 +180,34 @@ export const NewScheduleHeader: React.FC<NewScheduleHeaderProps> = ({
                 })}
             </div>
 
-            {/* Right Section: Auto-save Status + Save & Exit */}
-            <div className="flex items-center gap-4 w-1/4 justify-end">
+            {/* Right Section: Project Actions + Auto-save Status + Exit */}
+            <div className="flex items-center gap-3 w-1/4 justify-end">
+                {/* New Project Button */}
+                {onNewProject && (
+                    <button
+                        onClick={onNewProject}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
+                        title="Start a new project"
+                    >
+                        <Plus size={14} />
+                        New
+                    </button>
+                )}
+
+                {/* Open Projects Button */}
+                {onOpenProjects && (
+                    <button
+                        onClick={onOpenProjects}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
+                        title="Open saved projects"
+                    >
+                        <FolderOpen size={14} />
+                        Open
+                    </button>
+                )}
+
+                <div className="h-6 w-px bg-gray-200" />
+
                 {/* Auto-save Status (when available) */}
                 {autoSaveStatus && (
                     <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg">

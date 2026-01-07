@@ -16,6 +16,7 @@ const WIZARD_PROGRESS_KEY = 'newScheduleWizard_progress';
 export interface WizardProgress {
     step: 1 | 2 | 3 | 4;
     dayType: 'Weekday' | 'Saturday' | 'Sunday';
+    projectName?: string; // Draft/project name
     fileNames: string[]; // Store names only (files can't be serialized)
     analysis?: TripBucketAnalysis[];
     bands?: TimeBand[];

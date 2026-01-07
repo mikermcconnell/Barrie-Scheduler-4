@@ -53,17 +53,16 @@ export function useUndoRedo<T>(initialState: T, options: UseUndoRedoOptions = {}
     }, []);
 
     const set = useCallback((newPresent: T) => {
-        console.log('useUndoRedo set called');
         setState(currentState => {
-            // If the new state is exactly the same as current, don't add to history
-            // Use JSON stringify for simple deep equality check (sufficient for this use case)
+            // Skip update if state hasn't changed (shallow reference check first for performance)
+            if (currentState.present === newPresent) {
+                return currentState;
+            }
+
+            // Deep equality check using JSON stringify (sufficient for serializable state)
             const currentJson = JSON.stringify(currentState.present);
             const newJson = JSON.stringify(newPresent);
-            const isEqual = currentJson === newJson;
-            console.log('useUndoRedo equality check:', isEqual, 'currentLen:', currentJson.length, 'newLen:', newJson.length);
-
-            if (isEqual) {
-                console.log('useUndoRedo: states are equal, returning current state');
+            if (currentJson === newJson) {
                 return currentState;
             }
 
@@ -72,7 +71,6 @@ export function useUndoRedo<T>(initialState: T, options: UseUndoRedoOptions = {}
                 newPast.shift(); // Remove oldest
             }
 
-            console.log('useUndoRedo: states are different, updating state');
             return {
                 past: newPast,
                 present: newPresent,

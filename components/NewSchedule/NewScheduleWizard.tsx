@@ -1,6 +1,6 @@
 
-import React, { useState, useEffect } from 'react';
-import { ArrowRight, Save, Loader2, Check } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { ArrowRight, Save, Loader2, Check, Upload } from 'lucide-react';
 import { Step1Upload } from './steps/Step1Upload';
 import { Step2Analysis } from './steps/Step2Analysis';
 import { Step3Build, ScheduleConfig } from './steps/Step3Build';
@@ -15,8 +15,13 @@ import { NewScheduleHeader } from './NewScheduleHeader';
 import { ProjectManagerModal } from './ProjectManagerModal';
 import { AutoSaveStatus } from '../../hooks/useAutoSave';
 import { useAuth } from '../AuthContext';
+import { useTeam } from '../TeamContext';
 import { useToast } from '../ToastContext';
 import { saveProject, getProject } from '../../utils/newScheduleProjectService';
+import { UploadToMasterModal } from '../UploadToMasterModal';
+import { prepareUpload, uploadToMasterSchedule } from '../../utils/masterScheduleService';
+import { extractRouteNumber, extractDayType, buildRouteIdentity } from '../../utils/masterScheduleTypes';
+import type { UploadConfirmation, DayType as MasterDayType } from '../../utils/masterScheduleTypes';
 
 // Constants - centralized magic numbers
 const DEFAULT_CYCLE_TIME = 60;
@@ -38,6 +43,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
     lastSaved
 }) => {
     const { user } = useAuth();
+    const { team, hasTeam } = useTeam();
     const toast = useToast();
 
     const [step, setStep] = useState(1);
@@ -72,6 +78,11 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
     // State for Step 4 Schedule
     const [generatedSchedules, setGeneratedSchedules] = useState<MasterRouteTable[]>([]);
 
+    // Master Schedule Upload State
+    const [showUploadModal, setShowUploadModal] = useState(false);
+    const [uploadConfirmation, setUploadConfirmation] = useState<UploadConfirmation | null>(null);
+    const [isUploading, setIsUploading] = useState(false);
+
     // Helper to extract unique segment names from analysis
     const extractSegmentNames = (analysisData: TripBucketAnalysis[]): string[] => {
         const names = new Set<string>();
@@ -96,6 +107,137 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
     const [showResumeModal, setShowResumeModal] = useState(false);
     const [savedProgress, setSavedProgress] = useState<WizardProgress | null>(null);
 
+    // ========== CONSOLIDATED SAVE SYSTEM ==========
+    // Save state tracking to prevent race conditions
+    const [isSaving, setIsSaving] = useState(false);
+    const [isLoadingProject, setIsLoadingProject] = useState(false);
+    const pendingSaveRef = useRef(false);
+    const pendingOverridesRef = useRef<{ name?: string; generatedSchedules?: MasterRouteTable[]; isGenerated?: boolean } | null>(null);
+    const saveTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+    // Helper: Build localStorage save data structure
+    const buildLocalSaveData = useCallback((overrides?: {
+        generatedSchedules?: MasterRouteTable[]
+    }) => ({
+        step: step as 1 | 2 | 3 | 4,
+        dayType,
+        projectName,
+        fileNames: files.map(f => f.name),
+        analysis: step >= 2 ? analysis : undefined,
+        bands: step >= 2 ? bands : undefined,
+        config: step >= 3 ? config : undefined,
+        generatedSchedules: step >= 4 ? (overrides?.generatedSchedules || generatedSchedules) : undefined,
+        parsedData: step >= 1 ? parsedData : undefined,
+        updatedAt: new Date().toISOString()
+    }), [step, dayType, projectName, files, analysis, bands, config, generatedSchedules, parsedData]);
+
+    // Helper: Build Firebase save data structure
+    const buildFirebaseSaveData = useCallback((overrides?: {
+        name?: string;
+        generatedSchedules?: MasterRouteTable[];
+        isGenerated?: boolean;
+    }) => ({
+        name: overrides?.name || projectName,
+        dayType,
+        routeNumber: config.routeNumber,
+        analysis: step >= 2 ? analysis : undefined,
+        bands: step >= 2 ? bands : undefined,
+        config: step >= 3 ? config : undefined,
+        generatedSchedules: step >= 4 ? (overrides?.generatedSchedules || generatedSchedules) : undefined,
+        parsedData: step >= 1 ? parsedData : undefined,
+        isGenerated: overrides?.isGenerated ?? (step >= 4),
+        ...(projectId ? { id: projectId } : {})
+    }), [projectName, dayType, config, step, analysis, bands, generatedSchedules, parsedData, projectId]);
+
+    // Helper: Save to localStorage (fast, synchronous)
+    const saveToLocalStorage = useCallback((overrides?: { generatedSchedules?: MasterRouteTable[] }) => {
+        if (step >= 1 && files.length > 0) {
+            save(buildLocalSaveData(overrides));
+        }
+    }, [step, files.length, save, buildLocalSaveData]);
+
+    // Helper: Save to Firebase with lock to prevent race conditions
+    const saveToFirebase = useCallback(async (overrides?: {
+        name?: string;
+        generatedSchedules?: MasterRouteTable[];
+        isGenerated?: boolean;
+    }): Promise<string | undefined> => {
+        if (!user?.uid) return undefined;
+
+        // If already saving, store overrides and mark as pending
+        if (isSaving) {
+            pendingOverridesRef.current = overrides || null;
+            pendingSaveRef.current = true;
+            return undefined;
+        }
+
+        setIsSaving(true);
+        try {
+            const savedId = await saveProject(user.uid, buildFirebaseSaveData(overrides));
+            setProjectId(savedId);
+            return savedId;
+        } catch (e) {
+            console.error('Firebase save failed:', e);
+            throw e;
+        } finally {
+            setIsSaving(false);
+            // If there was a pending save, execute it with stored overrides
+            if (pendingSaveRef.current) {
+                const storedOverrides = pendingOverridesRef.current;
+                pendingSaveRef.current = false;
+                pendingOverridesRef.current = null;
+                // Use setTimeout to avoid stack overflow
+                setTimeout(() => saveToFirebase(storedOverrides || undefined), 100);
+            }
+        }
+    }, [user?.uid, isSaving, buildFirebaseSaveData]);
+
+    // Debounced auto-save to localStorage (2 second delay)
+    useEffect(() => {
+        // Skip auto-save when loading a project to avoid redundant write
+        if (step >= 1 && files.length > 0 && !isLoadingProject) {
+            // Clear any existing timer
+            if (saveTimerRef.current) {
+                clearTimeout(saveTimerRef.current);
+            }
+            // Set new debounced save
+            saveTimerRef.current = setTimeout(() => {
+                save(buildLocalSaveData());
+            }, 2000);
+        }
+        // Cleanup on unmount - save immediately to prevent data loss
+        return () => {
+            if (saveTimerRef.current) {
+                clearTimeout(saveTimerRef.current);
+                // Save immediately on unmount (debounced save might not have fired)
+                if (step >= 1 && files.length > 0) {
+                    save(buildLocalSaveData());
+                }
+            }
+        };
+    }, [step, dayType, files.length, analysis, bands, config, generatedSchedules, save, buildLocalSaveData, isLoadingProject]);
+
+    // Warn before navigating away if there are unsaved changes
+    useEffect(() => {
+        const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+            // Consider unsaved if debounce timer is running or actively saving
+            const hasUnsavedChanges = saveTimerRef.current !== null || isSaving;
+            if (hasUnsavedChanges && step >= 1) {
+                e.preventDefault();
+                e.returnValue = ''; // Chrome requires returnValue to be set
+            }
+        };
+
+        window.addEventListener('beforeunload', handleBeforeUnload);
+        return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+    }, [isSaving, step]);
+    // Compute wizard save status for header display
+    const wizardSaveStatus: AutoSaveStatus = isSaving ? 'saving' :
+                                             saveTimerRef.current !== null ? 'idle' :
+                                             'saved';
+    const wizardLastSaved = lastSaved; // Use parent's lastSaved if available
+    // ========== END CONSOLIDATED SAVE SYSTEM ==========
+
     // Check for saved progress on mount
     useEffect(() => {
         if (!hasCheckedProgress && hasProgress()) {
@@ -106,27 +248,12 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         setHasCheckedProgress(true);
     }, [hasCheckedProgress, hasProgress, load, setHasCheckedProgress]);
 
-    // Save progress when state changes (after step 1)
-    useEffect(() => {
-        if (step >= 1 && files.length > 0) {
-            save({
-                step: step as 1 | 2 | 3 | 4,
-                dayType,
-                fileNames: files.map(f => f.name),
-                analysis: step >= 2 ? analysis : undefined,
-                bands: step >= 2 ? bands : undefined,
-                config: step >= 3 ? config : undefined,
-                generatedSchedules: step >= 4 ? generatedSchedules : undefined,
-                updatedAt: new Date().toISOString()
-            });
-        }
-    }, [step, dayType, files.length, analysis, bands, config, generatedSchedules, save]);
-
     const handleResume = () => {
         if (savedProgress) {
             setStep(savedProgress.step);
             setMaxStepReached(Math.max(savedProgress.step, maxStepReached));
             setDayType(savedProgress.dayType);
+            if (savedProgress.projectName) setProjectName(savedProgress.projectName);
             if (savedProgress.analysis) {
                 setAnalysis(savedProgress.analysis);
                 setSegmentNames(extractSegmentNames(savedProgress.analysis));
@@ -156,40 +283,18 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
 
     const handleSaveProgress = async () => {
         setIsManualSaving(true);
-        // Save to localStorage for quick resume
-        save({
-            step: step as 1 | 2 | 3 | 4,
-            dayType,
-            fileNames: files.map(f => f.name),
-            analysis: step >= 2 ? analysis : undefined,
-            bands: step >= 2 ? bands : undefined,
-            config: step >= 3 ? config : undefined,
-            generatedSchedules: step >= 4 ? generatedSchedules : undefined,
-            parsedData: step >= 1 ? parsedData : undefined,
-            updatedAt: new Date().toISOString()
-        });
 
-        // Also save to Firebase if user is authenticated
+        // Save to localStorage immediately (uses consolidated helper)
+        saveToLocalStorage();
+
+        // Also save to Firebase if user is authenticated (uses consolidated helper with lock)
         if (user?.uid) {
             try {
-                const savedId = await saveProject(user.uid, {
-                    name: projectName,
-                    dayType,
-                    routeNumber: config.routeNumber,
-                    analysis: step >= 2 ? analysis : undefined,
-                    bands: step >= 2 ? bands : undefined,
-                    config: step >= 3 ? config : undefined,
-                    generatedSchedules: step >= 4 ? generatedSchedules : undefined,
-                    parsedData: step >= 1 ? parsedData : undefined,
-                    isGenerated: step >= 4,
-                    ...(projectId ? { id: projectId } : {})
-                });
-                setProjectId(savedId);
+                await saveToFirebase();
                 setManualSaveSuccess(true);
                 setTimeout(() => setManualSaveSuccess(false), 2000);
                 toast.success('Saved to Cloud', 'Your progress has been saved');
             } catch (e) {
-                console.error('Failed to save to Firebase:', e);
                 toast.warning('Partial Save', 'Saved locally. Cloud save failed.');
             }
         } else {
@@ -198,6 +303,21 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
             toast.info('Saved Locally', 'Sign in to save to cloud');
         }
         setIsManualSaving(false);
+    };
+
+    // Handle project rename with auto-save
+    const handleRenameProject = async (newName: string) => {
+        setProjectName(newName);
+
+        // Auto-save the rename to Firebase if authenticated (uses consolidated helper with lock)
+        if (user?.uid && projectId && !isSaving) {
+            try {
+                await saveToFirebase({ name: newName });
+                toast.success('Renamed', `Project renamed to "${newName}"`);
+            } catch (e) {
+                toast.warning('Rename Saved Locally', 'Could not sync to cloud');
+            }
+        }
     };
 
     const handleNext = async () => {
@@ -299,24 +419,15 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
             setStep(4);
             toast.success('Schedule Generated', `Created ${generatedTables.length} schedule(s)`);
 
-            // Save the generated schedule to Firebase
+            // Save generated schedule - localStorage backup + Firebase (uses consolidated helpers)
+            // Note: Pass generatedTables directly since state hasn't updated yet
+            saveToLocalStorage({ generatedSchedules: generatedTables });
+
             if (user?.uid && generatedTables.length > 0) {
                 try {
-                    const savedId = await saveProject(user.uid, {
-                        ...(projectId ? { id: projectId } : {}),
-                        name: projectName,
-                        dayType,
-                        routeNumber: config.routeNumber,
-                        analysis,
-                        bands,
-                        config,
-                        generatedSchedules: generatedTables,
-                        parsedData,
-                        isGenerated: true
-                    });
-                    setProjectId(savedId);
+                    await saveToFirebase({ generatedSchedules: generatedTables, isGenerated: true });
                 } catch (e) {
-                    console.error('Failed to save generated schedule:', e);
+                    toast.warning('Cloud Save Failed', 'Schedule saved locally. Check your connection.');
                 }
             }
         } else if (step === 4) {
@@ -348,6 +459,77 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         toast.info('New Project', 'Starting fresh');
     };
 
+    // ========== MASTER SCHEDULE UPLOAD ==========
+
+    const handleUploadToMaster = async () => {
+        if (!hasTeam || !team || generatedSchedules.length === 0) return;
+
+        try {
+            // Find north and south tables
+            const northTable = generatedSchedules.find(t => t.routeName.includes('North'));
+            const southTable = generatedSchedules.find(t => t.routeName.includes('South'));
+
+            if (!northTable || !southTable) {
+                toast.error('Missing Tables', 'Both North and South schedules are required');
+                return;
+            }
+
+            // Extract route info from first table
+            const routeNumber = extractRouteNumber(northTable.routeName);
+            const dayType = extractDayType(northTable.routeName) as MasterDayType;
+
+            // Prepare confirmation data
+            const confirmation = await prepareUpload(
+                team.id,
+                northTable,
+                southTable,
+                routeNumber,
+                dayType
+            );
+
+            setUploadConfirmation(confirmation);
+            setShowUploadModal(true);
+        } catch (error) {
+            console.error('Error preparing upload:', error);
+            toast.error('Upload Failed', 'Could not prepare upload');
+        }
+    };
+
+    const handleConfirmUpload = async () => {
+        if (!user || !team || !uploadConfirmation || generatedSchedules.length === 0) return;
+
+        setIsUploading(true);
+        try {
+            const northTable = generatedSchedules.find(t => t.routeName.includes('North'))!;
+            const southTable = generatedSchedules.find(t => t.routeName.includes('South'))!;
+
+            await uploadToMasterSchedule(
+                team.id,
+                user.uid,
+                user.displayName || user.email?.split('@')[0] || 'User',
+                northTable,
+                southTable,
+                uploadConfirmation.routeNumber,
+                uploadConfirmation.dayType,
+                'wizard'
+            );
+
+            toast.success('Uploaded!', `${uploadConfirmation.routeNumber} uploaded to Master Schedule`);
+            setShowUploadModal(false);
+            setUploadConfirmation(null);
+        } catch (error) {
+            console.error('Error uploading to master:', error);
+            toast.error('Upload Failed', 'Could not upload to Master Schedule');
+        } finally {
+            setIsUploading(false);
+        }
+    };
+
+    const handleCancelUpload = () => {
+        setShowUploadModal(false);
+        setUploadConfirmation(null);
+    };
+
     return (
         <>
             {/* Resume Modal */}
@@ -365,15 +547,15 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                     currentStep={step}
                     stepLabel={step === 1 ? 'Upload Data' : step === 2 ? 'Runtime Analysis' : 'Build Schedule'}
                     projectName={projectName}
-                    onRenameProject={setProjectName}
+                    onRenameProject={handleRenameProject}
                     onOpenProjects={() => setShowProjectManager(true)}
                     onNewProject={handleNewProject}
                     onSaveVersion={handleSaveProgress}
                     onClose={onBack}
                     onStepClick={(s) => setStep(s)}
                     maxStepReached={maxStepReached}
-                    autoSaveStatus={autoSaveStatus}
-                    lastSaved={lastSaved}
+                    autoSaveStatus={wizardSaveStatus}
+                    lastSaved={wizardLastSaved}
                     routeNumber={step >= 3 ? config.routeNumber : undefined}
                     dayType={dayType}
                 />
@@ -417,6 +599,8 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                                 projectName={projectName}
                                 autoSaveStatus={autoSaveStatus}
                                 lastSaved={lastSaved}
+                                targetCycleTime={(!config.cycleMode || config.cycleMode === 'Strict') ? config.cycleTime : undefined}
+                                targetHeadway={(!config.cycleMode || config.cycleMode === 'Strict') && config.blocks.length > 0 ? Math.round(config.cycleTime / config.blocks.length) : undefined}
                             />
                         )}
                     </div>
@@ -462,6 +646,17 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                             </button>
                         )}
 
+                        {/* Upload to Master Button (Step 4 only, if user has team) */}
+                        {step === 4 && hasTeam && generatedSchedules.length > 0 && (
+                            <button
+                                onClick={handleUploadToMaster}
+                                className="px-6 py-2 rounded-lg border-2 border-brand-green text-brand-green font-bold hover:bg-green-50 flex items-center gap-2"
+                            >
+                                <Upload size={18} />
+                                Upload to Master
+                            </button>
+                        )}
+
                         <button
                             onClick={handleNext}
                             className="px-6 py-2 rounded-lg bg-brand-blue text-white font-bold hover:brightness-110 shadow-md shadow-blue-500/20 flex items-center gap-2"
@@ -480,37 +675,101 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                 currentProjectId={projectId}
                 onClose={() => setShowProjectManager(false)}
                 onLoadProject={async (project) => {
+                    // Prevent redundant auto-save while loading
+                    setIsLoadingProject(true);
+
                     if (user?.uid) {
-                        const fullProject = await getProject(user.uid, project.id);
-                        if (fullProject) {
-                            setProjectId(fullProject.id);
-                            setProjectName(fullProject.name);
-                            setDayType(fullProject.dayType);
-                            if (fullProject.analysis) {
-                                setAnalysis(fullProject.analysis);
-                                setSegmentNames(extractSegmentNames(fullProject.analysis));
+                        try {
+                            const fullProject = await getProject(user.uid, project.id);
+                            if (fullProject) {
+                                try {
+                                    // Set project identity
+                                    setProjectId(fullProject.id);
+                                    setProjectName(fullProject.name);
+                                    setDayType(fullProject.dayType);
+
+                                    // Restore all data
+                                    if (fullProject.analysis && fullProject.analysis.length > 0) {
+                                        setAnalysis(fullProject.analysis);
+                                        setSegmentNames(extractSegmentNames(fullProject.analysis));
+                                    }
+                                    if (fullProject.bands && fullProject.bands.length > 0) {
+                                        setBands(fullProject.bands);
+                                    }
+                                    if (fullProject.config) {
+                                        setConfig(fullProject.config);
+                                    }
+                                    if (fullProject.generatedSchedules && fullProject.generatedSchedules.length > 0) {
+                                        setGeneratedSchedules(fullProject.generatedSchedules);
+                                    }
+                                    if (fullProject.parsedData && fullProject.parsedData.length > 0) {
+                                        setParsedData(fullProject.parsedData);
+                                    }
+
+                                    // Calculate which step to go to based on what data exists
+                                    let nextStep = 1;
+                                    if (fullProject.isGenerated && fullProject.generatedSchedules && fullProject.generatedSchedules.length > 0) {
+                                        nextStep = 4;
+                                    } else if (fullProject.config && fullProject.config.blocks && fullProject.config.blocks.length > 0) {
+                                        nextStep = 3;
+                                    } else if ((fullProject.analysis && fullProject.analysis.length > 0) || (fullProject.parsedData && fullProject.parsedData.length > 0)) {
+                                        nextStep = 2;
+                                    }
+
+                                    setStep(nextStep);
+                                    setMaxStepReached(nextStep);
+                                    toast.success('Project Loaded', `${fullProject.name} - Step ${nextStep}`);
+                                } catch (innerError) {
+                                    console.error('Error restoring project data:', innerError);
+                                    toast.error('Load Error', String(innerError));
+                                }
+                            } else {
+                                toast.error('Load Failed', 'Project data not found');
                             }
-                            if (fullProject.bands) setBands(fullProject.bands);
-                            if (fullProject.config) setConfig(fullProject.config);
-                            if (fullProject.generatedSchedules) setGeneratedSchedules(fullProject.generatedSchedules);
-                            if (fullProject.parsedData) setParsedData(fullProject.parsedData);
-
-                            const nextStep = (fullProject.isGenerated && fullProject.generatedSchedules?.length > 0) ? 4 : (fullProject.config ? 3 : 2);
-                            setStep(nextStep);
-                            setMaxStepReached(nextStep);
-
-                            toast.success('Project Loaded', fullProject.name);
+                        } catch (error) {
+                            console.error('Error loading project:', error);
+                            toast.error('Load Failed', 'Could not load project data');
                         }
+                    } else {
+                        toast.error('Not Signed In', 'Please sign in to load projects');
                     }
                     setShowProjectManager(false);
+
+                    // Re-enable auto-save after state updates settle
+                    setTimeout(() => setIsLoadingProject(false), 3000);
                 }}
-                onLoadGeneratedSchedule={(schedules, name, id) => {
+                onLoadGeneratedSchedule={async (schedules, name, id) => {
+                    // For generated projects, restore full wizard state at step 4
+                    setIsLoadingProject(true);
                     setProjectId(id);
                     setProjectName(name);
-                    if (onGenerate) {
-                        onGenerate(schedules);
-                        toast.success('Schedule Loaded', name);
+                    setGeneratedSchedules(schedules);
+
+                    // Also load the full project data to restore analysis, bands, config
+                    if (user?.uid) {
+                        try {
+                            const fullProject = await getProject(user.uid, id);
+                            if (fullProject) {
+                                setDayType(fullProject.dayType);
+                                if (fullProject.analysis && fullProject.analysis.length > 0) {
+                                    setAnalysis(fullProject.analysis);
+                                    setSegmentNames(extractSegmentNames(fullProject.analysis));
+                                }
+                                if (fullProject.bands) setBands(fullProject.bands);
+                                if (fullProject.config) setConfig(fullProject.config);
+                                if (fullProject.parsedData) setParsedData(fullProject.parsedData);
+                            }
+                        } catch (e) {
+                            console.error('Failed to load full project data:', e);
+                        }
                     }
+
+                    // Navigate to step 4 (Schedule)
+                    setStep(4);
+                    setMaxStepReached(4);
+                    toast.success('Schedule Loaded', `${name} - Step 4`);
+
+                    setTimeout(() => setIsLoadingProject(false), 1000);
                 }}
                 onNewProject={() => {
                     clear();
@@ -521,6 +780,15 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                     setProjectName('New Schedule Project');
                     setShowProjectManager(false);
                 }}
+            />
+
+            {/* Upload to Master Modal */}
+            <UploadToMasterModal
+                isOpen={showUploadModal}
+                confirmation={uploadConfirmation}
+                onConfirm={handleConfirmUpload}
+                onCancel={handleCancelUpload}
+                isUploading={isUploading}
             />
         </>
     );

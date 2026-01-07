@@ -8,7 +8,9 @@ import {
     signOut as firebaseSignOut,
     sendPasswordResetEmail
 } from 'firebase/auth';
+import { doc, setDoc, getDoc } from 'firebase/firestore';
 import { auth, googleProvider } from '../utils/firebase';
+import { db } from '../utils/firebase';
 
 interface AuthContextType {
     user: User | null;
@@ -38,8 +40,34 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     const [user, setUser] = useState<User | null>(null);
     const [loading, setLoading] = useState(true);
 
+    /**
+     * Ensure user document exists in Firestore with teamId field
+     */
+    const ensureUserDocument = async (user: User) => {
+        const userRef = doc(db, 'users', user.uid);
+        const userSnap = await getDoc(userRef);
+
+        if (!userSnap.exists()) {
+            // Create user document with default values
+            await setDoc(userRef, {
+                email: user.email,
+                displayName: user.displayName || user.email?.split('@')[0] || 'User',
+                teamId: null,
+                createdAt: new Date()
+            });
+        }
+    };
+
     useEffect(() => {
-        const unsubscribe = onAuthStateChanged(auth, (user) => {
+        const unsubscribe = onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                // Ensure user document exists in Firestore
+                try {
+                    await ensureUserDocument(user);
+                } catch (error) {
+                    console.error('Error ensuring user document:', error);
+                }
+            }
             setUser(user);
             setLoading(false);
         });

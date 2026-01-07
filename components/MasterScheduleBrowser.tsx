@@ -8,15 +8,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
     Loader2,
-    Edit3,
-    History,
-    Trash2,
     CalendarOff,
-    LayoutGrid,
-    Table as TableIcon,
     Maximize2,
-    Minimize2
+    Minimize2,
+    Download
 } from 'lucide-react';
+import ExcelJS from 'exceljs';
 import { useTeam } from './TeamContext';
 import { useToast } from './ToastContext';
 import { TeamManagement } from './TeamManagement';
@@ -38,9 +35,10 @@ import type { MasterRouteTable, MasterTrip } from '../utils/masterScheduleParser
 import { buildRoundTripView } from '../utils/masterScheduleParser';
 import { getRouteColor, getRouteTextColor } from '../utils/routeColors';
 import { PlatformSummary } from './PlatformSummary';
+import { ScheduleEditor } from './ScheduleEditor';
 
 // Constants
-const ROUTE_ORDER = ['400', '100', '101', '2', '7', '8A', '8B', '12'] as const;
+const ROUTE_ORDER = ['400', '100', '101', '2', '7', '8A', '8B', '10', '11', '12'] as const;
 const DAY_TYPES: DayType[] = ['Weekday', 'Saturday', 'Sunday'];
 const ANNUAL_MULTIPLIERS: Record<DayType, number> = {
     Weekday: 252,
@@ -67,12 +65,11 @@ function calculateDailyServiceHours(content: MasterScheduleContent): number {
     const allTrips = [...content.northTable.trips, ...content.southTable.trips];
     if (allTrips.length === 0) return 0;
 
-    // Sum of cycle times (endTime - startTime) for each trip, handling midnight rollover
+    // Use pre-calculated cycleTime from each trip (includes interline adjustments)
     let totalCycleMinutes = 0;
     allTrips.forEach(trip => {
-        const duration = getTripDuration(trip.startTime, trip.endTime);
-        if (duration > 0 && duration < 1440) { // Sanity check: less than 24 hours
-            totalCycleMinutes += duration;
+        if (trip.cycleTime > 0 && trip.cycleTime < 1440) { // Sanity check: less than 24 hours
+            totalCycleMinutes += trip.cycleTime;
         }
     });
 
@@ -103,7 +100,6 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
     // State
     const [selectedRoute, setSelectedRoute] = useState<string | 'overview' | 'platforms'>('overview');
     const [selectedDayType, setSelectedDayType] = useState<DayType>('Weekday');
-    const [viewMode, setViewMode] = useState<'card' | 'table'>('card');
     const [isFullScreen, setIsFullScreen] = useState(false);
     const [schedules, setSchedules] = useState<MasterScheduleEntry[]>([]);
     const [contentCache, setContentCache] = useState<Map<RouteIdentity, MasterScheduleContent>>(new Map());
@@ -259,22 +255,659 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
         );
     }
 
-    // Helper: Calculate service hours from content (sum of cycle times, handles midnight rollover)
+    // Helper: Calculate service hours from content (uses pre-calculated cycleTime per trip)
     const calculateServiceHours = (content: MasterScheduleContent | undefined): number => {
         if (!content) return 0;
 
         let totalCycleMinutes = 0;
 
-        // Sum cycle time for all trips (North + South)
+        // Use pre-calculated cycleTime from each trip (includes interline adjustments)
         const allTrips = [...content.northTable.trips, ...content.southTable.trips];
         allTrips.forEach(trip => {
-            const duration = getTripDuration(trip.startTime, trip.endTime);
-            if (duration > 0 && duration < 1440) { // Sanity check: less than 24 hours
-                totalCycleMinutes += duration;
+            if (trip.cycleTime > 0 && trip.cycleTime < 1440) { // Sanity check: less than 24 hours
+                totalCycleMinutes += trip.cycleTime;
             }
         });
 
         return totalCycleMinutes / 60; // Convert to hours
+    };
+
+    // ========== EXCEL EXPORT ==========
+    const handleExportOverview = async () => {
+        try {
+        console.log('Starting export...', { contentCacheSize: contentCache.size, schedulesCount: schedules.length });
+
+        const workbook = new ExcelJS.Workbook();
+        workbook.creator = 'Barrie Transit Scheduler';
+        workbook.created = new Date();
+
+        // Helper functions
+        const hexToArgb = (hex: string) => 'FF' + hex.replace('#', '').toUpperCase();
+        const getContrastText = (bgHex: string): string => {
+            const hex = bgHex.replace('#', '');
+            const r = parseInt(hex.substr(0, 2), 16);
+            const g = parseInt(hex.substr(2, 2), 16);
+            const b = parseInt(hex.substr(4, 2), 16);
+            const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+            return luminance > 0.5 ? 'FF1F2937' : 'FFFFFFFF';
+        };
+        const toHours = (min: number) => (min / 60).toFixed(1);
+
+        // Common styles
+        const thinBorder: Partial<ExcelJS.Border> = { style: 'thin', color: { argb: 'FFE5E7EB' } };
+        const allBorders: Partial<ExcelJS.Borders> = { top: thinBorder, bottom: thinBorder, left: thinBorder, right: thinBorder };
+        const centerAlign: Partial<ExcelJS.Alignment> = { horizontal: 'center', vertical: 'middle' };
+
+        // Generate sheet names for linking
+        const getSheetName = (route: string, dayType: DayType) => `R${route} ${dayType}`;
+
+        // Track which sheets exist (have content)
+        const existingSheets: { route: string; dayType: DayType; sheetName: string }[] = [];
+
+        // ===== SHEET 1: Service Hours Summary =====
+        const summarySheet = workbook.addWorksheet('Overview');
+
+        // Build data rows
+        const dataRows = ROUTE_ORDER.map(route => {
+            const routeSchedules = organizedSchedules[route];
+            const weekdayContent = routeSchedules.Weekday ? contentCache.get(buildRouteIdentity(route, 'Weekday')) : undefined;
+            const saturdayContent = routeSchedules.Saturday ? contentCache.get(buildRouteIdentity(route, 'Saturday')) : undefined;
+            const sundayContent = routeSchedules.Sunday ? contentCache.get(buildRouteIdentity(route, 'Sunday')) : undefined;
+
+            const weekdayDaily = weekdayContent ? calculateServiceHours(weekdayContent) : 0;
+            const saturdayDaily = saturdayContent ? calculateServiceHours(saturdayContent) : 0;
+            const sundayDaily = sundayContent ? calculateServiceHours(sundayContent) : 0;
+
+            const weekdayAnnual = weekdayDaily * ANNUAL_MULTIPLIERS.Weekday;
+            const saturdayAnnual = saturdayDaily * ANNUAL_MULTIPLIERS.Saturday;
+            const sundayAnnual = sundayDaily * ANNUAL_MULTIPLIERS.Sunday;
+            const totalAnnual = weekdayAnnual + saturdayAnnual + sundayAnnual;
+
+            return {
+                route,
+                weekdayDaily, weekdayAnnual,
+                saturdayDaily, saturdayAnnual,
+                sundayDaily, sundayAnnual,
+                totalAnnual,
+                hasWeekday: !!weekdayContent,
+                hasSaturday: !!saturdayContent,
+                hasSunday: !!sundayContent
+            };
+        });
+
+        const totals = dataRows.reduce((acc, row) => ({
+            weekdayDaily: acc.weekdayDaily + row.weekdayDaily,
+            weekdayAnnual: acc.weekdayAnnual + row.weekdayAnnual,
+            saturdayDaily: acc.saturdayDaily + row.saturdayDaily,
+            saturdayAnnual: acc.saturdayAnnual + row.saturdayAnnual,
+            sundayDaily: acc.sundayDaily + row.sundayDaily,
+            sundayAnnual: acc.sundayAnnual + row.sundayAnnual,
+            totalAnnual: acc.totalAnnual + row.totalAnnual,
+        }), { weekdayDaily: 0, weekdayAnnual: 0, saturdayDaily: 0, saturdayAnnual: 0, sundayDaily: 0, sundayAnnual: 0, totalAnnual: 0 });
+
+        // Title row
+        const titleRow = summarySheet.addRow(['BARRIE TRANSIT - MASTER SCHEDULE EXPORT']);
+        summarySheet.mergeCells(1, 1, 1, 8);
+        titleRow.height = 32;
+        titleRow.getCell(1).font = { bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
+        titleRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E40AF' } };
+        titleRow.getCell(1).alignment = centerAlign;
+
+        // Subtitle with date
+        const subtitleRow = summarySheet.addRow([`Generated: ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}`]);
+        summarySheet.mergeCells(2, 1, 2, 8);
+        subtitleRow.height = 22;
+        subtitleRow.getCell(1).font = { size: 11, color: { argb: 'FF6B7280' } };
+        subtitleRow.getCell(1).alignment = centerAlign;
+
+        // Empty row
+        summarySheet.addRow([]);
+
+        // Day type headers row
+        const dayTypeRow = summarySheet.addRow(['', 'WEEKDAY', '', 'SATURDAY', '', 'SUNDAY', '', 'TOTAL']);
+        summarySheet.mergeCells(4, 2, 4, 3);
+        summarySheet.mergeCells(4, 4, 4, 5);
+        summarySheet.mergeCells(4, 6, 4, 7);
+        dayTypeRow.height = 24;
+        dayTypeRow.eachCell((cell, colNum) => {
+            cell.font = { bold: true, size: 11, color: { argb: 'FF1F2937' } };
+            cell.alignment = centerAlign;
+            cell.border = allBorders;
+            if (colNum === 2 || colNum === 3) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDBEAFE' } };
+            if (colNum === 4 || colNum === 5) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF3C7' } };
+            if (colNum === 6 || colNum === 7) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE9D5FF' } };
+            if (colNum === 8) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD1FAE5' } };
+        });
+
+        // Sub-headers row
+        const subHeaderRow = summarySheet.addRow(['Route', 'Daily', 'Annual', 'Daily', 'Annual', 'Daily', 'Annual', 'Annual']);
+        subHeaderRow.height = 20;
+        subHeaderRow.eachCell((cell, colNum) => {
+            cell.font = { bold: true, size: 10, color: { argb: 'FF6B7280' } };
+            cell.alignment = centerAlign;
+            cell.border = allBorders;
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9FAFB' } };
+        });
+
+        // Data rows with hyperlinks
+        const dataStartRow = 6;
+        dataRows.forEach((row, idx) => {
+            const routeColor = getRouteColor(row.route);
+            const excelRow = summarySheet.addRow([
+                `Route ${row.route}`,
+                row.weekdayDaily > 0 ? Number(row.weekdayDaily.toFixed(1)) : '-',
+                row.weekdayAnnual > 0 ? Number(row.weekdayAnnual.toFixed(1)) : '-',
+                row.saturdayDaily > 0 ? Number(row.saturdayDaily.toFixed(1)) : '-',
+                row.saturdayAnnual > 0 ? Number(row.saturdayAnnual.toFixed(1)) : '-',
+                row.sundayDaily > 0 ? Number(row.sundayDaily.toFixed(1)) : '-',
+                row.sundayAnnual > 0 ? Number(row.sundayAnnual.toFixed(1)) : '-',
+                row.totalAnnual > 0 ? Number(row.totalAnnual.toFixed(1)) : '-'
+            ]);
+            excelRow.height = 22;
+            const bgColor = idx % 2 === 0 ? 'FFFFFFFF' : 'FFF9FAFB';
+            excelRow.eachCell((cell, colNum) => {
+                cell.alignment = colNum === 1 ? { horizontal: 'left', vertical: 'middle' } : centerAlign;
+                cell.border = allBorders;
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bgColor } };
+                cell.font = { size: 10 };
+                if (colNum === 1) {
+                    cell.font = { bold: true, size: 10, color: { argb: hexToArgb(routeColor) }, underline: true };
+                    // Link to weekday sheet if exists
+                    if (row.hasWeekday) {
+                        const sheetName = getSheetName(row.route, 'Weekday');
+                        cell.value = { text: `Route ${row.route}`, hyperlink: `#'${sheetName}'!A1` };
+                    }
+                }
+                if (colNum === 8) {
+                    cell.font = { bold: true, size: 10 };
+                    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD1FAE5' } };
+                }
+            });
+        });
+
+        // Totals row
+        const totalsRow = summarySheet.addRow([
+            'TOTAL',
+            Number(totals.weekdayDaily.toFixed(1)),
+            Number(totals.weekdayAnnual.toFixed(1)),
+            Number(totals.saturdayDaily.toFixed(1)),
+            Number(totals.saturdayAnnual.toFixed(1)),
+            Number(totals.sundayDaily.toFixed(1)),
+            Number(totals.sundayAnnual.toFixed(1)),
+            Number(totals.totalAnnual.toFixed(1))
+        ]);
+        totalsRow.height = 26;
+        totalsRow.eachCell((cell, colNum) => {
+            cell.font = { bold: true, size: 11, color: { argb: 'FF1F2937' } };
+            cell.alignment = colNum === 1 ? { horizontal: 'left', vertical: 'middle' } : centerAlign;
+            cell.border = allBorders;
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE5E7EB' } };
+            if (colNum === 8) {
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF10B981' } };
+                cell.font = { bold: true, size: 12, color: { argb: 'FFFFFFFF' } };
+            }
+        });
+
+        // Footer note
+        summarySheet.addRow([]);
+        const footerRow = summarySheet.addRow([`Annual multipliers: Weekday × ${ANNUAL_MULTIPLIERS.Weekday} | Saturday × ${ANNUAL_MULTIPLIERS.Saturday} | Sunday × ${ANNUAL_MULTIPLIERS.Sunday}`]);
+        summarySheet.mergeCells(footerRow.number, 1, footerRow.number, 8);
+        footerRow.getCell(1).font = { size: 9, italic: true, color: { argb: 'FF9CA3AF' } };
+        footerRow.getCell(1).alignment = centerAlign;
+
+        // ===== QUICK NAVIGATION SECTION =====
+        summarySheet.addRow([]);
+        summarySheet.addRow([]);
+        const navTitleRow = summarySheet.addRow(['QUICK NAVIGATION - Click to jump to schedule']);
+        summarySheet.mergeCells(navTitleRow.number, 1, navTitleRow.number, 4);
+        navTitleRow.height = 26;
+        navTitleRow.getCell(1).font = { bold: true, size: 12, color: { argb: 'FF1F2937' } };
+        navTitleRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3F4F6' } };
+        navTitleRow.getCell(1).alignment = { horizontal: 'left', vertical: 'middle' };
+        navTitleRow.getCell(1).border = allBorders;
+
+        // Navigation header row
+        const navHeaderRow = summarySheet.addRow(['Route', 'Weekday', 'Saturday', 'Sunday']);
+        navHeaderRow.height = 22;
+        navHeaderRow.eachCell((cell, colNum) => {
+            cell.font = { bold: true, size: 10, color: { argb: 'FF374151' } };
+            cell.alignment = centerAlign;
+            cell.border = allBorders;
+            if (colNum === 1) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE5E7EB' } };
+            if (colNum === 2) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDBEAFE' } };
+            if (colNum === 3) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF3C7' } };
+            if (colNum === 4) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE9D5FF' } };
+        });
+
+        // Navigation links for each route
+        dataRows.forEach((row, idx) => {
+            const routeColor = getRouteColor(row.route);
+            const navRow = summarySheet.addRow([
+                row.route,
+                row.hasWeekday ? '→ View' : '-',
+                row.hasSaturday ? '→ View' : '-',
+                row.hasSunday ? '→ View' : '-'
+            ]);
+            navRow.height = 20;
+            const bgColor = idx % 2 === 0 ? 'FFFFFFFF' : 'FFF9FAFB';
+            navRow.eachCell((cell, colNum) => {
+                cell.alignment = centerAlign;
+                cell.border = allBorders;
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bgColor } };
+                cell.font = { size: 10 };
+                if (colNum === 1) {
+                    cell.font = { bold: true, size: 10, color: { argb: hexToArgb(routeColor) } };
+                }
+                // Add hyperlinks
+                if (colNum === 2 && row.hasWeekday) {
+                    cell.value = { text: '→ View', hyperlink: `#'${getSheetName(row.route, 'Weekday')}'!A1` };
+                    cell.font = { size: 10, color: { argb: 'FF2563EB' }, underline: true };
+                }
+                if (colNum === 3 && row.hasSaturday) {
+                    cell.value = { text: '→ View', hyperlink: `#'${getSheetName(row.route, 'Saturday')}'!A1` };
+                    cell.font = { size: 10, color: { argb: 'FFD97706' }, underline: true };
+                }
+                if (colNum === 4 && row.hasSunday) {
+                    cell.value = { text: '→ View', hyperlink: `#'${getSheetName(row.route, 'Sunday')}'!A1` };
+                    cell.font = { size: 10, color: { argb: 'FF7C3AED' }, underline: true };
+                }
+            });
+        });
+
+        // Column widths for overview
+        summarySheet.getColumn(1).width = 14;
+        [2, 3, 4, 5, 6, 7, 8].forEach(col => summarySheet.getColumn(col).width = 12);
+
+        // ===== INDIVIDUAL ROUTE SHEETS =====
+        // Helper: Get time band color (uses assignedBand from New Schedule wizard: A, B, C, D, E)
+        const getTimeBandColor = (band: string | undefined): string => {
+            switch (band) {
+                case 'A': return 'FFEF4444';   // Red (slowest/peak)
+                case 'B': return 'FFF97316';   // Orange
+                case 'C': return 'FFFBBF24';   // Yellow
+                case 'D': return 'FF22C55E';   // Green
+                case 'E': return 'FF3B82F6';   // Blue (fastest/off-peak)
+                default: return 'FFF3F4F6';    // Light gray for blank/unknown
+            }
+        };
+
+        // Helper: Sort trips like Schedule Tweaker - by block ID numerically, then by start time
+        const sortTripsLikeTweaker = (trips: MasterTrip[]): MasterTrip[] => {
+            return [...trips].sort((a, b) => {
+                // Extract numeric parts from block ID for proper sorting (e.g., "100-1" vs "100-2")
+                const aBlockParts = a.blockId.replace(/\D/g, '-').split('-').filter(Boolean).map(Number);
+                const bBlockParts = b.blockId.replace(/\D/g, '-').split('-').filter(Boolean).map(Number);
+
+                // Compare block parts
+                for (let i = 0; i < Math.max(aBlockParts.length, bBlockParts.length); i++) {
+                    const diff = (aBlockParts[i] || 0) - (bBlockParts[i] || 0);
+                    if (diff !== 0) return diff;
+                }
+
+                // Same block - sort by start time
+                return a.startTime - b.startTime;
+            });
+        };
+
+        // Helper: Calculate headway from previous trip
+        const calculateHeadways = (sortedTrips: MasterTrip[]): Map<string, number> => {
+            const headways = new Map<string, number>();
+            for (let i = 1; i < sortedTrips.length; i++) {
+                const headway = sortedTrips[i].startTime - sortedTrips[i - 1].startTime;
+                headways.set(sortedTrips[i].id, headway);
+            }
+            return headways;
+        };
+
+        for (const route of ROUTE_ORDER) {
+            for (const dayType of DAY_TYPES) {
+                const content = contentCache.get(buildRouteIdentity(route, dayType));
+                if (!content) continue;
+
+                // Validate content structure
+                if (!content.northTable?.trips || !content.southTable?.trips) {
+                    console.warn(`Skipping ${route} ${dayType}: missing table data`);
+                    continue;
+                }
+
+                const sheetName = getSheetName(route, dayType);
+                existingSheets.push({ route, dayType, sheetName });
+                const ws = workbook.addWorksheet(sheetName);
+
+                const routeColor = getRouteColor(route);
+                const routeColorArgb = hexToArgb(routeColor);
+                const routeTextColor = getContrastText(routeColor);
+
+                // Get all trips from both directions
+                const northTrips = content.northTable.trips || [];
+                const southTrips = content.southTable.trips || [];
+                const northStops = content.northTable.stops || [];
+                const southStops = content.southTable.stops || [];
+                const allTrips = [...northTrips, ...southTrips];
+                // Sort by start time for service window calculation
+                const tripsByTime = [...allTrips].sort((a, b) => a.startTime - b.startTime);
+
+                // Calculate summary stats
+                const totalTrips = allTrips.length;
+                const northTripCount = northTrips.length;
+                const southTripCount = southTrips.length;
+                const uniqueBlocks = new Set(allTrips.map(t => t.blockId));
+                const peakVehicles = uniqueBlocks.size;
+                const totalTravelTime = allTrips.reduce((sum, t) => sum + t.travelTime, 0);
+                const totalRecoveryTime = allTrips.reduce((sum, t) => sum + t.recoveryTime, 0);
+                const totalCycleTime = totalTravelTime + totalRecoveryTime;
+                const recoveryRatio = totalTravelTime > 0 ? ((totalRecoveryTime / totalTravelTime) * 100).toFixed(0) : '0';
+                const firstTripTime = tripsByTime.length > 0 ? formatTimeFromMinutes(tripsByTime[0].startTime) : '-';
+                const lastTripTime = tripsByTime.length > 0 ? formatTimeFromMinutes(tripsByTime[tripsByTime.length - 1].endTime) : '-';
+                const serviceSpanMins = tripsByTime.length > 0 ? tripsByTime[tripsByTime.length - 1].endTime - tripsByTime[0].startTime : 0;
+                const avgHeadway = totalTrips > 1 ? Math.round(serviceSpanMins / (totalTrips - 1)) : 0;
+
+                // ===== ROW 1: ROUTE HEADER =====
+                const routeHeaderRow = ws.addRow([`ROUTE ${route} - ${dayType.toUpperCase()} SCHEDULE`]);
+                ws.mergeCells(1, 1, 1, 12);
+                routeHeaderRow.height = 36;
+                routeHeaderRow.getCell(1).font = { bold: true, size: 20, color: { argb: routeTextColor } };
+                routeHeaderRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: routeColorArgb } };
+                routeHeaderRow.getCell(1).alignment = centerAlign;
+
+                // ===== ROW 2: Back to Overview link =====
+                const backRow = ws.addRow(['← Back to Overview']);
+                ws.mergeCells(2, 1, 2, 2);
+                backRow.getCell(1).value = { text: '← Back to Overview', hyperlink: "#'Overview'!A1" };
+                backRow.getCell(1).font = { size: 10, color: { argb: 'FF2563EB' }, underline: true };
+                backRow.height = 20;
+
+                ws.addRow([]); // Row 3: spacer
+
+                // ===== ROW 4-5: DAY SUMMARY BANNER (improved layout) =====
+                const bannerLabels = ['SERVICE WINDOW', 'BLOCKS', 'TRIPS (N+S)', 'TRAVEL TIME', 'RECOVERY TIME', 'CYCLE TIME', 'RECOVERY %', 'AVG HEADWAY'];
+                const bannerLabelRow = ws.addRow(bannerLabels);
+                bannerLabelRow.height = 18;
+                bannerLabelRow.eachCell((cell) => {
+                    cell.font = { size: 9, color: { argb: 'FF6B7280' } };
+                    cell.alignment = centerAlign;
+                    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9FAFB' } };
+                    cell.border = { top: thinBorder, left: thinBorder, right: thinBorder };
+                });
+
+                const serviceWindow = `${firstTripTime} – ${lastTripTime}`;
+                const tripBreakdown = `${totalTrips} (${northTripCount}N + ${southTripCount}S)`;
+
+                const bannerValues = [
+                    serviceWindow,
+                    peakVehicles.toString(),
+                    tripBreakdown,
+                    `${toHours(totalTravelTime)}h`,
+                    `${toHours(totalRecoveryTime)}h`,
+                    `${toHours(totalCycleTime)}h`,
+                    `${recoveryRatio}%`,
+                    `${avgHeadway} min`
+                ];
+                const bannerValueRow = ws.addRow(bannerValues);
+                bannerValueRow.height = 28;
+                bannerValueRow.eachCell((cell, colNum) => {
+                    cell.font = { bold: true, size: 13, color: { argb: 'FF1F2937' } };
+                    cell.alignment = centerAlign;
+                    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9FAFB' } };
+                    cell.border = { bottom: thinBorder, left: thinBorder, right: thinBorder };
+                    // Highlight Cycle Time column
+                    if (colNum === 6) {
+                        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD1FAE5' } };
+                        cell.font = { bold: true, size: 13, color: { argb: 'FF059669' } };
+                    }
+                });
+
+                ws.addRow([]); // Row 6: spacer
+
+                // ===== NORTHBOUND TRIPS TABLE =====
+                if (northTrips.length > 0) {
+                    // Section header
+                    const northHeaderRow = ws.addRow([`NORTHBOUND TRIPS (${northTrips.length} trips)`]);
+                    ws.mergeCells(northHeaderRow.number, 1, northHeaderRow.number, 10);
+                    northHeaderRow.height = 24;
+                    northHeaderRow.getCell(1).font = { bold: true, size: 12, color: { argb: 'FF1E40AF' } };
+                    northHeaderRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDBEAFE' } };
+                    northHeaderRow.getCell(1).alignment = { horizontal: 'left', vertical: 'middle' };
+                    northHeaderRow.getCell(1).border = allBorders;
+
+                    // Build column headers: Block, Band, Stop columns..., Hdwy, Travel, Recovery, Cycle, Ratio
+                    const northColHeaders = ['Block', 'Band', ...northStops, 'Hdwy', 'Travel', 'Recovery', 'Cycle', 'Ratio'];
+                    const northColHeaderRow = ws.addRow(northColHeaders);
+                    northColHeaderRow.height = 24;
+                    northColHeaderRow.eachCell((cell, colNum) => {
+                        cell.font = { bold: true, size: 9, color: { argb: 'FF374151' } };
+                        cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+                        cell.border = allBorders;
+                        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEFF6FF' } };
+                        // Metrics columns get different color
+                        if (colNum > northStops.length + 2) {
+                            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3F4F6' } };
+                        }
+                    });
+
+                    // Sort north trips by block ID then start time - same order as Schedule Tweaker
+                    const sortedNorthTrips = sortTripsLikeTweaker(northTrips);
+
+                    // Calculate headways for this direction
+                    const northByTime = [...northTrips].sort((a, b) => a.startTime - b.startTime);
+                    const northHeadways = calculateHeadways(northByTime);
+
+                    // Data rows
+                    sortedNorthTrips.forEach((trip, rowIdx) => {
+                        const timeBand = trip.assignedBand || ''; // Use actual band from data, blank if not set
+                        const tripRatio = trip.travelTime > 0 ? Math.round((trip.recoveryTime / trip.travelTime) * 100) : 0;
+                        const headway = northHeadways.get(trip.id) || '';
+
+                        const rowData: (string | number)[] = [
+                            trip.blockId,
+                            timeBand,
+                            ...northStops.map(stop => trip.stops?.[stop] || ''),
+                            headway,
+                            trip.travelTime,
+                            trip.recoveryTime,
+                            trip.cycleTime,
+                            `${tripRatio}%`
+                        ];
+
+                        const dataRow = ws.addRow(rowData);
+                        dataRow.height = 18;
+                        const bgColor = rowIdx % 2 === 0 ? 'FFFFFFFF' : 'FFF9FAFB';
+                        dataRow.eachCell((cell, colNum) => {
+                            cell.font = { size: 10 };
+                            cell.alignment = centerAlign;
+                            cell.border = allBorders;
+                            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bgColor } };
+
+                            // Block column bold
+                            if (colNum === 1) {
+                                cell.font = { bold: true, size: 10, color: { argb: 'FF374151' } };
+                            }
+                            // Band column with color (only if band is set)
+                            if (colNum === 2 && timeBand) {
+                                const bandColor = getTimeBandColor(timeBand);
+                                cell.font = { bold: true, size: 9, color: { argb: 'FFFFFFFF' } };
+                                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bandColor } };
+                            }
+                            // Metrics columns
+                            if (colNum > northStops.length + 2) {
+                                cell.font = { size: 10, color: { argb: 'FF6B7280' } };
+                            }
+                        });
+                    });
+
+                    // North totals row - show hours instead of minutes
+                    const northTotalTravel = northTrips.reduce((sum, t) => sum + t.travelTime, 0);
+                    const northTotalRecovery = northTrips.reduce((sum, t) => sum + t.recoveryTime, 0);
+                    const northTotalCycle = northTotalTravel + northTotalRecovery;
+                    const northAvgRatio = northTotalTravel > 0 ? Math.round((northTotalRecovery / northTotalTravel) * 100) : 0;
+                    const northAvgHeadway = northTrips.length > 1 ? Math.round((northByTime[northByTime.length - 1].startTime - northByTime[0].startTime) / (northTrips.length - 1)) : 0;
+
+                    const northTotalsData: (string | number)[] = [
+                        'TOTALS', '',
+                        ...northStops.map(() => ''),
+                        northAvgHeadway > 0 ? `${northAvgHeadway}` : '',
+                        `${toHours(northTotalTravel)}h`,
+                        `${toHours(northTotalRecovery)}h`,
+                        `${toHours(northTotalCycle)}h`,
+                        `${northAvgRatio}%`
+                    ];
+                    const northTotalsRow = ws.addRow(northTotalsData);
+                    northTotalsRow.height = 22;
+                    northTotalsRow.eachCell((cell, colNum) => {
+                        cell.font = { bold: true, size: 10, color: { argb: 'FF1F2937' } };
+                        cell.alignment = centerAlign;
+                        cell.border = allBorders;
+                        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE5E7EB' } };
+                    });
+
+                    ws.addRow([]); // spacer
+                }
+
+                // ===== SOUTHBOUND TRIPS TABLE =====
+                if (southTrips.length > 0) {
+                    // Section header
+                    const southHeaderRow = ws.addRow([`SOUTHBOUND TRIPS (${southTrips.length} trips)`]);
+                    ws.mergeCells(southHeaderRow.number, 1, southHeaderRow.number, 10);
+                    southHeaderRow.height = 24;
+                    southHeaderRow.getCell(1).font = { bold: true, size: 12, color: { argb: 'FF5B21B6' } };
+                    southHeaderRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEDE9FE' } };
+                    southHeaderRow.getCell(1).alignment = { horizontal: 'left', vertical: 'middle' };
+                    southHeaderRow.getCell(1).border = allBorders;
+
+                    // Build column headers: Block, Band, Stop columns..., Hdwy, Travel, Recovery, Cycle, Ratio
+                    const southColHeaders = ['Block', 'Band', ...southStops, 'Hdwy', 'Travel', 'Recovery', 'Cycle', 'Ratio'];
+                    const southColHeaderRow = ws.addRow(southColHeaders);
+                    southColHeaderRow.height = 24;
+                    southColHeaderRow.eachCell((cell, colNum) => {
+                        cell.font = { bold: true, size: 9, color: { argb: 'FF374151' } };
+                        cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+                        cell.border = allBorders;
+                        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F3FF' } };
+                        // Metrics columns get different color
+                        if (colNum > southStops.length + 2) {
+                            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3F4F6' } };
+                        }
+                    });
+
+                    // Sort south trips by block ID then start time - same order as Schedule Tweaker
+                    const sortedSouthTrips = sortTripsLikeTweaker(southTrips);
+
+                    // Calculate headways for this direction
+                    const southByTime = [...southTrips].sort((a, b) => a.startTime - b.startTime);
+                    const southHeadways = calculateHeadways(southByTime);
+
+                    // Data rows
+                    sortedSouthTrips.forEach((trip, rowIdx) => {
+                        const timeBand = trip.assignedBand || ''; // Use actual band from data, blank if not set
+                        const tripRatio = trip.travelTime > 0 ? Math.round((trip.recoveryTime / trip.travelTime) * 100) : 0;
+                        const headway = southHeadways.get(trip.id) || '';
+
+                        const rowData: (string | number)[] = [
+                            trip.blockId,
+                            timeBand,
+                            ...southStops.map(stop => trip.stops?.[stop] || ''),
+                            headway,
+                            trip.travelTime,
+                            trip.recoveryTime,
+                            trip.cycleTime,
+                            `${tripRatio}%`
+                        ];
+
+                        const dataRow = ws.addRow(rowData);
+                        dataRow.height = 18;
+                        const bgColor = rowIdx % 2 === 0 ? 'FFFFFFFF' : 'FFF9FAFB';
+                        dataRow.eachCell((cell, colNum) => {
+                            cell.font = { size: 10 };
+                            cell.alignment = centerAlign;
+                            cell.border = allBorders;
+                            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bgColor } };
+
+                            // Block column bold
+                            if (colNum === 1) {
+                                cell.font = { bold: true, size: 10, color: { argb: 'FF374151' } };
+                            }
+                            // Band column with color (only if band is set)
+                            if (colNum === 2 && timeBand) {
+                                const bandColor = getTimeBandColor(timeBand);
+                                cell.font = { bold: true, size: 9, color: { argb: 'FFFFFFFF' } };
+                                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bandColor } };
+                            }
+                            // Metrics columns
+                            if (colNum > southStops.length + 2) {
+                                cell.font = { size: 10, color: { argb: 'FF6B7280' } };
+                            }
+                        });
+                    });
+
+                    // South totals row - show hours instead of minutes
+                    const southTotalTravel = southTrips.reduce((sum, t) => sum + t.travelTime, 0);
+                    const southTotalRecovery = southTrips.reduce((sum, t) => sum + t.recoveryTime, 0);
+                    const southTotalCycle = southTotalTravel + southTotalRecovery;
+                    const southAvgRatio = southTotalTravel > 0 ? Math.round((southTotalRecovery / southTotalTravel) * 100) : 0;
+                    const southAvgHeadway = southTrips.length > 1 ? Math.round((southByTime[southByTime.length - 1].startTime - southByTime[0].startTime) / (southTrips.length - 1)) : 0;
+
+                    const southTotalsData: (string | number)[] = [
+                        'TOTALS', '',
+                        ...southStops.map(() => ''),
+                        southAvgHeadway > 0 ? `${southAvgHeadway}` : '',
+                        `${toHours(southTotalTravel)}h`,
+                        `${toHours(southTotalRecovery)}h`,
+                        `${toHours(southTotalCycle)}h`,
+                        `${southAvgRatio}%`
+                    ];
+                    const southTotalsRow = ws.addRow(southTotalsData);
+                    southTotalsRow.height = 22;
+                    southTotalsRow.eachCell((cell, colNum) => {
+                        cell.font = { bold: true, size: 10, color: { argb: 'FF1F2937' } };
+                        cell.alignment = centerAlign;
+                        cell.border = allBorders;
+                        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE5E7EB' } };
+                    });
+                }
+
+                // ===== COLUMN WIDTHS (dynamic based on content) =====
+                const maxStopNameLength = Math.max(
+                    ...northStops.map(s => s.length),
+                    ...southStops.map(s => s.length),
+                    10 // minimum
+                );
+                const stopColWidth = Math.min(Math.max(maxStopNameLength * 1.2, 11), 18); // Between 11 and 18
+
+                ws.getColumn(1).width = 10;  // Block
+                ws.getColumn(2).width = 6;   // Band
+                // Stop columns - dynamic width
+                const maxStops = Math.max(northStops.length, southStops.length);
+                for (let i = 3; i <= maxStops + 2; i++) {
+                    ws.getColumn(i).width = stopColWidth;
+                }
+                // Metrics columns (after stops)
+                ws.getColumn(maxStops + 3).width = 6;   // Hdwy
+                ws.getColumn(maxStops + 4).width = 7;   // Travel
+                ws.getColumn(maxStops + 5).width = 9;   // Recovery
+                ws.getColumn(maxStops + 6).width = 7;   // Cycle
+                ws.getColumn(maxStops + 7).width = 6;   // Ratio
+
+                // ===== FREEZE PANES =====
+                // Freeze first 2 columns (Block, Time Band) and first 6 rows (header + summary)
+                ws.views = [{ state: 'frozen', xSplit: 2, ySplit: 6 }];
+            }
+        }
+
+        // Download
+        const buffer = await workbook.xlsx.writeBuffer();
+        const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `Barrie_Transit_Master_Schedule_${new Date().toISOString().split('T')[0]}.xlsx`;
+        a.click();
+        URL.revokeObjectURL(url);
+
+        toast?.success('Master schedule export complete');
+        } catch (error) {
+            console.error('Export failed:', error);
+            toast?.error(`Export failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
     };
 
     // ========== RENDER OVERVIEW TAB ==========
@@ -335,9 +968,18 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
 
         return (
             <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-                <div className="p-6 border-b border-gray-200">
-                    <h2 className="text-xl font-bold text-gray-900">System Overview</h2>
-                    <p className="text-sm text-gray-600 mt-1">Service hours across all routes (daily and annual)</p>
+                <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
+                    <div>
+                        <h2 className="text-lg font-bold text-gray-900">System Overview</h2>
+                        <p className="text-xs text-gray-600">Service hours across all routes (daily and annual)</p>
+                    </div>
+                    <button
+                        onClick={handleExportOverview}
+                        className="flex items-center gap-2 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-lg transition-colors"
+                    >
+                        <Download size={16} />
+                        Export Excel
+                    </button>
                 </div>
 
                 <div className="overflow-x-auto">
@@ -364,10 +1006,10 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
                         <tbody className="divide-y divide-gray-200">
                             {rows.map(row => (
                                 <tr key={row.route} className="hover:bg-gray-50">
-                                    <td className="px-4 py-3">
+                                    <td className="px-3 py-2">
                                         <div className="flex items-center gap-2">
                                             <div
-                                                className="w-7 h-7 rounded-lg flex items-center justify-center text-[10px] font-bold shadow-sm"
+                                                className="w-6 h-6 rounded flex items-center justify-center text-[9px] font-bold"
                                                 style={{
                                                     backgroundColor: getRouteColor(row.route),
                                                     color: getRouteTextColor(row.route)
@@ -375,60 +1017,60 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
                                             >
                                                 {row.route}
                                             </div>
-                                            <span className="font-semibold text-gray-900 text-sm">Route {row.route}</span>
+                                            <span className="font-medium text-gray-900 text-sm">Route {row.route}</span>
                                         </div>
                                     </td>
                                     {/* Weekday */}
-                                    <td className={`px-2 py-3 text-center text-sm border-l border-gray-100 ${row.weekdayEstimated ? 'text-gray-400 italic' : 'text-gray-900'}`} title={row.weekdayEstimated ? 'Estimated - loading...' : undefined}>
+                                    <td className={`px-2 py-2 text-center text-sm border-l border-gray-100 ${row.weekdayEstimated ? 'text-gray-400 italic' : 'text-gray-900'}`} title={row.weekdayEstimated ? 'Estimated - loading...' : undefined}>
                                         {row.weekdayDaily !== null ? formatHours(row.weekdayDaily) : '--'}
                                     </td>
-                                    <td className={`px-2 py-3 text-center text-sm ${row.weekdayEstimated ? 'text-gray-300 italic' : 'text-gray-600'}`}>
+                                    <td className={`px-2 py-2 text-center text-sm ${row.weekdayEstimated ? 'text-gray-300 italic' : 'text-gray-600'}`}>
                                         {row.weekdayAnnual !== null ? formatHours(row.weekdayAnnual) : '--'}
                                     </td>
                                     {/* Saturday */}
-                                    <td className={`px-2 py-3 text-center text-sm border-l border-gray-100 ${row.saturdayEstimated ? 'text-gray-400 italic' : 'text-gray-900'}`} title={row.saturdayEstimated ? 'Estimated - loading...' : undefined}>
+                                    <td className={`px-2 py-2 text-center text-sm border-l border-gray-100 ${row.saturdayEstimated ? 'text-gray-400 italic' : 'text-gray-900'}`} title={row.saturdayEstimated ? 'Estimated - loading...' : undefined}>
                                         {row.saturdayDaily !== null ? formatHours(row.saturdayDaily) : '--'}
                                     </td>
-                                    <td className={`px-2 py-3 text-center text-sm ${row.saturdayEstimated ? 'text-gray-300 italic' : 'text-gray-600'}`}>
+                                    <td className={`px-2 py-2 text-center text-sm ${row.saturdayEstimated ? 'text-gray-300 italic' : 'text-gray-600'}`}>
                                         {row.saturdayAnnual !== null ? formatHours(row.saturdayAnnual) : '--'}
                                     </td>
                                     {/* Sunday */}
-                                    <td className={`px-2 py-3 text-center text-sm border-l border-gray-100 ${row.sundayEstimated ? 'text-gray-400 italic' : 'text-gray-900'}`} title={row.sundayEstimated ? 'Estimated - loading...' : undefined}>
+                                    <td className={`px-2 py-2 text-center text-sm border-l border-gray-100 ${row.sundayEstimated ? 'text-gray-400 italic' : 'text-gray-900'}`} title={row.sundayEstimated ? 'Estimated - loading...' : undefined}>
                                         {row.sundayDaily !== null ? formatHours(row.sundayDaily) : '--'}
                                     </td>
-                                    <td className={`px-2 py-3 text-center text-sm ${row.sundayEstimated ? 'text-gray-300 italic' : 'text-gray-600'}`}>
+                                    <td className={`px-2 py-2 text-center text-sm ${row.sundayEstimated ? 'text-gray-300 italic' : 'text-gray-600'}`}>
                                         {row.sundayAnnual !== null ? formatHours(row.sundayAnnual) : '--'}
                                     </td>
                                     {/* Total Annual */}
-                                    <td className="px-2 py-3 text-center text-sm font-bold text-gray-900 border-l border-gray-200 bg-green-50/30">
+                                    <td className="px-2 py-2 text-center text-sm font-bold text-gray-900 border-l border-gray-200 bg-green-50/30">
                                         {row.totalAnnual !== null ? formatHours(row.totalAnnual) : '--'}
                                     </td>
                                 </tr>
                             ))}
                             {/* Totals Row */}
                             <tr className="bg-gray-100 font-bold">
-                                <td className="px-4 py-3 text-gray-900">TOTAL</td>
-                                <td className="px-2 py-3 text-center text-gray-900 border-l border-gray-200">{formatHours(totals.weekdayDaily)}</td>
-                                <td className="px-2 py-3 text-center text-gray-700">{formatHours(totals.weekdayAnnual)}</td>
-                                <td className="px-2 py-3 text-center text-gray-900 border-l border-gray-200">{formatHours(totals.saturdayDaily)}</td>
-                                <td className="px-2 py-3 text-center text-gray-700">{formatHours(totals.saturdayAnnual)}</td>
-                                <td className="px-2 py-3 text-center text-gray-900 border-l border-gray-200">{formatHours(totals.sundayDaily)}</td>
-                                <td className="px-2 py-3 text-center text-gray-700">{formatHours(totals.sundayAnnual)}</td>
-                                <td className="px-2 py-3 text-center text-gray-900 border-l border-gray-200 bg-green-100">{formatHours(totals.totalAnnual)}</td>
+                                <td className="px-3 py-2 text-gray-900 text-sm">TOTAL</td>
+                                <td className="px-2 py-2 text-center text-gray-900 text-sm border-l border-gray-200">{formatHours(totals.weekdayDaily)}</td>
+                                <td className="px-2 py-2 text-center text-gray-700 text-sm">{formatHours(totals.weekdayAnnual)}</td>
+                                <td className="px-2 py-2 text-center text-gray-900 text-sm border-l border-gray-200">{formatHours(totals.saturdayDaily)}</td>
+                                <td className="px-2 py-2 text-center text-gray-700 text-sm">{formatHours(totals.saturdayAnnual)}</td>
+                                <td className="px-2 py-2 text-center text-gray-900 text-sm border-l border-gray-200">{formatHours(totals.sundayDaily)}</td>
+                                <td className="px-2 py-2 text-center text-gray-700 text-sm">{formatHours(totals.sundayAnnual)}</td>
+                                <td className="px-2 py-2 text-center text-gray-900 text-sm border-l border-gray-200 bg-green-100">{formatHours(totals.totalAnnual)}</td>
                             </tr>
                         </tbody>
                     </table>
                 </div>
 
-                <div className="p-4 bg-gray-50 border-t border-gray-200 text-xs text-gray-600">
-                    Annual multipliers: Weekday × {ANNUAL_MULTIPLIERS.Weekday} days | Saturday × {ANNUAL_MULTIPLIERS.Saturday} days | Sunday × {ANNUAL_MULTIPLIERS.Sunday} days
+                <div className="px-3 py-2 bg-gray-50 border-t border-gray-200 text-[10px] text-gray-500">
+                    Annual: Weekday × {ANNUAL_MULTIPLIERS.Weekday} | Saturday × {ANNUAL_MULTIPLIERS.Saturday} | Sunday × {ANNUAL_MULTIPLIERS.Sunday} days
                 </div>
             </div>
         );
     };
 
-    // ========== RENDER SCHEDULE CARD VIEW ==========
-    const renderScheduleCard = () => {
+    // ========== RENDER TABLE VIEW (uses ScheduleEditor in readOnly mode) ==========
+    const renderScheduleTable = () => {
         const routeIdentity = buildRouteIdentity(selectedRoute as string, selectedDayType);
         const entry = schedules.find(s => s.id === routeIdentity);
         const content = contentCache.get(routeIdentity);
@@ -441,9 +1083,6 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
                     <h3 className="text-lg font-semibold text-gray-900 mb-2">Schedule Needed</h3>
                     <p className="text-gray-600">
                         No schedule has been uploaded for Route {selectedRoute} on {selectedDayType}.
-                    </p>
-                    <p className="text-sm text-gray-500 mt-2">
-                        Upload from New Schedule wizard or Schedule Tweaker to add this schedule.
                     </p>
                 </div>
             );
@@ -458,398 +1097,98 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
             );
         }
 
-        // Calculate metrics
-        const dailyHours = content ? calculateDailyServiceHours(content) : null;
-        const allStartTimes = content ? [
-            ...content.northTable.trips.map(t => t.startTime),
-            ...content.southTable.trips.map(t => t.startTime)
-        ] : [];
-        const allEndTimes = content ? [
-            ...content.northTable.trips.map(t => t.endTime),
-            ...content.southTable.trips.map(t => t.endTime)
-        ] : [];
-        const firstTrip = allStartTimes.length > 0 ? Math.min(...allStartTimes) : null;
-        const lastTrip = allEndTimes.length > 0 ? Math.max(...allEndTimes) : null;
-
-        return (
-            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-                {/* Card Header */}
-                <div
-                    className="p-6 text-white"
-                    style={{ backgroundColor: getRouteColor(selectedRoute as string) }}
-                >
-                    <div className="flex items-center justify-between">
-                        <div>
-                            <h2 className="text-2xl font-bold">Route {selectedRoute}</h2>
-                            <p className="text-sm opacity-90">{selectedDayType} Schedule</p>
-                        </div>
-                        <div className="text-right">
-                            <div className="text-sm opacity-90">Version</div>
-                            <div className="text-2xl font-bold">v{entry.currentVersion}</div>
-                        </div>
-                    </div>
-                </div>
-
-                {/* Card Content */}
-                <div className="p-6 space-y-6">
-                    {/* Metrics Grid */}
-                    <div className="grid grid-cols-2 gap-4">
-                        <div className="bg-gray-50 rounded-lg p-4">
-                            <div className="text-xs font-semibold text-gray-500 uppercase mb-1">Trips</div>
-                            <div className="text-2xl font-bold text-gray-900">{entry.tripCount}</div>
-                        </div>
-                        <div className="bg-gray-50 rounded-lg p-4">
-                            <div className="text-xs font-semibold text-gray-500 uppercase mb-1">Service Hours</div>
-                            <div className="text-2xl font-bold text-gray-900">
-                                {dailyHours !== null ? formatHours(dailyHours) : '--'}
-                            </div>
-                        </div>
-                        <div className="bg-gray-50 rounded-lg p-4">
-                            <div className="text-xs font-semibold text-gray-500 uppercase mb-1">First Trip</div>
-                            <div className="text-lg font-semibold text-gray-900">
-                                {firstTrip !== null ? formatTimeFromMinutes(firstTrip) : '--'}
-                            </div>
-                        </div>
-                        <div className="bg-gray-50 rounded-lg p-4">
-                            <div className="text-xs font-semibold text-gray-500 uppercase mb-1">Last Trip</div>
-                            <div className="text-lg font-semibold text-gray-900">
-                                {lastTrip !== null ? formatTimeFromMinutes(lastTrip) : '--'}
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Details */}
-                    <div className="border-t border-gray-200 pt-4 space-y-2">
-                        <div className="flex justify-between text-sm">
-                            <span className="text-gray-600">Stops</span>
-                            <span className="font-medium text-gray-900">
-                                {entry.northStopCount}N + {entry.southStopCount}S
-                            </span>
-                        </div>
-                        <div className="flex justify-between text-sm">
-                            <span className="text-gray-600">Last Updated</span>
-                            <span className="font-medium text-gray-900">
-                                {new Intl.DateTimeFormat('en-US', {
-                                    month: 'short',
-                                    day: 'numeric',
-                                    year: 'numeric'
-                                }).format(entry.updatedAt)}
-                            </span>
-                        </div>
-                        <div className="flex justify-between text-sm">
-                            <span className="text-gray-600">Updated By</span>
-                            <span className="font-medium text-gray-900">{entry.uploaderName}</span>
-                        </div>
-                    </div>
-
-                    {/* Actions */}
-                    <div className="flex gap-3 pt-4 border-t border-gray-200">
-                        {onLoadToTweaker && (
-                            <button
-                                onClick={() => handleLoadToTweaker(routeIdentity)}
-                                className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-brand-green text-white rounded-lg hover:brightness-110 font-semibold"
-                            >
-                                <Edit3 size={16} />
-                                Load to Tweaker
-                            </button>
-                        )}
-                        <button
-                            onClick={() => handleShowHistory(routeIdentity, entry.currentVersion)}
-                            className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-semibold flex items-center gap-2"
-                        >
-                            <History size={16} />
-                            Version History
-                        </button>
-                        <button
-                            onClick={() => handleDelete(routeIdentity, selectedRoute as string, selectedDayType)}
-                            className="px-4 py-2 border border-red-300 text-red-600 rounded-lg hover:bg-red-50 font-semibold"
-                        >
-                            <Trash2 size={16} />
-                        </button>
-                    </div>
-                </div>
-            </div>
-        );
-    };
-
-    // ========== RENDER TABLE VIEW ==========
-    const renderScheduleTable = () => {
-        const routeIdentity = buildRouteIdentity(selectedRoute as string, selectedDayType);
-        const entry = schedules.find(s => s.id === routeIdentity);
-        const content = contentCache.get(routeIdentity);
-
-        if (!entry || !content) {
-            return renderScheduleCard(); // Fallback to card view
+        if (!content) {
+            return null;
         }
 
-        // Build round-trip view (pairs North + South trips by block)
-        const combined = buildRoundTripView(content.northTable, content.southTable);
-
-        // Determine which stops have recovery times (to show R column)
-        const stopsWithRecovery = new Set<string>();
-        combined.rows.forEach(row => {
-            row.trips.forEach(trip => {
-                if (trip.recoveryTimes) {
-                    Object.entries(trip.recoveryTimes).forEach(([stop, time]) => {
-                        if (time && time > 0) stopsWithRecovery.add(stop);
-                    });
-                }
-            });
-        });
-
-        // Simple cell renderer - just departure time
-        const renderStopCell = (trip: MasterTrip | undefined, stopName: string, hasRecovery: boolean, rowKey: string) => {
-            if (!trip) {
-                return (
-                    <React.Fragment key={`empty-${rowKey}-${stopName}`}>
-                        <td className="py-2 px-2 border-r border-gray-100 text-center"></td>
-                        {hasRecovery && <td className="py-2 px-1 border-r border-gray-100 text-center"></td>}
-                    </React.Fragment>
-                );
-            }
-
-            const departTime = trip.stops[stopName];
-            const recoveryTime = trip.recoveryTimes?.[stopName] || 0;
-
-            return (
-                <React.Fragment key={`${trip.id}-${stopName}`}>
-                    <td className="py-2 px-2 border-r border-gray-100 text-center text-sm text-gray-900">
-                        {departTime || ''}
-                    </td>
-                    {hasRecovery && (
-                        <td className="py-2 px-1 border-r border-gray-100 text-center text-xs text-green-600 font-medium">
-                            {recoveryTime > 0 ? recoveryTime : ''}
-                        </td>
-                    )}
-                </React.Fragment>
-            );
+        // Convert to array format expected by ScheduleEditor
+        // ScheduleEditor needs "(North)" and "(South)" suffixes in routeName to pair tables
+        const northTable: MasterRouteTable = {
+            ...content.northTable,
+            routeName: `${selectedRoute} (North) (${selectedDayType})`
         };
+        const southTable: MasterRouteTable = {
+            ...content.southTable,
+            routeName: `${selectedRoute} (South) (${selectedDayType})`
+        };
+        const schedulesForEditor: MasterRouteTable[] = [northTable, southTable];
 
-        const tableContent = (
-            <div className="overflow-auto flex-1 min-h-0" style={{ maxHeight: isFullScreen ? 'calc(100vh - 120px)' : undefined }}>
-                    <table className="w-full border-collapse" style={{ fontSize: '12px' }}>
-                        <thead className="sticky top-0 z-40 bg-gray-50 shadow-sm">
-                            <tr>
-                                <th className="p-3 border-b border-gray-200 bg-gray-50 sticky left-0 z-50 text-xs font-semibold text-gray-600 uppercase text-center">Block</th>
-
-                                {/* North Stops */}
-                                {combined.northStops.map((stop) => (
-                                    <React.Fragment key={`n-h-${stop}`}>
-                                        <th className="p-2 border-b border-gray-200 bg-gray-50 text-center text-[11px] font-semibold text-gray-700 uppercase whitespace-nowrap" title={stop}>
-                                            {stop}
-                                        </th>
-                                        {stopsWithRecovery.has(stop) && (
-                                            <th className="p-2 border-b border-gray-200 bg-gray-50 text-center text-[10px] font-medium text-gray-400">R</th>
-                                        )}
-                                    </React.Fragment>
-                                ))}
-
-                                {/* South Stops */}
-                                {combined.southStops.map((stop) => (
-                                    <React.Fragment key={`s-h-${stop}`}>
-                                        <th className="p-2 border-b border-gray-200 bg-gray-50 text-center text-[11px] font-semibold text-gray-700 uppercase whitespace-nowrap" title={stop}>
-                                            {stop}
-                                        </th>
-                                        {stopsWithRecovery.has(stop) && (
-                                            <th className="p-2 border-b border-gray-200 bg-gray-50 text-center text-[10px] font-medium text-gray-400">R</th>
-                                        )}
-                                    </React.Fragment>
-                                ))}
-
-                                <th className="p-2 border-b border-gray-200 bg-gray-50 text-center text-xs font-medium text-gray-500">Trav</th>
-                                <th className="p-2 border-b border-gray-200 bg-gray-50 text-center text-xs font-medium text-gray-500">Rec</th>
-                                <th className="p-2 border-b border-gray-200 bg-gray-50 text-center text-xs font-medium text-gray-500">Cycle</th>
-                            </tr>
-                        </thead>
-
-                        <tbody className="divide-y divide-gray-100">
-                            {combined.rows.map((row, rowIdx) => {
-                                const northTrip = row.trips.find(t => t.direction === 'North');
-                                const southTrip = row.trips.find(t => t.direction === 'South');
-
-                                // Calculate travel time from actual trip duration minus recovery (handle midnight rollover)
-                                const northDuration = northTrip ? getTripDuration(northTrip.startTime, northTrip.endTime) : 0;
-                                const southDuration = southTrip ? getTripDuration(southTrip.startTime, southTrip.endTime) : 0;
-                                const totalRec = (northTrip?.recoveryTime || 0) + (southTrip?.recoveryTime || 0);
-                                const cycleTime = northDuration + southDuration;
-                                const totalTravel = cycleTime - totalRec;
-
-                                return (
-                                    <tr key={`${row.blockId}-${rowIdx}`} className={`hover:bg-gray-50 ${rowIdx % 2 === 0 ? 'bg-white' : 'bg-gray-50/30'}`}>
-                                        <td className="p-3 border-r border-gray-200 sticky left-0 bg-white font-bold text-gray-900 text-center z-30">
-                                            {row.blockId}
-                                        </td>
-
-                                        {/* North Stop Times */}
-                                        {combined.northStops.map((stop) => renderStopCell(northTrip, stop, stopsWithRecovery.has(stop), `${row.blockId}-${rowIdx}`))}
-
-                                        {/* South Stop Times */}
-                                        {combined.southStops.map((stop) => renderStopCell(southTrip, stop, stopsWithRecovery.has(stop), `${row.blockId}-${rowIdx}`))}
-
-                                        {/* Summary Columns */}
-                                        <td className="py-2 px-2 text-center text-sm text-gray-600">{totalTravel}</td>
-                                        <td className="py-2 px-2 text-center text-sm text-gray-600">{totalRec}</td>
-                                        <td className="py-2 px-2 text-center text-sm font-medium text-gray-900">{cycleTime}</td>
-                                    </tr>
-                                );
-                            })}
-                        </tbody>
-                        <tfoot className="bg-gray-100 border-t-2 border-gray-300">
-                            {(() => {
-                                // Calculate totals (handle midnight rollover)
-                                let sumTravel = 0, sumRec = 0, sumCycle = 0;
-                                combined.rows.forEach(row => {
-                                    const northTrip = row.trips.find(t => t.direction === 'North');
-                                    const southTrip = row.trips.find(t => t.direction === 'South');
-                                    const northDuration = northTrip ? getTripDuration(northTrip.startTime, northTrip.endTime) : 0;
-                                    const southDuration = southTrip ? getTripDuration(southTrip.startTime, southTrip.endTime) : 0;
-                                    const totalRec = (northTrip?.recoveryTime || 0) + (southTrip?.recoveryTime || 0);
-                                    const cycleTime = northDuration + southDuration;
-                                    sumTravel += cycleTime - totalRec;
-                                    sumRec += totalRec;
-                                    sumCycle += cycleTime;
-                                });
-                                const serviceHours = (sumCycle / 60).toFixed(1);
-                                const northColCount = combined.northStops.length + combined.northStops.filter(s => stopsWithRecovery.has(s)).length;
-                                const southColCount = combined.southStops.length + combined.southStops.filter(s => stopsWithRecovery.has(s)).length;
-
-                                return (
-                                    <tr>
-                                        <td className="p-3 border-r border-gray-200 sticky left-0 bg-gray-100 font-bold text-gray-900 text-center z-30">
-                                            TOTAL
-                                        </td>
-                                        <td colSpan={northColCount + southColCount} className="p-3 text-right text-sm font-medium text-gray-600 pr-4">
-                                            Service Hours: <span className="text-gray-900 font-bold">{serviceHours}h</span>
-                                        </td>
-                                        <td className="py-2 px-2 text-center text-sm font-bold text-gray-700">{sumTravel}</td>
-                                        <td className="py-2 px-2 text-center text-sm font-bold text-gray-700">{sumRec}</td>
-                                        <td className="py-2 px-2 text-center text-sm font-bold text-gray-900">{sumCycle}</td>
-                                    </tr>
-                                );
-                            })()}
-                        </tfoot>
-                    </table>
-                </div>
-            );
-
-        // Render full-screen view
+        // Fullscreen mode - render as fixed overlay
         if (isFullScreen) {
             return (
-                <div className="fixed inset-0 z-[100] bg-white flex flex-col">
-                    {/* Full-screen header */}
-                    <div className="p-6 border-b border-gray-200 flex items-center justify-between bg-white flex-shrink-0">
-                        <div>
-                            <h2 className="text-2xl font-bold text-gray-900">Route {selectedRoute} - {selectedDayType}</h2>
-                            <p className="text-sm text-gray-600">Version {entry.currentVersion} • {entry.tripCount} trips • Read-only view</p>
-                        </div>
-                        <div className="flex gap-2">
-                            {onLoadToTweaker && (
-                                <button
-                                    onClick={() => handleLoadToTweaker(routeIdentity)}
-                                    className="px-4 py-2 bg-brand-green text-white rounded-lg hover:brightness-110 font-semibold flex items-center gap-2"
-                                >
-                                    <Edit3 size={16} />
-                                    Load to Tweaker
-                                </button>
-                            )}
-                            <button
-                                onClick={() => handleShowHistory(routeIdentity, entry.currentVersion)}
-                                className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-semibold flex items-center gap-2"
+                <div className="fixed inset-0 z-[9999] bg-white flex flex-col">
+                    {/* Fullscreen Header */}
+                    <div className="flex items-center justify-between px-4 py-2 bg-gray-50 border-b border-gray-200 flex-shrink-0">
+                        <div className="flex items-center gap-3">
+                            <div
+                                className="w-8 h-8 rounded flex items-center justify-center text-xs font-bold"
+                                style={{
+                                    backgroundColor: getRouteColor(selectedRoute as string),
+                                    color: getRouteTextColor(selectedRoute as string)
+                                }}
                             >
-                                <History size={16} />
-                                History
-                            </button>
-                            <button
-                                onClick={() => setIsFullScreen(false)}
-                                className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-semibold flex items-center gap-2"
-                            >
-                                <Minimize2 size={16} />
-                                Exit Full Screen
-                            </button>
+                                {selectedRoute}
+                            </div>
+                            <div>
+                                <h2 className="text-lg font-bold text-gray-900">Route {selectedRoute}</h2>
+                                <p className="text-xs text-gray-500">{selectedDayType} Schedule</p>
+                            </div>
                         </div>
+                        <button
+                            onClick={() => setIsFullScreen(false)}
+                            className="flex items-center gap-2 px-3 py-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
+                            title="Exit full screen"
+                        >
+                            <Minimize2 size={18} />
+                            <span className="text-sm font-medium">Exit Full Screen</span>
+                        </button>
                     </div>
-                    {tableContent}
+                    {/* Schedule Content */}
+                    <div className="flex-1 overflow-hidden">
+                        <ScheduleEditor
+                            schedules={schedulesForEditor}
+                            readOnly={true}
+                            embedded={true}
+                            draftName={`Route ${selectedRoute} - ${selectedDayType}`}
+                            onClose={() => setIsFullScreen(false)}
+                            forceSimpleView={false}
+                        />
+                    </div>
                 </div>
             );
         }
 
-        // Normal view
         return (
-            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden h-full flex flex-col">
-                <div className="p-6 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
-                    <div>
-                        <h2 className="text-xl font-bold text-gray-900">Route {selectedRoute} - {selectedDayType}</h2>
-                        <p className="text-sm text-gray-600">Version {entry.currentVersion} • {entry.tripCount} trips • Read-only view</p>
-                    </div>
-                    <div className="flex gap-2">
-                        <button
-                            onClick={() => setIsFullScreen(true)}
-                            className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-semibold flex items-center gap-2"
-                            title="Full Screen"
-                        >
-                            <Maximize2 size={16} />
-                        </button>
-                        {onLoadToTweaker && (
-                            <button
-                                onClick={() => handleLoadToTweaker(routeIdentity)}
-                                className="px-4 py-2 bg-brand-green text-white rounded-lg hover:brightness-110 font-semibold flex items-center gap-2"
-                            >
-                                <Edit3 size={16} />
-                                Load to Tweaker
-                            </button>
-                        )}
-                        <button
-                            onClick={() => handleShowHistory(routeIdentity, entry.currentVersion)}
-                            className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-semibold"
-                        >
-                            <History size={16} />
-                        </button>
-                    </div>
-                </div>
-                {tableContent}
+            <div className="h-full">
+                <ScheduleEditor
+                    schedules={schedulesForEditor}
+                    readOnly={true}
+                    embedded={true}
+                    draftName={`Route ${selectedRoute} - ${selectedDayType}`}
+                    onClose={() => setSelectedRoute('overview')}
+                    forceSimpleView={false}
+                />
             </div>
         );
     };
 
     // ========== MAIN RENDER ==========
+    // Use compact padding when viewing a specific route (always table view now)
+    const isTableView = selectedRoute !== 'overview' && selectedRoute !== 'platforms';
+
     return (
-        <div className="p-8 max-w-7xl mx-auto h-full flex flex-col overflow-hidden">
-            {/* Header */}
-            <div className="mb-6 flex items-center justify-between flex-shrink-0">
-                <div>
-                    <h1 className="text-3xl font-bold text-gray-900 mb-2">Master Schedule</h1>
-                    <p className="text-gray-600">Source of truth for all route schedules</p>
+        <div className={`${isTableView ? 'p-4' : 'p-8'} max-w-7xl mx-auto h-full flex flex-col overflow-hidden`}>
+            {/* Header - Compact when viewing schedule table */}
+            <div className={`${isTableView ? 'mb-2' : 'mb-6'} flex items-center justify-between flex-shrink-0`}>
+                <div className="flex items-center gap-4">
+                    <h1 className={`${isTableView ? 'text-xl' : 'text-3xl'} font-bold text-gray-900`}>Master Schedule</h1>
+                    {!isTableView && <p className="text-gray-600">Source of truth for all route schedules</p>}
                 </div>
 
-                {/* View Mode Toggle (only shown when a specific route is selected, not overview or platforms) */}
-                {selectedRoute !== 'overview' && selectedRoute !== 'platforms' && (
-                    <div className="bg-gray-100/80 p-1 rounded-lg flex items-center">
-                        <button
-                            onClick={() => setViewMode('card')}
-                            className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-bold transition-all ${
-                                viewMode === 'card'
-                                    ? 'bg-white text-gray-900 shadow-sm ring-1 ring-black/5'
-                                    : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200/50'
-                            }`}
-                        >
-                            <LayoutGrid size={14} /> Card
-                        </button>
-                        <button
-                            onClick={() => setViewMode('table')}
-                            className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-bold transition-all ${
-                                viewMode === 'table'
-                                    ? 'bg-white text-gray-900 shadow-sm ring-1 ring-black/5'
-                                    : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200/50'
-                            }`}
-                        >
-                            <TableIcon size={14} /> Table
-                        </button>
-                    </div>
-                )}
             </div>
 
-            {/* Route Tabs */}
-            <div className="bg-gray-100/80 p-1 rounded-lg flex items-center gap-1 mb-4 overflow-x-auto flex-shrink-0">
+            {/* Route Tabs - Compact in table view */}
+            <div className={`bg-gray-100/80 p-1 rounded-lg flex items-center gap-1 ${isTableView ? 'mb-2' : 'mb-4'} overflow-x-auto flex-shrink-0`}>
                 <button
                     onClick={() => setSelectedRoute('overview')}
                     className={`px-4 py-2 rounded-md text-sm font-bold transition-all whitespace-nowrap ${
@@ -897,29 +1236,41 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
                 ))}
             </div>
 
-            {/* Day Type Sub-Tabs (shown for routes and platforms, not overview) */}
+            {/* Day Type Sub-Tabs (shown for routes and platforms, not overview) - Compact in table view */}
             {selectedRoute !== 'overview' && (
-                <div className="mb-4 flex-shrink-0">
-                    <div className="flex items-center gap-2">
-                        <h2 className="text-xl font-bold text-gray-900">
-                            {selectedRoute === 'platforms' ? 'Platform Summary' : `Route ${selectedRoute}`}
-                        </h2>
-                        <span className="text-gray-400">•</span>
-                        <div className="bg-gray-100/80 p-1 rounded-lg flex items-center">
-                            {DAY_TYPES.map(dayType => (
-                                <button
-                                    key={dayType}
-                                    onClick={() => setSelectedDayType(dayType)}
-                                    className={`px-3 py-1 rounded-md text-xs font-bold transition-all ${
-                                        selectedDayType === dayType
-                                            ? 'bg-white text-gray-900 shadow-sm ring-1 ring-black/5'
-                                            : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200/50'
-                                    }`}
-                                >
-                                    {dayType}
-                                </button>
-                            ))}
+                <div className={`${isTableView ? 'mb-2' : 'mb-4'} flex-shrink-0`}>
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                            <h2 className={`${isTableView ? 'text-base' : 'text-xl'} font-bold text-gray-900`}>
+                                {selectedRoute === 'platforms' ? 'Platform Summary' : `Route ${selectedRoute}`}
+                            </h2>
+                            <span className="text-gray-400">•</span>
+                            <div className="bg-gray-100/80 p-1 rounded-lg flex items-center">
+                                {DAY_TYPES.map(dayType => (
+                                    <button
+                                        key={dayType}
+                                        onClick={() => setSelectedDayType(dayType)}
+                                        className={`px-3 py-1 rounded-md text-xs font-bold transition-all ${
+                                            selectedDayType === dayType
+                                                ? 'bg-white text-gray-900 shadow-sm ring-1 ring-black/5'
+                                                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200/50'
+                                        }`}
+                                    >
+                                        {dayType}
+                                    </button>
+                                ))}
+                            </div>
                         </div>
+                        {/* Fullscreen toggle - only for routes */}
+                        {selectedRoute !== 'platforms' && (
+                            <button
+                                onClick={() => setIsFullScreen(true)}
+                                className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+                                title="Full screen"
+                            >
+                                <Maximize2 size={18} />
+                            </button>
+                        )}
                     </div>
                 </div>
             )}
@@ -944,8 +1295,7 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
                             />
                         </div>
                     )}
-                    {selectedRoute !== 'overview' && selectedRoute !== 'platforms' && viewMode === 'card' && <div className="h-full overflow-y-auto">{renderScheduleCard()}</div>}
-                    {selectedRoute !== 'overview' && selectedRoute !== 'platforms' && viewMode === 'table' && renderScheduleTable()}
+                    {selectedRoute !== 'overview' && selectedRoute !== 'platforms' && renderScheduleTable()}
                 </div>
             )}
         </div>

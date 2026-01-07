@@ -51,12 +51,14 @@ export const generateSchedule = (
 
     // Helper: Convert minutes to "6:00 AM" format
     const toTimeStr = (totalMinutes: number): string => {
-        let h = Math.floor(totalMinutes / 60);
-        const m = Math.floor(totalMinutes % 60);
-        const ampm = h >= 12 && h < 24 ? 'PM' : 'AM';
-        let displayH = h % 12;
-        if (displayH === 0) displayH = 12;
-        if (h >= 24) h -= 24;
+        // Normalize to 0-1439 range (handles negative and overflow)
+        let normalized = totalMinutes % 1440;
+        if (normalized < 0) normalized += 1440;
+
+        const h = Math.floor(normalized / 60);
+        const m = Math.floor(normalized % 60);
+        const ampm = h >= 12 ? 'PM' : 'AM';
+        const displayH = h % 12 || 12;
         return `${displayH}:${m.toString().padStart(2, '0')} ${ampm}`;
     };
 

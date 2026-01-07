@@ -59,7 +59,12 @@ export const ResumeWizardModal: React.FC<Props> = ({
                 {/* Header */}
                 <div className="bg-gradient-to-r from-emerald-500 to-emerald-600 px-6 py-4 text-white">
                     <div className="flex items-center justify-between">
-                        <h2 className="text-lg font-bold">Resume Progress?</h2>
+                        <div>
+                            <h2 className="text-lg font-bold">Resume Progress?</h2>
+                            {progress.projectName && (
+                                <p className="text-sm text-emerald-50/90 mt-0.5">{progress.projectName}</p>
+                            )}
+                        </div>
                         <button
                             onClick={onClose}
                             className="text-white/70 hover:text-white p-1 rounded transition-colors"

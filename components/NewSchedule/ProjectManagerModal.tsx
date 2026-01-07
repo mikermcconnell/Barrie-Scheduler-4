@@ -5,8 +5,8 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { X, FolderOpen, Clock, Trash2, Edit3, Check, Plus, CalendarPlus, Loader2 } from 'lucide-react';
-import { getAllProjects, deleteProject, getProject, NewScheduleProject } from '../../utils/newScheduleProjectService';
+import { X, FolderOpen, Clock, Trash2, Edit3, Check, Plus, CalendarPlus, Loader2, Copy, Search } from 'lucide-react';
+import { getAllProjects, deleteProject, getProject, duplicateProject, NewScheduleProject } from '../../utils/newScheduleProjectService';
 import type { MasterRouteTable } from '../../utils/masterScheduleParser';
 
 interface Props {
@@ -29,9 +29,12 @@ export const ProjectManagerModal: React.FC<Props> = ({
     onNewProject
 }) => {
     const [projects, setProjects] = useState<NewScheduleProject[]>([]);
+    const [filteredProjects, setFilteredProjects] = useState<NewScheduleProject[]>([]);
+    const [searchQuery, setSearchQuery] = useState('');
     const [loading, setLoading] = useState(false);
     const [selectedProject, setSelectedProject] = useState<NewScheduleProject | null>(null);
     const [deleting, setDeleting] = useState<string | null>(null);
+    const [duplicating, setDuplicating] = useState<string | null>(null);
 
     // Load projects on open
     useEffect(() => {
@@ -40,12 +43,28 @@ export const ProjectManagerModal: React.FC<Props> = ({
         }
     }, [isOpen, userId]);
 
+    // Filter projects when search query changes
+    useEffect(() => {
+        if (searchQuery.trim()) {
+            const query = searchQuery.toLowerCase();
+            setFilteredProjects(
+                projects.filter(p =>
+                    p.name.toLowerCase().includes(query) ||
+                    p.routeNumber?.toLowerCase().includes(query)
+                )
+            );
+        } else {
+            setFilteredProjects(projects);
+        }
+    }, [searchQuery, projects]);
+
     const loadProjects = async () => {
         if (!userId) return;
         setLoading(true);
         try {
             const data = await getAllProjects(userId);
             setProjects(data);
+            setFilteredProjects(data);
         } catch (e) {
             console.error('Failed to load projects:', e);
         } finally {
@@ -71,6 +90,19 @@ export const ProjectManagerModal: React.FC<Props> = ({
         }
     };
 
+    const handleDuplicate = async (projectId: string) => {
+        if (!userId) return;
+        setDuplicating(projectId);
+        try {
+            await duplicateProject(userId, projectId);
+            await loadProjects(); // Reload to show the new copy
+        } catch (e) {
+            console.error('Failed to duplicate project:', e);
+        } finally {
+            setDuplicating(null);
+        }
+    };
+
     const formatTime = (date: Date) => {
         const now = new Date();
         const diff = now.getTime() - date.getTime();
@@ -86,6 +118,27 @@ export const ProjectManagerModal: React.FC<Props> = ({
     };
 
     if (!isOpen) return null;
+
+    // Show login prompt if not authenticated
+    if (!userId) {
+        return (
+            <div className="fixed inset-0 bg-black/40 z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
+                <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8 text-center animate-in zoom-in-95 duration-200">
+                    <FolderOpen className="mx-auto text-gray-300 mb-4" size={48} />
+                    <h2 className="text-xl font-bold text-gray-900 mb-2">Sign In Required</h2>
+                    <p className="text-gray-500 mb-6">
+                        Please sign in to save and load your schedule projects.
+                    </p>
+                    <button
+                        onClick={onClose}
+                        className="px-6 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors font-medium"
+                    >
+                        Close
+                    </button>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="fixed inset-0 bg-black/40 z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
@@ -113,6 +166,20 @@ export const ProjectManagerModal: React.FC<Props> = ({
                     </div>
                 </div>
 
+                {/* Search Bar */}
+                <div className="px-6 py-3 border-b border-gray-100">
+                    <div className="relative">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                        <input
+                            type="text"
+                            placeholder="Search projects..."
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                        />
+                    </div>
+                </div>
+
                 {/* Content */}
                 <div className="flex-1 flex overflow-hidden">
                     {/* Project List */}
@@ -121,15 +188,15 @@ export const ProjectManagerModal: React.FC<Props> = ({
                             <div className="flex items-center justify-center py-12">
                                 <Loader2 size={24} className="animate-spin text-gray-400" />
                             </div>
-                        ) : projects.length === 0 ? (
+                        ) : filteredProjects.length === 0 ? (
                             <div className="flex flex-col items-center justify-center py-12 text-gray-400">
                                 <FolderOpen size={48} className="mb-2 opacity-50" />
-                                <p>No projects yet</p>
-                                <p className="text-sm">Create your first schedule project!</p>
+                                <p>{searchQuery ? 'No projects found' : 'No projects yet'}</p>
+                                <p className="text-sm">{searchQuery ? 'Try a different search' : 'Create your first schedule project!'}</p>
                             </div>
                         ) : (
                             <div className="divide-y divide-gray-50">
-                                {projects.map(project => (
+                                {filteredProjects.map(project => (
                                     <button
                                         key={project.id}
                                         onClick={() => setSelectedProject(project)}
@@ -213,9 +280,22 @@ export const ProjectManagerModal: React.FC<Props> = ({
                                         {selectedProject.isGenerated ? 'Open Schedule' : 'Resume Wizard'}
                                     </button>
                                     <button
+                                        onClick={() => handleDuplicate(selectedProject.id)}
+                                        disabled={duplicating === selectedProject.id}
+                                        className="px-4 py-2.5 text-gray-600 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors disabled:opacity-50"
+                                        title="Duplicate project"
+                                    >
+                                        {duplicating === selectedProject.id ? (
+                                            <Loader2 size={16} className="animate-spin" />
+                                        ) : (
+                                            <Copy size={16} />
+                                        )}
+                                    </button>
+                                    <button
                                         onClick={() => handleDelete(selectedProject.id)}
                                         disabled={deleting === selectedProject.id}
                                         className="px-4 py-2.5 text-red-600 bg-red-50 rounded-lg hover:bg-red-100 transition-colors disabled:opacity-50"
+                                        title="Delete project"
                                     >
                                         {deleting === selectedProject.id ? (
                                             <Loader2 size={16} className="animate-spin" />

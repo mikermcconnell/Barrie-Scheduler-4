@@ -15,7 +15,8 @@ export const FocusPromptModal: React.FC<Props> = ({ onCancel, onOptimize, initia
     };
 
     return (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+        // z-[10000] ensures focus prompt modal appears above fullscreen container (z-[9999])
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 animate-in fade-in duration-200">
             {/* Modal Container */}
             <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden border border-indigo-100 flex flex-col">
 

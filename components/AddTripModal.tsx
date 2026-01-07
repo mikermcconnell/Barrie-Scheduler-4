@@ -151,7 +151,8 @@ export const AddTripModal: React.FC<Props> = ({ context, onCancel, onConfirm }) 
     const isValidTime = parsedStartTime !== null;
 
     return (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+        // z-[10000] ensures modal appears above fullscreen container (z-[9999])
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 animate-in fade-in duration-200">
             <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden border border-blue-100 flex flex-col">
 
                 {/* Header with Route/Day Context */}

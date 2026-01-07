@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { MasterRouteTable } from '../utils/masterScheduleParser';
+import React, { useState, useEffect, useRef } from 'react';
+import { MasterRouteTable, InterlineConfig } from '../utils/masterScheduleParser';
 import { useAuth } from './AuthContext';
+import { useTeam } from './TeamContext';
 import { useUndoRedo } from '../hooks/useUndoRedo';
 import { useAutoSave } from '../hooks/useAutoSave';
 import { ScheduleEditor } from './ScheduleEditor';
@@ -23,18 +24,21 @@ export const ScheduleTweakerWorkspace: React.FC<ScheduleTweakerWorkspaceProps> =
     onClose
 }) => {
     const { user } = useAuth();
+    const { team } = useTeam();
 
     // --- State ---
     const {
         state: schedules,
         set: setSchedules,
         undo, redo, canUndo, canRedo,
-        reset: resetSchedules
+        reset: resetSchedules,
+        historyState
     } = useUndoRedo<MasterRouteTable[]>([], { maxHistory: 50 });
 
     const [originalSchedules, setOriginalSchedules] = useState<MasterRouteTable[]>([]);
+    const [interlineConfig, setInterlineConfig] = useState<InterlineConfig>({ rules: [] });
     const [draftName, setDraftName] = useState<string>('Untitled Draft');
-    const [successToast, setSuccessToast] = useState<{ message: string; visible: boolean } | null>(null);
+    const [successToast, setSuccessToast] = useState<{ message: string; visible: boolean; undoCount: number } | null>(null);
     const [showDraftManager, setShowDraftManager] = useState(false);
 
     // Additional state for internal dashboard (if started empty)
@@ -42,6 +46,13 @@ export const ScheduleTweakerWorkspace: React.FC<ScheduleTweakerWorkspaceProps> =
     const [savedFiles, setSavedFiles] = useState<SavedFile[]>([]);
     const [drafts, setDrafts] = useState<ScheduleDraft[]>([]);
     const [isProcessing, setIsProcessing] = useState(false);
+
+    // Ref to track mounted state for async cleanup
+    const isMountedRef = useRef(true);
+    useEffect(() => {
+        isMountedRef.current = true;
+        return () => { isMountedRef.current = false; };
+    }, []);
 
     // --- Init Effect ---
     useEffect(() => {
@@ -53,6 +64,7 @@ export const ScheduleTweakerWorkspace: React.FC<ScheduleTweakerWorkspaceProps> =
                 await handleLoadSavedFile(initialFile);
             } else {
                 // Start empty -> show internal dashboard
+                if (!isMountedRef.current) return;
                 setInternalViewMode('dashboard');
                 if (user) {
                     loadSavedFiles();
@@ -77,12 +89,13 @@ export const ScheduleTweakerWorkspace: React.FC<ScheduleTweakerWorkspaceProps> =
 
     useEffect(() => {
         if (schedules.length > 0) {
-            setAutoSaveData(schedules, originalSchedules, draftName);
+            setAutoSaveData(schedules, originalSchedules, draftName, interlineConfig);
         }
-    }, [schedules, originalSchedules, draftName, setAutoSaveData]);
+    }, [schedules, originalSchedules, draftName, interlineConfig, setAutoSaveData]);
 
     const showSuccessToastImpl = (message: string) => {
-        setSuccessToast({ message, visible: true });
+        // Capture current undo count so toast undo button knows if it's still relevant
+        setSuccessToast({ message, visible: true, undoCount: historyState.past.length });
         setTimeout(() => setSuccessToast(null), 4000);
     };
 
@@ -91,6 +104,7 @@ export const ScheduleTweakerWorkspace: React.FC<ScheduleTweakerWorkspaceProps> =
         if (!user) return;
         try {
             const files = await getAllFiles(user.uid);
+            if (!isMountedRef.current) return;
             setSavedFiles(files.filter(f => f.type === 'schedule_master'));
         } catch (error) {
             console.error("Failed to load saved files:", error);
@@ -98,8 +112,13 @@ export const ScheduleTweakerWorkspace: React.FC<ScheduleTweakerWorkspaceProps> =
     };
 
     const loadDrafts = async () => {
-        if (user) {
-            getAllDrafts(user.uid).then(setDrafts).catch(console.error);
+        if (!user) return;
+        try {
+            const loadedDrafts = await getAllDrafts(user.uid);
+            if (!isMountedRef.current) return;
+            setDrafts(loadedDrafts);
+        } catch (error) {
+            console.error("Failed to load drafts:", error);
         }
     };
 
@@ -119,18 +138,25 @@ export const ScheduleTweakerWorkspace: React.FC<ScheduleTweakerWorkspaceProps> =
 
     const handleFile = async (files: File[]) => {
         if (!files || files.length === 0) return;
+        if (isProcessing) return; // Prevent concurrent loads
         const file = files[0];
         setIsProcessing(true);
         try {
+            // If user is logged in, prompt for name and save to cloud
             if (user) {
                 const defaultName = file.name.replace('.xlsx', '');
                 const name = window.prompt("Enter a name for this Master Schedule:", defaultName);
-                if (name) {
-                    const renamedFile = new File([file], name + ".xlsx", { type: file.type });
-                    await uploadFile(user.uid, renamedFile, 'schedule_master');
-                    await loadSavedFiles();
+                if (!name) {
+                    // User cancelled - don't process the file
+                    setIsProcessing(false);
+                    return;
                 }
+                const renamedFile = new File([file], name + ".xlsx", { type: file.type });
+                await uploadFile(user.uid, renamedFile, 'schedule_master');
+                if (!isMountedRef.current) return;
+                await loadSavedFiles();
             }
+            if (!isMountedRef.current) return;
             const buffer = await file.arrayBuffer();
             const v2Result = parseMasterScheduleV2(buffer);
             const tables = adaptV2ToV1(v2Result);
@@ -139,15 +165,17 @@ export const ScheduleTweakerWorkspace: React.FC<ScheduleTweakerWorkspaceProps> =
             setInternalViewMode('editor');
         } catch (err) {
             console.error(err);
-            alert("Failed to process file.");
+            if (isMountedRef.current) alert("Failed to process file.");
         }
-        setIsProcessing(false);
+        if (isMountedRef.current) setIsProcessing(false);
     };
 
     const handleLoadSavedFile = async (file: SavedFile) => {
+        if (isProcessing) return; // Prevent concurrent loads
         setIsProcessing(true);
         try {
             const buffer = await downloadFileArrayBuffer(file.downloadUrl);
+            if (!isMountedRef.current) return;
             const v2Result = parseMasterScheduleV2(buffer);
             const tables = adaptV2ToV1(v2Result);
             resetSchedules(tables);
@@ -155,24 +183,47 @@ export const ScheduleTweakerWorkspace: React.FC<ScheduleTweakerWorkspaceProps> =
             setInternalViewMode('editor');
         } catch (err) {
             console.error(err);
-            alert("Failed to load saved file.");
+            if (isMountedRef.current) alert("Failed to load saved file.");
         }
-        setIsProcessing(false);
+        if (isMountedRef.current) setIsProcessing(false);
     };
 
     const handleLoadDraft = async (draft: ScheduleDraft) => {
-        if (!user) return;
         try {
+            // If draft already has schedules loaded (e.g., from Master Schedule Browser), use directly
+            if (draft.schedules && draft.schedules.length > 0) {
+                resetSchedules(draft.schedules);
+                setOriginalSchedules(draft.originalSchedules || draft.schedules);
+                setInterlineConfig(draft.interlineConfig || { rules: [] });
+                setDraftName(draft.name);
+                showSuccessToastImpl(`Loaded: ${draft.name}`);
+                setInternalViewMode('editor');
+                return;
+            }
+
+            // Otherwise, fetch from Firestore
+            if (!user) return;
+            if (isProcessing) return; // Prevent concurrent loads
+            setIsProcessing(true);
             const fullDraft = await getDraft(user.uid, draft.id);
+            if (!isMountedRef.current) return;
             if (fullDraft && fullDraft.schedules.length > 0) {
                 resetSchedules(fullDraft.schedules);
                 setOriginalSchedules(fullDraft.originalSchedules || []);
+                setInterlineConfig(fullDraft.interlineConfig || { rules: [] });
                 setDraftName(fullDraft.name);
                 showSuccessToastImpl(`Loaded: ${fullDraft.name}`);
                 setInternalViewMode('editor');
+            } else if (fullDraft) {
+                alert('This draft appears to be empty or corrupted.');
+            } else {
+                alert('Draft not found.');
             }
         } catch (e) {
             console.error('Failed to load draft:', e);
+            if (isMountedRef.current) alert('Failed to load draft. Please try again.');
+        } finally {
+            if (isMountedRef.current) setIsProcessing(false);
         }
     };
 
@@ -183,10 +234,7 @@ export const ScheduleTweakerWorkspace: React.FC<ScheduleTweakerWorkspaceProps> =
         resetSchedules([]);
         setOriginalSchedules([]);
         setDraftName('Untitled Draft');
-        // If we are in "editor" mode with empty schedules, Render Logic will handle it, or we can go back to dashboard
-        // Ideally "New Draft" creates a blank slate in the editor? 
-        // Or goes back to file picking?
-        // Let's assume it clears state.
+        setInternalViewMode('dashboard');
     };
 
     const handleCloseInternal = () => {
@@ -201,13 +249,13 @@ export const ScheduleTweakerWorkspace: React.FC<ScheduleTweakerWorkspaceProps> =
 
     const handleRenameDraft = (name: string) => setDraftName(name);
 
-    // Update draft name automatically
+    // Update draft name automatically when schedules first load
+    const firstRouteName = schedules[0]?.routeName?.split(' ')[0];
     useEffect(() => {
-        if (schedules.length > 0 && draftName === 'Untitled Draft') {
-            const routeName = schedules[0]?.routeName?.split(' ')[0] || 'Untitled';
-            setDraftName(`Draft - Route ${routeName}`);
+        if (schedules.length > 0 && draftName === 'Untitled Draft' && firstRouteName) {
+            setDraftName(`Draft - Route ${firstRouteName}`);
         }
-    }, [schedules.length]);
+    }, [schedules.length, draftName, firstRouteName]);
 
     // --- Render ---
 
@@ -246,6 +294,14 @@ export const ScheduleTweakerWorkspace: React.FC<ScheduleTweakerWorkspaceProps> =
                 undo={undo}
                 redo={redo}
                 showSuccessToast={showSuccessToastImpl}
+                forceSimpleView={true}
+                // Upload to Master - only available if user is part of a team
+                teamId={team?.id}
+                userId={user?.uid}
+                uploaderName={user?.displayName || user?.email || 'Unknown User'}
+                // Interline configuration
+                initialInterlineConfig={interlineConfig}
+                onInterlineConfigChange={setInterlineConfig}
             />
 
             {/* Success Toast */}
@@ -253,7 +309,10 @@ export const ScheduleTweakerWorkspace: React.FC<ScheduleTweakerWorkspaceProps> =
                 <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[70] animate-in slide-in-from-bottom-4 duration-300">
                     <div className="bg-emerald-600 text-white px-6 py-3 rounded-xl shadow-xl flex items-center gap-4 border border-emerald-500">
                         <span className="font-bold text-sm">{successToast.message}</span>
-                        <button onClick={() => { undo(); setSuccessToast(null); }} disabled={!canUndo} className="bg-white/20 hover:bg-white/30 px-3 py-1 rounded-lg text-xs font-bold transition-colors disabled:opacity-50">Undo</button>
+                        {/* Only show undo if history hasn't changed since toast was shown */}
+                        {historyState.past.length === successToast.undoCount && canUndo && (
+                            <button onClick={() => { undo(); setSuccessToast(null); }} className="bg-white/20 hover:bg-white/30 px-3 py-1 rounded-lg text-xs font-bold transition-colors">Undo</button>
+                        )}
                         <button onClick={() => setSuccessToast(null)} className="text-white/70 hover:text-white p-1">×</button>
                     </div>
                 </div>

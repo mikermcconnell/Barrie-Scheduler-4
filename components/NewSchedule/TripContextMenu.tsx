@@ -3,11 +3,11 @@
  * Right-click menu for trip row actions: End Block Here, Start Block Here, Delete, Add Trip.
  */
 
-import React, { useEffect, useRef } from 'react';
-import { Trash2, Plus, MapPinOff, MapPin, Scissors } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Trash2, Plus, MapPinOff, MapPin, Copy, ChevronRight } from 'lucide-react';
 
 export interface TripContextMenuAction {
-    type: 'endBlockHere' | 'startBlockHere' | 'deleteTrip' | 'addTripAfter';
+    type: 'endBlockHere' | 'startBlockHere' | 'deleteTrip' | 'addTripAfter' | 'duplicateTrip';
     tripId: string;
     stopName?: string;
     stopIndex?: number;
@@ -39,6 +39,8 @@ export const TripContextMenu: React.FC<TripContextMenuProps> = ({
     onClose
 }) => {
     const menuRef = useRef<HTMLDivElement>(null);
+    const [activeSubmenu, setActiveSubmenu] = useState<'endBlock' | 'startBlock' | null>(null);
+    const [submenuPosition, setSubmenuPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
     // Close on click outside
     useEffect(() => {
@@ -77,61 +79,127 @@ export const TripContextMenu: React.FC<TripContextMenuProps> = ({
         }
     }, [x, y]);
 
-    const handleAction = (type: TripContextMenuAction['type']) => {
+    const handleAction = (type: TripContextMenuAction['type'], stopName?: string, stopIndex?: number) => {
         onAction({
             type,
             tripId,
-            stopName: currentStopName,
-            stopIndex: currentStopIndex
+            stopName,
+            stopIndex
         });
         onClose();
     };
 
-    const isFirstStop = currentStopIndex === 0;
-    const isLastStop = currentStopIndex === stops.length - 1;
+    const handleSubmenuHover = (
+        submenu: 'endBlock' | 'startBlock',
+        e: React.MouseEvent<HTMLButtonElement>
+    ) => {
+        const rect = e.currentTarget.getBoundingClientRect();
+        setSubmenuPosition({
+            x: rect.right,
+            y: rect.top
+        });
+        setActiveSubmenu(submenu);
+    };
+
+    // Stops for "End Block Here" - all except the last one
+    const endBlockStops = stops.slice(0, -1);
+    // Stops for "Start Block Here" - all except the first one
+    const startBlockStops = stops.slice(1);
 
     return (
+        // z-[10000] ensures context menu appears above fullscreen container (z-[9999])
         <div
             ref={menuRef}
-            className="fixed z-[100] bg-white rounded-lg shadow-xl border border-gray-200 py-1 min-w-[180px] animate-in fade-in zoom-in-95 duration-100"
+            className="fixed z-[10000] bg-white rounded-lg shadow-xl border border-gray-200 py-1 min-w-[180px] animate-in fade-in zoom-in-95 duration-100"
             style={{ left: x, top: y }}
+            onMouseLeave={() => setActiveSubmenu(null)}
         >
             {/* Header */}
             <div className="px-3 py-2 border-b border-gray-100">
                 <div className="text-xs font-semibold text-gray-700">Block {blockId}</div>
                 <div className="text-[10px] text-gray-400">{tripDirection}bound</div>
-                {currentStopName && (
-                    <div className="text-[10px] text-gray-500 mt-0.5 truncate" title={currentStopName}>
-                        @ {currentStopName}
-                    </div>
-                )}
             </div>
 
             {/* Actions */}
             <div className="py-1">
-                {/* Start Block Here - only if not first stop */}
-                {currentStopName && !isFirstStop && (
-                    <button
-                        onClick={() => handleAction('startBlockHere')}
-                        className="w-full px-3 py-2 text-left text-sm flex items-center gap-2 hover:bg-gray-50 text-gray-700"
-                    >
-                        <MapPin size={14} className="text-green-500" />
-                        <span>Start Block Here</span>
-                    </button>
+                {/* Start Block Here - with submenu */}
+                {startBlockStops.length > 0 && (
+                    <div className="relative">
+                        <button
+                            onMouseEnter={(e) => handleSubmenuHover('startBlock', e)}
+                            className="w-full px-3 py-2 text-left text-sm flex items-center gap-2 hover:bg-gray-50 text-gray-700"
+                        >
+                            <MapPin size={14} className="text-green-500" />
+                            <span className="flex-1">Start Trip Here</span>
+                            <ChevronRight size={14} className="text-gray-400" />
+                        </button>
+
+                        {/* Submenu for Start Block */}
+                        {activeSubmenu === 'startBlock' && (
+                            <div
+                                className="fixed z-[101] bg-white rounded-lg shadow-xl border border-gray-200 py-1 min-w-[160px] max-h-[300px] overflow-y-auto"
+                                style={{ left: submenuPosition.x, top: submenuPosition.y }}
+                                onMouseEnter={() => setActiveSubmenu('startBlock')}
+                            >
+                                <div className="px-3 py-1.5 text-[10px] font-semibold text-gray-400 uppercase tracking-wide border-b border-gray-100">
+                                    Select Start Stop
+                                </div>
+                                {startBlockStops.map((stop, idx) => {
+                                    const actualIndex = idx + 1; // +1 because we sliced off the first
+                                    return (
+                                        <button
+                                            key={stop}
+                                            onClick={() => handleAction('startBlockHere', stop, actualIndex)}
+                                            className="w-full px-3 py-1.5 text-left text-xs hover:bg-green-50 text-gray-700 truncate"
+                                            title={stop}
+                                        >
+                                            {stop}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
                 )}
 
-                {/* End Block Here - only if not last stop */}
-                {currentStopName && !isLastStop && (
-                    <button
-                        onClick={() => handleAction('endBlockHere')}
-                        className="w-full px-3 py-2 text-left text-sm flex items-center gap-2 hover:bg-gray-50 text-gray-700"
-                    >
-                        <MapPinOff size={14} className="text-orange-500" />
-                        <span>End Block Here</span>
-                    </button>
+                {/* End Block Here - with submenu */}
+                {endBlockStops.length > 0 && (
+                    <div className="relative">
+                        <button
+                            onMouseEnter={(e) => handleSubmenuHover('endBlock', e)}
+                            className="w-full px-3 py-2 text-left text-sm flex items-center gap-2 hover:bg-gray-50 text-gray-700"
+                        >
+                            <MapPinOff size={14} className="text-orange-500" />
+                            <span className="flex-1">End Trip Here</span>
+                            <ChevronRight size={14} className="text-gray-400" />
+                        </button>
+
+                        {/* Submenu for End Block */}
+                        {activeSubmenu === 'endBlock' && (
+                            <div
+                                className="fixed z-[101] bg-white rounded-lg shadow-xl border border-gray-200 py-1 min-w-[160px] max-h-[300px] overflow-y-auto"
+                                style={{ left: submenuPosition.x, top: submenuPosition.y }}
+                                onMouseEnter={() => setActiveSubmenu('endBlock')}
+                            >
+                                <div className="px-3 py-1.5 text-[10px] font-semibold text-gray-400 uppercase tracking-wide border-b border-gray-100">
+                                    Select End Stop
+                                </div>
+                                {endBlockStops.map((stop, idx) => (
+                                    <button
+                                        key={stop}
+                                        onClick={() => handleAction('endBlockHere', stop, idx)}
+                                        className="w-full px-3 py-1.5 text-left text-xs hover:bg-orange-50 text-gray-700 truncate"
+                                        title={stop}
+                                    >
+                                        {stop}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                    </div>
                 )}
 
-                {(currentStopName && !isFirstStop && !isLastStop) && (
+                {(startBlockStops.length > 0 || endBlockStops.length > 0) && (
                     <div className="border-t border-gray-100 my-1" />
                 )}
 
@@ -142,6 +210,15 @@ export const TripContextMenu: React.FC<TripContextMenuProps> = ({
                 >
                     <Plus size={14} className="text-blue-500" />
                     <span>Add Trip After</span>
+                </button>
+
+                {/* Duplicate Trip */}
+                <button
+                    onClick={() => handleAction('duplicateTrip')}
+                    className="w-full px-3 py-2 text-left text-sm flex items-center gap-2 hover:bg-gray-50 text-gray-700"
+                >
+                    <Copy size={14} className="text-purple-500" />
+                    <span>Duplicate Trip</span>
                 </button>
 
                 <div className="border-t border-gray-100 my-1" />

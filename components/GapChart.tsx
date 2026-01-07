@@ -55,6 +55,7 @@ interface Props {
   data: TimeSlot[];
   zoneFilter: ZoneFilterType;
   onZoneFilterChange: (filter: ZoneFilterType) => void;
+  fillHeight?: boolean; // When true, fills parent container instead of fixed 550px
 }
 
 const CustomTooltip = ({ active, payload, label, viewMode }: any) => {
@@ -112,7 +113,7 @@ const CustomTooltip = ({ active, payload, label, viewMode }: any) => {
   return null;
 };
 
-export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange }) => {
+export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange, fillHeight = false }) => {
 
   // Filter data to only show reasonable operating hours (e.g., 5am to 1am) for better visual
   const displayData = data.filter(d => {
@@ -170,7 +171,7 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
   const [isExpanded, setIsExpanded] = React.useState(true);
 
   return (
-    <div className={`w-full bg-white p-6 rounded-3xl border-2 border-gray-200 shadow-sm relative overflow-hidden transition-all duration-300 ${isExpanded ? 'h-[550px]' : 'h-auto'}`}>
+    <div className={`w-full bg-white p-6 rounded-3xl border-2 border-gray-200 shadow-sm relative overflow-hidden transition-all duration-300 ${isExpanded ? (fillHeight ? 'h-full' : 'h-[550px]') : 'h-auto'}`}>
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
         <div className="flex items-center gap-4">
           <button

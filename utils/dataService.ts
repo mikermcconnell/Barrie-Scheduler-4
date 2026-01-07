@@ -20,7 +20,7 @@ import {
 } from 'firebase/storage';
 import { db, storage } from './firebase';
 import type { Shift, Requirement } from '../types';
-import type { MasterRouteTable } from './masterScheduleParser';
+import type { MasterRouteTable, InterlineConfig } from './masterScheduleParser';
 
 // Types for saved data
 export interface SavedSchedule {
@@ -273,6 +273,7 @@ export interface ScheduleDraft {
     // Schedules are now loaded from Storage, so these might be empty in listing view
     schedules: MasterRouteTable[];
     originalSchedules: MasterRouteTable[];
+    interlineConfig?: InterlineConfig; // Interline rules configuration
     storagePath?: string; // Path to JSON in Firebase Storage
     routeCount?: number; // Metadata for display without loading full data
     createdAt: Date;
@@ -321,7 +322,8 @@ export const saveDraft = async (
     // 1. Prepare data for Storage
     const content = JSON.stringify({
         schedules: draft.schedules || [],
-        originalSchedules: draft.originalSchedules || []
+        originalSchedules: draft.originalSchedules || [],
+        interlineConfig: draft.interlineConfig || { rules: [] }
     });
 
     const timestamp = Date.now();
@@ -375,6 +377,7 @@ export const getDraft = async (
     const data = snapshot.data();
     let schedules = data.schedules || [];
     let originalSchedules = data.originalSchedules || [];
+    let interlineConfig: InterlineConfig | undefined = undefined;
 
     // If storagePath exists, download the full content
     if (data.storagePath) {
@@ -385,6 +388,7 @@ export const getDraft = async (
             const json = JSON.parse(content);
             schedules = json.schedules || [];
             originalSchedules = json.originalSchedules || [];
+            interlineConfig = json.interlineConfig;
         } catch (e) {
             console.error('Failed to load draft content from storage:', e);
             // Fallback to Firestore data if available (backwards compatibility)
@@ -396,6 +400,7 @@ export const getDraft = async (
         name: data.name,
         schedules,
         originalSchedules,
+        interlineConfig,
         storagePath: data.storagePath,
         createdAt: (data.createdAt as Timestamp)?.toDate() || new Date(),
         updatedAt: (data.updatedAt as Timestamp)?.toDate() || new Date()
@@ -469,7 +474,8 @@ export const saveDraftVersion = async (
     draftId: string,
     schedules: ScheduleDraft['schedules'],
     originalSchedules: ScheduleDraft['originalSchedules'],
-    label?: string
+    label?: string,
+    interlineConfig?: InterlineConfig
 ): Promise<string> => {
     const versionsRef = collection(db, 'users', userId, 'scheduleDrafts', draftId, 'versions');
     const newVersionRef = doc(versionsRef);
@@ -478,7 +484,8 @@ export const saveDraftVersion = async (
     // 1. Prepare data for Storage
     const content = JSON.stringify({
         schedules: schedules || [],
-        originalSchedules: originalSchedules || []
+        originalSchedules: originalSchedules || [],
+        interlineConfig: interlineConfig || { rules: [] }
     });
 
     const timestamp = Date.now();

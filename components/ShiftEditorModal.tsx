@@ -264,11 +264,12 @@ export const ShiftEditorModal: React.FC<Props> = ({ shift, allShifts, requiremen
                     {/* Chart Section */}
                     {/* Updated to use local zone filter from shift */}
                     <div className="flex-1 p-6 min-h-0">
-                        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm h-full p-4">
+                        <div className="h-full">
                             <GapChart
                                 data={chartData}
                                 zoneFilter={localZoneFilter}
                                 onZoneFilterChange={setLocalZoneFilter}
+                                fillHeight={true}
                             />
                         </div>
                     </div>

@@ -99,7 +99,6 @@ export const saveProject = async (
         dayType: project.dayType,
         routeNumber: project.routeNumber || null,
         isGenerated: project.isGenerated || false,
-        storagePath: storagePath || null,
         // Don't store large data in Firestore
         analysis: [],
         bands: [],
@@ -108,6 +107,11 @@ export const saveProject = async (
         // parsedData is never stored in Firestore
         updatedAt: serverTimestamp()
     };
+
+    // Only update storagePath if we uploaded new data (don't overwrite existing path with null)
+    if (storagePath) {
+        docData.storagePath = storagePath;
+    }
 
     if (!isUpdate) {
         docData.createdAt = serverTimestamp();
@@ -128,9 +132,19 @@ export const getProject = async (
     const docRef = doc(db, 'users', userId, 'newScheduleProjects', projectId);
     const docSnap = await getDoc(docRef);
 
-    if (!docSnap.exists()) return null;
+    if (!docSnap.exists()) {
+        console.error('Project document does not exist:', projectId);
+        return null;
+    }
 
     const data = docSnap.data();
+    console.log('Loading project from Firestore:', {
+        name: data.name,
+        storagePath: data.storagePath,
+        isGenerated: data.isGenerated,
+        hasConfig: !!data.config
+    });
+
     let fullData: NewScheduleProject = {
         id: docSnap.id,
         name: data.name,
@@ -162,9 +176,18 @@ export const getProject = async (
                 bands: content.bands || [],
                 config: content.config || fullData.config
             };
+            console.log('Loaded from Cloud Storage:', {
+                analysisCount: fullData.analysis?.length,
+                parsedDataCount: fullData.parsedData?.length,
+                schedulesCount: fullData.generatedSchedules?.length,
+                bandsCount: fullData.bands?.length,
+                hasConfig: !!fullData.config
+            });
         } catch (e) {
             console.error('Failed to load project data from storage:', e);
         }
+    } else {
+        console.warn('No storagePath found - project has no saved data in Cloud Storage');
     }
 
     return fullData;
@@ -224,4 +247,35 @@ export const deleteProject = async (
 
     // Delete Firestore document
     await deleteDoc(docRef);
+};
+
+/**
+ * Duplicate a project
+ */
+export const duplicateProject = async (
+    userId: string,
+    projectId: string,
+    newName?: string
+): Promise<string> => {
+    // Get the full project data
+    const project = await getProject(userId, projectId);
+    if (!project) {
+        throw new Error('Project not found');
+    }
+
+    // Create a new project with the same data but a new name
+    const duplicatedProject: Omit<NewScheduleProject, 'id' | 'createdAt' | 'updatedAt'> = {
+        name: newName || `${project.name} (Copy)`,
+        dayType: project.dayType,
+        routeNumber: project.routeNumber,
+        analysis: project.analysis,
+        bands: project.bands,
+        config: project.config,
+        generatedSchedules: project.generatedSchedules,
+        parsedData: project.parsedData,
+        isGenerated: project.isGenerated
+    };
+
+    // Save the duplicated project
+    return await saveProject(userId, duplicatedProject);
 };

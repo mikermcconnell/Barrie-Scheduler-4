@@ -247,16 +247,15 @@ function parseTimeToMinutes(timeStr: string): number | null {
 }
 
 function formatMinutesToTime(minutes: number): string {
-    // Handle negative or overflow
-    while (minutes < 0) minutes += 24 * 60;
-    minutes = minutes % (24 * 60);
+    // Normalize to 0-1439 range (handles negative and overflow)
+    let normalized = minutes % 1440;
+    if (normalized < 0) normalized += 1440;
 
-    let h = Math.floor(minutes / 60);
-    const m = Math.round(minutes % 60);
+    const h = Math.floor(normalized / 60);
+    const m = Math.round(normalized % 60);
 
     const period = h >= 12 ? 'PM' : 'AM';
-    if (h > 12) h -= 12;
-    if (h === 0) h = 12;
+    const h12 = h % 12 || 12;
 
-    return `${h}:${m.toString().padStart(2, '0')} ${period}`;
+    return `${h12}:${m.toString().padStart(2, '0')} ${period}`;
 }

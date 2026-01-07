@@ -14,7 +14,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { saveDraft, saveDraftVersion, getDraft, ScheduleDraft, withRetry } from '../utils/dataService';
-import type { MasterRouteTable } from '../utils/masterScheduleParser';
+import type { MasterRouteTable, InterlineConfig } from '../utils/masterScheduleParser';
 
 // localStorage keys for guest users
 const GUEST_DRAFT_KEY = 'scheduleDraft_current';
@@ -41,13 +41,14 @@ export interface UseAutoSaveResult {
     clearDraft: () => void;
 
     // Data setters (call these when state changes)
-    setData: (schedules: MasterRouteTable[], originalSchedules: MasterRouteTable[], name?: string) => void;
+    setData: (schedules: MasterRouteTable[], originalSchedules: MasterRouteTable[], name?: string, interlineConfig?: InterlineConfig) => void;
 }
 
 interface GuestDraft {
     name: string;
     schedules: MasterRouteTable[];
     originalSchedules: MasterRouteTable[];
+    interlineConfig?: InterlineConfig;
     updatedAt: string;
 }
 
@@ -55,6 +56,7 @@ interface GuestVersion {
     id: string;
     schedules: MasterRouteTable[];
     originalSchedules: MasterRouteTable[];
+    interlineConfig?: InterlineConfig;
     savedAt: string;
     label?: string;
 }
@@ -72,12 +74,14 @@ export const useAutoSave = (options: UseAutoSaveOptions = {}): UseAutoSaveResult
     const dataRef = useRef<{
         schedules: MasterRouteTable[];
         originalSchedules: MasterRouteTable[];
+        interlineConfig?: InterlineConfig;
         name: string;
         isDirty: boolean;
         version: number;
     }>({
         schedules: [],
         originalSchedules: [],
+        interlineConfig: undefined,
         name: 'Untitled Draft',
         isDirty: false,
         version: 0
@@ -99,6 +103,7 @@ export const useAutoSave = (options: UseAutoSaveOptions = {}): UseAutoSaveResult
                 name: dataRef.current.name,
                 schedules: dataRef.current.schedules,
                 originalSchedules: dataRef.current.originalSchedules,
+                interlineConfig: dataRef.current.interlineConfig,
                 updatedAt: new Date().toISOString()
             };
             localStorage.setItem(GUEST_DRAFT_KEY, JSON.stringify(draft));
@@ -125,7 +130,8 @@ export const useAutoSave = (options: UseAutoSaveOptions = {}): UseAutoSaveResult
                 id: currentDraftId || undefined,
                 name: dataRef.current.name,
                 schedules: dataRef.current.schedules,
-                originalSchedules: dataRef.current.originalSchedules
+                originalSchedules: dataRef.current.originalSchedules,
+                interlineConfig: dataRef.current.interlineConfig
             }));
 
             if (!currentDraftId) {
@@ -176,18 +182,20 @@ export const useAutoSave = (options: UseAutoSaveOptions = {}): UseAutoSaveResult
     const setData = useCallback((
         schedules: MasterRouteTable[],
         originalSchedules: MasterRouteTable[],
-        name?: string
+        name?: string,
+        interlineConfig?: InterlineConfig
     ) => {
         dataRef.current = {
             schedules,
             originalSchedules,
+            interlineConfig: interlineConfig || dataRef.current.interlineConfig,
             name: name || dataRef.current.name,
             isDirty: true,
             version: (dataRef.current.version || 0) + 1
         };
 
-        // Only update status to idle if we were saved or errorRed. 
-        // If we are currently 'saving', keep it 'saving' so UI doesn't flicker 
+        // Only update status to idle if we were saved or errorRed.
+        // If we are currently 'saving', keep it 'saving' so UI doesn't flicker
         // (but logic in saveToFirebase will prevent setting 'saved' if version mismatch)
         setStatus(prev => (prev === 'saved' || prev === 'error') ? 'idle' : prev);
         scheduleSave();
@@ -208,7 +216,8 @@ export const useAutoSave = (options: UseAutoSaveOptions = {}): UseAutoSaveResult
                     draftId = await saveDraft(userId, {
                         name: dataRef.current.name,
                         schedules: dataRef.current.schedules,
-                        originalSchedules: dataRef.current.originalSchedules
+                        originalSchedules: dataRef.current.originalSchedules,
+                        interlineConfig: dataRef.current.interlineConfig
                     });
                     setCurrentDraftId(draftId);
                 }
@@ -218,7 +227,8 @@ export const useAutoSave = (options: UseAutoSaveOptions = {}): UseAutoSaveResult
                     draftId,
                     dataRef.current.schedules,
                     dataRef.current.originalSchedules,
-                    label
+                    label,
+                    dataRef.current.interlineConfig
                 );
                 setLastSaved(new Date());
                 setStatus('saved');
@@ -238,6 +248,7 @@ export const useAutoSave = (options: UseAutoSaveOptions = {}): UseAutoSaveResult
                     id: `v_${Date.now()}`,
                     schedules: dataRef.current.schedules,
                     originalSchedules: dataRef.current.originalSchedules,
+                    interlineConfig: dataRef.current.interlineConfig,
                     savedAt: new Date().toISOString(),
                     label
                 });
@@ -262,6 +273,7 @@ export const useAutoSave = (options: UseAutoSaveOptions = {}): UseAutoSaveResult
                 dataRef.current = {
                     schedules: draft.schedules,
                     originalSchedules: draft.originalSchedules,
+                    interlineConfig: draft.interlineConfig,
                     name: draft.name,
                     isDirty: false,
                     version: 0
@@ -271,6 +283,7 @@ export const useAutoSave = (options: UseAutoSaveOptions = {}): UseAutoSaveResult
                     name: draft.name,
                     schedules: draft.schedules,
                     originalSchedules: draft.originalSchedules,
+                    interlineConfig: draft.interlineConfig,
                     createdAt: new Date(draft.updatedAt),
                     updatedAt: new Date(draft.updatedAt)
                 };
@@ -285,6 +298,7 @@ export const useAutoSave = (options: UseAutoSaveOptions = {}): UseAutoSaveResult
                 dataRef.current = {
                     schedules: draft.schedules,
                     originalSchedules: draft.originalSchedules,
+                    interlineConfig: draft.interlineConfig,
                     name: draft.name,
                     isDirty: false,
                     version: 0
@@ -303,6 +317,7 @@ export const useAutoSave = (options: UseAutoSaveOptions = {}): UseAutoSaveResult
         dataRef.current = {
             schedules: [],
             originalSchedules: [],
+            interlineConfig: undefined,
             name: 'Untitled Draft',
             isDirty: false,
             version: 0
@@ -328,6 +343,7 @@ export const useAutoSave = (options: UseAutoSaveOptions = {}): UseAutoSaveResult
                         dataRef.current = {
                             schedules: draft.schedules,
                             originalSchedules: draft.originalSchedules,
+                            interlineConfig: draft.interlineConfig,
                             name: draft.name,
                             isDirty: false,
                             version: 0

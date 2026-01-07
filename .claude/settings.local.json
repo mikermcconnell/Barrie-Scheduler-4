@@ -13,7 +13,18 @@
       "Bash(node --version:*)",
       "Bash(npm:*)",
       "Bash(claude mcp add --transport stdio filesystem -- npx -y @modelcontextprotocol/server-filesystem)",
-      "Bash(claude mcp add:*)"
+      "Bash(claude mcp add:*)",
+      "mcp__filesystem__directory_tree",
+      "mcp__filesystem__read_text_file",
+      "mcp__filesystem__list_directory",
+      "Bash(grep:*)",
+      "Bash(find:*)",
+      "Bash(cat:*)",
+      "mcp__browsermcp__browser_navigate",
+      "Bash(firebase --version:*)",
+      "Bash(firebase login:list:*)",
+      "Bash(firebase use:*)",
+      "Bash(firebase deploy:*)"
     ]
   }
 }

@@ -16,6 +16,8 @@ interface Step4ScheduleProps {
     projectName: string;
     autoSaveStatus?: AutoSaveStatus;
     lastSaved?: Date | null;
+    targetCycleTime?: number;
+    targetHeadway?: number;
 }
 
 export const Step4Schedule: React.FC<Step4ScheduleProps> = ({
@@ -26,7 +28,9 @@ export const Step4Schedule: React.FC<Step4ScheduleProps> = ({
     onUpdateSchedules,
     projectName,
     autoSaveStatus,
-    lastSaved
+    lastSaved,
+    targetCycleTime,
+    targetHeadway
 }) => {
     // We use a local Undo/Redo stack for the session in this step
     // syncing changes back to the parent for persistence
@@ -66,6 +70,9 @@ export const Step4Schedule: React.FC<Step4ScheduleProps> = ({
                     bands={bands}
                     analysis={analysis}
                     segmentNames={segmentNames}
+                    targetCycleTime={targetCycleTime}
+                    targetHeadway={targetHeadway}
+                    hideAutoSave={true}
                 />
             </div>
         </div>

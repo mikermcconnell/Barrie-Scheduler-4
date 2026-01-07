@@ -2,9 +2,65 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Users can only access their own data
+
+    // ========== USERS ==========
+
+    // Users can access their own document
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Users can access their own subdocuments (projects, drafts, etc.)
     match /users/{userId}/{document=**} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // ========== TEAMS ==========
+
+    // Anyone can read team documents (needed for invite code lookup)
+    // Only owner can update/delete team
+    match /teams/{teamId} {
+      allow read: if true;
+      allow create: if request.auth != null;
+      allow update, delete: if request.auth != null && isTeamOwner(teamId);
+
+      // Team Members
+      match /members/{memberId} {
+        allow read: if isTeamMember(teamId);
+        // Allow creating your own member document when joining/creating team
+        // OR being an owner/admin to manage others
+        allow create: if request.auth != null &&
+                         (request.auth.uid == memberId || isTeamOwnerOrAdmin(teamId));
+        allow update, delete: if isTeamOwnerOrAdmin(teamId);
+      }
+
+      // Master Schedules
+      match /masterSchedules/{scheduleId} {
+        allow read, write: if isTeamMember(teamId);
+
+        // Version History
+        match /versions/{versionId} {
+          allow read, write: if isTeamMember(teamId);
+        }
+      }
+    }
+
+    // ========== HELPER FUNCTIONS ==========
+
+    function isTeamMember(teamId) {
+      return request.auth != null &&
+             exists(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid));
+    }
+
+    function isTeamOwner(teamId) {
+      return request.auth != null &&
+             get(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid)).data.role == 'owner';
+    }
+
+    function isTeamOwnerOrAdmin(teamId) {
+      let member = get(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid));
+      return request.auth != null &&
+             (member.data.role == 'owner' || member.data.role == 'admin');
     }
   }
 }

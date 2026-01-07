@@ -55,33 +55,37 @@ export interface ParseResult {
 export const parseTimeToMinutes = (value: any): number | null => {
     if (value === null || value === undefined || value === '') return null;
 
-    // Excel stores times as decimal fractions (0.5 = 12:00 PM)
-    // Times past midnight (24:30, 25:00) are stored as values > 1.0
+    // Excel stores times as decimal fractions of a day:
+    // - 0.5 = 12:00 PM (noon)
+    // - 0.99 = 11:45 PM
+    // - 1.02 = 12:30 AM next day (the "1" = next day, 0.02 = 30 min)
+    //
+    // CRITICAL FIX: Any value >= 1.0 needs the fractional part extracted.
+    // Previous bug: Values 1.0-2.0 were multiplied directly, causing
+    // 1.02 (12:30 AM) to become 1469 min instead of 30 min.
     if (typeof value === 'number') {
         // Small integers (< 100) are likely block IDs, stop IDs, recovery minutes - NOT times
         if (Number.isInteger(value) && value < 100) {
             return null;
         }
 
-        // Very small decimals (< 0.1 = before 2:24 AM) are suspicious unless they're
-        // clearly from a time column. Skip values that could be residual/error data.
-        // Valid early morning times should be explicitly formatted, not tiny decimals.
-        if (value > 0 && value < 0.1) {
-            return null;  // Skip suspicious early morning decimals
+        // Values >= 1.0 are dates with time - extract just the time (fractional part)
+        // This handles post-midnight times correctly (1.02 = 12:30 AM)
+        if (value >= 1) {
+            const timePortion = value % 1;
+            // Reject very small fractions - likely residual data, not real times
+            // 0.004 = ~6 minutes, so times before 12:06 AM from numeric sources are rejected
+            // Legitimate early AM times like 12:07 AM (0.00486) will still pass
+            if (timePortion < 0.004) return null;
+            return Math.round(timePortion * 24 * 60);
         }
 
-        // Values 0-2: Direct time representation (0 = midnight, 1 = 24:00, 2 = 48:00)
-        // This supports transit schedules where times past midnight are common (24:30 = 00:30 next day)
-        if (value >= 0 && value < 2) {
-            return Math.round(value * 24 * 60);
-        }
-        // Values >= 2: Likely an Excel serial date+time. Extract just the time portion.
-        const timePortion = value % 1;
-        // Skip if time portion is very small (suspicious early morning)
-        if (timePortion > 0 && timePortion < 0.1) {
-            return null;
-        }
-        return Math.round(timePortion * 24 * 60);
+        // Values < 1.0 are pure time fractions (0.5 = noon, 0.02 = 12:30 AM)
+        // Reject very small values (< 0.004 = ~6 minutes) as these are likely residual data
+        // Transit schedules rarely have times at 12:01 AM, 12:02 AM etc.
+        if (value > 0 && value < 0.004) return null;
+
+        return Math.round(value * 24 * 60);
     }
 
     let str = String(value).trim().toLowerCase();
@@ -418,11 +422,12 @@ const parseTripRow = (row: any[], stops: StopInfo[], rowIdx: number): ParsedTrip
             const minutes = parseTimeToMinutes(cellValue);
 
             // Reject very small minute values (0-59) as stop times UNLESS:
-            // 1. The cell was a decimal Excel time (0.xxx format) - includes early AM times
+            // 1. The cell was a decimal Excel time (includes post-midnight times >= 1.0)
             // 2. The cell contained AM/PM text indicating it's an actual time
             // 3. The cell is in HH:MM format with colon (e.g., "0:23" for 12:23 AM)
             // Integer values like 1, 2, 3 in stop columns are likely priority/sequence numbers
-            const isExcelTime = typeof cellValue === 'number' && cellValue >= 0 && cellValue < 1;
+            // CRITICAL: Post-midnight times are >= 1.0 (e.g., 1.02 = 12:30 AM) - must include these!
+            const isExcelTime = typeof cellValue === 'number' && cellValue >= 0 && !Number.isInteger(cellValue);
             const hasAmPmIndicator = typeof cellValue === 'string' && /[ap]m?/i.test(cellValue);
             const hasTimeFormat = typeof cellValue === 'string' && /\d{1,2}:\d{2}/.test(cellValue);
             const isValidStopTime = minutes !== null && (minutes >= 60 || isExcelTime || hasAmPmIndicator || hasTimeFormat);

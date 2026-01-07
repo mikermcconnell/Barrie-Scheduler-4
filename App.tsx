@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { OnDemandWorkspace } from './components/OnDemandWorkspace';
 import { FixedRouteWorkspace } from './components/FixedRouteWorkspace';
 import { AuthProvider, useAuth } from './components/AuthContext';
+import { TeamProvider } from './components/TeamContext';
 import { ToastProvider } from './components/ToastContext';
 import { AuthModal } from './components/AuthModal';
 import { FileManager } from './components/FileManager';
@@ -164,13 +165,15 @@ const AppContent: React.FC = () => {
   );
 };
 
-// Main App component with AuthProvider and ToastProvider wrappers
+// Main App component with providers
 const App: React.FC = () => {
   return (
     <AuthProvider>
-      <ToastProvider>
-        <AppContent />
-      </ToastProvider>
+      <TeamProvider>
+        <ToastProvider>
+          <AppContent />
+        </ToastProvider>
+      </TeamProvider>
     </AuthProvider>
   );
 };

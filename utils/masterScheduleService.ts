@@ -50,6 +50,132 @@ function timestampToDate(timestamp: Timestamp | Date): Date {
     return timestamp.toDate();
 }
 
+/**
+ * Calculate effective cycle times for interlined routes (8A/8B)
+ * This adjusts trip.cycleTime to exclude interline gaps
+ */
+function applyEffectiveCycleTimes(table: MasterRouteTable, routeNumber: string): MasterRouteTable {
+    // Only apply to interlined routes
+    if (!routeNumber.includes('8A') && !routeNumber.includes('8B')) {
+        return table;
+    }
+
+    const interlineStopPattern = 'allandale';
+
+    // Helper: time difference handling midnight crossing
+    const timeDiff = (end: number, start: number): number => {
+        const diff = end - start;
+        return diff < 0 ? diff + 1440 : diff;
+    };
+
+    // Find interline stop index and recovery stop
+    const findInterlineStopInfo = (): { interlineIdx: number; hasRecovery: boolean } | null => {
+        for (let i = 0; i < table.stops.length; i++) {
+            if (table.stops[i].toLowerCase().includes(interlineStopPattern)) {
+                // Check if any trip has recovery at this stop
+                const hasRecovery = table.trips.some(t =>
+                    t.recoveryTimes?.[table.stops[i]] !== undefined &&
+                    t.recoveryTimes[table.stops[i]] !== null
+                );
+                return { interlineIdx: i, hasRecovery };
+            }
+        }
+        return null;
+    };
+
+    const interlineInfo = findInterlineStopInfo();
+    if (!interlineInfo) {
+        return table; // No interline stop found
+    }
+
+    const interlineStop = table.stops[interlineInfo.interlineIdx];
+    const resumeStop = interlineInfo.interlineIdx + 1 < table.stops.length
+        ? table.stops[interlineInfo.interlineIdx + 1]
+        : null;
+
+    // Helper: parse time string to minutes
+    const parseTime = (timeStr: string | undefined): number | null => {
+        if (!timeStr) return null;
+        const match = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+        if (!match) return null;
+        let hours = parseInt(match[1]);
+        const mins = parseInt(match[2]);
+        const period = match[3]?.toUpperCase();
+        if (period === 'PM' && hours !== 12) hours += 12;
+        if (period === 'AM' && hours === 12) hours = 0;
+        return hours * 60 + mins;
+    };
+
+    // Process each trip
+    const updatedTrips = table.trips.map(trip => {
+        // Get first stop time
+        let firstTime: number | null = null;
+        for (const stop of table.stops) {
+            const time = parseTime(trip.stops[stop]);
+            if (time !== null) {
+                firstTime = time;
+                break;
+            }
+        }
+
+        // Get interline arrival time
+        const interlineArr = parseTime(trip.stops[interlineStop]);
+
+        // Get recovery at interline
+        const recovery = trip.recoveryTimes?.[interlineStop] ?? 0;
+
+        // Get resume time (departure after interline)
+        const resumeTime = resumeStop ? parseTime(trip.stops[resumeStop]) : null;
+
+        // Get last stop time
+        let lastTime: number | null = null;
+        for (let i = table.stops.length - 1; i >= 0; i--) {
+            const time = parseTime(trip.stops[table.stops[i]]);
+            if (time !== null) {
+                lastTime = time;
+                break;
+            }
+        }
+
+        // If we don't have the required times, keep original cycleTime
+        if (firstTime === null || interlineArr === null) {
+            return trip;
+        }
+
+        // Calculate effective cycle time
+        const segment1 = timeDiff(interlineArr, firstTime);
+
+        // Check if trip ends at interline (no resume)
+        if (resumeTime === null) {
+            // Trip ends at interline: effective = segment1 + recovery
+            const effectiveCycle = segment1 + recovery;
+            return {
+                ...trip,
+                cycleTime: effectiveCycle,
+                travelTime: effectiveCycle - trip.recoveryTime
+            };
+        }
+
+        // Full interline trip
+        if (lastTime !== null) {
+            const segment2 = timeDiff(lastTime, resumeTime);
+            const effectiveCycle = segment1 + recovery + segment2;
+            return {
+                ...trip,
+                cycleTime: effectiveCycle,
+                travelTime: effectiveCycle - trip.recoveryTime
+            };
+        }
+
+        return trip;
+    });
+
+    return {
+        ...table,
+        trips: updatedTrips
+    };
+}
+
 // ============ UPLOAD FLOW ============
 
 /**
@@ -121,11 +247,15 @@ export async function uploadToMasterSchedule(
     const currentVersion = existingSnap.exists() ? existingSnap.data().currentVersion : 0;
     const newVersion = currentVersion + 1;
 
-    // 2. Prepare content and upload to Cloud Storage FIRST (before transaction)
+    // 2. Apply effective cycle times for interlined routes (8A/8B)
+    const adjustedNorthTable = applyEffectiveCycleTimes(northTable, routeNumber);
+    const adjustedSouthTable = applyEffectiveCycleTimes(southTable, routeNumber);
+
+    // 3. Prepare content and upload to Cloud Storage FIRST (before transaction)
     const storagePath = `teams/${teamId}/masterSchedules/${routeIdentity}_v${newVersion}.json`;
     const content: MasterScheduleContent = {
-        northTable,
-        southTable,
+        northTable: adjustedNorthTable,
+        southTable: adjustedSouthTable,
         metadata: {
             routeNumber,
             dayType,

@@ -105,23 +105,27 @@ const toMinutes = (timeStr: string | number): number | null => {
     if (timeStr === null || timeStr === undefined || timeStr === '') return null;
 
     if (typeof timeStr === 'number') {
-        // Excel decimal days (e.g. 0.5 = 12:00 PM)
-        // Fix: If > 2, assume it's a Serial Date + Time. Strip the integer part.
-        // Heuristic: If > 2.0 and has decimal, it's a date.
-        // If < 2.0, it's a time fraction.
-        // If it's a small integer (< 100), it's likely NOT a time (could be block ID, stop ID, etc.)
+        // Excel decimal days: 0.5 = 12:00 PM, 0.99 = 11:45 PM
+        // Post-midnight times: 1.02 = 12:30 AM (the "1" = next day, 0.02 = 30 min)
+        //
+        // CRITICAL FIX: Any value >= 1.0 needs the fractional part extracted
+        // Previous bug: Values between 1.0 and 2.0 were multiplied by 24*60 directly,
+        // causing 1.02 (12:30 AM) to become 1469 min instead of 30 min.
 
         // Small integers are NOT times - they're likely IDs or other data
         if (Number.isInteger(timeStr) && timeStr < 100) {
             return null;
         }
 
-        if (timeStr > 2) {
+        // Values >= 1.0 are dates with time component - extract just the time (fractional part)
+        if (timeStr >= 1) {
             const fraction = timeStr % 1;
-            // If fraction is very small (pure integer date), not a valid time
+            // If fraction is very small (pure integer date with no time), not a valid time
             if (fraction < 0.001) return null;
             return Math.round(fraction * 24 * 60);
         }
+
+        // Values < 1.0 are pure time fractions (0.5 = noon, 0.75 = 6 PM)
         return Math.round(timeStr * 24 * 60);
     }
 
