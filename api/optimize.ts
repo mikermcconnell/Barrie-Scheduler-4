@@ -44,7 +44,7 @@ const criticSchema = {
  * ==========================================
  */
 
-async function callGemini(apiKey: string, prompt: string, systemInstruction: string, schema: any, modelName: string = "gemini-3-flash-preview", temperature: number = 0.3) {
+async function callGemini(apiKey: string, prompt: string, systemInstruction: string, schema: any, modelName: string = "gemini-3-pro-preview", temperature: number = 0.3) {
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({
         model: modelName,
@@ -126,7 +126,7 @@ export async function optimizeImplementation(requirements: any[], apiKey: string
     // Call Phase 1
     let draftShifts = [];
     try {
-        draftShifts = await callGemini(apiKey, draftPrompt, draftSystemInstruction, generatorSchema, "gemini-3-flash-preview", 0.4);
+        draftShifts = await callGemini(apiKey, draftPrompt, draftSystemInstruction, generatorSchema, "gemini-3-pro-preview", 0.4);
         console.log(`✅ [Phase 1] Draft Generated: ${draftShifts.length} shifts.`);
     } catch (e) {
         console.error("❌ [Phase 1] Failed:", e);
@@ -175,7 +175,7 @@ export async function optimizeImplementation(requirements: any[], apiKey: string
 
     let finalShifts = [];
     try {
-        const criticOutput = await callGemini(apiKey, criticPrompt, criticSystemInstruction, criticSchema, "gemini-3-flash-preview", 0.2);
+        const criticOutput = await callGemini(apiKey, criticPrompt, criticSystemInstruction, criticSchema, "gemini-3-pro-preview", 0.2);
 
         console.log("📝 [Phase 2] Critic's Analysis:\n" + criticOutput.critique);
         finalShifts = criticOutput.shifts;
@@ -220,7 +220,7 @@ export async function optimizeImplementation(requirements: any[], apiKey: string
 
     try {
         // Reuse generator schema since we just need the list
-        const polishedOutput = await callGemini(apiKey, polisherPrompt, polisherSystemInstruction, generatorSchema, "gemini-3-flash-preview", 0.1); // Low temp for strictness
+        const polishedOutput = await callGemini(apiKey, polisherPrompt, polisherSystemInstruction, generatorSchema, "gemini-3-pro-preview", 0.1); // Low temp for strictness
         console.log(`✅ [Phase 3] Polished Schedule: ${polishedOutput.length} shifts.`);
         finalShifts = polishedOutput;
     } catch (e) {
