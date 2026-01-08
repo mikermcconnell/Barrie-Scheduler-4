@@ -25,7 +25,7 @@ export const optimizeScheduleWithGemini = async (
   focusInstruction?: string
 ): Promise<Shift[]> => {
   try {
-    console.log(`Calling Gemini Optimization API (Model: gemini-3-pro-preview)... Mode: ${mode}`);
+    console.log(`Calling Gemini Optimization API (Model: gemini-3-flash-preview)... Mode: ${mode}`);
 
     const response = await fetch('/api/optimize', {
       method: 'POST',
