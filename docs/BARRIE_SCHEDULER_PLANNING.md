@@ -27,9 +27,10 @@ This document defines the architecture and data flow for the Barrie Transit Sche
 5. [User Flows](#5-user-flows)
 6. [Component Responsibilities](#6-component-responsibilities)
 7. [GTFS Integration](#7-gtfs-integration)
-8. [Locked Logic](#8-locked-logic)
-9. [Migration Plan](#9-migration-plan)
-10. [File Reference](#10-file-reference)
+8. [Brochure Generator](#8-brochure-generator)
+9. [Locked Logic](#9-locked-logic)
+10. [Migration Plan](#10-migration-plan)
+11. [File Reference](#11-file-reference)
 
 ---
 
@@ -104,7 +105,7 @@ NO SYNC MECHANISM BETWEEN THEM
 
 | Before | After |
 |--------|-------|
-| 4 disconnected views | 2 clear modes: Draft Editor + Published Browser |
+| 4 disconnected views | 2 clear modes: Schedule Editor + Master Schedule |
 | CSV parsing for existing schedules | GTFS import |
 | `ScheduleDraft` separate from Master | Drafts are first-class citizens |
 | Edits lost between views | All edits in Draft, published when ready |
@@ -195,11 +196,11 @@ NO SYNC MECHANISM BETWEEN THEM
                     ┌───────────────┼───────────────┐
                     ▼               ▼               ▼
            ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
-           │ DRAFT        │ │ PUBLISHED    │ │ EXPORT       │
-           │ EDITOR       │ │ BROWSER      │ │              │
+           │ SCHEDULE     │ │ MASTER       │ │ EXPORT       │
+           │ EDITOR       │ │ SCHEDULE     │ │              │
            │              │ │              │ │ • Excel      │
            │ Edit drafts  │ │ View final   │ │ • CSV        │
-           │ Auto-save    │ │ Copy to draft│ │ • GTFS       │
+           │ Auto-save    │ │ Copy to draft│ │ • Brochure   │
            │ Publish      │ │ View history │ │              │
            └──────────────┘ └──────────────┘ └──────────────┘
 ```
@@ -227,10 +228,10 @@ App.tsx
 │   │   ├── Dashboard
 │   │   ├── Schedule Creator (was: New Schedule Wizard)
 │   │   │   └── Sources: GTFS Import | Runtime CSV | Manual
-│   │   ├── Draft Editor (was: Schedule Tweaker)
+│   │   ├── Schedule Editor (was: Schedule Tweaker)
 │   │   │   └── Edit drafts, auto-save, publish
-│   │   ├── Published Browser (was: Master Schedule Browser)
-│   │   │   └── View published, copy to draft, export
+│   │   ├── Master Schedule (was: Master Schedule Browser)
+│   │   │   └── View published, copy to draft, export, brochure generation
 │   │   └── Analytics (future)
 │   │
 │   └── On-Demand Workspace
@@ -628,9 +629,9 @@ User clicks "Export"
 |-----------|----------|----------------|
 | `FixedRouteWorkspace` | `/components/FixedRouteWorkspace.tsx` | Dashboard and navigation for fixed routes |
 | `ScheduleCreator` | `/components/ScheduleCreator/` (NEW) | Create schedules from GTFS, CSV, or manual |
-| `DraftEditor` | `/components/DraftEditor/` (was Tweaker) | Edit drafts, auto-save, publish action |
-| `PublishedBrowser` | `/components/PublishedBrowser/` (was MasterBrowser) | View/export published, copy to draft |
-| `ScheduleEditor` | `/components/ScheduleEditor.tsx` | Reusable table editor (used by DraftEditor) |
+| `ScheduleEditorWorkspace` | `/components/ScheduleEditor/` (was Tweaker) | Edit drafts, auto-save, publish action |
+| `MasterScheduleView` | `/components/MasterSchedule/` (was MasterBrowser) | View/export published, copy to draft, brochure export |
+| `ScheduleTableEditor` | `/components/ScheduleTableEditor.tsx` | Reusable table editor (used by ScheduleEditorWorkspace) |
 
 ### Service Modules
 
@@ -663,24 +664,25 @@ ScheduleCreator
 ├── Uses: gtfsImportService (GTFS import)
 ├── Uses: csvParser + scheduleGenerator (CSV import)
 ├── Creates: DraftSchedule
-└── Navigates to: DraftEditor
+└── Navigates to: ScheduleEditorWorkspace
 
-DraftEditor
+ScheduleEditorWorkspace
 ├── Uses: draftService (load/save drafts)
-├── Uses: ScheduleEditor (table editing)
+├── Uses: ScheduleTableEditor (table editing)
 ├── Uses: publishService (publish action)
 └── Data: DraftSchedule → MasterScheduleContent
 
-PublishedBrowser
+MasterScheduleView
 ├── Uses: masterScheduleService (load published)
 ├── Uses: exportService (Excel/CSV export)
+├── Uses: brochureService (PDF brochure generation)
 ├── Uses: draftService (copy to draft)
 └── Data: PublishedSchedule → MasterScheduleContent
 
-ScheduleEditor (Shared)
+ScheduleTableEditor (Shared)
 ├── Input: MasterRouteTable[]
 ├── Output: onUpdateSchedules callback
-└── Used by: DraftEditor, ScheduleCreator Step 4
+└── Used by: ScheduleEditorWorkspace, ScheduleCreator Step 4
 ```
 
 ---
@@ -802,7 +804,394 @@ function gtfsToMasterContent(
 
 ---
 
-## 8. Locked Logic
+## 8. Brochure Generator
+
+### Overview
+
+Generate public-facing PDF brochures (like the Route 2 Dunlop/Park Place brochure) directly from the Master Schedule. The brochure combines:
+- **Static elements:** Route map image, fare table, legend, connections (manually configured per route)
+- **Dynamic elements:** Schedule times (pulled from Master Schedule)
+
+This eliminates manual time entry when schedules change - just regenerate the brochure.
+
+### Feature Requirements
+
+| Requirement | Description |
+|-------------|-------------|
+| Single route export | Generate brochure for one route + all day types |
+| Batch export | Generate brochures for all routes at once |
+| Day type support | Weekday, Saturday, Sunday/Holiday schedules on same brochure |
+| Branch support | Handle routes with branches (2A/2B, 8A/8B) |
+| Manual metadata | Effective date, fare table, legend, connections |
+| Map images | One PNG image per route (user-provided) |
+
+### Data Model
+
+```typescript
+// ============================================
+// BROCHURE TEMPLATE (Per Route)
+// ============================================
+
+interface BrochureTemplate {
+  id: string;
+  routeNumber: string;
+  routeName: string;                    // e.g., "Dunlop/Park Place"
+
+  // Static content (manually configured)
+  mapImagePath: string;                 // Path to PNG in Firebase Storage
+  effectiveDate: string;                // e.g., "October 27th, 2025"
+  fareTable: FareTable;
+  legend: LegendItem[];
+  connections: RouteConnection[];
+
+  // Branch configuration
+  branches: RouteBranch[];
+
+  // Layout settings
+  layoutType: 'standard' | 'compact';   // For routes with many trips
+
+  // Metadata
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+  createdBy: string;
+}
+
+interface RouteBranch {
+  branchId: string;                     // e.g., "2A", "2B"
+  branchName: string;                   // e.g., "Dunlop to Downtown"
+  direction: 'outbound' | 'inbound';
+  stops: BrochureStop[];                // Ordered stops for this branch
+  color?: string;                       // Branch indicator color
+}
+
+interface BrochureStop {
+  stopName: string;                     // e.g., "Park Place Platform 2"
+  stopId: string;                       // e.g., "777"
+  isTimingPoint: boolean;               // Show in schedule table
+  displayName?: string;                 // Short name for table header
+}
+
+interface FareTable {
+  effectiveDate: string;
+  fares: FareRow[];
+  notes: string[];                      // e.g., "Seniors Ride Free on Tuesdays..."
+}
+
+interface FareRow {
+  type: string;                         // e.g., "Single Ride", "Monthly Pass"
+  adult: string;
+  student: string;
+  children: string;
+  senior: string;
+  family: string;
+}
+
+interface LegendItem {
+  symbol: string;                       // e.g., "#", "X"
+  description: string;                  // e.g., "Connection to other fixed route"
+}
+
+interface RouteConnection {
+  stopName: string;
+  routes: string[];                     // e.g., ["7", "8", "11", "12", "400"]
+}
+
+// ============================================
+// GENERATED BROCHURE (Output)
+// ============================================
+
+interface GeneratedBrochure {
+  routeNumber: string;
+  generatedAt: Timestamp;
+  generatedBy: string;
+  sourceScheduleVersion: number;        // Master Schedule version used
+  pdfUrl: string;                       // Firebase Storage URL
+  dayTypes: DayType[];                  // Which day types included
+}
+```
+
+### Firestore Structure
+
+```
+firestore/
+├── teams/{teamId}/
+│   ├── brochureTemplates/
+│   │   ├── route_2/
+│   │   │   ├── routeNumber: "2"
+│   │   │   ├── routeName: "Dunlop/Park Place"
+│   │   │   ├── mapImagePath: "brochures/maps/route_2.png"
+│   │   │   ├── effectiveDate: "October 27th, 2025"
+│   │   │   ├── fareTable: { ... }
+│   │   │   ├── legend: [ ... ]
+│   │   │   ├── connections: [ ... ]
+│   │   │   ├── branches: [
+│   │   │   │   { branchId: "2A", branchName: "Dunlop to Downtown", ... },
+│   │   │   │   { branchId: "2B", branchName: "Park Place", ... }
+│   │   │   │ ]
+│   │   │   └── layoutType: "standard"
+│   │   │
+│   │   ├── route_7/
+│   │   ├── route_8/
+│   │   └── ...
+│   │
+│   └── generatedBrochures/
+│       ├── route_2_2026-01-13/
+│       │   ├── pdfUrl: "..."
+│       │   ├── generatedAt: Timestamp
+│       │   └── sourceScheduleVersion: 4
+│       └── ...
+│
+└── storage/
+    └── brochures/
+        └── maps/
+            ├── route_2.png
+            ├── route_7.png
+            └── ...
+```
+
+### User Flow: Configure Brochure Template
+
+```
+User opens Master Schedule
+         │
+         ▼
+Clicks "Brochure Settings" for Route 2
+         │
+         ▼
+┌─────────────────────────────────────────────┐
+│       BROCHURE TEMPLATE EDITOR              │
+├─────────────────────────────────────────────┤
+│                                             │
+│  Route: 2 - Dunlop/Park Place              │
+│                                             │
+│  ┌─────────────────────────────────────┐   │
+│  │ Map Image                           │   │
+│  │ [route_2.png]  [Upload New]         │   │
+│  └─────────────────────────────────────┘   │
+│                                             │
+│  ┌─────────────────────────────────────┐   │
+│  │ Effective Date                      │   │
+│  │ [October 27th, 2025]                │   │
+│  └─────────────────────────────────────┘   │
+│                                             │
+│  ┌─────────────────────────────────────┐   │
+│  │ Branches                            │   │
+│  │ ┌─────────────────────────────────┐ │   │
+│  │ │ 2A: Dunlop to Downtown          │ │   │
+│  │ │ Stops: [Configure]              │ │   │
+│  │ └─────────────────────────────────┘ │   │
+│  │ ┌─────────────────────────────────┐ │   │
+│  │ │ 2B: Park Place                  │ │   │
+│  │ │ Stops: [Configure]              │ │   │
+│  │ └─────────────────────────────────┘ │   │
+│  │ [+ Add Branch]                      │   │
+│  └─────────────────────────────────────┘   │
+│                                             │
+│  ┌─────────────────────────────────────┐   │
+│  │ Fare Table  [Edit]                  │   │
+│  └─────────────────────────────────────┘   │
+│                                             │
+│  ┌─────────────────────────────────────┐   │
+│  │ Legend & Connections  [Edit]        │   │
+│  └─────────────────────────────────────┘   │
+│                                             │
+│  [Cancel]                    [Save Template]│
+│                                             │
+└─────────────────────────────────────────────┘
+```
+
+### User Flow: Generate Brochure
+
+```
+User opens Master Schedule
+         │
+         ▼
+Selects Route 2 (or multiple routes)
+         │
+         ▼
+Clicks "Export → Brochure PDF"
+         │
+         ▼
+┌─────────────────────────────────────────────┐
+│       GENERATE BROCHURE                     │
+├─────────────────────────────────────────────┤
+│                                             │
+│  Route: 2 - Dunlop/Park Place              │
+│  Template: ✓ Configured                     │
+│  Map Image: ✓ Uploaded                      │
+│                                             │
+│  Day Types to Include:                      │
+│  ☑ Weekday                                  │
+│  ☑ Saturday                                 │
+│  ☑ Sunday & Holidays                        │
+│                                             │
+│  Schedule Source:                           │
+│  Master Schedule v4 (Published Jan 10)     │
+│                                             │
+│  Preview:                                   │
+│  ┌─────────────────────────────────────┐   │
+│  │  [Thumbnail of brochure page 1]     │   │
+│  └─────────────────────────────────────┘   │
+│                                             │
+│  [Cancel]              [Generate PDF]       │
+│                                             │
+└─────────────────────────────────────────────┘
+         │
+         ▼
+PDF generated → Browser downloads
+```
+
+### User Flow: Batch Generate
+
+```
+User opens Master Schedule
+         │
+         ▼
+Clicks "Export → Generate All Brochures"
+         │
+         ▼
+┌─────────────────────────────────────────────┐
+│       BATCH GENERATE BROCHURES              │
+├─────────────────────────────────────────────┤
+│                                             │
+│  Routes with templates configured:          │
+│                                             │
+│  ☑ Route 2 - Dunlop/Park Place    ✓ Ready  │
+│  ☑ Route 7 - Bayfield             ✓ Ready  │
+│  ☑ Route 8 - Essa                 ✓ Ready  │
+│  ☐ Route 11 - Mapleview          ⚠ No map │
+│  ☑ Route 12 - Yonge              ✓ Ready  │
+│  ☐ Route 100 - Barrie South GO   ⚠ No tmpl│
+│                                             │
+│  [Select All Ready]  [Deselect All]         │
+│                                             │
+│  Output: ZIP file with all PDFs             │
+│                                             │
+│  [Cancel]              [Generate All]       │
+│                                             │
+└─────────────────────────────────────────────┘
+```
+
+### Technical Implementation
+
+#### Map Image Format
+
+**Recommendation: PNG**
+
+| Format | Pros | Cons |
+|--------|------|------|
+| **PNG** | Simple to embed, good quality, widely supported | Larger file size |
+| SVG | Scalable, small file size | Complex to embed in PDF |
+| PDF | Vector quality | Requires conversion |
+
+**PNG specifications:**
+- Resolution: 300 DPI for print quality
+- Dimensions: ~1200 x 800 pixels (landscape, half-page)
+- Color: RGB
+- File size: ~500KB - 1MB per map
+
+#### PDF Generation
+
+**Technology options:**
+
+| Library | Pros | Cons |
+|---------|------|------|
+| `@react-pdf/renderer` | React-native syntax, good for complex layouts | Learning curve |
+| `pdfmake` | Simple API, good table support | Less flexible styling |
+| `Puppeteer` | Render HTML to PDF, full CSS support | Requires server, slower |
+
+**Recommendation: `@react-pdf/renderer`**
+- Best for complex brochure layouts
+- Good image embedding support
+- Table rendering for schedule grids
+- Can match existing brochure styling
+
+#### Service Module
+
+```typescript
+// utils/brochureService.ts
+
+interface BrochureService {
+  // Template management
+  getTemplate(routeNumber: string): Promise<BrochureTemplate | null>;
+  saveTemplate(template: BrochureTemplate): Promise<void>;
+  uploadMapImage(routeNumber: string, file: File): Promise<string>;
+
+  // Generation
+  generateBrochure(
+    routeNumber: string,
+    dayTypes: DayType[]
+  ): Promise<Blob>;
+
+  generateAllBrochures(
+    routeNumbers: string[]
+  ): Promise<Blob>;  // ZIP file
+
+  // Preview
+  generatePreview(
+    routeNumber: string,
+    dayTypes: DayType[]
+  ): Promise<string>;  // Base64 image of first page
+}
+```
+
+#### Schedule Time Injection
+
+The brochure generator pulls times from the published Master Schedule:
+
+```typescript
+function injectScheduleTimes(
+  template: BrochureTemplate,
+  masterSchedule: MasterScheduleContent,
+  dayType: DayType
+): BrochureScheduleData {
+
+  // 1. Get trips from Master Schedule
+  const northTrips = masterSchedule.northTable.trips;
+  const southTrips = masterSchedule.southTable.trips;
+
+  // 2. Map to brochure stops (timing points only)
+  const outboundTimes = template.branches
+    .filter(b => b.direction === 'outbound')
+    .map(branch => ({
+      branchId: branch.branchId,
+      stops: branch.stops.filter(s => s.isTimingPoint),
+      trips: mapTripsToStops(northTrips, branch.stops)
+    }));
+
+  // 3. Return structured data for PDF generation
+  return {
+    dayType,
+    outbound: outboundTimes,
+    inbound: inboundTimes
+  };
+}
+```
+
+### Files to Create
+
+| File | Purpose |
+|------|---------|
+| `utils/brochureService.ts` | Template CRUD, PDF generation |
+| `utils/brochureTypes.ts` | Type definitions |
+| `components/MasterSchedule/BrochureTemplateEditor.tsx` | Template configuration UI |
+| `components/MasterSchedule/BrochureGenerator.tsx` | Generation dialog |
+| `components/MasterSchedule/BrochurePreview.tsx` | PDF preview component |
+| `components/pdf/BrochureDocument.tsx` | React-PDF document template |
+| `components/pdf/ScheduleTable.tsx` | Schedule grid component |
+| `components/pdf/FareTable.tsx` | Fare table component |
+
+### Migration: Adding Templates for Existing Routes
+
+1. For each route, user uploads map image
+2. Configure branches based on Master Schedule structure
+3. Set timing point stops (which stops appear in brochure)
+4. Configure fare table (one-time, shared across routes)
+5. Add legend and connections
+
+---
+
+## 9. Locked Logic
 
 > **WARNING:** Do not modify the following logic without explicit approval. These have been tested and bugs in these areas have caused significant issues.
 
@@ -858,7 +1247,7 @@ Block 2: N1 → S1 → N2 → S2 → ...
 
 ---
 
-## 9. Migration Plan
+## 10. Migration Plan
 
 ### Phase 1: Unified Data Model
 
@@ -877,9 +1266,9 @@ Block 2: N1 → S1 → N2 → S2 → ...
 
 ### Phase 3: Refactor Views
 
-1. Rename `ScheduleTweakerWorkspace` → `DraftEditor`
+1. Rename `ScheduleTweakerWorkspace` → `ScheduleEditorWorkspace`
 2. Update to use `draftService` instead of `ScheduleDraft`
-3. Rename `MasterScheduleBrowser` → `PublishedBrowser`
+3. Rename `MasterScheduleBrowser` → `MasterScheduleView`
 4. Add "Copy to Draft" functionality
 5. Update export to only use Published data
 
@@ -897,9 +1286,17 @@ Block 2: N1 → S1 → N2 → S2 → ...
 3. Test export from Published only
 4. Validate no data loss in migration
 
+### Phase 6: Brochure Generator
+
+1. Create `brochureService.ts` and `brochureTypes.ts`
+2. Build Brochure Template Editor UI
+3. Build PDF generation with `@react-pdf/renderer`
+4. Add batch generation capability
+5. Test with Route 2 brochure as reference
+
 ---
 
-## 10. File Reference
+## 11. File Reference
 
 ### Key Files (Current)
 
@@ -907,9 +1304,9 @@ Block 2: N1 → S1 → N2 → S2 → ...
 |---------|------|--------|
 | App entry | `App.tsx` | Keep |
 | Fixed route workspace | `components/FixedRouteWorkspace.tsx` | Modify |
-| Schedule editor | `components/ScheduleEditor.tsx` | Keep |
-| Schedule tweaker | `components/ScheduleTweakerWorkspace.tsx` | Rename → DraftEditor |
-| Master browser | `components/MasterScheduleBrowser.tsx` | Rename → PublishedBrowser |
+| Schedule table editor | `components/ScheduleEditor.tsx` | Rename → ScheduleTableEditor |
+| Schedule tweaker | `components/ScheduleTweakerWorkspace.tsx` | Rename → ScheduleEditorWorkspace |
+| Master browser | `components/MasterScheduleBrowser.tsx` | Rename → MasterScheduleView |
 | New schedule wizard | `components/NewSchedule/NewScheduleWizard.tsx` | Refactor |
 | CSV parser | `components/NewSchedule/utils/csvParser.ts` | Keep |
 | Schedule generator | `utils/scheduleGenerator.ts` | Keep (LOCKED) |
@@ -926,9 +1323,14 @@ Block 2: N1 → S1 → N2 → S2 → ...
 | GTFS import | `utils/gtfsImportService.ts` |
 | Draft operations | `utils/draftService.ts` |
 | Publish operations | `utils/publishService.ts` |
-| Draft editor view | `components/DraftEditor/DraftEditor.tsx` |
-| Published browser view | `components/PublishedBrowser/PublishedBrowser.tsx` |
+| Brochure service | `utils/brochureService.ts` |
+| Brochure types | `utils/brochureTypes.ts` |
+| Schedule editor view | `components/ScheduleEditor/ScheduleEditorWorkspace.tsx` |
+| Master schedule view | `components/MasterSchedule/MasterScheduleView.tsx` |
 | GTFS import UI | `components/ScheduleCreator/GTFSImport.tsx` |
+| Brochure template editor | `components/MasterSchedule/BrochureTemplateEditor.tsx` |
+| Brochure generator | `components/MasterSchedule/BrochureGenerator.tsx` |
+| PDF brochure document | `components/pdf/BrochureDocument.tsx` |
 
 ### Type Definitions
 
@@ -937,6 +1339,7 @@ Block 2: N1 → S1 → N2 → S2 → ...
 | Core schedule types | `utils/masterScheduleTypes.ts` |
 | Draft/Published types | `utils/scheduleTypes.ts` (NEW) |
 | GTFS types | `utils/gtfsTypes.ts` (NEW) |
+| Brochure types | `utils/brochureTypes.ts` (NEW) |
 
 ---
 
@@ -945,6 +1348,7 @@ Block 2: N1 → S1 → N2 → S2 → ...
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
 | 1.0 | January 13, 2026 | Planning Session | Initial document |
+| 1.1 | January 13, 2026 | Planning Session | Added Brochure Generator spec; renamed Draft Editor → Schedule Editor, Published Browser → Master Schedule |
 
 ---
 
