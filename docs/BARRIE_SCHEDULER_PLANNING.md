@@ -28,9 +28,10 @@ This document defines the architecture and data flow for the Barrie Transit Sche
 6. [Component Responsibilities](#6-component-responsibilities)
 7. [GTFS Integration](#7-gtfs-integration)
 8. [Brochure Generator](#8-brochure-generator)
-9. [Locked Logic](#9-locked-logic)
-10. [Migration Plan](#10-migration-plan)
-11. [File Reference](#11-file-reference)
+9. [Platform Conflict Detector](#9-platform-conflict-detector)
+10. [Locked Logic](#10-locked-logic)
+11. [Migration Plan](#11-migration-plan)
+12. [File Reference](#12-file-reference)
 
 ---
 
@@ -1191,7 +1192,350 @@ function injectScheduleTimes(
 
 ---
 
-## 9. Locked Logic
+## 9. Platform Conflict Detector
+
+### Overview
+
+Automatically detect platform conflicts (multiple buses at the same platform simultaneously) when the Master Schedule is updated. Conflicts are displayed via alerts, badges, and highlighted rows in the schedule table.
+
+**Existing Foundation:** The app already has `platformAnalysis.ts`, `platformConfig.ts`, and `PlatformSummary.tsx` that detect and display conflicts. This spec enhances the system with:
+- Soft warnings (within 2 minutes)
+- Auto-run on publish
+- Schedule table highlighting
+- Master Schedule view badges
+
+### Conflict Severity Levels
+
+| Severity | Definition | Visual Indicator |
+|----------|------------|------------------|
+| **Hard Conflict** | Exact same minute OR overlapping dwell times exceeding platform capacity | Red badge, red row highlight |
+| **Soft Warning** | Within 2 minutes of another bus at same platform | Yellow badge, yellow row highlight |
+| **OK** | No overlap | No indicator |
+
+### Dwell Time Calculation
+
+A bus occupies a platform from **arrival** to **departure**:
+
+```
+Arrival Time = Departure Time - Dwell Time
+Dwell Time = Recovery Time (if set) OR default 2 minutes
+```
+
+**Conflict occurs when:**
+```
+Bus A: arrives 9:00, departs 9:02
+Bus B: arrives 9:01, departs 9:03
+Overlap: 9:01 - 9:02 (1 minute) = HARD CONFLICT
+```
+
+**Soft warning when:**
+```
+Bus A: departs 9:02
+Bus B: arrives 9:03
+Gap: 1 minute = SOFT WARNING (within 2-min threshold)
+```
+
+### Data Model Enhancements
+
+```typescript
+// ============================================
+// CONFLICT DETECTION TYPES
+// ============================================
+
+type ConflictSeverity = 'hard' | 'soft' | 'none';
+
+interface PlatformConflict {
+  id: string;
+  severity: ConflictSeverity;
+  platform: {
+    hubName: string;
+    platformId: string;
+  };
+  timeWindow: {
+    startMin: number;       // Minutes from midnight
+    endMin: number;
+    overlapMinutes: number; // For hard: actual overlap. For soft: gap minutes
+  };
+  involvedTrips: ConflictingTrip[];
+  dayType: DayType;
+}
+
+interface ConflictingTrip {
+  tripId: string;
+  routeNumber: string;
+  direction: 'North' | 'South';
+  blockId: string;
+  arrivalTime: string;      // HH:MM format
+  departureTime: string;
+  stopName: string;
+}
+
+interface ConflictAnalysisResult {
+  dayType: DayType;
+  analyzedAt: Timestamp;
+  scheduleVersion: number;
+  totalRoutes: number;
+  summary: {
+    hardConflicts: number;
+    softWarnings: number;
+    conflictingTrips: number;   // Unique trips involved
+    affectedPlatforms: number;
+  };
+  conflicts: PlatformConflict[];
+}
+
+// ============================================
+// ENHANCED MASTER SCHEDULE ENTRY
+// ============================================
+
+interface PublishedSchedule {
+  // ... existing fields ...
+
+  // NEW: Conflict analysis results (auto-populated on publish)
+  conflictAnalysis?: {
+    [dayType: string]: ConflictAnalysisResult;
+  };
+}
+```
+
+### Auto-Run on Publish
+
+When a schedule is published to Master, automatically run conflict analysis:
+
+```typescript
+// In publishService.ts
+
+async function publishToMaster(
+  draft: DraftSchedule,
+  userId: string
+): Promise<PublishedSchedule> {
+
+  // 1. Create published schedule (existing logic)
+  const published = createPublishedSchedule(draft, userId);
+
+  // 2. NEW: Run conflict analysis for ALL routes + this route's day type
+  const conflictResults = await runConflictAnalysis(
+    draft.dayType,
+    published.routeNumber
+  );
+
+  // 3. Store conflict results with the schedule
+  published.conflictAnalysis = {
+    [draft.dayType]: conflictResults
+  };
+
+  // 4. Save to Firestore
+  await savePublishedSchedule(published);
+
+  // 5. Return with conflict info for immediate display
+  return published;
+}
+```
+
+### UI Enhancements
+
+#### 1. Master Schedule View - Conflict Badge
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  MASTER SCHEDULE                                             │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  Day Type: [Weekday ▼]                                      │
+│                                                              │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │ Routes                                              │    │
+│  │                                                     │    │
+│  │  [400] [100] [7]  [8] ⚠️ [11] [12] 🔴 [2]          │    │
+│  │                    ↑              ↑                 │    │
+│  │              soft warning    hard conflict          │    │
+│  └─────────────────────────────────────────────────────┘    │
+│                                                              │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │ 🔴 2 Hard Conflicts  ⚠️ 3 Soft Warnings             │    │
+│  │ [View All Conflicts]                                │    │
+│  └─────────────────────────────────────────────────────┘    │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### 2. Conflicts Panel (Expandable)
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  PLATFORM CONFLICTS - Weekday                               │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  🔴 HARD CONFLICTS (2)                                      │
+│  ────────────────────                                       │
+│                                                              │
+│  Downtown - Stop 1                                          │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │ 9:00 AM - 9:02 AM (2 buses, capacity 2)             │   │
+│  │                                                      │   │
+│  │ • Route 2B Block 201 - arrives 9:00, departs 9:02   │   │
+│  │ • Route 7B Block 301 - arrives 9:01, departs 9:03   │   │
+│  │                                                      │   │
+│  │ Overlap: 1 minute                                    │   │
+│  │ [Jump to Trip] [Jump to Trip]                       │   │
+│  └─────────────────────────────────────────────────────┘   │
+│                                                              │
+│  Park Place - P2                                            │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │ 3:30 PM - 3:32 PM (2 buses, capacity 1)             │   │
+│  │                                                      │   │
+│  │ • Route 2A Block 102 - arrives 3:30, departs 3:32   │   │
+│  │ • Route 7A Block 302 - arrives 3:31, departs 3:33   │   │
+│  │                                                      │   │
+│  │ Overlap: 1 minute                                    │   │
+│  │ [Jump to Trip] [Jump to Trip]                       │   │
+│  └─────────────────────────────────────────────────────┘   │
+│                                                              │
+│  ⚠️ SOFT WARNINGS (3)                                       │
+│  ────────────────────                                       │
+│                                                              │
+│  Georgian College - Stop 330                                │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │ 10:02 AM → 10:03 AM (1 min gap)                     │   │
+│  │                                                      │   │
+│  │ • Route 8A Block 401 - departs 10:02                │   │
+│  │ • Route 100 Block 501 - arrives 10:03               │   │
+│  │                                                      │   │
+│  │ Gap: 1 minute (tight turnaround)                    │   │
+│  └─────────────────────────────────────────────────────┘   │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### 3. Schedule Table - Row Highlighting
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  ROUTE 2B - WEEKDAY                                         │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  Block │ Park Place │ Downtown │ Ferndale │ ... │ Status   │
+│  ──────┼────────────┼──────────┼──────────┼─────┼──────────│
+│  201   │ 8:30       │ 8:45     │ 8:52     │ ... │          │
+│  201   │ 9:00       │ 🔴 9:00  │ 9:07     │ ... │ 🔴 Conflict│
+│  201   │ 9:30       │ 9:45     │ 9:52     │ ... │          │
+│  202   │ 10:00      │ ⚠️ 10:15 │ 10:22    │ ... │ ⚠️ Warning │
+│  202   │ 10:30      │ 10:45    │ 10:52    │ ... │          │
+│                                                              │
+│  Legend: 🔴 Hard Conflict  ⚠️ Soft Warning                  │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+
+Clicking on highlighted cell shows tooltip:
+┌─────────────────────────────────────┐
+│ Platform Conflict at Downtown Stop 1│
+│                                     │
+│ This trip conflicts with:           │
+│ • Route 7B Block 301 at 9:01 AM     │
+│                                     │
+│ Overlap: 1 minute                   │
+│ [View in Conflicts Panel]           │
+└─────────────────────────────────────┘
+```
+
+### Platform Configuration UI
+
+Add ability to edit platform assignments (currently hardcoded):
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  PLATFORM CONFIGURATION                                      │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  Hub: [Downtown ▼]                                          │
+│                                                              │
+│  Platform Assignments:                                       │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │ Stop 1 (Capacity: 2)                                │    │
+│  │ Routes: [101] [2] [2B] [7] [7B] [8B] [11] [12B]    │    │
+│  │ [Edit Routes] [Change Capacity]                     │    │
+│  └─────────────────────────────────────────────────────┘    │
+│                                                              │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │ Stop 2 (Capacity: 2)                                │    │
+│  │ Routes: [100] [7A] [8A] [10] [12A]                  │    │
+│  │ [Edit Routes] [Change Capacity]                     │    │
+│  └─────────────────────────────────────────────────────┘    │
+│                                                              │
+│  [+ Add Platform]                                           │
+│                                                              │
+│  Stop Codes: 1, 2, 10                                       │
+│  [Edit Stop Codes]                                          │
+│                                                              │
+│  [Save Configuration]                                       │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Service Module Enhancements
+
+```typescript
+// utils/platformConflictService.ts (NEW)
+
+interface PlatformConflictService {
+  // Run analysis for a specific day type
+  analyzeConflicts(dayType: DayType): Promise<ConflictAnalysisResult>;
+
+  // Get conflicts for a specific route
+  getConflictsForRoute(
+    routeNumber: string,
+    dayType: DayType
+  ): PlatformConflict[];
+
+  // Get conflicts for a specific trip
+  getConflictsForTrip(tripId: string): PlatformConflict[];
+
+  // Check if a trip has conflicts
+  tripHasConflict(tripId: string): ConflictSeverity;
+
+  // Get summary for display
+  getConflictSummary(dayType: DayType): ConflictSummary;
+}
+
+interface ConflictSummary {
+  hardConflicts: number;
+  softWarnings: number;
+  routesWithConflicts: string[];
+  worstPlatform: { hub: string; platform: string; count: number };
+}
+```
+
+### Files to Modify
+
+| File | Changes |
+|------|---------|
+| `utils/platformAnalysis.ts` | Add soft warning detection, return trip IDs |
+| `utils/platformConfig.ts` | Move to Firestore (editable) |
+| `utils/publishService.ts` | Add auto-run conflict analysis on publish |
+| `components/PlatformSummary.tsx` | Add soft warning display |
+| `components/MasterSchedule/MasterScheduleView.tsx` | Add conflict badge, conflicts panel |
+| `components/ScheduleTableEditor.tsx` | Add row highlighting for conflicts |
+
+### Files to Create
+
+| File | Purpose |
+|------|---------|
+| `utils/platformConflictService.ts` | Enhanced conflict detection with soft warnings |
+| `components/MasterSchedule/ConflictsPanel.tsx` | Dedicated conflicts display |
+| `components/MasterSchedule/PlatformConfigEditor.tsx` | Edit platform assignments |
+| `components/common/ConflictBadge.tsx` | Reusable conflict indicator |
+| `components/common/ConflictTooltip.tsx` | Hover tooltip for conflicts |
+
+### Migration: Platform Config to Firestore
+
+1. Create `teams/{teamId}/platformConfig/` collection
+2. Migrate `HUBS` array from `platformConfig.ts` to Firestore
+3. Add UI for editing platform assignments
+4. Keep `platformConfig.ts` as default/fallback
+
+---
+
+## 10. Locked Logic
 
 > **WARNING:** Do not modify the following logic without explicit approval. These have been tested and bugs in these areas have caused significant issues.
 
@@ -1247,7 +1591,7 @@ Block 2: N1 → S1 → N2 → S2 → ...
 
 ---
 
-## 10. Migration Plan
+## 11. Migration Plan
 
 ### Phase 1: Unified Data Model
 
@@ -1294,9 +1638,19 @@ Block 2: N1 → S1 → N2 → S2 → ...
 4. Add batch generation capability
 5. Test with Route 2 brochure as reference
 
+### Phase 7: Platform Conflict Detector
+
+1. Enhance `platformAnalysis.ts` with soft warning detection
+2. Create `platformConflictService.ts` with enhanced API
+3. Add auto-run on publish in `publishService.ts`
+4. Build conflict badges and highlighting in Master Schedule view
+5. Build Conflicts Panel component
+6. Add Platform Configuration editor (move config to Firestore)
+7. Add row highlighting in ScheduleTableEditor
+
 ---
 
-## 11. File Reference
+## 12. File Reference
 
 ### Key Files (Current)
 
@@ -1315,6 +1669,9 @@ Block 2: N1 → S1 → N2 → S2 → ...
 | Master schedule service | `utils/masterScheduleService.ts` | Modify |
 | Data service | `utils/dataService.ts` | Modify (remove ScheduleDraft) |
 | Export service | `utils/exportService.ts` | Modify |
+| Platform analysis | `utils/platformAnalysis.ts` | Enhance (add soft warnings) |
+| Platform config | `utils/platformConfig.ts` | Migrate to Firestore |
+| Platform summary UI | `components/PlatformSummary.tsx` | Enhance |
 
 ### New Files (To Create)
 
@@ -1331,6 +1688,11 @@ Block 2: N1 → S1 → N2 → S2 → ...
 | Brochure template editor | `components/MasterSchedule/BrochureTemplateEditor.tsx` |
 | Brochure generator | `components/MasterSchedule/BrochureGenerator.tsx` |
 | PDF brochure document | `components/pdf/BrochureDocument.tsx` |
+| Platform conflict service | `utils/platformConflictService.ts` |
+| Conflicts panel | `components/MasterSchedule/ConflictsPanel.tsx` |
+| Platform config editor | `components/MasterSchedule/PlatformConfigEditor.tsx` |
+| Conflict badge | `components/common/ConflictBadge.tsx` |
+| Conflict tooltip | `components/common/ConflictTooltip.tsx` |
 
 ### Type Definitions
 
@@ -1349,6 +1711,7 @@ Block 2: N1 → S1 → N2 → S2 → ...
 |---------|------|--------|---------|
 | 1.0 | January 13, 2026 | Planning Session | Initial document |
 | 1.1 | January 13, 2026 | Planning Session | Added Brochure Generator spec; renamed Draft Editor → Schedule Editor, Published Browser → Master Schedule |
+| 1.2 | January 13, 2026 | Planning Session | Added Platform Conflict Detector enhancement spec (Section 9) |
 
 ---
 
