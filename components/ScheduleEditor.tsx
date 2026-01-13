@@ -110,6 +110,7 @@ import {
 import { StackedTimeCell, StackedTimeInput } from './ui/StackedTimeInput';
 import { RoundTripTableView } from './schedule/RoundTripTableView';
 import { SingleRouteView } from './schedule/SingleRouteView';
+import { getRouteConfig, extractDirectionFromName } from '../utils/routeDirectionConfig';
 // --- Main Editor Component ---
 
 // Time Band type for display
@@ -415,8 +416,9 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
             if (!routeGroups[baseName].days[dayType]) routeGroups[baseName].days[dayType] = {};
 
             const dayGroup = routeGroups[baseName].days[dayType];
-            if (table.routeName.includes('(North)')) dayGroup.north = table;
-            else if (table.routeName.includes('(South)')) dayGroup.south = table;
+            const tableDirection = extractDirectionFromName(table.routeName);
+            if (tableDirection === 'North') dayGroup.north = table;
+            else if (tableDirection === 'South') dayGroup.south = table;
             else dayGroup.north = table;
         });
 
@@ -754,6 +756,35 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                 break;
             }
         }
+        onSchedulesChange(newScheds);
+    };
+
+    // Handle direction change from SingleRouteView dropdown
+    const handleDirectionChange = (tableRouteName: string, direction: 'North' | 'South') => {
+        const newScheds = deepCloneSchedules(schedules);
+        const table = newScheds.find(t => t.routeName === tableRouteName);
+        if (!table) return;
+
+        // Update route name to include direction
+        // Remove any existing direction suffix first, then add new one
+        let newName = table.routeName
+            .replace(/\s*\((North|South)\)/gi, '')
+            .trim();
+        newName = `${newName} (${direction})`;
+
+        table.routeName = newName;
+
+        // Also update direction on all trips in this table
+        table.trips.forEach(trip => {
+            trip.direction = direction;
+        });
+
+        logAction('edit', `Set direction to ${direction}`, {
+            field: 'direction',
+            oldValue: tableRouteName,
+            newValue: newName
+        });
+
         onSchedulesChange(newScheds);
     };
 
@@ -1099,15 +1130,31 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         for (const table of schedules) {
             const ws = workbook.addWorksheet(table.routeName.substring(0, 31));
 
-            // Extract info
-            const direction = table.routeName.includes('(North)') ? 'NORTHBOUND' :
-                table.routeName.includes('(South)') ? 'SOUTHBOUND' : 'ALL TRIPS';
+            // Extract info using centralized direction config
+            const tableDirection = extractDirectionFromName(table.routeName);
+            const isNorth = tableDirection === 'North';
+            const isSouth = tableDirection === 'South';
             const dayType = table.routeName.includes('Saturday') ? 'Saturday' :
                 table.routeName.includes('Sunday') ? 'Sunday' : 'Weekday';
             const baseName = table.routeName
                 .replace(/\s*\((North|South)\)/gi, '')
                 .replace(/\s*\((Weekday|Saturday|Sunday)\)/gi, '')
                 .trim();
+
+            // Get direction info from config
+            const routeConfig = getRouteConfig(baseName);
+            let direction = isNorth ? 'NORTHBOUND' : isSouth ? 'SOUTHBOUND' : 'ALL TRIPS';
+            if (routeConfig) {
+                if (routeConfig.type === 'loop') {
+                    direction = `LOOP (${routeConfig.direction.toUpperCase()})`;
+                } else if (routeConfig.type === 'linear') {
+                    if (isNorth) {
+                        direction = `${routeConfig.northVariant} NORTHBOUND → ${routeConfig.northTerminus}`;
+                    } else if (isSouth) {
+                        direction = `${routeConfig.southVariant} SOUTHBOUND → ${routeConfig.southTerminus}`;
+                    }
+                }
+            }
 
             // Get route color
             const routeColor = getRouteColor(baseName);
@@ -1124,23 +1171,36 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
             // Store for summary sheet
             routeSummaries.push({ route: baseName, dayType, cycleHours: totalCycleTime / 60 });
 
-            // Build column structure
-            const columnDefs: { name: string; isRecovery: boolean }[] = [];
-            columnDefs.push({ name: 'Block', isRecovery: false });
-
-            table.stops.forEach((stop, idx) => {
-                columnDefs.push({ name: stop, isRecovery: false });
-                if (idx < table.stops.length - 1) {
-                    const hasRecovery = table.trips.some(t => t.recoveryTimes?.[stop] && t.recoveryTimes[stop] > 0);
-                    if (hasRecovery) {
-                        columnDefs.push({ name: 'R', isRecovery: true });
-                    }
+            // Build set of stops with recovery (same logic as UI)
+            const stopsWithRecovery = new Set<string>();
+            table.trips.forEach(t => {
+                if (t.recoveryTimes) {
+                    Object.entries(t.recoveryTimes).forEach(([s, m]) => {
+                        if (m != null) stopsWithRecovery.add(s);
+                    });
                 }
             });
-            columnDefs.push({ name: 'Travel', isRecovery: false });
-            columnDefs.push({ name: 'Recovery', isRecovery: false });
-            columnDefs.push({ name: 'Cycle', isRecovery: false });
-            columnDefs.push({ name: 'Ratio', isRecovery: false });
+
+            // Build column structure with ARR/R/DEP pattern
+            // columnDefs: { name: string, subheader: string, isRecovery: boolean, stopName?: string }
+            const columnDefs: { name: string; subheader: string; isRecovery: boolean; stopName?: string }[] = [];
+            columnDefs.push({ name: 'Block', subheader: '', isRecovery: false });
+
+            table.stops.forEach((stop) => {
+                if (stopsWithRecovery.has(stop)) {
+                    // Stop with recovery: ARR | R | DEP
+                    columnDefs.push({ name: stop, subheader: 'ARR', isRecovery: false, stopName: stop });
+                    columnDefs.push({ name: 'R', subheader: 'R', isRecovery: true, stopName: stop });
+                    columnDefs.push({ name: stop, subheader: 'DEP', isRecovery: false, stopName: stop });
+                } else {
+                    // Stop without recovery: DEP only
+                    columnDefs.push({ name: stop, subheader: 'DEP', isRecovery: false, stopName: stop });
+                }
+            });
+            columnDefs.push({ name: 'Travel', subheader: '', isRecovery: false });
+            columnDefs.push({ name: 'Recovery', subheader: '', isRecovery: false });
+            columnDefs.push({ name: 'Cycle', subheader: '', isRecovery: false });
+            columnDefs.push({ name: 'Ratio', subheader: '', isRecovery: false });
 
             // Row 1: Route header with route color
             const routeRow = ws.addRow([`ROUTE ${baseName} - ${dayType.toUpperCase()}`]);
@@ -1160,7 +1220,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
             dirRow.getCell(1).alignment = headerAlignment;
             dirRow.getCell(1).border = allBorders;
 
-            // Row 3: Column headers
+            // Row 3: Column headers (stop names)
             const headerRow = ws.addRow(columnDefs.map(c => c.name));
             headerRow.height = 20;
             headerRow.eachCell((cell, colNumber) => {
@@ -1174,17 +1234,42 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                 }
             });
 
+            // Row 4: ARR/R/DEP subheaders
+            const subheaderRow = ws.addRow(columnDefs.map(c => c.subheader));
+            subheaderRow.height = 16;
+            subheaderRow.eachCell((cell, colNumber) => {
+                cell.font = { bold: true, size: 9, color: { argb: 'FF6B7280' } };
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9FAFB' } };
+                cell.alignment = headerAlignment;
+                cell.border = allBorders;
+                if (columnDefs[colNumber - 1]?.isRecovery) {
+                    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDBEAFE' } };
+                    cell.font = { bold: true, size: 9, color: { argb: 'FF1D4ED8' } };
+                }
+            });
+
             // Data rows
             table.trips.forEach((trip, tripIdx) => {
                 const rowData: (string | number)[] = [trip.blockId];
 
-                table.stops.forEach((stop, idx) => {
-                    rowData.push(trip.stops[stop] || '');
-                    if (idx < table.stops.length - 1) {
-                        const hasRecovery = table.trips.some(t => t.recoveryTimes?.[stop] && t.recoveryTimes[stop] > 0);
-                        if (hasRecovery) {
-                            rowData.push(trip.recoveryTimes?.[stop] || '');
+                table.stops.forEach((stop) => {
+                    const depTime = trip.stops[stop] || '';
+                    const recovery = trip.recoveryTimes?.[stop] ?? 0;
+
+                    if (stopsWithRecovery.has(stop)) {
+                        // Calculate ARR time = DEP - Recovery
+                        let arrTime = '';
+                        if (depTime) {
+                            const depMin = TimeUtils.toMinutes(depTime);
+                            if (depMin !== null) {
+                                arrTime = TimeUtils.fromMinutes(depMin - recovery);
+                            }
                         }
+                        rowData.push(arrTime);           // ARR
+                        rowData.push(recovery || '');    // R
+                        rowData.push(depTime);           // DEP
+                    } else {
+                        rowData.push(depTime);           // DEP only
                     }
                 });
 
@@ -1779,6 +1864,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                                     onDeleteTrip={readOnly ? undefined : handleDeleteTrip}
                                     onDuplicateTrip={readOnly ? undefined : handleDuplicateTrip}
                                     onAddTrip={readOnly ? undefined : (_, tripId) => openAddTripModal(tripId, {})}
+                                    onDirectionChange={readOnly ? undefined : handleDirectionChange}
                                     readOnly={readOnly}
                                 />
                             )

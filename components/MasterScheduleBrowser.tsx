@@ -295,8 +295,26 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
 
         // Common styles
         const thinBorder: Partial<ExcelJS.Border> = { style: 'thin', color: { argb: 'FFE5E7EB' } };
+        const mediumBorder: Partial<ExcelJS.Border> = { style: 'medium', color: { argb: 'FF9CA3AF' } };
+        const blockSeparatorBorder: Partial<ExcelJS.Border> = { style: 'medium', color: { argb: 'FF374151' } };
         const allBorders: Partial<ExcelJS.Borders> = { top: thinBorder, bottom: thinBorder, left: thinBorder, right: thinBorder };
         const centerAlign: Partial<ExcelJS.Alignment> = { horizontal: 'center', vertical: 'middle' };
+
+        // Headway variance colors (target ~30 min for most routes)
+        const getHeadwayColor = (headway: number, avgHeadway: number): string => {
+            if (!headway || !avgHeadway) return 'FFFFFFFF';
+            const variance = Math.abs(headway - avgHeadway);
+            if (variance <= 3) return 'FFD1FAE5'; // Green - on target
+            if (variance <= 5) return 'FFFEF3C7'; // Yellow - slight variance
+            return 'FFFEE2E2'; // Red - significant variance
+        };
+
+        // Recovery % colors
+        const getRecoveryColor = (recoveryPct: number): string => {
+            if (recoveryPct >= 15) return 'FFD1FAE5'; // Green - good recovery
+            if (recoveryPct >= 10) return 'FFFEF3C7'; // Yellow - adequate
+            return 'FFFEE2E2'; // Red - insufficient recovery
+        };
 
         // Generate sheet names for linking
         const getSheetName = (route: string, dayType: DayType) => `R${route} ${dayType}`;
@@ -602,9 +620,50 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
                 const serviceSpanMins = tripsByTime.length > 0 ? tripsByTime[tripsByTime.length - 1].endTime - tripsByTime[0].startTime : 0;
                 const avgHeadway = totalTrips > 1 ? Math.round(serviceSpanMins / (totalTrips - 1)) : 0;
 
+                // ===== IDENTIFY TURNAROUND AND TERMINAL STOPS =====
+                // Turnaround = last stop in direction (where bus waits before returning)
+                // All stops get DEP subheading, turnaround gets ARR + R, terminal gets ARR + R + DEP
+                const northTurnaroundStop = northStops.length > 0 ? northStops[northStops.length - 1] : null;
+                const southTurnaroundStop = southStops.length > 0 ? southStops[southStops.length - 1] : null;
+
+                // Build enhanced stop columns:
+                // - Regular stops: just DEP subheading
+                // - Turnaround (last stop): ARR + R columns (arrival time + recovery minutes)
+                type StopColumn = { name: string; subColumns: string[]; type: 'regular' | 'turnaround' };
+
+                const buildStopColumns = (stops: string[], turnaroundStop: string | null): StopColumn[] => {
+                    const columns: StopColumn[] = [];
+                    stops.forEach(stop => {
+                        if (stop === turnaroundStop) {
+                            // Turnaround stop: show ARR time and R (recovery minutes)
+                            columns.push({ name: stop, subColumns: ['ARR', 'R'], type: 'turnaround' });
+                        } else {
+                            // Regular stop: just DEP
+                            columns.push({ name: stop, subColumns: ['DEP'], type: 'regular' });
+                        }
+                    });
+                    return columns;
+                };
+
+                const northStopColumns = buildStopColumns(northStops, northTurnaroundStop);
+                const southStopColumns = buildStopColumns(southStops, southTurnaroundStop);
+
+                // Calculate total columns for each direction (for header merge)
+                const getNorthColCount = () => {
+                    let count = 2; // Block + Band
+                    northStopColumns.forEach(col => count += col.subColumns.length);
+                    count += 5; // Trav, Rec, Ratio, Hdwy, Cycle
+                    return count;
+                };
+
+                // Count unique blocks per direction
+                const northUniqueBlocks = new Set(northTrips.map(t => t.blockId));
+                const southUniqueBlocks = new Set(southTrips.map(t => t.blockId));
+
                 // ===== ROW 1: ROUTE HEADER =====
                 const routeHeaderRow = ws.addRow([`ROUTE ${route} - ${dayType.toUpperCase()} SCHEDULE`]);
-                ws.mergeCells(1, 1, 1, 12);
+                const totalCols = getNorthColCount();
+                ws.mergeCells(1, 1, 1, Math.max(totalCols, 12));
                 routeHeaderRow.height = 36;
                 routeHeaderRow.getCell(1).font = { bold: true, size: 20, color: { argb: routeTextColor } };
                 routeHeaderRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: routeColorArgb } };
@@ -619,99 +678,116 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
 
                 ws.addRow([]); // Row 3: spacer
 
-                // ===== ROW 4-5: DAY SUMMARY BANNER (improved layout) =====
-                const bannerLabels = ['SERVICE WINDOW', 'BLOCKS', 'TRIPS (N+S)', 'TRAVEL TIME', 'RECOVERY TIME', 'CYCLE TIME', 'RECOVERY %', 'AVG HEADWAY'];
-                const bannerLabelRow = ws.addRow(bannerLabels);
-                bannerLabelRow.height = 18;
-                bannerLabelRow.eachCell((cell) => {
-                    cell.font = { size: 9, color: { argb: 'FF6B7280' } };
-                    cell.alignment = centerAlign;
-                    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9FAFB' } };
-                    cell.border = { top: thinBorder, left: thinBorder, right: thinBorder };
-                });
-
-                const serviceWindow = `${firstTripTime} – ${lastTripTime}`;
-                const tripBreakdown = `${totalTrips} (${northTripCount}N + ${southTripCount}S)`;
-
-                const bannerValues = [
-                    serviceWindow,
-                    peakVehicles.toString(),
-                    tripBreakdown,
-                    `${toHours(totalTravelTime)}h`,
-                    `${toHours(totalRecoveryTime)}h`,
-                    `${toHours(totalCycleTime)}h`,
-                    `${recoveryRatio}%`,
-                    `${avgHeadway} min`
-                ];
-                const bannerValueRow = ws.addRow(bannerValues);
-                bannerValueRow.height = 28;
-                bannerValueRow.eachCell((cell, colNum) => {
-                    cell.font = { bold: true, size: 13, color: { argb: 'FF1F2937' } };
-                    cell.alignment = centerAlign;
-                    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9FAFB' } };
-                    cell.border = { bottom: thinBorder, left: thinBorder, right: thinBorder };
-                    // Highlight Cycle Time column
-                    if (colNum === 6) {
-                        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD1FAE5' } };
-                        cell.font = { bold: true, size: 13, color: { argb: 'FF059669' } };
-                    }
-                });
-
-                ws.addRow([]); // Row 6: spacer
-
                 // ===== NORTHBOUND TRIPS TABLE =====
                 if (northTrips.length > 0) {
-                    // Section header
-                    const northHeaderRow = ws.addRow([`NORTHBOUND TRIPS (${northTrips.length} trips)`]);
-                    ws.mergeCells(northHeaderRow.number, 1, northHeaderRow.number, 10);
+                    // Section header with block count
+                    const northHeaderRow = ws.addRow([`NORTHBOUND TRIPS (${northTrips.length} trips, ${northUniqueBlocks.size} blocks)`]);
+                    ws.mergeCells(northHeaderRow.number, 1, northHeaderRow.number, totalCols);
                     northHeaderRow.height = 24;
                     northHeaderRow.getCell(1).font = { bold: true, size: 12, color: { argb: 'FF1E40AF' } };
                     northHeaderRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDBEAFE' } };
                     northHeaderRow.getCell(1).alignment = { horizontal: 'left', vertical: 'middle' };
                     northHeaderRow.getCell(1).border = allBorders;
 
-                    // Build column headers: Block, Band, Stop columns..., Hdwy, Travel, Recovery, Cycle, Ratio
-                    const northColHeaders = ['Block', 'Band', ...northStops, 'Hdwy', 'Travel', 'Recovery', 'Cycle', 'Ratio'];
-                    const northColHeaderRow = ws.addRow(northColHeaders);
-                    northColHeaderRow.height = 24;
-                    northColHeaderRow.eachCell((cell, colNum) => {
-                        cell.font = { bold: true, size: 9, color: { argb: 'FF374151' } };
-                        cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
-                        cell.border = allBorders;
-                        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEFF6FF' } };
-                        // Metrics columns get different color
-                        if (colNum > northStops.length + 2) {
-                            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3F4F6' } };
+                    // ===== TWO-ROW HEADER: Stop names (merged) + Subheaders (DEP/ARR/R) =====
+                    // Row 1: Stop name headers (merged across sub-columns)
+                    const stopNameRow: string[] = ['Block', 'Band'];
+                    northStopColumns.forEach(col => {
+                        stopNameRow.push(col.name);
+                        // Add placeholders for additional sub-columns (for merge)
+                        for (let i = 1; i < col.subColumns.length; i++) {
+                            stopNameRow.push('');
                         }
                     });
+                    // Metrics in new order: Trav, Rec, Ratio, Hdwy, Cycle
+                    stopNameRow.push('Trav', 'Rec', 'Ratio', 'Hdwy', 'Cycle');
 
-                    // Sort north trips by block ID then start time - same order as Schedule Tweaker
+                    const northStopNameRow = ws.addRow(stopNameRow);
+                    northStopNameRow.height = 20;
+
+                    // Row 2: Sub-headers (DEP for regular stops, ARR/R for turnaround)
+                    const subHeaderRow: string[] = ['', ''];
+                    northStopColumns.forEach(col => {
+                        subHeaderRow.push(...col.subColumns);
+                    });
+                    subHeaderRow.push('', '', '', '', ''); // Empty for metrics (already labeled above)
+
+                    const northSubHeaderRow = ws.addRow(subHeaderRow);
+                    northSubHeaderRow.height = 18;
+
+                    // Apply merge and styles for the two-row header
+                    let colIdx = 1;
+                    // Block column - merge 2 rows
+                    ws.mergeCells(northStopNameRow.number, 1, northSubHeaderRow.number, 1);
+                    // Band column - merge 2 rows
+                    ws.mergeCells(northStopNameRow.number, 2, northSubHeaderRow.number, 2);
+                    colIdx = 3;
+
+                    northStopColumns.forEach(col => {
+                        const numSubCols = col.subColumns.length;
+                        if (numSubCols > 1) {
+                            // Merge the stop name across multiple sub-columns
+                            ws.mergeCells(northStopNameRow.number, colIdx, northStopNameRow.number, colIdx + numSubCols - 1);
+                        } else {
+                            // Single column - merge across 2 rows (stop name + empty sub-header)
+                            ws.mergeCells(northStopNameRow.number, colIdx, northSubHeaderRow.number, colIdx);
+                        }
+                        colIdx += numSubCols;
+                    });
+
+                    // Metrics columns - merge 2 rows each
+                    for (let i = 0; i < 5; i++) {
+                        ws.mergeCells(northStopNameRow.number, colIdx + i, northSubHeaderRow.number, colIdx + i);
+                    }
+
+                    // Style the header rows
+                    [northStopNameRow, northSubHeaderRow].forEach((row, rowOffset) => {
+                        row.eachCell((cell, colNum) => {
+                            cell.font = { bold: true, size: 9, color: { argb: 'FF374151' } };
+                            cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+                            cell.border = allBorders;
+                            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEFF6FF' } };
+                        });
+                    });
+
+                    // Sort north trips by block ID then start time
                     const sortedNorthTrips = sortTripsLikeTweaker(northTrips);
 
-                    // Calculate headways for this direction
+                    // Calculate headways
                     const northByTime = [...northTrips].sort((a, b) => a.startTime - b.startTime);
                     const northHeadways = calculateHeadways(northByTime);
 
+                    // Track previous block for separation
+                    let prevNorthBlock = '';
+
                     // Data rows
                     sortedNorthTrips.forEach((trip, rowIdx) => {
-                        const timeBand = trip.assignedBand || ''; // Use actual band from data, blank if not set
+                        const timeBand = trip.assignedBand || '';
                         const tripRatio = trip.travelTime > 0 ? Math.round((trip.recoveryTime / trip.travelTime) * 100) : 0;
-                        const headway = northHeadways.get(trip.id) || '';
+                        const headway = northHeadways.get(trip.id) || 0;
+                        const isNewBlock = prevNorthBlock !== '' && trip.blockId !== prevNorthBlock;
+                        prevNorthBlock = trip.blockId;
 
-                        const rowData: (string | number)[] = [
-                            trip.blockId,
-                            timeBand,
-                            ...northStops.map(stop => trip.stops?.[stop] || ''),
-                            headway,
-                            trip.travelTime,
-                            trip.recoveryTime,
-                            trip.cycleTime,
-                            `${tripRatio}%`
-                        ];
+                        // Build row data with DEP for regular stops, ARR/R for turnaround
+                        const rowData: (string | number)[] = [trip.blockId, timeBand];
+                        northStopColumns.forEach(col => {
+                            const stopTime = trip.stops?.[col.name] || '';
+                            if (col.type === 'turnaround') {
+                                // Turnaround stop: ARR time + R (recovery minutes)
+                                rowData.push(stopTime); // ARR
+                                rowData.push(trip.recoveryTime > 0 ? trip.recoveryTime : ''); // R
+                            } else {
+                                // Regular stop: just DEP time
+                                rowData.push(stopTime);
+                            }
+                        });
+                        // Metrics in new order: Trav, Rec, Ratio, Hdwy, Cycle
+                        rowData.push(trip.travelTime, trip.recoveryTime, `${tripRatio}%`, headway || '', trip.cycleTime);
 
                         const dataRow = ws.addRow(rowData);
                         dataRow.height = 18;
                         const bgColor = rowIdx % 2 === 0 ? 'FFFFFFFF' : 'FFF9FAFB';
+
                         dataRow.eachCell((cell, colNum) => {
                             cell.font = { size: 10 };
                             cell.alignment = centerAlign;
@@ -722,38 +798,61 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
                             if (colNum === 1) {
                                 cell.font = { bold: true, size: 10, color: { argb: 'FF374151' } };
                             }
-                            // Band column with color (only if band is set)
+                            // Band column with color
                             if (colNum === 2 && timeBand) {
                                 const bandColor = getTimeBandColor(timeBand);
                                 cell.font = { bold: true, size: 9, color: { argb: 'FFFFFFFF' } };
                                 cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bandColor } };
                             }
-                            // Metrics columns
-                            if (colNum > northStops.length + 2) {
-                                cell.font = { size: 10, color: { argb: 'FF6B7280' } };
-                            }
                         });
+
+                        // Apply block separator (thick top border) when block changes
+                        if (isNewBlock) {
+                            dataRow.eachCell((cell) => {
+                                cell.border = {
+                                    ...allBorders,
+                                    top: blockSeparatorBorder
+                                };
+                            });
+                        }
+
+                        // Metrics order: Trav, Rec, Ratio, Hdwy, Cycle
+                        // Ratio is at position rowData.length - 2 (3rd from end)
+                        const ratioColIdx = rowData.length - 2;
+                        const ratioCell = dataRow.getCell(ratioColIdx);
+                        ratioCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: getRecoveryColor(tripRatio) } };
+
+                        // Hdwy is at position rowData.length - 1 (2nd from end)
+                        const hdwyColIdx = rowData.length - 1;
+                        if (headway && typeof headway === 'number') {
+                            const hdwyCell = dataRow.getCell(hdwyColIdx);
+                            hdwyCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: getHeadwayColor(headway, avgHeadway) } };
+                        }
                     });
 
-                    // North totals row - show hours instead of minutes
+                    // North totals row
                     const northTotalTravel = northTrips.reduce((sum, t) => sum + t.travelTime, 0);
                     const northTotalRecovery = northTrips.reduce((sum, t) => sum + t.recoveryTime, 0);
                     const northTotalCycle = northTotalTravel + northTotalRecovery;
                     const northAvgRatio = northTotalTravel > 0 ? Math.round((northTotalRecovery / northTotalTravel) * 100) : 0;
                     const northAvgHeadway = northTrips.length > 1 ? Math.round((northByTime[northByTime.length - 1].startTime - northByTime[0].startTime) / (northTrips.length - 1)) : 0;
 
-                    const northTotalsData: (string | number)[] = [
-                        'TOTALS', '',
-                        ...northStops.map(() => ''),
-                        northAvgHeadway > 0 ? `${northAvgHeadway}` : '',
+                    const northTotalsData: (string | number)[] = ['TOTALS', ''];
+                    northStopColumns.forEach(col => {
+                        // Add empty cells for each sub-column
+                        col.subColumns.forEach(() => northTotalsData.push(''));
+                    });
+                    // Metrics in new order: Trav, Rec, Ratio, Hdwy, Cycle
+                    northTotalsData.push(
                         `${toHours(northTotalTravel)}h`,
                         `${toHours(northTotalRecovery)}h`,
-                        `${toHours(northTotalCycle)}h`,
-                        `${northAvgRatio}%`
-                    ];
+                        `${northAvgRatio}%`,
+                        northAvgHeadway > 0 ? `${northAvgHeadway}` : '',
+                        `${toHours(northTotalCycle)}h`
+                    );
                     const northTotalsRow = ws.addRow(northTotalsData);
                     northTotalsRow.height = 22;
-                    northTotalsRow.eachCell((cell, colNum) => {
+                    northTotalsRow.eachCell((cell) => {
                         cell.font = { bold: true, size: 10, color: { argb: 'FF1F2937' } };
                         cell.alignment = centerAlign;
                         cell.border = allBorders;
@@ -765,99 +864,163 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
 
                 // ===== SOUTHBOUND TRIPS TABLE =====
                 if (southTrips.length > 0) {
-                    // Section header
-                    const southHeaderRow = ws.addRow([`SOUTHBOUND TRIPS (${southTrips.length} trips)`]);
-                    ws.mergeCells(southHeaderRow.number, 1, southHeaderRow.number, 10);
+                    // Section header with block count
+                    const southHeaderRow = ws.addRow([`SOUTHBOUND TRIPS (${southTrips.length} trips, ${southUniqueBlocks.size} blocks)`]);
+                    ws.mergeCells(southHeaderRow.number, 1, southHeaderRow.number, totalCols);
                     southHeaderRow.height = 24;
                     southHeaderRow.getCell(1).font = { bold: true, size: 12, color: { argb: 'FF5B21B6' } };
                     southHeaderRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEDE9FE' } };
                     southHeaderRow.getCell(1).alignment = { horizontal: 'left', vertical: 'middle' };
                     southHeaderRow.getCell(1).border = allBorders;
 
-                    // Build column headers: Block, Band, Stop columns..., Hdwy, Travel, Recovery, Cycle, Ratio
-                    const southColHeaders = ['Block', 'Band', ...southStops, 'Hdwy', 'Travel', 'Recovery', 'Cycle', 'Ratio'];
-                    const southColHeaderRow = ws.addRow(southColHeaders);
-                    southColHeaderRow.height = 24;
-                    southColHeaderRow.eachCell((cell, colNum) => {
-                        cell.font = { bold: true, size: 9, color: { argb: 'FF374151' } };
-                        cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
-                        cell.border = allBorders;
-                        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F3FF' } };
-                        // Metrics columns get different color
-                        if (colNum > southStops.length + 2) {
-                            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3F4F6' } };
+                    // Two-row header for south
+                    const southStopNameRowData: string[] = ['Block', 'Band'];
+                    southStopColumns.forEach(col => {
+                        southStopNameRowData.push(col.name);
+                        // Add placeholders for additional sub-columns (for merge)
+                        for (let i = 1; i < col.subColumns.length; i++) {
+                            southStopNameRowData.push('');
                         }
                     });
+                    // Metrics in new order: Trav, Rec, Ratio, Hdwy, Cycle
+                    southStopNameRowData.push('Trav', 'Rec', 'Ratio', 'Hdwy', 'Cycle');
 
-                    // Sort south trips by block ID then start time - same order as Schedule Tweaker
+                    const southStopNameRow = ws.addRow(southStopNameRowData);
+                    southStopNameRow.height = 20;
+
+                    const southSubHeaderRowData: string[] = ['', ''];
+                    southStopColumns.forEach(col => {
+                        southSubHeaderRowData.push(...col.subColumns);
+                    });
+                    southSubHeaderRowData.push('', '', '', '', '');
+
+                    const southSubHeaderRow = ws.addRow(southSubHeaderRowData);
+                    southSubHeaderRow.height = 18;
+
+                    // Apply merge for south headers
+                    let sColIdx = 1;
+                    ws.mergeCells(southStopNameRow.number, 1, southSubHeaderRow.number, 1);
+                    ws.mergeCells(southStopNameRow.number, 2, southSubHeaderRow.number, 2);
+                    sColIdx = 3;
+
+                    southStopColumns.forEach(col => {
+                        const numSubCols = col.subColumns.length;
+                        if (numSubCols > 1) {
+                            ws.mergeCells(southStopNameRow.number, sColIdx, southStopNameRow.number, sColIdx + numSubCols - 1);
+                        } else {
+                            ws.mergeCells(southStopNameRow.number, sColIdx, southSubHeaderRow.number, sColIdx);
+                        }
+                        sColIdx += numSubCols;
+                    });
+
+                    for (let i = 0; i < 5; i++) {
+                        ws.mergeCells(southStopNameRow.number, sColIdx + i, southSubHeaderRow.number, sColIdx + i);
+                    }
+
+                    // Style south headers
+                    [southStopNameRow, southSubHeaderRow].forEach((row) => {
+                        row.eachCell((cell) => {
+                            cell.font = { bold: true, size: 9, color: { argb: 'FF374151' } };
+                            cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+                            cell.border = allBorders;
+                            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F3FF' } };
+                        });
+                    });
+
+                    // Sort south trips
                     const sortedSouthTrips = sortTripsLikeTweaker(southTrips);
-
-                    // Calculate headways for this direction
                     const southByTime = [...southTrips].sort((a, b) => a.startTime - b.startTime);
                     const southHeadways = calculateHeadways(southByTime);
 
+                    let prevSouthBlock = '';
+
                     // Data rows
                     sortedSouthTrips.forEach((trip, rowIdx) => {
-                        const timeBand = trip.assignedBand || ''; // Use actual band from data, blank if not set
+                        const timeBand = trip.assignedBand || '';
                         const tripRatio = trip.travelTime > 0 ? Math.round((trip.recoveryTime / trip.travelTime) * 100) : 0;
-                        const headway = southHeadways.get(trip.id) || '';
+                        const headway = southHeadways.get(trip.id) || 0;
+                        const isNewBlock = prevSouthBlock !== '' && trip.blockId !== prevSouthBlock;
+                        prevSouthBlock = trip.blockId;
 
-                        const rowData: (string | number)[] = [
-                            trip.blockId,
-                            timeBand,
-                            ...southStops.map(stop => trip.stops?.[stop] || ''),
-                            headway,
-                            trip.travelTime,
-                            trip.recoveryTime,
-                            trip.cycleTime,
-                            `${tripRatio}%`
-                        ];
+                        // Build row data with DEP for regular stops, ARR/R for turnaround
+                        const rowData: (string | number)[] = [trip.blockId, timeBand];
+                        southStopColumns.forEach(col => {
+                            const stopTime = trip.stops?.[col.name] || '';
+                            if (col.type === 'turnaround') {
+                                // Turnaround stop: ARR time + R (recovery minutes)
+                                rowData.push(stopTime); // ARR
+                                rowData.push(trip.recoveryTime > 0 ? trip.recoveryTime : ''); // R
+                            } else {
+                                // Regular stop: just DEP time
+                                rowData.push(stopTime);
+                            }
+                        });
+                        // Metrics in new order: Trav, Rec, Ratio, Hdwy, Cycle
+                        rowData.push(trip.travelTime, trip.recoveryTime, `${tripRatio}%`, headway || '', trip.cycleTime);
 
                         const dataRow = ws.addRow(rowData);
                         dataRow.height = 18;
                         const bgColor = rowIdx % 2 === 0 ? 'FFFFFFFF' : 'FFF9FAFB';
+
                         dataRow.eachCell((cell, colNum) => {
                             cell.font = { size: 10 };
                             cell.alignment = centerAlign;
                             cell.border = allBorders;
                             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bgColor } };
 
-                            // Block column bold
                             if (colNum === 1) {
                                 cell.font = { bold: true, size: 10, color: { argb: 'FF374151' } };
                             }
-                            // Band column with color (only if band is set)
                             if (colNum === 2 && timeBand) {
                                 const bandColor = getTimeBandColor(timeBand);
                                 cell.font = { bold: true, size: 9, color: { argb: 'FFFFFFFF' } };
                                 cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bandColor } };
                             }
-                            // Metrics columns
-                            if (colNum > southStops.length + 2) {
-                                cell.font = { size: 10, color: { argb: 'FF6B7280' } };
-                            }
                         });
+
+                        if (isNewBlock) {
+                            dataRow.eachCell((cell) => {
+                                cell.border = { ...allBorders, top: blockSeparatorBorder };
+                            });
+                        }
+
+                        // Metrics order: Trav, Rec, Ratio, Hdwy, Cycle
+                        // Ratio is at position rowData.length - 2 (3rd from end)
+                        const ratioColIdx = rowData.length - 2;
+                        const ratioCell = dataRow.getCell(ratioColIdx);
+                        ratioCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: getRecoveryColor(tripRatio) } };
+
+                        // Hdwy is at position rowData.length - 1 (2nd from end)
+                        const hdwyColIdx = rowData.length - 1;
+                        if (headway && typeof headway === 'number') {
+                            const hdwyCell = dataRow.getCell(hdwyColIdx);
+                            hdwyCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: getHeadwayColor(headway, avgHeadway) } };
+                        }
                     });
 
-                    // South totals row - show hours instead of minutes
+                    // South totals row
                     const southTotalTravel = southTrips.reduce((sum, t) => sum + t.travelTime, 0);
                     const southTotalRecovery = southTrips.reduce((sum, t) => sum + t.recoveryTime, 0);
                     const southTotalCycle = southTotalTravel + southTotalRecovery;
                     const southAvgRatio = southTotalTravel > 0 ? Math.round((southTotalRecovery / southTotalTravel) * 100) : 0;
                     const southAvgHeadway = southTrips.length > 1 ? Math.round((southByTime[southByTime.length - 1].startTime - southByTime[0].startTime) / (southTrips.length - 1)) : 0;
 
-                    const southTotalsData: (string | number)[] = [
-                        'TOTALS', '',
-                        ...southStops.map(() => ''),
-                        southAvgHeadway > 0 ? `${southAvgHeadway}` : '',
+                    const southTotalsData: (string | number)[] = ['TOTALS', ''];
+                    southStopColumns.forEach(col => {
+                        // Add empty cells for each sub-column
+                        col.subColumns.forEach(() => southTotalsData.push(''));
+                    });
+                    // Metrics in new order: Trav, Rec, Ratio, Hdwy, Cycle
+                    southTotalsData.push(
                         `${toHours(southTotalTravel)}h`,
                         `${toHours(southTotalRecovery)}h`,
-                        `${toHours(southTotalCycle)}h`,
-                        `${southAvgRatio}%`
-                    ];
+                        `${southAvgRatio}%`,
+                        southAvgHeadway > 0 ? `${southAvgHeadway}` : '',
+                        `${toHours(southTotalCycle)}h`
+                    );
                     const southTotalsRow = ws.addRow(southTotalsData);
                     southTotalsRow.height = 22;
-                    southTotalsRow.eachCell((cell, colNum) => {
+                    southTotalsRow.eachCell((cell) => {
                         cell.font = { bold: true, size: 10, color: { argb: 'FF1F2937' } };
                         cell.alignment = centerAlign;
                         cell.border = allBorders;
@@ -865,31 +1028,109 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
                     });
                 }
 
-                // ===== COLUMN WIDTHS (dynamic based on content) =====
-                const maxStopNameLength = Math.max(
-                    ...northStops.map(s => s.length),
-                    ...southStops.map(s => s.length),
-                    10 // minimum
-                );
-                const stopColWidth = Math.min(Math.max(maxStopNameLength * 1.2, 11), 18); // Between 11 and 18
+                // ===== METRICS PANEL (Right Side) =====
+                // Add metrics panel to the right of the trip data
+                const metricsStartCol = totalCols + 2; // Gap of 1 column
+                const serviceWindow = `${firstTripTime} – ${lastTripTime}`;
+                const tripBreakdown = `${totalTrips} (${northTripCount}N + ${southTripCount}S)`;
+                const recoveryPct = Number(recoveryRatio);
 
+                const metricsData = [
+                    { label: 'SERVICE WINDOW', value: serviceWindow },
+                    { label: 'BLOCKS', value: peakVehicles.toString() },
+                    { label: 'TRIPS (N+S)', value: tripBreakdown },
+                    { label: 'TRAVEL TIME', value: `${toHours(totalTravelTime)}h` },
+                    { label: 'RECOVERY TIME', value: `${toHours(totalRecoveryTime)}h` },
+                    { label: 'CYCLE TIME', value: `${toHours(totalCycleTime)}h`, highlight: true },
+                    { label: 'RECOVERY %', value: `${recoveryRatio}%`, recoveryHighlight: true },
+                    { label: 'AVG HEADWAY', value: `${avgHeadway} min` },
+                ];
+
+                // Add metrics panel title
+                ws.getCell(4, metricsStartCol).value = 'SCHEDULE METRICS';
+                ws.getCell(4, metricsStartCol).font = { bold: true, size: 11, color: { argb: 'FF1F2937' } };
+                ws.getCell(4, metricsStartCol).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3F4F6' } };
+                ws.getCell(4, metricsStartCol).border = allBorders;
+                ws.mergeCells(4, metricsStartCol, 4, metricsStartCol + 1);
+
+                metricsData.forEach((metric, idx) => {
+                    const rowNum = 5 + idx;
+                    ws.getCell(rowNum, metricsStartCol).value = metric.label;
+                    ws.getCell(rowNum, metricsStartCol).font = { size: 9, color: { argb: 'FF6B7280' } };
+                    ws.getCell(rowNum, metricsStartCol).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9FAFB' } };
+                    ws.getCell(rowNum, metricsStartCol).border = allBorders;
+                    ws.getCell(rowNum, metricsStartCol).alignment = { horizontal: 'right', vertical: 'middle' };
+
+                    ws.getCell(rowNum, metricsStartCol + 1).value = metric.value;
+                    ws.getCell(rowNum, metricsStartCol + 1).font = { bold: true, size: 11, color: { argb: 'FF1F2937' } };
+                    ws.getCell(rowNum, metricsStartCol + 1).border = allBorders;
+                    ws.getCell(rowNum, metricsStartCol + 1).alignment = { horizontal: 'center', vertical: 'middle' };
+
+                    if (metric.highlight) {
+                        ws.getCell(rowNum, metricsStartCol + 1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD1FAE5' } };
+                        ws.getCell(rowNum, metricsStartCol + 1).font = { bold: true, size: 11, color: { argb: 'FF059669' } };
+                    } else if (metric.recoveryHighlight) {
+                        ws.getCell(rowNum, metricsStartCol + 1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: getRecoveryColor(recoveryPct) } };
+                    } else {
+                        ws.getCell(rowNum, metricsStartCol + 1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFFF' } };
+                    }
+                });
+
+                // ===== COLUMN WIDTHS =====
                 ws.getColumn(1).width = 10;  // Block
                 ws.getColumn(2).width = 6;   // Band
-                // Stop columns - dynamic width
-                const maxStops = Math.max(northStops.length, southStops.length);
-                for (let i = 3; i <= maxStops + 2; i++) {
-                    ws.getColumn(i).width = stopColWidth;
-                }
-                // Metrics columns (after stops)
-                ws.getColumn(maxStops + 3).width = 6;   // Hdwy
-                ws.getColumn(maxStops + 4).width = 7;   // Travel
-                ws.getColumn(maxStops + 5).width = 9;   // Recovery
-                ws.getColumn(maxStops + 6).width = 7;   // Cycle
-                ws.getColumn(maxStops + 7).width = 6;   // Ratio
+
+                // Stop columns with wider time columns
+                let currentCol = 3;
+                const stopColWidth = 11; // Standard time column width for "12:30 PM"
+                const recoveryColWidth = 5; // Narrow for R column
+
+                northStopColumns.forEach(col => {
+                    if (col.type === 'turnaround') {
+                        ws.getColumn(currentCol).width = stopColWidth;     // ARR
+                        ws.getColumn(currentCol + 1).width = recoveryColWidth; // R
+                        currentCol += 2;
+                    } else {
+                        ws.getColumn(currentCol).width = stopColWidth; // DEP
+                        currentCol += 1;
+                    }
+                });
+
+                // Metrics columns in new order: Trav, Rec, Ratio, Hdwy, Cycle
+                ws.getColumn(currentCol).width = 7;     // Trav
+                ws.getColumn(currentCol + 1).width = 6; // Rec
+                ws.getColumn(currentCol + 2).width = 7; // Ratio
+                ws.getColumn(currentCol + 3).width = 6; // Hdwy
+                ws.getColumn(currentCol + 4).width = 7; // Cycle
+
+                // Side panel columns
+                ws.getColumn(metricsStartCol).width = 16;
+                ws.getColumn(metricsStartCol + 1).width = 14;
 
                 // ===== FREEZE PANES =====
-                // Freeze first 2 columns (Block, Time Band) and first 6 rows (header + summary)
-                ws.views = [{ state: 'frozen', xSplit: 2, ySplit: 6 }];
+                // Freeze first 2 columns (Block, Band) and first 4 rows (header + link + spacer)
+                ws.views = [{ state: 'frozen', xSplit: 2, ySplit: 4 }];
+
+                // ===== PRINT SETTINGS =====
+                ws.pageSetup = {
+                    orientation: 'landscape',
+                    fitToPage: true,
+                    fitToWidth: 1,
+                    fitToHeight: 0, // Auto height
+                    paperSize: 9, // A4
+                    margins: {
+                        left: 0.25,
+                        right: 0.25,
+                        top: 0.5,
+                        bottom: 0.5,
+                        header: 0.3,
+                        footer: 0.3
+                    }
+                };
+                ws.headerFooter = {
+                    oddHeader: `&C&B${route} - ${dayType} Schedule`,
+                    oddFooter: '&LBarrie Transit&CPage &P of &N&R&D'
+                };
             }
         }
 

@@ -153,10 +153,14 @@ App.tsx
        ├─> Step 1: CSV upload
        ├─> Step 2: Runtime analysis
        ├─> Step 3: Recovery settings
-       └─> Step 4: Schedule generation
-            └─> scheduleGenerator.ts
-                 ├─> csvParser.ts
-                 └─> runtimeAnalysis.ts
+       ├─> Step 4: Schedule generation
+       │    └─> utils/scheduleGenerator.ts
+       │         ├─> csvParser.ts
+       │         └─> utils/runtimeAnalysis.ts
+       └─> Step 5: Connections (interline)
+            └─> utils/connectionOptimizer.ts
+                 ├─> utils/connectionConfigService.ts
+                 └─> utils/connectionLibraryService.ts
 
 ScheduleEditor.tsx
   └─> Displays paired trips

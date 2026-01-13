@@ -5,6 +5,9 @@ import { Step1Upload } from './steps/Step1Upload';
 import { Step2Analysis } from './steps/Step2Analysis';
 import { Step3Build, ScheduleConfig } from './steps/Step3Build';
 import { Step4Schedule } from './steps/Step4Schedule';
+import { Step5Connections } from './steps/Step5Connections';
+import type { ConnectionLibrary, RouteConnectionConfig, OptimizationResult } from '../../utils/connectionTypes';
+import { buildRouteIdentity as buildConnRouteIdentity } from '../../utils/masterScheduleTypes';
 import { parseRuntimeCSV, RuntimeData, SegmentRawData } from './utils/csvParser';
 import { calculateTotalTripTimes, detectOutliers, calculateBands, TripBucketAnalysis, TimeBand, DirectionBandSummary, computeDirectionBandSummary } from '../../utils/runtimeAnalysis';
 import { generateSchedule } from '../../utils/scheduleGenerator';
@@ -21,6 +24,7 @@ import { saveProject, getProject } from '../../utils/newScheduleProjectService';
 import { UploadToMasterModal } from '../UploadToMasterModal';
 import { prepareUpload, uploadToMasterSchedule } from '../../utils/masterScheduleService';
 import { extractRouteNumber, extractDayType, buildRouteIdentity } from '../../utils/masterScheduleTypes';
+import { extractDirectionFromName } from '../../utils/routeDirectionConfig';
 import type { UploadConfirmation, DayType as MasterDayType } from '../../utils/masterScheduleTypes';
 
 // Constants - centralized magic numbers
@@ -77,6 +81,11 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
 
     // State for Step 4 Schedule
     const [generatedSchedules, setGeneratedSchedules] = useState<MasterRouteTable[]>([]);
+
+    // State for Step 5 Connections
+    const [connectionLibrary, setConnectionLibrary] = useState<ConnectionLibrary | null>(null);
+    const [routeConnectionConfig, setRouteConnectionConfig] = useState<RouteConnectionConfig | null>(null);
+    const [originalSchedules, setOriginalSchedules] = useState<MasterRouteTable[]>([]); // Before optimization
 
     // Master Schedule Upload State
     const [showUploadModal, setShowUploadModal] = useState(false);
@@ -431,6 +440,10 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                 }
             }
         } else if (step === 4) {
+            // Move to Step 5 - Connection Optimization
+            setStep(5);
+            toast.info('Connection Optimization', 'Configure connections to GO trains, College bells, or other routes');
+        } else if (step === 5) {
             // Finalize / Export
             if (onGenerate) {
                 onGenerate(generatedSchedules);
@@ -465,9 +478,9 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         if (!hasTeam || !team || generatedSchedules.length === 0) return;
 
         try {
-            // Find north and south tables
-            const northTable = generatedSchedules.find(t => t.routeName.includes('North'));
-            const southTable = generatedSchedules.find(t => t.routeName.includes('South'));
+            // Find north and south tables using centralized direction config
+            const northTable = generatedSchedules.find(t => extractDirectionFromName(t.routeName) === 'North');
+            const southTable = generatedSchedules.find(t => extractDirectionFromName(t.routeName) === 'South');
 
             if (!northTable || !southTable) {
                 toast.error('Missing Tables', 'Both North and South schedules are required');
@@ -500,8 +513,8 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
 
         setIsUploading(true);
         try {
-            const northTable = generatedSchedules.find(t => t.routeName.includes('North'))!;
-            const southTable = generatedSchedules.find(t => t.routeName.includes('South'))!;
+            const northTable = generatedSchedules.find(t => extractDirectionFromName(t.routeName) === 'North')!;
+            const southTable = generatedSchedules.find(t => extractDirectionFromName(t.routeName) === 'South')!;
 
             await uploadToMasterSchedule(
                 team.id,
@@ -562,7 +575,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
 
                 {/* Content Area */}
                 <div className="flex-grow p-8 overflow-auto">
-                    <div className={step === 4 || step === 2 ? "w-full" : "max-w-5xl mx-auto"}>
+                    <div className={step === 4 || step === 5 || step === 2 ? "w-full" : "max-w-5xl mx-auto"}>
                         {step === 1 && (
                             <Step1Upload
                                 files={files}
@@ -601,6 +614,31 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                                 lastSaved={lastSaved}
                                 targetCycleTime={(!config.cycleMode || config.cycleMode === 'Strict') ? config.cycleTime : undefined}
                                 targetHeadway={(!config.cycleMode || config.cycleMode === 'Strict') && config.blocks.length > 0 ? Math.round(config.cycleTime / config.blocks.length) : undefined}
+                            />
+                        )}
+                        {step === 5 && (
+                            <Step5Connections
+                                schedules={generatedSchedules}
+                                routeIdentity={buildRouteIdentity(config.routeNumber, dayType)}
+                                dayType={dayType}
+                                connectionLibrary={connectionLibrary}
+                                setConnectionLibrary={setConnectionLibrary}
+                                routeConnectionConfig={routeConnectionConfig}
+                                setRouteConnectionConfig={setRouteConnectionConfig}
+                                onOptimize={(result: OptimizationResult) => {
+                                    if (originalSchedules.length === 0) {
+                                        setOriginalSchedules(generatedSchedules);
+                                    }
+                                    setGeneratedSchedules(result.optimizedSchedules);
+                                }}
+                                onReset={() => {
+                                    if (originalSchedules.length > 0) {
+                                        setGeneratedSchedules(originalSchedules);
+                                        setOriginalSchedules([]);
+                                    }
+                                }}
+                                teamId={team?.id || ''}
+                                userId={user?.uid || ''}
                             />
                         )}
                     </div>
@@ -646,8 +684,8 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                             </button>
                         )}
 
-                        {/* Upload to Master Button (Step 4 only, if user has team) */}
-                        {step === 4 && hasTeam && generatedSchedules.length > 0 && (
+                        {/* Upload to Master Button (Step 4 or 5, if user has team) */}
+                        {(step === 4 || step === 5) && hasTeam && generatedSchedules.length > 0 && (
                             <button
                                 onClick={handleUploadToMaster}
                                 className="px-6 py-2 rounded-lg border-2 border-brand-green text-brand-green font-bold hover:bg-green-50 flex items-center gap-2"
@@ -661,8 +699,8 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                             onClick={handleNext}
                             className="px-6 py-2 rounded-lg bg-brand-blue text-white font-bold hover:brightness-110 shadow-md shadow-blue-500/20 flex items-center gap-2"
                         >
-                            {step === 4 ? 'Export to Dashboard' : (step === 3 ? 'Generate Schedule' : 'Next Step')}
-                            {step !== 4 && <ArrowRight size={18} />}
+                            {step === 5 ? 'Export to Dashboard' : step === 4 ? 'Optimize Connections' : (step === 3 ? 'Generate Schedule' : 'Next Step')}
+                            {step !== 5 && <ArrowRight size={18} />}
                         </button>
                     </div>
                 </div>

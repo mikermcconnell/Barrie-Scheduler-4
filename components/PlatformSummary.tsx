@@ -160,8 +160,9 @@ interface HubCardProps {
 
 const HubCard: React.FC<HubCardProps> = ({ hub, isExpanded, onToggle }) => {
     const activePlatforms = hub.platforms.filter(p => p.totalVisits > 0);
-    const peakPlatform = hub.platforms.reduce((max, p) =>
-        p.peakCount > (max?.peakCount || 0) ? p : max, hub.platforms[0]);
+    const peakPlatform = hub.platforms.length > 0
+        ? hub.platforms.reduce((max, p) => p.peakCount > (max?.peakCount || 0) ? p : max, hub.platforms[0])
+        : null;
 
     return (
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">

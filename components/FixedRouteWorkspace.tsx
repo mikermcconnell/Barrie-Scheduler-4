@@ -7,13 +7,17 @@ import {
     BarChart2,
     ArrowRight,
     ArrowLeft,
-    FileSpreadsheet
+    FileSpreadsheet,
+    FileText,
+    GitBranch
 } from 'lucide-react';
 
 import { OTPAnalysis } from './OTPAnalysis';
 import { ScheduleTweakerWorkspace } from './ScheduleTweakerWorkspace';
 import { NewScheduleWizard } from './NewSchedule/NewScheduleWizard';
 import { MasterScheduleBrowser } from './MasterScheduleBrowser';
+import { ReportsDashboard } from './Reports/ReportsDashboard';
+import { AnalyticsDashboard } from './Analytics/AnalyticsDashboard';
 import { ScheduleDraft, SavedFile } from '../utils/dataService';
 
 // --- Placeholder Components ---
@@ -28,7 +32,7 @@ const DwellAssessment: React.FC = () => (
     </div>
 );
 
-type FixedRouteViewMode = 'dashboard' | 'tweaker' | 'new-schedule' | 'dwell' | 'otp' | 'master';
+type FixedRouteViewMode = 'dashboard' | 'tweaker' | 'new-schedule' | 'dwell' | 'otp' | 'master' | 'reports' | 'analytics';
 
 export const FixedRouteWorkspace: React.FC = () => {
     const [viewMode, setViewMode] = useState<FixedRouteViewMode>('dashboard');
@@ -121,6 +125,26 @@ export const FixedRouteWorkspace: React.FC = () => {
                         <h3 className="text-lg font-bold text-gray-500 mb-1">OTP Analysis</h3>
                         <p className="text-sm text-gray-400 leading-relaxed">Monitor On-Time Performance metrics.</p>
                     </div>
+
+                    {/* Reports Card */}
+                    <button onClick={() => setViewMode('reports')} className="group bg-white p-6 rounded-xl border border-gray-200 shadow-sm hover:shadow-md hover:border-amber-300 transition-all text-left flex flex-col h-full active:scale-[0.99]">
+                        <div className="flex items-center justify-between mb-4">
+                            <div className="bg-amber-50/50 p-2.5 rounded-lg text-amber-600 group-hover:bg-amber-100 transition-colors"><FileText size={20} /></div>
+                            <ArrowRight size={16} className="text-gray-300 group-hover:text-amber-500 transition-colors" />
+                        </div>
+                        <h3 className="text-lg font-bold text-gray-900 mb-1">Reports</h3>
+                        <p className="text-sm text-gray-500 leading-relaxed">Generate public timetables, GTFS exports, and driver sheets.</p>
+                    </button>
+
+                    {/* Analytics Card */}
+                    <button onClick={() => setViewMode('analytics')} className="group bg-white p-6 rounded-xl border border-gray-200 shadow-sm hover:shadow-md hover:border-cyan-300 transition-all text-left flex flex-col h-full active:scale-[0.99]">
+                        <div className="flex items-center justify-between mb-4">
+                            <div className="bg-cyan-50/50 p-2.5 rounded-lg text-cyan-600 group-hover:bg-cyan-100 transition-colors"><GitBranch size={20} /></div>
+                            <ArrowRight size={16} className="text-gray-300 group-hover:text-cyan-500 transition-colors" />
+                        </div>
+                        <h3 className="text-lg font-bold text-gray-900 mb-1">Analytics</h3>
+                        <p className="text-sm text-gray-500 leading-relaxed">Discover interlining opportunities and analyze route efficiency.</p>
+                    </button>
                 </div>
             </div>
         );
@@ -145,6 +169,8 @@ export const FixedRouteWorkspace: React.FC = () => {
                         {viewMode === 'master' && 'Master Schedule'}
                         {viewMode === 'dwell' && 'Dwell Assessment'}
                         {viewMode === 'otp' && 'OTP Assessment'}
+                        {viewMode === 'reports' && 'Reports'}
+                        {viewMode === 'analytics' && 'Analytics'}
                     </div>
                 </div>
             )}
@@ -205,6 +231,14 @@ export const FixedRouteWorkspace: React.FC = () => {
                         <div className="p-6 overflow-auto custom-scrollbar h-full">
                             <OTPAnalysis />
                         </div>
+                    )}
+
+                    {viewMode === 'reports' && (
+                        <ReportsDashboard onClose={() => setViewMode('dashboard')} />
+                    )}
+
+                    {viewMode === 'analytics' && (
+                        <AnalyticsDashboard onClose={() => setViewMode('dashboard')} />
                     )}
                 </div>
             </div>

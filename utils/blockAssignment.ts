@@ -11,6 +11,7 @@
  */
 
 import { ParsedSection, ParsedTrip, ParsedRoute, StopInfo } from './masterScheduleParserV2';
+import { inferDirectionFromTerminus, type Direction } from './routeDirectionConfig';
 
 // --- Types ---
 
@@ -71,19 +72,24 @@ const getTotalRecovery = (trip: ParsedTrip): number => {
 
 /**
  * Infer direction from stop pattern.
- * For bidirectional routes, compares first/last stop names against known termini.
+ * For bidirectional routes, uses routeDirectionConfig to compare terminus stops.
+ * Falls back to firstStop name for loops or unknown routes.
  */
 const inferDirection = (
     firstStop: string,
     lastStop: string,
-    knownTermini?: { north: string; south: string }
-): string => {
-    if (knownTermini) {
-        // If first stop matches south terminus and last matches north → "North"
-        if (firstStop.toLowerCase().includes(knownTermini.south.toLowerCase())) return 'North';
-        if (firstStop.toLowerCase().includes(knownTermini.north.toLowerCase())) return 'South';
+    routeName?: string
+): Direction | string => {
+    // Try to infer from config if route name is provided
+    if (routeName) {
+        // Extract base route number (e.g., "12" from "12-Weekday")
+        const baseRoute = routeName.split('-')[0].replace(/[AB]$/i, '');
+        const configDirection = inferDirectionFromTerminus(baseRoute, firstStop, lastStop);
+        if (configDirection) {
+            return configDirection;
+        }
     }
-    // Default: use first stop as direction indicator
+    // Default: use first stop as direction indicator (for loops or unknown routes)
     return firstStop;
 };
 
@@ -197,7 +203,7 @@ export const assignBlocksToSection = (
             ...trip,
             blockId: '',
             tripNumber: 0,
-            direction: inferDirection(sectionFirstStopName, sectionLastStopName),
+            direction: inferDirection(sectionFirstStopName, sectionLastStopName, routeName),
             firstStopName: actualFirstStop,
             lastStopName: actualLastStop,
             routeName,
@@ -441,7 +447,7 @@ export const assignBlocksInterlined = (
                 ...trip,
                 blockId: '',
                 tripNumber: 0,
-                direction: inferDirection(firstStop?.name || '', lastStop?.name || ''), // Direction is per-trip
+                direction: inferDirection(firstStop?.name || '', lastStop?.name || '', routeName), // Direction from config
                 firstStopName: firstStop?.name || '',
                 lastStopName: lastStop?.name || '',
                 routeName, // Track ability to split back later

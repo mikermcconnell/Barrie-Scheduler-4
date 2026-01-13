@@ -50,18 +50,44 @@ export interface HubAnalysis {
 }
 
 /**
- * Parse time string to minutes from midnight
+ * Parse time string to minutes from midnight.
+ * Handles multiple formats:
+ * - 12-hour with AM/PM: "6:30 AM", "11:45 PM"
+ * - 24-hour: "06:30", "23:45"
+ * - Excel day fractions: 0.5 = 12:00 PM, 1.02 = 12:30 AM (next day)
  */
 function parseTimeToMinutes(timeStr: string): number {
-    if (!timeStr) return 0;
+    if (!timeStr) return -1;
 
-    const str = timeStr.trim().toLowerCase();
+    const str = timeStr.trim();
+
+    // Handle Excel numeric format (day fractions)
+    const numVal = parseFloat(str);
+    if (!isNaN(numVal) && !str.includes(':')) {
+        // Excel stores times as fractions of a day
+        // Values >= 1.0 are post-midnight (next day)
+        const fractional = numVal >= 1 ? numVal - Math.floor(numVal) : numVal;
+        const totalMinutes = Math.round(fractional * 24 * 60);
+        return totalMinutes;
+    }
+
+    // Handle string time formats
+    const lowerStr = str.toLowerCase();
     const [hStr, mStr] = str.split(':');
     let h = parseInt(hStr);
     let m = parseInt(mStr?.replace(/\D+/g, '') || '0');
 
-    if (str.includes('pm') && h !== 12) h += 12;
-    if (str.includes('am') && h === 12) h = 0;
+    if (isNaN(h) || isNaN(m)) return -1;
+
+    // Check for AM/PM
+    const hasAm = lowerStr.includes('am');
+    const hasPm = lowerStr.includes('pm');
+
+    if (hasPm && h !== 12) h += 12;
+    if (hasAm && h === 12) h = 0;
+
+    // If no AM/PM marker and hour > 12, assume 24-hour format (already correct)
+    // If no AM/PM and hour <= 12, we assume it's already in correct format
 
     return (h * 60) + m;
 }
@@ -114,8 +140,9 @@ function calculatePlatformMetrics(platform: PlatformAnalysis): void {
         changes.push({ time: event.departureMin, delta: -1, event });
     }
 
-    // Sort by time, arrivals before departures at same time
-    changes.sort((a, b) => a.time - b.time || b.delta - a.delta);
+    // Sort by time, departures before arrivals at same time
+    // This prevents overcounting when one bus departs exactly as another arrives
+    changes.sort((a, b) => a.time - b.time || a.delta - b.delta);
 
     // Sweep-line to find peaks and conflicts
     let currentCount = 0;
@@ -174,32 +201,34 @@ function calculatePlatformMetrics(platform: PlatformAnalysis): void {
     currentCount = 0;
     let inPeak = false;
     let peakWindowStart = 0;
-    const peakEvents: DwellEvent[] = [];
+    const activePeakEvents: DwellEvent[] = [];
 
     for (const change of changes) {
         if (change.delta === 1) {
+            // Arrival - add to active events
             currentCount++;
+            activePeakEvents.push(change.event);
+
             if (currentCount === peakCount && !inPeak) {
                 inPeak = true;
                 peakWindowStart = change.time;
             }
-            if (currentCount === peakCount) {
-                peakEvents.push(change.event);
-            }
         } else {
+            // Departure - check if ending a peak window before removing
             if (currentCount === peakCount && inPeak) {
                 peakWindows.push({
                     startMin: peakWindowStart,
                     endMin: change.time,
                     busCount: peakCount,
-                    events: [...peakEvents]
+                    events: [...activePeakEvents]
                 });
-                peakEvents.length = 0;
-            }
-            currentCount--;
-            if (currentCount < peakCount) {
                 inPeak = false;
             }
+
+            // Remove departing event from active list
+            currentCount--;
+            const idx = activePeakEvents.findIndex(e => e.tripId === change.event.tripId);
+            if (idx !== -1) activePeakEvents.splice(idx, 1);
         }
     }
 
@@ -239,12 +268,6 @@ export function aggregatePlatformData(
         });
     }
 
-    // Debug: Log input data
-    console.log('[PlatformAnalysis] Processing', scheduleContents.length, 'schedules for routes:', routeNumbers);
-
-    // Track unique events to detect duplicates
-    const seenEvents = new Set<string>();
-
     // Process each schedule's trips
     for (let i = 0; i < scheduleContents.length; i++) {
         const content = scheduleContents[i];
@@ -255,38 +278,29 @@ export function aggregatePlatformData(
 
             const direction = table === content.northTable ? 'North' : 'South';
 
-            // Debug: Log stop names and IDs from first trip
-            if (table.trips.length > 0) {
-                const firstTrip = table.trips[0];
-                const stopNames = Object.keys(firstTrip.stops);
-                const stopIdsInfo = stopNames.map(s => `${s}=${table.stopIds?.[s] || '?'}`).join(', ');
-                console.log(`[PlatformAnalysis] Route ${routeNumber} ${direction} has ${table.trips.length} trips`);
-                console.log(`  Stops with IDs: ${stopIdsInfo}`);
-            }
+            // Track merged events per trip per hub (to merge arrival/departure columns)
+            // Key: `${tripId}-${hubName}-${platformId}` → event index in platform.events
+            const tripHubEvents = new Map<string, { platformEvents: DwellEvent[], eventIndex: number }>();
 
             for (const trip of table.trips) {
                 // For each stop in the trip
                 for (const [stopName, departureTime] of Object.entries(trip.stops)) {
                     if (!departureTime) continue;
 
-                    // Get stop ID for precise matching
-                    const stopId = table.stopIds?.[stopName];
-                    const hub = matchStopToHub(stopName, stopId);
+                    // Normalize stop name by removing suffixes like "(2)", " 1", etc.
+                    // This merges "Park Place" and "Park Place (2)" into the same hub visit
+                    const normalizedStopName = stopName
+                        .replace(/\s*\(\d+\)\s*$/, '')  // Remove (1), (2) suffixes
+                        .replace(/\s+\d+\s*$/, '')       // Remove trailing " 1", " 2"
+                        .trim();
+
+                    // Get stop ID for precise matching (try original name first, then normalized)
+                    const stopId = table.stopIds?.[stopName] || table.stopIds?.[normalizedStopName];
+                    const hub = matchStopToHub(normalizedStopName, stopId);
                     if (!hub) continue;
 
                     const platformAssignment = getPlatformForRoute(hub, routeNumber);
-                    if (!platformAssignment) {
-                        console.log(`[PlatformAnalysis] Route ${routeNumber} matched hub "${hub.name}" (stop ${stopId || stopName}) but no platform assignment`);
-                        continue;
-                    }
-
-                    // Create unique key to detect duplicates
-                    const eventKey = `${routeNumber}-${trip.blockId}-${direction}-${stopName}-${departureTime}`;
-                    if (seenEvents.has(eventKey)) {
-                        console.warn(`[PlatformAnalysis] DUPLICATE event detected:`, eventKey);
-                        continue;
-                    }
-                    seenEvents.add(eventKey);
+                    if (!platformAssignment) continue;
 
                     const hubAnalysis = hubAnalyses.get(hub.name);
                     if (!hubAnalysis) continue;
@@ -295,21 +309,43 @@ export function aggregatePlatformData(
                     if (!platform) continue;
 
                     // Calculate times
-                    const arrivalMin = getArrivalTime(trip, stopName);
-                    const departureMin = parseTimeToMinutes(departureTime);
+                    let arrivalMin = getArrivalTime(trip, stopName);
+                    let departureMin = parseTimeToMinutes(departureTime);
 
-                    // Skip invalid times (but allow midnight = 0)
+                    // Skip invalid times
                     if (departureMin < 0 || arrivalMin < 0) continue;
 
-                    platform.events.push({
-                        tripId: trip.id,
-                        route: routeNumber,
-                        direction: trip.direction,
-                        arrivalMin,
-                        departureMin,
-                        blockId: trip.blockId,
-                        stopName
-                    });
+                    // Handle post-midnight trips
+                    if (arrivalMin > departureMin && arrivalMin > 1200 && departureMin < 240) {
+                        departureMin += 1440;
+                    }
+                    if (arrivalMin > departureMin) continue;
+
+                    // Create key for merging arrival/departure at same hub
+                    // One event per trip per hub per platform (merges "Park Place" + "Park Place (2)")
+                    const mergeKey = `${trip.id}-${hub.name}-${platformAssignment.platformId}`;
+                    const existing = tripHubEvents.get(mergeKey);
+
+                    if (existing) {
+                        // Merge: use earliest arrival, latest departure
+                        const event = existing.platformEvents[existing.eventIndex];
+                        event.arrivalMin = Math.min(event.arrivalMin, arrivalMin);
+                        event.departureMin = Math.max(event.departureMin, departureMin);
+                    } else {
+                        // Create new event
+                        const newEvent: DwellEvent = {
+                            tripId: trip.id,
+                            route: routeNumber,
+                            direction,
+                            arrivalMin,
+                            departureMin,
+                            blockId: trip.blockId,
+                            stopName: normalizedStopName
+                        };
+                        const eventIndex = platform.events.length;
+                        platform.events.push(newEvent);
+                        tripHubEvents.set(mergeKey, { platformEvents: platform.events, eventIndex });
+                    }
                 }
             }
         }
@@ -319,19 +355,6 @@ export function aggregatePlatformData(
     for (const hubAnalysis of hubAnalyses.values()) {
         for (const platform of hubAnalysis.platforms) {
             calculatePlatformMetrics(platform);
-
-            // Debug: Log platform results
-            if (platform.events.length > 0) {
-                console.log(`[PlatformAnalysis] ${hubAnalysis.hubName} ${platform.platformId}: ${platform.events.length} events, peak=${platform.peakCount}, conflicts=${platform.conflictWindows.length}`);
-
-                // Show sample of events if there are conflicts
-                if (platform.peakCount > 1) {
-                    const sampleEvents = platform.events.slice(0, 5).map(e =>
-                        `${e.route} block ${e.blockId} ${e.direction}: ${formatMinutesToTime(e.arrivalMin)}-${formatMinutesToTime(e.departureMin)}`
-                    );
-                    console.log(`  Sample events:`, sampleEvents);
-                }
-            }
         }
 
         // Aggregate hub totals

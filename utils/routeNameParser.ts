@@ -1,9 +1,9 @@
 /**
  * Route Name Parser
- * 
+ *
  * Utilities for parsing and manipulating route names with their
  * day type and direction components.
- * 
+ *
  * Route names follow the pattern: "400 (Weekday) (North) (To RVH)"
  * - Route number: "400"
  * - Day type: "Weekday" | "Saturday" | "Sunday"
@@ -11,9 +11,11 @@
  * - Destination: optional suffix like "(To RVH)"
  */
 
+import { extractDirectionFromName, type Direction } from './routeDirectionConfig';
+
 export type DayType = 'Weekday' | 'Saturday' | 'Sunday';
 export type DaySuffix = 'WD' | 'SA' | 'SU';
-export type Direction = 'North' | 'South';
+export type { Direction };
 
 export interface ParsedRouteName {
     /** Raw route name as stored (e.g., "400 (Weekday) (North)") */
@@ -54,10 +56,8 @@ export const parseRouteName = (routeName: string): ParsedRouteName => {
 
     const daySuffix = DAY_SUFFIX_MAP[dayType];
 
-    // Extract direction
-    let direction: Direction | null = null;
-    if (routeName.includes('(North)')) direction = 'North';
-    else if (routeName.includes('(South)')) direction = 'South';
+    // Extract direction using centralized config
+    const direction = extractDirectionFromName(routeName);
 
     // Extract base name (without direction)
     const baseName = routeName
@@ -123,7 +123,7 @@ export const isSameRoute = (routeName1: string, routeName2: string): boolean => 
  * Check if a route name is for a bidirectional route.
  */
 export const isBidirectional = (routeName: string): boolean => {
-    return routeName.includes('(North)') || routeName.includes('(South)');
+    return extractDirectionFromName(routeName) !== null;
 };
 
 /**

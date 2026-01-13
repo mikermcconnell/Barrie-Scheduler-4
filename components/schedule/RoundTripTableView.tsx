@@ -24,6 +24,7 @@ import {
     buildRoundTripView
 } from '../../utils/masterScheduleParser';
 import { TimeUtils } from '../../utils/timeUtils';
+import { getRouteVariant, getRouteConfig, getDirectionDisplay, extractDirectionFromName } from '../../utils/routeDirectionConfig';
 import {
     calculateHeadways,
     getRatioColor,
@@ -43,6 +44,7 @@ import {
     matchesSearch
 } from '../NewSchedule/QuickActionsBar';
 import { StackedTimeCell, StackedTimeInput } from '../ui/StackedTimeInput';
+import { ConnectionBadgeGroup } from './ConnectionBadge';
 
 // --- Types ---
 
@@ -100,8 +102,9 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
         schedules.forEach(table => {
             const baseName = table.routeName.replace(/ \(North\).*$/, '').replace(/ \(South\).*$/, '');
             if (!routeGroups[baseName]) routeGroups[baseName] = {};
-            if (table.routeName.includes('(North)')) routeGroups[baseName].north = table;
-            else if (table.routeName.includes('(South)')) routeGroups[baseName].south = table;
+            const tableDirection = extractDirectionFromName(table.routeName);
+            if (tableDirection === 'North') routeGroups[baseName].north = table;
+            else if (tableDirection === 'South') routeGroups[baseName].south = table;
         });
 
         Object.entries(routeGroups).forEach(([baseName, group]) => {
@@ -433,6 +436,60 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                 </div>}
                             </div>
                         </div>
+
+                        {/* Direction Info Row */}
+                        {(() => {
+                            // Extract route number - don't strip A/B suffix, let getRouteConfig handle it
+                            // (8A/8B are distinct routes, not direction variants)
+                            const baseRoute = combined.routeName.split(' ')[0];
+                            const config = getRouteConfig(baseRoute);
+                            const isLoop = config?.type === 'loop';
+                            const northVariant = config?.type === 'linear' ? config.northVariant : baseRoute;
+                            const southVariant = config?.type === 'linear' ? config.southVariant : baseRoute;
+                            const northTerminus = config?.type === 'linear' ? config.northTerminus : '';
+                            const southTerminus = config?.type === 'linear' ? config.southTerminus : '';
+
+                            return (
+                                <div className="px-6 py-2 bg-blue-50 border-b border-blue-100 flex items-center gap-6 text-xs">
+                                    <span className="font-semibold text-blue-700">Route Directions:</span>
+                                    {isLoop ? (
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-blue-600">🔄 Loop:</span>
+                                            <code className="bg-blue-100 px-2 py-0.5 rounded font-mono text-blue-800">
+                                                {config?.type === 'loop' ? config.direction : 'Unknown'}
+                                            </code>
+                                            <span className="text-gray-400">({(north?.trips?.length || 0) + (south?.trips?.length || 0)} trips)</span>
+                                        </div>
+                                    ) : (
+                                        <>
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-blue-600">↑ Northbound:</span>
+                                                <code className="bg-green-100 px-2 py-0.5 rounded font-mono text-green-800 font-bold">
+                                                    {northVariant}
+                                                </code>
+                                                {northTerminus && (
+                                                    <span className="text-gray-500">→ {northTerminus}</span>
+                                                )}
+                                                <span className="text-gray-400">({north?.trips?.length || 0} trips)</span>
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-blue-600">↓ Southbound:</span>
+                                                <code className="bg-orange-100 px-2 py-0.5 rounded font-mono text-orange-800 font-bold">
+                                                    {southVariant}
+                                                </code>
+                                                {southTerminus && (
+                                                    <span className="text-gray-500">→ {southTerminus}</span>
+                                                )}
+                                                <span className="text-gray-400">({south?.trips?.length || 0} trips)</span>
+                                            </div>
+                                        </>
+                                    )}
+                                    {!config && (
+                                        <span className="text-amber-600 italic">⚠ Route not in config</span>
+                                    )}
+                                </div>
+                            );
+                        })()}
 
                         {/* Main Table Area */}
                         <div className="overflow-auto custom-scrollbar relative w-full flex-1 min-h-0">
@@ -876,7 +933,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                     )}
                                                 </td>
 
-                                                {/* Interline Badge */}
+                                                {/* Interline Badge + External Connections */}
                                                 <td className="p-1 text-center">
                                                     {(() => {
                                                         const nNext = northTrip?.interlineNext;
@@ -915,12 +972,33 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                             );
                                                         }
 
-                                                        return badges.length > 0 ? (
-                                                            <div className="flex flex-wrap gap-0.5 justify-center">
-                                                                {badges}
+                                                        // Combine external connections from both trips
+                                                        const externalConnections = [
+                                                            ...(northTrip?.externalConnections || []),
+                                                            ...(southTrip?.externalConnections || [])
+                                                        ];
+
+                                                        const hasInterline = badges.length > 0;
+                                                        const hasExternal = externalConnections.length > 0;
+
+                                                        if (!hasInterline && !hasExternal) {
+                                                            return <span className="text-gray-300">-</span>;
+                                                        }
+
+                                                        return (
+                                                            <div className="flex flex-col gap-0.5 items-center">
+                                                                {hasInterline && (
+                                                                    <div className="flex flex-wrap gap-0.5 justify-center">
+                                                                        {badges}
+                                                                    </div>
+                                                                )}
+                                                                {hasExternal && (
+                                                                    <ConnectionBadgeGroup
+                                                                        connections={externalConnections}
+                                                                        maxVisible={2}
+                                                                    />
+                                                                )}
                                                             </div>
-                                                        ) : (
-                                                            <span className="text-gray-300">-</span>
                                                         );
                                                     })()}
                                                 </td>

@@ -12,6 +12,7 @@
  */
 
 import * as XLSX from 'xlsx';
+import { validateDirection, type Direction } from './routeDirectionConfig';
 
 // --- Types ---
 
@@ -20,6 +21,7 @@ export interface StopInfo {
     id: string;
     columnIndex: number;
     isRecovery: boolean;  // True if this is an "R" (recovery) column
+    departureColumnIndex?: number;  // If this stop has ARR→R→DEP pattern, this is the DEP column
 }
 
 export interface ParsedTrip {
@@ -162,6 +164,15 @@ export const parseMasterScheduleV2 = (fileData: ArrayBuffer): ParseResult => {
     try {
         const workbook = XLSX.read(fileData, { type: 'array' });
 
+        // Detect if this is an export format file
+        // Export format has "ROUTE X - DAYTYPE" in cell A1 of sheets
+        const isExportFormat = detectExportFormat(workbook);
+
+        if (isExportFormat) {
+            return parseExportFormatWorkbook(workbook);
+        }
+
+        // Original format parsing continues below
         for (const sheetName of workbook.SheetNames) {
             // Skip sheets that don't look like route names
             // Route sheets are typically numeric or alphanumeric (400, 7A, 101, etc.)
@@ -357,6 +368,22 @@ const parseStopNamesRow = (row: any[]): StopInfo[] => {
             name = 'R';
         }
 
+        // FIX: Detect ARR → R → DEP pattern for the same stop
+        // If this is a non-recovery column with the same name as a recent stop
+        // that was followed by a recovery column, it's the DEP column - not a new stop
+        if (!isRecovery && stops.length >= 2) {
+            const prevStop = stops[stops.length - 1];
+            const prevPrevStop = stops[stops.length - 2];
+            // Pattern: STOP(ARR) → R → STOP(DEP) with same name
+            // Use case-insensitive comparison to handle Excel inconsistencies
+            if (prevStop.isRecovery && !prevPrevStop.isRecovery &&
+                prevPrevStop.name.toLowerCase() === name.toLowerCase()) {
+                // This is the DEP column for the same stop - store its index on the ARR stop
+                prevPrevStop.departureColumnIndex = i;
+                continue; // Don't add as a separate stop
+            }
+        }
+
         stops.push({
             name,
             id: '',
@@ -366,9 +393,8 @@ const parseStopNamesRow = (row: any[]): StopInfo[] => {
     }
 
     // Handle duplicates by appending suffix (2), (3) etc.
-    // IMPORTANT: Include recovery columns to distinguish R columns at the same
-    // stop in different directions (e.g., route 8B has the same stop appearing
-    // twice - once per direction, each with its own recovery time)
+    // This handles legitimate cases like loop routes that pass through the same stop twice
+    // The ARR→R→DEP pattern for the same stop is already handled above
     const nameCounts: Record<string, number> = {};
     for (const stop of stops) {
         const baseName = stop.name;
@@ -419,7 +445,11 @@ const parseTripRow = (row: any[], stops: StopInfo[], rowIdx: number): ParsedTrip
 
         } else {
             // Regular time column
-            const minutes = parseTimeToMinutes(cellValue);
+            // If this stop has a departureColumnIndex (ARR→R→DEP pattern), use DEP column
+            // Otherwise use the stop's main column
+            const timeColumnIndex = stop.departureColumnIndex ?? stop.columnIndex;
+            const timeValue = row[timeColumnIndex];
+            const minutes = parseTimeToMinutes(timeValue);
 
             // Reject very small minute values (0-59) as stop times UNLESS:
             // 1. The cell was a decimal Excel time (includes post-midnight times >= 1.0)
@@ -427,9 +457,9 @@ const parseTripRow = (row: any[], stops: StopInfo[], rowIdx: number): ParsedTrip
             // 3. The cell is in HH:MM format with colon (e.g., "0:23" for 12:23 AM)
             // Integer values like 1, 2, 3 in stop columns are likely priority/sequence numbers
             // CRITICAL: Post-midnight times are >= 1.0 (e.g., 1.02 = 12:30 AM) - must include these!
-            const isExcelTime = typeof cellValue === 'number' && cellValue >= 0 && !Number.isInteger(cellValue);
-            const hasAmPmIndicator = typeof cellValue === 'string' && /[ap]m?/i.test(cellValue);
-            const hasTimeFormat = typeof cellValue === 'string' && /\d{1,2}:\d{2}/.test(cellValue);
+            const isExcelTime = typeof timeValue === 'number' && timeValue >= 0 && !Number.isInteger(timeValue);
+            const hasAmPmIndicator = typeof timeValue === 'string' && /[ap]m?/i.test(timeValue);
+            const hasTimeFormat = typeof timeValue === 'string' && /\d{1,2}:\d{2}/.test(timeValue);
             const isValidStopTime = minutes !== null && (minutes >= 60 || isExcelTime || hasAmPmIndicator || hasTimeFormat);
 
             if (isValidStopTime) {
@@ -533,4 +563,263 @@ const activeSectionsAreDistinctDays = (sections: any[]): boolean => {
     }
 
     return false;
+};
+
+// --- Export Format Parser ---
+
+/**
+ * Detect if workbook is in export format (vs original master schedule format)
+ * Export format has "ROUTE X - DAYTYPE" in cell A1
+ */
+const detectExportFormat = (workbook: XLSX.WorkBook): boolean => {
+    console.log('[ExportDetect] Checking format, sheets:', workbook.SheetNames);
+    if (workbook.SheetNames.length === 0) return false;
+
+    const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+    const data: any[][] = XLSX.utils.sheet_to_json(firstSheet, { header: 1, defval: '' });
+
+    console.log('[ExportDetect] First sheet data rows:', data.length);
+    if (data.length === 0 || !data[0] || !data[0][0]) {
+        console.log('[ExportDetect] No data in first cell');
+        return false;
+    }
+
+    const firstCell = String(data[0][0]).trim().toUpperCase();
+    console.log('[ExportDetect] First cell:', firstCell);
+    const isExport = firstCell.startsWith('ROUTE ') && firstCell.includes(' - ');
+    console.log('[ExportDetect] Is export format:', isExport);
+    return isExport;
+};
+
+/**
+ * Parse export format workbook
+ * Structure per sheet:
+ * - Row 1: "ROUTE X - DAYTYPE SCHEDULE"
+ * - Row 2: Summary stats (SERVICE WINDOW, BLOCKS, etc.)
+ * - Row 3: Direction row ("Direction" | dir1 | dir2 | ...)
+ * - Row 4: Stop names (Block | Time Band | Stop1 | Stop2 | ... | Travel | Recovery | Cycle | Ratio)
+ * - Row 5: ARR/DEP subheaders
+ * - Row 6+: Trip data
+ */
+const parseExportFormatWorkbook = (workbook: XLSX.WorkBook): ParseResult => {
+    const result: ParseResult = {
+        routes: [],
+        errors: [],
+        warnings: []
+    };
+
+    console.log('[ExportParser] Starting export format parsing, sheets:', workbook.SheetNames);
+
+    for (const sheetName of workbook.SheetNames) {
+        // Skip summary sheets
+        if (sheetName.toLowerCase().includes('summary')) {
+            console.log('[ExportParser] Skipping summary sheet:', sheetName);
+            continue;
+        }
+
+        try {
+            const sheet = workbook.Sheets[sheetName];
+            const data: any[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+
+            if (data.length < 6) {
+                result.warnings.push(`Sheet "${sheetName}" has insufficient rows for export format`);
+                continue;
+            }
+
+            // Row 1: Parse route name and day type from "ROUTE X - DAYTYPE SCHEDULE"
+            const titleRow = String(data[0][0] || '').trim();
+            console.log('[ExportParser] Sheet:', sheetName, 'Row 1:', titleRow);
+            const titleMatch = titleRow.match(/ROUTE\s+(\S+)\s*-\s*(WEEKDAY|SATURDAY|SUNDAY)/i);
+            if (!titleMatch) {
+                console.log('[ExportParser] Title regex failed for:', titleRow);
+                result.warnings.push(`Sheet "${sheetName}" Row 1 doesn't match expected format: "${titleRow}"`);
+                continue;
+            }
+            const routeName = titleMatch[1];
+            const dayType = titleMatch[2].charAt(0).toUpperCase() + titleMatch[2].slice(1).toLowerCase() as 'Weekday' | 'Saturday' | 'Sunday';
+            console.log('[ExportParser] Parsed route:', routeName, 'dayType:', dayType);
+
+            // Row 7 (data[6]): Direction row - each stop has its own direction
+            const directionRow = data[6] || [];
+            // Build map of column index -> direction (using routeDirectionConfig)
+            const columnDirections: Record<number, Direction | 'Loop'> = {};
+            for (let i = 0; i < directionRow.length; i++) {
+                const val = String(directionRow[i] || '').trim();
+                if (val && val.toLowerCase() !== 'direction') {
+                    // Use validateDirection for North/South detection
+                    const validatedDir = validateDirection(val);
+                    if (validatedDir) {
+                        columnDirections[i] = validatedDir;
+                    } else if (val.toLowerCase().includes('clock')) {
+                        columnDirections[i] = 'Loop';
+                    }
+                    // Ignore unrecognized direction values
+                }
+            }
+
+            // Determine the dominant direction for this section
+            const directionCounts = { North: 0, South: 0, Loop: 0 };
+            Object.values(columnDirections).forEach(d => {
+                if (d in directionCounts) directionCounts[d as keyof typeof directionCounts]++;
+            });
+            const sectionDirection: Direction | 'Loop' | null =
+                directionCounts.North > directionCounts.South ? 'North' :
+                directionCounts.South > directionCounts.North ? 'South' :
+                directionCounts.Loop > 0 ? 'Loop' : null;
+
+            console.log('[ExportParser] Direction row sample:', directionRow.slice(0, 5), '-> dominant:', sectionDirection);
+
+            // Row 8 (data[7]): Stop names
+            const stopRow = data[7] || [];
+            const stops: (StopInfo & { direction?: string })[] = [];
+            const summaryColumns = ['travel', 'recovery', 'cycle', 'ratio'];
+            const skipColumns = ['block', 'time band', 'timeband'];
+
+            for (let i = 0; i < stopRow.length; i++) {
+                let stopName = String(stopRow[i] || '').trim();
+                if (!stopName) continue;
+
+                const lowerName = stopName.toLowerCase();
+
+                // Skip Block, Time Band, and summary columns
+                if (skipColumns.includes(lowerName) || summaryColumns.includes(lowerName)) {
+                    continue;
+                }
+
+                // Skip R (recovery) columns
+                if (stopName === 'R' || lowerName === 'r') {
+                    stops.push({
+                        name: `R_${i}`,
+                        id: '',
+                        columnIndex: i,
+                        isRecovery: true,
+                        direction: columnDirections[i]
+                    });
+                    continue;
+                }
+
+                // Remove (2), (3) suffixes from stop names
+                stopName = stopName.replace(/\s*\(\d+\)$/, '').trim();
+
+                stops.push({
+                    name: stopName,
+                    id: '',
+                    columnIndex: i,
+                    isRecovery: false,
+                    direction: columnDirections[i]
+                });
+            }
+
+            console.log('[ExportParser] Stops found:', stops.length, stops.filter(s => !s.isRecovery).map(s => s.name));
+
+            // Row 9 (data[8]): Check for ARR/DEP subheaders OR first data row
+            const potentialSubheaderRow = data[8] || [];
+            const hasSubheaders = potentialSubheaderRow.some((cell: any) => {
+                const val = String(cell || '').trim().toUpperCase();
+                return val === 'ARR' || val === 'DEP';
+            });
+            // If subheaders present, data starts at row 10 (data[9]), otherwise row 9 (data[8])
+            const dataStartRow = hasSubheaders ? 9 : 8;
+            console.log('[ExportParser] hasSubheaders:', hasSubheaders, 'dataStartRow:', dataStartRow, 'row sample:', potentialSubheaderRow.slice(0, 5));
+
+            // Parse trip data
+            const trips: ParsedTrip[] = [];
+            for (let rowIdx = dataStartRow; rowIdx < data.length; rowIdx++) {
+                const row = data[rowIdx];
+                if (!row || row.length === 0) continue;
+
+                // Skip empty rows or rows without a block ID
+                const blockId = String(row[0] || '').trim();
+                if (!blockId || blockId.toLowerCase() === 'block') continue;
+
+                // Get time band (column 1)
+                const timeBand = String(row[1] || '').trim();
+
+                // Parse times for each stop
+                const times: Record<string, string> = {};
+                const recoveryTimes: Record<string, number> = {};
+                let firstTime: number | null = null;
+                let lastTime: number | null = null;
+                let lastStopName: string | null = null;
+
+                for (const stop of stops) {
+                    const cellValue = row[stop.columnIndex];
+
+                    if (stop.isRecovery) {
+                        // Recovery column - parse as minutes
+                        const recVal = parseInt(String(cellValue || '0'), 10);
+                        if (!isNaN(recVal) && lastStopName) {
+                            recoveryTimes[lastStopName] = recVal;
+                        }
+                    } else {
+                        // Time column
+                        const timeStr = String(cellValue || '').trim();
+                        if (timeStr) {
+                            times[stop.name] = timeStr;
+                            const mins = parseTimeToMinutes(cellValue);
+                            if (mins !== null) {
+                                if (firstTime === null) firstTime = mins;
+                                lastTime = mins;
+                            }
+                        }
+                        lastStopName = stop.name;
+                    }
+                }
+
+                // Skip rows with no times
+                if (Object.keys(times).length === 0) continue;
+
+                const travelTime = (firstTime !== null && lastTime !== null) ? lastTime - firstTime : 0;
+
+                trips.push({
+                    rowIndex: rowIdx,
+                    dayType,
+                    timeBand: timeBand || 'Unknown',
+                    times,
+                    recoveryTimes,
+                    startTime: firstTime,
+                    endTime: lastTime,
+                    travelTime: travelTime > 0 ? travelTime : 0
+                });
+            }
+
+            // Build route name with direction
+            let fullRouteName = routeName;
+            if (sectionDirection === 'North' || sectionDirection === 'South') {
+                fullRouteName = `${routeName} (${sectionDirection})`;
+            }
+
+            // Create section
+            const section: ParsedSection = {
+                dayType,
+                stops: stops.filter(s => !s.isRecovery),
+                trips
+            };
+
+            // Find or create route
+            let existingRoute = result.routes.find(r => r.routeName === routeName);
+            if (!existingRoute) {
+                existingRoute = {
+                    routeName,
+                    sections: []
+                };
+                result.routes.push(existingRoute);
+            }
+
+            // Add direction to section trips
+            section.trips.forEach(t => {
+                (t as any).direction = sectionDirection;
+            });
+
+            existingRoute.sections.push(section);
+            console.log('[ExportParser] Added section with', trips.length, 'trips to route', routeName);
+
+        } catch (err) {
+            console.error('[ExportParser] Error parsing sheet:', sheetName, err);
+            result.errors.push(`Error parsing export sheet "${sheetName}": ${err}`);
+        }
+    }
+
+    console.log('[ExportParser] Final result:', result.routes.length, 'routes,', result.routes.map(r => `${r.routeName}(${r.sections.length} sections)`));
+    return result;
 };

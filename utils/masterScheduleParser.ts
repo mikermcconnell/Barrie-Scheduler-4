@@ -1,5 +1,6 @@
 
 import * as XLSX from 'xlsx';
+import { extractDirectionFromName } from './routeDirectionConfig';
 
 // --- Types ---
 
@@ -61,6 +62,9 @@ export interface MasterTrip {
     // Interline Metadata
     interlineNext?: { route: string; time: number; stopName?: string }; // Route it turns into
     interlinePrev?: { route: string; time: number; stopName?: string }; // Route it came from
+
+    // External Connections (from Step 5 Connection Optimizer)
+    externalConnections?: import('./connectionTypes').ExternalConnection[];
 
     // Band Assignment (from New Schedule wizard)
     assignedBand?: string; // 'A', 'B', 'C', 'D', 'E' - determined by departure time
@@ -740,11 +744,10 @@ const extractDayType = (routeName: string): DayType => {
 
 /**
  * Extract direction from routeName (e.g., "8A (Weekday) (North)" -> "North")
+ * Uses centralized direction extraction from routeDirectionConfig.
  */
 const extractDirection = (routeName: string): Direction | null => {
-    if (routeName.includes('(North)')) return 'North';
-    if (routeName.includes('(South)')) return 'South';
-    return null;
+    return extractDirectionFromName(routeName);
 };
 
 /**
