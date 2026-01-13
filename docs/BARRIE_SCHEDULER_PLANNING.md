@@ -1,7 +1,7 @@
 # Barrie Transit Schedule Builder
 ## Project Planning Document
 
-**Version:** 1.0
+**Version:** 1.3
 **Date:** January 13, 2026
 **Project Type:** Internal Schedule Planning Tool
 **Target Users:** Barrie Transit Planners
@@ -29,9 +29,10 @@ This document defines the architecture and data flow for the Barrie Transit Sche
 7. [GTFS Integration](#7-gtfs-integration)
 8. [Brochure Generator](#8-brochure-generator)
 9. [Platform Conflict Detector](#9-platform-conflict-detector)
-10. [Locked Logic](#10-locked-logic)
-11. [Migration Plan](#11-migration-plan)
-12. [File Reference](#12-file-reference)
+10. [Connection Timing](#10-connection-timing)
+11. [Locked Logic](#11-locked-logic)
+12. [Migration Plan](#12-migration-plan)
+13. [File Reference](#13-file-reference)
 
 ---
 
@@ -1535,7 +1536,599 @@ interface ConflictSummary {
 
 ---
 
-## 10. Locked Logic
+## 10. Connection Timing
+
+### Overview
+
+Enable transit planners to create timed connections between routes, GO trains, and college bell times by adjusting trip recovery times. Changes cascade through the block with visible deltas, allowing planners to normalize timing downstream.
+
+**Key Capabilities:**
+- Define **Connection Rules** (auto-applied) for recurring connections
+- **Manual trip adjustments** for fine-tuning
+- **Timeline visualization** showing original vs adjusted times
+- **Delta display** (+/- minutes from baseline)
+- **Block cascade** with downstream normalization
+
+### Connection Types
+
+| Type | Source | Example |
+|------|--------|---------|
+| **GO Train** | Manual entry | "8:15 AM train to Union at Barrie South GO" |
+| **Route Transfer** | Master Schedule | "Connect with Route 400 at Downtown Hub" |
+| **College Bell** | Fixed times | "Arrive Georgian by 8:50 for 9:00 class" |
+| **Custom** | Manual entry | Any user-defined target time |
+
+### How It Works
+
+```
+SCENARIO: Route 100 needs to connect with 8:15 GO train at Barrie South GO
+
+CURRENT SCHEDULE:
+Trip 101: Departs Downtown 7:45 → Arrives BSGO 8:22 (MISSES train by 7 min)
+
+ADJUSTMENT NEEDED:
+- Speed up trip by reducing recovery at Downtown
+- Recovery change: -7 minutes
+- New arrival: 8:15 (but we want 8:13 for 2-min buffer)
+- Total adjustment: -9 minutes
+
+AFTER ADJUSTMENT:
+Trip 101: Departs Downtown 7:36 → Arrives BSGO 8:13 ✓ (2 min before train)
+
+NORMALIZATION:
+Trip 101's next leg starts earlier, so Trip 102 (return) needs adjustment
+- Add +9 minutes recovery at BSGO before Trip 102 departs
+- Net change to cycle: 0 minutes
+```
+
+### Data Model
+
+```typescript
+// ============================================
+// CONNECTION RULES
+// ============================================
+
+interface ConnectionRule {
+  id: string;
+  name: string;                        // "Route 100 → 8:15 GO Train"
+  enabled: boolean;
+
+  // Source (which trips this applies to)
+  source: {
+    routeNumber: string;
+    dayType: DayType;
+    direction: 'North' | 'South' | 'both';
+    tripFilter?: {
+      timeRange?: { start: string; end: string };  // "07:00" - "09:00"
+      blockIds?: string[];
+    };
+  };
+
+  // Connection point
+  connectionStop: string;              // "Barrie South GO"
+
+  // Target
+  target: {
+    type: 'go_train' | 'route' | 'bell_time' | 'custom';
+    time: string;                      // "08:15"
+    description?: string;              // "GO Train to Union"
+    routeNumber?: string;              // If connecting to another route
+  };
+
+  // Timing
+  bufferMinutes: number;               // Arrive X minutes before target (default: 2)
+  maxAdjustmentMinutes: number;        // Don't adjust more than X minutes (default: 10)
+
+  // Metadata
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+  createdBy: string;
+}
+
+// ============================================
+// TRIP ADJUSTMENTS
+// ============================================
+
+interface TripAdjustment {
+  tripId: string;
+  routeNumber: string;
+  dayType: DayType;
+
+  // The adjustment
+  stopName: string;                    // Where adjustment is applied
+  adjustmentMinutes: number;           // Positive = add time, Negative = reduce
+  adjustmentType: 'recovery' | 'dwell';
+
+  // Source of adjustment
+  source: {
+    type: 'rule' | 'manual';
+    ruleId?: string;                   // If from a connection rule
+    reason?: string;                   // "Connect with 8:15 GO train"
+  };
+
+  // Cascade info
+  cascadeToTrips: string[];            // Trip IDs affected downstream
+  netBlockChange: number;              // Total minutes added/removed from block
+}
+
+// ============================================
+// CONNECTION ANALYSIS (Per Schedule)
+// ============================================
+
+interface ConnectionAnalysis {
+  dayType: DayType;
+  analyzedAt: Timestamp;
+
+  // Applied rules
+  appliedRules: AppliedRule[];
+
+  // Summary
+  summary: {
+    connectionsConfigured: number;
+    connectionsMet: number;
+    connectionsMissed: number;
+    totalAdjustmentMinutes: number;
+  };
+}
+
+interface AppliedRule {
+  ruleId: string;
+  ruleName: string;
+  tripsAffected: TripConnectionStatus[];
+}
+
+interface TripConnectionStatus {
+  tripId: string;
+  blockId: string;
+  originalArrival: string;             // "08:22"
+  adjustedArrival: string;             // "08:13"
+  targetTime: string;                  // "08:15"
+  adjustmentMinutes: number;           // -9
+  status: 'met' | 'missed' | 'tight';  // tight = within buffer but close
+  bufferMinutes: number;               // Actual buffer achieved
+}
+
+// ============================================
+// ENHANCED MASTER TRIP
+// ============================================
+
+interface MasterTrip {
+  // ... existing fields ...
+
+  // NEW: Connection adjustments
+  adjustments?: TripAdjustment[];
+  originalTimes?: Record<string, string>;  // Before adjustments
+  hasConnectionAdjustment?: boolean;
+}
+```
+
+### Connection Targets Configuration
+
+#### GO Train Times (Manual Entry)
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  GO TRAIN SCHEDULE                                           │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  Station: Barrie South GO                                   │
+│                                                              │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │ WEEKDAY - Southbound (to Union)                       │  │
+│  │                                                        │  │
+│  │ Time     │ Train #  │ Notes                           │  │
+│  │ ─────────┼──────────┼─────────────────────────────────│  │
+│  │ 05:42    │ GO 7001  │ First train                     │  │
+│  │ 06:15    │ GO 7003  │                                 │  │
+│  │ 06:42    │ GO 7005  │                                 │  │
+│  │ 07:15    │ GO 7007  │ Peak                            │  │
+│  │ 07:42    │ GO 7009  │ Peak                            │  │
+│  │ 08:15    │ GO 7011  │ Peak                            │  │
+│  │ ...      │ ...      │                                 │  │
+│  │                                                        │  │
+│  │ [+ Add Time]  [Import from CSV]  [Clear All]          │  │
+│  └───────────────────────────────────────────────────────┘  │
+│                                                              │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │ WEEKDAY - Northbound (from Union)                     │  │
+│  │ [Configure...]                                         │  │
+│  └───────────────────────────────────────────────────────┘  │
+│                                                              │
+│  [Save GO Schedule]                                         │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### College Bell Times (Fixed)
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  BELL TIMES - Georgian College                              │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  Class Start Times (arrive 10 min before):                  │
+│                                                              │
+│  ☑ 08:00  →  Target arrival: 07:50                         │
+│  ☑ 09:00  →  Target arrival: 08:50                         │
+│  ☑ 10:00  →  Target arrival: 09:50                         │
+│  ☑ 11:00  →  Target arrival: 10:50                         │
+│  ☑ 12:00  →  Target arrival: 11:50                         │
+│  ☑ 13:00  →  Target arrival: 12:50                         │
+│  ☑ 14:00  →  Target arrival: 13:50                         │
+│                                                              │
+│  Buffer before class: [10] minutes                          │
+│                                                              │
+│  [Save Bell Times]                                          │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### User Interface
+
+#### 1. Connection Rules Manager
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  CONNECTION RULES                                            │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  [+ New Rule]  [Import GO Schedule]  [Configure Bell Times] │
+│                                                              │
+│  Active Rules:                                               │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │ ☑ Route 100 → 8:15 GO Train                          │  │
+│  │   Stop: Barrie South GO | Buffer: 2 min              │  │
+│  │   Trips: 07:00-09:00 AM | Status: 3/4 trips met      │  │
+│  │   [Edit] [Disable] [Delete]                          │  │
+│  └───────────────────────────────────────────────────────┘  │
+│                                                              │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │ ☑ Route 8 → Georgian 9:00 Bell                       │  │
+│  │   Stop: Georgian College | Buffer: 10 min            │  │
+│  │   Trips: 08:00-09:00 AM | Status: 2/2 trips met      │  │
+│  │   [Edit] [Disable] [Delete]                          │  │
+│  └───────────────────────────────────────────────────────┘  │
+│                                                              │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │ ☑ Route 100 ↔ Route 400 Transfer                     │  │
+│  │   Stop: Downtown Hub | Buffer: 3 min                 │  │
+│  │   Trips: All day | Status: 12/15 transfers met       │  │
+│  │   [Edit] [Disable] [Delete]                          │  │
+│  └───────────────────────────────────────────────────────┘  │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### 2. Create/Edit Connection Rule
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  CREATE CONNECTION RULE                                      │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  Rule Name: [Route 100 → 8:15 GO Train_______________]     │
+│                                                              │
+│  SOURCE ROUTE                                               │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │ Route: [100 ▼]  Direction: [South ▼]  Day: [Weekday ▼]│  │
+│  │                                                        │  │
+│  │ Apply to trips:                                        │  │
+│  │ ○ All trips                                           │  │
+│  │ ● Trips between [07:00] and [09:30]                   │  │
+│  │ ○ Specific blocks: [___]                              │  │
+│  └───────────────────────────────────────────────────────┘  │
+│                                                              │
+│  CONNECTION POINT                                           │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │ Stop: [Barrie South GO ▼]                             │  │
+│  └───────────────────────────────────────────────────────┘  │
+│                                                              │
+│  TARGET                                                     │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │ Type: ● GO Train  ○ Route  ○ Bell Time  ○ Custom     │  │
+│  │                                                        │  │
+│  │ Target Time: [08:15]                                  │  │
+│  │ Description: [GO Train to Union________________]      │  │
+│  └───────────────────────────────────────────────────────┘  │
+│                                                              │
+│  TIMING                                                     │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │ Buffer: [2] minutes before target                     │  │
+│  │ Max adjustment: [10] minutes (won't adjust beyond)    │  │
+│  └───────────────────────────────────────────────────────┘  │
+│                                                              │
+│  PREVIEW                                                    │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │ 4 trips will be evaluated:                            │  │
+│  │                                                        │  │
+│  │ Trip 101 (Block 501): 08:22 → 08:13 (-9 min) ✓        │  │
+│  │ Trip 103 (Block 501): 08:52 → 08:43 (-9 min) ⚠ close │  │
+│  │ Trip 105 (Block 502): 09:22 → 09:13 (-9 min) ✓        │  │
+│  │ Trip 107 (Block 502): 09:52 → needs -37 min ✗ too far│  │
+│  └───────────────────────────────────────────────────────┘  │
+│                                                              │
+│  [Cancel]                              [Save Rule]          │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### 3. Timeline View (Original vs Adjusted)
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  CONNECTION TIMELINE - Route 100 South (Weekday)                        │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  🚂 GO Trains    ▼         ▼         ▼         ▼                        │
+│                8:15      8:45      9:15      9:45                        │
+│                                                                          │
+│  ────────────────────────────────────────────────────────────────────── │
+│  7:30    8:00    8:30    9:00    9:30    10:00   10:30                  │
+│  ────────────────────────────────────────────────────────────────────── │
+│                                                                          │
+│  Block 501:                                                             │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │ ORIGINAL  ████████████░░░░░░░░░████████████░░░░░░░░░           │   │
+│  │           Trip 101    rec      Trip 103    rec                  │   │
+│  │           arr 8:22             arr 8:52                         │   │
+│  │                  ↓ MISS              ↓ MISS                     │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │ ADJUSTED  ████████████░░░░░░░░░░░░░████████████░░░░░░░░░       │   │
+│  │           Trip 101    rec(+9)       Trip 103                    │   │
+│  │           arr 8:13 ✓                arr 8:43 ✓                  │   │
+│  │               ↓ -9 min                  ↓ -9 min                │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                                                                          │
+│  Block 502:                                                             │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │ ORIGINAL  ░░░░████████████░░░░░░░░░████████████░░░░░░░░░       │   │
+│  │                Trip 105    rec      Trip 107                    │   │
+│  │                arr 9:22             arr 9:52                    │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │ ADJUSTED  ░░░░████████████░░░░░░░░░░░░░████████████░░░░░       │   │
+│  │                Trip 105    rec(+9)      Trip 107                │   │
+│  │                arr 9:13 ✓               arr 9:43 (no change)    │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                                                                          │
+│  Legend: ████ Trip  ░░░░ Recovery  ▼ Target  ✓ Met  ✗ Missed           │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+#### 4. Schedule Table with Delta Display
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  ROUTE 100 SOUTH - WEEKDAY                                              │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  [Show Deltas: ☑]  [Show Original: ☐]  [Apply Rules]  [Clear Adjustments]│
+│                                                                          │
+│  Block │ Downtown  │ Bayfield  │ BSGO      │ Recovery │ Δ Total │ Status│
+│  ──────┼───────────┼───────────┼───────────┼──────────┼─────────┼───────│
+│  501   │ 7:36      │ 7:55      │ 8:13      │ 17 min   │         │       │
+│        │ (-9)      │ (-9)      │ (-9)      │ (+9)     │ 0       │ ✓     │
+│  ──────┼───────────┼───────────┼───────────┼──────────┼─────────┼───────│
+│  501   │ 8:06      │ 8:25      │ 8:43      │ 17 min   │         │       │
+│        │ (-9)      │ (-9)      │ (-9)      │ (+9)     │ 0       │ ✓     │
+│  ──────┼───────────┼───────────┼───────────┼──────────┼─────────┼───────│
+│  502   │ 8:36      │ 8:55      │ 9:13      │ 17 min   │         │       │
+│        │ (-9)      │ (-9)      │ (-9)      │ (+9)     │ 0       │ ✓     │
+│  ──────┼───────────┼───────────┼───────────┼──────────┼─────────┼───────│
+│  502   │ 9:06      │ 9:25      │ 9:43      │ 8 min    │         │       │
+│        │ (0)       │ (0)       │ (0)       │ (0)      │ 0       │ ⚠     │
+│                                                                          │
+│  Legend: (Δ) = adjustment from original                                 │
+│          ✓ = Connection met  ⚠ = Missed/No adjustment  Δ Total = net   │
+│                                                                          │
+│  Clicking a cell with delta shows adjustment details:                   │
+│  ┌─────────────────────────────────────────┐                            │
+│  │ Original: 7:45                          │                            │
+│  │ Adjusted: 7:36                          │                            │
+│  │ Delta: -9 minutes                       │                            │
+│  │                                         │                            │
+│  │ Reason: Connect with 8:15 GO Train      │                            │
+│  │ Rule: Route 100 → 8:15 GO Train         │                            │
+│  │                                         │                            │
+│  │ [Edit Manually] [Remove Adjustment]     │                            │
+│  └─────────────────────────────────────────┘                            │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+#### 5. Manual Trip Adjustment
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  ADJUST TRIP                                                 │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  Trip: 101 (Block 501) - Route 100 South                    │
+│                                                              │
+│  Current Times:                                              │
+│  Downtown 7:45 → Bayfield 8:04 → BSGO 8:22                  │
+│                                                              │
+│  ADJUSTMENT                                                  │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │ Adjust at stop: [Downtown ▼]                          │  │
+│  │                                                        │  │
+│  │ Adjustment: [-9] minutes                              │  │
+│  │             ◄────────●────────►                        │  │
+│  │            -15      0       +15                        │  │
+│  │                                                        │  │
+│  │ Type: ● Recovery  ○ Dwell                             │  │
+│  │                                                        │  │
+│  │ Reason: [Connect with 8:15 GO Train___________]       │  │
+│  └───────────────────────────────────────────────────────┘  │
+│                                                              │
+│  PREVIEW                                                     │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │ After adjustment:                                      │  │
+│  │ Downtown 7:36 (-9) → Bayfield 7:55 (-9) → BSGO 8:13 (-9)│  │
+│  │                                                        │  │
+│  │ Cascade to subsequent trips in block:                  │  │
+│  │ • Trip 103: All times shift by -9 min                 │  │
+│  │ • Trip 105: All times shift by -9 min                 │  │
+│  │ • ... (until normalized)                              │  │
+│  │                                                        │  │
+│  │ ⚠ Net block change: -9 minutes                        │  │
+│  │   Add +9 min recovery to normalize                    │  │
+│  └───────────────────────────────────────────────────────┘  │
+│                                                              │
+│  NORMALIZATION                                              │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │ Add compensating recovery at:                          │  │
+│  │ [BSGO (after Trip 101) ▼]  Amount: [+9] min           │  │
+│  │                                                        │  │
+│  │ ☑ Auto-normalize (add recovery at connection stop)    │  │
+│  └───────────────────────────────────────────────────────┘  │
+│                                                              │
+│  [Cancel]                    [Apply Adjustment]             │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Service Module
+
+```typescript
+// utils/connectionService.ts
+
+interface ConnectionService {
+  // Connection Rules
+  getRules(dayType: DayType): Promise<ConnectionRule[]>;
+  createRule(rule: ConnectionRule): Promise<void>;
+  updateRule(rule: ConnectionRule): Promise<void>;
+  deleteRule(ruleId: string): Promise<void>;
+
+  // GO Train Schedule
+  getGOSchedule(station: string, dayType: DayType): Promise<GOTrainTime[]>;
+  saveGOSchedule(station: string, dayType: DayType, times: GOTrainTime[]): Promise<void>;
+
+  // Bell Times
+  getBellTimes(location: string): Promise<BellTime[]>;
+  saveBellTimes(location: string, times: BellTime[]): Promise<void>;
+
+  // Apply Rules
+  analyzeConnections(
+    schedule: MasterScheduleContent,
+    dayType: DayType
+  ): Promise<ConnectionAnalysis>;
+
+  applyRules(
+    schedule: MasterScheduleContent,
+    rules: ConnectionRule[]
+  ): MasterScheduleContent;  // Returns schedule with adjustments
+
+  // Manual Adjustments
+  adjustTrip(
+    schedule: MasterScheduleContent,
+    tripId: string,
+    adjustment: TripAdjustment
+  ): MasterScheduleContent;
+
+  clearAdjustments(
+    schedule: MasterScheduleContent,
+    tripId?: string  // If omitted, clear all
+  ): MasterScheduleContent;
+
+  // Normalization
+  calculateNormalization(
+    schedule: MasterScheduleContent,
+    blockId: string
+  ): NormalizationSuggestion;
+}
+
+interface NormalizationSuggestion {
+  blockId: string;
+  netChange: number;                    // Minutes
+  suggestedRecoveryStop: string;
+  suggestedRecoveryAmount: number;
+}
+```
+
+### Firestore Structure
+
+```
+firestore/
+├── teams/{teamId}/
+│   ├── connectionRules/
+│   │   ├── {ruleId}/
+│   │   │   ├── name: "Route 100 → 8:15 GO Train"
+│   │   │   ├── enabled: true
+│   │   │   ├── source: { routeNumber: "100", ... }
+│   │   │   ├── connectionStop: "Barrie South GO"
+│   │   │   ├── target: { type: "go_train", time: "08:15", ... }
+│   │   │   └── ...
+│   │
+│   ├── goSchedules/
+│   │   ├── barrie_south_go_weekday/
+│   │   │   └── times: [{ time: "05:42", trainId: "GO 7001" }, ...]
+│   │   ├── barrie_south_go_saturday/
+│   │   └── allandale_weekday/
+│   │
+│   ├── bellTimes/
+│   │   └── georgian_college/
+│   │       └── times: ["08:00", "09:00", "10:00", ...]
+│   │
+│   └── masterSchedules/
+│       └── {routeId}_{dayType}/
+│           └── content:
+│               └── trips[].adjustments: [...]  // Stored with schedule
+```
+
+### Files to Create
+
+| File | Purpose |
+|------|---------|
+| `utils/connectionService.ts` | Rule management, adjustment logic |
+| `utils/connectionTypes.ts` | Type definitions |
+| `components/ConnectionRules/ConnectionRulesManager.tsx` | Rules list and management |
+| `components/ConnectionRules/ConnectionRuleEditor.tsx` | Create/edit rule dialog |
+| `components/ConnectionRules/GOScheduleEditor.tsx` | GO train times entry |
+| `components/ConnectionRules/BellTimesEditor.tsx` | College bell times config |
+| `components/ConnectionRules/ConnectionTimeline.tsx` | Timeline visualization |
+| `components/ScheduleEditor/TripAdjustmentDialog.tsx` | Manual adjustment UI |
+| `components/ScheduleEditor/DeltaCell.tsx` | Cell showing adjustment delta |
+
+### Integration Points
+
+| Location | Integration |
+|----------|-------------|
+| **Schedule Editor** | Show deltas, enable manual adjustments, timeline view |
+| **Schedule Creator** | Apply rules to newly generated schedules |
+| **Master Schedule** | Show connection analysis summary |
+| **Publish** | Store adjustments with published schedule |
+
+### Workflow Summary
+
+```
+1. CONFIGURE TARGETS
+   └── Enter GO train times, bell times, route transfer points
+
+2. CREATE RULES
+   └── Define which trips should connect with which targets
+
+3. GENERATE/EDIT SCHEDULE
+   └── System auto-applies rules, shows timeline with deltas
+
+4. MANUAL FINE-TUNING
+   └── User adjusts individual trips as needed
+
+5. NORMALIZE
+   └── User adds compensating recovery to maintain cycle time
+
+6. REVIEW
+   └── Timeline view shows all adjustments clearly
+
+7. PUBLISH
+   └── Adjustments stored with Master Schedule
+```
+
+---
+
+## 11. Locked Logic
 
 > **WARNING:** Do not modify the following logic without explicit approval. These have been tested and bugs in these areas have caused significant issues.
 
@@ -1591,7 +2184,7 @@ Block 2: N1 → S1 → N2 → S2 → ...
 
 ---
 
-## 11. Migration Plan
+## 12. Migration Plan
 
 ### Phase 1: Unified Data Model
 
@@ -1648,9 +2241,22 @@ Block 2: N1 → S1 → N2 → S2 → ...
 6. Add Platform Configuration editor (move config to Firestore)
 7. Add row highlighting in ScheduleTableEditor
 
+### Phase 8: Connection Timing
+
+1. Create `connectionTypes.ts` with ConnectionRule, TripAdjustment types
+2. Create `connectionService.ts` with connection analysis logic
+3. Build GO Schedule Editor UI (manual time entry)
+4. Build Bell Times Editor UI
+5. Build Connection Rules Manager UI
+6. Build Timeline View component
+7. Add delta display (+/-) to Schedule Table
+8. Add manual trip adjustment dialog
+9. Integrate connection checking into Schedule Creator
+10. Integrate connection checking into Schedule Editor
+
 ---
 
-## 12. File Reference
+## 13. File Reference
 
 ### Key Files (Current)
 
@@ -1693,6 +2299,12 @@ Block 2: N1 → S1 → N2 → S2 → ...
 | Platform config editor | `components/MasterSchedule/PlatformConfigEditor.tsx` |
 | Conflict badge | `components/common/ConflictBadge.tsx` |
 | Conflict tooltip | `components/common/ConflictTooltip.tsx` |
+| Connection service | `utils/connectionService.ts` |
+| GO schedule editor | `components/connections/GOScheduleEditor.tsx` |
+| Bell times editor | `components/connections/BellTimesEditor.tsx` |
+| Connection rules manager | `components/connections/ConnectionRulesManager.tsx` |
+| Timeline view | `components/connections/TimelineView.tsx` |
+| Trip adjustment dialog | `components/connections/TripAdjustmentDialog.tsx` |
 
 ### Type Definitions
 
@@ -1702,6 +2314,7 @@ Block 2: N1 → S1 → N2 → S2 → ...
 | Draft/Published types | `utils/scheduleTypes.ts` (NEW) |
 | GTFS types | `utils/gtfsTypes.ts` (NEW) |
 | Brochure types | `utils/brochureTypes.ts` (NEW) |
+| Connection types | `utils/connectionTypes.ts` (NEW) |
 
 ---
 
@@ -1712,6 +2325,7 @@ Block 2: N1 → S1 → N2 → S2 → ...
 | 1.0 | January 13, 2026 | Planning Session | Initial document |
 | 1.1 | January 13, 2026 | Planning Session | Added Brochure Generator spec; renamed Draft Editor → Schedule Editor, Published Browser → Master Schedule |
 | 1.2 | January 13, 2026 | Planning Session | Added Platform Conflict Detector enhancement spec (Section 9) |
+| 1.3 | January 13, 2026 | Planning Session | Added Connection Timing spec (Section 10) with GO trains, bell times, and route connections |
 
 ---
 
