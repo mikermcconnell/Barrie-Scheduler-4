@@ -110,7 +110,13 @@ import {
 import { StackedTimeCell, StackedTimeInput } from './ui/StackedTimeInput';
 import { RoundTripTableView } from './schedule/RoundTripTableView';
 import { SingleRouteView } from './schedule/SingleRouteView';
-import { getRouteConfig, extractDirectionFromName } from '../utils/routeDirectionConfig';
+import { getRouteConfig, extractDirectionFromName, parseRouteInfo } from '../utils/routeDirectionConfig';
+import { reassignBlocksForTables, MatchConfigPresets } from '../utils/blockAssignmentCore';
+import { useScheduleEditing, CascadeMode } from '../hooks/useScheduleEditing';
+import { useUploadToMaster, ConsolidatedRoute } from '../hooks/useUploadToMaster';
+import { useTravelTimeGrid } from '../hooks/useTravelTimeGrid';
+import { ScheduleSidebar } from './ScheduleSidebar';
+import { CascadeModeSelector } from './ui/CascadeModeSelector';
 // --- Main Editor Component ---
 
 // Time Band type for display
@@ -161,6 +167,9 @@ export interface ScheduleEditorProps {
     // Embedded mode - hides sidebar and header for use in MasterScheduleBrowser
     embedded?: boolean;
 
+    // Hide sidebar (for multi-route mode where top bar handles route switching)
+    hideSidebar?: boolean;
+
     // Optional time bands for display
     bands?: TimeBandDisplay[];
 
@@ -184,6 +193,12 @@ export interface ScheduleEditorProps {
     // Interline configuration (optional - for persistence)
     initialInterlineConfig?: InterlineConfig;
     onInterlineConfigChange?: (config: InterlineConfig) => void;
+
+    // Publish action (Draft -> Publish)
+    onPublish?: () => void;
+    publishLabel?: string;
+    isPublishing?: boolean;
+    publishDisabled?: boolean;
 }
 
 export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
@@ -213,7 +228,12 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
     initialInterlineConfig,
     onInterlineConfigChange,
     readOnly = false,
-    embedded = false
+    embedded = false,
+    hideSidebar = false,
+    onPublish,
+    publishLabel,
+    isPublishing,
+    publishDisabled
 }) => {
     const [activeRouteIdx, setActiveRouteIdx] = useState(0);
     const [activeDay, setActiveDay] = useState<string>('Weekday');
@@ -223,12 +243,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
     const [showComparisonModal, setShowComparisonModal] = useState(false);
     const [showAuditLog, setShowAuditLog] = useState(false);
 
-    // Upload to Master State
-    const [showUploadModal, setShowUploadModal] = useState(false);
-    const [showBulkUploadModal, setShowBulkUploadModal] = useState(false);
-    const [uploadConfirmation, setUploadConfirmation] = useState<UploadConfirmation | null>(null);
-    const [isUploading, setIsUploading] = useState(false);
-    const [uploadRouteKey, setUploadRouteKey] = useState<{ routeNumber: string; dayType: DayType } | null>(null);
+    // Upload to Master State - now handled by useUploadToMaster hook
 
     // Interline Configuration State
     const [showInterlineConfig, setShowInterlineConfig] = useState(false);
@@ -379,6 +394,9 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
     // Audit Log
     const { entries: auditEntries, logAction } = useAuditLog();
 
+    // Cascade Mode for time editing
+    const [cascadeMode, setCascadeMode] = useState<CascadeMode>('always');
+
     // Add Trip
     const {
         modalContext: addTripModalContext,
@@ -390,6 +408,18 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         setSchedules: onSchedulesChange,
         onSuccess: showSuccessToast
     });
+
+    // Helper to extract the true base route name (handles 2A/2B direction variants)
+    const getTrueBaseRoute = (routeName: string): string => {
+        // First strip (North), (South), and day type suffixes
+        const stripped = routeName
+            .replace(/\s*\((North|South)\)/gi, '')
+            .replace(/\s*\((Weekday|Saturday|Sunday)\)/gi, '')
+            .trim();
+        // Then check if the result (e.g., "2A", "2B") is a direction variant
+        const parsed = parseRouteInfo(stripped);
+        return parsed.suffixIsDirection ? parsed.baseRoute : stripped;
+    };
 
     // Consolidate Routes
     const consolidatedRoutes = useMemo(() => {
@@ -407,16 +437,28 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
             if (table.routeName.includes('(Saturday)')) dayType = 'Saturday';
             else if (table.routeName.includes('(Sunday)')) dayType = 'Sunday';
 
-            const baseName = table.routeName
-                .replace(/\s?\((Weekday|Saturday|Sunday)\)/g, '')
-                .replace(/\s?\((North|South)\)/g, '')
+            // Get base route name (handles 2A/2B direction variants -> "2")
+            const baseName = getTrueBaseRoute(table.routeName);
+
+            // Parse route info for direction variant detection
+            const stripped = table.routeName
+                .replace(/\s*\((North|South)\)/gi, '')
+                .replace(/\s*\((Weekday|Saturday|Sunday)\)/gi, '')
                 .trim();
+            const parsed = parseRouteInfo(stripped);
 
             if (!routeGroups[baseName]) routeGroups[baseName] = { name: baseName, days: {} };
             if (!routeGroups[baseName].days[dayType]) routeGroups[baseName].days[dayType] = {};
 
             const dayGroup = routeGroups[baseName].days[dayType];
-            const tableDirection = extractDirectionFromName(table.routeName);
+
+            // Determine direction: either from explicit (North)/(South) suffix or from A/B variant
+            let tableDirection = extractDirectionFromName(table.routeName);
+            if (!tableDirection && parsed.suffixIsDirection) {
+                // A/B suffix IS the direction (e.g., 2A=North, 2B=South)
+                tableDirection = parsed.direction;
+            }
+
             if (tableDirection === 'North') dayGroup.north = table;
             else if (tableDirection === 'South') dayGroup.south = table;
             else dayGroup.north = table;
@@ -446,7 +488,26 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         southTrips: r.days['Weekday']?.south?.trips?.length || 0
     })));
 
+    // --- Extracted Hooks ---
 
+    // Schedule Editing Hook (cell edits, recovery, delete, duplicate, direction)
+    const editing = useScheduleEditing(schedules, onSchedulesChange, {
+        cascadeMode,
+        logAction,
+        showSuccessToast
+    });
+
+    // Upload to Master Hook
+    const upload = useUploadToMaster(
+        consolidatedRoutes as ConsolidatedRoute[],
+        teamId,
+        userId,
+        uploaderName,
+        showSuccessToast
+    );
+
+    // Travel Time Grid Hook
+    const gridHandlers = useTravelTimeGrid(schedules, onSchedulesChange, logAction);
 
     // Auto-select day if current is invalid
     useEffect(() => {
@@ -505,94 +566,27 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         if (start !== null && end !== null) {
             trip.startTime = start;
             trip.endTime = end;
-            trip.cycleTime = end - start;
-            trip.travelTime = Math.max(0, trip.cycleTime - trip.recoveryTime);
+            trip.cycleTime = end - start;  // Full span: last departure - first departure
+            trip.travelTime = Math.max(0, trip.cycleTime - trip.recoveryTime);  // Travel = cycle - recovery
         }
     };
 
     // Re-assign blocks for related tables based on time matching
-    // Trips are linked when: endTime + recovery at last stop ≈ next trip's startTime (within 1 min)
+    // Uses unified block assignment from blockAssignmentCore.ts
     const reassignBlocksForRelatedTables = (
         tables: MasterRouteTable[],
         baseName: string
     ) => {
         // Find all related tables (same route, different directions)
         const relatedTables = tables.filter(t => {
-            const tBase = t.routeName
-                .replace(/\s*\((North|South)\)/gi, '')
-                .replace(/\s*\((Weekday|Saturday|Sunday)\)/gi, '')
-                .trim();
+            const tBase = getTrueBaseRoute(t.routeName);
             return tBase === baseName;
         });
 
         if (relatedTables.length === 0) return;
 
-        // Collect all trips with their table reference
-        interface TripWithTable {
-            trip: MasterTrip;
-            table: MasterRouteTable;
-            assigned: boolean;
-        }
-
-        const allTrips: TripWithTable[] = [];
-        relatedTables.forEach(table => {
-            table.trips.forEach(trip => {
-                allTrips.push({ trip, table, assigned: false });
-            });
-        });
-
-        // Sort by start time for consistent block assignment
-        const getOperationalSortTime = (minutes: number): number => {
-            const DAY_START = 240; // 4:00 AM
-            return minutes < DAY_START ? minutes + 1440 : minutes;
-        };
-        allTrips.sort((a, b) =>
-            getOperationalSortTime(a.trip.startTime) - getOperationalSortTime(b.trip.startTime)
-        );
-
-        // Assign blocks based on time matching
-        let blockCounter = 1;
-        for (const item of allTrips) {
-            if (item.assigned) continue;
-
-            const blockId = `${baseName}-${blockCounter}`;
-            let currentItem: TripWithTable | undefined = item;
-            let tripNumberInBlock = 1;
-
-            while (currentItem) {
-                currentItem.assigned = true;
-                currentItem.trip.blockId = blockId;
-                currentItem.trip.tripNumber = tripNumberInBlock++;
-
-                // Find next matching trip in opposite direction
-                const currentEndTime = currentItem.trip.endTime;
-                const currentDirection = currentItem.trip.direction;
-
-                // For generated schedules, endTime is already the departure time from the last stop
-                // (includes recovery). For imported schedules, endTime may be arrival time.
-                // Use endTime directly as the expected start of the next trip.
-                const expectedStart = currentEndTime;
-
-                const oppositeDirection = currentDirection === 'North' ? 'South' : 'North';
-
-                // Find next trip in opposite direction with matching start time
-                currentItem = allTrips.find(t =>
-                    !t.assigned &&
-                    t.trip.direction === oppositeDirection &&
-                    Math.abs(t.trip.startTime - expectedStart) <= 1
-                );
-
-                // If no opposite direction match, try same direction (for loop routes)
-                if (!currentItem) {
-                    currentItem = allTrips.find(t =>
-                        !t.assigned &&
-                        Math.abs(t.trip.startTime - expectedStart) <= 1
-                    );
-                }
-            }
-
-            blockCounter++;
-        }
+        // Use the core module for block reassignment (exact time match, no location check)
+        reassignBlocksForTables(relatedTables, baseName, MatchConfigPresets.editor);
     };
 
     const handleCellEdit = (tripId: string, col: string, val: string) => {
@@ -601,23 +595,27 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         if (!result) return;
         const { table, trip } = result;
 
-        const oldValue = trip.stops[col];
+        // Handle arrival time edits (col ends with __ARR)
+        const isArrivalEdit = col.endsWith('__ARR');
+        const stopName = isArrivalEdit ? col.replace('__ARR', '') : col;
+
+        const oldValue = trip.stops[stopName];
         const oldTime = TimeUtils.toMinutes(oldValue);
         const newTime = TimeUtils.toMinutes(val);
-        const colIdx = table.stops.indexOf(col);
+        const colIdx = table.stops.indexOf(stopName);
 
         // Log the edit to audit log
         if (oldValue !== val) {
-            logAction('edit', `Edited ${col} time`, {
+            logAction('edit', `Edited ${stopName}${isArrivalEdit ? ' (arrival)' : ''} time`, {
                 tripId,
                 blockId: trip.blockId,
-                field: col,
+                field: stopName,
                 oldValue: oldValue || '-',
                 newValue: val || '-'
             });
         }
 
-        trip.stops[col] = val;
+        trip.stops[stopName] = val;
 
         if (oldTime !== null && newTime !== null && colIdx !== -1) {
             const delta = newTime - oldTime;
@@ -637,18 +635,12 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
 
         if (deltaEnd !== 0) {
             // Ripple to subsequent trips in the same block
-            // Extract base route name (remove direction and day type suffixes)
-            const baseName = table.routeName
-                .replace(/\s*\((North|South)\)/gi, '')
-                .replace(/\s*\((Weekday|Saturday|Sunday)\)/gi, '')
-                .trim();
+            // Extract base route name using getTrueBaseRoute (handles 2A/2B direction variants)
+            const baseName = getTrueBaseRoute(table.routeName);
 
             // Find all tables for this route (both directions if bidirectional)
             const relatedTables = newScheds.filter(t => {
-                const tBase = t.routeName
-                    .replace(/\s*\((North|South)\)/gi, '')
-                    .replace(/\s*\((Weekday|Saturday|Sunday)\)/gi, '')
-                    .trim();
+                const tBase = getTrueBaseRoute(t.routeName);
                 return tBase === baseName;
             });
 
@@ -685,11 +677,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         newScheds.forEach(t => validateRouteTable(t));
 
         // Re-assign blocks after time changes to maintain proper linking
-        const baseName = table.routeName
-            .replace(/\s*\((North|South)\)/gi, '')
-            .replace(/\s*\((Weekday|Saturday|Sunday)\)/gi, '')
-            .trim();
-        reassignBlocksForRelatedTables(newScheds, baseName);
+        reassignBlocksForRelatedTables(newScheds, getTrueBaseRoute(table.routeName));
 
         onSchedulesChange(newScheds);
     };
@@ -717,11 +705,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         validateRouteTable(table);
 
         // Re-assign blocks after recovery time changes
-        const baseName = table.routeName
-            .replace(/\s*\((North|South)\)/gi, '')
-            .replace(/\s*\((Weekday|Saturday|Sunday)\)/gi, '')
-            .trim();
-        reassignBlocksForRelatedTables(newScheds, baseName);
+        reassignBlocksForRelatedTables(newScheds, getTrueBaseRoute(table.routeName));
 
         onSchedulesChange(newScheds);
     };
@@ -976,117 +960,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         setSelectedTripId(tripId);
     };
 
-    const handleBulkAdjustTravelTime = (fromStop: string, toStop: string, delta: number, routeName: string) => {
-        const newScheds = deepCloneSchedules(schedules);
-        const targetTable = newScheds.find(t => t.routeName === routeName);
-        if (!targetTable) return;
-
-        const toIdx = targetTable.stops.indexOf(toStop);
-        if (toIdx === -1) return;
-
-        // Log bulk adjustment
-        logAction('bulk_adjust', `Bulk travel time ${delta > 0 ? '+' : ''}${delta} min`, {
-            field: `${fromStop} → ${toStop}`,
-            newValue: delta,
-            count: targetTable.trips.length
-        });
-
-        targetTable.trips.forEach(trip => {
-            for (let i = toIdx; i < targetTable.stops.length; i++) {
-                const stop = targetTable.stops[i];
-                const t = TimeUtils.toMinutes(trip.stops[stop]);
-                if (t !== null) {
-                    trip.stops[stop] = TimeUtils.fromMinutes(t + delta);
-                }
-            }
-            recalculateTrip(trip, targetTable.stops);
-        });
-
-        newScheds.forEach(t => validateRouteTable(t));
-        onSchedulesChange(newScheds);
-    };
-
-    const handleSingleTripTravelAdjust = (tripId: string, fromStop: string, delta: number, routeName: string) => {
-        const newScheds = deepCloneSchedules(schedules);
-        const targetTable = newScheds.find(t => t.routeName === routeName);
-        if (!targetTable) return;
-
-        const trip = targetTable.trips.find(t => t.id === tripId);
-        if (!trip) return;
-
-        const fromIdx = targetTable.stops.indexOf(fromStop);
-        if (fromIdx === -1) return;
-
-        // Adjust this stop and all subsequent stops for this trip only
-        for (let i = fromIdx; i < targetTable.stops.length; i++) {
-            const stop = targetTable.stops[i];
-            const t = TimeUtils.toMinutes(trip.stops[stop]);
-            if (t !== null) {
-                trip.stops[stop] = TimeUtils.fromMinutes(t + delta);
-            }
-        }
-        recalculateTrip(trip, targetTable.stops);
-
-        newScheds.forEach(t => validateRouteTable(t));
-        onSchedulesChange(newScheds);
-    };
-
-    const handleBulkAdjustRecoveryTime = (stopName: string, delta: number, routeName: string) => {
-        const newScheds = deepCloneSchedules(schedules);
-        const targetTable = newScheds.find(t => t.routeName === routeName);
-        if (!targetTable) return;
-
-        const stopIdx = targetTable.stops.indexOf(stopName);
-
-        targetTable.trips.forEach(trip => {
-            const oldRec = trip.recoveryTimes?.[stopName] || 0;
-            const newRec = Math.max(0, oldRec + delta);
-            if (!trip.recoveryTimes) trip.recoveryTimes = {};
-            trip.recoveryTimes[stopName] = newRec;
-
-            if (stopIdx !== -1) {
-                for (let i = stopIdx + 1; i < targetTable.stops.length; i++) {
-                    const s = targetTable.stops[i];
-                    const t = TimeUtils.toMinutes(trip.stops[s]);
-                    if (t !== null) trip.stops[s] = TimeUtils.fromMinutes(t + delta);
-                }
-            }
-            recalculateTrip(trip, targetTable.stops);
-        });
-
-        newScheds.forEach(t => validateRouteTable(t));
-        onSchedulesChange(newScheds);
-    };
-
-    const handleSingleRecoveryAdjust = (tripId: string, stopName: string, delta: number, routeName: string) => {
-        const newScheds = deepCloneSchedules(schedules);
-        const targetTable = newScheds.find(t => t.routeName === routeName);
-        if (!targetTable) return;
-
-        const trip = targetTable.trips.find(t => t.id === tripId);
-        if (!trip) return;
-
-        const stopIdx = targetTable.stops.indexOf(stopName);
-
-        // Adjust recovery for this trip
-        const oldRec = trip.recoveryTimes?.[stopName] || 0;
-        const newRec = Math.max(0, oldRec + delta);
-        if (!trip.recoveryTimes) trip.recoveryTimes = {};
-        trip.recoveryTimes[stopName] = newRec;
-
-        // Cascade time changes to subsequent stops
-        if (stopIdx !== -1) {
-            for (let i = stopIdx + 1; i < targetTable.stops.length; i++) {
-                const s = targetTable.stops[i];
-                const t = TimeUtils.toMinutes(trip.stops[s]);
-                if (t !== null) trip.stops[s] = TimeUtils.fromMinutes(t + delta);
-            }
-        }
-        recalculateTrip(trip, targetTable.stops);
-
-        newScheds.forEach(t => validateRouteTable(t));
-        onSchedulesChange(newScheds);
-    };
+    // NOTE: Travel time grid handlers moved to useTravelTimeGrid hook (see gridHandlers.* above)
 
     const handleExport = async () => {
         const workbook = new ExcelJS.Workbook();
@@ -1472,145 +1346,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
     };
 
     // --- Upload to Master Handlers ---
-
-    // Get routes available for upload (combines North/South tables for each route-day)
-    const routesForUpload = useMemo((): RouteForUpload[] => {
-        const result: RouteForUpload[] = [];
-        consolidatedRoutes.forEach(group => {
-            Object.entries(group.days).forEach(([dayType, dayData]) => {
-                const north = dayData.north;
-                const south = dayData.south;
-                if (north || south) {
-                    result.push({
-                        routeNumber: group.name,
-                        dayType: dayType as DayType,
-                        displayName: `Route ${group.name} (${dayType})`,
-                        tripCount: (north?.trips.length || 0) + (south?.trips.length || 0),
-                        northStopCount: north?.stops.length || 0,
-                        southStopCount: south?.stops.length || 0
-                    });
-                }
-            });
-        });
-        return result;
-    }, [consolidatedRoutes]);
-
-    // Get North/South tables for a specific route-day
-    const getTablesForRoute = (routeNumber: string, dayType: DayType): { north: MasterRouteTable | null; south: MasterRouteTable | null } => {
-        const group = consolidatedRoutes.find(g => g.name === routeNumber);
-        if (!group) return { north: null, south: null };
-        const dayData = group.days[dayType];
-        if (!dayData) return { north: null, south: null };
-        return { north: dayData.north || null, south: dayData.south || null };
-    };
-
-    // Initiate single route upload
-    const handleInitiateUpload = async (routeNumber: string, dayType: DayType) => {
-        if (!teamId || !userId) {
-            showSuccessToast('Please join a team to upload to Master Schedule');
-            return;
-        }
-
-        const { north, south } = getTablesForRoute(routeNumber, dayType);
-        if (!north && !south) {
-            showSuccessToast('No schedule data found for this route');
-            return;
-        }
-
-        try {
-            // Use empty table if one direction is missing
-            const northTable = north || { routeName: `${routeNumber} (${dayType}) (North)`, stops: [], stopIds: {}, trips: [] };
-            const southTable = south || { routeName: `${routeNumber} (${dayType}) (South)`, stops: [], stopIds: {}, trips: [] };
-
-            const confirmation = await prepareUpload(teamId, northTable, southTable, routeNumber, dayType);
-            setUploadConfirmation(confirmation);
-            setUploadRouteKey({ routeNumber, dayType });
-            setShowUploadModal(true);
-        } catch (error) {
-            console.error('Error preparing upload:', error);
-            showSuccessToast('Failed to prepare upload');
-        }
-    };
-
-    // Confirm single route upload
-    const handleConfirmUpload = async () => {
-        if (!teamId || !userId || !uploaderName || !uploadRouteKey) return;
-
-        setIsUploading(true);
-        try {
-            const { north, south } = getTablesForRoute(uploadRouteKey.routeNumber, uploadRouteKey.dayType);
-            const northTable = north || { routeName: `${uploadRouteKey.routeNumber} (${uploadRouteKey.dayType}) (North)`, stops: [], stopIds: {}, trips: [] };
-            const southTable = south || { routeName: `${uploadRouteKey.routeNumber} (${uploadRouteKey.dayType}) (South)`, stops: [], stopIds: {}, trips: [] };
-
-            await uploadToMasterSchedule(
-                teamId,
-                userId,
-                uploaderName,
-                northTable,
-                southTable,
-                uploadRouteKey.routeNumber,
-                uploadRouteKey.dayType,
-                'tweaker'
-            );
-
-            showSuccessToast(`Route ${uploadRouteKey.routeNumber} (${uploadRouteKey.dayType}) uploaded to Master`);
-            setShowUploadModal(false);
-            setUploadConfirmation(null);
-            setUploadRouteKey(null);
-        } catch (error) {
-            console.error('Error uploading to master:', error);
-            showSuccessToast('Failed to upload to Master Schedule');
-        } finally {
-            setIsUploading(false);
-        }
-    };
-
-    // Bulk upload handler
-    const handleBulkUpload = async (selectedRoutes: RouteForUpload[]) => {
-        if (!teamId || !userId || !uploaderName) return [];
-
-        const results: Array<{ routeNumber: string; dayType: DayType; success: boolean; error?: string; newVersion?: number }> = [];
-
-        for (const route of selectedRoutes) {
-            try {
-                const { north, south } = getTablesForRoute(route.routeNumber, route.dayType);
-                const northTable = north || { routeName: `${route.routeNumber} (${route.dayType}) (North)`, stops: [], stopIds: {}, trips: [] };
-                const southTable = south || { routeName: `${route.routeNumber} (${route.dayType}) (South)`, stops: [], stopIds: {}, trips: [] };
-
-                const entry = await uploadToMasterSchedule(
-                    teamId,
-                    userId,
-                    uploaderName,
-                    northTable,
-                    southTable,
-                    route.routeNumber,
-                    route.dayType,
-                    'tweaker'
-                );
-
-                results.push({
-                    routeNumber: route.routeNumber,
-                    dayType: route.dayType,
-                    success: true,
-                    newVersion: entry.currentVersion
-                });
-            } catch (error) {
-                results.push({
-                    routeNumber: route.routeNumber,
-                    dayType: route.dayType,
-                    success: false,
-                    error: error instanceof Error ? error.message : 'Unknown error'
-                });
-            }
-        }
-
-        const successCount = results.filter(r => r.success).length;
-        if (successCount > 0) {
-            showSuccessToast(`${successCount} route(s) uploaded to Master Schedule`);
-        }
-
-        return results;
-    };
+    // NOTE: Upload handlers moved to useUploadToMaster hook (see upload.* above)
 
     // Active Data
     const activeRouteGroup = consolidatedRoutes[activeRouteIdx];
@@ -1661,23 +1397,19 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
 
             {/* Upload to Master Modal (Single Route) */}
             <UploadToMasterModal
-                isOpen={showUploadModal}
-                confirmation={uploadConfirmation}
-                onConfirm={handleConfirmUpload}
-                onCancel={() => {
-                    setShowUploadModal(false);
-                    setUploadConfirmation(null);
-                    setUploadRouteKey(null);
-                }}
-                isUploading={isUploading}
+                isOpen={upload.showUploadModal}
+                confirmation={upload.uploadConfirmation}
+                onConfirm={upload.confirmUpload}
+                onCancel={upload.cancelUpload}
+                isUploading={upload.isUploading}
             />
 
             {/* Bulk Upload to Master Modal */}
             <BulkUploadToMasterModal
-                isOpen={showBulkUploadModal}
-                routes={routesForUpload}
-                onConfirm={handleBulkUpload}
-                onCancel={() => setShowBulkUploadModal(false)}
+                isOpen={upload.showBulkUploadModal}
+                routes={upload.routesForUpload}
+                onConfirm={upload.handleBulkUpload}
+                onCancel={upload.closeBulkUpload}
             />
 
             <div className={`h-full flex flex-col bg-gray-50/30 overflow-hidden ${isFullScreen ? 'fixed inset-0 z-[9999] bg-white' : ''}`}>
@@ -1708,12 +1440,16 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                         onUndo={readOnly ? undefined : undo}
                         onRedo={readOnly ? undefined : redo}
                         hideAutoSave={readOnly || hideAutoSave}
+                        onPublish={readOnly ? undefined : onPublish}
+                        publishLabel={publishLabel}
+                        isPublishing={isPublishing}
+                        publishDisabled={publishDisabled}
                     />
                 )}
 
                 <div className="flex-grow flex overflow-hidden">
-                    {/* Sidebar - hidden in embedded mode */}
-                    {!isFullScreen && !embedded && (
+                    {/* Sidebar - hidden in embedded mode or when hideSidebar is true */}
+                    {!isFullScreen && !embedded && !hideSidebar && (
                         <div className="w-80 min-w-[320px] flex-shrink-0 bg-white border-r border-gray-200 flex flex-col overflow-hidden z-20">
                             {/* Header */}
                             <div className="p-4 border-b border-gray-100 flex justify-between items-center">
@@ -1749,7 +1485,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                                                             <button
                                                                 onClick={(e) => {
                                                                     e.stopPropagation();
-                                                                    handleInitiateUpload(route.name, day as DayType);
+                                                                    upload.initiateUpload(route.name, day as DayType);
                                                                 }}
                                                                 className="p-1.5 rounded text-gray-400 hover:text-green-600 hover:bg-green-50 transition-colors"
                                                                 title={`Upload Route ${route.name} (${day}) to Master`}
@@ -1772,14 +1508,14 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                                     {teamId && (
                                         <div className="p-3 border-b border-gray-100">
                                             <button
-                                                onClick={() => setShowBulkUploadModal(true)}
+                                                onClick={upload.openBulkUpload}
                                                 className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-green-600 text-white font-bold rounded-lg hover:bg-green-700 transition-colors shadow-sm"
                                             >
                                                 <Database size={16} />
                                                 Upload to Master
                                             </button>
                                             <p className="text-xs text-gray-500 text-center mt-2">
-                                                {routesForUpload.length} route{routesForUpload.length !== 1 ? 's' : ''} available
+                                                {upload.routesForUpload.length} route{upload.routesForUpload.length !== 1 ? 's' : ''} available
                                             </p>
                                         </div>
                                     )}
@@ -1817,10 +1553,10 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                         {subView === 'matrix' ? (
                             <TravelTimeGrid
                                 schedules={[activeRoute.north, activeRoute.south].filter((t): t is MasterRouteTable => !!t)}
-                                onBulkAdjust={handleBulkAdjustTravelTime}
-                                onRecoveryAdjust={handleBulkAdjustRecoveryTime}
-                                onSingleTripAdjust={handleSingleTripTravelAdjust}
-                                onSingleRecoveryAdjust={handleSingleRecoveryAdjust}
+                                onBulkAdjust={gridHandlers.handleBulkAdjustTravelTime}
+                                onRecoveryAdjust={gridHandlers.handleBulkAdjustRecoveryTime}
+                                onSingleTripAdjust={gridHandlers.handleSingleTripTravelAdjust}
+                                onSingleRecoveryAdjust={gridHandlers.handleSingleRecoveryAdjust}
                                 bands={bands}
                                 analysis={analysis}
                                 segmentNames={segmentNames}
@@ -1835,7 +1571,14 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                         ) : (
                             (activeRoute.combined && !forceSimpleView) ? (
                                 <>
-                                    {!isFullScreen && !embedded && <QuickActionsBar filter={filter} onFilterChange={setFilter} />}
+                                    {!isFullScreen && !embedded && (
+                                        <div className="flex items-center gap-3 mb-3">
+                                            <QuickActionsBar filter={filter} onFilterChange={setFilter} />
+                                            {!readOnly && (
+                                                <CascadeModeSelector mode={cascadeMode} onChange={setCascadeMode} />
+                                            )}
+                                        </div>
+                                    )}
                                     <RoundTripTableView
                                         schedules={schedules}
                                         onCellEdit={readOnly ? undefined : handleCellEdit}

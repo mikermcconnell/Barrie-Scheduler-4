@@ -33,12 +33,14 @@ export interface ParsedTrip {
     startTime: number | null;  // Minutes from midnight
     endTime: number | null;    // Minutes from midnight
     travelTime: number;        // Minutes
+    direction?: Direction | 'Loop' | null;  // North, South, Loop, or null if unknown
 }
 
 export interface ParsedSection {
     dayType: 'Weekday' | 'Saturday' | 'Sunday';
     stops: StopInfo[];
     trips: ParsedTrip[];
+    direction?: Direction | 'Loop' | null;  // Section-level direction
 }
 
 export interface ParsedRoute {
@@ -806,9 +808,10 @@ const parseExportFormatWorkbook = (workbook: XLSX.WorkBook): ParseResult => {
                 result.routes.push(existingRoute);
             }
 
-            // Add direction to section trips
+            // Set direction on section and trips (typed, no more any cast)
+            section.direction = sectionDirection;
             section.trips.forEach(t => {
-                (t as any).direction = sectionDirection;
+                t.direction = sectionDirection;
             });
 
             existingRoute.sections.push(section);

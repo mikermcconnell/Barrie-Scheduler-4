@@ -19,13 +19,12 @@ interface StackedTimeCellProps {
 export const StackedTimeCell: React.FC<StackedTimeCellProps> = ({ timeStr, className = '' }) => {
     const parsed = parseStackedTime(timeStr);
     if (!parsed) {
-        return <span className={className}>{timeStr || '-'}</span>;
+        return <span className={`whitespace-nowrap ${className}`}>{timeStr || '-'}</span>;
     }
     return (
-        <div className={`flex flex-col items-center leading-tight ${className}`}>
-            <span className="text-[11px] font-medium text-gray-700">{parsed.time}</span>
-            <span className="text-[8px] font-medium text-gray-400">{parsed.period}</span>
-        </div>
+        <span className={`text-[11px] font-medium text-gray-700 whitespace-nowrap ${className}`}>
+            {`${parsed.time} ${parsed.period}`}
+        </span>
     );
 };
 
@@ -39,6 +38,10 @@ export interface StackedTimeInputProps {
     disabled?: boolean;
     focusClass?: string;
     placeholder?: string;
+    /** Callback for time adjustment (+/- minutes) via W/S or Arrow keys */
+    onAdjust?: (delta: number) => void;
+    /** Callback for cell navigation via A/D or Arrow keys */
+    onNavigate?: (direction: 'left' | 'right' | 'up' | 'down') => void;
 }
 
 export const StackedTimeInput: React.FC<StackedTimeInputProps> = ({
@@ -47,74 +50,116 @@ export const StackedTimeInput: React.FC<StackedTimeInputProps> = ({
     onBlur,
     disabled = false,
     focusClass = 'focus:ring-blue-100',
-    placeholder = '-'
+    placeholder = '-',
+    onAdjust,
+    onNavigate
 }) => {
-    const [isFocused, setIsFocused] = useState(false);
+    const [isEditing, setIsEditing] = useState(false);
     const [editValue, setEditValue] = useState(value);
     const inputRef = useRef<HTMLInputElement>(null);
 
-    // Sync edit value when external value changes
+    // Sync when external value changes (only when not editing)
     useEffect(() => {
-        if (!isFocused) {
+        if (!isEditing) {
             setEditValue(value);
         }
-    }, [value, isFocused]);
+    }, [value, isEditing]);
+
+    // Focus input when entering edit mode
+    useEffect(() => {
+        if (isEditing && inputRef.current) {
+            inputRef.current.focus();
+            inputRef.current.select();
+        }
+    }, [isEditing]);
+
+    const handleStartEdit = () => {
+        if (disabled) return;
+        setEditValue(value);
+        setIsEditing(true);
+    };
+
+    const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const sanitized = sanitizeInput(e.target.value);
+        setEditValue(sanitized);
+        onChange(sanitized);
+    };
+
+    const handleBlur = () => {
+        setIsEditing(false);
+        onBlur(editValue);
+    };
+
+    const handleKeyDown = (e: React.KeyboardEvent) => {
+        if (e.key === 'Enter') {
+            setIsEditing(false);
+            onBlur(editValue);
+        } else if (e.key === 'Escape') {
+            setEditValue(value); // Revert
+            setIsEditing(false);
+        } else if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') {
+            // Adjust time +1 minute
+            if (onAdjust) {
+                e.preventDefault();
+                onAdjust(1);
+            } else if (onNavigate && (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W')) {
+                e.preventDefault();
+                onNavigate('up');
+            }
+        } else if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') {
+            // Adjust time -1 minute
+            if (onAdjust) {
+                e.preventDefault();
+                onAdjust(-1);
+            } else if (onNavigate) {
+                e.preventDefault();
+                onNavigate('down');
+            }
+        } else if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') {
+            // Navigate left
+            if (onNavigate) {
+                e.preventDefault();
+                onNavigate('left');
+            }
+        } else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') {
+            // Navigate right
+            if (onNavigate) {
+                e.preventDefault();
+                onNavigate('right');
+            }
+        }
+    };
 
     const parsed = parseStackedTime(value);
 
-    if (!isFocused && parsed) {
-        // Show stacked display - clickable to edit
+    // Editing mode - show visible text input
+    if (isEditing) {
         return (
-            <div
-                className="flex flex-col items-center justify-center leading-tight cursor-text w-full h-full py-1"
-                onClick={() => {
-                    if (!disabled) {
-                        setIsFocused(true);
-                        setTimeout(() => inputRef.current?.focus(), 0);
-                    }
-                }}
-            >
-                <span className="text-[11px] font-medium text-gray-700">{parsed.time}</span>
-                <span className="text-[8px] font-medium text-gray-400">{parsed.period}</span>
-                {/* Hidden input for focus management */}
-                <input
-                    ref={inputRef}
-                    type="text"
-                    value={editValue}
-                    onChange={(e) => {
-                        setEditValue(e.target.value);
-                        onChange(sanitizeInput(e.target.value));
-                    }}
-                    onFocus={() => setIsFocused(true)}
-                    onBlur={(e) => {
-                        setIsFocused(false);
-                        onBlur(e.target.value);
-                    }}
-                    className="absolute opacity-0 w-0 h-0"
-                    disabled={disabled}
-                />
-            </div>
+            <input
+                ref={inputRef}
+                type="text"
+                value={editValue}
+                onChange={handleChange}
+                onBlur={handleBlur}
+                onKeyDown={handleKeyDown}
+                className={`w-full h-full bg-white font-medium text-[11px] text-gray-900 text-center ring-2 ${focusClass} outline-none px-1`}
+                placeholder={placeholder}
+                disabled={disabled}
+            />
         );
     }
 
-    // Show regular input - for editing or when value doesn't parse as time
+    // Display mode - show formatted time, click to edit
     return (
-        <input
-            ref={inputRef}
-            type="text"
-            value={isFocused ? editValue : (value || '')}
-            onChange={(e) => {
-                setEditValue(e.target.value);
-                onChange(sanitizeInput(e.target.value));
-            }}
-            onFocus={() => setIsFocused(true)}
-            onBlur={(e) => {
-                setIsFocused(false);
-                onBlur(e.target.value);
-            }}
-            className={`w-full h-full bg-transparent font-medium text-[11px] text-gray-700 text-center focus:bg-white focus:ring-2 ${focusClass} focus:outline-none transition-all placeholder-gray-200 px-2`}
-            placeholder={placeholder}
-            disabled={disabled}
-        />
+        <div
+            className={`flex items-center justify-center w-full h-full py-1 whitespace-nowrap ${disabled ? 'cursor-default' : 'cursor-text hover:bg-gray-50'}`}
+            onClick={handleStartEdit}
+        >
+            {parsed ? (
+                <span className="text-[11px] font-medium text-gray-700">{`${parsed.time} ${parsed.period}`}</span>
+            ) : (
+                <span className="text-[11px] text-gray-400">{value || placeholder}</span>
+            )}
+        </div>
     );
 };

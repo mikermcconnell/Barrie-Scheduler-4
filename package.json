@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
+    "adm-zip": "^0.5.16",
     "dotenv": "^17.2.3",
     "exceljs": "^4.4.0",
     "firebase": "^12.6.0",
@@ -25,6 +26,7 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@types/adm-zip": "^0.5.7",
     "@types/node": "^24.10.1",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",

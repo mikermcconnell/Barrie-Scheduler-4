@@ -17,11 +17,13 @@ interface ScheduleDashboardProps {
     savedFiles: SavedFile[];
     user: any; // Using any for now to match rapid refactor, ideally User type
     isProcessing: boolean;
+    isMigratingLegacy?: boolean;
     onLoadDraft: (draft: ScheduleDraft) => void;
     onLoadFile: (file: SavedFile) => void;
     onDeleteFile?: (file: SavedFile) => void;
     onUpload: (files: File[]) => void;
     onViewNewSchedule: () => void;
+    onMigrateLegacy?: () => void;
 }
 
 export const ScheduleDashboard: React.FC<ScheduleDashboardProps> = ({
@@ -29,11 +31,13 @@ export const ScheduleDashboard: React.FC<ScheduleDashboardProps> = ({
     savedFiles,
     user,
     isProcessing,
+    isMigratingLegacy,
     onLoadDraft,
     onLoadFile,
     onDeleteFile,
     onUpload,
-    onViewNewSchedule
+    onViewNewSchedule,
+    onMigrateLegacy
 }) => {
     const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
@@ -42,9 +46,18 @@ export const ScheduleDashboard: React.FC<ScheduleDashboardProps> = ({
             <div className="max-w-6xl mx-auto mt-8 animate-in fade-in slide-in-from-bottom-2 duration-500 px-6 pb-12">
                 <div className="flex items-center justify-between mb-8">
                     <div>
-                        <h2 className="text-2xl font-bold text-gray-900 tracking-tight">Schedule Manager</h2>
-                        <p className="text-gray-500 text-sm mt-1">Upload a master schedule file or load a saved version.</p>
+                        <h2 className="text-2xl font-bold text-gray-900 tracking-tight">Schedule Manager (Legacy)</h2>
+                        <p className="text-gray-500 text-sm mt-1">Legacy drafts and uploads. Use Schedule Editor for Draft → Publish.</p>
                     </div>
+                    {user && onMigrateLegacy && (
+                        <button
+                            onClick={onMigrateLegacy}
+                            disabled={isMigratingLegacy}
+                            className="px-4 py-2 text-xs font-bold bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {isMigratingLegacy ? 'Migrating...' : 'Migrate Legacy Drafts'}
+                        </button>
+                    )}
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
@@ -86,7 +99,7 @@ export const ScheduleDashboard: React.FC<ScheduleDashboardProps> = ({
                     {/* Recent Drafts Column */}
                     <div className="bg-white p-0 rounded-xl border border-gray-200 shadow-sm h-full max-h-[500px] flex flex-col overflow-hidden col-span-1 lg:col-span-4 hover:border-blue-300 transition-colors">
                         <div className="p-4 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center">
-                            <h3 className="font-bold text-gray-900 text-sm">Saved Drafts</h3>
+                            <h3 className="font-bold text-gray-900 text-sm">Legacy Drafts</h3>
                             <span className="bg-blue-100 text-blue-700 text-[10px] font-bold px-2 py-0.5 rounded-full">{drafts.length}</span>
                         </div>
 

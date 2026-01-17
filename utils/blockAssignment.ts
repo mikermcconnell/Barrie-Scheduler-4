@@ -15,10 +15,10 @@ import { inferDirectionFromTerminus, type Direction } from './routeDirectionConf
 
 // --- Types ---
 
-export interface BlockedTrip extends ParsedTrip {
+export interface BlockedTrip extends Omit<ParsedTrip, 'direction'> {
     blockId: string;
     tripNumber: number;      // Sequential trip number within the block
-    direction: string;       // Inferred direction (e.g., "North", "South", or stop name for loops)
+    direction: Direction | 'Loop' | string;  // Inferred direction (e.g., "North", "South", or stop name for loops)
     firstStopName: string;
     lastStopName: string;
     routeName: string;       // Added for interline tracking
@@ -37,7 +37,7 @@ export interface Block {
 
 export interface BlockAssignmentResult {
     blocks: Block[];
-    unassignedTrips: ParsedTrip[];
+    unassignedTrips: BlockedTrip[];
     stats: {
         totalTrips: number;
         assignedTrips: number;
@@ -66,7 +66,7 @@ const getLastStop = (stops: StopInfo[]): StopInfo | null => {
 /**
  * Calculate total recovery time for a trip from its recovery columns
  */
-const getTotalRecovery = (trip: ParsedTrip): number => {
+const getTotalRecovery = (trip: Pick<ParsedTrip, 'recoveryTimes'>): number => {
     return Object.values(trip.recoveryTimes).reduce((sum, r) => sum + r, 0);
 };
 
@@ -255,7 +255,11 @@ export const assignBlocksToSection = (
             // Expected start time calculation:
             // - The bus starts the next trip after completing the current trip and its recovery.
             // - recoveryAtEnd is the recovery time specifically after the last stop.
-            const recoveryAtEnd = currentTrip.recoveryTimes?.[currentTrip.lastStopName] ?? 0;
+            // - Try exact stop name first, then base name (handles loop routes with "(2)" suffix)
+            const baseLastStop = getBaseStopName(currentTrip.lastStopName);
+            const recoveryAtEnd = currentTrip.recoveryTimes?.[currentTrip.lastStopName]
+                ?? currentTrip.recoveryTimes?.[baseLastStop]
+                ?? 0;
             const expectedStart = (currentEndTime ?? 0) + recoveryAtEnd;
 
             // Debug log
@@ -395,11 +399,13 @@ export const assignBlocksBidirectional = (
             block.totalRecoveryTime += getTotalRecovery(currentTrip);
 
             // Find next matching trip in OPPOSITE direction
-            // Current endTime === next startTime (exact match)
-            // Find next matching trip in OPPOSITE direction
             // Current endTime + Recovery at terminal === next startTime (exact match)
+            // Try exact stop name first, then base name (handles loop routes with "(2)" suffix)
             const currentEndTime = currentTrip.endTime;
-            const recoveryAtEnd = currentTrip.recoveryTimes?.[currentTrip.lastStopName] ?? 0;
+            const baseLastStop = getBaseStopName(currentTrip.lastStopName);
+            const recoveryAtEnd = currentTrip.recoveryTimes?.[currentTrip.lastStopName]
+                ?? currentTrip.recoveryTimes?.[baseLastStop]
+                ?? 0;
             const expectedStart = (currentEndTime ?? 0) + recoveryAtEnd;
 
             const oppositeDirection = currentTrip.direction === 'North' ? 'South' : 'North';

@@ -72,6 +72,10 @@ export interface MasterTrip {
     // Partial Trip Support (start/end at mid-route stops)
     startStopIndex?: number; // 0-based index of first active stop (undefined = 0)
     endStopIndex?: number;   // 0-based index of last active stop (undefined = last)
+
+    // Block Position Flags (from GTFS block assignment)
+    isBlockStart?: boolean; // True if this is the first trip in a block
+    isBlockEnd?: boolean;   // True if this is the last trip in a block
 }
 
 export interface MasterRouteTable {
@@ -595,20 +599,61 @@ export const buildRoundTripView = (
     const rows: RoundTripRow[] = [];
 
     Object.entries(blockGroups).forEach(([blockId, trips]) => {
-        // Sort trips by tripNumber to maintain journey sequence
-        const sortedTrips = trips.sort((a, b) => a.tripNumber - b.tripNumber);
+        // Sort trips by start time to maintain chronological sequence
+        const sortedTrips = trips.sort((a, b) => a.startTime - b.startTime);
 
-        // Pair up trips: North1 + South1 = Row1, North2 + South2 = Row2, etc.
-        // Trips alternate N-S-N-S based on tripNumber
         const northTrips = sortedTrips.filter(t => t.direction === 'North');
         const southTrips = sortedTrips.filter(t => t.direction === 'South');
 
-        // Create one row per pair
-        const maxPairs = Math.max(northTrips.length, southTrips.length);
+        // Pair by TIME SEQUENCE: find South trip that starts within 15 min of North trip ending
+        // This handles cases where blocks have unequal N/S counts or different start times
+        const MAX_PAIRING_GAP = 15; // minutes
+        const usedSouthTrips = new Set<string>();
+        const pairedRows: { nTrip?: MasterTrip; sTrip?: MasterTrip; pairIndex: number }[] = [];
 
-        for (let i = 0; i < maxPairs; i++) {
-            const nTrip = northTrips[i];
-            const sTrip = southTrips[i];
+        // First, pair each North trip with its matching South trip
+        northTrips.forEach((nTrip, idx) => {
+            // Find South trip that starts within MAX_PAIRING_GAP of North trip ending
+            let bestMatch: MasterTrip | undefined;
+            let bestGap = Infinity;
+
+            for (const sTrip of southTrips) {
+                if (usedSouthTrips.has(sTrip.id)) continue;
+                const gap = sTrip.startTime - nTrip.endTime;
+                if (gap >= 0 && gap <= MAX_PAIRING_GAP && gap < bestGap) {
+                    bestGap = gap;
+                    bestMatch = sTrip;
+                }
+            }
+
+            if (bestMatch) {
+                usedSouthTrips.add(bestMatch.id);
+                pairedRows.push({ nTrip, sTrip: bestMatch, pairIndex: idx });
+            } else {
+                // North trip with no matching South (end of day pullout)
+                pairedRows.push({ nTrip, sTrip: undefined, pairIndex: idx });
+            }
+        });
+
+        // Add any unpaired South trips (start of day pullin - South before first North)
+        southTrips.forEach(sTrip => {
+            if (!usedSouthTrips.has(sTrip.id)) {
+                pairedRows.push({ nTrip: undefined, sTrip, pairIndex: pairedRows.length });
+            }
+        });
+
+        // Sort paired rows by the earliest trip time in each pair
+        pairedRows.sort((a, b) => {
+            const aTime = a.nTrip?.startTime ?? a.sTrip?.startTime ?? 0;
+            const bTime = b.nTrip?.startTime ?? b.sTrip?.startTime ?? 0;
+            return aTime - bTime;
+        });
+
+        // Reassign pairIndex after sorting
+        pairedRows.forEach((row, idx) => { row.pairIndex = idx; });
+
+        // Create rows from paired data
+        for (const { nTrip, sTrip, pairIndex } of pairedRows) {
             const pairTrips = [nTrip, sTrip].filter(Boolean) as MasterTrip[];
 
             if (pairTrips.length === 0) continue;
@@ -616,10 +661,19 @@ export const buildRoundTripView = (
             const totalTravelTime = pairTrips.reduce((sum, t) => sum + t.travelTime, 0);
             const totalRecoveryTime = pairTrips.reduce((sum, t) => sum + t.recoveryTime, 0);
 
-            // Cycle time for this round trip pair - handle midnight crossover
+            // Cycle time = span from first departure to final departure (after recovery)
+            // endTime is the ARRIVAL time at final stop, so we need to add final stop recovery
             const firstTrip = pairTrips[0];
             const lastTrip = pairTrips[pairTrips.length - 1];
-            const totalCycleTime = getTripDuration(firstTrip.startTime, lastTrip.endTime);
+
+            // Get recovery at the final stop (not total trip recovery)
+            // For block-ending trips, don't include phantom recovery
+            const lastTripStops = Object.keys(lastTrip.stops);
+            const finalStopName = lastTripStops[lastTripStops.length - 1];
+            const finalStopRecovery = lastTrip.isBlockEnd ? 0 : (lastTrip.recoveryTimes?.[finalStopName] || 0);
+
+            const spanTime = getTripDuration(firstTrip.startTime, lastTrip.endTime);
+            const totalCycleTime = spanTime + finalStopRecovery;
 
             rows.push({
                 blockId: `${blockId}`, // Same block ID, different row per pair
@@ -629,26 +683,13 @@ export const buildRoundTripView = (
                 totalTravelTime,
                 totalRecoveryTime,
                 totalCycleTime,
-                pairIndex: i // Track which round-trip cycle this is (0 = first, 1 = second, etc.)
+                pairIndex // Track which round-trip cycle this is (0 = first, 1 = second, etc.)
             });
         }
     });
 
-    // Sort rows by: 1) pair index (cycle number), 2) block ID, 3) start time as tiebreaker
+    // Sort rows by initial departure time (earliest trip start), early to late
     rows.sort((a, b) => {
-        // First, group by trip pair/cycle number
-        const pairDiff = a.pairIndex - b.pairIndex;
-        if (pairDiff !== 0) return pairDiff;
-
-        // Within same cycle, sort by block ID numerically
-        const aBlock = a.blockId.replace(/\D/g, '-').split('-').map(Number);
-        const bBlock = b.blockId.replace(/\D/g, '-').split('-').map(Number);
-        for (let i = 0; i < Math.max(aBlock.length, bBlock.length); i++) {
-            const diff = (aBlock[i] || 0) - (bBlock[i] || 0);
-            if (diff !== 0) return diff;
-        }
-
-        // Fallback to start time
         const aStart = a.trips[0]?.startTime ?? 0;
         const bStart = b.trips[0]?.startTime ?? 0;
         return aStart - bStart;

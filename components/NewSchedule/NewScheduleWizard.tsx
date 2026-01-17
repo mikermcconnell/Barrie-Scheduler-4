@@ -582,6 +582,14 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                                 setFiles={setFiles}
                                 dayType={dayType}
                                 setDayType={setDayType}
+                                userId={user?.uid}
+                                onGTFSImport={(result) => {
+                                    if (result.success && result.draftId) {
+                                        toast.success('GTFS Import Complete', `Created draft for ${result.routeIdentity}`);
+                                        // Optionally navigate to the draft editor
+                                        onBack(); // Return to dashboard where user can open the draft
+                                    }
+                                }}
                             />
                         )}
                         {step === 2 && (

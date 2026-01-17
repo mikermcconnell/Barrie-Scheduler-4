@@ -1,51 +1,26 @@
-# Project Context & Locked Logic
+# Locked Logic & Critical Rules
 
-> [!IMPORTANT]
-> This file contains critical domain knowledge and implementation rules.
 > **DO NOT modify locked logic without explicit user approval.**
 
 ---
 
-## Project Overview
-
-**Scheduler 4** - Transit scheduling application for bus route optimization
-
-**Tech Stack:**
-- React + TypeScript
-- Vite build system
-- TailwindCSS
-- Claude API for AI optimization
-
-**Purpose:** Generate optimal bus schedules from runtime data (CSV), accounting for:
-- Recovery time between trips
-- Travel time variations by time of day
-- Trip pairing (Northbound/Southbound)
-- Cycle time calculations
-
----
-
-## Locked Logic (DO NOT MODIFY)
+## Locked Logic (6 Rules)
 
 ### 1. Double Pass Optimization (`api/optimize.ts`)
-**Pattern:** Generator → Critic
 
-```typescript
-// LOCKED: Two-phase AI optimization
+```
 Phase 1 (Generator): Create initial schedule
 Phase 2 (Critic): Review and suggest improvements
 ```
 
-**Why locked:** This pattern prevents AI from over-optimizing in a single pass and provides better results through iterative refinement.
-
-**Before modifying:** Ask user for approval
+**Why:** Prevents AI over-optimization; iterative refinement produces better results.
 
 ---
 
 ### 2. Segment Rounding (`scheduleGenerator.ts`)
-**Rule:** Round BEFORE summing, not after
 
 ```typescript
-// CORRECT (LOCKED):
+// CORRECT:
 const segment1 = Math.round(runtime1)
 const segment2 = Math.round(runtime2)
 const total = segment1 + segment2
@@ -54,175 +29,190 @@ const total = segment1 + segment2
 const total = Math.round(runtime1 + runtime2)
 ```
 
-**Why locked:** Individual segment precision prevents cumulative timing errors in long routes.
+**Why:** Individual segment precision prevents cumulative timing errors.
 
 ---
 
 ### 3. Trip Pairing (`ScheduleEditor.tsx`)
-**Rule:** N1+S1, N2+S2 pairs per row
 
 ```
 Row 1: Trip N1 | Trip S1
 Row 2: Trip N2 | Trip S2
-Row 3: Trip N3 | Trip S3
 ```
 
-**NOT:**
-```
-Row 1: Trip N1 | Trip N2
-Row 2: Trip S1 | Trip S2
-```
+**NOT:** N1/N2 in one column, S1/S2 in another.
 
-**Why locked:** Operators need to see paired round trips (N→S or S→N) for vehicle assignment.
+**Why:** Operators need paired round trips (N→S) for vehicle assignment.
 
 ---
 
 ### 4. Cycle Time Calculation
-**Formula:** `Last Trip End Time - First Trip Start Time`
 
 ```typescript
-// LOCKED:
 cycleTime = schedule[schedule.length - 1].end - schedule[0].start
 ```
 
-**NOT:**
-- Sum of all trip durations
-- Sum of runtime + recovery
-- Any other calculation
+**NOT:** Sum of trip durations or runtime + recovery.
 
-**Why locked:** Cycle time represents the total vehicle operating period, not sum of individual trips.
+**Why:** Cycle time = total vehicle operating period, not sum of parts.
 
 ---
 
-## Key Architectural Patterns
-
-### CSV Parsing (`csvParser.ts`)
-- Handles variable CSV formats (with/without headers)
-- Auto-detects time formats (HH:mm:ss vs HH:mm)
-- Validates and cleans data before processing
-
-### Runtime Analysis (`runtimeAnalysis.ts`)
-- Calculates time-of-day travel time bands
-- Identifies peak/off-peak patterns
-- Used for recovery time adjustments
-
-### Schedule Generation (`scheduleGenerator.ts`)
-- Creates trips from runtime data
-- Applies recovery times
-- Handles trip direction pairing
-- Outputs schedule in display format
-
----
-
-## Domain Terminology
+## Domain Terms
 
 | Term | Meaning |
 |------|---------|
-| **Runtime** | Actual driving time from start to end of route |
-| **Recovery Time** | Buffer time between trips for operator breaks |
-| **Cycle Time** | Total time vehicle is in service (first start → last end) |
-| **Trip Pair** | Northbound + Southbound trip (or vice versa) |
-| **Segment** | Individual portion of a route with distinct timing |
-| **Time Band** | Period of day with characteristic travel times |
+| **Runtime** | Actual driving time start → end |
+| **Recovery** | Buffer between trips for operator breaks |
+| **Cycle Time** | Total time vehicle is in service |
+| **Trip Pair** | Northbound + Southbound trip |
+| **Block** | Chain of trips by single bus |
+| **Time Band** | Period with characteristic travel times (A/B/C/D/E) |
 
 ---
 
-## Common Gotchas
+## Critical Gotchas
 
-### ❌ Don't
-- Modify cycle time calculation
-- Change rounding logic
-- Reorder trip pairing
-- Skip segment-level rounding
-- Assume CSV headers exist
-
-### ✅ Do
-- Validate CSV format before parsing
-- Apply recovery times after runtime calculation
-- Round each segment individually
-- Preserve trip pairing in display
-- Ask before changing locked logic
+| Don't | Do |
+|-------|-----|
+| Modify cycle time calculation | Ask before changing locked logic |
+| Change rounding logic | Round each segment individually |
+| Reorder trip pairing | Preserve N+S pairs in display |
+| Assume CSV headers exist | Validate format before parsing |
+| Hardcode column indices | Use dynamic stop-name detection |
+| Use first GTFS trip for stop list | Use canonical (most stops) trip |
+| Index-based stop time lookup | Name-based stop matching |
+| Use `expectedStart` for merged routes | Use gap-based matching (`maxGap`) |
+| Check `timeTolerance` before `maxGap` | Check `maxGap` first when specified |
 
 ---
 
-## File Dependency Map
+## 5. GTFS Import for Merged A/B Routes (`gtfsImportService.ts`)
 
-```
-App.tsx
-  └─> NewSchedule (wizard)
-       ├─> Step 1: CSV upload
-       ├─> Step 2: Runtime analysis
-       ├─> Step 3: Recovery settings
-       ├─> Step 4: Schedule generation
-       │    └─> utils/scheduleGenerator.ts
-       │         ├─> csvParser.ts
-       │         └─> utils/runtimeAnalysis.ts
-       └─> Step 5: Connections (interline)
-            └─> utils/connectionOptimizer.ts
-                 ├─> utils/connectionConfigService.ts
-                 └─> utils/connectionLibraryService.ts
+Routes like 2A+2B, 7A+7B, 12A+12B share a terminus where the bus arrives on A and departs on B.
 
-ScheduleEditor.tsx
-  └─> Displays paired trips
-  └─> Allows manual adjustments
-  └─> Sends to API for optimization
+### Stop Name Generation
 
-api/optimize.ts
-  └─> Double-pass AI optimization
-  └─> Returns improved schedule
+```typescript
+// CORRECT: Use trip with MOST stops as canonical
+const canonicalTrip = trips.reduce((best, trip) =>
+    trip.stopTimes.length > best.stopTimes.length ? trip : best
+);
+
+// WRONG: Use first trip (may be partial, missing stops like Park Place)
+const stopNames = generateUniqueStopNames(trips[0].stopTimes);
 ```
 
----
+**Why:** First trip may start mid-route; canonical trip ensures all stops captured.
 
-## Testing Scenarios
+### Stop Time Assignment
 
-### Essential Test Cases
-1. **Empty CSV** - Should show error
-2. **CSV without headers** - Should auto-detect
-3. **Single trip** - Should handle edge case
-4. **Odd number of trips** - Last trip unpaired OK
-5. **Zero recovery time** - Should allow
-6. **Very long cycle** - Should calculate correctly
+```typescript
+// CORRECT: Name-based matching
+const stopName = stopNameMap.get(st.stopName);
+if (stopName) stops[stopName] = formatTime(st.arrivalMinutes);
 
----
+// WRONG: Index-based lookup
+const stopName = uniqueStopNames[stIdx];  // Assumes all trips have same stops
+```
 
-## Performance Considerations
+**Why:** Trips may have different stop counts; index lookup assigns times to wrong columns.
 
-- **CSV parsing**: Handled synchronously (files < 10MB)
-- **Schedule generation**: < 100ms for typical routes
-- **AI optimization**: 2-5 seconds (uses Claude API)
-- **UI updates**: React state updates, not real-time
+### Merged Route Detection
 
----
+```typescript
+// Detect shared terminus (e.g., Downtown Hub)
+const lastNorthStop = northStops[northStops.length - 1]?.toLowerCase();
+const firstSouthStop = southStops[0]?.toLowerCase();
+const isMergedRoute = lastNorthStop === firstSouthStop;
+```
 
-## Future Enhancements (Not Yet Implemented)
+### Block Assignment - Gap-Based Chaining (LOCKED)
 
-- [ ] Database storage (currently CSV only)
-- [ ] Multi-route scheduling
-- [ ] Driver assignment logic
-- [ ] Real-time vehicle tracking integration
-- [ ] Historical runtime analysis
-- [ ] Automated schedule versioning
+**File:** `blockAssignmentCore.ts:105-162` (`findNextTrip`)
 
----
+Blocks must chain trips by **time continuity**, not by index. Each block represents a single bus operating throughout the day.
 
-## Questions Before Implementing Features
+```typescript
+// CORRECT: Gap-based matching for merged routes
+// Uses direct time gap instead of unreliable recoveryAtEnd
+if (config.maxGap !== undefined) {
+    const gap = candidate.startTime - current.endTime;
+    if (gap >= 0 && gap <= config.maxGap) {
+        // Valid chain: bus waits `gap` minutes, then starts next trip
+    }
+}
 
-Before adding new features, clarify:
+// WRONG: ExpectedStart-based matching with missing recovery
+const recoveryAtEnd = current.recoveryTimes?.[lastStopName] ?? 0;  // Often 0!
+const expectedStart = current.endTime + recoveryAtEnd;  // Wrong if recovery missing
+const timeDiff = Math.abs(candidate.startTime - expectedStart);
+if (timeDiff > timeTolerance) continue;  // Fails when recovery=0 but gap=8min
+```
 
-1. **Does this affect locked logic?** → Ask for approval
-2. **Which files will change?** → Impact assessment
-3. **Are there edge cases?** → Think through scenarios
-4. **Does this change existing behavior?** → Flag breaking changes
+**Why this matters:**
+- GTFS doesn't have terminal layover data → `recoveryAtEnd = 0`
+- Actual layover (8 min) is calculated from `nextTrip.startTime - currentTrip.endTime`
+- ExpectedStart-based matching fails: `|6:40 - 6:32| = 8 > timeTolerance(5)` → no chain
+- Gap-based matching succeeds: `8 <= maxGap(30)` → trips chain correctly
 
----
+**Config presets (`MatchConfigPresets`):**
+| Preset | Use Case | Key Setting |
+|--------|----------|-------------|
+| `merged` | 2A+2B, 7A+7B routes | `maxGap: 30` (gap-based) |
+| `gtfs` | Standard GTFS import | `timeTolerance: 5, checkLocation: true` |
+| `exact` | Generated schedules | `timeTolerance: 1, checkLocation: true` |
 
-## Contact & Feedback
+**Expected result:**
+- ~8 blocks with multiple trips chained (not 53 single-trip blocks)
+- "END" marker only on final trip of each block
+- Matches Excel master schedule format (one row = one round trip)
 
-When uncertain about:
-- Locked logic modification → ASK USER FIRST
-- Architectural changes → PROPOSE, DON'T IMPLEMENT
-- Domain logic interpretation → CLARIFY BEFORE CODING
+### Layover/Recovery Calculation (BOTH Terminuses)
 
-Remember: **This is a scheduling application with mathematical precision requirements.
-Small logic changes can have cascading timing errors.**
+Merged routes have TWO recovery points:
+1. **Shared terminus** (Downtown): North→South handoff
+2. **Outer terminus** (Park Place): South→North handoff (next cycle)
+
+```typescript
+// 1. Recovery at SHARED terminus (Downtown) - North trip waits before South departs
+const sharedLayover = southTrip.startTime - northTrip.endTime;
+northTrip.recoveryTimes[lastNorthStopName] = sharedLayover;
+
+// 2. Recovery at OUTER terminus (Park Place) - South trip waits before next North departs
+// Find CLOSEST North trip by time (not sequential index)
+// e.g., South ends 3:57 PM → find North starting 4:05 PM (closest), not just next in array
+let closestNorthTrip = null;
+let minGap = Infinity;
+for (const candidate of sortedNorth) {
+    const gap = candidate.startTime - southTrip.endTime;
+    if (gap >= 0 && gap < minGap) {
+        minGap = gap;
+        closestNorthTrip = candidate;
+    }
+}
+if (closestNorthTrip && minGap < 60) {
+    southTrip.recoveryTimes[lastSouthStopName] = minGap;
+}
+```
+
+**Why:** Without outer terminus recovery, Park Place shows R=0, block chaining fails, and operator breaks are missing.
+
+### Display Format (`RoundTripTableView.tsx`)
+
+For merged terminus:
+- **Show:** ARR column (arrival), R column (recovery)
+- **Skip:** DEP column (South's first stop handles departure)
+
+```
+| Route 2A                              | Route 2B                    |
+| Park Pl | ... | Downtown (ARR) | R    | Downtown (DEP) | ... | Park Pl |
+| 6:05 AM | ... | 6:32 AM        | 8    | 6:40 AM        | ... | 7:15 AM |
+```
+
+**Key condition:**
+```typescript
+const isMergedTerminusStop = i === lastNorthStopIdx && hasMergedTerminus;
+const showArrRCols = hasRecovery || isMergedTerminusStop;
+// Show ARR | R, skip DEP for merged terminus
+```

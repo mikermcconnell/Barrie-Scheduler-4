@@ -6,7 +6,7 @@ import { Clock, Bus, Plus, Trash2, LayoutGrid } from 'lucide-react';
 // Configuration Constants
 export const SCHEDULE_DEFAULTS = {
     CYCLE_TIME: 60,           // Default cycle time in minutes
-    RECOVERY_RATIO: 15,       // Default recovery ratio percentage
+    RECOVERY_RATIO: 0,        // Default recovery ratio (0% since GTFS times are complete)
     START_TIME: '06:00',      // Default block start time
     END_TIME: '22:00',        // Default block end time
     ROUTE_NUMBER: '10'        // Default route number

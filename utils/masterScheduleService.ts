@@ -50,6 +50,11 @@ function timestampToDate(timestamp: Timestamp | Date): Date {
     return timestamp.toDate();
 }
 
+function optionalTimestampToDate(timestamp?: Timestamp | Date): Date | undefined {
+    if (!timestamp) return undefined;
+    return timestampToDate(timestamp);
+}
+
 /**
  * Calculate effective cycle times for interlined routes (8A/8B)
  * This adjusts trip.cycleTime to exclude interline gaps
@@ -405,7 +410,12 @@ export async function getAllMasterSchedules(
             updatedAt: timestampToDate(data.updatedAt),
             updatedBy: data.updatedBy,
             uploaderName: data.uploaderName,
-            source: data.source
+            source: data.source,
+            publishedAt: optionalTimestampToDate(data.publishedAt),
+            publishedBy: data.publishedBy,
+            publishedFromDraft: data.publishedFromDraft,
+            effectiveDate: data.effectiveDate,
+            notes: data.notes
         };
     });
 }
@@ -437,7 +447,12 @@ export async function getMasterSchedule(
         updatedAt: timestampToDate(data.updatedAt),
         updatedBy: data.updatedBy,
         uploaderName: data.uploaderName,
-        source: data.source
+        source: data.source,
+        publishedAt: optionalTimestampToDate(data.publishedAt),
+        publishedBy: data.publishedBy,
+        publishedFromDraft: data.publishedFromDraft,
+        effectiveDate: data.effectiveDate,
+        notes: data.notes
     };
 
     // Load content from Cloud Storage

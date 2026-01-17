@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { MasterRouteTable, InterlineConfig } from '../utils/masterScheduleParser';
 import { useAuth } from './AuthContext';
-import { useTeam } from './TeamContext';
 import { useUndoRedo } from '../hooks/useUndoRedo';
 import { useAutoSave } from '../hooks/useAutoSave';
 import { ScheduleEditor } from './ScheduleEditor';
@@ -9,8 +8,9 @@ import { DraftManagerModal } from './DraftManagerModal';
 import { getAllDrafts, getDraft, ScheduleDraft, SavedFile, uploadFile, downloadFileArrayBuffer, deleteFile, getAllFiles } from '../utils/dataService';
 import { parseMasterScheduleV2 } from '../utils/masterScheduleParserV2';
 import { adaptV2ToV1 } from '../utils/parserAdapter';
-import { Loader2 } from 'lucide-react';
 import { ScheduleDashboard } from './ScheduleDashboard';
+import { useToast } from './ToastContext';
+import { migrateLegacyUserData } from '../utils/legacyDraftMigration';
 
 interface ScheduleTweakerWorkspaceProps {
     initialDraft?: ScheduleDraft;
@@ -24,7 +24,7 @@ export const ScheduleTweakerWorkspace: React.FC<ScheduleTweakerWorkspaceProps> =
     onClose
 }) => {
     const { user } = useAuth();
-    const { team } = useTeam();
+    const toast = useToast();
 
     // --- State ---
     const {
@@ -46,6 +46,7 @@ export const ScheduleTweakerWorkspace: React.FC<ScheduleTweakerWorkspaceProps> =
     const [savedFiles, setSavedFiles] = useState<SavedFile[]>([]);
     const [drafts, setDrafts] = useState<ScheduleDraft[]>([]);
     const [isProcessing, setIsProcessing] = useState(false);
+    const [isMigratingLegacy, setIsMigratingLegacy] = useState(false);
 
     // Ref to track mounted state for async cleanup
     const isMountedRef = useRef(true);
@@ -135,6 +136,36 @@ export const ScheduleTweakerWorkspace: React.FC<ScheduleTweakerWorkspaceProps> =
     };
 
     // --- Handlers ---
+    const handleMigrateLegacy = async () => {
+        if (!user) {
+            toast?.warning('Sign In Required', 'Sign in to migrate legacy drafts.');
+            return;
+        }
+        if (isMigratingLegacy) return;
+        setIsMigratingLegacy(true);
+
+        try {
+            const summary = await migrateLegacyUserData(user.uid);
+            const migratedLabel = `${summary.migrated} draft${summary.migrated === 1 ? '' : 's'} migrated`;
+            const skippedLabel = `${summary.skipped} skipped`;
+
+            if (summary.errors.length > 0) {
+                console.error('Legacy migration errors:', summary.errors);
+                toast?.warning('Migration Completed', `${migratedLabel}, ${skippedLabel}, ${summary.errors.length} error(s)`);
+            } else {
+                toast?.success('Migration Completed', `${migratedLabel}, ${skippedLabel}`);
+            }
+
+            if (summary.migrated > 0) {
+                await loadDrafts();
+            }
+        } catch (error) {
+            console.error('Legacy migration failed:', error);
+            toast?.error('Migration Failed', 'Unable to migrate legacy drafts');
+        } finally {
+            if (isMountedRef.current) setIsMigratingLegacy(false);
+        }
+    };
 
     const handleFile = async (files: File[]) => {
         if (!files || files.length === 0) return;
@@ -266,11 +297,13 @@ export const ScheduleTweakerWorkspace: React.FC<ScheduleTweakerWorkspaceProps> =
                 savedFiles={savedFiles}
                 user={user}
                 isProcessing={isProcessing}
+                isMigratingLegacy={isMigratingLegacy}
                 onLoadDraft={handleLoadDraft}
                 onLoadFile={handleLoadSavedFile}
                 onDeleteFile={handleDeleteFile}
                 onUpload={handleFile}
                 onViewNewSchedule={() => onClose()} // "New Schedule" from here just exits Tweaker to let parent handle it
+                onMigrateLegacy={handleMigrateLegacy}
             />
         );
     }
@@ -295,10 +328,6 @@ export const ScheduleTweakerWorkspace: React.FC<ScheduleTweakerWorkspaceProps> =
                 redo={redo}
                 showSuccessToast={showSuccessToastImpl}
                 forceSimpleView={true}
-                // Upload to Master - only available if user is part of a team
-                teamId={team?.id}
-                userId={user?.uid}
-                uploaderName={user?.displayName || user?.email || 'Unknown User'}
                 // Interline configuration
                 initialInterlineConfig={interlineConfig}
                 onInterlineConfigChange={setInterlineConfig}

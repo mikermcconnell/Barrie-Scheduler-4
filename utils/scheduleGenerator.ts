@@ -255,7 +255,7 @@ export const generateSchedule = (
 
             if (config.cycleMode === 'Floating') {
                 // Floating: Cycle = Travel + (Travel * Ratio)
-                const ratio = (config.recoveryRatio ?? 15) / 100;
+                const ratio = (config.recoveryRatio ?? 0) / 100;  // Default 0% since GTFS times are complete
                 totalRecovery = Math.round(pureTravelTime * ratio);
                 tripCycleAllocated = pureTravelTime + totalRecovery;
                 nextTripStart = currentTime + tripCycleAllocated;

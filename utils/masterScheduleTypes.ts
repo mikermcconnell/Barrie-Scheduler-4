@@ -11,7 +11,7 @@ import type { MasterRouteTable } from './masterScheduleParser';
 // ============ ENUMS AND TYPES ============
 
 export type DayType = 'Weekday' | 'Saturday' | 'Sunday';
-export type UploadSource = 'wizard' | 'tweaker';
+export type UploadSource = 'wizard' | 'tweaker' | 'draft';
 export type TeamRole = 'owner' | 'admin' | 'member';
 export type RouteIdentity = `${string}-${DayType}`;
 
@@ -58,6 +58,11 @@ export interface MasterScheduleEntry {
     updatedBy: string;
     uploaderName: string;
     source: UploadSource;
+    publishedAt?: Date;
+    publishedBy?: string;
+    publishedFromDraft?: string;
+    effectiveDate?: string;
+    notes?: string;
 }
 
 export interface MasterScheduleVersion {
@@ -78,6 +83,8 @@ export interface MasterScheduleContent {
         routeNumber: string;
         dayType: DayType;
         uploadedAt: string;   // ISO string
+        effectiveDate?: string;
+        notes?: string;
     };
 }
 

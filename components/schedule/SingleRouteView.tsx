@@ -319,32 +319,8 @@ export const SingleRouteView: React.FC<SingleRouteViewProps> = ({ table, showSum
                     );
                 })()}
                 <div className="overflow-auto custom-scrollbar flex-grow">
-                    <table className="w-full text-left border-collapse text-[11px]">
+                    <table className="w-full text-left border-collapse text-[11px]" style={{ tableLayout: 'fixed' }}>
                         <thead className="sticky top-0 z-40 bg-gray-50 shadow-sm">
-                            {/* Column Numbers Row */}
-                            <tr className="bg-gray-100">
-                                {(() => {
-                                    let colNum = 1;
-                                    const cells: React.ReactNode[] = [];
-                                    // Block column
-                                    cells.push(<th key="col-block" className="py-0.5 px-1 border-b border-gray-300 bg-gray-100 sticky left-0 z-30 text-[9px] font-mono font-bold text-gray-500 text-center">{colNum++}</th>);
-                                    // Stop columns: DEP only, or ARR + R + DEP if has recovery
-                                    table.stops.forEach((stop, i) => {
-                                        if (stopsWithRecovery.has(stop)) {
-                                            cells.push(<th key={`col-arr-${i}`} className="py-0.5 px-1 border-b border-gray-300 bg-blue-100 text-[9px] font-mono font-bold text-blue-700 text-center">{colNum++}</th>);
-                                            cells.push(<th key={`col-rec-${i}`} className="py-0.5 px-1 border-b border-gray-300 bg-gray-100 text-[9px] font-mono font-bold text-gray-500 text-center">{colNum++}</th>);
-                                            cells.push(<th key={`col-dep-${i}`} className="py-0.5 px-1 border-b border-gray-300 bg-blue-100 text-[9px] font-mono font-bold text-blue-700 text-center">{colNum++}</th>);
-                                        } else {
-                                            cells.push(<th key={`col-dep-${i}`} className="py-0.5 px-1 border-b border-gray-300 bg-blue-100 text-[9px] font-mono font-bold text-blue-700 text-center">{colNum++}</th>);
-                                        }
-                                    });
-                                    // Summary columns: Trav, Rec, Ratio, Hdwy, Cycle, Actions
-                                    ['Tr', 'Rc', 'Rt', 'Hw', 'Cy', 'Ac'].forEach((_, i) => {
-                                        cells.push(<th key={`col-sum-${i}`} className="py-0.5 px-1 border-b border-gray-300 bg-gray-100 text-[9px] font-mono font-bold text-gray-500 text-center">{colNum++}</th>);
-                                    });
-                                    return cells;
-                                })()}
-                            </tr>
                             {/* Stop Names Row - spans ARR+R+DEP for stops with recovery */}
                             <tr>
                                 <th rowSpan={2} className="p-2 border-b bg-gray-50 sticky left-0 z-30 text-xs font-semibold text-gray-500 uppercase align-middle">Block</th>
@@ -353,7 +329,7 @@ export const SingleRouteView: React.FC<SingleRouteViewProps> = ({ table, showSum
                                         key={stop}
                                         colSpan={stopsWithRecovery.has(stop) ? 3 : 1}
                                         className="p-2 border-b border-x border-gray-200 text-[10px] font-semibold text-gray-700 uppercase text-center align-bottom bg-gray-50"
-                                        style={{ minWidth: stopsWithRecovery.has(stop) ? '140px' : '60px' }}
+                                        style={{ minWidth: stopsWithRecovery.has(stop) ? '168px' : '80px' }}
                                         title={stop}
                                     >
                                         <div className="break-words leading-tight">{stop}</div>
@@ -365,6 +341,7 @@ export const SingleRouteView: React.FC<SingleRouteViewProps> = ({ table, showSum
                                 <th rowSpan={2} className="p-2 border-b text-center text-xs font-semibold align-middle">Hdwy</th>
                                 <th rowSpan={2} className="p-2 border-b text-center text-xs font-semibold align-middle">Cycle</th>
                                 <th rowSpan={2} className="p-2 border-b text-center text-xs font-semibold align-middle">Actions</th>
+                                <th rowSpan={2} className="p-2 border-b text-center text-xs font-semibold align-middle">Trip #</th>
                             </tr>
                             {/* ARR / R / DEP Subheaders Row */}
                             <tr className="bg-gray-50">
@@ -372,12 +349,12 @@ export const SingleRouteView: React.FC<SingleRouteViewProps> = ({ table, showSum
                                     <React.Fragment key={`sub-${stop}`}>
                                         {stopsWithRecovery.has(stop) ? (
                                             <>
-                                                <th className="py-1 px-1 border-b border-gray-200 text-[9px] font-medium text-gray-500 text-center" style={{ minWidth: '55px', width: '55px' }}>ARR</th>
-                                                <th className="py-1 px-1 border-b border-gray-200 text-[9px] font-medium text-blue-600 text-center bg-blue-50" style={{ minWidth: '28px', width: '28px' }}>R</th>
-                                                <th className="py-1 px-1 border-b border-gray-200 text-[9px] font-medium text-gray-500 text-center" style={{ minWidth: '55px', width: '55px' }}>DEP</th>
+                                                <th className="py-1 px-1 border-b border-gray-200 text-[9px] font-medium text-gray-500 text-center" style={{ minWidth: '56px', width: '56px' }}>ARR</th>
+                                                <th className="py-1 px-1 border-b border-gray-200 text-[9px] font-medium text-blue-600 text-center bg-blue-50" style={{ minWidth: '32px', width: '32px' }}>R</th>
+                                                <th className="py-1 px-1 border-b border-gray-200 text-[9px] font-medium text-gray-500 text-center" style={{ minWidth: '80px', width: '80px' }}>DEP</th>
                                             </>
                                         ) : (
-                                            <th className="py-1 px-1 border-b border-gray-200 text-[9px] font-medium text-gray-500 text-center" style={{ minWidth: '55px', width: '55px' }}>DEP</th>
+                                            <th className="py-1 px-1 border-b border-gray-200 text-[9px] font-medium text-gray-500 text-center" style={{ minWidth: '80px', width: '80px' }}>DEP</th>
                                         )}
                                     </React.Fragment>
                                 ))}
@@ -395,20 +372,25 @@ export const SingleRouteView: React.FC<SingleRouteViewProps> = ({ table, showSum
                                     {table.stops.map(stop => {
                                         // Calculate diff from original
                                         const originalTrip = originalTable?.trips.find(t => t.id === trip.id);
-                                        const depMin = TimeUtils.toMinutes(trip.stops[stop]);
-                                        const originalDepMin = originalTrip ? TimeUtils.toMinutes(originalTrip.stops[stop]) : null;
-                                        const depDiff = (depMin !== null && originalDepMin !== null) ? depMin - originalDepMin : 0;
+
+                                        // NOTE: trip.stops[stop] contains ARRIVAL time (consistent with RoundTripTableView)
+                                        // We ADD recovery to get departure time
+                                        const arrMin = TimeUtils.toMinutes(trip.stops[stop]);
+                                        const originalArrMin = originalTrip ? TimeUtils.toMinutes(originalTrip.stops[stop]) : null;
+                                        const arrDiff = (arrMin !== null && originalArrMin !== null) ? arrMin - originalArrMin : 0;
 
                                         const originalRec = originalTrip?.recoveryTimes?.[stop] || 0;
                                         const currentRec = trip.recoveryTimes?.[stop] || 0;
                                         const recDiff = currentRec - originalRec;
 
-                                        // Calculate arrival time = departure - recovery
+                                        // Calculate departure time = arrival + recovery
                                         const hasRecovery = stopsWithRecovery.has(stop);
-                                        const arrMin = hasRecovery && depMin !== null ? depMin - currentRec : null;
+                                        const depMin = hasRecovery && arrMin !== null ? arrMin + currentRec : arrMin;
+                                        const depDiff = (depMin !== null && originalArrMin !== null)
+                                            ? depMin - (originalArrMin + originalRec)
+                                            : 0;
                                         const arrTime = arrMin !== null ? TimeUtils.fromMinutes(arrMin) : '';
-                                        const originalArrMin = hasRecovery && originalDepMin !== null ? originalDepMin - originalRec : null;
-                                        const arrDiff = (arrMin !== null && originalArrMin !== null) ? arrMin - originalArrMin : 0;
+                                        const depTime = depMin !== null ? TimeUtils.fromMinutes(depMin) : '';
 
                                         // Check if this stop is an interline point
                                         const normalizeStop = (s: string) => s.toLowerCase().trim().replace(/\s+/g, ' ');
@@ -439,8 +421,8 @@ export const SingleRouteView: React.FC<SingleRouteViewProps> = ({ table, showSum
                                             <React.Fragment key={stop}>
                                                 {hasRecovery ? (
                                                     <>
-                                                        {/* ARR Column - same width as DEP */}
-                                                        <td className={`p-0 border-r relative ${isInterlineIncoming ? 'bg-purple-50' : ''}`} style={{ minWidth: '55px', width: '55px' }}>
+                                                        {/* ARR Column */}
+                                                        <td className={`p-0 border-r relative ${isInterlineIncoming ? 'bg-purple-50' : ''}`} style={{ minWidth: '56px', width: '56px' }}>
                                                             <div className="flex items-center justify-center">
                                                                 <span className={`w-full font-mono text-xs text-center p-1 text-gray-600 ${arrDiff !== 0 ? 'font-bold' : ''}`}>
                                                                     {arrTime}
@@ -458,7 +440,7 @@ export const SingleRouteView: React.FC<SingleRouteViewProps> = ({ table, showSum
                                                             </div>
                                                         </td>
                                                         {/* R Column */}
-                                                        <td className="p-1 text-center border-r bg-blue-50/30 relative group/rec" style={{ minWidth: '28px', width: '28px' }}>
+                                                        <td className="p-1 text-center border-r bg-blue-50/30 relative group/rec" style={{ minWidth: '32px', width: '32px' }}>
                                                             <span className={`text-xs font-bold text-blue-700 ${recDiff !== 0 ? 'underline' : ''}`}>{currentRec || ''}</span>
                                                             {recDiff !== 0 && (
                                                                 <span className={`absolute top-0 right-0 text-[9px] font-bold px-0.5 rounded-bl ${recDiff > 0 ? 'text-green-600 bg-green-50' : 'text-red-600 bg-red-50'}`}>
@@ -472,12 +454,12 @@ export const SingleRouteView: React.FC<SingleRouteViewProps> = ({ table, showSum
                                                                 </div>
                                                             )}
                                                         </td>
-                                                        {/* DEP Column - same width as ARR */}
-                                                        <td className={`p-0 border-r relative group/time ${isInterlineOutgoing ? 'bg-blue-50' : ''}`} style={{ minWidth: '55px', width: '55px' }}>
+                                                        {/* DEP Column */}
+                                                        <td className={`p-0 border-r relative group/time ${isInterlineOutgoing ? 'bg-blue-50' : ''}`} style={{ minWidth: '80px', width: '80px' }}>
                                                             <div className="flex items-center justify-center">
                                                                 <input
                                                                     type="text"
-                                                                    value={trip.stops[stop] || ''}
+                                                                    value={depTime}
                                                                     onChange={(e) => onCellEdit?.(trip.id, stop, sanitizeInput(e.target.value))}
                                                                     onBlur={(e) => {
                                                                         if (e.target.value && onCellEdit) {
@@ -510,11 +492,11 @@ export const SingleRouteView: React.FC<SingleRouteViewProps> = ({ table, showSum
                                                     </>
                                                 ) : (
                                                     /* DEP only (no recovery at this stop) */
-                                                    <td className={`p-0 border-r relative group/time ${isInterlineOutgoing ? 'bg-blue-50' : ''} ${isInterlineIncoming ? 'bg-purple-50' : ''}`} style={{ minWidth: '55px', width: '55px' }}>
+                                                    <td className={`p-0 border-r relative group/time ${isInterlineOutgoing ? 'bg-blue-50' : ''} ${isInterlineIncoming ? 'bg-purple-50' : ''}`} style={{ minWidth: '80px', width: '80px' }}>
                                                         <div className="flex items-center justify-center">
                                                             <input
                                                                 type="text"
-                                                                value={trip.stops[stop] || ''}
+                                                                value={depTime}
                                                                 onChange={(e) => onCellEdit?.(trip.id, stop, sanitizeInput(e.target.value))}
                                                                 onBlur={(e) => {
                                                                     if (e.target.value && onCellEdit) {
@@ -596,6 +578,7 @@ export const SingleRouteView: React.FC<SingleRouteViewProps> = ({ table, showSum
                                             )}
                                         </div>
                                     </td>
+                                    <td className="p-2 text-center text-xs font-mono">{idx + 1}</td>
                                 </tr>
                             ))}
                         </tbody>

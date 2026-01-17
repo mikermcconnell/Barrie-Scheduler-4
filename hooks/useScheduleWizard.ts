@@ -24,7 +24,7 @@ import { saveProject, getProject, NewScheduleProject } from '../utils/newSchedul
 
 // Constants
 export const DEFAULT_CYCLE_TIME = 60;
-export const DEFAULT_RECOVERY_RATIO = 15;
+export const DEFAULT_RECOVERY_RATIO = 0;  // 0% since GTFS times are complete
 export const DEFAULT_ROUTE_NUMBER = '10';
 export const MAX_FILES = 2;
 

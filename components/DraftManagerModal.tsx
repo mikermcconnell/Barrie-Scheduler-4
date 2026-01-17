@@ -122,8 +122,8 @@ export const DraftManagerModal: React.FC<Props> = ({
                             <FolderOpen size={20} className="text-blue-600" />
                         </div>
                         <div>
-                            <h2 className="text-lg font-bold text-gray-900">Your Drafts</h2>
-                            <p className="text-xs text-gray-500">{drafts.length} saved draft{drafts.length !== 1 ? 's' : ''}</p>
+                            <h2 className="text-lg font-bold text-gray-900">Legacy Drafts</h2>
+                            <p className="text-xs text-gray-500">{drafts.length} saved legacy draft{drafts.length !== 1 ? 's' : ''}</p>
                         </div>
                     </div>
                     <div className="flex items-center gap-2">

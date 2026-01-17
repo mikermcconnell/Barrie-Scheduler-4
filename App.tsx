@@ -7,7 +7,7 @@ import { ToastProvider } from './components/ToastContext';
 import { AuthModal } from './components/AuthModal';
 import { FileManager } from './components/FileManager';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { LayoutDashboard, Bus, Settings, Bell, ArrowRight, ArrowLeft, Map, CheckCircle2, User, LogOut, FolderOpen, ChevronDown, ChevronRight, Loader2, Wifi, FileSpreadsheet, Plus, Download, CalendarPlus, Timer, BarChart2, Settings2, Sparkles } from 'lucide-react';
+import { LayoutDashboard, Bus, Settings, Bell, ArrowRight, ArrowLeft, Map, User, LogOut, FolderOpen, ChevronDown, ChevronRight, Loader2, FileSpreadsheet, Plus, Download, CalendarPlus, Timer, BarChart2, Settings2, Sparkles } from 'lucide-react';
 import { Header, View } from './components/Header';
 
 
@@ -68,18 +68,6 @@ const AppContent: React.FC = () => {
         onShowAuthModal={() => setShowAuthModal(true)}
       />
 
-      {/* Breadcrumb / Navigation State */}
-      {currentView !== 'home' && (
-        <div className="bg-white border-b border-gray-100 px-6 py-2 flex-shrink-0">
-          <div className="mx-auto flex items-center gap-2 text-sm font-bold text-gray-400 max-w-[1920px] w-full">
-            <span className="hover:text-gray-600 cursor-pointer" onClick={() => setCurrentView('home')}>Home</span>
-            <ArrowRight size={14} />
-            <span className="text-brand-blue bg-blue-50 px-2 py-0.5 rounded-md">
-              {currentView === 'ondemand' ? 'Transit On-Demand' : 'Scheduled Transit'}
-            </span>
-          </div>
-        </div>
-      )}
 
       <main className={`flex-1 overflow-hidden relative flex flex-col mx-auto w-full px-6 py-8 ${currentView === 'home' ? 'max-w-7xl' : 'max-w-[1920px]'}`}>
 
@@ -88,9 +76,6 @@ const AppContent: React.FC = () => {
           <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 overflow-y-auto h-full">
             <div className="text-center mb-12 mt-8">
               <h2 className="text-4xl font-extrabold text-gray-800 mb-4">Select Workspace</h2>
-              <p className="text-xl text-gray-500 font-semibold max-w-2xl mx-auto">
-                Choose between managing dynamic Transit On-Demand shifts or optimizing Fixed Route schedules.
-              </p>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-4xl mx-auto pb-12">
@@ -127,7 +112,7 @@ const AppContent: React.FC = () => {
                 </div>
                 <h3 className="text-2xl font-extrabold text-gray-800 mb-2 group-hover:text-brand-green transition-colors">Scheduled Transit</h3>
                 <p className="text-gray-500 font-bold mb-6">
-                  Manage fixed routes (100, 200, 8A/B), set timetables, and monitor headway compliance.
+                  Manage fixed routes (2, 7, 8A/B, 100), set timetables, and monitor headway compliance.
                 </p>
                 <div className="flex items-center gap-2 text-brand-green font-extrabold uppercase tracking-wide text-sm">
                   Enter Workspace <ArrowRight size={16} />
@@ -135,16 +120,6 @@ const AppContent: React.FC = () => {
               </button>
             </div>
 
-            <div className="mt-8 flex justify-center gap-8 text-gray-400 font-bold text-sm pb-8">
-              <div className="flex items-center gap-2">
-                <CheckCircle2 size={16} className="text-brand-green" />
-                System Operational
-              </div>
-              <div className="flex items-center gap-2">
-                <Wifi size={16} className="text-brand-green" />
-                Live Connection
-              </div>
-            </div>
           </div>
         )}
 

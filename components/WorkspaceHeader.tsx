@@ -57,6 +57,11 @@ interface WorkspaceHeaderProps {
     onRedo?: () => void;
     // Hide autosave when parent handles it
     hideAutoSave?: boolean;
+    // Publish action
+    onPublish?: () => void;
+    publishLabel?: string;
+    isPublishing?: boolean;
+    publishDisabled?: boolean;
 }
 
 export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
@@ -83,7 +88,11 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
     canRedo,
     onUndo,
     onRedo,
-    hideAutoSave
+    hideAutoSave,
+    onPublish,
+    publishLabel = 'Publish',
+    isPublishing = false,
+    publishDisabled = false
 }) => {
     return (
         <div className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between sticky top-0 z-[100] transition-all shadow-sm">
@@ -259,6 +268,19 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
                             </div>
                         </div>
 
+                        <div className="h-8 w-px bg-gray-200"></div>
+                    </>
+                )}
+
+                {onPublish && (
+                    <>
+                        <button
+                            onClick={onPublish}
+                            disabled={publishDisabled || isPublishing}
+                            className="px-4 py-2 rounded-lg text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {isPublishing ? 'Publishing...' : publishLabel}
+                        </button>
                         <div className="h-8 w-px bg-gray-200"></div>
                     </>
                 )}
