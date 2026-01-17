@@ -1,121 +1,165 @@
 /**
  * Route Direction Configuration
  *
- * Defines how direction works for each Barrie Transit route.
- *
- * Types:
- * - linear: Has North and South directions (may use A/B suffix as direction indicator)
- * - loop: Single direction (clockwise or counter-clockwise)
+ * Unified "Cycle" model for all Barrie Transit routes.
+ * All routes are represented as cycles with 1 or 2 directional segments:
+ * - Bidirectional routes: 2 segments (North/South)
+ * - Loop routes: 1 segment (Clockwise/Counter-clockwise)
  *
  * A/B Suffix Meanings:
  * - Routes 2, 7, 12: A = North, B = South (suffix IS the direction)
  * - Routes 8A, 8B: A and B are route variants (each has its own NB + SB)
  */
 
+// =============================================================================
+// NEW UNIFIED TYPES
+// =============================================================================
+
+/**
+ * A directional segment of a route.
+ * Linear routes have 2 segments (North, South).
+ * Loop routes have 1 segment (Clockwise, Counter-clockwise).
+ */
+export interface RouteSegment {
+    /** Direction/segment name: "North", "South", "Clockwise", "Counter-clockwise" */
+    name: string;
+    /** Route variant for this segment (e.g., "12A", "12B", "100") */
+    variant: string;
+    /** Terminus/endpoint for this direction (optional for loops) */
+    terminus?: string;
+}
+
+/**
+ * Unified route configuration using segments.
+ * Check segments.length to determine route type:
+ * - 1 segment = loop route
+ * - 2 segments = bidirectional (linear) route
+ */
+export interface CycleRouteConfig {
+    /** Directional segments (1 for loops, 2 for linear) */
+    segments: RouteSegment[];
+    /** True if A/B suffix indicates direction (e.g., 12A=North, 12B=South) */
+    suffixIsDirection?: boolean;
+}
+
+// Type alias for the unified config
+export type RouteConfig = CycleRouteConfig;
+
+// =============================================================================
+// LEGACY TYPE ALIASES (for gradual migration - can be removed later)
+// =============================================================================
+
+/** @deprecated Use CycleRouteConfig with segments.length check instead */
 export type RouteType = 'linear' | 'loop';
+/** @deprecated Use segment.name instead */
 export type LoopDirection = 'clockwise' | 'counter-clockwise';
 
-export interface LinearRouteConfig {
-    type: 'linear';
-    northVariant: string;  // Route name for northbound (e.g., "12A", "400")
-    southVariant: string;  // Route name for southbound (e.g., "12B", "400")
-    northTerminus: string; // North end terminal
-    southTerminus: string; // South end terminal
+// =============================================================================
+// HELPER FUNCTIONS FOR SEGMENT-BASED CONFIG
+// =============================================================================
+
+/**
+ * Check if a route is a loop (single segment).
+ */
+export function isLoop(config: CycleRouteConfig | null | undefined): boolean {
+    return config?.segments.length === 1;
 }
 
-export interface LoopRouteConfig {
-    type: 'loop';
-    direction: LoopDirection;
-    variant: string;  // Route name (e.g., "100", "10")
+/**
+ * Check if a route is bidirectional (two segments).
+ */
+export function isBidirectional(config: CycleRouteConfig | null | undefined): boolean {
+    return config?.segments.length === 2;
 }
 
-export type RouteConfig = LinearRouteConfig | LoopRouteConfig;
+/**
+ * Get a segment by name (e.g., "North", "Clockwise").
+ */
+export function getSegmentByName(config: CycleRouteConfig | null | undefined, name: string): RouteSegment | undefined {
+    return config?.segments.find(s => s.name.toLowerCase() === name.toLowerCase());
+}
+
+/**
+ * Get the primary/first segment (useful for loops).
+ */
+export function getPrimarySegment(config: CycleRouteConfig | null | undefined): RouteSegment | undefined {
+    return config?.segments[0];
+}
 
 /**
  * Master route direction configuration.
  * Key is the base route number as it appears in schedule files.
  */
-export const ROUTE_DIRECTIONS: Record<string, RouteConfig> = {
-    // Route 400 - Linear, uses explicit North/South
+export const ROUTE_DIRECTIONS: Record<string, CycleRouteConfig> = {
+    // Route 400 - Bidirectional, uses explicit North/South
     '400': {
-        type: 'linear',
-        northVariant: '400',
-        southVariant: '400',
-        northTerminus: 'RVH',
-        southTerminus: 'Park Place',
+        segments: [
+            { name: 'North', variant: '400', terminus: 'RVH' },
+            { name: 'South', variant: '400', terminus: 'Park Place' },
+        ],
     },
 
-    // Route 2 - Linear, A/B suffix = direction
+    // Route 2 - Bidirectional, A/B suffix = direction
     '2': {
-        type: 'linear',
-        northVariant: '2A',
-        southVariant: '2B',
-        northTerminus: 'Downtown',
-        southTerminus: 'Park Place',
+        segments: [
+            { name: 'North', variant: '2A', terminus: 'Downtown' },
+            { name: 'South', variant: '2B', terminus: 'Park Place' },
+        ],
+        suffixIsDirection: true,
     },
 
-    // Route 7 - Linear, A/B suffix = direction
+    // Route 7 - Bidirectional, A/B suffix = direction
     '7': {
-        type: 'linear',
-        northVariant: '7A',
-        southVariant: '7B',
-        northTerminus: 'Georgian College',
-        southTerminus: 'Park Place',
+        segments: [
+            { name: 'North', variant: '7A', terminus: 'Georgian College' },
+            { name: 'South', variant: '7B', terminus: 'Park Place' },
+        ],
+        suffixIsDirection: true,
     },
 
-    // Route 8A - Linear, full route with both directions
+    // Route 8A - Bidirectional, full route with both directions
     '8A': {
-        type: 'linear',
-        northVariant: '8A',
-        southVariant: '8A',
-        northTerminus: 'Georgian College',
-        southTerminus: 'Barrie South GO',
+        segments: [
+            { name: 'North', variant: '8A', terminus: 'Georgian College' },
+            { name: 'South', variant: '8A', terminus: 'Barrie South GO' },
+        ],
     },
 
-    // Route 8B - Linear, full route with both directions
+    // Route 8B - Bidirectional, full route with both directions
     '8B': {
-        type: 'linear',
-        northVariant: '8B',
-        southVariant: '8B',
-        northTerminus: 'Georgian College',
-        southTerminus: 'Barrie South GO',
+        segments: [
+            { name: 'North', variant: '8B', terminus: 'Georgian College' },
+            { name: 'South', variant: '8B', terminus: 'Barrie South GO' },
+        ],
     },
 
     // Route 10 - Loop (clockwise)
     '10': {
-        type: 'loop',
-        direction: 'clockwise',
-        variant: '10',
+        segments: [{ name: 'Clockwise', variant: '10' }],
     },
 
     // Route 11 - Loop (counter-clockwise)
     '11': {
-        type: 'loop',
-        direction: 'counter-clockwise',
-        variant: '11',
+        segments: [{ name: 'Counter-clockwise', variant: '11' }],
     },
 
-    // Route 12 - Linear, A/B suffix = direction
+    // Route 12 - Bidirectional, A/B suffix = direction
     '12': {
-        type: 'linear',
-        northVariant: '12A',
-        southVariant: '12B',
-        northTerminus: 'Georgian College',
-        southTerminus: 'Barrie South GO',
+        segments: [
+            { name: 'North', variant: '12A', terminus: 'Georgian College' },
+            { name: 'South', variant: '12B', terminus: 'Barrie South GO' },
+        ],
+        suffixIsDirection: true,
     },
 
     // Route 100 - Loop (clockwise)
     '100': {
-        type: 'loop',
-        direction: 'clockwise',
-        variant: '100',
+        segments: [{ name: 'Clockwise', variant: '100' }],
     },
 
     // Route 101 - Loop (counter-clockwise)
     '101': {
-        type: 'loop',
-        direction: 'counter-clockwise',
-        variant: '101',
+        segments: [{ name: 'Counter-clockwise', variant: '101' }],
     },
 };
 
@@ -133,11 +177,14 @@ export function getRouteVariant(baseRoute: string, direction: 'North' | 'South')
         return baseRoute;
     }
 
-    if (config.type === 'loop') {
-        return config.variant;
+    // For loops, return the single segment's variant
+    if (config.segments.length === 1) {
+        return config.segments[0].variant;
     }
 
-    return direction === 'North' ? config.northVariant : config.southVariant;
+    // For bidirectional routes, find the matching segment
+    const segment = config.segments.find(s => s.name === direction);
+    return segment?.variant ?? baseRoute;
 }
 
 /**
@@ -153,23 +200,27 @@ export function getDirectionDisplay(baseRoute: string, direction?: 'North' | 'So
         return direction || 'Unknown';
     }
 
-    if (config.type === 'loop') {
-        return config.direction === 'clockwise' ? 'Clockwise' : 'Counter-clockwise';
+    // For loops, return the single segment's name
+    if (config.segments.length === 1) {
+        return config.segments[0].name;
     }
 
     if (!direction) {
         return 'Unknown';
     }
 
-    const variant = direction === 'North' ? config.northVariant : config.southVariant;
-    const terminus = direction === 'North' ? config.northTerminus : config.southTerminus;
-
-    // If variant differs from base (e.g., 12A vs 12), show it
-    if (variant !== baseRoute) {
-        return `${variant} (${direction} → ${terminus})`;
+    // For bidirectional routes, find the matching segment
+    const segment = config.segments.find(s => s.name === direction);
+    if (!segment) {
+        return direction;
     }
 
-    return `${direction} → ${terminus}`;
+    // If variant differs from base (e.g., 12A vs 12), show it
+    if (segment.variant !== baseRoute) {
+        return `${segment.variant} (${direction} → ${segment.terminus})`;
+    }
+
+    return `${direction} → ${segment.terminus}`;
 }
 
 /**
@@ -179,10 +230,17 @@ export function getDirectionDisplay(baseRoute: string, direction?: 'North' | 'So
  */
 export function usesVariantAsDirection(baseRoute: string): boolean {
     const config = ROUTE_DIRECTIONS[baseRoute];
-    if (!config || config.type === 'loop') return false;
+    if (!config || config.segments.length === 1) return false;
 
-    // If north and south variants differ, the suffix IS the direction
-    return config.northVariant !== config.southVariant;
+    // Use explicit suffixIsDirection flag, or infer from differing variants
+    if (config.suffixIsDirection !== undefined) {
+        return config.suffixIsDirection;
+    }
+
+    // Fallback: if north and south variants differ, the suffix IS the direction
+    const northSegment = config.segments.find(s => s.name === 'North');
+    const southSegment = config.segments.find(s => s.name === 'South');
+    return northSegment?.variant !== southSegment?.variant;
 }
 
 /**
@@ -225,10 +283,12 @@ export interface ParsedRouteInfo {
     direction: Direction | null;
     /** The variant name (e.g., "12A", "400", "8A") */
     variant: string;
-    /** Route type from config */
-    type: RouteType | null;
+    /** Whether this is a loop route (1 segment) */
+    isLoop: boolean;
     /** Whether this route uses A/B suffix as direction (true for 2, 7, 12; false for 8A, 8B) */
     suffixIsDirection: boolean;
+    /** @deprecated Use isLoop instead. Kept for backward compatibility. */
+    type: RouteType | null;
 }
 
 /**
@@ -255,12 +315,14 @@ export function parseRouteInfo(routeIdentifier: string): ParsedRouteInfo {
     // Check if this is an exact match (8A, 8B, 400, 10, etc.)
     if (ROUTE_DIRECTIONS[cleaned]) {
         const config = ROUTE_DIRECTIONS[cleaned];
+        const routeIsLoop = config.segments.length === 1;
         return {
             baseRoute: cleaned,
             direction: null, // Direction not embedded in the identifier itself
             variant: cleaned,
-            type: config.type,
+            isLoop: routeIsLoop,
             suffixIsDirection: false,
+            type: routeIsLoop ? 'loop' : 'linear', // Backward compat
         };
     }
 
@@ -272,16 +334,17 @@ export function parseRouteInfo(routeIdentifier: string): ParsedRouteInfo {
 
         // Check if the numeric part is a route that uses A/B as direction
         const baseConfig = ROUTE_DIRECTIONS[numericPart];
-        if (baseConfig && baseConfig.type === 'linear') {
+        if (baseConfig && baseConfig.segments.length === 2) {
             // Verify this route uses variant suffixes for direction
-            if (baseConfig.northVariant !== baseConfig.southVariant) {
+            if (baseConfig.suffixIsDirection) {
                 // Routes like 2, 7, 12 where A=North, B=South
                 return {
                     baseRoute: numericPart,
                     direction: suffix === 'A' ? 'North' : 'South',
                     variant: cleaned,
-                    type: 'linear',
+                    isLoop: false,
                     suffixIsDirection: true,
+                    type: 'linear', // Backward compat
                 };
             }
         }
@@ -294,12 +357,14 @@ export function parseRouteInfo(routeIdentifier: string): ParsedRouteInfo {
     const withoutSuffix = cleaned.replace(/[AB]$/i, '');
     if (ROUTE_DIRECTIONS[withoutSuffix]) {
         const config = ROUTE_DIRECTIONS[withoutSuffix];
+        const routeIsLoop = config.segments.length === 1;
         return {
             baseRoute: withoutSuffix,
             direction: null,
             variant: cleaned,
-            type: config.type,
+            isLoop: routeIsLoop,
             suffixIsDirection: false,
+            type: routeIsLoop ? 'loop' : 'linear', // Backward compat
         };
     }
 
@@ -308,8 +373,9 @@ export function parseRouteInfo(routeIdentifier: string): ParsedRouteInfo {
         baseRoute: cleaned,
         direction: null,
         variant: cleaned,
-        type: null,
+        isLoop: false,
         suffixIsDirection: false,
+        type: null,
     };
 }
 
@@ -358,14 +424,20 @@ export function inferDirectionFromTerminus(
     lastStop: string
 ): Direction | null {
     const config = getRouteConfig(routeNumber);
-    if (!config || config.type !== 'linear') {
+    if (!config || config.segments.length !== 2) {
+        return null; // Can't infer for loops or unknown routes
+    }
+
+    const northSegment = config.segments.find(s => s.name === 'North');
+    const southSegment = config.segments.find(s => s.name === 'South');
+    if (!northSegment?.terminus || !southSegment?.terminus) {
         return null;
     }
 
     const firstLower = firstStop.toLowerCase();
     const lastLower = lastStop.toLowerCase();
-    const northTerminus = config.northTerminus.toLowerCase();
-    const southTerminus = config.southTerminus.toLowerCase();
+    const northTerminus = northSegment.terminus.toLowerCase();
+    const southTerminus = southSegment.terminus.toLowerCase();
 
     // Trip starting from south terminus going to north = Northbound
     if (firstLower.includes(southTerminus) || southTerminus.includes(firstLower)) {
@@ -389,29 +461,36 @@ export function inferDirectionFromTerminus(
 }
 
 /**
- * Get both directions for a linear route.
+ * Get both directions for a bidirectional route.
  * Returns the variant names for display/selection.
  *
  * @param baseRoute - Base route number (e.g., "12", "400")
- * @returns Object with north/south variants and termini, or null if not a linear route
+ * @returns Object with north/south variants and termini, or null if not a bidirectional route
  */
 export function getRouteDirections(baseRoute: string): {
     north: { variant: string; terminus: string };
     south: { variant: string; terminus: string };
 } | null {
     const config = getRouteConfig(baseRoute);
-    if (!config || config.type !== 'linear') {
+    if (!config || config.segments.length !== 2) {
+        return null;
+    }
+
+    const northSegment = config.segments.find(s => s.name === 'North');
+    const southSegment = config.segments.find(s => s.name === 'South');
+
+    if (!northSegment || !southSegment) {
         return null;
     }
 
     return {
         north: {
-            variant: config.northVariant,
-            terminus: config.northTerminus,
+            variant: northSegment.variant,
+            terminus: northSegment.terminus ?? '',
         },
         south: {
-            variant: config.southVariant,
-            terminus: config.southTerminus,
+            variant: southSegment.variant,
+            terminus: southSegment.terminus ?? '',
         },
     };
 }

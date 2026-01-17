@@ -260,7 +260,9 @@ export const SingleRouteView: React.FC<SingleRouteViewProps> = ({ table, showSum
                     const tableDirection = extractDirectionFromName(table.routeName);
                     const isNorth = tableDirection === 'North';
                     const isSouth = tableDirection === 'South';
-                    const isLoop = config?.type === 'loop';
+                    const isLoop = config?.segments.length === 1;
+                    const northSegment = config?.segments.find(s => s.name === 'North');
+                    const southSegment = config?.segments.find(s => s.name === 'South');
 
                     if (!config) return null;
 
@@ -271,27 +273,27 @@ export const SingleRouteView: React.FC<SingleRouteViewProps> = ({ table, showSum
                                 <span className="flex items-center gap-2">
                                     <span className="text-blue-600">🔄</span>
                                     <code className="bg-blue-100 px-2 py-0.5 rounded font-mono text-blue-800">
-                                        {config.direction}
+                                        {config.segments[0].name}
                                     </code>
                                 </span>
-                            ) : config.type === 'linear' && (
+                            ) : config.segments.length === 2 && (
                                 <span className="flex items-center gap-2">
-                                    {isNorth && (
+                                    {isNorth && northSegment && (
                                         <>
                                             <span className="text-blue-600">↑</span>
                                             <code className="bg-green-100 px-2 py-0.5 rounded font-mono text-green-800 font-bold">
-                                                {config.northVariant}
+                                                {northSegment.variant}
                                             </code>
-                                            <span className="text-gray-500">→ {config.northTerminus}</span>
+                                            <span className="text-gray-500">→ {northSegment.terminus}</span>
                                         </>
                                     )}
-                                    {isSouth && (
+                                    {isSouth && southSegment && (
                                         <>
                                             <span className="text-blue-600">↓</span>
                                             <code className="bg-orange-100 px-2 py-0.5 rounded font-mono text-orange-800 font-bold">
-                                                {config.southVariant}
+                                                {southSegment.variant}
                                             </code>
-                                            <span className="text-gray-500">→ {config.southTerminus}</span>
+                                            <span className="text-gray-500">→ {southSegment.terminus}</span>
                                         </>
                                     )}
                                     {!isNorth && !isSouth && (
@@ -305,8 +307,8 @@ export const SingleRouteView: React.FC<SingleRouteViewProps> = ({ table, showSum
                                                 }}
                                             >
                                                 <option value="" disabled>Select direction...</option>
-                                                <option value="North">↑ North → {config.northTerminus}</option>
-                                                <option value="South">↓ South → {config.southTerminus}</option>
+                                                <option value="North">↑ North → {northSegment?.terminus}</option>
+                                                <option value="South">↓ South → {southSegment?.terminus}</option>
                                             </select>
                                         ) : (
                                             <span className="text-gray-500 italic">Direction not detected</span>

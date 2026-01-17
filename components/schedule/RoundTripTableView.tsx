@@ -466,11 +466,13 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                             // (8A/8B are distinct routes, not direction variants)
                             const baseRoute = combined.routeName.split(' ')[0];
                             const config = getRouteConfig(baseRoute);
-                            const isLoop = config?.type === 'loop';
-                            const northVariant = config?.type === 'linear' ? config.northVariant : baseRoute;
-                            const southVariant = config?.type === 'linear' ? config.southVariant : baseRoute;
-                            const northTerminus = config?.type === 'linear' ? config.northTerminus : '';
-                            const southTerminus = config?.type === 'linear' ? config.southTerminus : '';
+                            const isLoop = config?.segments.length === 1;
+                            const northSegment = config?.segments.find(s => s.name === 'North');
+                            const southSegment = config?.segments.find(s => s.name === 'South');
+                            const northVariant = northSegment?.variant ?? baseRoute;
+                            const southVariant = southSegment?.variant ?? baseRoute;
+                            const northTerminus = northSegment?.terminus ?? '';
+                            const southTerminus = southSegment?.terminus ?? '';
 
                             return (
                                 <div className="px-6 py-2 bg-blue-50 border-b border-blue-100 flex items-center gap-6 text-xs">
@@ -479,7 +481,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                         <div className="flex items-center gap-2">
                                             <span className="text-blue-600">🔄 Loop:</span>
                                             <code className="bg-blue-100 px-2 py-0.5 rounded font-mono text-blue-800">
-                                                {config?.type === 'loop' ? config.direction : 'Unknown'}
+                                                {config?.segments[0]?.name ?? 'Unknown'}
                                             </code>
                                             <span className="text-gray-400">({(north?.trips?.length || 0) + (south?.trips?.length || 0)} trips)</span>
                                         </div>

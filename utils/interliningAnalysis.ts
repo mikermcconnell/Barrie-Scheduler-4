@@ -109,8 +109,9 @@ export function formatTime(minutes: number): string {
  */
 function getTerminusForDirection(routeNumber: string, direction: 'North' | 'South'): string | null {
     const config = getRouteConfig(routeNumber);
-    if (!config || config.type !== 'linear') return null;
-    return direction === 'North' ? config.northTerminus : config.southTerminus;
+    if (!config || config.segments.length !== 2) return null;
+    const segment = config.segments.find(s => s.name === direction);
+    return segment?.terminus ?? null;
 }
 
 /**

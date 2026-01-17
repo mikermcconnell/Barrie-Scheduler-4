@@ -1019,13 +1019,17 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
             const routeConfig = getRouteConfig(baseName);
             let direction = isNorth ? 'NORTHBOUND' : isSouth ? 'SOUTHBOUND' : 'ALL TRIPS';
             if (routeConfig) {
-                if (routeConfig.type === 'loop') {
-                    direction = `LOOP (${routeConfig.direction.toUpperCase()})`;
-                } else if (routeConfig.type === 'linear') {
-                    if (isNorth) {
-                        direction = `${routeConfig.northVariant} NORTHBOUND → ${routeConfig.northTerminus}`;
-                    } else if (isSouth) {
-                        direction = `${routeConfig.southVariant} SOUTHBOUND → ${routeConfig.southTerminus}`;
+                if (routeConfig.segments.length === 1) {
+                    // Loop route
+                    direction = `LOOP (${routeConfig.segments[0].name.toUpperCase()})`;
+                } else if (routeConfig.segments.length === 2) {
+                    // Bidirectional route
+                    const northSegment = routeConfig.segments.find(s => s.name === 'North');
+                    const southSegment = routeConfig.segments.find(s => s.name === 'South');
+                    if (isNorth && northSegment) {
+                        direction = `${northSegment.variant} NORTHBOUND → ${northSegment.terminus}`;
+                    } else if (isSouth && southSegment) {
+                        direction = `${southSegment.variant} SOUTHBOUND → ${southSegment.terminus}`;
                     }
                 }
             }
