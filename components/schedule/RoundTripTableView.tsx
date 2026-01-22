@@ -1537,9 +1537,14 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                         let displayCycleTime = row.totalCycleTime;
 
                                         if (isRoute8A(combined.routeName) && tripWithInterline?._interlinePartial) {
-                                            // Pure runtime = travel time + recovery time (excludes interline wait)
-                                            // After merge, travelTime and recoveryTime include all segments correctly
-                                            displayCycleTime = totalTravel + totalRec;
+                                            // For 8A interline: cycle = travel + Allandale recovery + Barrie South GO recovery
+                                            // Avoid double-counting Georgian College recovery (present in both N and S trips)
+                                            const interlineStopName = tripWithInterline._interlineStop;
+                                            const allandaleRecovery = (interlineStopName && northTrip?.recoveryTimes?.[interlineStopName]) || 5;
+                                            // Get Barrie South GO recovery from the last South stop
+                                            const lastSouthStop = combined.southStops[combined.southStops.length - 1];
+                                            const barrieSouthRecovery = (lastSouthStop && southTrip?.recoveryTimes?.[lastSouthStop]) || 0;
+                                            displayCycleTime = totalTravel + allandaleRecovery + barrieSouthRecovery;
                                         }
 
                                         const headway = northTrip ? headways[northTrip.id] : (southTrip ? headways[southTrip.id] : '-');

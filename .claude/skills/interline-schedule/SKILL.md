@@ -257,7 +257,38 @@ The `linkInterlineTripsAtAllandale()` function pairs Trip 1's arrival with Trip 
 | Stops after Allandale empty | Stop data not merged from departure trip | Check `_mergedFromDepartureTrip` is set; verify departure trip has stop data |
 | Trips not in interline window | Wrong time check | Verify `isInInterlineWindow` returns true for the trip time |
 | Last interline trip has no DEP | No "next" trip to pair with | Expected - last trip of the day won't have a following departure |
-| **Cycle time inflated (~70 min vs ~50 min)** | Wall-clock span includes 35-min interline gap | **FIXED**: Line 1509-1520 uses `totalTravel + totalRec + allandaleRecovery` for 8A interline trips |
+| **Cycle time inflated (172 vs 150 min)** | Georgian College recovery double-counted in N+S | **WIP**: Line 1539-1548 uses `totalTravel + allandaleRecovery + barrieSouthRecovery` to avoid double-counting |
+
+### Cycle Time Calculation (WIP)
+
+**File:** `components/schedule/RoundTripTableView.tsx:1539-1548`
+
+For 8A interline trips, the cycle time requires special handling:
+
+**User's Example Trip (expected 150 min):**
+- Segment 1: Barrie South GO → Allandale = 49 min travel
+- Allandale recovery: 5 min
+- Segment 2: Allandale → Georgian College → Barrie South GO = 96 min travel
+- **Total: 150 min**
+
+**Problem:** Standard calculation (`totalTravel + totalRec`) showed 172 min (22 min too high)
+
+**Root Cause:** Georgian College recovery appears in BOTH:
+- North trip's `recoveryTime` (from merge)
+- South trip's `recoveryTime` (original data)
+
+**Current Fix Attempt:**
+```typescript
+if (isRoute8A(combined.routeName) && tripWithInterline?._interlinePartial) {
+    const interlineStopName = tripWithInterline._interlineStop;
+    const allandaleRecovery = (interlineStopName && northTrip?.recoveryTimes?.[interlineStopName]) || 5;
+    const lastSouthStop = combined.southStops[combined.southStops.length - 1];
+    const barrieSouthRecovery = (lastSouthStop && southTrip?.recoveryTimes?.[lastSouthStop]) || 0;
+    displayCycleTime = totalTravel + allandaleRecovery + barrieSouthRecovery;
+}
+```
+
+**Status:** Still showing incorrect value - needs further investigation into what `totalTravel` contains after the interline merge.
 
 ### Debug Logging
 
