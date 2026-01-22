@@ -132,6 +132,7 @@ const INTERLINE_ROUTES = ['8A', '8B'];
 const INTERLINE_STOP_PATTERN = 'allandale';
 const INTERLINE_START_TIME = 1200; // 8:00 PM in minutes
 const INTERLINE_END_TIME = 120; // 2:00 AM in minutes (next day, wrapped format)
+const INTERLINE_RECOVERY = 5; // Standard 5-minute recovery at Allandale
 
 /**
  * Check if a trip is within the interline time window.
@@ -173,6 +174,32 @@ const isInterlineRoute = (routeName: string): boolean => {
  */
 const isRoute8A = (routeName: string): boolean => {
     return routeName.toUpperCase().includes('8A');
+};
+
+/**
+ * Get recovery time for a stop, with interline override.
+ * For 8A/8B at Allandale during interline hours, always returns 5 min.
+ */
+const getRecoveryForStop = (
+    trip: MasterTrip | undefined,
+    stopName: string,
+    routeName: string
+): number | string => {
+    if (!trip) return '';
+
+    // For interline routes at Allandale during interline hours, always show 5 min
+    if (isInterlineRoute(routeName) && isInterlineStop(stopName)) {
+        const arrivalTimeStr = getStopValue(trip.stops, stopName) || getStopValue(trip.arrivalTimes, stopName);
+        if (arrivalTimeStr) {
+            const arrivalTime = TimeUtils.toMinutes(arrivalTimeStr);
+            if (arrivalTime !== null && isInInterlineWindow(arrivalTime, routeName)) {
+                return INTERLINE_RECOVERY;
+            }
+        }
+    }
+
+    // Default: use trip's recoveryTimes
+    return getStopValue(trip.recoveryTimes, stopName) ?? '';
 };
 
 /**
@@ -1696,7 +1723,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                             <ChevronDown size={10} />
                                                                         </button>
                                                                     )}
-                                                                    <span className="px-2">{northArrivalAtStop ? (northTrip?.recoveryTimes?.[stop] ?? '') : ''}</span>
+                                                                    <span className="px-2">{northArrivalAtStop ? getRecoveryForStop(northTrip, stop, combined.routeName) : ''}</span>
                                                                     {onRecoveryEdit && northTrip && (
                                                                         <button
                                                                             onClick={() => onRecoveryEdit(northTrip.id, stop, 1)}
@@ -1907,7 +1934,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                             <ChevronDown size={10} />
                                                                         </button>
                                                                     )}
-                                                                    <span className="px-2">{southTrip?.recoveryTimes?.[stop] ?? ''}</span>
+                                                                    <span className="px-2">{getRecoveryForStop(southTrip, stop, combined.routeName)}</span>
                                                                     {onRecoveryEdit && southTrip && (
                                                                         <button
                                                                             onClick={() => onRecoveryEdit(southTrip.id, stop, 1)}
