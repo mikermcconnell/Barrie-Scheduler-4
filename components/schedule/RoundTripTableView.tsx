@@ -784,15 +784,18 @@ export const linkInterlineTripsAtAllandale = (
     }
     const allandaleStop = stops[allandaleStopIdx];
 
-    // Check if there are stops both before and after Allandale
+    // Check if there are stops before Allandale (trips must arrive from somewhere)
     const hasStopsBefore = allandaleStopIdx > 0;
-    const hasStopsAfter = allandaleStopIdx < stops.length - 1;
-    if (!hasStopsBefore || !hasStopsAfter) {
-        return trips; // Allandale is at start or end, no splitting needed
+    if (!hasStopsBefore) {
+        return trips; // Allandale is at start, no arriving trips to process
     }
 
+    // Note: hasStopsAfter check removed - Sunday schedules may not have Georgian College
+    // in the North stops array, but we still need to process interline departures
+    const hasStopsAfter = allandaleStopIdx < stops.length - 1;
+
     const stopsBeforeAllandale = stops.slice(0, allandaleStopIdx);
-    const stopsAfterAllandale = stops.slice(allandaleStopIdx + 1);
+    const stopsAfterAllandale = hasStopsAfter ? stops.slice(allandaleStopIdx + 1) : [];
 
     // Step 1: Identify full trips passing through Allandale during interline hours
     // Extract BOTH arrival AND departure times from each trip
