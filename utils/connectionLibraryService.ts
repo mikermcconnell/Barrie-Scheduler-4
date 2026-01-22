@@ -17,11 +17,32 @@ import type {
     ConnectionLibrary,
     ConnectionTarget,
     ConnectionTime,
+    RouteConnectionConfig,
     generateConnectionId
 } from './connectionTypes';
 import { generateConnectionId as genId } from './connectionTypes';
 
 // ============ HELPER FUNCTIONS ============
+
+/**
+ * Remove undefined values from an object (Firebase doesn't accept undefined).
+ */
+function removeUndefined<T>(obj: T): T {
+    if (obj === null || obj === undefined) return obj;
+    if (Array.isArray(obj)) {
+        return obj.map(item => removeUndefined(item)) as T;
+    }
+    if (typeof obj === 'object') {
+        const cleaned: Record<string, unknown> = {};
+        for (const [key, value] of Object.entries(obj)) {
+            if (value !== undefined) {
+                cleaned[key] = removeUndefined(value);
+            }
+        }
+        return cleaned as T;
+    }
+    return obj;
+}
 
 /**
  * Get the Firestore document reference for a team's connection library.
@@ -90,8 +111,10 @@ export async function saveConnectionLibrary(
 ): Promise<void> {
     try {
         const docRef = getLibraryRef(teamId);
+        // Clean undefined values before saving (Firebase doesn't accept undefined)
+        const cleanedTargets = removeUndefined(library.targets);
         await setDoc(docRef, {
-            targets: library.targets,
+            targets: cleanedTargets,
             updatedAt: serverTimestamp(),
             updatedBy: userId
         });
@@ -332,4 +355,67 @@ export async function getRouteTargets(teamId: string): Promise<ConnectionTarget[
     const library = await getConnectionLibrary(teamId);
     if (!library) return [];
     return library.targets.filter(t => t.type === 'route');
+}
+
+// ============ ROUTE CONNECTION CONFIG OPERATIONS ============
+
+/**
+ * Get the Firestore document reference for a route's connection config.
+ * Stored at teams/{teamId}/routeConnectionConfigs/{routeIdentity}
+ */
+function getRouteConfigRef(teamId: string, routeIdentity: string) {
+    return doc(db, 'teams', teamId, 'routeConnectionConfigs', routeIdentity);
+}
+
+/**
+ * Get the connection config for a specific route.
+ * Returns null if no config exists yet.
+ */
+export async function getRouteConnectionConfig(
+    teamId: string,
+    routeIdentity: string
+): Promise<RouteConnectionConfig | null> {
+    try {
+        const docRef = getRouteConfigRef(teamId, routeIdentity);
+        const docSnap = await getDoc(docRef);
+
+        if (!docSnap.exists()) {
+            return null;
+        }
+
+        const data = docSnap.data();
+        return {
+            routeIdentity: data.routeIdentity || routeIdentity,
+            connections: data.connections || [],
+            lastOptimized: timestampToISO(data.lastOptimized),
+            optimizationMode: data.optimizationMode || 'hybrid'
+        };
+    } catch (error) {
+        console.error('Error getting route connection config:', error);
+        throw error;
+    }
+}
+
+/**
+ * Save the connection config for a specific route.
+ */
+export async function saveRouteConnectionConfig(
+    teamId: string,
+    routeIdentity: string,
+    config: RouteConnectionConfig
+): Promise<void> {
+    try {
+        const docRef = getRouteConfigRef(teamId, routeIdentity);
+        // Clean undefined values before saving (Firebase doesn't accept undefined)
+        const cleanedConnections = removeUndefined(config.connections);
+        await setDoc(docRef, {
+            routeIdentity: config.routeIdentity,
+            connections: cleanedConnections,
+            lastOptimized: config.lastOptimized ? serverTimestamp() : null,
+            optimizationMode: config.optimizationMode || 'hybrid'
+        });
+    } catch (error) {
+        console.error('Error saving route connection config:', error);
+        throw error;
+    }
 }

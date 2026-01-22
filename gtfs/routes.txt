@@ -1,0 +1,14 @@
+route_id,agency_id,route_short_name,route_long_name,route_desc,route_type,route_color,route_text_color
+11,478c63c1-9928-4080-bc80-0e8143f4df1b,11,NORTH LOOP,NORTH LOOP to Georgian College  to Downtown Barrie Terminal,3,B2D235,000000
+7B,478c63c1-9928-4080-bc80-0e8143f4df1b,7B,BEAR CREEK,Georgian College to Park Place,3,F58220,000000
+10,478c63c1-9928-4080-bc80-0e8143f4df1b,10,NORTH LOOP,NORTH LOOP to Georgian College to Downtown Barrie Terminal,3,681757,FFFFFF
+400,478c63c1-9928-4080-bc80-0e8143f4df1b,400,EXPRESS,Park Place to RVH,3,00C4DC,000000
+100,478c63c1-9928-4080-bc80-0e8143f4df1b,100,RED,Bayfield - Georgian - Blake ,3,910005,FFFFFF
+101,478c63c1-9928-4080-bc80-0e8143f4df1b,101,BLUE,Blake - College - Bayfield ,3,2464A2,000000
+2A,478c63c1-9928-4080-bc80-0e8143f4df1b,2A,DUNLOP,Park Place to Downtown Barrie Terminal,3,006838,FFFFFF
+7A,478c63c1-9928-4080-bc80-0e8143f4df1b,7A,GROVE,Park Place to Georgian College,3,F58220,000000
+8B,478c63c1-9928-4080-bc80-0e8143f4df1b,8B,Crosstown/Essa,Park Place to Georgian College ,3,000000,FFFFFF
+12A,478c63c1-9928-4080-bc80-0e8143f4df1b,12A,GEORGIAN MALL,Barrie South GO to Georgian Mall,3,F8A1BE,000000
+12B,478c63c1-9928-4080-bc80-0e8143f4df1b,12B,BARRIE SOUTH GO,Georgian Mall to Barrie South GO,3,F8A1BE,000000
+8A,478c63c1-9928-4080-bc80-0e8143f4df1b,8A,RVH/YONGE,Park Place to Downtown Barrie Terminal to Georgian College,3,000000,FFFFFF
+2B,478c63c1-9928-4080-bc80-0e8143f4df1b,2B,PARK PLACE,Downtown Barrie Terminal to Park Place,3,006838,FFFFFF

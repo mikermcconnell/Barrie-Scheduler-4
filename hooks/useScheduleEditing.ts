@@ -133,7 +133,15 @@ export function useScheduleEditing(
                     const nextStop = table.stops[i];
                     const nextTime = TimeUtils.toMinutes(trip.stops[nextStop]);
                     if (nextTime !== null) {
-                        trip.stops[nextStop] = TimeUtils.fromMinutes(nextTime + delta);
+                        const proposedTime = nextTime + delta;
+                        // Validate: don't let time go before previous stop (would create negative segment)
+                        const prevStop = table.stops[i - 1];
+                        const prevTime = TimeUtils.toMinutes(trip.stops[prevStop]);
+                        if (prevTime !== null && proposedTime <= prevTime) {
+                            // Skip cascade - would create invalid timing
+                            break;
+                        }
+                        trip.stops[nextStop] = TimeUtils.fromMinutes(proposedTime);
                     }
                 }
             }
@@ -195,16 +203,25 @@ export function useScheduleEditing(
         if (stopIdx === -1) return;
 
         const oldRec = trip.recoveryTimes?.[stopName] || 0;
-        const newRec = Math.max(0, oldRec + delta);
+        // Bound recovery: can't be negative, and can't exceed travel time - 1 (to avoid negative runtime)
+        const maxRec = Math.max(0, trip.travelTime - 1);
+        const newRec = Math.max(0, Math.min(oldRec + delta, maxRec));
+        const actualDelta = newRec - oldRec; // May differ from requested delta if bounds were hit
+
         if (!trip.recoveryTimes) trip.recoveryTimes = {};
         trip.recoveryTimes[stopName] = newRec;
         trip.recoveryTime = Object.values(trip.recoveryTimes).reduce((sum, v) => sum + (v || 0), 0);
 
-        // Cascade time changes to subsequent stops
+        // Cascade time changes to subsequent stops (both stops and arrivalTimes)
         for (let i = stopIdx + 1; i < table.stops.length; i++) {
             const nextStop = table.stops[i];
             const t = TimeUtils.toMinutes(trip.stops[nextStop]);
-            if (t !== null) trip.stops[nextStop] = TimeUtils.fromMinutes(t + delta);
+            if (t !== null) trip.stops[nextStop] = TimeUtils.fromMinutes(t + actualDelta);
+            // Also update arrivalTimes
+            if (trip.arrivalTimes?.[nextStop]) {
+                const arr = TimeUtils.toMinutes(trip.arrivalTimes[nextStop]);
+                if (arr !== null) trip.arrivalTimes[nextStop] = TimeUtils.fromMinutes(arr + actualDelta);
+            }
         }
         recalculateTrip(trip, table.stops);
         validateRouteTable(table);
@@ -266,15 +283,19 @@ export function useScheduleEditing(
         const newTrip: MasterTrip = {
             ...JSON.parse(JSON.stringify(trip)),
             id: `${trip.id}-dup-${Date.now()}`,
-            tripNumber: table.trips.length + 1,
+            tripNumber: 0, // Will be set by renumbering after sort
+            blockId: '', // Clear blockId - let block reassignment handle it
             startTime: trip.startTime + 1,
             endTime: trip.endTime + 1,
         };
 
-        // Shift all stop times by 1 minute
+        // Shift all stop times and arrival times by 1 minute
         Object.keys(newTrip.stops).forEach(stop => {
             if (newTrip.stops[stop]) {
                 newTrip.stops[stop] = TimeUtils.addMinutes(newTrip.stops[stop], 1);
+            }
+            if (newTrip.arrivalTimes?.[stop]) {
+                newTrip.arrivalTimes[stop] = TimeUtils.addMinutes(newTrip.arrivalTimes[stop], 1);
             }
         });
 
@@ -288,8 +309,11 @@ export function useScheduleEditing(
 
         validateRouteTable(table);
 
+        // Reassign blocks to assign proper blockId to the new trip
+        reassignBlocksForRelatedTables(newScheds, getTrueBaseRoute(table.routeName));
+
         if (logAction) {
-            logAction('add', `Duplicated trip from Block ${trip.blockId}`, {
+            logAction('add', `Duplicated trip from Block ${newTrip.blockId || 'new'}`, {
                 tripId: newTrip.id,
                 blockId: newTrip.blockId,
                 field: 'trip'

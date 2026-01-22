@@ -9,6 +9,7 @@
 
 import type { DayType } from './masterScheduleTypes';
 import type { Direction } from './routeDirectionConfig';
+import { getRouteConfig } from './routeDirectionConfig';
 
 // ============ RAW GTFS ENTITIES (from feed files) ============
 
@@ -291,15 +292,34 @@ export function calendarToDayType(calendar: GTFSCalendar): DayType | null {
 }
 
 /**
- * Infer direction from GTFS direction_id
- * Standard: 0 = outbound, 1 = inbound
- * For Barrie: typically 0 = South, 1 = North (verify with actual data)
+ * Infer direction from GTFS trip data
+ * Priority: 1) Headsign terminus matching, 2) Custom config mapping, 3) Default direction_id
  */
 export function gtfsDirectionToDirection(
     directionId: number | undefined,
     routeId: string,
-    config?: GTFSImportConfig
+    config?: GTFSImportConfig,
+    headsign?: string,
+    routeShortName?: string
 ): Direction | null {
+    // Try headsign-based inference first (most reliable)
+    if (headsign && routeShortName) {
+        const routeConfig = getRouteConfig(routeShortName);
+        if (routeConfig && routeConfig.segments.length === 2) {
+            const headsignLower = headsign.toLowerCase();
+
+            for (const segment of routeConfig.segments) {
+                if (segment.terminus) {
+                    const terminusLower = segment.terminus.toLowerCase();
+                    // Check if headsign contains the terminus name
+                    if (headsignLower.includes(terminusLower) || terminusLower.includes(headsignLower)) {
+                        return segment.name as Direction;
+                    }
+                }
+            }
+        }
+    }
+
     if (directionId === undefined) return null;
 
     // Check for custom mapping

@@ -328,7 +328,7 @@ const parseSheet = (sheet: XLSX.WorkSheet, sheetName: string): ParsedRoute => {
     return route;
 };
 
-const parseStopNamesRow = (row: any[]): StopInfo[] => {
+const parseStopNamesRow = (row: any[], debugDayType?: string): StopInfo[] => {
     const stops: StopInfo[] = [];
 
     for (let i = 2; i < row.length; i++) {  // Start from column C (index 2)

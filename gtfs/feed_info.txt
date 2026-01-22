@@ -1,0 +1,2 @@
+feed_publisher_name,feed_publisher_url,feed_lang,default_lang,feed_start_date,feed_end_date,feed_version,feed_contact_email,feed_contact_url
+Barrie Transit,https://www.barrie.ca/services-payments/transportation-parking/barrie-transit,en,en,20251219,20260228,20251128v2,ServiceBarrie@barrie.ca,https://www.barrie.ca/services-payments/transportation-parking/barrie-transit

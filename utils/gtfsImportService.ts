@@ -39,7 +39,8 @@ import type { MasterTrip, MasterRouteTable } from './masterScheduleParser';
 import type { Direction } from './routeDirectionConfig';
 import { inferDirectionFromTerminus, getRouteConfig, parseRouteInfo } from './routeDirectionConfig';
 import { saveDraft } from './draftService';
-import type { DraftScheduleInput } from './scheduleTypes';
+import { saveSystemDraft, generateSystemDraftName } from './systemDraftService';
+import type { DraftScheduleInput, SystemDraftInput, SystemDraftRoute } from './scheduleTypes';
 import {
     getBaseStopName,
     getOperationalSortTime,
@@ -136,9 +137,15 @@ export function getAvailableRoutes(
         const dayType = getDayType(calendar);
         if (!dayType) return; // Skip mixed schedules
 
-        // Determine direction from first trip
+        // Determine direction from first trip (using headsign for better accuracy)
         const firstTrip = trips[0];
-        const direction = mapDirection(firstTrip.direction_id, routeId, config);
+        const direction = mapDirection(
+            firstTrip.direction_id,
+            routeId,
+            config,
+            firstTrip.trip_headsign,
+            route.route_short_name
+        );
 
         rawOptions.push({
             routeId,
@@ -355,23 +362,23 @@ export function processTripsForRoute(
         const firstStop = processedStopTimes[0];
         const lastStop = processedStopTimes[processedStopTimes.length - 1];
 
-        // Determine direction
+        // Determine direction (using headsign for better accuracy)
+        const route = feed.routes.find(r => r.route_id === routeId);
         let direction: Direction | 'Loop' | null = mapDirection(
             trip.direction_id,
             routeId,
-            config
+            config,
+            trip.trip_headsign,
+            route?.route_short_name
         );
 
         // If no direction from GTFS, try to infer from terminus
-        if (!direction) {
-            const route = feed.routes.find(r => r.route_id === routeId);
-            if (route) {
-                direction = inferDirectionFromTerminus(
-                    route.route_short_name,
-                    firstStop.stopName,
-                    lastStop.stopName
-                );
-            }
+        if (!direction && route) {
+            direction = inferDirectionFromTerminus(
+                route.route_short_name,
+                firstStop.stopName,
+                lastStop.stopName
+            );
         }
 
         processed.push({
@@ -616,24 +623,23 @@ export function convertToMasterSchedule(
         });
     }
 
-    // Build stop name lookup map for name-based matching
-    // Maps actual stop name -> unique stop name (handles duplicates like "Park Place (2)")
-    const buildStopNameMap = (uniqueNames: string[]): Map<string, string> => {
-        const map = new Map<string, string>();
+    // Build stop name lookup that tracks occurrences for loop routes
+    // For trips where same stop appears multiple times (e.g., loop routes),
+    // we need to map the Nth occurrence to the Nth unique name
+    const buildStopOccurrenceMap = (uniqueNames: string[]): Map<string, string[]> => {
+        const map = new Map<string, string[]>();
         uniqueNames.forEach(name => {
-            // Extract base name (without "(2)" suffix if present)
             const baseName = name.replace(/\s*\(\d+\)$/, '');
-            // Store both the full unique name and base name mappings
-            map.set(name, name);
             if (!map.has(baseName)) {
-                map.set(baseName, name);
+                map.set(baseName, []);
             }
+            map.get(baseName)!.push(name);
         });
         return map;
     };
 
-    const northStopNameMap = buildStopNameMap(northUniqueStopNames);
-    const southStopNameMap = buildStopNameMap(southUniqueStopNames);
+    const northStopOccurrenceMap = buildStopOccurrenceMap(northUniqueStopNames);
+    const southStopOccurrenceMap = buildStopOccurrenceMap(southUniqueStopNames);
 
     // Convert to MasterTrips with temporary IDs (will be reassigned by block assignment)
     const convertToMasterTrip = (
@@ -641,21 +647,30 @@ export function convertToMasterSchedule(
         index: number,
         direction: Direction,
         uniqueStopNames: string[],
-        stopNameMap: Map<string, string>
+        stopOccurrenceMap: Map<string, string[]>
     ): MasterTrip => {
         const stops: Record<string, string> = {};
         const arrivalTimes: Record<string, string> = {};
         const recoveryTimes: Record<string, number> = {};
 
-        // Use name-based lookup instead of index-based
-        // This handles trips with different stop counts correctly
+        // Track how many times we've seen each stop name in this trip
+        // For loop routes, the Nth occurrence maps to the Nth unique name
+        const occurrenceCount = new Map<string, number>();
+
         trip.stopTimes.forEach((st) => {
-            // Look up the unique stop name for this actual stop name
-            const stopName = stopNameMap.get(st.stopName);
-            if (!stopName) {
-                console.warn(`Stop "${st.stopName}" not found in stop name map, skipping`);
+            // Get current occurrence count for this stop name
+            const count = occurrenceCount.get(st.stopName) || 0;
+            occurrenceCount.set(st.stopName, count + 1);
+
+            // Look up the unique stop names for this base name
+            const uniqueNames = stopOccurrenceMap.get(st.stopName);
+            if (!uniqueNames || uniqueNames.length === 0) {
+                console.warn(`Stop "${st.stopName}" not found in stop occurrence map, skipping`);
                 return;
             }
+
+            // Use the Nth unique name for the Nth occurrence (0-indexed)
+            const stopName = uniqueNames[Math.min(count, uniqueNames.length - 1)];
 
             // NOTE: RoundTripTableView expects `stops` to contain ARRIVAL times
             // It then adds recoveryTimes to calculate departure times for display
@@ -709,14 +724,16 @@ export function convertToMasterSchedule(
             cycleTime,
             stops,
             arrivalTimes: Object.keys(arrivalTimes).length > 0 ? arrivalTimes : undefined,
+            // Preserve original GTFS block ID for linking trips on same physical bus
+            gtfsBlockId: trip.blockId || undefined,
         };
     };
 
     const northMasterTrips = effectiveNorthTrips.map((t, i) =>
-        convertToMasterTrip(t, i, 'North', northUniqueStopNames, northStopNameMap)
+        convertToMasterTrip(t, i, 'North', northUniqueStopNames, northStopOccurrenceMap)
     );
     const southMasterTrips = effectiveSouthTrips.map((t, i) =>
-        convertToMasterTrip(t, i, 'South', southUniqueStopNames, southStopNameMap)
+        convertToMasterTrip(t, i, 'South', southUniqueStopNames, southStopOccurrenceMap)
     );
 
     // Apply block assignment to generate user-friendly block IDs
@@ -898,6 +915,189 @@ export async function importRouteFromGTFS(
         return {
             success: false,
             error: error instanceof Error ? error.message : 'Unknown error during import',
+        };
+    }
+}
+
+// ============ SYSTEM-WIDE IMPORT ============
+
+/**
+ * Result of importing all routes for a day type into a system draft.
+ */
+export interface SystemImportResult {
+    success: boolean;
+    systemDraftId?: string;
+    dayType?: DayType;
+    routeCount?: number;
+    totalTrips?: number;
+    routeNumbers?: string[];
+    warnings?: string[];
+    error?: string;
+}
+
+/**
+ * Import ALL routes for a specific day type from GTFS feed into a single system draft.
+ * This enables interline logic by having all routes (e.g., 8A and 8B) loaded together.
+ *
+ * @param feed - The parsed GTFS feed
+ * @param dayType - The day type to import (Weekday, Saturday, Sunday)
+ * @param userId - The user's ID
+ * @param draftName - Optional custom name for the system draft
+ * @param config - Optional GTFS import config
+ * @param options - Import options (timepointsOnly, etc.)
+ * @returns Result containing the system draft ID and statistics
+ */
+export async function importAllRoutesFromGTFS(
+    feed: ParsedGTFSFeed,
+    dayType: DayType,
+    userId: string,
+    draftName?: string,
+    config?: GTFSImportConfig,
+    options: GTFSImportOptions = { timepointsOnly: true }
+): Promise<SystemImportResult> {
+    console.log(`🚌 importAllRoutesFromGTFS started for ${dayType}`, { userId, options });
+
+    try {
+        // Get all routes for this day type
+        const allRoutes = getAvailableRoutes(feed, config);
+        const dayTypeRoutes = allRoutes.filter(r => r.dayType === dayType);
+
+        if (dayTypeRoutes.length === 0) {
+            return {
+                success: false,
+                error: `No routes found for ${dayType} in GTFS feed`,
+            };
+        }
+
+        console.log(`📊 Found ${dayTypeRoutes.length} routes for ${dayType}`);
+
+        // Process each route
+        const systemRoutes: SystemDraftRoute[] = [];
+        const warnings: string[] = [];
+        let totalTrips = 0;
+
+        for (const routeOption of dayTypeRoutes) {
+            console.log(`  Processing Route ${routeOption.routeShortName}...`);
+
+            try {
+                let content: MasterScheduleContent;
+
+                if (routeOption.isMergedRoute) {
+                    // Handle merged A/B direction routes (2A+2B, 7A+7B, 12A+12B)
+                    const northTrips = processTripsForRoute(
+                        feed,
+                        routeOption.northRouteId!,
+                        routeOption.northServiceId!,
+                        config,
+                        options
+                    );
+                    northTrips.forEach(t => { t.direction = 'North'; });
+
+                    const southTrips = processTripsForRoute(
+                        feed,
+                        routeOption.southRouteId!,
+                        routeOption.southServiceId!,
+                        config,
+                        options
+                    );
+                    southTrips.forEach(t => { t.direction = 'South'; });
+
+                    const allTrips = [...northTrips, ...southTrips];
+                    if (allTrips.length === 0) {
+                        warnings.push(`Route ${routeOption.routeShortName}: No trips found`);
+                        continue;
+                    }
+
+                    content = convertToMasterSchedule(
+                        allTrips,
+                        routeOption.routeShortName,
+                        dayType
+                    );
+                } else {
+                    // Handle regular routes
+                    const trips = processTripsForRoute(
+                        feed,
+                        routeOption.routeId,
+                        routeOption.serviceId,
+                        config,
+                        options
+                    );
+
+                    if (trips.length === 0) {
+                        warnings.push(`Route ${routeOption.routeShortName}: No trips found`);
+                        continue;
+                    }
+
+                    content = convertToMasterSchedule(
+                        trips,
+                        routeOption.routeShortName,
+                        dayType
+                    );
+                }
+
+                // Create SystemDraftRoute
+                const routeTripCount = content.northTable.trips.length + content.southTable.trips.length;
+                totalTrips += routeTripCount;
+
+                systemRoutes.push({
+                    routeNumber: routeOption.routeShortName,
+                    northTable: content.northTable,
+                    southTable: content.southTable,
+                });
+
+                console.log(`    ✓ Route ${routeOption.routeShortName}: ${routeTripCount} trips`);
+            } catch (error) {
+                const errMsg = error instanceof Error ? error.message : 'Unknown error';
+                warnings.push(`Route ${routeOption.routeShortName}: ${errMsg}`);
+                console.error(`    ✗ Route ${routeOption.routeShortName}: ${errMsg}`);
+            }
+        }
+
+        if (systemRoutes.length === 0) {
+            return {
+                success: false,
+                error: `Failed to process any routes for ${dayType}`,
+                warnings,
+            };
+        }
+
+        // Sort routes by route number
+        systemRoutes.sort((a, b) =>
+            a.routeNumber.localeCompare(b.routeNumber, undefined, { numeric: true })
+        );
+
+        // Create system draft
+        const systemDraftInput: SystemDraftInput = {
+            name: draftName || generateSystemDraftName(dayType),
+            dayType,
+            routes: systemRoutes,
+            status: 'draft',
+            createdBy: userId,
+            basedOn: {
+                type: 'gtfs',
+                importedAt: new Date(),
+                gtfsFeedUrl: config?.feedUrl || DEFAULT_GTFS_URL,
+            },
+        };
+
+        console.log(`💾 Saving system draft with ${systemRoutes.length} routes...`);
+        const systemDraftId = await saveSystemDraft(userId, systemDraftInput);
+        console.log(`✅ System draft saved with ID: ${systemDraftId}`);
+
+        return {
+            success: true,
+            systemDraftId,
+            dayType,
+            routeCount: systemRoutes.length,
+            totalTrips,
+            routeNumbers: systemRoutes.map(r => r.routeNumber),
+            warnings: warnings.length > 0 ? warnings : undefined,
+        };
+    } catch (error) {
+        console.error('❌ importAllRoutesFromGTFS error:', error);
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Unknown error during system import',
         };
     }
 }

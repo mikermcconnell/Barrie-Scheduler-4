@@ -243,9 +243,9 @@ export const extractTimepointsFromSegments = (segments: SegmentRawData[]): strin
 
         // Check for closing the loop
         if (visited.has(next)) {
-            // If we circled back to start, add it to complete the loop
+            // If we circled back to start, add it with suffix to avoid key collision
             if (next === startNode) {
-                path.push(next);
+                path.push(`${next} (2)`);
             }
             break;
         }

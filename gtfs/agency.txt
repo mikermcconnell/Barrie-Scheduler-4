@@ -1,0 +1,2 @@
+agency_id,agency_name,agency_url,agency_timezone,agency_lang,agency_phone,agency_fare_url,agency_email
+478c63c1-9928-4080-bc80-0e8143f4df1b,Barrie Transit,https://www.barrie.ca/services-payments/transportation-parking/barrie-transit,America/New_York,en,705-726-4242,https://www.barrie.ca/services-payments/transportation-parking/barrie-transit/fares-passes,ServiceBarrie@barrie.ca

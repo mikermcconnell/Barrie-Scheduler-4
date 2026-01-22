@@ -1,6 +1,8 @@
 # Claude Code Instructions
 
 > **READ context.md** for locked logic before modifying core schedule files.
+> **READ docs/PRODUCT_VISION.md** for product goals when planning features.
+> **Use /pm-review** during complex planning to validate alignment.
 
 ---
 
@@ -59,13 +61,15 @@ npx vitest run tests/timeUtils.test.ts
 ### New Feature
 1. Clarify requirements (1-3 questions)
 2. Impact assessment (which files affected)
-3. Wait for "go" confirmation
-4. Implement with TodoWrite tracking
+3. **PM Quick Check** (auto-triggered, or `/pm-review` for complex features)
+4. Wait for "go" confirmation
+5. Implement with TodoWrite tracking
 
 ### Refactor
 1. Explain current state and proposed change
 2. Flag any behavioral changes
-3. Get approval before proceeding
+3. **PM Quick Check** if touching core workflows or locked logic
+4. Get approval before proceeding
 
 ---
 

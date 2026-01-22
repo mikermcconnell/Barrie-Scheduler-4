@@ -6,7 +6,7 @@ import {
 import { db } from './firebase';
 import { uploadToMasterSchedule } from './masterScheduleService';
 import { buildRouteIdentity } from './masterScheduleTypes';
-import type { DraftSchedule } from './scheduleTypes';
+import type { DraftSchedule, SystemDraftRoute } from './scheduleTypes';
 import type { DayType, MasterScheduleContent, MasterScheduleEntry, RouteIdentity } from './masterScheduleTypes';
 
 export interface PublishDraftParams {
@@ -64,5 +64,112 @@ export const publishDraft = async ({
         entry,
         routeIdentity,
         publishedAt: new Date()
+    };
+};
+
+// ============ SYSTEM DRAFT PUBLISHING ============
+
+export interface PublishSystemDraftParams {
+    teamId: string;
+    userId: string;
+    publisherName: string;
+    systemDraftId: string;
+    routes: SystemDraftRoute[];
+    dayType: DayType;
+}
+
+export interface PublishSystemDraftResult {
+    success: boolean;
+    publishedCount: number;
+    failedCount: number;
+    publishedRoutes: Array<{
+        routeNumber: string;
+        routeIdentity: RouteIdentity;
+        entry: MasterScheduleEntry;
+    }>;
+    failedRoutes: Array<{
+        routeNumber: string;
+        error: string;
+    }>;
+    error?: string;
+}
+
+/**
+ * Publish all routes in a system draft to master schedules.
+ * Each route is published to its own master schedule entry.
+ */
+export const publishSystemDraft = async ({
+    teamId,
+    userId,
+    publisherName,
+    systemDraftId,
+    routes,
+    dayType
+}: PublishSystemDraftParams): Promise<PublishSystemDraftResult> => {
+    if (routes.length === 0) {
+        return {
+            success: false,
+            publishedCount: 0,
+            failedCount: 0,
+            publishedRoutes: [],
+            failedRoutes: [],
+            error: 'No routes to publish'
+        };
+    }
+
+    const publishedRoutes: PublishSystemDraftResult['publishedRoutes'] = [];
+    const failedRoutes: PublishSystemDraftResult['failedRoutes'] = [];
+
+    for (const route of routes) {
+        try {
+            // Upload to master schedule
+            const entry = await uploadToMasterSchedule(
+                teamId,
+                userId,
+                publisherName,
+                route.northTable,
+                route.southTable,
+                route.routeNumber,
+                dayType,
+                'draft'
+            );
+
+            const routeIdentity = buildRouteIdentity(route.routeNumber, dayType);
+            const entryRef = doc(db, 'teams', teamId, 'masterSchedules', routeIdentity);
+
+            // Update metadata
+            await setDoc(entryRef, {
+                publishedAt: serverTimestamp(),
+                publishedBy: userId,
+                publishedFromDraft: systemDraftId,
+                status: 'published'
+            }, { merge: true });
+
+            publishedRoutes.push({
+                routeNumber: route.routeNumber,
+                routeIdentity,
+                entry
+            });
+
+            console.log(`Published Route ${route.routeNumber} (${dayType})`);
+        } catch (error) {
+            const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+            failedRoutes.push({
+                routeNumber: route.routeNumber,
+                error: errorMsg
+            });
+            console.error(`Failed to publish Route ${route.routeNumber}:`, error);
+        }
+    }
+
+    return {
+        success: failedRoutes.length === 0,
+        publishedCount: publishedRoutes.length,
+        failedCount: failedRoutes.length,
+        publishedRoutes,
+        failedRoutes,
+        error: failedRoutes.length > 0
+            ? `Failed to publish ${failedRoutes.length} route(s): ${failedRoutes.map(r => r.routeNumber).join(', ')}`
+            : undefined
     };
 };

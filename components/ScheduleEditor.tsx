@@ -41,7 +41,8 @@ import {
     MoreVertical,
     Pencil,
     Upload,
-    Database
+    Database,
+    Link2
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import ExcelJS from 'exceljs';
@@ -50,13 +51,9 @@ import {
     MasterTrip,
     validateRouteTable,
     RoundTripTable,
-    buildRoundTripView,
-    InterlineConfig,
-    InterlineRule,
-    applyInterlineRules,
-    clearInterlineMetadata
+    buildRoundTripView
 } from '../utils/masterScheduleParser';
-import { InterlineConfigPanel } from './InterlineConfigPanel';
+import { ConnectionsPanel } from './connections/ConnectionsPanel';
 import { RouteSummary } from './RouteSummary';
 import { WorkspaceHeader } from './WorkspaceHeader';
 import { AutoSaveStatus } from '../hooks/useAutoSave';
@@ -190,10 +187,6 @@ export interface ScheduleEditorProps {
     userId?: string;
     uploaderName?: string;
 
-    // Interline configuration (optional - for persistence)
-    initialInterlineConfig?: InterlineConfig;
-    onInterlineConfigChange?: (config: InterlineConfig) => void;
-
     // Publish action (Draft -> Publish)
     onPublish?: () => void;
     publishLabel?: string;
@@ -225,8 +218,6 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
     teamId,
     userId,
     uploaderName,
-    initialInterlineConfig,
-    onInterlineConfigChange,
     readOnly = false,
     embedded = false,
     hideSidebar = false,
@@ -245,132 +236,8 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
 
     // Upload to Master State - now handled by useUploadToMaster hook
 
-    // Interline Configuration State
-    const [showInterlineConfig, setShowInterlineConfig] = useState(false);
-    const [interlineConfig, setInterlineConfigInternal] = useState<InterlineConfig>(
-        initialInterlineConfig || { rules: [] }
-    );
-
-    // Wrapper to notify parent when interline config changes
-    const setInterlineConfig = (config: InterlineConfig) => {
-        setInterlineConfigInternal(config);
-        onInterlineConfigChange?.(config);
-    };
-
-    // Handler to apply interline rules to schedules
-    const handleApplyInterlineRules = () => {
-        const cloned = deepCloneSchedules(schedules);
-        clearInterlineMetadata(cloned);
-        const result = applyInterlineRules(cloned, interlineConfig.rules);
-        onSchedulesChange(cloned);
-        showSuccessToast(`Applied ${result.applied} interline connection(s)`);
-        setShowInterlineConfig(false);
-    };
-
-    // Auto-initialize and auto-apply interline rules for 8A/8B routes
-    const [hasAutoAppliedInterline, setHasAutoAppliedInterline] = useState(false);
-
-    useEffect(() => {
-        // Only run once when schedules are loaded and we haven't auto-applied yet
-        if (hasAutoAppliedInterline || schedules.length === 0) return;
-
-        // Extract route names
-        const routeNames = new Set<string>();
-        schedules.forEach(t => {
-            const match = t.routeName.match(/^([\dA-Za-z]+)/);
-            if (match) routeNames.add(match[1]);
-        });
-
-        const has8A = routeNames.has('8A');
-        const has8B = routeNames.has('8B');
-
-        // Only proceed if both 8A and 8B exist
-        if (!has8A || !has8B) return;
-
-        // Find the interline stop
-        const allStops = new Set<string>();
-        schedules.forEach(t => t.stops.forEach(s => allStops.add(s)));
-        const stopsArray = Array.from(allStops);
-        const atStop = stopsArray.find(s => s.toLowerCase().includes('barrie allandale transit terminal'))
-            || stopsArray.find(s => s.toLowerCase().includes('allandale'))
-            || stopsArray[0] || '';
-
-        if (!atStop) return;
-
-        // Create default rules if config is empty
-        const needsDefaultRules = interlineConfig.rules.length === 0;
-
-        const defaultRules: InterlineRule[] = needsDefaultRules ? [
-            // Weekday/Saturday rules (8 PM to 1:35 AM)
-            {
-                id: 'rule-8a-8b-weekday',
-                fromRoute: '8A',
-                fromDirection: 'North' as const,
-                toRoute: '8B',
-                toDirection: 'North' as const,
-                atStop,
-                timeRange: { start: 1200, end: 1535 },
-                days: ['Weekday', 'Saturday'] as ('Weekday' | 'Saturday' | 'Sunday')[],
-                enabled: true
-            },
-            {
-                id: 'rule-8b-8a-weekday',
-                fromRoute: '8B',
-                fromDirection: 'North' as const,
-                toRoute: '8A',
-                toDirection: 'North' as const,
-                atStop,
-                timeRange: { start: 1200, end: 1535 },
-                days: ['Weekday', 'Saturday'] as ('Weekday' | 'Saturday' | 'Sunday')[],
-                enabled: true
-            },
-            // Sunday rules (All Day)
-            {
-                id: 'rule-8a-8b-sunday',
-                fromRoute: '8A',
-                fromDirection: 'North' as const,
-                toRoute: '8B',
-                toDirection: 'North' as const,
-                atStop,
-                timeRange: { start: 0, end: 1535 },
-                days: ['Sunday'] as ('Weekday' | 'Saturday' | 'Sunday')[],
-                enabled: true
-            },
-            {
-                id: 'rule-8b-8a-sunday',
-                fromRoute: '8B',
-                fromDirection: 'North' as const,
-                toRoute: '8A',
-                toDirection: 'North' as const,
-                atStop,
-                timeRange: { start: 0, end: 1535 },
-                days: ['Sunday'] as ('Weekday' | 'Saturday' | 'Sunday')[],
-                enabled: true
-            }
-        ] : interlineConfig.rules;
-
-        // Update config with default rules if needed
-        if (needsDefaultRules) {
-            setInterlineConfig({
-                ...interlineConfig,
-                rules: defaultRules,
-                lastUpdated: new Date().toISOString()
-            });
-        }
-
-        // Auto-apply rules (only enabled ones)
-        const enabledRules = defaultRules.filter(r => r.enabled);
-        if (enabledRules.length > 0) {
-            const cloned = deepCloneSchedules(schedules);
-            clearInterlineMetadata(cloned);
-            const result = applyInterlineRules(cloned, enabledRules);
-            if (result.applied > 0) {
-                onSchedulesChange(cloned);
-            }
-        }
-
-        setHasAutoAppliedInterline(true);
-    }, [schedules, interlineConfig.rules.length, hasAutoAppliedInterline]);
+    // Connections Panel State
+    const [showConnectionsPanel, setShowConnectionsPanel] = useState(false);
 
     // Quick Actions Bar Filter State
     const [filter, setFilter] = useState<FilterState>({
@@ -623,7 +490,17 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                 for (let i = colIdx + 1; i < table.stops.length; i++) {
                     const nextStop = table.stops[i];
                     const nextTime = TimeUtils.toMinutes(trip.stops[nextStop]);
-                    if (nextTime !== null) trip.stops[nextStop] = TimeUtils.fromMinutes(nextTime + delta);
+                    if (nextTime !== null) {
+                        const proposedTime = nextTime + delta;
+                        // Validate: don't let time go before previous stop (would create negative segment)
+                        const prevStop = table.stops[i - 1];
+                        const prevTime = TimeUtils.toMinutes(trip.stops[prevStop]);
+                        if (prevTime !== null && proposedTime <= prevTime) {
+                            // Skip cascade - would create invalid timing
+                            break;
+                        }
+                        trip.stops[nextStop] = TimeUtils.fromMinutes(proposedTime);
+                    }
                 }
             }
         }
@@ -665,7 +542,8 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                     // Shift all stop times by the delta
                     nextTable.stops.forEach(s => {
                         const stopTime = nextTrip.stops[s];
-                        if (stopTime) {
+                        // Use explicit check - "0:00 AM" would be falsy but is valid
+                        if (stopTime !== null && stopTime !== undefined && stopTime !== '') {
                             nextTrip.stops[s] = TimeUtils.addMinutes(stopTime, deltaEnd);
                         }
                     });
@@ -691,15 +569,25 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         if (stopIdx === -1) return;
 
         const oldRec = trip.recoveryTimes?.[stopName] || 0;
-        const newRec = Math.max(0, oldRec + delta);
+        // Bound recovery: can't be negative, and can't exceed travel time - 1 (to avoid negative runtime)
+        const maxRec = Math.max(0, trip.travelTime - 1);
+        const newRec = Math.max(0, Math.min(oldRec + delta, maxRec));
+        const actualDelta = newRec - oldRec; // May differ from requested delta if bounds were hit
+
         if (!trip.recoveryTimes) trip.recoveryTimes = {};
         trip.recoveryTimes[stopName] = newRec;
         trip.recoveryTime = Object.values(trip.recoveryTimes).reduce((sum, v) => sum + (v || 0), 0);
 
+        // Cascade time changes to subsequent stops (both stops and arrivalTimes)
         for (let i = stopIdx + 1; i < table.stops.length; i++) {
             const nextStop = table.stops[i];
             const t = TimeUtils.toMinutes(trip.stops[nextStop]);
-            if (t !== null) trip.stops[nextStop] = TimeUtils.fromMinutes(t + delta);
+            if (t !== null) trip.stops[nextStop] = TimeUtils.fromMinutes(t + actualDelta);
+            // Also update arrivalTimes
+            if (trip.arrivalTimes?.[nextStop]) {
+                const arr = TimeUtils.toMinutes(trip.arrivalTimes[nextStop]);
+                if (arr !== null) trip.arrivalTimes[nextStop] = TimeUtils.fromMinutes(arr + actualDelta);
+            }
         }
         recalculateTrip(trip, table.stops);
         validateRouteTable(table);
@@ -740,6 +628,79 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                 break;
             }
         }
+        onSchedulesChange(newScheds);
+    };
+
+    // Handle manual linking of North and South trips at Georgian College
+    const handleLinkTrips = (northTripId: string, southTripId: string, stopName: string) => {
+        const newScheds = deepCloneSchedules(schedules);
+
+        // Find North trip
+        const northResult = findTableAndTrip(newScheds, northTripId);
+        if (!northResult) {
+            console.error('[LinkTrips] North trip not found:', northTripId);
+            return;
+        }
+        const { trip: northTrip } = northResult;
+
+        // Find South trip
+        const southResult = findTableAndTrip(newScheds, southTripId);
+        if (!southResult) {
+            console.error('[LinkTrips] South trip not found:', southTripId);
+            return;
+        }
+        const { table: southTable, trip: southTrip } = southResult;
+
+        // Get South trip's departure time at Georgian College
+        const southDepTime = southTrip.stops?.[stopName] ||
+                            southTrip.arrivalTimes?.[stopName];
+        if (!southDepTime) {
+            console.error('[LinkTrips] South trip has no time at stop:', stopName);
+            return;
+        }
+
+        // Get North trip's arrival time at Georgian College
+        const northArrTime = northTrip.endTime !== undefined
+            ? TimeUtils.fromMinutes(northTrip.endTime)
+            : (northTrip.stops?.[stopName] || northTrip.arrivalTimes?.[stopName]);
+
+        if (!northArrTime) {
+            console.error('[LinkTrips] North trip has no arrival time at stop:', stopName);
+            return;
+        }
+
+        // Calculate recovery time (South departure - North arrival)
+        const northArrMinutes = TimeUtils.toMinutes(northArrTime);
+        const southDepMinutes = TimeUtils.toMinutes(southDepTime);
+        const recoveryTime = (northArrMinutes !== null && southDepMinutes !== null)
+            ? Math.max(0, southDepMinutes - northArrMinutes)
+            : 0;
+
+        // Update North trip with Georgian College data
+        if (!northTrip.stops) northTrip.stops = {};
+        if (!northTrip.arrivalTimes) northTrip.arrivalTimes = {};
+        if (!northTrip.recoveryTimes) northTrip.recoveryTimes = {};
+
+        northTrip.stops[stopName] = northArrTime;
+        northTrip.arrivalTimes[stopName] = northArrTime;
+        northTrip.recoveryTimes[stopName] = recoveryTime;
+
+        // Copy South trip's block ID to help with pairing
+        northTrip.blockId = southTrip.blockId || northTrip.blockId;
+
+        // Remove South trip from its table
+        southTable.trips = southTable.trips.filter(t => t.id !== southTripId);
+
+        // Log the action
+        logAction('link', `Linked trips at ${stopName}`, {
+            northTripId,
+            southTripId,
+            stopName,
+            recoveryTime
+        });
+
+        console.log(`[LinkTrips] Linked North ${northTripId} with South ${southTripId} at ${stopName} (recovery: ${recoveryTime} min)`);
+
         onSchedulesChange(newScheds);
     };
 
@@ -841,15 +802,19 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         const newTrip: MasterTrip = {
             ...JSON.parse(JSON.stringify(trip)),
             id: `${trip.id}-dup-${Date.now()}`,
-            tripNumber: table.trips.length + 1,
+            tripNumber: 0, // Will be set by renumbering after sort
+            blockId: '', // Clear blockId - let block reassignment handle it
             startTime: trip.startTime + 1, // Offset by 1 minute
             endTime: trip.endTime + 1,
         };
 
-        // Shift all stop times by 1 minute
+        // Shift all stop times and arrival times by 1 minute
         Object.keys(newTrip.stops).forEach(stop => {
             if (newTrip.stops[stop]) {
                 newTrip.stops[stop] = TimeUtils.addMinutes(newTrip.stops[stop], 1);
+            }
+            if (newTrip.arrivalTimes?.[stop]) {
+                newTrip.arrivalTimes[stop] = TimeUtils.addMinutes(newTrip.arrivalTimes[stop], 1);
             }
         });
 
@@ -865,7 +830,10 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
 
         validateRouteTable(table);
 
-        logAction('add', `Duplicated trip from Block ${trip.blockId}`, {
+        // Reassign blocks to assign proper blockId to the new trip
+        reassignBlocksForRelatedTables(newScheds, getTrueBaseRoute(table.routeName));
+
+        logAction('add', `Duplicated trip from Block ${newTrip.blockId || 'new'}`, {
             tripId: newTrip.id,
             blockId: newTrip.blockId,
             field: 'trip'
@@ -1530,6 +1498,15 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                                             <button onClick={undo} disabled={!canUndo} className="p-2 bg-gray-100 rounded hover:bg-gray-200 disabled:opacity-50" title="Undo (Ctrl+Z)"><Undo2 size={16} /></button>
                                             <button onClick={redo} disabled={!canRedo} className="p-2 bg-gray-100 rounded hover:bg-gray-200 disabled:opacity-50" title="Redo (Ctrl+Y)"><Redo2 size={16} /></button>
                                             <div className="w-px bg-gray-200 mx-1" />
+                                            {teamId && (
+                                                <button
+                                                    onClick={() => setShowConnectionsPanel(true)}
+                                                    className="flex items-center gap-1.5 px-3 py-1.5 bg-green-100 text-green-700 rounded hover:bg-green-200 text-sm font-medium"
+                                                    title="Configure external connections (GO Train, College)"
+                                                >
+                                                    <Link2 size={14} /> Connections
+                                                </button>
+                                            )}
                                             <button
                                                 onClick={() => setShowComparisonModal(true)}
                                                 disabled={!originalSchedules}
@@ -1537,13 +1514,6 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                                                 title="Compare with original"
                                             >
                                                 <GitCompare size={14} /> Compare
-                                            </button>
-                                            <button
-                                                onClick={() => setShowInterlineConfig(true)}
-                                                className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-100 text-blue-700 rounded hover:bg-blue-200 text-sm font-medium"
-                                                title="Configure route interlining"
-                                            >
-                                                <ArrowRight size={14} /> Interline
                                             </button>
                                         </div>
                                     )}
@@ -1594,6 +1564,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                                         onAddTrip={readOnly ? undefined : (_, tripId) => openAddTripModal(tripId, {})}
                                         onTripRightClick={readOnly ? undefined : handleTripRightClick}
                                         onMenuOpen={readOnly ? undefined : handleMenuOpen}
+                                        onLinkTrips={readOnly ? undefined : handleLinkTrips}
                                         draftName={draftName}
                                         filter={filter}
                                         targetCycleTime={targetCycleTime}
@@ -1620,15 +1591,19 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                 </div>
             </div>
 
-            {/* Interline Config Panel */}
-            <InterlineConfigPanel
-                isOpen={showInterlineConfig}
-                onClose={() => setShowInterlineConfig(false)}
-                config={interlineConfig}
-                onConfigChange={setInterlineConfig}
-                tables={schedules}
-                onApplyRules={handleApplyInterlineRules}
-            />
+            {/* Connections Panel */}
+            {showConnectionsPanel && teamId && userId && activeRouteGroup && (
+                <ConnectionsPanel
+                    schedules={schedules}
+                    routeIdentity={`${activeRouteGroup.name}-${activeDay}`}
+                    dayType={activeDay as 'Weekday' | 'Saturday' | 'Sunday'}
+                    teamId={teamId}
+                    userId={userId}
+                    onClose={() => setShowConnectionsPanel(false)}
+                    onSchedulesChange={onSchedulesChange}
+                    showSuccessToast={showSuccessToast}
+                />
+            )}
 
             {/* Audit Log Panel */}
             <AuditLogPanel

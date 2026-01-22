@@ -240,7 +240,10 @@ export const parseTimeInput = (input: string, originalValue?: string): string | 
     } else if (!hasExplicitPeriod && originalPeriod) {
         period = originalPeriod;
     } else {
-        period = hours >= 1 && hours <= 11 ? 'PM' : 'AM';
+        // For ambiguous times without explicit AM/PM:
+        // - Hours 1-6: default to AM (early morning transit service)
+        // - Hours 7-11: default to PM (afternoon service)
+        period = hours >= 1 && hours <= 6 ? 'AM' : 'PM';
     }
 
     const h12 = hours > 12 ? hours - 12 : (hours === 0 ? 12 : hours);

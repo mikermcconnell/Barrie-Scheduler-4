@@ -46,15 +46,6 @@ export interface CycleRouteConfig {
 export type RouteConfig = CycleRouteConfig;
 
 // =============================================================================
-// LEGACY TYPE ALIASES (for gradual migration - can be removed later)
-// =============================================================================
-
-/** @deprecated Use CycleRouteConfig with segments.length check instead */
-export type RouteType = 'linear' | 'loop';
-/** @deprecated Use segment.name instead */
-export type LoopDirection = 'clockwise' | 'counter-clockwise';
-
-// =============================================================================
 // HELPER FUNCTIONS FOR SEGMENT-BASED CONFIG
 // =============================================================================
 
@@ -118,18 +109,20 @@ export const ROUTE_DIRECTIONS: Record<string, CycleRouteConfig> = {
     },
 
     // Route 8A - Bidirectional, full route with both directions
+    // GTFS headsigns: "RVH/YONGE to Georgian College" (North), "RVH/YONGE to Park Place" (South)
     '8A': {
         segments: [
             { name: 'North', variant: '8A', terminus: 'Georgian College' },
-            { name: 'South', variant: '8A', terminus: 'Barrie South GO' },
+            { name: 'South', variant: '8A', terminus: 'Park Place' },
         ],
     },
 
     // Route 8B - Bidirectional, full route with both directions
+    // GTFS headsigns: "Crosstown/Essa to Georgian College" (North), "Crosstown/Essa to Park Place" (South)
     '8B': {
         segments: [
             { name: 'North', variant: '8B', terminus: 'Georgian College' },
-            { name: 'South', variant: '8B', terminus: 'Barrie South GO' },
+            { name: 'South', variant: '8B', terminus: 'Park Place' },
         ],
     },
 
@@ -287,8 +280,6 @@ export interface ParsedRouteInfo {
     isLoop: boolean;
     /** Whether this route uses A/B suffix as direction (true for 2, 7, 12; false for 8A, 8B) */
     suffixIsDirection: boolean;
-    /** @deprecated Use isLoop instead. Kept for backward compatibility. */
-    type: RouteType | null;
 }
 
 /**
@@ -322,7 +313,6 @@ export function parseRouteInfo(routeIdentifier: string): ParsedRouteInfo {
             variant: cleaned,
             isLoop: routeIsLoop,
             suffixIsDirection: false,
-            type: routeIsLoop ? 'loop' : 'linear', // Backward compat
         };
     }
 
@@ -344,7 +334,6 @@ export function parseRouteInfo(routeIdentifier: string): ParsedRouteInfo {
                     variant: cleaned,
                     isLoop: false,
                     suffixIsDirection: true,
-                    type: 'linear', // Backward compat
                 };
             }
         }
@@ -364,7 +353,6 @@ export function parseRouteInfo(routeIdentifier: string): ParsedRouteInfo {
             variant: cleaned,
             isLoop: routeIsLoop,
             suffixIsDirection: false,
-            type: routeIsLoop ? 'loop' : 'linear', // Backward compat
         };
     }
 
@@ -375,7 +363,6 @@ export function parseRouteInfo(routeIdentifier: string): ParsedRouteInfo {
         variant: cleaned,
         isLoop: false,
         suffixIsDirection: false,
-        type: null,
     };
 }
 

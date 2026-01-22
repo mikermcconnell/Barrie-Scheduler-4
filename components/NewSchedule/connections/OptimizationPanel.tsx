@@ -27,6 +27,7 @@ import type {
     ConnectionReportEntry
 } from '../../../utils/connectionTypes';
 import { formatConnectionTime } from '../../../utils/connectionTypes';
+import { optimizeForConnections } from '../../../utils/connectionOptimizer';
 
 interface OptimizationPanelProps {
     schedules: MasterRouteTable[];
@@ -62,29 +63,21 @@ export const OptimizationPanel: React.FC<OptimizationPanelProps> = ({
         hybrid: 'Shift first, then fine-tune individual trips (recommended)'
     };
 
-    // Run optimization (placeholder - will use connectionOptimizer.ts)
+    // Run optimization using the real optimizer
     const handleOptimize = async () => {
         if (!config || !library || !canOptimize) return;
 
-        // This will be replaced with actual optimizer call
-        console.log('Running optimization with mode:', mode);
-
-        // Placeholder result
-        const placeholderResult: OptimizationResult = {
-            originalSchedules: schedules,
-            optimizedSchedules: schedules, // Will be actual optimized schedules
-            shiftApplied: mode === 'shift' || mode === 'hybrid' ? previewShift : undefined,
-            connectionReport: [],
-            summary: {
-                totalConnections: config.connections.filter(c => c.enabled).length,
-                connectionsMet: 0,
-                connectionsMissed: 0,
-                connectionsImproved: 0,
-                avgGapImprovement: 0
-            }
-        };
-
-        onOptimize(placeholderResult);
+        try {
+            const result = optimizeForConnections(
+                schedules,
+                config,
+                library,
+                mode
+            );
+            onOptimize(result);
+        } catch (error) {
+            console.error('Optimization failed:', error);
+        }
     };
 
     // Get status icon for report entry

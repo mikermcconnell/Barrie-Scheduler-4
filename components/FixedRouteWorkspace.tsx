@@ -18,18 +18,21 @@ import { ScheduleTweakerWorkspace } from './ScheduleTweakerWorkspace';
 import { NewScheduleWizard } from './NewSchedule/NewScheduleWizard';
 import { MasterScheduleBrowser } from './MasterScheduleBrowser';
 import { ScheduleEditorWorkspace, SiblingDraft } from './ScheduleEditorWorkspace';
+import { SystemDraftEditorWorkspace } from './SystemDraftEditorWorkspace';
 import { ReportsDashboard } from './Reports/ReportsDashboard';
 import { AnalyticsDashboard } from './Analytics/AnalyticsDashboard';
 import { GTFSImportModal } from './GTFSImport';
+import { SystemDraftList } from './SystemDraftList';
 import { ScheduleDraft, SavedFile } from '../utils/dataService';
 import type { MasterScheduleContent } from '../utils/masterScheduleTypes';
-import type { DraftBasedOn, DraftSchedule } from '../utils/scheduleTypes';
+import type { DraftBasedOn, DraftSchedule, SystemDraft } from '../utils/scheduleTypes';
 import { buildMasterContentFromTables } from '../utils/scheduleDraftAdapter';
 import { getAllDrafts, getDraft, deleteDraft } from '../utils/draftService';
+import { getSystemDraft } from '../utils/systemDraftService';
 import { useAuth } from './AuthContext';
 import { useToast } from './ToastContext';
 
-type FixedRouteViewMode = 'dashboard' | 'tweaker' | 'editor' | 'new-schedule' | 'master' | 'reports' | 'analytics' | 'drafts';
+type FixedRouteViewMode = 'dashboard' | 'tweaker' | 'editor' | 'new-schedule' | 'master' | 'reports' | 'analytics' | 'drafts' | 'system-editor';
 
 const VIEW_MODE_LABELS: Record<FixedRouteViewMode, string> = {
     dashboard: '',
@@ -39,7 +42,8 @@ const VIEW_MODE_LABELS: Record<FixedRouteViewMode, string> = {
     reports: 'Reports',
     analytics: 'Analytics',
     editor: 'Schedule Editor',
-    drafts: 'Schedule Editor'
+    drafts: 'Schedule Editor',
+    'system-editor': 'System Draft Editor'
 };
 
 interface DashboardCardProps {
@@ -93,6 +97,9 @@ export const FixedRouteWorkspace: React.FC = () => {
     // Route switcher state (for bulk GTFS import)
     const [siblingDrafts, setSiblingDrafts] = useState<SiblingDraft[]>([]);
     const [currentEditorDraftId, setCurrentEditorDraftId] = useState<string | null>(null);
+
+    // System draft state (new model - all routes for a day type)
+    const [activeSystemDraft, setActiveSystemDraft] = useState<SystemDraft | null>(null);
 
     // Fetch drafts when entering drafts view
     useEffect(() => {
@@ -339,6 +346,27 @@ export const FixedRouteWorkspace: React.FC = () => {
                                 }
                             }
                         }}
+                        onSystemImportComplete={async (result) => {
+                            if (result.success && result.systemDraftId) {
+                                toast.success(
+                                    'System Draft Created',
+                                    `Imported ${result.routeCount} routes for ${result.dayType}`
+                                );
+                                setShowGTFSImport(false);
+
+                                // Load and open the system draft
+                                try {
+                                    const systemDraft = await getSystemDraft(user.uid, result.systemDraftId);
+                                    if (systemDraft) {
+                                        setActiveSystemDraft(systemDraft);
+                                        setViewMode('system-editor');
+                                    }
+                                } catch (error) {
+                                    console.error('Failed to load system draft:', error);
+                                    toast.error('Error', 'Failed to open system draft');
+                                }
+                            }
+                        }}
                     />
                 )}
             </div>
@@ -407,6 +435,18 @@ export const FixedRouteWorkspace: React.FC = () => {
                             siblingDrafts={siblingDrafts}
                             currentDraftId={currentEditorDraftId || undefined}
                             onSwitchDraft={handleSwitchDraft}
+                        />
+                    )}
+
+                    {viewMode === 'system-editor' && activeSystemDraft && (
+                        <SystemDraftEditorWorkspace
+                            key={activeSystemDraft.id}
+                            systemDraft={activeSystemDraft}
+                            onClose={() => {
+                                setActiveSystemDraft(null);
+                                setViewMode('dashboard');
+                            }}
+                            onDraftUpdated={(updated) => setActiveSystemDraft(updated)}
                         />
                     )}
 
@@ -503,7 +543,16 @@ export const FixedRouteWorkspace: React.FC = () => {
                                     </div>
                                 )}
 
-                                {/* Drafts List */}
+                                {/* System Drafts Section */}
+                                <SystemDraftList
+                                    onSelectDraft={(draft) => {
+                                        setActiveSystemDraft(draft);
+                                        setViewMode('system-editor');
+                                    }}
+                                    className="mb-8"
+                                />
+
+                                {/* Regular Drafts List */}
                                 {drafts.length > 0 && (
                                     <div className="space-y-3">
                                         {drafts.map(draft => (
@@ -609,6 +658,27 @@ export const FixedRouteWorkspace: React.FC = () => {
                                     setViewMode('drafts');
                                     setTimeout(() => fetchDrafts(), 100);
                                 }
+                            }
+                        }
+                    }}
+                    onSystemImportComplete={async (result) => {
+                        if (result.success && result.systemDraftId) {
+                            toast.success(
+                                'System Draft Created',
+                                `Imported ${result.routeCount} routes for ${result.dayType}`
+                            );
+                            setShowGTFSImport(false);
+
+                            // Load and open the system draft
+                            try {
+                                const systemDraft = await getSystemDraft(user.uid, result.systemDraftId);
+                                if (systemDraft) {
+                                    setActiveSystemDraft(systemDraft);
+                                    setViewMode('system-editor');
+                                }
+                            } catch (error) {
+                                console.error('Failed to load system draft:', error);
+                                toast.error('Error', 'Failed to open system draft');
                             }
                         }
                     }}

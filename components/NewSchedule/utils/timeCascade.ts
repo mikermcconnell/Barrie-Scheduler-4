@@ -179,8 +179,18 @@ export function setTripStartStop(
         if (found) {
             found.startStopIndex = startStopIndex;
 
-            // Recalculate startTime based on new first stop
+            // Clean up orphaned stops before the new start index
             const stops = table.stops;
+            if (startStopIndex > 0) {
+                const stopsToRemove = stops.slice(0, startStopIndex);
+                stopsToRemove.forEach(s => {
+                    delete found.stops[s];
+                    if (found.arrivalTimes) delete found.arrivalTimes[s];
+                    if (found.recoveryTimes) delete found.recoveryTimes[s];
+                });
+            }
+
+            // Recalculate startTime based on new first stop
             if (startStopIndex < stops.length) {
                 const newFirstStop = stops[startStopIndex];
                 const newStartTime = parseTimeToMinutes(found.stops[newFirstStop] || '');
@@ -210,8 +220,18 @@ export function setTripEndStop(
         if (found) {
             found.endStopIndex = endStopIndex;
 
-            // Recalculate endTime based on new last stop
+            // Clean up orphaned stops after the new end index
             const stops = table.stops;
+            if (endStopIndex < stops.length - 1) {
+                const stopsToRemove = stops.slice(endStopIndex + 1);
+                stopsToRemove.forEach(s => {
+                    delete found.stops[s];
+                    if (found.arrivalTimes) delete found.arrivalTimes[s];
+                    if (found.recoveryTimes) delete found.recoveryTimes[s];
+                });
+            }
+
+            // Recalculate endTime based on new last stop
             if (endStopIndex < stops.length) {
                 const newLastStop = stops[endStopIndex];
                 const newEndTime = parseTimeToMinutes(found.stops[newLastStop] || '');

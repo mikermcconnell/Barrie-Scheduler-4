@@ -21,6 +21,27 @@ import type {
 
 // ============ TYPES ============
 
+/**
+ * Result of checking connection status (without optimization).
+ * Used by ConnectionStatusPanel to display current state.
+ */
+export interface ConnectionCheckResult {
+    totalConnections: number;
+    connectionsMet: number;
+    connectionsMissed: number;
+    gaps: Array<{
+        targetName: string;
+        stopName: string;
+        targetTime: number;
+        tripTime: number;
+        gapMinutes: number;
+        meetsConnection: boolean;
+        direction: string;
+        tripId: string;
+        bufferRequired: number;
+    }>;
+}
+
 interface TripConnectionPair {
     trip: MasterTrip;
     tableIndex: number;
@@ -42,6 +63,74 @@ interface GapAnalysis {
     bufferRequired: number;
     meetsConnection: boolean;
     priority: number;
+}
+
+// ============ CONNECTION STATUS CHECK ============
+
+/**
+ * Check connection status without optimizing.
+ * Returns current state of all configured connections.
+ */
+export function checkConnections(
+    schedules: MasterRouteTable[],
+    config: RouteConnectionConfig,
+    library: ConnectionLibrary
+): ConnectionCheckResult {
+    // Get enabled connections
+    const enabledConnections = config.connections.filter(c => c.enabled);
+
+    if (enabledConnections.length === 0) {
+        return {
+            totalConnections: 0,
+            connectionsMet: 0,
+            connectionsMissed: 0,
+            gaps: []
+        };
+    }
+
+    // Build connection pairs
+    const pairs = buildConnectionPairs(schedules, enabledConnections, library);
+
+    if (pairs.length === 0) {
+        return {
+            totalConnections: 0,
+            connectionsMet: 0,
+            connectionsMissed: 0,
+            gaps: []
+        };
+    }
+
+    // Calculate gaps
+    const gapAnalyses = calculateGaps(pairs);
+
+    // Transform to ConnectionCheckResult format
+    const gaps = gapAnalyses.map(gap => {
+        const pair = pairs.find(p =>
+            p.trip.id === gap.tripId &&
+            p.connection.id === gap.connectionId
+        );
+        return {
+            targetName: gap.targetName,
+            stopName: pair?.connection.stopName || '',
+            targetTime: gap.targetTime,
+            tripTime: gap.tripTime,
+            gapMinutes: gap.gap,
+            meetsConnection: gap.meetsConnection,
+            direction: pair?.trip.direction || 'North',
+            tripId: gap.tripId,
+            bufferRequired: gap.bufferRequired
+        };
+    });
+
+    const met = gaps.filter(g => g.meetsConnection).length;
+    const missed = gaps.filter(g => !g.meetsConnection).length;
+
+    return {
+        totalConnections: gaps.length,
+        connectionsMet: met,
+        connectionsMissed: missed,
+        gaps
+    };
 }
 
 // ============ MAIN OPTIMIZER ============

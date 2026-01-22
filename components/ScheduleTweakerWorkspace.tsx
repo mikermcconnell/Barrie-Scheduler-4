@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { MasterRouteTable, InterlineConfig } from '../utils/masterScheduleParser';
+import { MasterRouteTable } from '../utils/masterScheduleParser';
 import { useAuth } from './AuthContext';
+import { useTeam } from './TeamContext';
 import { useUndoRedo } from '../hooks/useUndoRedo';
 import { useAutoSave } from '../hooks/useAutoSave';
 import { ScheduleEditor } from './ScheduleEditor';
@@ -24,6 +25,7 @@ export const ScheduleTweakerWorkspace: React.FC<ScheduleTweakerWorkspaceProps> =
     onClose
 }) => {
     const { user } = useAuth();
+    const { team } = useTeam();
     const toast = useToast();
 
     // --- State ---
@@ -36,7 +38,6 @@ export const ScheduleTweakerWorkspace: React.FC<ScheduleTweakerWorkspaceProps> =
     } = useUndoRedo<MasterRouteTable[]>([], { maxHistory: 50 });
 
     const [originalSchedules, setOriginalSchedules] = useState<MasterRouteTable[]>([]);
-    const [interlineConfig, setInterlineConfig] = useState<InterlineConfig>({ rules: [] });
     const [draftName, setDraftName] = useState<string>('Untitled Draft');
     const [successToast, setSuccessToast] = useState<{ message: string; visible: boolean; undoCount: number } | null>(null);
     const [showDraftManager, setShowDraftManager] = useState(false);
@@ -90,9 +91,9 @@ export const ScheduleTweakerWorkspace: React.FC<ScheduleTweakerWorkspaceProps> =
 
     useEffect(() => {
         if (schedules.length > 0) {
-            setAutoSaveData(schedules, originalSchedules, draftName, interlineConfig);
+            setAutoSaveData(schedules, originalSchedules, draftName);
         }
-    }, [schedules, originalSchedules, draftName, interlineConfig, setAutoSaveData]);
+    }, [schedules, originalSchedules, draftName, setAutoSaveData]);
 
     const showSuccessToastImpl = (message: string) => {
         // Capture current undo count so toast undo button knows if it's still relevant
@@ -225,7 +226,6 @@ export const ScheduleTweakerWorkspace: React.FC<ScheduleTweakerWorkspaceProps> =
             if (draft.schedules && draft.schedules.length > 0) {
                 resetSchedules(draft.schedules);
                 setOriginalSchedules(draft.originalSchedules || draft.schedules);
-                setInterlineConfig(draft.interlineConfig || { rules: [] });
                 setDraftName(draft.name);
                 showSuccessToastImpl(`Loaded: ${draft.name}`);
                 setInternalViewMode('editor');
@@ -241,7 +241,6 @@ export const ScheduleTweakerWorkspace: React.FC<ScheduleTweakerWorkspaceProps> =
             if (fullDraft && fullDraft.schedules.length > 0) {
                 resetSchedules(fullDraft.schedules);
                 setOriginalSchedules(fullDraft.originalSchedules || []);
-                setInterlineConfig(fullDraft.interlineConfig || { rules: [] });
                 setDraftName(fullDraft.name);
                 showSuccessToastImpl(`Loaded: ${fullDraft.name}`);
                 setInternalViewMode('editor');
@@ -328,9 +327,10 @@ export const ScheduleTweakerWorkspace: React.FC<ScheduleTweakerWorkspaceProps> =
                 redo={redo}
                 showSuccessToast={showSuccessToastImpl}
                 forceSimpleView={true}
-                // Interline configuration
-                initialInterlineConfig={interlineConfig}
-                onInterlineConfigChange={setInterlineConfig}
+                // Connection optimization
+                teamId={team?.id}
+                userId={user?.uid}
+                uploaderName={user?.displayName || user?.email || 'Unknown'}
             />
 
             {/* Success Toast */}

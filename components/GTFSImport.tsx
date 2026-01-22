@@ -25,13 +25,16 @@ import {
     fetchGTFSFeed,
     getAvailableRoutes,
     importRouteFromGTFS,
+    importAllRoutesFromGTFS,
     getDefaultGTFSConfig,
+    type SystemImportResult,
 } from '../utils/gtfsImportService';
 import type { DayType } from '../utils/masterScheduleTypes';
 
 interface GTFSImportProps {
     userId: string;
     onImportComplete?: (result: GTFSImportResult) => void;
+    onSystemImportComplete?: (result: SystemImportResult) => void;
     onCancel?: () => void;
     showHeader?: boolean;
     className?: string;
@@ -40,6 +43,7 @@ interface GTFSImportProps {
 export const GTFSImport: React.FC<GTFSImportProps> = ({
     userId,
     onImportComplete,
+    onSystemImportComplete,
     onCancel,
     showHeader = true,
     className = '',
@@ -67,6 +71,14 @@ export const GTFSImport: React.FC<GTFSImportProps> = ({
     // Bulk import state
     const [isBulkImporting, setIsBulkImporting] = useState(false);
     const [bulkProgress, setBulkProgress] = useState({ current: 0, total: 0, currentRoute: '' });
+
+    // System draft import state
+    const [isSystemImporting, setIsSystemImporting] = useState(false);
+    const [systemImportDayType, setSystemImportDayType] = useState<DayType | null>(null);
+
+    // Import all day types state
+    const [isImportingAllDayTypes, setIsImportingAllDayTypes] = useState(false);
+    const [allDayTypesProgress, setAllDayTypesProgress] = useState({ current: 0, total: 0, currentDayType: '' });
 
     // Fetch GTFS feed on mount or when URL changes
     const handleFetchFeed = async () => {
@@ -202,6 +214,117 @@ export const GTFSImport: React.FC<GTFSImportProps> = ({
             setError(`Failed to import any routes. ${failCount} routes failed.`);
         }
     };
+
+    // Handle import as system draft (all routes for a day type)
+    const handleImportAsSystem = async (dayType: DayType) => {
+        if (!feed) return;
+
+        setIsSystemImporting(true);
+        setSystemImportDayType(dayType);
+        setError(null);
+
+        try {
+            const importOptions: GTFSImportOptions = { timepointsOnly };
+            const result = await importAllRoutesFromGTFS(
+                feed,
+                dayType,
+                userId,
+                undefined, // Auto-generate name
+                config,
+                importOptions
+            );
+
+            if (result.success) {
+                onSystemImportComplete?.(result);
+            } else {
+                setError(result.error || 'System import failed');
+            }
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'System import failed');
+        } finally {
+            setIsSystemImporting(false);
+            setSystemImportDayType(null);
+        }
+    };
+
+    // Handle import ALL day types as system drafts (Weekday + Saturday + Sunday)
+    const handleImportAllDayTypes = async () => {
+        if (!feed) return;
+
+        const dayTypesToImport: DayType[] = ['Weekday', 'Saturday', 'Sunday'].filter(
+            dt => (routeCountsByDayType[dt as DayType] || 0) > 0
+        ) as DayType[];
+
+        if (dayTypesToImport.length === 0) {
+            setError('No routes found in any day type');
+            return;
+        }
+
+        setIsImportingAllDayTypes(true);
+        setError(null);
+        setAllDayTypesProgress({ current: 0, total: dayTypesToImport.length, currentDayType: '' });
+
+        const importOptions: GTFSImportOptions = { timepointsOnly };
+        const results: SystemImportResult[] = [];
+
+        for (let i = 0; i < dayTypesToImport.length; i++) {
+            const dayType = dayTypesToImport[i];
+            setAllDayTypesProgress({
+                current: i + 1,
+                total: dayTypesToImport.length,
+                currentDayType: dayType
+            });
+
+            try {
+                const result = await importAllRoutesFromGTFS(
+                    feed,
+                    dayType,
+                    userId,
+                    undefined,
+                    config,
+                    importOptions
+                );
+                results.push(result);
+            } catch (err) {
+                results.push({
+                    success: false,
+                    error: err instanceof Error ? err.message : 'Unknown error'
+                });
+            }
+        }
+
+        setIsImportingAllDayTypes(false);
+
+        const successCount = results.filter(r => r.success).length;
+        const totalRoutes = results.reduce((sum, r) => sum + (r.routeCount || 0), 0);
+
+        if (successCount > 0) {
+            // Return the last successful result (or first) so it opens in editor
+            const lastSuccess = results.filter(r => r.success).pop();
+            if (lastSuccess) {
+                onSystemImportComplete?.({
+                    ...lastSuccess,
+                    warnings: [
+                        `Created ${successCount} system drafts with ${totalRoutes} total routes`,
+                        ...(lastSuccess.warnings || [])
+                    ]
+                });
+            }
+        } else {
+            setError('Failed to import any day types');
+        }
+    };
+
+    // Get route counts by day type
+    const routeCountsByDayType = routes.reduce((acc, route) => {
+        acc[route.dayType] = (acc[route.dayType] || 0) + 1;
+        return acc;
+    }, {} as Record<DayType, number>);
+
+    // Count available day types
+    const availableDayTypes = (['Weekday', 'Saturday', 'Sunday'] as DayType[]).filter(
+        dt => (routeCountsByDayType[dt] || 0) > 0
+    );
 
     // Filter routes
     const filteredRoutes = routes.filter(route => {
@@ -362,8 +485,103 @@ export const GTFSImport: React.FC<GTFSImportProps> = ({
                             </div>
                         )}
 
-                        {/* Import All Button */}
-                        {!isBulkImporting && filteredRoutes.length > 1 && (
+                        {/* Import System Draft Section */}
+                        {!isBulkImporting && !isSystemImporting && !isImportingAllDayTypes && onSystemImportComplete && (
+                            <div className="mb-4 p-4 bg-gradient-to-r from-purple-50 to-indigo-50 border border-purple-200 rounded-lg">
+                                <div className="flex items-center justify-between mb-3">
+                                    <div className="flex items-center gap-2">
+                                        <Database className="text-purple-600" size={20} />
+                                        <p className="font-medium text-gray-800">Import as System Draft</p>
+                                        <span className="text-xs px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full">
+                                            Recommended
+                                        </span>
+                                    </div>
+                                    {/* Import All Day Types Button */}
+                                    {availableDayTypes.length > 1 && (
+                                        <button
+                                            onClick={handleImportAllDayTypes}
+                                            className="px-4 py-2 bg-purple-700 text-white font-bold rounded-lg hover:bg-purple-800 transition-colors flex items-center gap-2 shadow-md"
+                                        >
+                                            <Download size={16} />
+                                            Import All ({availableDayTypes.length} day types)
+                                        </button>
+                                    )}
+                                </div>
+                                <p className="text-sm text-gray-500 mb-3">
+                                    Import all routes for a day type together. This enables interline logic between routes like 8A and 8B.
+                                </p>
+                                <div className="flex gap-2">
+                                    {(['Weekday', 'Saturday', 'Sunday'] as DayType[]).map((dt) => {
+                                        const count = routeCountsByDayType[dt] || 0;
+                                        if (count === 0) return null;
+                                        const isImporting = isSystemImporting && systemImportDayType === dt;
+                                        return (
+                                            <button
+                                                key={dt}
+                                                onClick={() => handleImportAsSystem(dt)}
+                                                disabled={isSystemImporting}
+                                                className={`flex-1 px-4 py-2 rounded-lg font-medium transition-colors flex items-center justify-center gap-2 ${
+                                                    isImporting
+                                                        ? 'bg-purple-200 text-purple-700'
+                                                        : 'bg-purple-600 text-white hover:bg-purple-700'
+                                                } disabled:opacity-50`}
+                                            >
+                                                {isImporting ? (
+                                                    <Loader2 size={16} className="animate-spin" />
+                                                ) : (
+                                                    <Download size={16} />
+                                                )}
+                                                {dt} ({count})
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* System Import Progress - Single Day Type */}
+                        {isSystemImporting && (
+                            <div className="mb-4 p-4 bg-purple-50 border border-purple-200 rounded-lg">
+                                <div className="flex items-center gap-3">
+                                    <Loader2 className="text-purple-600 animate-spin" size={20} />
+                                    <div>
+                                        <p className="font-medium text-purple-800">
+                                            Importing {systemImportDayType} System Draft...
+                                        </p>
+                                        <p className="text-sm text-purple-600">
+                                            Processing all routes for {systemImportDayType}
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Import All Day Types Progress */}
+                        {isImportingAllDayTypes && (
+                            <div className="mb-4 p-4 bg-purple-50 border border-purple-200 rounded-lg">
+                                <div className="flex items-center justify-between mb-2">
+                                    <span className="font-medium text-purple-800">
+                                        Importing All Day Types...
+                                    </span>
+                                    <span className="text-sm text-purple-600">
+                                        {allDayTypesProgress.current} / {allDayTypesProgress.total}
+                                    </span>
+                                </div>
+                                <div className="w-full bg-purple-200 rounded-full h-2 mb-2">
+                                    <div
+                                        className="bg-purple-600 h-2 rounded-full transition-all"
+                                        style={{ width: `${(allDayTypesProgress.current / allDayTypesProgress.total) * 100}%` }}
+                                    />
+                                </div>
+                                <div className="flex items-center gap-2 text-sm text-purple-600">
+                                    <Loader2 size={14} className="animate-spin" />
+                                    <span>Processing {allDayTypesProgress.currentDayType} routes...</span>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Import All Button (legacy - separate drafts) */}
+                        {!isBulkImporting && !isSystemImporting && filteredRoutes.length > 1 && !onSystemImportComplete && (
                             <div className="mb-4 p-4 bg-gradient-to-r from-indigo-50 to-blue-50 border border-indigo-200 rounded-lg flex items-center justify-between">
                                 <div>
                                     <p className="font-medium text-gray-800">Import All Routes</p>

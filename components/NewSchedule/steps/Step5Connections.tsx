@@ -36,8 +36,9 @@ import { RouteConnectionPanel } from '../connections/RouteConnectionPanel';
 import { OptimizationPanel } from '../connections/OptimizationPanel';
 import { AddTargetModal } from '../connections/AddTargetModal';
 import { ImportRouteModal } from '../connections/ImportRouteModal';
+import { ConnectionStatusPanel } from '../../connections/ConnectionStatusPanel';
 import { getConnectionLibrary, saveConnectionLibrary } from '../../../utils/connectionLibraryService';
-import { optimizeForConnections } from '../../../utils/connectionOptimizer';
+import { optimizeForConnections, checkConnections, ConnectionCheckResult } from '../../../utils/connectionOptimizer';
 
 interface Step5Props {
     schedules: MasterRouteTable[];
@@ -79,6 +80,8 @@ export const Step5Connections: React.FC<Step5Props> = ({
     const [showImportRouteModal, setShowImportRouteModal] = useState(false);
     const [expandedSection, setExpandedSection] = useState<'library' | 'config' | 'optimize' | null>('library');
     const [isLoadingLibrary, setIsLoadingLibrary] = useState(false);
+    const [connectionStatus, setConnectionStatus] = useState<ConnectionCheckResult | null>(null);
+    const [isCheckingStatus, setIsCheckingStatus] = useState(false);
 
     // Load connection library from Firebase on mount
     useEffect(() => {
@@ -141,6 +144,25 @@ export const Step5Connections: React.FC<Step5Props> = ({
             });
         }
     }, [routeIdentity, routeConnectionConfig, setRouteConnectionConfig]);
+
+    // Check connection status whenever schedules, config, or library changes
+    useEffect(() => {
+        if (!connectionLibrary || !routeConnectionConfig || schedules.length === 0) {
+            setConnectionStatus(null);
+            return;
+        }
+
+        setIsCheckingStatus(true);
+        try {
+            const result = checkConnections(schedules, routeConnectionConfig, connectionLibrary);
+            setConnectionStatus(result);
+        } catch (error) {
+            console.error('Error checking connections:', error);
+            setConnectionStatus(null);
+        } finally {
+            setIsCheckingStatus(false);
+        }
+    }, [schedules, connectionLibrary, routeConnectionConfig]);
 
     // Get stop names from current schedules
     const availableStops = React.useMemo(() => {
@@ -261,6 +283,13 @@ export const Step5Connections: React.FC<Step5Props> = ({
                     </div>
                 </div>
             </div>
+
+            {/* Connection Status Panel - shows current state */}
+            <ConnectionStatusPanel
+                checkResult={connectionStatus}
+                isLoading={isCheckingStatus}
+                onConfigureClick={() => setExpandedSection('config')}
+            />
 
             {/* Info banner if no connections */}
             {stats.targetCount === 0 && (

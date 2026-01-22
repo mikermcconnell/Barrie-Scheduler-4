@@ -1,9 +1,7 @@
 
 import { ParseResult, ParsedRoute, ParsedTrip, StopInfo, parseTimeToMinutes } from './masterScheduleParserV2';
 import { MasterRouteTable, MasterTrip } from './masterScheduleParser';
-import { assignBlocksToRoute, assignBlocksBidirectional, assignBlocksToSection, assignBlocksInterlined, BlockAssignmentResult, BlockedTrip, Block } from './blockAssignment';
-
-const INTERLINE_PAIRS: string[][] = [];
+import { assignBlocksToRoute, assignBlocksBidirectional, assignBlocksToSection, BlockAssignmentResult, BlockedTrip, Block } from './blockAssignment';
 
 /**
  * Adapts V2 Parser output to V1 MasterRouteTable format
@@ -11,69 +9,9 @@ const INTERLINE_PAIRS: string[][] = [];
  */
 export const adaptV2ToV1 = (v2Result: ParseResult): MasterRouteTable[] => {
     const tables: MasterRouteTable[] = [];
-    const routeMap = new Map(v2Result.routes.map(r => [r.routeName, r]));
-    const processedRoutes = new Set<string>();
 
-    // 1. Handle Configured Interline Pairs
-    for (const pair of INTERLINE_PAIRS) {
-        const [r1Name, r2Name] = pair;
-        const r1 = routeMap.get(r1Name);
-        const r2 = routeMap.get(r2Name);
-
-        if (r1 && r2) {
-            processedRoutes.add(r1Name);
-            processedRoutes.add(r2Name);
-
-            // Group sections by day for BOTH routes
-            const sectionsByDay: Record<string, { section: any, routeName: string }[]> = {
-                'Weekday': [], 'Saturday': [], 'Sunday': []
-            };
-
-            r1.sections.forEach(s => sectionsByDay[s.dayType]?.push({ section: s, routeName: r1Name }));
-            r2.sections.forEach(s => sectionsByDay[s.dayType]?.push({ section: s, routeName: r2Name }));
-
-            // Process each day
-            for (const [dayType, sections] of Object.entries(sectionsByDay)) {
-                if (sections.length === 0) continue;
-
-                // Run Interlined Block Assignment
-                const blockResult = assignBlocksInterlined(sections); // New function
-
-                // We need to split the results back into route-specific tables
-                // Filter trips by the `routeName` property we added to BlockedTrip
-                const tripsByRoute: Record<string, BlockedTrip[]> = { [r1Name]: [], [r2Name]: [] };
-
-                blockResult.blocks.forEach(block => {
-                    block.trips.forEach(trip => {
-                        if (tripsByRoute[trip.routeName]) {
-                            tripsByRoute[trip.routeName].push(trip);
-                        }
-                    });
-                });
-
-                // Helper to create tables for a specific route
-                const createTablesForRoute = (rName: string, trips: BlockedTrip[], rStops: StopInfo[]) => {
-                    if (trips.length === 0 || rStops.length === 0) return;
-
-                    const northTrips = trips.filter(t => t.direction === 'North');
-                    const southTrips = trips.filter(t => t.direction === 'South');
-                    const otherTrips = trips.filter(t => t.direction !== 'North' && t.direction !== 'South');
-
-                    if (northTrips.length > 0) tables.push(createTable(rName, dayType, 'North', rStops, northTrips.map(t => convertTrip(t, rStops))));
-                    if (southTrips.length > 0) tables.push(createTable(rName, dayType, 'South', rStops, southTrips.map(t => convertTrip(t, rStops))));
-                    if (otherTrips.length > 0) tables.push(createTable(rName, dayType, 'Loop', rStops, otherTrips.map(t => convertTrip(t, rStops))));
-                };
-
-                // Create Tables
-                createTablesForRoute(r1Name, tripsByRoute[r1Name], r1.sections.find(s => s.dayType === dayType)?.stops || []);
-                createTablesForRoute(r2Name, tripsByRoute[r2Name], r2.sections.find(s => s.dayType === dayType)?.stops || []);
-            }
-        }
-    }
-
-    // 2. Standard Handling for Remaining Routes
+    // Process each route
     for (const route of v2Result.routes) {
-        if (processedRoutes.has(route.routeName)) continue;
 
         // Group sections by day type
         const sectionsByDay: Record<string, typeof route.sections> = {
@@ -379,7 +317,5 @@ const convertTrip = (trip: BlockedTrip, stops: StopInfo[]): MasterTrip => {
         stops: stopRecord,
         isOverlap: false, // Calculated later if needed
         isTightRecovery: (totalRecovery < 5),
-        interlineNext: trip.interlineNext ? { route: trip.interlineNext.route, time: trip.interlineNext.time, stopName: trip.interlineNext.stopName } : undefined,
-        interlinePrev: trip.interlinePrev ? { route: trip.interlinePrev.route, time: trip.interlinePrev.time, stopName: trip.interlinePrev.stopName } : undefined
     };
 };

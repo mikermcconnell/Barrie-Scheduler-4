@@ -386,6 +386,10 @@ export const ScheduleEditorWorkspace: React.FC<ScheduleEditorWorkspaceProps> = (
                     publishDisabled={!user || !team}
                     isPublishing={isPublishing}
                     hideSidebar={!!hasSiblings}
+                    teamId={team?.id}
+                    userId={user?.uid}
+                    uploaderName={user?.displayName || user?.email || 'Unknown'}
+                    showSuccessToast={(msg) => toast?.success('Success', msg)}
                 />
             </div>
         </div>

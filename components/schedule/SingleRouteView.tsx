@@ -16,8 +16,6 @@ import {
     Plus,
     ChevronUp,
     ChevronDown,
-    ArrowRight,
-    ArrowLeft,
     Copy,
     Trash2
 } from 'lucide-react';
@@ -181,12 +179,8 @@ export const SingleRouteView: React.FC<SingleRouteViewProps> = ({ table, showSum
             }
         }
 
-        // If no interline pattern for this route, check if trip has interline markers
+        // If no interline pattern for this route, return standard cycle time
         if (!stopPattern) {
-            if (!trip.interlineNext?.stopName) {
-                return { value: trip.cycleTime, hasGap: false, gap: 0 };
-            }
-            // Fall back to original dynamic logic for non-configured routes
             return { value: trip.cycleTime, hasGap: false, gap: 0 };
         }
 
@@ -402,38 +396,16 @@ export const SingleRouteView: React.FC<SingleRouteViewProps> = ({ table, showSum
                                             return match ? parseInt(match[1]) : 0;
                                         };
 
-                                        const cellTime = depMin;
-
-                                        // Outgoing: match base name (no suffix) AND verify this cell's time matches the interline time
-                                        const isInterlineOutgoing = trip.interlineNext?.stopName &&
-                                            stripSuffix(normalizeStop(stop)) === stripSuffix(normalizeStop(trip.interlineNext.stopName)) &&
-                                            getSuffix(stop) === 0 &&
-                                            cellTime !== null &&
-                                            Math.abs(cellTime - trip.interlineNext.time) <= 5;
-
-                                        // Incoming: match the (2) variant
-                                        const isInterlineIncoming = trip.interlinePrev?.stopName &&
-                                            stripSuffix(normalizeStop(stop)) === stripSuffix(normalizeStop(trip.interlinePrev.stopName)) &&
-                                            getSuffix(stop) === 2 &&
-                                            cellTime !== null &&
-                                            cellTime >= trip.interlinePrev.time &&
-                                            cellTime <= trip.interlinePrev.time + 15;
-
                                         return (
                                             <React.Fragment key={stop}>
                                                 {hasRecovery ? (
                                                     <>
                                                         {/* ARR Column */}
-                                                        <td className={`p-0 border-r relative ${isInterlineIncoming ? 'bg-purple-50' : ''}`} style={{ minWidth: '56px', width: '56px' }}>
+                                                        <td className="p-0 border-r relative" style={{ minWidth: '56px', width: '56px' }}>
                                                             <div className="flex items-center justify-center">
                                                                 <span className={`w-full font-mono text-xs text-center p-1 text-gray-600 ${arrDiff !== 0 ? 'font-bold' : ''}`}>
                                                                     {arrTime}
                                                                 </span>
-                                                                {isInterlineIncoming && (
-                                                                    <span className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 z-10 inline-flex items-center gap-0.5 px-1 py-0.5 bg-purple-500 text-white rounded text-[8px] font-bold shadow-sm whitespace-nowrap" title={`Came from ${trip.interlinePrev!.route}`}>
-                                                                        <ArrowLeft size={8} />{trip.interlinePrev!.route}
-                                                                    </span>
-                                                                )}
                                                                 {arrDiff !== 0 && (
                                                                     <span className={`absolute top-0 right-0 text-[9px] font-bold px-0.5 rounded-bl ${arrDiff > 0 ? 'text-green-600 bg-green-50' : 'text-red-600 bg-red-50'}`}>
                                                                         {arrDiff > 0 ? '+' : ''}{arrDiff}
@@ -457,27 +429,29 @@ export const SingleRouteView: React.FC<SingleRouteViewProps> = ({ table, showSum
                                                             )}
                                                         </td>
                                                         {/* DEP Column */}
-                                                        <td className={`p-0 border-r relative group/time ${isInterlineOutgoing ? 'bg-blue-50' : ''}`} style={{ minWidth: '80px', width: '80px' }}>
+                                                        <td className="p-0 border-r relative group/time" style={{ minWidth: '80px', width: '80px' }}>
                                                             <div className="flex items-center justify-center">
                                                                 <input
                                                                     type="text"
-                                                                    value={depTime}
-                                                                    onChange={(e) => onCellEdit?.(trip.id, stop, sanitizeInput(e.target.value))}
+                                                                    key={`${trip.id}-${stop}-${depTime}`}
+                                                                    defaultValue={depTime}
                                                                     onBlur={(e) => {
-                                                                        if (e.target.value && onCellEdit) {
-                                                                            const originalValue = trip.stops[stop];
-                                                                            const formatted = parseTimeInput(e.target.value, originalValue);
-                                                                            if (formatted) onCellEdit(trip.id, stop, formatted);
+                                                                        const val = e.target.value.trim();
+                                                                        if (!val) {
+                                                                            // Restore original value if empty
+                                                                            e.target.value = depTime || '';
+                                                                            return;
+                                                                        }
+                                                                        if (onCellEdit) {
+                                                                            const formatted = parseTimeInput(val, depTime);
+                                                                            if (formatted && formatted !== depTime) {
+                                                                                onCellEdit(trip.id, stop, formatted);
+                                                                            }
                                                                         }
                                                                     }}
                                                                     disabled={readOnly}
                                                                     className={`w-full h-full bg-transparent font-mono text-xs text-center p-1 focus:bg-white focus:outline-none ${depDiff !== 0 ? 'font-bold' : ''} ${readOnly ? 'cursor-default' : ''}`}
                                                                 />
-                                                                {isInterlineOutgoing && (
-                                                                    <span className="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2 z-10 inline-flex items-center gap-0.5 px-1 py-0.5 bg-blue-500 text-white rounded text-[8px] font-bold shadow-sm whitespace-nowrap" title={`Continues as ${trip.interlineNext!.route}`}>
-                                                                        <ArrowRight size={8} />{trip.interlineNext!.route}
-                                                                    </span>
-                                                                )}
                                                                 {depDiff !== 0 && (
                                                                     <span className={`absolute top-0 right-0 text-[9px] font-bold px-0.5 rounded-bl ${depDiff > 0 ? 'text-green-600 bg-green-50' : 'text-red-600 bg-red-50'}`}>
                                                                         {depDiff > 0 ? '+' : ''}{depDiff}
@@ -494,32 +468,29 @@ export const SingleRouteView: React.FC<SingleRouteViewProps> = ({ table, showSum
                                                     </>
                                                 ) : (
                                                     /* DEP only (no recovery at this stop) */
-                                                    <td className={`p-0 border-r relative group/time ${isInterlineOutgoing ? 'bg-blue-50' : ''} ${isInterlineIncoming ? 'bg-purple-50' : ''}`} style={{ minWidth: '80px', width: '80px' }}>
+                                                    <td className="p-0 border-r relative group/time" style={{ minWidth: '80px', width: '80px' }}>
                                                         <div className="flex items-center justify-center">
                                                             <input
                                                                 type="text"
-                                                                value={depTime}
-                                                                onChange={(e) => onCellEdit?.(trip.id, stop, sanitizeInput(e.target.value))}
+                                                                key={`${trip.id}-${stop}-${depTime}`}
+                                                                defaultValue={depTime}
                                                                 onBlur={(e) => {
-                                                                    if (e.target.value && onCellEdit) {
-                                                                        const originalValue = trip.stops[stop];
-                                                                        const formatted = parseTimeInput(e.target.value, originalValue);
-                                                                        if (formatted) onCellEdit(trip.id, stop, formatted);
+                                                                    const val = e.target.value.trim();
+                                                                    if (!val) {
+                                                                        // Restore original value if empty
+                                                                        e.target.value = depTime || '';
+                                                                        return;
+                                                                    }
+                                                                    if (onCellEdit) {
+                                                                        const formatted = parseTimeInput(val, depTime);
+                                                                        if (formatted && formatted !== depTime) {
+                                                                            onCellEdit(trip.id, stop, formatted);
+                                                                        }
                                                                     }
                                                                 }}
                                                                 disabled={readOnly}
                                                                 className={`w-full h-full bg-transparent font-mono text-xs text-center p-1 focus:bg-white focus:outline-none ${depDiff !== 0 ? 'font-bold' : ''} ${readOnly ? 'cursor-default' : ''}`}
                                                             />
-                                                            {isInterlineOutgoing && (
-                                                                <span className="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2 z-10 inline-flex items-center gap-0.5 px-1 py-0.5 bg-blue-500 text-white rounded text-[8px] font-bold shadow-sm whitespace-nowrap" title={`Continues as ${trip.interlineNext!.route}`}>
-                                                                    <ArrowRight size={8} />{trip.interlineNext!.route}
-                                                                </span>
-                                                            )}
-                                                            {isInterlineIncoming && (
-                                                                <span className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 z-10 inline-flex items-center gap-0.5 px-1 py-0.5 bg-purple-500 text-white rounded text-[8px] font-bold shadow-sm whitespace-nowrap" title={`Came from ${trip.interlinePrev!.route}`}>
-                                                                    <ArrowLeft size={8} />{trip.interlinePrev!.route}
-                                                                </span>
-                                                            )}
                                                             {depDiff !== 0 && (
                                                                 <span className={`absolute top-0 right-0 text-[9px] font-bold px-0.5 rounded-bl ${depDiff > 0 ? 'text-green-600 bg-green-50' : 'text-red-600 bg-red-50'}`}>
                                                                     {depDiff > 0 ? '+' : ''}{depDiff}

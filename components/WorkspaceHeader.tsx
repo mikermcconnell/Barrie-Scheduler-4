@@ -95,7 +95,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
     publishDisabled = false
 }) => {
     return (
-        <div className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between sticky top-0 z-[100] transition-all shadow-sm">
+        <div className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between sticky top-0 z-60 transition-all shadow-sm">
             {/* Left Section: File Menu & Route Info */}
             <div className="flex items-center gap-4">
 
