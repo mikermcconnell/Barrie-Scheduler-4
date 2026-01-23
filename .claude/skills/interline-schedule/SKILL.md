@@ -276,38 +276,27 @@ The `linkInterlineTripsAtAllandale()` function pairs Trip 1's arrival with Trip 
 | Stops after Allandale empty | Stop data not merged from departure trip | Check `_mergedFromDepartureTrip` is set; verify departure trip has stop data |
 | Trips not in interline window | Wrong time check | Verify `isInInterlineWindow` returns true for the trip time |
 | Last interline trip has no DEP | No "next" trip to pair with | Expected - last trip of the day won't have a following departure |
-| **Cycle time inflated (172 vs 150 min)** | Georgian College recovery double-counted in N+S | **WIP**: Line 1539-1548 uses `totalTravel + allandaleRecovery + barrieSouthRecovery` to avoid double-counting |
+| **Cycle time inflated** | Wall-clock span includes interline gap at Allandale | Fixed 2026-01-23: Line 1541-1556 uses service cycle calculation for 8A/8B |
 
-### Cycle Time Calculation (WIP)
+### Cycle Time Calculation (Service Cycle)
 
-**File:** `components/schedule/RoundTripTableView.tsx:1539-1548`
+**File:** `components/schedule/RoundTripTableView.tsx:1541-1556`
 
-For 8A interline trips, the cycle time requires special handling:
+For 8A/8B interline trips, cycle time uses **service cycle** (actual running time) instead of wall-clock span (which incorrectly includes the interline gap at Allandale).
 
-**User's Example Trip (expected 150 min):**
-- Segment 1: Barrie South GO → Allandale = 49 min travel
-- Allandale recovery: 5 min
-- Segment 2: Allandale → Georgian College → Barrie South GO = 96 min travel
-- **Total: 150 min**
-
-**Problem:** Standard calculation (`totalTravel + totalRec`) showed 172 min (22 min too high)
-
-**Root Cause:** Georgian College recovery appears in BOTH:
-- North trip's `recoveryTime` (from merge)
-- South trip's `recoveryTime` (original data)
-
-**Current Fix Attempt:**
+**Formula:**
 ```typescript
-if (isRoute8A(combined.routeName) && tripWithInterline?._interlinePartial) {
-    const interlineStopName = tripWithInterline._interlineStop;
-    const allandaleRecovery = (interlineStopName && northTrip?.recoveryTimes?.[interlineStopName]) || 5;
-    const lastSouthStop = combined.southStops[combined.southStops.length - 1];
-    const barrieSouthRecovery = (lastSouthStop && southTrip?.recoveryTimes?.[lastSouthStop]) || 0;
-    displayCycleTime = totalTravel + allandaleRecovery + barrieSouthRecovery;
-}
+displayCycleTime = totalTravel + allandaleRecovery + georgianRecovery + terminalRecovery;
 ```
 
-**Status:** Still showing incorrect value - needs further investigation into what `totalTravel` contains after the interline merge.
+Where:
+- `totalTravel` = North trip travel + South trip travel
+- `allandaleRecovery` = Recovery at Allandale (interline stop), defaults to 5 min
+- `georgianRecovery` = Recovery at Georgian College (turnaround point)
+- `terminalRecovery` = Recovery at final terminal (Park Place or South GO)
+
+**Why not use wall-clock span?**
+During interline hours, the bus switches routes at Allandale. The wall-clock `totalCycleTime` includes the ~35 min gap when the bus is running as the OTHER route, which inflates the displayed cycle time.
 
 ### Debug Logging
 

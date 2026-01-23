@@ -1128,11 +1128,10 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                     });
                 });
 
-                // Force Georgian College to show ARR | R columns for Route 8A only
+                // Force Georgian College to show ARR | R columns for Route 8A/8B
                 // This ensures the turnaround linking can work even if recovery times aren't
                 // explicitly set in the source data (common on Sunday schedules)
-                // Note: Only 8A has Georgian College turnaround (not 8B)
-                if (isRoute8A(combined.routeName)) {
+                if (isInterlineRoute(combined.routeName)) {
                     const georgianStopNorth = findGeorgianStop(combined.northStops);
                     if (georgianStopNorth) {
                         northStopsWithRecovery.add(georgianStopNorth);
@@ -1532,21 +1531,27 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                         const totalRec = (northTrip?.recoveryTime || 0) + (southTrip?.recoveryTime || 0);
                                         const ratio = totalTravel > 0 ? (totalRec / totalTravel) * 100 : 0;
 
-                                        // Calculate cycle time - for Route 8A interline trips, use pure runtime
+                                        // Calculate cycle time - for Route 8A/8B interline trips, use pure runtime
                                         // (sum of travel times + recovery times) instead of wall-clock span
-                                        // which incorrectly includes the 35-min interline gap at Allandale
+                                        // which incorrectly includes the interline gap at Allandale
                                         const tripWithInterline = northTrip as MasterTrip & { _interlinePartial?: boolean; _interlineStop?: string };
                                         let displayCycleTime = row.totalCycleTime;
 
-                                        if (isRoute8A(combined.routeName) && tripWithInterline?._interlinePartial) {
-                                            // For 8A interline: cycle = travel + Allandale recovery + Barrie South GO recovery
-                                            // Avoid double-counting Georgian College recovery (present in both N and S trips)
+                                        if (isInterlineRoute(combined.routeName) && tripWithInterline?._interlinePartial) {
+                                            // For 8A/8B interline: cycle = travel + Allandale recovery + Georgian College recovery + terminal recovery
+                                            // Get Allandale recovery (the interline stop)
                                             const interlineStopName = tripWithInterline._interlineStop;
                                             const allandaleRecovery = (interlineStopName && northTrip?.recoveryTimes?.[interlineStopName]) || 5;
-                                            // Get Barrie South GO recovery from the last South stop
+
+                                            // Get Georgian College recovery (turnaround point)
+                                            const georgianStopNorth = findGeorgianStop(combined.northStops);
+                                            const georgianRecovery = (georgianStopNorth && northTrip?.recoveryTimes?.[georgianStopNorth]) || 0;
+
+                                            // Get terminal recovery from the last South stop (Park Place or South GO)
                                             const lastSouthStop = combined.southStops[combined.southStops.length - 1];
-                                            const barrieSouthRecovery = (lastSouthStop && southTrip?.recoveryTimes?.[lastSouthStop]) || 0;
-                                            displayCycleTime = totalTravel + allandaleRecovery + barrieSouthRecovery;
+                                            const terminalRecovery = (lastSouthStop && southTrip?.recoveryTimes?.[lastSouthStop]) || 0;
+
+                                            displayCycleTime = totalTravel + allandaleRecovery + georgianRecovery + terminalRecovery;
                                         }
 
                                         const headway = northTrip ? headways[northTrip.id] : (southTrip ? headways[southTrip.id] : '-');
