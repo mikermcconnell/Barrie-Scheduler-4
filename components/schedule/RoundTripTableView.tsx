@@ -1548,8 +1548,10 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                             const georgianRecovery = (georgianStopNorth && northTrip?.recoveryTimes?.[georgianStopNorth]) || 0;
 
                                             // Get terminal recovery from the last South stop (Park Place or South GO)
+                                            // Default to 10 min for interline routes when GTFS data shows 0
                                             const lastSouthStop = combined.southStops[combined.southStops.length - 1];
-                                            const terminalRecovery = (lastSouthStop && southTrip?.recoveryTimes?.[lastSouthStop]) || 0;
+                                            const rawTerminalRecovery = (lastSouthStop && southTrip?.recoveryTimes?.[lastSouthStop]) || 0;
+                                            const terminalRecovery = rawTerminalRecovery === 0 ? 10 : rawTerminalRecovery;
 
                                             displayCycleTime = totalTravel + allandaleRecovery + georgianRecovery + terminalRecovery;
                                         }
@@ -1975,7 +1977,16 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                         // Standard calculation: arrival + recovery
                                                                         const arrival = getStopValue(southTrip?.arrivalTimes, stop) || getStopValue(southTrip?.stops, stop);
                                                                         if (!arrival) return '';
-                                                                        const recovery = getStopValue(southTrip?.recoveryTimes, stop) || 0;
+                                                                        let recovery = getStopValue(southTrip?.recoveryTimes, stop) || 0;
+
+                                                                        // For interline routes (8A/8B), the terminal (last South stop) should have
+                                                                        // recovery time even if GTFS data shows 0. Default to 10 min for 8B South GO.
+                                                                        const isLastSouthStop = i === combined.southStops.length - 1;
+                                                                        if (recovery === 0 && isLastSouthStop && isInterlineRoute(combined.routeName)) {
+                                                                            // Use default terminal recovery of 10 min for interline routes
+                                                                            recovery = 10;
+                                                                        }
+
                                                                         if (recovery === 0) return arrival;
                                                                         return TimeUtils.addMinutes(arrival, recovery);
                                                                     })()}

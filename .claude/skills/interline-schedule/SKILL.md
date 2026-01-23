@@ -277,6 +277,7 @@ The `linkInterlineTripsAtAllandale()` function pairs Trip 1's arrival with Trip 
 | Trips not in interline window | Wrong time check | Verify `isInInterlineWindow` returns true for the trip time |
 | Last interline trip has no DEP | No "next" trip to pair with | Expected - last trip of the day won't have a following departure |
 | **Cycle time inflated** | Wall-clock span includes interline gap at Allandale | Fixed 2026-01-23: Line 1541-1556 uses service cycle calculation for 8A/8B |
+| **8B Sunday South DEP shows :12 instead of :22** | Some GTFS trips have 0 terminal recovery at Barrie South GO while others have 10 min | Fixed 2026-01-23: Line 1980-1986 and 1552-1554 default to 10 min terminal recovery for interline routes when GTFS shows 0 |
 
 ### Cycle Time Calculation (Service Cycle)
 
