@@ -568,6 +568,101 @@ function generateUniqueStopNames(stopTimes: ProcessedGTFSTrip['stopTimes']): str
 }
 
 /**
+ * Merge stop lists from multiple partial trips into a complete stop list.
+ * This handles cases like Sunday schedules where some trips go A→B and others go B→C,
+ * and we need the full A→B→C stop list.
+ *
+ * Algorithm:
+ * 1. Build a graph of stop connections (which stop follows which)
+ * 2. Find the starting stop (one that's never preceded by another)
+ * 3. Walk the graph to build the complete ordered stop list
+ */
+function mergeStopListsFromTrips(trips: ProcessedGTFSTrip[]): ProcessedGTFSTrip['stopTimes'] {
+    if (trips.length === 0) return [];
+    if (trips.length === 1) return trips[0].stopTimes;
+
+    // Build a map of stop connections: stopId -> next stopId
+    // Also track which stops exist and their stop info
+    const stopInfoMap = new Map<string, ProcessedGTFSTrip['stopTimes'][0]>();
+    const nextStopMap = new Map<string, string>(); // stopId -> next stopId
+    const prevStopSet = new Set<string>(); // stops that have a predecessor
+
+    for (const trip of trips) {
+        for (let i = 0; i < trip.stopTimes.length; i++) {
+            const st = trip.stopTimes[i];
+            // Store stop info (prefer earlier occurrence for timing)
+            if (!stopInfoMap.has(st.stopId)) {
+                stopInfoMap.set(st.stopId, st);
+            }
+
+            // Record the connection to next stop
+            if (i < trip.stopTimes.length - 1) {
+                const nextSt = trip.stopTimes[i + 1];
+                // Only set if not already set (preserve first occurrence)
+                if (!nextStopMap.has(st.stopId)) {
+                    nextStopMap.set(st.stopId, nextSt.stopId);
+                }
+                prevStopSet.add(nextSt.stopId);
+            }
+        }
+    }
+
+    // Find starting stops (stops that are never a "next" stop)
+    const startingStops: string[] = [];
+    for (const stopId of stopInfoMap.keys()) {
+        if (!prevStopSet.has(stopId)) {
+            startingStops.push(stopId);
+        }
+    }
+
+    // If no clear starting stop, fall back to the trip with earliest start time
+    if (startingStops.length === 0) {
+        const earliestTrip = trips.reduce((best, trip) =>
+            trip.startTime < best.startTime ? trip : best
+        );
+        return earliestTrip.stopTimes;
+    }
+
+    // Walk from starting stop(s) to build complete list
+    // If multiple starting stops, pick the one from the trip with earliest time
+    let startStopId = startingStops[0];
+    if (startingStops.length > 1) {
+        // Find which starting stop appears in the earliest trip
+        const earliestTrip = trips.reduce((best, trip) =>
+            trip.startTime < best.startTime ? trip : best
+        );
+        const earliestStart = earliestTrip.stopTimes[0]?.stopId;
+        if (earliestStart && startingStops.includes(earliestStart)) {
+            startStopId = earliestStart;
+        }
+    }
+
+    // Build the merged stop list by walking the graph
+    const mergedStops: ProcessedGTFSTrip['stopTimes'] = [];
+    const visited = new Set<string>();
+    let currentStopId: string | undefined = startStopId;
+
+    while (currentStopId && !visited.has(currentStopId)) {
+        visited.add(currentStopId);
+        const stopInfo = stopInfoMap.get(currentStopId);
+        if (stopInfo) {
+            mergedStops.push(stopInfo);
+        }
+        currentStopId = nextStopMap.get(currentStopId);
+    }
+
+    // If we didn't get all stops, there might be disconnected segments
+    // Fall back to adding any missing stops at the end
+    for (const [stopId, stopInfo] of stopInfoMap) {
+        if (!visited.has(stopId)) {
+            mergedStops.push(stopInfo);
+        }
+    }
+
+    return mergedStops;
+}
+
+/**
  * Convert processed GTFS trips to MasterScheduleContent
  */
 export function convertToMasterSchedule(
@@ -585,43 +680,28 @@ export function convertToMasterSchedule(
     const effectiveSouthTrips = southTrips;
 
     // Generate unique stop names for each direction
-    // Use trip with MOST stops as canonical (first trip might be a partial trip missing stops)
-    const northCanonicalTrip = effectiveNorthTrips.length > 0
-        ? effectiveNorthTrips.reduce((best, trip) =>
-            trip.stopTimes.length > best.stopTimes.length ? trip : best
-        )
-        : null;
-    const southCanonicalTrip = effectiveSouthTrips.length > 0
-        ? effectiveSouthTrips.reduce((best, trip) =>
-            trip.stopTimes.length > best.stopTimes.length ? trip : best
-        )
-        : null;
+    // Merge stops from ALL trips to handle partial trips (e.g., Sunday schedules
+    // where some trips go A→B and others go B→C, we need full A→B→C)
+    const northMergedStopTimes = mergeStopListsFromTrips(effectiveNorthTrips);
+    const southMergedStopTimes = mergeStopListsFromTrips(effectiveSouthTrips);
 
-    const northUniqueStopNames = northCanonicalTrip
-        ? generateUniqueStopNames(northCanonicalTrip.stopTimes)
-        : [];
-    const southUniqueStopNames = southCanonicalTrip
-        ? generateUniqueStopNames(southCanonicalTrip.stopTimes)
-        : [];
+    const northUniqueStopNames = generateUniqueStopNames(northMergedStopTimes);
+    const southUniqueStopNames = generateUniqueStopNames(southMergedStopTimes);
 
     // Extract stop order using unique names
     const northStops = northUniqueStopNames;
     const southStops = southUniqueStopNames;
 
-    // Build stop ID maps using canonical trips
+    // Build stop ID maps using merged stop times
     const northStopIds: Record<string, string> = {};
     const southStopIds: Record<string, string> = {};
 
-    if (northCanonicalTrip) {
-        northCanonicalTrip.stopTimes.forEach((st, idx) => {
-            northStopIds[northUniqueStopNames[idx]] = st.stopId;
-        });
-    }
-    if (southCanonicalTrip) {
-        southCanonicalTrip.stopTimes.forEach((st, idx) => {
-            southStopIds[southUniqueStopNames[idx]] = st.stopId;
-        });
-    }
+    northMergedStopTimes.forEach((st, idx) => {
+        northStopIds[northUniqueStopNames[idx]] = st.stopId;
+    });
+    southMergedStopTimes.forEach((st, idx) => {
+        southStopIds[southUniqueStopNames[idx]] = st.stopId;
+    });
 
     // Build stop name lookup that tracks occurrences for loop routes
     // For trips where same stop appears multiple times (e.g., loop routes),

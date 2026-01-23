@@ -599,3 +599,75 @@ export async function loadForTweaker(
     // Return both direction tables
     return [result.content.northTable, result.content.southTable];
 }
+
+// ============ ROUTE MAP OPERATIONS ============
+
+/**
+ * Upload a route map image for a specific route
+ */
+export async function uploadRouteMap(
+    teamId: string,
+    routeNumber: string,
+    file: File
+): Promise<string> {
+    const extension = file.name.split('.').pop() || 'png';
+    const storagePath = `teams/${teamId}/routeMaps/${routeNumber}.${extension}`;
+    const storageRef = ref(storage, storagePath);
+
+    await uploadBytes(storageRef, file, { contentType: file.type });
+    const downloadUrl = await getDownloadURL(storageRef);
+
+    return downloadUrl;
+}
+
+/**
+ * Delete a route map image
+ */
+export async function deleteRouteMap(
+    teamId: string,
+    routeNumber: string
+): Promise<void> {
+    // Try common extensions
+    const extensions = ['png', 'jpg', 'jpeg', 'gif', 'webp'];
+
+    for (const ext of extensions) {
+        try {
+            const storagePath = `teams/${teamId}/routeMaps/${routeNumber}.${ext}`;
+            const storageRef = ref(storage, storagePath);
+            await deleteObject(storageRef);
+            return; // Successfully deleted
+        } catch (error: any) {
+            // Continue trying other extensions if not found
+            if (error.code !== 'storage/object-not-found') {
+                throw error;
+            }
+        }
+    }
+}
+
+/**
+ * Get the download URL for a route map image
+ */
+export async function getRouteMapUrl(
+    teamId: string,
+    routeNumber: string
+): Promise<string | null> {
+    // Try common extensions
+    const extensions = ['png', 'jpg', 'jpeg', 'gif', 'webp'];
+
+    for (const ext of extensions) {
+        try {
+            const storagePath = `teams/${teamId}/routeMaps/${routeNumber}.${ext}`;
+            const storageRef = ref(storage, storagePath);
+            const url = await getDownloadURL(storageRef);
+            return url;
+        } catch (error: any) {
+            // Continue trying other extensions if not found
+            if (error.code !== 'storage/object-not-found') {
+                throw error;
+            }
+        }
+    }
+
+    return null; // No map found
+}

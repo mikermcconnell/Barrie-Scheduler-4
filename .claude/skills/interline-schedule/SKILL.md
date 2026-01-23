@@ -25,6 +25,24 @@ Activate when discussion involves:
 
 ## Part 1: Operational Rules
 
+### CRITICAL: 8A and 8B Are Separate Loop Routes
+
+**Routes 8A and 8B are completely independent loop routes.** They are NOT directional variants of the same route (i.e., "8A goes out, 8B comes back" is WRONG).
+
+| Route | Description |
+|-------|-------------|
+| **8A** | Its own complete loop route with North and South directions |
+| **8B** | Its own complete loop route with North and South directions |
+
+Each route:
+- Has its own distinct path through the city
+- Has both Northbound and Southbound legs
+- Operates as a full loop returning to its origin
+
+The "interline" simply means these two separate routes **share a vehicle** during certain hours at Allandale Terminal to improve efficiency. The bus physically switches from serving one route to serving the other.
+
+---
+
 ### What is the 8A/8B Interline?
 
 Routes 8A and 8B share vehicles during certain time periods at Barrie Allandale Transit Terminal. A single bus alternates between routes:
@@ -252,6 +270,7 @@ The `linkInterlineTripsAtAllandale()` function pairs Trip 1's arrival with Trip 
 
 | Issue | Cause | Fix |
 |-------|-------|-----|
+| **Sunday 8B missing stops (e.g., South GO)** | GTFS has partial trips (A→B and B→C); old code picked trip with most stops which might not start at the beginning | Fixed 2026-01-23: Added `mergeStopListsFromTrips()` in gtfsImportService.ts that merges stops from ALL trips using graph traversal |
 | DEP shows "-" at Allandale | No departures found to pair with | Check `linkInterlineTripsAtAllandale` is finding departure-only trips |
 | DEP shows ARR+R instead of :42 | `_interlineDepartureTime` not being used in display | Check DEP column logic - `interlineDepTime` must be checked before returning null |
 | Stops after Allandale empty | Stop data not merged from departure trip | Check `_mergedFromDepartureTrip` is set; verify departure trip has stop data |

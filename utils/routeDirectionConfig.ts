@@ -91,9 +91,10 @@ export const ROUTE_DIRECTIONS: Record<string, CycleRouteConfig> = {
     },
 
     // Route 2 - Bidirectional, A/B suffix = direction
+    // Terminus includes full label for brochure display (e.g., "2A Dunlop to Downtown")
     '2': {
         segments: [
-            { name: 'North', variant: '2A', terminus: 'Downtown' },
+            { name: 'North', variant: '2A', terminus: 'Dunlop to Downtown' },
             { name: 'South', variant: '2B', terminus: 'Park Place' },
         ],
         suffixIsDirection: true,
