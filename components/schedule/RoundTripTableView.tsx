@@ -169,8 +169,7 @@ const isInterlineRoute = (routeName: string): boolean => {
 };
 
 /**
- * Check if this route is specifically 8A (for Georgian College turnaround linking).
- * Georgian College turnaround only applies to 8A, not 8B.
+ * Check if this route is specifically 8A (for cycle time calculations).
  */
 const isRoute8A = (routeName: string): boolean => {
     return routeName.toUpperCase().includes('8A');
@@ -543,9 +542,9 @@ export const mergeGeorgianTurnaroundTripsAcrossTables = (
     southStops: string[],
     routeName: string
 ): { mergedNorthTrips: MasterTrip[]; mergedSouthTrips: MasterTrip[]; mergedNorthStops: string[]; mergedSouthStops: string[] } => {
-    // Georgian College turnaround linking only applies to Route 8A (not 8B)
-    // 8A North trips END at Georgian College, South trips START there
-    if (!isRoute8A(routeName)) {
+    // Georgian College turnaround linking applies to Routes 8A and 8B
+    // Both routes have North trips that END at Georgian College, South trips START there
+    if (!isInterlineRoute(routeName)) {
         return { mergedNorthTrips: northTrips, mergedSouthTrips: southTrips, mergedNorthStops: northStops, mergedSouthStops: southStops };
     }
 

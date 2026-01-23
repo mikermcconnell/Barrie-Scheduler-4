@@ -386,7 +386,7 @@ The terminal stop name varies. Code handles:
 
 ### What is the Georgian College Turnaround?
 
-Route 8A has a turnaround point at Georgian College where:
+Routes 8A and 8B both have a turnaround point at Georgian College where:
 - **Northbound trips END** at Georgian College
 - **Southbound trips START** at Georgian College
 
