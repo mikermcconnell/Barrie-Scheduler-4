@@ -16,6 +16,7 @@ import type { MasterRouteTable, MasterTrip, RoundTripTable } from '../../utils/m
 import { buildRoundTripView } from '../../utils/masterScheduleParser';
 import { buildRouteIdentity } from '../../utils/masterScheduleTypes';
 import { getRouteConfig, getRouteDirections } from '../../utils/routeDirectionConfig';
+import { getRouteColor, getRouteTextColor } from '../../utils/routeColors';
 
 // Extend jsPDF with autoTable
 declare module 'jspdf' {
@@ -137,27 +138,34 @@ const formatCompactTime = (timeStr: string | undefined): string => {
     return `${hours}:${mins}`;
 };
 
+// Strip numbered suffixes like (2), (3), (4) from stop names for public display
+const stripStopSuffix = (stop: string): string => {
+    return stop.replace(/\s*\(\d+\)$/, '');
+};
+
 // Format stop name with (Depart)/(Arrive) annotations for brochure
 // This creates the A/B split structure where:
 // - 2A (North) columns: Origin (Depart) → ... → Downtown Hub (Arrive)
 // - 2B (South) columns: Downtown Hub (Depart) → ... → Origin (Arrive)
-// Park Place on 2B only shows "(Arrive)" to reduce overall column header length
 const formatBrochureStopName = (
     stop: string,
     stopIndex: number,
     totalStops: number,
     _direction: 'North' | 'South'
 ): string => {
+    // First strip any numbered suffix for public display
+    const cleanStop = stripStopSuffix(stop);
+
     const isFirst = stopIndex === 0;
     const isLast = stopIndex === totalStops - 1;
 
     // Origin stop (first in direction) gets "(Depart)" - where trip begins
-    if (isFirst) return `${stop} (Depart)`;
+    if (isFirst) return `${cleanStop} (Depart)`;
 
     // Destination stop (last in direction) gets "(Arrive)" - where trip ends
-    if (isLast) return `${stop} (Arrive)`;
+    if (isLast) return `${cleanStop} (Arrive)`;
 
-    return stop;
+    return cleanStop;
 };
 
 export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
@@ -269,11 +277,13 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
                 setMapImageUrl(null);
                 return;
             }
+            console.log('[RouteMap] Loading for:', { teamId: team.id, route: selectedRoute });
             try {
                 const url = await getRouteMapUrl(team.id, selectedRoute);
+                console.log('[RouteMap] Load result:', url ? 'Found' : 'Not found', url);
                 setMapImageUrl(url);
             } catch (error) {
-                console.error('Error loading route map:', error);
+                console.error('[RouteMap] Load error:', error);
                 setMapImageUrl(null);
             }
         };
@@ -325,7 +335,10 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
     // Handle map image upload
     const handleMapUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
-        if (!file || !team?.id || !selectedRoute) return;
+        if (!file || !team?.id || !selectedRoute) {
+            console.log('[RouteMap] Upload aborted - missing:', { file: !!file, teamId: team?.id, route: selectedRoute });
+            return;
+        }
 
         // Validate file type
         if (!file.type.startsWith('image/')) {
@@ -333,13 +346,15 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
             return;
         }
 
+        console.log('[RouteMap] Uploading:', { teamId: team.id, route: selectedRoute, fileName: file.name, fileType: file.type });
         setUploadingMap(true);
         try {
             const url = await uploadRouteMap(team.id, selectedRoute, file);
+            console.log('[RouteMap] Upload successful:', url);
             setMapImageUrl(url);
         } catch (error) {
-            console.error('Error uploading map:', error);
-            alert('Failed to upload map image');
+            console.error('[RouteMap] Upload failed:', error);
+            alert('Failed to upload map image. Check console for details.');
         } finally {
             setUploadingMap(false);
         }
@@ -867,6 +882,33 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
                         <div className="space-y-6" style={{ fontFamily: 'Arial, sans-serif' }}>
                             {/* Helper function to render a timetable */}
                             {(() => {
+                                // Get route color for theming
+                                const routeColor = getRouteColor(selectedRoute);
+                                const textColor = getRouteTextColor(selectedRoute);
+
+                                // Generate color variations (darker/lighter)
+                                const darkenColor = (hex: string, percent: number): string => {
+                                    const num = parseInt(hex.slice(1), 16);
+                                    const r = Math.max(0, (num >> 16) - Math.round(255 * percent / 100));
+                                    const g = Math.max(0, ((num >> 8) & 0x00FF) - Math.round(255 * percent / 100));
+                                    const b = Math.max(0, (num & 0x0000FF) - Math.round(255 * percent / 100));
+                                    return `#${(r << 16 | g << 8 | b).toString(16).padStart(6, '0')}`;
+                                };
+                                const lightenColor = (hex: string, percent: number): string => {
+                                    const num = parseInt(hex.slice(1), 16);
+                                    const r = Math.min(255, (num >> 16) + Math.round(255 * percent / 100));
+                                    const g = Math.min(255, ((num >> 8) & 0x00FF) + Math.round(255 * percent / 100));
+                                    const b = Math.min(255, (num & 0x0000FF) + Math.round(255 * percent / 100));
+                                    return `#${(r << 16 | g << 8 | b).toString(16).padStart(6, '0')}`;
+                                };
+
+                                const colorDark = darkenColor(routeColor, 15);
+                                const colorMid = routeColor;
+                                const colorLight = lightenColor(routeColor, 15);
+                                const colorLighter = lightenColor(routeColor, 30);
+                                const colorBorder = lightenColor(routeColor, 20);
+                                const spacerColor = darkenColor(routeColor, 30);
+
                                 const renderTimetable = (
                                     table: RoundTripTable,
                                     dayType: string,
@@ -874,43 +916,74 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
                                 ) => (
                                     <div className="flex-1 min-w-0 flex flex-col">
                                         {/* Day Type Header Banner */}
-                                        <div className="bg-[#2d6b6b] text-white text-center py-1.5 font-bold text-sm tracking-wide">
+                                        <div
+                                            className="text-center py-1.5 font-bold text-sm tracking-wide"
+                                            style={{ backgroundColor: colorDark, color: textColor }}
+                                        >
                                             {dayType}
                                         </div>
 
-                                        {/* Direction Headers Row */}
-                                        <div className="flex bg-[#3d7b7b]">
-                                            <div className="flex-1 text-white text-center py-1 font-bold text-[10px] border-r border-[#5d9b9b]">
-                                                {(() => {
-                                                    const label = getDirectionLabel(selectedRoute, 'North');
-                                                    const parts = label.split(' to ');
-                                                    if (parts.length === 2) {
-                                                        return (
-                                                            <>
-                                                                {parts[0]}<br />
-                                                                <span className="font-normal text-[9px]">to {parts[1]}</span>
-                                                            </>
-                                                        );
-                                                    }
-                                                    return label;
-                                                })()}
-                                            </div>
-                                            <div className="flex-1 text-white text-center py-1 font-bold text-[10px]">
-                                                {getDirectionLabel(selectedRoute, 'South')}
-                                            </div>
-                                        </div>
+                                        {/* Direction Headers Row - as table to align with columns */}
+                                        <table className="w-full border-collapse">
+                                            <tbody>
+                                                <tr style={{ backgroundColor: colorMid }}>
+                                                    <td
+                                                        colSpan={table.northStops.length}
+                                                        className="text-center py-1 font-bold text-[10px]"
+                                                        style={{ color: textColor, borderRight: `1px solid ${colorBorder}` }}
+                                                    >
+                                                        {(() => {
+                                                            const label = getDirectionLabel(selectedRoute, 'North');
+                                                            const parts = label.split(' to ');
+                                                            if (parts.length === 2) {
+                                                                return (
+                                                                    <>
+                                                                        {parts[0]}<br />
+                                                                        <span className="font-normal text-[9px]">to {parts[1]}</span>
+                                                                    </>
+                                                                );
+                                                            }
+                                                            return label;
+                                                        })()}
+                                                    </td>
+                                                    {/* Spacer cell */}
+                                                    <td style={{ width: '4px', backgroundColor: spacerColor }} />
+                                                    <td
+                                                        colSpan={table.southStops.length}
+                                                        className="text-center py-1 font-bold text-[10px]"
+                                                        style={{ color: textColor }}
+                                                    >
+                                                        {(() => {
+                                                            const label = getDirectionLabel(selectedRoute, 'South');
+                                                            // For south direction, add "to" prefix for the terminus
+                                                            const directions = getRouteDirections(selectedRoute);
+                                                            if (directions) {
+                                                                const info = directions.south;
+                                                                return (
+                                                                    <>
+                                                                        {info.variant}<br />
+                                                                        <span className="font-normal text-[9px]">to {info.terminus}</span>
+                                                                    </>
+                                                                );
+                                                            }
+                                                            return label;
+                                                        })()}
+                                                    </td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
 
                                         {/* Timetable with vertical headers */}
                                         <div className="overflow-x-auto flex-1">
                                             <table className="w-full border-collapse text-[8px]">
                                                 <thead>
                                                     {/* Vertical stop names row */}
-                                                    <tr className="bg-[#4d8b8b]">
+                                                    <tr style={{ backgroundColor: colorLight }}>
                                                         {table.northStops.map((stop, idx) => (
                                                             <th
                                                                 key={`${keyPrefix}-n-${stop}`}
-                                                                className="text-white p-0 border-r border-[#6dabad]"
-                                                                style={{ minWidth: '28px', maxWidth: '34px', height: '90px' }}
+                                                                className="p-0"
+                                                                style={{ minWidth: '28px', maxWidth: '34px', height: '90px', color: textColor, borderRight: `1px solid ${colorBorder}` }}
                                                             >
                                                                 <div
                                                                     className="h-full w-full flex items-center justify-center"
@@ -930,14 +1003,14 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
                                                         {/* Spacer column between 2A and 2B */}
                                                         <th
                                                             key={`${keyPrefix}-spacer`}
-                                                            className="bg-[#1a4040] p-0"
-                                                            style={{ width: '4px', minWidth: '4px', maxWidth: '4px' }}
+                                                            className="p-0"
+                                                            style={{ width: '4px', minWidth: '4px', maxWidth: '4px', backgroundColor: spacerColor }}
                                                         />
                                                         {table.southStops.map((stop, idx) => (
                                                             <th
                                                                 key={`${keyPrefix}-s-${stop}`}
-                                                                className={`text-white p-0 ${idx < table.southStops.length - 1 ? 'border-r border-[#6dabad]' : ''}`}
-                                                                style={{ minWidth: '28px', maxWidth: '34px', height: '90px' }}
+                                                                className="p-0"
+                                                                style={{ minWidth: '28px', maxWidth: '34px', height: '90px', color: textColor, borderRight: idx < table.southStops.length - 1 ? `1px solid ${colorBorder}` : 'none' }}
                                                             >
                                                                 <div
                                                                     className="h-full w-full flex items-center justify-center"
@@ -956,11 +1029,12 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
                                                         ))}
                                                     </tr>
                                                     {/* Stop IDs row */}
-                                                    <tr className="bg-[#5d9b9b] text-white text-[7px]">
+                                                    <tr style={{ backgroundColor: colorLighter, color: textColor }} className="text-[7px]">
                                                         {table.northStops.map((stop, idx) => (
                                                             <th
                                                                 key={`${keyPrefix}-nid-${stop}`}
-                                                                className="px-0.5 py-0.5 font-normal text-center border-r border-[#7dbdbd]"
+                                                                className="px-0.5 py-0.5 font-normal text-center"
+                                                                style={{ borderRight: `1px solid ${colorBorder}` }}
                                                             >
                                                                 {table.northStopIds?.[stop] || ''}
                                                             </th>
@@ -968,13 +1042,14 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
                                                         {/* Spacer column between 2A and 2B */}
                                                         <th
                                                             key={`${keyPrefix}-spacer-id`}
-                                                            className="bg-[#1a4040] p-0"
-                                                            style={{ width: '4px', minWidth: '4px', maxWidth: '4px' }}
+                                                            className="p-0"
+                                                            style={{ width: '4px', minWidth: '4px', maxWidth: '4px', backgroundColor: spacerColor }}
                                                         />
                                                         {table.southStops.map((stop, idx) => (
                                                             <th
                                                                 key={`${keyPrefix}-sid-${stop}`}
-                                                                className={`px-0.5 py-0.5 font-normal text-center ${idx < table.southStops.length - 1 ? 'border-r border-[#7dbdbd]' : ''}`}
+                                                                className="px-0.5 py-0.5 font-normal text-center"
+                                                                style={{ borderRight: idx < table.southStops.length - 1 ? `1px solid ${colorBorder}` : 'none' }}
                                                             >
                                                                 {table.southStopIds?.[stop] || ''}
                                                             </th>
@@ -985,11 +1060,13 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
                                                     {table.rows.map((row, rowIdx) => {
                                                         const northTrip = row.trips.find(t => t.direction === 'North');
                                                         const southTrip = row.trips.find(t => t.direction === 'South');
+                                                        // Alternating row color with light tint of route color
+                                                        const rowBg = rowIdx % 2 === 0 ? 'white' : lightenColor(routeColor, 45);
 
                                                         return (
                                                             <tr
                                                                 key={`${keyPrefix}-row-${rowIdx}`}
-                                                                className={rowIdx % 2 === 0 ? 'bg-white' : 'bg-[#e5f0f0]'}
+                                                                style={{ backgroundColor: rowBg }}
                                                             >
                                                                 {table.northStops.map((stop, idx) => (
                                                                     <td
@@ -1002,8 +1079,8 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
                                                                 {/* Spacer column between 2A and 2B */}
                                                                 <td
                                                                     key={`${keyPrefix}-spacer-${rowIdx}`}
-                                                                    className="bg-[#1a4040] p-0"
-                                                                    style={{ width: '4px', minWidth: '4px', maxWidth: '4px' }}
+                                                                    className="p-0"
+                                                                    style={{ width: '4px', minWidth: '4px', maxWidth: '4px', backgroundColor: spacerColor }}
                                                                 />
                                                                 {table.southStops.map((stop, idx) => (
                                                                     <td
