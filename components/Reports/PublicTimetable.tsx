@@ -1,12 +1,12 @@
 /**
  * Public Timetable Generator
  *
- * Generates rider-friendly timetables from master schedule data.
- * Supports both grid (traditional) and linear (mobile) formats.
+ * Generates rider-friendly brochure timetables from master schedule data.
+ * Matches Barrie Transit's official brochure design.
  */
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { ArrowLeft, Download, RefreshCw, Eye, Grid3X3, List, Check, FileText, Upload, Trash2, Image } from 'lucide-react';
+import { ArrowLeft, Download, RefreshCw, Eye, Check, FileText, Upload, Trash2, Image } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
 import { useTeam } from '../TeamContext';
@@ -44,7 +44,7 @@ interface PublicTimetableProps {
     onBack: () => void;
 }
 
-type TimetableFormat = 'grid' | 'linear' | 'brochure';
+type TimetableFormat = 'brochure';
 
 // Helper to format minutes to time string
 const formatTime = (minutes: number): string => {
@@ -138,27 +138,24 @@ const formatCompactTime = (timeStr: string | undefined): string => {
 };
 
 // Format stop name with (Depart)/(Arrive) annotations for brochure
+// This creates the A/B split structure where:
+// - 2A (North) columns: Origin (Depart) → ... → Downtown Hub (Arrive)
+// - 2B (South) columns: Downtown Hub (Depart) → ... → Origin (Arrive)
+// Park Place on 2B only shows "(Arrive)" to reduce overall column header length
 const formatBrochureStopName = (
     stop: string,
     stopIndex: number,
     totalStops: number,
-    direction: 'North' | 'South'
+    _direction: 'North' | 'South'
 ): string => {
     const isFirst = stopIndex === 0;
     const isLast = stopIndex === totalStops - 1;
 
-    // Check if this is Downtown Hub
-    const isDowntown = stop.toLowerCase().includes('downtown');
+    // Origin stop (first in direction) gets "(Depart)" - where trip begins
+    if (isFirst) return `${stop} (Depart)`;
 
-    if (direction === 'North') {
-        // 2A direction - going TO downtown
-        if (isFirst) return `${stop} (Depart)`;
-        if (isLast && isDowntown) return `${stop} (Arrive)`;
-    } else {
-        // 2B direction - coming FROM downtown
-        if (isFirst && isDowntown) return `${stop} (Depart)`;
-        if (isLast) return `${stop} (Arrive)`;
-    }
+    // Destination stop (last in direction) gets "(Arrive)" - where trip ends
+    if (isLast) return `${stop} (Arrive)`;
 
     return stop;
 };
@@ -174,7 +171,7 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
     const [selectedDayType, setSelectedDayType] = useState<DayType>('Weekday');
     const [selectedDirection, setSelectedDirection] = useState<'North' | 'South' | 'Both'>('Both');
     const [selectedStops, setSelectedStops] = useState<string[]>([]);
-    const [format, setFormat] = useState<TimetableFormat>('grid');
+    const [format] = useState<TimetableFormat>('brochure');
     const [headerText, setHeaderText] = useState('');
 
     // Route map image
@@ -186,6 +183,13 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
         northTable: MasterRouteTable | null;
         southTable: MasterRouteTable | null;
     }>({ northTable: null, southTable: null });
+
+    // All day types data for brochure format (Weekday, Saturday, Sunday)
+    const [allDayTypesData, setAllDayTypesData] = useState<{
+        weekday: RoundTripTable | null;
+        saturday: RoundTripTable | null;
+        sunday: RoundTripTable | null;
+    }>({ weekday: null, saturday: null, sunday: null });
 
     // Build round-trip view for brochure format
     const roundTripTable = useMemo((): RoundTripTable | null => {
@@ -275,6 +279,48 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
         };
         loadMapImage();
     }, [team?.id, selectedRoute]);
+
+    // Load all day types for brochure format
+    useEffect(() => {
+        const loadAllDayTypes = async () => {
+            if (!team?.id || !selectedRoute || format !== 'brochure') {
+                return;
+            }
+
+            const dayTypesToLoad: DayType[] = ['Weekday', 'Saturday', 'Sunday'];
+            const results: { weekday: RoundTripTable | null; saturday: RoundTripTable | null; sunday: RoundTripTable | null } = {
+                weekday: null,
+                saturday: null,
+                sunday: null,
+            };
+
+            for (const dayType of dayTypesToLoad) {
+                try {
+                    const routeIdentity = buildRouteIdentity(selectedRoute, dayType);
+                    const result = await getMasterSchedule(team.id, routeIdentity);
+                    if (result) {
+                        const roundTrip = buildRoundTripView(result.content.northTable, result.content.southTable);
+                        // Debug terminus detection
+                        console.log(`[Brochure] Route ${selectedRoute} ${dayType}:`, {
+                            lastNorthStop: roundTrip.northStops[roundTrip.northStops.length - 1],
+                            firstSouthStop: roundTrip.southStops[0],
+                            terminusDetected: roundTrip.terminusStop,
+                            northStops: roundTrip.northStops,
+                            southStops: roundTrip.southStops
+                        });
+                        if (dayType === 'Weekday') results.weekday = roundTrip;
+                        else if (dayType === 'Saturday') results.saturday = roundTrip;
+                        else if (dayType === 'Sunday') results.sunday = roundTrip;
+                    }
+                } catch (error) {
+                    console.error(`Error loading ${dayType} schedule:`, error);
+                }
+            }
+
+            setAllDayTypesData(results);
+        };
+        loadAllDayTypes();
+    }, [team?.id, selectedRoute, format]);
 
     // Handle map image upload
     const handleMapUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -381,85 +427,47 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
                 doc.text(getDirectionLabel(selectedRoute, direction), margin, startY);
                 startY += 5;
 
-                if (format === 'grid') {
-                    // Grid format: stops as columns, trips as rows
-                    // Build header rows: stop names + stop IDs
-                    const stopNamesRow = ['', ...filteredStops];
-                    const stopIdsRow = ['', ...filteredStops.map(stop => table.stopIds?.[stop] || '')];
-                    const head = [stopNamesRow, stopIdsRow];
+                // Grid format: stops as columns, trips as rows
+                // Build header rows: stop names + stop IDs
+                const stopNamesRow = ['', ...filteredStops];
+                const stopIdsRow = ['', ...filteredStops.map(stop => table.stopIds?.[stop] || '')];
+                const head = [stopNamesRow, stopIdsRow];
 
-                    const body = table.trips.map((trip, idx) => {
-                        const row = [`Trip ${idx + 1}`];
-                        filteredStops.forEach(stop => {
-                            const time = trip.stops[stop] || '-';
-                            row.push(time);
-                        });
-                        return row;
+                const body = table.trips.map((trip, idx) => {
+                    const row = [`Trip ${idx + 1}`];
+                    filteredStops.forEach(stop => {
+                        const time = trip.stops[stop] || '-';
+                        row.push(time);
                     });
+                    return row;
+                });
 
-                    doc.autoTable({
-                        head,
-                        body,
-                        startY,
-                        theme: 'grid',
-                        headStyles: {
-                            fillColor: [66, 139, 202],
-                            textColor: 255,
-                            fontSize: 8,
-                            fontStyle: 'bold'
-                        },
-                        bodyStyles: {
-                            fontSize: 7,
-                            cellPadding: 1
-                        },
-                        columnStyles: {
-                            0: { fontStyle: 'bold', cellWidth: 15 }
-                        },
-                        styles: {
-                            overflow: 'linebreak',
-                            cellWidth: 'wrap'
-                        },
-                        margin: { left: margin, right: margin }
-                    });
+                doc.autoTable({
+                    head,
+                    body,
+                    startY,
+                    theme: 'grid',
+                    headStyles: {
+                        fillColor: [66, 139, 202],
+                        textColor: 255,
+                        fontSize: 8,
+                        fontStyle: 'bold'
+                    },
+                    bodyStyles: {
+                        fontSize: 7,
+                        cellPadding: 1
+                    },
+                    columnStyles: {
+                        0: { fontStyle: 'bold', cellWidth: 15 }
+                    },
+                    styles: {
+                        overflow: 'linebreak',
+                        cellWidth: 'wrap'
+                    },
+                    margin: { left: margin, right: margin }
+                });
 
-                    return doc.lastAutoTable.finalY + 10;
-                } else {
-                    // Linear format: trip by trip listing
-                    const body = table.trips.map((trip, idx) => {
-                        const times = filteredStops
-                            .map(stop => {
-                                const time = trip.stops[stop];
-                                return time ? `${stop}: ${time}` : null;
-                            })
-                            .filter(Boolean)
-                            .join(' → ');
-                        return [`Trip ${idx + 1}`, times];
-                    });
-
-                    doc.autoTable({
-                        head: [['Trip', 'Route']],
-                        body,
-                        startY,
-                        theme: 'striped',
-                        headStyles: {
-                            fillColor: [66, 139, 202],
-                            textColor: 255,
-                            fontSize: 9,
-                            fontStyle: 'bold'
-                        },
-                        bodyStyles: {
-                            fontSize: 8,
-                            cellPadding: 2
-                        },
-                        columnStyles: {
-                            0: { fontStyle: 'bold', cellWidth: 20 },
-                            1: { cellWidth: 'auto' }
-                        },
-                        margin: { left: margin, right: margin }
-                    });
-
-                    return doc.lastAutoTable.finalY + 10;
-                }
+                return doc.lastAutoTable.finalY + 10;
             };
 
             // Generate based on format selection
@@ -736,46 +744,6 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
                             </div>
                         </div>
 
-                        {/* Format Selection */}
-                        <div>
-                            <label className="block text-sm font-bold text-gray-700 mb-2">Format</label>
-                            <div className="flex gap-2">
-                                <button
-                                    onClick={() => setFormat('grid')}
-                                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                                        format === 'grid'
-                                            ? 'bg-amber-600 text-white'
-                                            : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-50'
-                                    }`}
-                                >
-                                    <Grid3X3 size={16} />
-                                    Grid
-                                </button>
-                                <button
-                                    onClick={() => setFormat('linear')}
-                                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                                        format === 'linear'
-                                            ? 'bg-amber-600 text-white'
-                                            : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-50'
-                                    }`}
-                                >
-                                    <List size={16} />
-                                    Linear
-                                </button>
-                                <button
-                                    onClick={() => setFormat('brochure')}
-                                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                                        format === 'brochure'
-                                            ? 'bg-amber-600 text-white'
-                                            : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-50'
-                                    }`}
-                                >
-                                    <FileText size={16} />
-                                    Brochure
-                                </button>
-                            </div>
-                        </div>
-
                         {/* Header Text */}
                         <div>
                             <label className="block text-sm font-bold text-gray-700 mb-2">
@@ -890,118 +858,29 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
                         <span className="text-sm text-gray-500">(First 5 trips per direction)</span>
                     </div>
 
-                    {previewTrips.length === 0 ? (
+                    {!selectedRoute ? (
                         <div className="flex items-center justify-center h-64 border-2 border-dashed border-gray-200 rounded-lg">
-                            <p className="text-gray-400">Select a route to preview timetable</p>
+                            <p className="text-gray-400">Select a route to preview brochure</p>
                         </div>
-                    ) : format === 'grid' ? (
-                        <div className="space-y-6">
-                            {/* Group by direction */}
-                            {['North', 'South'].map(dir => {
-                                const dirTrips = previewTrips.filter(t => t.direction === dir);
-                                if (dirTrips.length === 0) return null;
-                                if (selectedDirection !== 'Both' && selectedDirection !== dir) return null;
-
-                                const table = dir === 'North' ? scheduleData.northTable : scheduleData.southTable;
-                                const filteredStops = table?.stops.filter(s => selectedStops.includes(s)) || [];
-
-                                return (
-                                    <div key={dir}>
-                                        <h4 className="text-sm font-bold text-gray-700 mb-2">
-                                            {getDirectionLabel(selectedRoute, dir as 'North' | 'South')}
-                                        </h4>
-                                        <div className="overflow-x-auto">
-                                            <table className="min-w-full border border-gray-200 text-sm">
-                                                <thead>
-                                                    <tr className="bg-blue-500 text-white">
-                                                        <th className="px-2 py-1 border-r border-blue-400 text-left" rowSpan={2}>Trip</th>
-                                                        {filteredStops.map(stop => (
-                                                            <th
-                                                                key={stop}
-                                                                className="px-2 py-1 border-r border-blue-400 text-left whitespace-nowrap"
-                                                                title={stop}
-                                                            >
-                                                                {stop}
-                                                            </th>
-                                                        ))}
-                                                    </tr>
-                                                    <tr className="bg-blue-400 text-white text-xs">
-                                                        {filteredStops.map(stop => (
-                                                            <th
-                                                                key={`id-${stop}`}
-                                                                className="px-2 py-0.5 border-r border-blue-300 text-left font-normal"
-                                                            >
-                                                                {table?.stopIds?.[stop] || ''}
-                                                            </th>
-                                                        ))}
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    {dirTrips.map(({ trip, index }) => (
-                                                        <tr key={trip.id} className={index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
-                                                            <td className="px-2 py-1 border border-gray-200 font-medium">
-                                                                {index + 1}
-                                                            </td>
-                                                            {filteredStops.map(stop => (
-                                                                <td key={stop} className="px-2 py-1 border border-gray-200 text-gray-600">
-                                                                    {trip.stops[stop] || '-'}
-                                                                </td>
-                                                            ))}
-                                                        </tr>
-                                                    ))}
-                                                </tbody>
-                                            </table>
-                                        </div>
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    ) : format === 'linear' ? (
-                        <div className="space-y-4">
-                            {previewTrips.map(({ direction, trip, index }) => {
-                                const table = direction === 'North' ? scheduleData.northTable : scheduleData.southTable;
-                                const filteredStops = table?.stops.filter(s => selectedStops.includes(s)) || [];
-
-                                return (
-                                    <div key={trip.id} className="p-3 bg-gray-50 rounded-lg">
-                                        <div className="flex items-center gap-2 mb-2">
-                                            <span className="text-sm font-bold text-gray-700">
-                                                Trip {index + 1}
-                                            </span>
-                                            <span className={`text-xs px-2 py-0.5 rounded-full ${
-                                                direction === 'North' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'
-                                            }`}>
-                                                {getDirectionLabel(selectedRoute, direction)}
-                                            </span>
-                                        </div>
-                                        <div className="text-sm text-gray-600">
-                                            {filteredStops
-                                                .map(stop => {
-                                                    const time = trip.stops[stop];
-                                                    return time ? `${stop}: ${time}` : null;
-                                                })
-                                                .filter(Boolean)
-                                                .join(' → ')}
-                                        </div>
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    ) : format === 'brochure' ? (
-                        /* Brochure format: Matches Barrie Transit brochure design */
-                        <div className="bg-white border border-gray-300 shadow-lg overflow-hidden" style={{ fontFamily: 'Arial, sans-serif' }}>
-                            {roundTripTable ? (
-                                <div className="flex">
-                                    {/* LEFT SIDE - Timetable */}
+                    ) : (
+                        /* Brochure format: Two-page layout matching Barrie Transit brochure design */
+                        <div className="space-y-6" style={{ fontFamily: 'Arial, sans-serif' }}>
+                            {/* Helper function to render a timetable */}
+                            {(() => {
+                                const renderTimetable = (
+                                    table: RoundTripTable,
+                                    dayType: string,
+                                    keyPrefix: string
+                                ) => (
                                     <div className="flex-1 min-w-0 flex flex-col">
                                         {/* Day Type Header Banner */}
-                                        <div className="bg-[#2d6b6b] text-white text-center py-1.5 font-bold text-base tracking-wide">
-                                            {selectedDayType === 'Sunday' ? 'Sunday & Holidays' : selectedDayType}
+                                        <div className="bg-[#2d6b6b] text-white text-center py-1.5 font-bold text-sm tracking-wide">
+                                            {dayType}
                                         </div>
 
                                         {/* Direction Headers Row */}
                                         <div className="flex bg-[#3d7b7b]">
-                                            <div className="flex-1 text-white text-center py-1 font-bold text-xs border-r border-[#5d9b9b]">
+                                            <div className="flex-1 text-white text-center py-1 font-bold text-[10px] border-r border-[#5d9b9b]">
                                                 {(() => {
                                                     const label = getDirectionLabel(selectedRoute, 'North');
                                                     const parts = label.split(' to ');
@@ -1009,111 +888,127 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
                                                         return (
                                                             <>
                                                                 {parts[0]}<br />
-                                                                <span className="font-normal text-[10px]">to {parts[1]}</span>
+                                                                <span className="font-normal text-[9px]">to {parts[1]}</span>
                                                             </>
                                                         );
                                                     }
                                                     return label;
                                                 })()}
                                             </div>
-                                            <div className="flex-1 text-white text-center py-1 font-bold text-xs">
+                                            <div className="flex-1 text-white text-center py-1 font-bold text-[10px]">
                                                 {getDirectionLabel(selectedRoute, 'South')}
                                             </div>
                                         </div>
 
                                         {/* Timetable with vertical headers */}
                                         <div className="overflow-x-auto flex-1">
-                                            <table className="w-full border-collapse text-[9px]">
+                                            <table className="w-full border-collapse text-[8px]">
                                                 <thead>
                                                     {/* Vertical stop names row */}
                                                     <tr className="bg-[#4d8b8b]">
-                                                        {roundTripTable.northStops.map((stop, idx) => (
+                                                        {table.northStops.map((stop, idx) => (
                                                             <th
-                                                                key={`n-${stop}`}
-                                                                className={`text-white p-0 align-bottom ${idx === roundTripTable.northStops.length - 1 ? 'border-r-2 border-white' : 'border-r border-[#6dabad]'}`}
-                                                                style={{ minWidth: '32px', maxWidth: '38px', height: '100px' }}
+                                                                key={`${keyPrefix}-n-${stop}`}
+                                                                className="text-white p-0 border-r border-[#6dabad]"
+                                                                style={{ minWidth: '28px', maxWidth: '34px', height: '90px' }}
                                                             >
                                                                 <div
-                                                                    className="whitespace-nowrap text-[8px] font-medium px-0.5"
-                                                                    style={{
-                                                                        writingMode: 'vertical-rl',
-                                                                        transform: 'rotate(180deg)',
-                                                                        height: '100%',
-                                                                        display: 'flex',
-                                                                        alignItems: 'center',
-                                                                        justifyContent: 'flex-start',
-                                                                        paddingTop: '4px'
-                                                                    }}
+                                                                    className="h-full w-full flex items-center justify-center"
                                                                 >
-                                                                    {formatBrochureStopName(stop, idx, roundTripTable.northStops.length, 'North')}
+                                                                    <span
+                                                                        className="whitespace-nowrap text-[7px] font-medium"
+                                                                        style={{
+                                                                            writingMode: 'vertical-rl',
+                                                                            transform: 'rotate(180deg)',
+                                                                        }}
+                                                                    >
+                                                                        {formatBrochureStopName(stop, idx, table.northStops.length, 'North')}
+                                                                    </span>
                                                                 </div>
                                                             </th>
                                                         ))}
-                                                        {roundTripTable.southStops.map((stop, idx) => (
+                                                        {/* Spacer column between 2A and 2B */}
+                                                        <th
+                                                            key={`${keyPrefix}-spacer`}
+                                                            className="bg-[#1a4040] p-0"
+                                                            style={{ width: '4px', minWidth: '4px', maxWidth: '4px' }}
+                                                        />
+                                                        {table.southStops.map((stop, idx) => (
                                                             <th
-                                                                key={`s-${stop}`}
-                                                                className={`text-white p-0 align-bottom ${idx < roundTripTable.southStops.length - 1 ? 'border-r border-[#6dabad]' : ''}`}
-                                                                style={{ minWidth: '32px', maxWidth: '38px', height: '100px' }}
+                                                                key={`${keyPrefix}-s-${stop}`}
+                                                                className={`text-white p-0 ${idx < table.southStops.length - 1 ? 'border-r border-[#6dabad]' : ''}`}
+                                                                style={{ minWidth: '28px', maxWidth: '34px', height: '90px' }}
                                                             >
                                                                 <div
-                                                                    className="whitespace-nowrap text-[8px] font-medium px-0.5"
-                                                                    style={{
-                                                                        writingMode: 'vertical-rl',
-                                                                        transform: 'rotate(180deg)',
-                                                                        height: '100%',
-                                                                        display: 'flex',
-                                                                        alignItems: 'center',
-                                                                        justifyContent: 'flex-start',
-                                                                        paddingTop: '4px'
-                                                                    }}
+                                                                    className="h-full w-full flex items-center justify-center"
                                                                 >
-                                                                    {formatBrochureStopName(stop, idx, roundTripTable.southStops.length, 'South')}
+                                                                    <span
+                                                                        className="whitespace-nowrap text-[7px] font-medium"
+                                                                        style={{
+                                                                            writingMode: 'vertical-rl',
+                                                                            transform: 'rotate(180deg)',
+                                                                        }}
+                                                                    >
+                                                                        {formatBrochureStopName(stop, idx, table.southStops.length, 'South')}
+                                                                    </span>
                                                                 </div>
                                                             </th>
                                                         ))}
                                                     </tr>
                                                     {/* Stop IDs row */}
-                                                    <tr className="bg-[#5d9b9b] text-white text-[8px]">
-                                                        {roundTripTable.northStops.map((stop, idx) => (
+                                                    <tr className="bg-[#5d9b9b] text-white text-[7px]">
+                                                        {table.northStops.map((stop, idx) => (
                                                             <th
-                                                                key={`nid-${stop}`}
-                                                                className={`px-0.5 py-0.5 font-normal text-center ${idx === roundTripTable.northStops.length - 1 ? 'border-r-2 border-white' : 'border-r border-[#7dbdbd]'}`}
+                                                                key={`${keyPrefix}-nid-${stop}`}
+                                                                className="px-0.5 py-0.5 font-normal text-center border-r border-[#7dbdbd]"
                                                             >
-                                                                {roundTripTable.northStopIds?.[stop] || ''}
+                                                                {table.northStopIds?.[stop] || ''}
                                                             </th>
                                                         ))}
-                                                        {roundTripTable.southStops.map((stop, idx) => (
+                                                        {/* Spacer column between 2A and 2B */}
+                                                        <th
+                                                            key={`${keyPrefix}-spacer-id`}
+                                                            className="bg-[#1a4040] p-0"
+                                                            style={{ width: '4px', minWidth: '4px', maxWidth: '4px' }}
+                                                        />
+                                                        {table.southStops.map((stop, idx) => (
                                                             <th
-                                                                key={`sid-${stop}`}
-                                                                className={`px-0.5 py-0.5 font-normal text-center ${idx < roundTripTable.southStops.length - 1 ? 'border-r border-[#7dbdbd]' : ''}`}
+                                                                key={`${keyPrefix}-sid-${stop}`}
+                                                                className={`px-0.5 py-0.5 font-normal text-center ${idx < table.southStops.length - 1 ? 'border-r border-[#7dbdbd]' : ''}`}
                                                             >
-                                                                {roundTripTable.southStopIds?.[stop] || ''}
+                                                                {table.southStopIds?.[stop] || ''}
                                                             </th>
                                                         ))}
                                                     </tr>
                                                 </thead>
                                                 <tbody>
-                                                    {roundTripTable.rows.map((row, rowIdx) => {
+                                                    {table.rows.map((row, rowIdx) => {
                                                         const northTrip = row.trips.find(t => t.direction === 'North');
                                                         const southTrip = row.trips.find(t => t.direction === 'South');
 
                                                         return (
                                                             <tr
-                                                                key={`row-${rowIdx}`}
+                                                                key={`${keyPrefix}-row-${rowIdx}`}
                                                                 className={rowIdx % 2 === 0 ? 'bg-white' : 'bg-[#e5f0f0]'}
                                                             >
-                                                                {roundTripTable.northStops.map((stop, idx) => (
+                                                                {table.northStops.map((stop, idx) => (
                                                                     <td
-                                                                        key={`n-${stop}-${rowIdx}`}
-                                                                        className={`px-0.5 py-[2px] text-center text-gray-800 ${idx === roundTripTable.northStops.length - 1 ? 'border-r-2 border-[#9dbdbd]' : 'border-r border-gray-200'}`}
+                                                                        key={`${keyPrefix}-n-${stop}-${rowIdx}`}
+                                                                        className="px-0.5 py-[1px] text-center text-gray-800 border-r border-gray-200"
                                                                     >
                                                                         {formatCompactTime(northTrip?.stops[stop])}
                                                                     </td>
                                                                 ))}
-                                                                {roundTripTable.southStops.map((stop, idx) => (
+                                                                {/* Spacer column between 2A and 2B */}
+                                                                <td
+                                                                    key={`${keyPrefix}-spacer-${rowIdx}`}
+                                                                    className="bg-[#1a4040] p-0"
+                                                                    style={{ width: '4px', minWidth: '4px', maxWidth: '4px' }}
+                                                                />
+                                                                {table.southStops.map((stop, idx) => (
                                                                     <td
-                                                                        key={`s-${stop}-${rowIdx}`}
-                                                                        className={`px-0.5 py-[2px] text-center text-gray-800 ${idx < roundTripTable.southStops.length - 1 ? 'border-r border-gray-200' : ''}`}
+                                                                        key={`${keyPrefix}-s-${stop}-${rowIdx}`}
+                                                                        className={`px-0.5 py-[1px] text-center text-gray-800 ${idx < table.southStops.length - 1 ? 'border-r border-gray-200' : ''}`}
                                                                     >
                                                                         {formatCompactTime(southTrip?.stops[stop])}
                                                                     </td>
@@ -1124,158 +1019,173 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
                                                 </tbody>
                                             </table>
                                         </div>
-
-                                        {/* Disclaimer */}
-                                        <div className="px-2 py-1.5 text-[8px] text-gray-700 border-t border-gray-300">
-                                            <p className="font-semibold">Times are approximate. Riders should arrive at the bus stop at least 5 minutes before the scheduled time.</p>
-                                        </div>
-
-                                        {/* Fare Table - Matching PDF structure */}
-                                        <div className="px-2 py-2 border-t border-gray-300 bg-white">
-                                            <p className="text-[9px] font-bold text-gray-800 mb-1.5">Transit Fares - Effective May 1, 2025</p>
-                                            <table className="w-full text-[7px] border-collapse">
-                                                <thead>
-                                                    <tr className="bg-[#2d6b6b] text-white">
-                                                        <th className="px-1 py-0.5 text-left font-medium border-r border-[#4d8b8b]"></th>
-                                                        <th className="px-1 py-0.5 text-center font-medium border-r border-[#4d8b8b]">Adult (19-64)</th>
-                                                        <th className="px-1 py-0.5 text-center font-medium border-r border-[#4d8b8b]">Student (13-18)</th>
-                                                        <th className="px-1 py-0.5 text-center font-medium border-r border-[#4d8b8b]">Children (0-12)</th>
-                                                        <th className="px-1 py-0.5 text-center font-medium border-r border-[#4d8b8b]">Senior (65+)</th>
-                                                        <th className="px-1 py-0.5 text-center font-medium">Family</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    <tr className="bg-gray-50">
-                                                        <td className="px-1 py-0.5 font-medium border-r border-gray-200">Single Ride</td>
-                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">$3.50</td>
-                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">$3.50</td>
-                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">Free</td>
-                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">$3.00</td>
-                                                        <td className="px-1 py-0.5 text-center">-</td>
-                                                    </tr>
-                                                    <tr className="bg-white">
-                                                        <td className="px-1 py-0.5 font-medium border-r border-gray-200">10-Ride Card</td>
-                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">$30</td>
-                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">$26</td>
-                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">-</td>
-                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">$21</td>
-                                                        <td className="px-1 py-0.5 text-center">-</td>
-                                                    </tr>
-                                                    <tr className="bg-gray-50">
-                                                        <td className="px-1 py-0.5 font-medium border-r border-gray-200">Day Pass</td>
-                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">$8.50</td>
-                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">$8.50</td>
-                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">-</td>
-                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">$8.50</td>
-                                                        <td className="px-1 py-0.5 text-center">$10</td>
-                                                    </tr>
-                                                    <tr className="bg-white">
-                                                        <td className="px-1 py-0.5 font-medium border-r border-gray-200">Monthly Pass</td>
-                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">$93</td>
-                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">$71.25</td>
-                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">-</td>
-                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">$54</td>
-                                                        <td className="px-1 py-0.5 text-center">-</td>
-                                                    </tr>
-                                                </tbody>
-                                            </table>
-                                            <p className="text-[6px] text-gray-600 mt-1">Seniors Ride Free on Tuesdays and Thursdays. Single fares are valid, with a transfer, for 90 minutes on any route.</p>
-                                        </div>
                                     </div>
+                                );
 
-                                    {/* RIGHT SIDE - Route Info & Map */}
-                                    <div className="w-72 flex-shrink-0 border-l-2 border-[#2d6b6b] flex flex-col bg-white">
-                                        {/* Route Header */}
-                                        <div className="p-3 border-b border-gray-200">
-                                            <div className="flex items-start gap-3">
-                                                {/* Route Number Badge */}
-                                                <div className="bg-[#2d6b6b] text-white w-14 h-14 flex items-center justify-center text-3xl font-bold rounded-lg shadow-sm">
-                                                    {selectedRoute}
+                                // Letter landscape: 11" × 8.5" at 72 DPI = 792px × 612px
+                                // Using scaled dimensions for better preview
+                                const pageStyle = {
+                                    width: '1000px',
+                                    height: '773px', // 1000 / (11/8.5) to maintain letter landscape ratio
+                                    maxWidth: '100%',
+                                };
+
+                                return (
+                                    <>
+                                        {/* PAGE 1: Sunday + Route Info Panel - Letter Landscape */}
+                                        <div className="bg-white border border-gray-300 shadow-lg overflow-hidden mx-auto" style={pageStyle}>
+                                            <div className="text-center text-[10px] text-gray-500 py-1 bg-gray-100 border-b">Page 1 - Front (Letter Landscape 11" × 8.5")</div>
+                                            {allDayTypesData.sunday ? (
+                                                <div className="flex">
+                                                    {/* LEFT SIDE - Sunday Timetable */}
+                                                    <div className="flex-1 min-w-0 flex flex-col">
+                                                        {renderTimetable(allDayTypesData.sunday, 'Sunday & Holidays', 'sunday')}
+
+                                                        {/* Disclaimer */}
+                                                        <div className="px-2 py-1 text-[7px] text-gray-700 border-t border-gray-300">
+                                                            <p className="font-semibold">Times are approximate. Riders should arrive at the bus stop at least 5 minutes before the scheduled time.</p>
+                                                        </div>
+
+                                                        {/* Fare Table */}
+                                                        <div className="px-2 py-1.5 border-t border-gray-300 bg-white">
+                                                            <p className="text-[8px] font-bold text-gray-800 mb-1">Transit Fares - Effective May 1, 2025</p>
+                                                            <table className="w-full text-[6px] border-collapse">
+                                                                <thead>
+                                                                    <tr className="bg-[#2d6b6b] text-white">
+                                                                        <th className="px-1 py-0.5 text-left font-medium border-r border-[#4d8b8b]"></th>
+                                                                        <th className="px-1 py-0.5 text-center font-medium border-r border-[#4d8b8b]">Adult (19-64)</th>
+                                                                        <th className="px-1 py-0.5 text-center font-medium border-r border-[#4d8b8b]">Student (13-18)</th>
+                                                                        <th className="px-1 py-0.5 text-center font-medium border-r border-[#4d8b8b]">Children (0-12)</th>
+                                                                        <th className="px-1 py-0.5 text-center font-medium border-r border-[#4d8b8b]">Senior (65+)</th>
+                                                                        <th className="px-1 py-0.5 text-center font-medium">Family</th>
+                                                                    </tr>
+                                                                </thead>
+                                                                <tbody>
+                                                                    <tr className="bg-gray-50">
+                                                                        <td className="px-1 py-0.5 font-medium border-r border-gray-200">Single Ride</td>
+                                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">$3.50</td>
+                                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">$3.50</td>
+                                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">Free</td>
+                                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">$3.00</td>
+                                                                        <td className="px-1 py-0.5 text-center">-</td>
+                                                                    </tr>
+                                                                    <tr className="bg-white">
+                                                                        <td className="px-1 py-0.5 font-medium border-r border-gray-200">10-Ride Card</td>
+                                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">$30</td>
+                                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">$26</td>
+                                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">-</td>
+                                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">$21</td>
+                                                                        <td className="px-1 py-0.5 text-center">-</td>
+                                                                    </tr>
+                                                                    <tr className="bg-gray-50">
+                                                                        <td className="px-1 py-0.5 font-medium border-r border-gray-200">Day Pass</td>
+                                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">$8.50</td>
+                                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">$8.50</td>
+                                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">-</td>
+                                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">$8.50</td>
+                                                                        <td className="px-1 py-0.5 text-center">$10</td>
+                                                                    </tr>
+                                                                    <tr className="bg-white">
+                                                                        <td className="px-1 py-0.5 font-medium border-r border-gray-200">Monthly Pass</td>
+                                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">$93</td>
+                                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">$71.25</td>
+                                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">-</td>
+                                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">$54</td>
+                                                                        <td className="px-1 py-0.5 text-center">-</td>
+                                                                    </tr>
+                                                                </tbody>
+                                                            </table>
+                                                            <p className="text-[5px] text-gray-600 mt-0.5">Seniors Ride Free on Tuesdays and Thursdays. Single fares are valid, with a transfer, for 90 minutes on any route.</p>
+                                                        </div>
+                                                    </div>
+
+                                                    {/* RIGHT SIDE - Route Map (50% width) */}
+                                                    <div className="flex-1 border-l-2 border-[#2d6b6b] flex flex-col bg-white">
+                                                        {/* Route Map - Takes up most of the space */}
+                                                        <div className="flex-1 p-3 bg-white overflow-hidden min-h-[250px]">
+                                                            {mapImageUrl ? (
+                                                                <img src={mapImageUrl} alt={`Route ${selectedRoute} map`} className="w-full h-full object-contain" />
+                                                            ) : (
+                                                                <div className="h-full min-h-[230px] bg-gray-50 rounded border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400 text-sm">
+                                                                    Upload route map
+                                                                </div>
+                                                            )}
+                                                        </div>
+
+                                                        {/* Legend */}
+                                                        <div className="px-3 py-2 bg-white border-t border-gray-200">
+                                                            <p className="font-bold text-sm text-gray-800 mb-1">Legend</p>
+                                                            <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-gray-700">
+                                                                <div className="flex items-center gap-2">
+                                                                    <div className="w-4 h-4 rounded-full bg-[#2d6b6b] flex items-center justify-center text-white text-[8px] font-bold">#</div>
+                                                                    <span>Timing stop & stop ID listed in schedule</span>
+                                                                </div>
+                                                                <div className="flex items-center gap-2">
+                                                                    <div className="w-4 h-4 rounded-full border-2 border-[#2d6b6b] bg-white flex items-center justify-center text-[#2d6b6b] text-[8px] font-bold">#</div>
+                                                                    <span>Regular stop & stop ID</span>
+                                                                </div>
+                                                                <div className="flex items-center gap-2">
+                                                                    <div className="w-4 h-4 rounded bg-[#2d6b6b] flex items-center justify-center text-white text-[8px] font-bold">#</div>
+                                                                    <span>Connection to other fixed route</span>
+                                                                </div>
+                                                                <div className="flex items-center gap-2">
+                                                                    <div className="w-4 h-4 rounded bg-gray-200 flex items-center justify-center text-gray-600 text-[8px] font-bold">X</div>
+                                                                    <span>Connection to Transit ON Demand</span>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+
+                                                        {/* MyRide Promo */}
+                                                        <div className="px-3 py-2 bg-[#e8f4f4] border-t border-gray-200">
+                                                            <p className="text-sm text-gray-800 font-semibold">Visit MyRideBarrie.ca</p>
+                                                            <p className="text-xs text-gray-600">or download "Transit" for real-time bus information and trip planning.</p>
+                                                        </div>
+
+                                                        {/* Contact Footer */}
+                                                        <div className="px-3 py-2 bg-[#2d6b6b] text-white flex items-center justify-between text-xs">
+                                                            <span>705-726-4242</span>
+                                                            <span>servicebarrie@barrie.ca</span>
+                                                            <span>Barrie.ca/Transit</span>
+                                                        </div>
+                                                    </div>
                                                 </div>
-                                                <div className="flex-1 min-w-0">
-                                                    <h2 className="text-base font-bold text-gray-900 leading-tight whitespace-pre-line">
-                                                        {headerText || getRouteDisplayName(selectedRoute)}
-                                                    </h2>
-                                                    <p className="text-[9px] text-gray-500 mt-1">
-                                                        Effective {new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
-                                                    </p>
-                                                </div>
-                                            </div>
-                                            <div className="mt-2 text-[9px] text-gray-700">
-                                                <p className="font-semibold">{getDirectionLabel(selectedRoute, 'North')}</p>
-                                                <p className="font-semibold">{getDirectionLabel(selectedRoute, 'South')}</p>
-                                            </div>
-                                        </div>
-
-                                        {/* Barrie Transit Branding */}
-                                        <div className="bg-[#f5a623] px-3 py-2 flex items-center justify-end gap-2">
-                                            <div className="text-right">
-                                                <p className="text-xl font-bold text-[#2d6b6b] leading-tight">Barrie</p>
-                                                <p className="text-base text-[#2d6b6b] -mt-1">Transit</p>
-                                            </div>
-                                        </div>
-
-                                        {/* Route Map */}
-                                        <div className="flex-1 p-2 bg-white overflow-hidden min-h-[200px]">
-                                            {mapImageUrl ? (
-                                                <img
-                                                    src={mapImageUrl}
-                                                    alt={`Route ${selectedRoute} map`}
-                                                    className="w-full h-full object-contain"
-                                                />
                                             ) : (
-                                                <div className="h-full min-h-[180px] bg-gray-50 rounded border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400 text-xs">
-                                                    Upload route map in left panel
+                                                <div className="p-8 text-center text-gray-400">
+                                                    Loading Sunday schedule...
                                                 </div>
                                             )}
                                         </div>
 
-                                        {/* Legend */}
-                                        <div className="px-3 py-2 bg-white border-t border-gray-200">
-                                            <p className="font-bold text-[8px] text-gray-800 mb-1">Legend</p>
-                                            <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-[7px] text-gray-700">
-                                                <div className="flex items-center gap-1.5">
-                                                    <div className="w-3 h-3 rounded-full bg-[#2d6b6b] flex items-center justify-center text-white text-[5px] font-bold">#</div>
-                                                    <span>Timing stop & stop ID listed in schedule</span>
+                                        {/* PAGE 2: Weekday | Saturday side by side - Letter Landscape */}
+                                        <div className="bg-white border border-gray-300 shadow-lg overflow-hidden mx-auto" style={pageStyle}>
+                                            <div className="text-center text-[10px] text-gray-500 py-1 bg-gray-100 border-b">Page 2 - Back (Letter Landscape 11" × 8.5")</div>
+                                            {allDayTypesData.weekday && allDayTypesData.saturday ? (
+                                                <div className="flex">
+                                                    {/* Weekday Timetable */}
+                                                    {renderTimetable(allDayTypesData.weekday, 'Weekday', 'weekday')}
+
+                                                    {/* Divider */}
+                                                    <div className="w-[2px] bg-[#2d6b6b]" />
+
+                                                    {/* Saturday Timetable */}
+                                                    {renderTimetable(allDayTypesData.saturday, 'Saturday', 'saturday')}
                                                 </div>
-                                                <div className="flex items-center gap-1.5">
-                                                    <div className="w-3 h-3 rounded-full border border-[#2d6b6b] bg-white flex items-center justify-center text-[#2d6b6b] text-[5px] font-bold">#</div>
-                                                    <span>Regular stop & stop ID</span>
+                                            ) : (
+                                                <div className="p-8 text-center text-gray-400">
+                                                    Loading Weekday and Saturday schedules...
                                                 </div>
-                                                <div className="flex items-center gap-1.5">
-                                                    <div className="w-3 h-3 rounded bg-[#2d6b6b] flex items-center justify-center text-white text-[5px] font-bold">#</div>
-                                                    <span>Connection to other fixed route</span>
-                                                </div>
-                                                <div className="flex items-center gap-1.5">
-                                                    <div className="w-3 h-3 rounded bg-gray-200 flex items-center justify-center text-gray-600 text-[5px] font-bold">X</div>
-                                                    <span>Connection to Transit ON Demand</span>
-                                                </div>
+                                            )}
+
+                                            {/* Footer for Page 2 */}
+                                            <div className="px-2 py-1 text-[6px] text-gray-600 border-t border-gray-300 bg-gray-50">
+                                                <p className="font-semibold">Times are approximate. Riders should arrive at the bus stop at least 5 minutes before the scheduled time.</p>
                                             </div>
                                         </div>
-
-                                        {/* MyRide Promo */}
-                                        <div className="px-3 py-2 bg-[#e8f4f4] border-t border-gray-200">
-                                            <p className="text-[8px] text-gray-800 font-semibold">Visit MyRideBarrie.ca</p>
-                                            <p className="text-[7px] text-gray-600">or download "Transit" for real-time bus information and trip planning.</p>
-                                        </div>
-
-                                        {/* Contact Info Footer */}
-                                        <div className="px-3 py-1.5 bg-[#2d6b6b] text-white flex items-center justify-between text-[7px]">
-                                            <span>705-726-4242</span>
-                                            <span>servicebarrie@barrie.ca</span>
-                                            <span>Barrie.ca/Transit</span>
-                                        </div>
-                                    </div>
-                                </div>
-                            ) : (
-                                <div className="p-8 text-center">
-                                    <p className="text-gray-400">
-                                        Select a route with both directions to view brochure format
-                                    </p>
-                                </div>
-                            )}
+                                    </>
+                                );
+                            })()}
                         </div>
-                    ) : null}
+                    )}
                 </div>
             </div>
         </div>

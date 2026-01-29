@@ -81,6 +81,7 @@ export interface RoundTripTable {
     northStopIds: Record<string, string>; // Map north stop name -> ID
     southStopIds: Record<string, string>; // Map south stop name -> ID
     rows: RoundTripRow[]; // Each row is one bus/block's full day
+    terminusStop: string | null; // The turnaround stop between directions (auto-detected)
 }
 
 
@@ -675,13 +676,105 @@ export const buildRoundTripView = (
     // Extract route name (remove direction suffix)
     const routeBase = northTable.routeName.replace(/ \(North\).*$/, '');
 
+    // Helper to normalize stop names for comparison
+    const normalizeStopName = (name: string): string => {
+        return name
+            .toLowerCase()
+            .replace(/\s*\(\d+\)\s*/g, '') // Remove numbered suffixes like (2), (3), (4)
+            .replace(/\s*(hub|terminal|station|stop|plaza|centre|center)\s*/gi, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+    };
+
+    // Determine final stops arrays - handle case where all stops are in northTable
+    let finalNorthStops = northTable.stops;
+    let finalSouthStops = southTable.stops;
+    let finalNorthStopIds = northTable.stopIds;
+    let finalSouthStopIds = southTable.stopIds;
+    let terminusStop: string | null = null;
+
+    // Check if southStops is empty - need to auto-split northStops
+    if (southTable.stops.length === 0 && northTable.stops.length > 0) {
+        // Find the terminus (Downtown) - it should appear twice in the combined array
+        const terminusKeywords = ['downtown', 'allandale', 'georgian', 'terminal'];
+        let terminusIndex = -1;
+
+        for (let i = 0; i < northTable.stops.length; i++) {
+            const normalized = normalizeStopName(northTable.stops[i]);
+            if (terminusKeywords.some(kw => normalized.includes(kw))) {
+                // Found first terminus occurrence - look for the second one
+                for (let j = i + 1; j < northTable.stops.length; j++) {
+                    const normalized2 = normalizeStopName(northTable.stops[j]);
+                    if (terminusKeywords.some(kw => normalized2.includes(kw))) {
+                        // Found second terminus - split between them
+                        // North ends at i (inclusive), South starts at j (inclusive)
+                        terminusIndex = i;
+                        terminusStop = northTable.stops[i];
+
+                        // Split the arrays
+                        finalNorthStops = northTable.stops.slice(0, i + 1); // Include terminus arrive
+                        finalSouthStops = northTable.stops.slice(j); // Start from terminus depart
+
+                        // Split the stop IDs
+                        finalNorthStopIds = {};
+                        finalSouthStopIds = {};
+                        finalNorthStops.forEach(stop => {
+                            if (northTable.stopIds[stop]) {
+                                finalNorthStopIds[stop] = northTable.stopIds[stop];
+                            }
+                        });
+                        finalSouthStops.forEach(stop => {
+                            if (northTable.stopIds[stop]) {
+                                finalSouthStopIds[stop] = northTable.stopIds[stop];
+                            }
+                        });
+
+                        console.log('[RoundTrip] Auto-split stops at terminus:', {
+                            terminus: terminusStop,
+                            northStops: finalNorthStops,
+                            southStops: finalSouthStops
+                        });
+                        break;
+                    }
+                }
+                if (terminusIndex >= 0) break;
+            }
+        }
+    } else {
+        // Normal case - detect terminus from existing north/south split
+        const lastNorthStop = northTable.stops[northTable.stops.length - 1];
+        const firstSouthStop = southTable.stops[0];
+
+        if (lastNorthStop && firstSouthStop) {
+            if (lastNorthStop === firstSouthStop) {
+                terminusStop = lastNorthStop;
+            } else {
+                const normalizedNorth = normalizeStopName(lastNorthStop);
+                const normalizedSouth = normalizeStopName(firstSouthStop);
+
+                if (normalizedNorth === normalizedSouth) {
+                    terminusStop = lastNorthStop;
+                } else {
+                    const keyWords = ['downtown', 'allandale', 'georgian', 'park place', 'terminal'];
+                    for (const keyword of keyWords) {
+                        if (normalizedNorth.includes(keyword) && normalizedSouth.includes(keyword)) {
+                            terminusStop = lastNorthStop;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     return {
         routeName: routeBase,
-        northStops: northTable.stops,
-        southStops: southTable.stops,
-        northStopIds: northTable.stopIds,
-        southStopIds: southTable.stopIds,
-        rows
+        northStops: finalNorthStops,
+        southStops: finalSouthStops,
+        northStopIds: finalNorthStopIds,
+        southStopIds: finalSouthStopIds,
+        rows,
+        terminusStop
     };
 };
 

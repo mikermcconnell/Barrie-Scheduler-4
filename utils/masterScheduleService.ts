@@ -420,6 +420,168 @@ export async function getAllMasterSchedules(
     });
 }
 
+// Cache for all stops (cleared on page refresh)
+let allStopsCache: { teamId: string; stops: string[]; stopCodes: Record<string, string> } | null = null;
+
+/**
+ * Get all unique stops from all master schedules.
+ * Fetches full schedule content for each route in parallel.
+ * Results are cached for the session.
+ */
+export async function getAllUniqueStops(teamId: string): Promise<string[]> {
+    // Return cached result if available for this team
+    if (allStopsCache && allStopsCache.teamId === teamId) {
+        return allStopsCache.stops;
+    }
+
+    // Populate cache
+    await getAllStopsWithCodes(teamId);
+
+    return allStopsCache?.stops || [];
+}
+
+/**
+ * Get all unique stops with their codes from all master schedules.
+ * Fetches full schedule content for each route in parallel.
+ * Results are cached for the session.
+ * Returns: { stops: string[], stopCodes: Record<stopName, stopCode> }
+ */
+export async function getAllStopsWithCodes(teamId: string): Promise<{ stops: string[]; stopCodes: Record<string, string> }> {
+    // Return cached result if available for this team
+    if (allStopsCache && allStopsCache.teamId === teamId) {
+        return { stops: allStopsCache.stops, stopCodes: allStopsCache.stopCodes };
+    }
+
+    // Get all schedule metadata
+    const schedules = await getAllMasterSchedules(teamId);
+
+    if (schedules.length === 0) {
+        return { stops: [], stopCodes: {} };
+    }
+
+    // Fetch all schedules in parallel
+    // Use nameToAllCodes to track ALL codes for each stop name
+    const nameToAllCodes: Record<string, Set<string>> = {};
+
+    const fetchPromises = schedules.map(async (schedule) => {
+        try {
+            const storageRef = ref(storage, schedule.storagePath);
+            const bytes = await getBytes(storageRef);
+            const json = new TextDecoder().decode(bytes);
+            const content: MasterScheduleContent = JSON.parse(json);
+
+            // Collect stop names and their codes from both directions
+            const collectStopCodes = (stopIds: Record<string, string> | undefined) => {
+                if (!stopIds) return;
+                Object.entries(stopIds).forEach(([name, code]) => {
+                    if (code) {
+                        if (!nameToAllCodes[name]) {
+                            nameToAllCodes[name] = new Set();
+                        }
+                        nameToAllCodes[name].add(code);
+                    }
+                });
+            };
+
+            // Also add stops without codes (from stops array)
+            const collectStopsWithoutCodes = (stops: string[] | undefined, stopIds: Record<string, string> | undefined) => {
+                if (!stops) return;
+                stops.forEach(stop => {
+                    if (!stopIds?.[stop] && !nameToAllCodes[stop]) {
+                        nameToAllCodes[stop] = new Set(); // Empty set = no code
+                    }
+                });
+            };
+
+            collectStopCodes(content.northTable?.stopIds);
+            collectStopCodes(content.southTable?.stopIds);
+            collectStopsWithoutCodes(content.northTable?.stops, content.northTable?.stopIds);
+            collectStopsWithoutCodes(content.southTable?.stops, content.southTable?.stopIds);
+        } catch (error) {
+            console.error(`Error fetching stops for ${schedule.id}:`, error);
+        }
+    });
+
+    await Promise.all(fetchPromises);
+
+    // Now process nameToAllCodes to build final stop list
+    // Rules:
+    // 1. Same code, different names -> keep cleanest name (no parens, shorter)
+    // 2. Same name, different codes -> keep all, disambiguate with [code]
+
+    // Step 1: Build code -> names mapping (reverse of nameToAllCodes)
+    const codeToNames: Record<string, string[]> = {};
+    const stopsWithoutCodes: string[] = [];
+
+    for (const [name, codes] of Object.entries(nameToAllCodes)) {
+        if (codes.size === 0) {
+            stopsWithoutCodes.push(name);
+        } else {
+            for (const code of codes) {
+                if (!codeToNames[code]) {
+                    codeToNames[code] = [];
+                }
+                codeToNames[code].push(name);
+            }
+        }
+    }
+
+    // Step 2: For each code, pick the cleanest name (prefer shorter, no parenthetical suffix)
+    const codeToBestName: Record<string, string> = {};
+    for (const [code, names] of Object.entries(codeToNames)) {
+        const sorted = [...names].sort((a, b) => {
+            const aHasParens = a.includes('(');
+            const bHasParens = b.includes('(');
+            if (aHasParens !== bHasParens) {
+                return aHasParens ? 1 : -1; // Prefer no parens
+            }
+            return a.length - b.length; // Prefer shorter
+        });
+        codeToBestName[code] = sorted[0];
+    }
+
+    // Step 3: Check for duplicate "best names" across different codes
+    const bestNameToCodes: Record<string, string[]> = {};
+    for (const [code, name] of Object.entries(codeToBestName)) {
+        if (!bestNameToCodes[name]) {
+            bestNameToCodes[name] = [];
+        }
+        bestNameToCodes[name].push(code);
+    }
+
+    // Step 4: Build final list - append code to disambiguate when same name has multiple codes
+    const deduplicatedStops: string[] = [...stopsWithoutCodes];
+    const finalStopCodes: Record<string, string> = {};
+
+    for (const [code, bestName] of Object.entries(codeToBestName)) {
+        const codesWithThisName = bestNameToCodes[bestName];
+
+        let displayName: string;
+        if (codesWithThisName.length > 1) {
+            // Multiple codes share this name - append code to disambiguate
+            displayName = `${bestName} [${code}]`;
+        } else {
+            displayName = bestName;
+        }
+
+        deduplicatedStops.push(displayName);
+        finalStopCodes[displayName] = code;
+    }
+
+    // Sort and cache
+    const sortedStops = deduplicatedStops.sort();
+    allStopsCache = { teamId, stops: sortedStops, stopCodes: finalStopCodes };
+
+    return { stops: sortedStops, stopCodes: finalStopCodes };
+}
+
+/**
+ * Clear the all stops cache (call when schedules are updated)
+ */
+export function clearAllStopsCache(): void {
+    allStopsCache = null;
+}
+
 /**
  * Get single master schedule entry with full content
  */
