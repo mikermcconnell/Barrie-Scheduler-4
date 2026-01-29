@@ -6,10 +6,10 @@
  */
 
 export const ROUTE_COLORS: Record<string, string> = {
-    // Green routes
-    '2A': '#22C55E',
-    '2B': '#22C55E',
-    '2': '#22C55E', // Fallback for just "2"
+    // Green routes - Barrie Transit official dark green
+    '2A': '#0D6B4B',
+    '2B': '#0D6B4B',
+    '2': '#0D6B4B', // Fallback for just "2"
 
     // Blue/Orange routes (7 series) - both are orange
     '7A': '#F97316',
