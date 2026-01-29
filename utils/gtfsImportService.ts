@@ -663,6 +663,98 @@ function mergeStopListsFromTrips(trips: ProcessedGTFSTrip[]): ProcessedGTFSTrip[
 }
 
 /**
+ * Split "Loop" trips into North and South based on terminus detection.
+ *
+ * Logic:
+ * - Find the terminus (Downtown, Terminal, etc.) by looking at stop names
+ * - Trips ending at terminus = North (going TO downtown)
+ * - Trips starting at terminus = South (going FROM downtown)
+ */
+function splitLoopTripsByTerminus(
+    loopTrips: ProcessedGTFSTrip[],
+    terminusKeywords: string[]
+): { north: ProcessedGTFSTrip[]; south: ProcessedGTFSTrip[] } {
+    const north: ProcessedGTFSTrip[] = [];
+    const south: ProcessedGTFSTrip[] = [];
+
+    // Helper to check if a stop name matches terminus keywords
+    const isTerminus = (stopName: string): boolean => {
+        const normalized = stopName.toLowerCase();
+        return terminusKeywords.some(kw => normalized.includes(kw));
+    };
+
+    for (const trip of loopTrips) {
+        if (trip.stopTimes.length === 0) continue;
+
+        const firstStop = trip.stopTimes[0].stopName;
+        const lastStop = trip.stopTimes[trip.stopTimes.length - 1].stopName;
+
+        const startsAtTerminus = isTerminus(firstStop);
+        const endsAtTerminus = isTerminus(lastStop);
+
+        if (endsAtTerminus && !startsAtTerminus) {
+            // Going TO terminus = North direction
+            north.push({ ...trip, direction: 'North' });
+        } else if (startsAtTerminus && !endsAtTerminus) {
+            // Coming FROM terminus = South direction
+            south.push({ ...trip, direction: 'South' });
+        } else if (startsAtTerminus && endsAtTerminus) {
+            // Starts and ends at terminus - check middle stops to determine direction
+            // Or use time-based heuristic: earlier trips tend to be first direction
+            // For now, alternate based on departure time
+            const departureHour = Math.floor(trip.stopTimes[0].departureMinutes / 60);
+            // Morning trips going TO downtown (North), return trips FROM downtown (South)
+            // This is a simplification - may need refinement
+            if (north.length <= south.length) {
+                north.push({ ...trip, direction: 'North' });
+            } else {
+                south.push({ ...trip, direction: 'South' });
+            }
+        } else {
+            // Neither start nor end at terminus - try to find terminus in middle
+            const hasTerminusInMiddle = trip.stopTimes.slice(1, -1).some(st => isTerminus(st.stopName));
+            if (hasTerminusInMiddle) {
+                // This is likely a full round-trip in one trip record
+                // Split it into two trips at the terminus
+                const terminusIdx = trip.stopTimes.findIndex((st, idx) =>
+                    idx > 0 && idx < trip.stopTimes.length - 1 && isTerminus(st.stopName)
+                );
+
+                if (terminusIdx > 0) {
+                    // First half: origin → terminus = North
+                    const northStops = trip.stopTimes.slice(0, terminusIdx + 1);
+                    north.push({
+                        ...trip,
+                        direction: 'North',
+                        stopTimes: northStops
+                    });
+
+                    // Second half: terminus → origin = South
+                    const southStops = trip.stopTimes.slice(terminusIdx);
+                    south.push({
+                        ...trip,
+                        direction: 'South',
+                        stopTimes: southStops
+                    });
+                } else {
+                    // Fallback: put in north
+                    north.push({ ...trip, direction: 'North' });
+                }
+            } else {
+                // No terminus found - use heuristic based on count balance
+                if (north.length <= south.length) {
+                    north.push({ ...trip, direction: 'North' });
+                } else {
+                    south.push({ ...trip, direction: 'South' });
+                }
+            }
+        }
+    }
+
+    return { north, south };
+}
+
+/**
  * Convert processed GTFS trips to MasterScheduleContent
  */
 export function convertToMasterSchedule(
@@ -675,9 +767,28 @@ export function convertToMasterSchedule(
     const southTrips = trips.filter(t => t.direction === 'South');
     const loopTrips = trips.filter(t => t.direction === 'Loop' || !t.direction);
 
-    // For loop routes, put all in north table
-    const effectiveNorthTrips = northTrips.length > 0 ? northTrips : loopTrips;
-    const effectiveSouthTrips = southTrips;
+    // Determine effective trips for each direction
+    let effectiveNorthTrips: ProcessedGTFSTrip[];
+    let effectiveSouthTrips: ProcessedGTFSTrip[];
+
+    if (northTrips.length > 0 || southTrips.length > 0) {
+        // Normal case: we have explicit direction data
+        effectiveNorthTrips = northTrips;
+        effectiveSouthTrips = southTrips;
+    } else if (loopTrips.length > 0) {
+        // All trips are "Loop" - need to intelligently split them
+        // Detect terminus keywords to determine direction
+        const terminusKeywords = ['downtown', 'terminal', 'hub', 'allandale', 'georgian'];
+
+        const splitLoopTrips = splitLoopTripsByTerminus(loopTrips, terminusKeywords);
+        effectiveNorthTrips = splitLoopTrips.north;
+        effectiveSouthTrips = splitLoopTrips.south;
+
+        console.log(`[GTFS Import] Split ${loopTrips.length} loop trips: ${effectiveNorthTrips.length} North, ${effectiveSouthTrips.length} South`);
+    } else {
+        effectiveNorthTrips = [];
+        effectiveSouthTrips = [];
+    }
 
     // Generate unique stop names for each direction
     // Merge stops from ALL trips to handle partial trips (e.g., Sunday schedules
