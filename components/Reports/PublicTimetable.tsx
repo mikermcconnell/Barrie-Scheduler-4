@@ -143,29 +143,56 @@ const stripStopSuffix = (stop: string): string => {
     return stop.replace(/\s*\(\d+\)$/, '');
 };
 
+/**
+ * De-duplicate stops for public brochure display.
+ * When a stop appears multiple times (arrival + departure at timing points),
+ * keep only the LAST occurrence (departure time) for each unique stop name.
+ * Returns: { displayStops: cleaned stop names, stopMapping: original stop name for each display stop }
+ */
+const deduplicateStopsForBrochure = (stops: string[]): { displayStops: string[]; stopMapping: string[] } => {
+    const seenStops = new Map<string, number>(); // cleanName -> last index
+
+    // First pass: find the last occurrence of each stop name
+    stops.forEach((stop, idx) => {
+        const cleanName = stripStopSuffix(stop);
+        seenStops.set(cleanName, idx); // Overwrites, so we get the last occurrence
+    });
+
+    // Second pass: build the de-duplicated list in order
+    const displayStops: string[] = [];
+    const stopMapping: string[] = []; // Maps display index to original stop name (for time lookup)
+    const addedStops = new Set<string>();
+
+    stops.forEach((stop, idx) => {
+        const cleanName = stripStopSuffix(stop);
+        // Only add if this is the last occurrence (the departure)
+        if (seenStops.get(cleanName) === idx && !addedStops.has(cleanName)) {
+            displayStops.push(cleanName);
+            stopMapping.push(stop); // Keep original name for time lookup
+            addedStops.add(cleanName);
+        }
+    });
+
+    return { displayStops, stopMapping };
+};
+
 // Format stop name with (Depart)/(Arrive) annotations for brochure
-// This creates the A/B split structure where:
-// - 2A (North) columns: Origin (Depart) → ... → Downtown Hub (Arrive)
-// - 2B (South) columns: Downtown Hub (Depart) → ... → Origin (Arrive)
 const formatBrochureStopName = (
     stop: string,
     stopIndex: number,
     totalStops: number,
     _direction: 'North' | 'South'
 ): string => {
-    // First strip any numbered suffix for public display
-    const cleanStop = stripStopSuffix(stop);
-
     const isFirst = stopIndex === 0;
     const isLast = stopIndex === totalStops - 1;
 
     // Origin stop (first in direction) gets "(Depart)" - where trip begins
-    if (isFirst) return `${cleanStop} (Depart)`;
+    if (isFirst) return `${stop} (Depart)`;
 
     // Destination stop (last in direction) gets "(Arrive)" - where trip ends
-    if (isLast) return `${cleanStop} (Arrive)`;
+    if (isLast) return `${stop} (Arrive)`;
 
-    return cleanStop;
+    return stop;
 };
 
 export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
@@ -913,7 +940,14 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
                                     table: RoundTripTable,
                                     dayType: string,
                                     keyPrefix: string
-                                ) => (
+                                ) => {
+                                    // De-duplicate stops for cleaner public display
+                                    // This removes duplicate stops (arrival/departure at same location)
+                                    // and keeps only the departure time (last occurrence)
+                                    const northDeduped = deduplicateStopsForBrochure(table.northStops);
+                                    const southDeduped = deduplicateStopsForBrochure(table.southStops);
+
+                                    return (
                                     <div className="flex-1 min-w-0 flex flex-col">
                                         {/* Day Type Header Banner */}
                                         <div
@@ -928,7 +962,7 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
                                             <tbody>
                                                 <tr style={{ backgroundColor: colorMid }}>
                                                     <td
-                                                        colSpan={table.northStops.length}
+                                                        colSpan={northDeduped.displayStops.length}
                                                         className="text-center py-1 font-bold text-[10px]"
                                                         style={{ color: textColor, borderRight: `1px solid ${colorBorder}` }}
                                                     >
@@ -949,7 +983,7 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
                                                     {/* Spacer cell */}
                                                     <td style={{ width: '4px', backgroundColor: spacerColor }} />
                                                     <td
-                                                        colSpan={table.southStops.length}
+                                                        colSpan={southDeduped.displayStops.length}
                                                         className="text-center py-1 font-bold text-[10px]"
                                                         style={{ color: textColor }}
                                                     >
@@ -979,11 +1013,11 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
                                                 <thead>
                                                     {/* Vertical stop names row */}
                                                     <tr style={{ backgroundColor: colorLight }}>
-                                                        {table.northStops.map((stop, idx) => (
+                                                        {northDeduped.displayStops.map((stop, idx) => (
                                                             <th
                                                                 key={`${keyPrefix}-n-${stop}`}
                                                                 className="p-0"
-                                                                style={{ minWidth: '28px', maxWidth: '34px', height: '90px', color: textColor, borderRight: `1px solid ${colorBorder}` }}
+                                                                style={{ minWidth: '32px', maxWidth: '38px', height: '90px', color: textColor, borderRight: `1px solid ${colorBorder}` }}
                                                             >
                                                                 <div
                                                                     className="h-full w-full flex items-center justify-center"
@@ -995,7 +1029,7 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
                                                                             transform: 'rotate(180deg)',
                                                                         }}
                                                                     >
-                                                                        {formatBrochureStopName(stop, idx, table.northStops.length, 'North')}
+                                                                        {formatBrochureStopName(stop, idx, northDeduped.displayStops.length, 'North')}
                                                                     </span>
                                                                 </div>
                                                             </th>
@@ -1006,11 +1040,11 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
                                                             className="p-0"
                                                             style={{ width: '4px', minWidth: '4px', maxWidth: '4px', backgroundColor: spacerColor }}
                                                         />
-                                                        {table.southStops.map((stop, idx) => (
+                                                        {southDeduped.displayStops.map((stop, idx) => (
                                                             <th
                                                                 key={`${keyPrefix}-s-${stop}`}
                                                                 className="p-0"
-                                                                style={{ minWidth: '28px', maxWidth: '34px', height: '90px', color: textColor, borderRight: idx < table.southStops.length - 1 ? `1px solid ${colorBorder}` : 'none' }}
+                                                                style={{ minWidth: '32px', maxWidth: '38px', height: '90px', color: textColor, borderRight: idx < southDeduped.displayStops.length - 1 ? `1px solid ${colorBorder}` : 'none' }}
                                                             >
                                                                 <div
                                                                     className="h-full w-full flex items-center justify-center"
@@ -1022,7 +1056,7 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
                                                                             transform: 'rotate(180deg)',
                                                                         }}
                                                                     >
-                                                                        {formatBrochureStopName(stop, idx, table.southStops.length, 'South')}
+                                                                        {formatBrochureStopName(stop, idx, southDeduped.displayStops.length, 'South')}
                                                                     </span>
                                                                 </div>
                                                             </th>
@@ -1030,13 +1064,13 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
                                                     </tr>
                                                     {/* Stop IDs row */}
                                                     <tr style={{ backgroundColor: colorLighter, color: textColor }} className="text-[7px]">
-                                                        {table.northStops.map((stop, idx) => (
+                                                        {northDeduped.stopMapping.map((origStop, idx) => (
                                                             <th
-                                                                key={`${keyPrefix}-nid-${stop}`}
+                                                                key={`${keyPrefix}-nid-${origStop}`}
                                                                 className="px-0.5 py-0.5 font-normal text-center"
                                                                 style={{ borderRight: `1px solid ${colorBorder}` }}
                                                             >
-                                                                {table.northStopIds?.[stop] || ''}
+                                                                {table.northStopIds?.[origStop] || ''}
                                                             </th>
                                                         ))}
                                                         {/* Spacer column between 2A and 2B */}
@@ -1045,13 +1079,13 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
                                                             className="p-0"
                                                             style={{ width: '4px', minWidth: '4px', maxWidth: '4px', backgroundColor: spacerColor }}
                                                         />
-                                                        {table.southStops.map((stop, idx) => (
+                                                        {southDeduped.stopMapping.map((origStop, idx) => (
                                                             <th
-                                                                key={`${keyPrefix}-sid-${stop}`}
+                                                                key={`${keyPrefix}-sid-${origStop}`}
                                                                 className="px-0.5 py-0.5 font-normal text-center"
-                                                                style={{ borderRight: idx < table.southStops.length - 1 ? `1px solid ${colorBorder}` : 'none' }}
+                                                                style={{ borderRight: idx < southDeduped.stopMapping.length - 1 ? `1px solid ${colorBorder}` : 'none' }}
                                                             >
-                                                                {table.southStopIds?.[stop] || ''}
+                                                                {table.southStopIds?.[origStop] || ''}
                                                             </th>
                                                         ))}
                                                     </tr>
@@ -1068,12 +1102,12 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
                                                                 key={`${keyPrefix}-row-${rowIdx}`}
                                                                 style={{ backgroundColor: rowBg }}
                                                             >
-                                                                {table.northStops.map((stop, idx) => (
+                                                                {northDeduped.stopMapping.map((origStop, idx) => (
                                                                     <td
-                                                                        key={`${keyPrefix}-n-${stop}-${rowIdx}`}
+                                                                        key={`${keyPrefix}-n-${origStop}-${rowIdx}`}
                                                                         className="px-0.5 py-[1px] text-center text-gray-800 border-r border-gray-200"
                                                                     >
-                                                                        {formatCompactTime(northTrip?.stops[stop])}
+                                                                        {formatCompactTime(northTrip?.stops[origStop])}
                                                                     </td>
                                                                 ))}
                                                                 {/* Spacer column between 2A and 2B */}
@@ -1082,12 +1116,12 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
                                                                     className="p-0"
                                                                     style={{ width: '4px', minWidth: '4px', maxWidth: '4px', backgroundColor: spacerColor }}
                                                                 />
-                                                                {table.southStops.map((stop, idx) => (
+                                                                {southDeduped.stopMapping.map((origStop, idx) => (
                                                                     <td
-                                                                        key={`${keyPrefix}-s-${stop}-${rowIdx}`}
-                                                                        className={`px-0.5 py-[1px] text-center text-gray-800 ${idx < table.southStops.length - 1 ? 'border-r border-gray-200' : ''}`}
+                                                                        key={`${keyPrefix}-s-${origStop}-${rowIdx}`}
+                                                                        className={`px-0.5 py-[1px] text-center text-gray-800 ${idx < southDeduped.stopMapping.length - 1 ? 'border-r border-gray-200' : ''}`}
                                                                     >
-                                                                        {formatCompactTime(southTrip?.stops[stop])}
+                                                                        {formatCompactTime(southTrip?.stops[origStop])}
                                                                     </td>
                                                                 ))}
                                                             </tr>
@@ -1097,7 +1131,8 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
                                             </table>
                                         </div>
                                     </div>
-                                );
+                                    );
+                                };
 
                                 // Letter landscape: 11" × 8.5" at 72 DPI = 792px × 612px
                                 // Using scaled dimensions for better preview
