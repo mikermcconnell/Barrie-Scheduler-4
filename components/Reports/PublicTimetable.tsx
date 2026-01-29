@@ -1020,7 +1020,7 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
                                                                     className="h-full w-full flex items-center justify-center"
                                                                 >
                                                                     <span
-                                                                        className="whitespace-nowrap text-[7px] font-medium"
+                                                                        className="whitespace-nowrap text-[7px] font-bold"
                                                                         style={{
                                                                             writingMode: 'vertical-rl',
                                                                             transform: 'rotate(180deg)',
@@ -1047,7 +1047,7 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
                                                                     className="h-full w-full flex items-center justify-center"
                                                                 >
                                                                     <span
-                                                                        className="whitespace-nowrap text-[7px] font-medium"
+                                                                        className="whitespace-nowrap text-[7px] font-bold"
                                                                         style={{
                                                                             writingMode: 'vertical-rl',
                                                                             transform: 'rotate(180deg)',
@@ -1064,7 +1064,7 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
                                                         {northDeduped.stopMapping.map((origStop, idx) => (
                                                             <th
                                                                 key={`${keyPrefix}-nid-${origStop}`}
-                                                                className="px-0.5 py-0.5 font-normal text-center"
+                                                                className="px-0.5 py-0.5 font-bold text-center"
                                                                 style={{ borderRight: `1px solid ${colorBorder}` }}
                                                             >
                                                                 {table.northStopIds?.[origStop] || ''}
@@ -1079,7 +1079,7 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
                                                         {southDeduped.stopMapping.map((origStop, idx) => (
                                                             <th
                                                                 key={`${keyPrefix}-sid-${origStop}`}
-                                                                className="px-0.5 py-0.5 font-normal text-center"
+                                                                className="px-0.5 py-0.5 font-bold text-center"
                                                                 style={{ borderRight: idx < southDeduped.stopMapping.length - 1 ? `1px solid ${colorBorder}` : 'none' }}
                                                             >
                                                                 {table.southStopIds?.[origStop] || ''}
@@ -1269,12 +1269,12 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
                                         <div className="bg-white border border-gray-300 shadow-lg overflow-hidden mx-auto" style={pageStyle}>
                                             <div className="text-center text-[10px] text-gray-500 py-1 bg-gray-100 border-b">Page 2 - Back (Letter Landscape 11" × 8.5")</div>
                                             {allDayTypesData.weekday && allDayTypesData.saturday ? (
-                                                <div className="flex">
+                                                <div className="flex pb-3">
                                                     {/* Weekday Timetable */}
                                                     {renderTimetable(allDayTypesData.weekday, 'Weekday', 'weekday')}
 
                                                     {/* Divider */}
-                                                    <div className="w-[2px] bg-[#2d6b6b]" />
+                                                    <div className="w-[2px] bg-[#0D6B4B]" />
 
                                                     {/* Saturday Timetable */}
                                                     {renderTimetable(allDayTypesData.saturday, 'Saturday', 'saturday')}
@@ -1286,7 +1286,7 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
                                             )}
 
                                             {/* Footer for Page 2 */}
-                                            <div className="px-2 py-1 text-[6px] text-gray-600 border-t border-gray-300 bg-gray-50">
+                                            <div className="px-2 py-2 text-[6px] text-gray-600 border-t border-gray-300 bg-gray-50">
                                                 <p className="font-semibold">Times are approximate. Riders should arrive at the bus stop at least 5 minutes before the scheduled time.</p>
                                             </div>
                                         </div>
