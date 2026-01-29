@@ -957,60 +957,57 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
                                             {dayType}
                                         </div>
 
-                                        {/* Direction Headers Row - as table to align with columns */}
-                                        <table className="w-full border-collapse">
-                                            <tbody>
-                                                <tr style={{ backgroundColor: colorMid }}>
-                                                    <td
-                                                        colSpan={northDeduped.displayStops.length}
-                                                        className="text-center py-1 font-bold text-[10px]"
-                                                        style={{ color: textColor, borderRight: `1px solid ${colorBorder}` }}
-                                                    >
-                                                        {(() => {
-                                                            const label = getDirectionLabel(selectedRoute, 'North');
-                                                            const parts = label.split(' to ');
-                                                            if (parts.length === 2) {
-                                                                return (
-                                                                    <>
-                                                                        {parts[0]}<br />
-                                                                        <span className="font-normal text-[9px]">to {parts[1]}</span>
-                                                                    </>
-                                                                );
-                                                            }
-                                                            return label;
-                                                        })()}
-                                                    </td>
-                                                    {/* Spacer cell */}
-                                                    <td style={{ width: '4px', backgroundColor: spacerColor }} />
-                                                    <td
-                                                        colSpan={southDeduped.displayStops.length}
-                                                        className="text-center py-1 font-bold text-[10px]"
-                                                        style={{ color: textColor }}
-                                                    >
-                                                        {(() => {
-                                                            const label = getDirectionLabel(selectedRoute, 'South');
-                                                            // For south direction, add "to" prefix for the terminus
-                                                            const directions = getRouteDirections(selectedRoute);
-                                                            if (directions) {
-                                                                const info = directions.south;
-                                                                return (
-                                                                    <>
-                                                                        {info.variant}<br />
-                                                                        <span className="font-normal text-[9px]">to {info.terminus}</span>
-                                                                    </>
-                                                                );
-                                                            }
-                                                            return label;
-                                                        })()}
-                                                    </td>
-                                                </tr>
-                                            </tbody>
-                                        </table>
-
                                         {/* Timetable with vertical headers */}
                                         <div className="overflow-x-auto flex-1">
                                             <table className="w-full border-collapse text-[8px]">
                                                 <thead>
+                                                    {/* Direction Headers Row - merged into main table for alignment */}
+                                                    <tr style={{ backgroundColor: colorMid }}>
+                                                        <th
+                                                            colSpan={northDeduped.displayStops.length}
+                                                            className="text-center py-1 font-bold text-[10px]"
+                                                            style={{ color: textColor }}
+                                                        >
+                                                            {(() => {
+                                                                const label = getDirectionLabel(selectedRoute, 'North');
+                                                                const parts = label.split(' to ');
+                                                                if (parts.length === 2) {
+                                                                    return (
+                                                                        <>
+                                                                            {parts[0]}<br />
+                                                                            <span className="font-normal text-[9px]">to {parts[1]}</span>
+                                                                        </>
+                                                                    );
+                                                                }
+                                                                return label;
+                                                            })()}
+                                                        </th>
+                                                        {/* Spacer cell - same column as body spacer */}
+                                                        <th
+                                                            className="p-0"
+                                                            style={{ width: '4px', minWidth: '4px', maxWidth: '4px', backgroundColor: spacerColor }}
+                                                        />
+                                                        <th
+                                                            colSpan={southDeduped.displayStops.length}
+                                                            className="text-center py-1 font-bold text-[10px]"
+                                                            style={{ color: textColor }}
+                                                        >
+                                                            {(() => {
+                                                                const label = getDirectionLabel(selectedRoute, 'South');
+                                                                const directions = getRouteDirections(selectedRoute);
+                                                                if (directions) {
+                                                                    const info = directions.south;
+                                                                    return (
+                                                                        <>
+                                                                            {info.variant}<br />
+                                                                            <span className="font-normal text-[9px]">to {info.terminus}</span>
+                                                                        </>
+                                                                    );
+                                                                }
+                                                                return label;
+                                                            })()}
+                                                        </th>
+                                                    </tr>
                                                     {/* Vertical stop names row */}
                                                     <tr style={{ backgroundColor: colorLight }}>
                                                         {northDeduped.displayStops.map((stop, idx) => (
