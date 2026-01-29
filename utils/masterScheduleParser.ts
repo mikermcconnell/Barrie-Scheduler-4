@@ -693,11 +693,12 @@ export const buildRoundTripView = (
     let finalSouthStopIds = southTable.stopIds;
     let terminusStop: string | null = null;
 
-    // Check if southStops is empty - need to auto-split northStops
+    // Check if southStops is empty - need to auto-split northStops AND trip data
     if (southTable.stops.length === 0 && northTable.stops.length > 0) {
         // Find the terminus (Downtown) - it should appear twice in the combined array
         const terminusKeywords = ['downtown', 'allandale', 'georgian', 'terminal'];
         let terminusIndex = -1;
+        let secondTerminusIndex = -1;
 
         for (let i = 0; i < northTable.stops.length; i++) {
             const normalized = normalizeStopName(northTable.stops[i]);
@@ -707,13 +708,13 @@ export const buildRoundTripView = (
                     const normalized2 = normalizeStopName(northTable.stops[j]);
                     if (terminusKeywords.some(kw => normalized2.includes(kw))) {
                         // Found second terminus - split between them
-                        // North ends at i (inclusive), South starts at j (inclusive)
                         terminusIndex = i;
+                        secondTerminusIndex = j;
                         terminusStop = northTable.stops[i];
 
-                        // Split the arrays
-                        finalNorthStops = northTable.stops.slice(0, i + 1); // Include terminus arrive
-                        finalSouthStops = northTable.stops.slice(j); // Start from terminus depart
+                        // Split the stop arrays
+                        finalNorthStops = northTable.stops.slice(0, i + 1);
+                        finalSouthStops = northTable.stops.slice(j);
 
                         // Split the stop IDs
                         finalNorthStopIds = {};
@@ -729,10 +730,32 @@ export const buildRoundTripView = (
                             }
                         });
 
-                        console.log('[RoundTrip] Auto-split stops at terminus:', {
+                        // IMPORTANT: Also update the rows to use split trip data
+                        // Each "north" trip actually contains full round-trip data
+                        // We need to create synthetic south trips from the same data
+                        rows.forEach(row => {
+                            row.trips.forEach(trip => {
+                                if (trip.direction === 'North') {
+                                    // Create a synthetic south trip from the same stop data
+                                    const southTrip: MasterTrip = {
+                                        ...trip,
+                                        id: `${trip.id}-south`,
+                                        direction: 'South' as const,
+                                        // Keep the same stops data - it has times for all stops
+                                    };
+                                    row.trips.push(southTrip);
+                                }
+                            });
+                            // Update row's stop arrays
+                            row.northStops = finalNorthStops;
+                            row.southStops = finalSouthStops;
+                        });
+
+                        console.log('[RoundTrip] Auto-split stops and trips at terminus:', {
                             terminus: terminusStop,
                             northStops: finalNorthStops,
-                            southStops: finalSouthStops
+                            southStops: finalSouthStops,
+                            rowsUpdated: rows.length
                         });
                         break;
                     }
