@@ -772,7 +772,8 @@ export async function uploadRouteMap(
     routeNumber: string,
     file: File
 ): Promise<string> {
-    const extension = file.name.split('.').pop() || 'png';
+    // Always use lowercase extension for consistency (Firebase paths are case-sensitive)
+    const extension = (file.name.split('.').pop() || 'png').toLowerCase();
     const storagePath = `teams/${teamId}/routeMaps/${routeNumber}.${extension}`;
     const storageRef = ref(storage, storagePath);
 
@@ -814,8 +815,8 @@ export async function getRouteMapUrl(
     teamId: string,
     routeNumber: string
 ): Promise<string | null> {
-    // Try common extensions
-    const extensions = ['png', 'jpg', 'jpeg', 'gif', 'webp'];
+    // Try common extensions (lowercase and uppercase for backwards compatibility)
+    const extensions = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'PNG', 'JPG', 'JPEG', 'GIF', 'WEBP'];
 
     for (const ext of extensions) {
         try {
