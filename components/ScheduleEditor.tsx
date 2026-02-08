@@ -716,79 +716,6 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         onSchedulesChange(newScheds);
     };
 
-    // Handle manual linking of North and South trips at Georgian College
-    const handleLinkTrips = (northTripId: string, southTripId: string, stopName: string) => {
-        const newScheds = deepCloneSchedules(schedules);
-
-        // Find North trip
-        const northResult = findTableAndTrip(newScheds, northTripId);
-        if (!northResult) {
-            console.error('[LinkTrips] North trip not found:', northTripId);
-            return;
-        }
-        const { trip: northTrip } = northResult;
-
-        // Find South trip
-        const southResult = findTableAndTrip(newScheds, southTripId);
-        if (!southResult) {
-            console.error('[LinkTrips] South trip not found:', southTripId);
-            return;
-        }
-        const { table: southTable, trip: southTrip } = southResult;
-
-        // Get South trip's departure time at Georgian College
-        const southDepTime = southTrip.stops?.[stopName] ||
-                            southTrip.arrivalTimes?.[stopName];
-        if (!southDepTime) {
-            console.error('[LinkTrips] South trip has no time at stop:', stopName);
-            return;
-        }
-
-        // Get North trip's arrival time at Georgian College
-        const northArrTime = northTrip.endTime !== undefined
-            ? TimeUtils.fromMinutes(northTrip.endTime)
-            : (northTrip.stops?.[stopName] || northTrip.arrivalTimes?.[stopName]);
-
-        if (!northArrTime) {
-            console.error('[LinkTrips] North trip has no arrival time at stop:', stopName);
-            return;
-        }
-
-        // Calculate recovery time (South departure - North arrival)
-        const northArrMinutes = TimeUtils.toMinutes(northArrTime);
-        const southDepMinutes = TimeUtils.toMinutes(southDepTime);
-        const recoveryTime = (northArrMinutes !== null && southDepMinutes !== null)
-            ? Math.max(0, southDepMinutes - northArrMinutes)
-            : 0;
-
-        // Update North trip with Georgian College data
-        if (!northTrip.stops) northTrip.stops = {};
-        if (!northTrip.arrivalTimes) northTrip.arrivalTimes = {};
-        if (!northTrip.recoveryTimes) northTrip.recoveryTimes = {};
-
-        northTrip.stops[stopName] = northArrTime;
-        northTrip.arrivalTimes[stopName] = northArrTime;
-        northTrip.recoveryTimes[stopName] = recoveryTime;
-
-        // Copy South trip's block ID to help with pairing
-        northTrip.blockId = southTrip.blockId || northTrip.blockId;
-
-        // Remove South trip from its table
-        southTable.trips = southTable.trips.filter(t => t.id !== southTripId);
-
-        // Log the action
-        logAction('link', `Linked trips at ${stopName}`, {
-            northTripId,
-            southTripId,
-            stopName,
-            recoveryTime
-        });
-
-        console.log(`[LinkTrips] Linked North ${northTripId} with South ${southTripId} at ${stopName} (recovery: ${recoveryTime} min)`);
-
-        onSchedulesChange(newScheds);
-    };
-
     // Handle direction change from SingleRouteView dropdown
     const handleDirectionChange = (tableRouteName: string, direction: 'North' | 'South') => {
         const newScheds = deepCloneSchedules(schedules);
@@ -1655,7 +1582,6 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                                 )}
                                 <RoundTripTableView
                                     schedules={schedules}
-                                    interlineScopeSchedules={connectionScopeSchedules || schedules}
                                     onCellEdit={readOnly ? undefined : handleCellEdit}
                                     onTimeAdjust={readOnly ? undefined : handleTimeAdjust}
                                     onRecoveryEdit={readOnly ? undefined : handleRecoveryEdit}
@@ -1665,7 +1591,6 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                                     onAddTrip={readOnly ? undefined : (_, tripId) => openAddTripModal(tripId, {})}
                                     onTripRightClick={readOnly ? undefined : handleTripRightClick}
                                     onMenuOpen={readOnly ? undefined : handleMenuOpen}
-                                    onLinkTrips={readOnly ? undefined : handleLinkTrips}
                                     draftName={draftName}
                                     filter={filter}
                                     targetCycleTime={targetCycleTime}

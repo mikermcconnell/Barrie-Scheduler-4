@@ -237,10 +237,6 @@ interface MasterTrip {
   isBlockStart: boolean;
   isBlockEnd: boolean;
 
-  // Interlining
-  interlineNext?: { route: string; tripId: string };
-  interlinePrev?: { route: string; tripId: string };
-
   // Connections
   externalConnections?: ExternalConnection[];
 
@@ -300,8 +296,6 @@ interface BlockedTrip extends ParsedTrip {
   firstStopName: string;
   lastStopName: string;
   routeName: string;
-  interlineNext?: { route: string; tripId: string };
-  interlinePrev?: { route: string; tripId: string };
 }
 ```
 

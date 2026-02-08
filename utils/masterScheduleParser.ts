@@ -56,10 +56,6 @@ export interface MasterTrip {
     // Original GTFS block ID (for linking trips on same physical bus)
     gtfsBlockId?: string;
 
-    // Explicit interline links (used for cross-route continuity like 8A <-> 8B)
-    interlineNext?: { route: string; tripId: string };
-    interlinePrev?: { route: string; tripId: string };
-
     // GTFS shape/pattern identification
     shapeId?: string;
     patternLabel?: string;
@@ -638,25 +634,29 @@ export const buildRoundTripView = (
         // Sort trips by start time to maintain chronological sequence
         const sortedTrips = trips.sort((a, b) => a.startTime - b.startTime);
 
-        const northTrips = sortedTrips.filter(t => t.direction === 'North');
-        const southTrips = sortedTrips.filter(t => t.direction === 'South');
-
-        // Pair by sequence within block to preserve manual/edited linkage.
-        // Time-gap-only pairing can split rows after larger edits.
+        // Pair by chronological direction alternation within each block.
+        // Walk through trips in time order: each North followed by the next South forms a pair.
+        // This correctly handles blocks that start with a South trip (off-by-one fix).
         const pairedRows: { nTrip?: MasterTrip; sTrip?: MasterTrip; pairIndex: number }[] = [];
-        const orderedNorthTrips = [...northTrips].sort((a, b) =>
-            (a.tripNumber - b.tripNumber) || (a.startTime - b.startTime)
-        );
-        const orderedSouthTrips = [...southTrips].sort((a, b) =>
-            (a.tripNumber - b.tripNumber) || (a.startTime - b.startTime)
-        );
-        const pairCount = Math.max(orderedNorthTrips.length, orderedSouthTrips.length);
-        for (let idx = 0; idx < pairCount; idx++) {
-            pairedRows.push({
-                nTrip: orderedNorthTrips[idx],
-                sTrip: orderedSouthTrips[idx],
-                pairIndex: idx
-            });
+        let pendingNorth: MasterTrip | undefined;
+        let pairIdx = 0;
+
+        for (const trip of sortedTrips) {
+            if (trip.direction === 'North') {
+                // If there's already an unpaired north trip, emit it as north-only
+                if (pendingNorth) {
+                    pairedRows.push({ nTrip: pendingNorth, sTrip: undefined, pairIndex: pairIdx++ });
+                }
+                pendingNorth = trip;
+            } else {
+                // South trip - pair with pending north if available
+                pairedRows.push({ nTrip: pendingNorth, sTrip: trip, pairIndex: pairIdx++ });
+                pendingNorth = undefined;
+            }
+        }
+        // Handle trailing unpaired north trip
+        if (pendingNorth) {
+            pairedRows.push({ nTrip: pendingNorth, sTrip: undefined, pairIndex: pairIdx++ });
         }
 
         // Sort paired rows by the earliest trip time in each pair
