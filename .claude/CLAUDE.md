@@ -82,7 +82,21 @@ When user provides feedback like `"7/10 - missed edge case"`:
 
 ---
 
-## 6. Session Memory
+## 6. Route 8A/8B Sorting Rules
+
+Route 8A and 8B have custom "Block Flow" sort logic in `RoundTripTableView.tsx`:
+
+- **8A/8B are separate routes** (`suffixIsDirection: false`), not direction variants
+- **Default sort key**: North Allandale Terminal departure (Platform 5 for 8A, Platform 12 for 8B)
+- **South-only pullout trips** (no North leg): fall back to South Allandale arrival time — this keeps morning pullouts grouped chronologically at the top
+- **Post-midnight trips** (12am–3am): use `getOperationalSortTime()` (DAY_START = 4:00 AM) so late-night service sorts at the bottom, not the top
+- **Tiebreaker**: `compareBlockIds()` for same-time departures
+- **All other routes**: keep standard `pairIndex`-based block flow sort
+- Allandale stops found dynamically via `combined.northStops.find(s => includes('allandale'))`
+
+---
+
+## 7. Session Memory
 
 - **Post-midnight time parsing** - Always run tests after touching time parsing
 - **Interline cycle calculation** - Use dynamic stop-name detection, not hardcoded indices

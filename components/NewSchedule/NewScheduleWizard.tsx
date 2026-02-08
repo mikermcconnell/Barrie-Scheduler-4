@@ -608,6 +608,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                                 bands={bands}
                                 config={config}
                                 setConfig={setConfig}
+                                teamId={team?.id}
                             />
                         )}
                         {step === 4 && (

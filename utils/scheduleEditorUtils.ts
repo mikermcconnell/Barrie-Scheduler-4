@@ -6,6 +6,7 @@
  */
 
 import { MasterRouteTable, MasterTrip } from './masterScheduleParser';
+import { getOperationalSortTime } from './blockAssignmentCore';
 
 // --- Schedule Data Operations ---
 
@@ -46,7 +47,8 @@ export const calculateHeadways = (trips: MasterTrip[]): Record<string, number> =
     });
 
     Object.values(byDir).forEach(dirTrips => {
-        dirTrips.sort((a, b) => a.startTime - b.startTime);
+        // Midnight-4AM trips are late-night, not early morning
+        dirTrips.sort((a, b) => getOperationalSortTime(a.startTime) - getOperationalSortTime(b.startTime));
         for (let i = 1; i < dirTrips.length; i++) {
             const current = dirTrips[i];
             const prev = dirTrips[i - 1];
@@ -72,7 +74,8 @@ export const analyzeHeadways = (trips: MasterTrip[]): { avg: number; irregular: 
     const irregular: string[] = [];
 
     Object.entries(byDir).forEach(([dir, dirTrips]) => {
-        const sorted = [...dirTrips].sort((a, b) => a.startTime - b.startTime);
+        // Midnight-4AM trips are late-night, not early morning
+        const sorted = [...dirTrips].sort((a, b) => getOperationalSortTime(a.startTime) - getOperationalSortTime(b.startTime));
         for (let i = 1; i < sorted.length; i++) {
             const headway = sorted[i].startTime - sorted[i - 1].startTime;
             allHeadways.push(headway);
@@ -137,7 +140,8 @@ export const sortTripsByBlockNumber = (trips: MasterTrip[]): MasterTrip[] => {
         const blockDiff = compareBlockIds(a.blockId, b.blockId);
         if (blockDiff !== 0) return blockDiff;
 
-        const timeDiff = a.startTime - b.startTime;
+        // Midnight-4AM trips are late-night, not early morning
+        const timeDiff = getOperationalSortTime(a.startTime) - getOperationalSortTime(b.startTime);
         if (timeDiff !== 0) return timeDiff;
 
         return (a.tripNumber || 0) - (b.tripNumber || 0);
@@ -154,7 +158,8 @@ export const sortTripsByBlockFlow = (trips: MasterTrip[]): MasterTrip[] => {
         const bSeq = b.tripNumber || 0;
         if (aSeq !== bSeq) return aSeq - bSeq;
 
-        const timeDiff = a.startTime - b.startTime;
+        // Midnight-4AM trips are late-night, not early morning
+        const timeDiff = getOperationalSortTime(a.startTime) - getOperationalSortTime(b.startTime);
         if (timeDiff !== 0) return timeDiff;
 
         const blockDiff = compareBlockIds(a.blockId, b.blockId);
@@ -180,8 +185,9 @@ export const calculatePeakVehicles = (trips: MasterTrip[]): number => {
 export const calculateServiceSpan = (trips: MasterTrip[]): { start: string; end: string; hours: number } => {
     if (trips.length === 0) return { start: '-', end: '-', hours: 0 };
 
-    const sortedByStart = [...trips].sort((a, b) => a.startTime - b.startTime);
-    const sortedByEnd = [...trips].sort((a, b) => b.endTime - a.endTime);
+    // Midnight-4AM trips are late-night, not early morning
+    const sortedByStart = [...trips].sort((a, b) => getOperationalSortTime(a.startTime) - getOperationalSortTime(b.startTime));
+    const sortedByEnd = [...trips].sort((a, b) => getOperationalSortTime(b.endTime) - getOperationalSortTime(a.endTime));
 
     const startMins = sortedByStart[0].startTime;
     const endMins = sortedByEnd[0].endTime;
@@ -386,7 +392,8 @@ export const validateSchedule = (trips: MasterTrip[]): ValidationWarning[] => {
     });
 
     Object.entries(byDir).forEach(([dir, dirTrips]) => {
-        const sorted = [...dirTrips].sort((a, b) => a.startTime - b.startTime);
+        // Midnight-4AM trips are late-night, not early morning
+        const sorted = [...dirTrips].sort((a, b) => getOperationalSortTime(a.startTime) - getOperationalSortTime(b.startTime));
         for (let i = 1; i < sorted.length; i++) {
             const gap = sorted[i].startTime - sorted[i - 1].endTime;
             if (gap > 90) {

@@ -1,7 +1,9 @@
 
 import React from 'react';
 import { TimeBand } from '../../../utils/runtimeAnalysis';
-import { Clock, Bus, Plus, Trash2, LayoutGrid } from 'lucide-react';
+import { Clock, Bus, Plus, Trash2, LayoutGrid, Loader2, Database } from 'lucide-react';
+import { getMasterSchedule } from '../../../utils/masterScheduleService';
+import type { RouteIdentity } from '../../../utils/masterScheduleTypes';
 
 // Configuration Constants
 export const SCHEDULE_DEFAULTS = {
@@ -33,9 +35,122 @@ interface Step3Props {
     bands: TimeBand[];
     config: ScheduleConfig;
     setConfig: (c: ScheduleConfig) => void;
+    teamId?: string;
 }
 
-export const Step3Build: React.FC<Step3Props> = ({ dayType, bands, config, setConfig }) => {
+export const Step3Build: React.FC<Step3Props> = ({ dayType, bands, config, setConfig, teamId }) => {
+
+    // Autofill from Master Schedule state
+    const [autofillFromMaster, setAutofillFromMaster] = React.useState(true);
+    const [isLoadingMaster, setIsLoadingMaster] = React.useState(false);
+    const [masterStatus, setMasterStatus] = React.useState<'idle' | 'loaded' | 'not-found'>('idle');
+    const configRef = React.useRef(config);
+    React.useEffect(() => { configRef.current = config; }, [config]);
+
+    // Convert minutes-from-midnight to "HH:MM" string
+    const minutesToTimeStr = (minutes: number): string => {
+        const normalized = ((minutes % 1440) + 1440) % 1440;
+        const h = Math.floor(normalized / 60);
+        const m = normalized % 60;
+        return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+    };
+
+    // Parse "6:50 AM" / "10:30 PM" → minutes from midnight
+    const parseTimeToMinutes = (timeStr: string): number | null => {
+        const match = timeStr.trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+        if (!match) return null;
+        let hours = parseInt(match[1], 10);
+        const minutes = parseInt(match[2], 10);
+        const period = match[3].toUpperCase();
+        if (period === 'AM' && hours === 12) hours = 0;
+        else if (period === 'PM' && hours !== 12) hours += 12;
+        return hours * 60 + minutes;
+    };
+
+    // Extract effective min/max times from a trip by scanning all stop times
+    const getEffectiveTimes = (trip: { startTime: number; endTime: number; stopMinutes?: Record<string, number>; stops?: Record<string, string> }) => {
+        let start = trip.startTime;
+        let end = trip.endTime;
+
+        if (trip.stopMinutes && Object.keys(trip.stopMinutes).length > 0) {
+            const times = Object.values(trip.stopMinutes) as number[];
+            start = Math.min(start, ...times);
+            end = Math.max(end, ...times);
+        } else if (trip.stops && Object.keys(trip.stops).length > 0) {
+            for (const timeStr of Object.values(trip.stops)) {
+                const parsed = parseTimeToMinutes(timeStr as string);
+                if (parsed !== null) {
+                    if (parsed < start) start = parsed;
+                    if (parsed > end) end = parsed;
+                }
+            }
+        }
+
+        return { start, end };
+    };
+
+    // Fetch and autofill blocks from master schedule
+    React.useEffect(() => {
+        if (!autofillFromMaster || !teamId || !config.routeNumber) return;
+
+        let cancelled = false;
+        const fetchBlocks = async () => {
+            setIsLoadingMaster(true);
+            setMasterStatus('idle');
+            try {
+                const routeIdentity = `${config.routeNumber}-${dayType}` as RouteIdentity;
+                const result = await getMasterSchedule(teamId, routeIdentity);
+                if (cancelled) return;
+
+                if (!result) {
+                    setMasterStatus('not-found');
+                    return;
+                }
+
+                const { content } = result;
+                const allTrips = [...content.northTable.trips, ...content.southTable.trips];
+
+                // Group by blockId, scanning all stop times for true min/max
+                const blockMap = new Map<string, { startTime: number; endTime: number }>();
+                for (const trip of allTrips) {
+                    const { start, end } = getEffectiveTimes(trip);
+                    const existing = blockMap.get(trip.blockId);
+                    if (!existing) {
+                        blockMap.set(trip.blockId, { startTime: start, endTime: end });
+                    } else {
+                        if (start < existing.startTime) existing.startTime = start;
+                        if (end > existing.endTime) existing.endTime = end;
+                    }
+                }
+
+                // Convert to BlockConfig, sorted by start time
+                const blocks: BlockConfig[] = Array.from(blockMap.entries())
+                    .sort((a, b) => a[1].startTime - b[1].startTime)
+                    .map(([blockId, data]) => ({
+                        id: blockId,
+                        startTime: minutesToTimeStr(data.startTime),
+                        endTime: minutesToTimeStr(data.endTime)
+                    }));
+
+                if (blocks.length > 0 && !cancelled) {
+                    setConfig({ ...configRef.current, blocks });
+                    setMasterStatus('loaded');
+                } else {
+                    setMasterStatus('not-found');
+                }
+            } catch (e) {
+                if (!cancelled) {
+                    console.error('Failed to fetch master schedule blocks:', e);
+                    setMasterStatus('not-found');
+                }
+            } finally {
+                if (!cancelled) setIsLoadingMaster(false);
+            }
+        };
+
+        fetchBlocks();
+        return () => { cancelled = true; };
+    }, [autofillFromMaster, teamId, config.routeNumber, dayType, setConfig]);
 
     // Helper to add minutes to HH:MM time string
     const addMinutes = (timeStr: string, minutes: number): string => {
@@ -47,8 +162,10 @@ export const Step3Build: React.FC<Step3Props> = ({ dayType, bands, config, setCo
     };
 
     // Auto-calculate subsequent block start times whenever head/config changes
+    // Skip when autofill is active — master schedule times are authoritative
     React.useEffect(() => {
         if (config.blocks.length <= 1) return;
+        if (autofillFromMaster && masterStatus === 'loaded') return;
 
         const cycleTime = config.cycleTime;
         const computedHeadway = config.blocks.length > 0 ? cycleTime / config.blocks.length : 0;
@@ -70,7 +187,7 @@ export const Step3Build: React.FC<Step3Props> = ({ dayType, bands, config, setCo
         if (changed) {
             setConfig({ ...config, blocks: newBlocks });
         }
-    }, [config.cycleTime, config.blocks.length, config.blocks[0]?.startTime]);
+    }, [config.cycleTime, config.blocks.length, config.blocks[0]?.startTime, autofillFromMaster, masterStatus]);
 
     const addBlock = () => {
         const nextNum = config.blocks.length + 1;
@@ -247,12 +364,38 @@ export const Step3Build: React.FC<Step3Props> = ({ dayType, bands, config, setCo
                             <LayoutGrid size={20} className="text-gray-400" />
                             Block Configuration
                         </h3>
-                        <button
-                            onClick={addBlock}
-                            className="flex items-center gap-2 text-brand-blue font-bold hover:bg-blue-50 px-3 py-1.5 rounded-lg transition-colors border border-transparent hover:border-blue-100"
-                        >
-                            <Plus size={18} /> Add Block
-                        </button>
+                        <div className="flex items-center gap-3">
+                            {/* Autofill from Master Toggle */}
+                            {teamId && (
+                                <button
+                                    onClick={() => setAutofillFromMaster(!autofillFromMaster)}
+                                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all border ${
+                                        autofillFromMaster
+                                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200 shadow-sm'
+                                            : 'bg-gray-50 text-gray-400 border-gray-200 hover:bg-gray-100'
+                                    }`}
+                                >
+                                    {isLoadingMaster ? (
+                                        <Loader2 size={14} className="animate-spin" />
+                                    ) : (
+                                        <Database size={14} />
+                                    )}
+                                    Autofill from Master
+                                    {masterStatus === 'loaded' && autofillFromMaster && !isLoadingMaster && (
+                                        <span className="text-emerald-500 ml-0.5">&#10003;</span>
+                                    )}
+                                    {masterStatus === 'not-found' && autofillFromMaster && !isLoadingMaster && (
+                                        <span className="text-amber-500 text-[10px] ml-1">No master found</span>
+                                    )}
+                                </button>
+                            )}
+                            <button
+                                onClick={addBlock}
+                                className="flex items-center gap-2 text-brand-blue font-bold hover:bg-blue-50 px-3 py-1.5 rounded-lg transition-colors border border-transparent hover:border-blue-100"
+                            >
+                                <Plus size={18} /> Add Block
+                            </button>
+                        </div>
                     </div>
 
                     <div className="flex-grow overflow-y-auto">

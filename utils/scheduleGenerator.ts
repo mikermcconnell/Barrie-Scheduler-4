@@ -3,6 +3,7 @@ import { MasterRouteTable, MasterTrip } from './masterScheduleParser';
 import { ScheduleConfig } from '../components/NewSchedule/steps/Step3Build';
 import { TimeBand, TripBucketAnalysis, BandSummary, DirectionBandSummary } from './runtimeAnalysis';
 import { SegmentRawData, extractTimepointsFromSegments } from '../components/NewSchedule/utils/csvParser';
+import { getOperationalSortTime } from './blockAssignmentCore';
 
 /**
  * Generates a complete schedule from configuration and runtime analysis data.
@@ -363,7 +364,8 @@ export const generateSchedule = (
                 routeName: `${config.routeNumber} (${dayType}) (${dir})`,
                 stops: timepointsMap[dir],
                 stopIds: stopIdsMap[dir],
-                trips: resultTrips[dir].sort((a, b) => a.startTime - b.startTime)
+                // Sort by operational time: midnight-4AM trips are late-night, not early morning
+                trips: resultTrips[dir].sort((a, b) => getOperationalSortTime(a.startTime) - getOperationalSortTime(b.startTime))
             });
         }
     });

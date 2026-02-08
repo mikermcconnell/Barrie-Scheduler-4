@@ -167,9 +167,11 @@ export const RouteSummary: React.FC<RouteSummaryProps> = ({ table, orientation =
             }
         });
 
-        // Safe division - Recovery Ratio = Recovery / Travel Time (not Cycle)
-        const avgRatio = totalTravel > 0 ? (totalRec / totalTravel) * 100 : 0;
-        return { totalCycle, totalRec, totalTravel, activeTrips, avgRatio };
+        // Derive travel from cycle - recovery so the math always adds up
+        const derivedTravel = Math.max(0, totalCycle - totalRec);
+        // Recovery Ratio = Recovery / Travel Time (not Cycle)
+        const avgRatio = derivedTravel > 0 ? (totalRec / derivedTravel) * 100 : 0;
+        return { totalCycle, totalRec, totalTravel: derivedTravel, activeTrips, avgRatio };
     }, [table]);
 
     if (orientation === 'vertical') {
@@ -203,25 +205,18 @@ export const RouteSummary: React.FC<RouteSummaryProps> = ({ table, orientation =
 
     if (orientation === 'header') {
         return (
-            <div className="flex items-center gap-4 ml-2">
+            <div className="flex items-center gap-3 ml-2 flex-shrink-0">
                 <div className="flex items-center gap-1.5">
-                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Trips</span>
-                    <span className="text-sm font-bold text-gray-900">{stats.activeTrips}</span>
+                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Cycle</span>
+                    <span className="text-sm font-bold text-gray-900">{(stats.totalCycle / 60).toFixed(1)}<span className="text-[10px] text-gray-400 font-normal ml-0.5">h</span></span>
                 </div>
                 <div className="flex items-center gap-1.5">
-                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider hidden xl:inline">Travel</span>
-                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider xl:hidden">Trav</span>
+                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Travel</span>
                     <span className="text-sm font-bold text-gray-900">{(stats.totalTravel / 60).toFixed(1)}<span className="text-[10px] text-gray-400 font-normal ml-0.5">h</span></span>
                 </div>
                 <div className="flex items-center gap-1.5">
-                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider hidden xl:inline">Recovery</span>
-                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider xl:hidden">Rec</span>
+                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Recovery</span>
                     <span className="text-sm font-bold text-gray-900">{(stats.totalRec / 60).toFixed(1)}<span className="text-[10px] text-gray-400 font-normal ml-0.5">h</span></span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider hidden xl:inline">Cycle</span>
-                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider xl:hidden">Cyc</span>
-                    <span className="text-sm font-bold text-gray-900">{(stats.totalCycle / 60).toFixed(1)}<span className="text-[10px] text-gray-400 font-normal ml-0.5">h</span></span>
                 </div>
                 <div className="flex items-center gap-1.5">
                     <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Ratio</span>

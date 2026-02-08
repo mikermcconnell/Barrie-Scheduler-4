@@ -273,8 +273,8 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
                     </button>
                 )}
 
-                {/* Stats - Hide in RoundTrip view as it has its own metrics header */}
-                {!isRoundTrip && <RouteSummary table={summaryTable} orientation="header" />}
+                {/* Route stats summary */}
+                <RouteSummary table={summaryTable} orientation="header" />
             </div>
         </div>
     );

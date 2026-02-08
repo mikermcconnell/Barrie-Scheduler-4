@@ -426,9 +426,12 @@ function calculateTerminalRecovery(trips: ProcessedGTFSTrip[]): void {
     // This represents the same bus doing its next loop
     for (const currentTrip of tripsByEndTime) {
         const currentEndTime = currentTrip.endTime;
+        const lastStopId = currentTrip.stopTimes[currentTrip.stopTimes.length - 1]?.stopId;
 
-        // Find the earliest trip that starts AFTER this trip ends
-        // Allow a reasonable recovery window (1-20 minutes for transit)
+        // Find the earliest trip that starts AFTER this trip ends at the SAME stop.
+        // The stop match ensures we only link trips by the same bus doing another loop
+        // (e.g., Route 10 looping at Downtown Terminal), not unrelated trips that
+        // happen to be nearby in time (e.g., 8A ending at Allandale vs 8A starting at RVH).
         let bestMatch: ProcessedGTFSTrip | null = null;
         let bestGap = Infinity;
 
@@ -438,21 +441,27 @@ function calculateTerminalRecovery(trips: ProcessedGTFSTrip[]): void {
 
             const gap = candidateTrip.startTime - currentEndTime;
 
+            // Once we're past 20 minutes, no point checking further
+            if (gap > 20) break;
+
+            // Only match if the candidate starts at the same stop where current ends
+            const firstStopId = candidateTrip.stopTimes[0]?.stopId;
+            if (firstStopId !== lastStopId) continue;
+
             // Terminal recovery should be reasonable (1-20 minutes typically)
-            if (gap >= 1 && gap <= 20 && gap < bestGap) {
+            if (gap >= 1 && gap < bestGap) {
                 bestMatch = candidateTrip;
                 bestGap = gap;
             }
-
-            // Once we're past 20 minutes, no point checking further
-            if (gap > 20) break;
         }
 
         if (bestMatch) {
-            // Set terminal recovery = gap to next trip
+            // Set terminal recovery = gap to next trip, but only if the GTFS
+            // doesn't already encode a recovery (arrival != departure).
+            // Overwriting GTFS-provided recovery with a cross-trip gap can
+            // produce incorrect values (e.g., matching unrelated 8A/8B trips).
             const lastStopTime = currentTrip.stopTimes[currentTrip.stopTimes.length - 1];
-            if (lastStopTime) {
-                // Departure time = next trip's start time
+            if (lastStopTime && lastStopTime.departureMinutes === lastStopTime.arrivalMinutes) {
                 lastStopTime.departureMinutes = bestMatch.startTime;
             }
         }
@@ -583,10 +592,12 @@ function applyBlockAssignment(
                 masterTrip.isBlockEnd = i === block.trips.length - 1;
 
                 // Calculate recovery if there's a next trip in block
+                // Cap at 20 min to match calculateTerminalRecovery — large gaps
+                // (e.g., 8A→8B block transitions) are layovers, not recovery
                 if (i < block.trips.length - 1) {
                     const nextTrip = block.trips[i + 1];
                     const gap = nextTrip.startTime - masterTrip.endTime;
-                    if (gap > 0) {
+                    if (gap > 0 && gap <= 20) {
                         const lastStopName = Object.keys(masterTrip.stops).pop();
                         if (lastStopName) {
                             if (!masterTrip.recoveryTimes) masterTrip.recoveryTimes = {};
@@ -644,7 +655,12 @@ function mergeStopListsFromTrips(trips: ProcessedGTFSTrip[]): ProcessedGTFSTrip[
     const nextStopMap = new Map<string, string>(); // stopId -> next stopId
     const prevStopSet = new Set<string>(); // stops that have a predecessor
 
-    for (const trip of trips) {
+    // Sort trips by number of stops (descending) so the most complete trip pattern
+    // sets adjacency edges first. This prevents shorter trips (that skip stops) from
+    // creating edges that orphan stops only present in longer trip variants.
+    const sortedTrips = [...trips].sort((a, b) => b.stopTimes.length - a.stopTimes.length);
+
+    for (const trip of sortedTrips) {
         for (let i = 0; i < trip.stopTimes.length; i++) {
             const st = trip.stopTimes[i];
             // Store stop info (prefer earlier occurrence for timing)
@@ -672,21 +688,23 @@ function mergeStopListsFromTrips(trips: ProcessedGTFSTrip[]): ProcessedGTFSTrip[
         }
     }
 
-    // If no clear starting stop, fall back to the trip with earliest start time
+    // If no clear starting stop, fall back to the trip with earliest operational start time
+    // (midnight-4AM trips are late-night, not early morning)
     if (startingStops.length === 0) {
         const earliestTrip = trips.reduce((best, trip) =>
-            trip.startTime < best.startTime ? trip : best
+            getOperationalSortTime(trip.startTime) < getOperationalSortTime(best.startTime) ? trip : best
         );
         return earliestTrip.stopTimes;
     }
 
     // Walk from starting stop(s) to build complete list
-    // If multiple starting stops, pick the one from the trip with earliest time
+    // If multiple starting stops, pick the one from the trip with earliest operational time
     let startStopId = startingStops[0];
     if (startingStops.length > 1) {
         // Find which starting stop appears in the earliest trip
+        // (midnight-4AM trips are late-night, not early morning)
         const earliestTrip = trips.reduce((best, trip) =>
-            trip.startTime < best.startTime ? trip : best
+            getOperationalSortTime(trip.startTime) < getOperationalSortTime(best.startTime) ? trip : best
         );
         const earliestStart = earliestTrip.stopTimes[0]?.stopId;
         if (earliestStart && startingStops.includes(earliestStart)) {
@@ -976,7 +994,7 @@ export function convertToMasterSchedule(
             endTime: trip.endTime,
             recoveryTime: totalRecovery,
             recoveryTimes: Object.keys(recoveryTimes).length > 0 ? recoveryTimes : undefined,
-            travelTime: trip.travelTime,
+            travelTime: Math.max(0, cycleTime - totalRecovery),
             cycleTime,
             stops,
             arrivalTimes: Object.keys(arrivalTimes).length > 0 ? arrivalTimes : undefined,
@@ -1178,6 +1196,151 @@ export async function importRouteFromGTFS(
     }
 }
 
+// ============ CROSS-ROUTE INTERLINE RECOVERY ============
+
+/**
+ * Apply interline recovery times across routes using GTFS block continuity.
+ *
+ * When a bus interlines between routes (e.g., 8A arrives at Allandale, recovers
+ * 5 min, then departs as 8B), the recovery gap spans two separate routes.
+ * Per-route import can't see this — the 8A trip ends with 0 recovery and the
+ * 8B trip starts with no preceding arrival.
+ *
+ * This function runs after all routes are imported and uses gtfsBlockId to find
+ * trips that are consecutive on the same physical bus across different routes,
+ * then sets the terminal recovery on the earlier trip.
+ */
+function applyInterlineRecovery(systemRoutes: SystemDraftRoute[]): number {
+    // Collect all MasterTrips across all routes, tagged with their route number
+    const allTrips: { trip: MasterTrip; routeNumber: string }[] = [];
+    for (const route of systemRoutes) {
+        for (const trip of route.northTable.trips) {
+            allTrips.push({ trip, routeNumber: route.routeNumber });
+        }
+        for (const trip of route.southTable.trips) {
+            allTrips.push({ trip, routeNumber: route.routeNumber });
+        }
+    }
+
+    // Group by GTFS block ID
+    const blockMap = new Map<string, { trip: MasterTrip; routeNumber: string }[]>();
+    for (const entry of allTrips) {
+        const blockId = entry.trip.gtfsBlockId?.trim();
+        if (!blockId) continue;
+        if (!blockMap.has(blockId)) blockMap.set(blockId, []);
+        blockMap.get(blockId)!.push(entry);
+    }
+
+    let fixCount = 0;
+
+    for (const [, blockTrips] of blockMap) {
+        // Only care about blocks with trips from multiple routes
+        const routeNumbers = new Set(blockTrips.map(e => e.routeNumber));
+        if (routeNumbers.size < 2) continue;
+
+        // Sort by start time (operational sort for post-midnight)
+        blockTrips.sort((a, b) =>
+            getOperationalSortTime(a.trip.startTime) - getOperationalSortTime(b.trip.startTime)
+        );
+
+        // For each consecutive pair of trips from DIFFERENT routes,
+        // check if the earlier trip has 0 terminal recovery
+        for (let i = 0; i < blockTrips.length - 1; i++) {
+            const current = blockTrips[i];
+            const next = blockTrips[i + 1];
+
+            // Only apply for cross-route transitions (interline)
+            if (current.routeNumber === next.routeNumber) continue;
+
+            const gap = next.trip.startTime - current.trip.endTime;
+
+            // Reasonable interline recovery: 1-20 min
+            if (gap < 1 || gap > 20) continue;
+
+            // Get the last stop name of the current trip
+            const stopNames = Object.keys(current.trip.stops);
+            const lastStopName = stopNames[stopNames.length - 1];
+            if (!lastStopName) continue;
+
+            // Only set if terminal has no recovery (or 0)
+            const existingRecovery = current.trip.recoveryTimes?.[lastStopName] ?? 0;
+            if (existingRecovery > 0) continue;
+
+            // Apply the interline recovery
+            if (!current.trip.recoveryTimes) current.trip.recoveryTimes = {};
+            current.trip.recoveryTimes[lastStopName] = gap;
+            current.trip.recoveryTime = Object.values(current.trip.recoveryTimes)
+                .reduce((sum, r) => sum + r, 0);
+            fixCount++;
+        }
+    }
+
+    return fixCount;
+}
+
+/**
+ * Coordinate block numbering across interlined routes using GTFS block continuity.
+ *
+ * When 8A and 8B share a GTFS block_id (same physical bus), their per-route
+ * block assignments are independent — 8A-1 might be the same bus as 8B-3.
+ * This function renumbers so shared blocks use the same suffix (e.g., 8A-1 ↔ 8B-1).
+ *
+ * Algorithm:
+ * 1. Group all trips by GTFS block_id
+ * 2. For shared blocks, pick a canonical block number (from the route with the
+ *    earliest trip in that block)
+ * 3. Renumber all routes' trips in that block to use the canonical suffix
+ */
+function coordinateInterlineBlocks(systemRoutes: SystemDraftRoute[]): number {
+    // Collect all trips tagged with route number
+    const allTrips: { trip: MasterTrip; routeNumber: string }[] = [];
+    for (const route of systemRoutes) {
+        for (const trip of route.northTable.trips) {
+            allTrips.push({ trip, routeNumber: route.routeNumber });
+        }
+        for (const trip of route.southTable.trips) {
+            allTrips.push({ trip, routeNumber: route.routeNumber });
+        }
+    }
+
+    // Group by GTFS block ID
+    const blockMap = new Map<string, { trip: MasterTrip; routeNumber: string }[]>();
+    for (const entry of allTrips) {
+        const gtfsBlockId = entry.trip.gtfsBlockId?.trim();
+        if (!gtfsBlockId) continue;
+        if (!blockMap.has(gtfsBlockId)) blockMap.set(gtfsBlockId, []);
+        blockMap.get(gtfsBlockId)!.push(entry);
+    }
+
+    let renumberCount = 0;
+
+    for (const [, blockTrips] of blockMap) {
+        // Only process blocks shared across multiple routes
+        const routeNumbers = new Set(blockTrips.map(e => e.routeNumber));
+        if (routeNumbers.size < 2) continue;
+
+        // Find the canonical block number: use the suffix from the route whose
+        // first trip in this block starts earliest (the "primary" route for this bus)
+        blockTrips.sort((a, b) =>
+            getOperationalSortTime(a.trip.startTime) - getOperationalSortTime(b.trip.startTime)
+        );
+
+        const primaryBlockId = blockTrips[0].trip.blockId; // e.g., "8A-1"
+        const canonicalSuffix = primaryBlockId.replace(/^[^-]+-/, ''); // e.g., "1"
+
+        // Renumber all trips in this shared block to use the canonical suffix
+        for (const entry of blockTrips) {
+            const expectedBlockId = `${entry.routeNumber}-${canonicalSuffix}`;
+            if (entry.trip.blockId !== expectedBlockId) {
+                entry.trip.blockId = expectedBlockId;
+                renumberCount++;
+            }
+        }
+    }
+
+    return renumberCount;
+}
+
 // ============ SYSTEM-WIDE IMPORT ============
 
 /**
@@ -1318,6 +1481,18 @@ export async function importAllRoutesFromGTFS(
                 error: `Failed to process any routes for ${dayType}`,
                 warnings,
             };
+        }
+
+        // Apply interline recovery across routes (e.g., 8A→8B at Allandale)
+        const interlineFixes = applyInterlineRecovery(systemRoutes);
+        if (interlineFixes > 0) {
+            console.log(`🔗 Applied ${interlineFixes} interline recovery time(s) across routes`);
+        }
+
+        // Coordinate block numbering across interlined routes (e.g., 8A-1 ↔ 8B-1)
+        const blockFixes = coordinateInterlineBlocks(systemRoutes);
+        if (blockFixes > 0) {
+            console.log(`🔗 Renumbered ${blockFixes} trip(s) for consistent interline block IDs`);
         }
 
         // Sort routes by route number

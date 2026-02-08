@@ -296,24 +296,24 @@ export const FixedRouteWorkspace: React.FC = () => {
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 px-4">
+                    <DashboardCard onClick={handleOpenMasterSchedule} icon={<FileSpreadsheet size={20} />} color="purple"
+                        title="Master Schedule" description="Browse your team's source of truth. View versions and manage all routes." />
+
                     <DashboardCard onClick={() => setViewMode('drafts')} icon={<Edit3 size={20} />} color="indigo"
                         title="Schedule Editor" description="Edit drafts and publish to Master Schedule. The main workflow for schedule changes." />
 
                     <DashboardCard onClick={handleOpenNewSchedule} icon={<CalendarPlus size={20} />} color="emerald"
                         title="New Schedules" description="Generate optimized schedules from scratch using AI-powered run cutting." />
 
-                    <DashboardCard onClick={handleOpenMasterSchedule} icon={<FileSpreadsheet size={20} />} color="purple"
-                        title="Master Schedule" description="Browse your team's source of truth. View versions and manage all routes." />
+                    <DashboardCard onClick={() => user ? setShowGTFSImport(true) : toast.warning('Sign In Required', 'Please sign in to import from GTFS')}
+                        icon={<Database size={20} />} color="indigo"
+                        title="Import from GTFS" description="Import existing Barrie Transit schedules from the GTFS feed." />
 
                     <DashboardCard onClick={() => setViewMode('reports')} icon={<FileText size={20} />} color="amber"
                         title="Reports" description="Generate public timetables, GTFS exports, and driver sheets." />
 
                     <DashboardCard onClick={() => setViewMode('analytics')} icon={<GitBranch size={20} />} color="cyan"
                         title="Analytics" description="Discover interlining opportunities and analyze route efficiency." />
-
-                    <DashboardCard onClick={() => user ? setShowGTFSImport(true) : toast.warning('Sign In Required', 'Please sign in to import from GTFS')}
-                        icon={<Database size={20} />} color="indigo"
-                        title="Import from GTFS" description="Import existing Barrie Transit schedules from the GTFS feed." />
                 </div>
 
                 {/* GTFS Import Modal */}

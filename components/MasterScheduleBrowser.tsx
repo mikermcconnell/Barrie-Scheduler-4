@@ -50,31 +50,6 @@ interface MasterScheduleBrowserProps {
     onClose?: () => void;
 }
 
-// Helper: Calculate trip duration handling midnight rollover
-function getTripDuration(startTime: number, endTime: number): number {
-    if (endTime >= startTime) {
-        return endTime - startTime;
-    }
-    // Trip crosses midnight - add 24 hours (1440 minutes) to endTime
-    return (endTime + 1440) - startTime;
-}
-
-// Helper: Calculate daily service hours from schedule content (sum of all cycle times)
-function calculateDailyServiceHours(content: MasterScheduleContent): number {
-    const allTrips = [...content.northTable.trips, ...content.southTable.trips];
-    if (allTrips.length === 0) return 0;
-
-    // Use pre-calculated cycleTime from each trip (includes interline adjustments)
-    let totalCycleMinutes = 0;
-    allTrips.forEach(trip => {
-        if (trip.cycleTime > 0 && trip.cycleTime < 1440) { // Sanity check: less than 24 hours
-            totalCycleMinutes += trip.cycleTime;
-        }
-    });
-
-    return totalCycleMinutes / 60; // Convert minutes to hours
-}
-
 // Helper: Format time from minutes
 function formatTimeFromMinutes(minutes: number): string {
     const hours = Math.floor(minutes / 60);
@@ -586,6 +561,8 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
         };
 
         // ===== HELPER: Render a direction's trip table =====
+        type StopColumn = { name: string; subColumns: string[]; type: 'regular' | 'turnaround' };
+
         type DirectionConfig = {
             label: string;
             headerTextColor: string;
@@ -810,8 +787,6 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
                 // Build enhanced stop columns:
                 // - Regular stops: just DEP subheading
                 // - Turnaround (last stop): ARR + R columns (arrival time + recovery minutes)
-                type StopColumn = { name: string; subColumns: string[]; type: 'regular' | 'turnaround' };
-
                 const buildStopColumns = (stops: string[], turnaroundStop: string | null): StopColumn[] => {
                     const columns: StopColumn[] = [];
                     stops.forEach(stop => {
@@ -1158,6 +1133,65 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
                 <div className="px-3 py-2 bg-gray-50 border-t border-gray-200 text-[10px] text-gray-500">
                     Annual: Weekday × {ANNUAL_MULTIPLIERS.Weekday} | Saturday × {ANNUAL_MULTIPLIERS.Saturday} | Sunday × {ANNUAL_MULTIPLIERS.Sunday} days
                 </div>
+
+                {/* Published Schedule Sources */}
+                <div className="border-t border-gray-200">
+                    <div className="px-4 py-2.5 border-b border-gray-100">
+                        <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Current Published Sources</h3>
+                        <p className="text-[10px] text-gray-400 mt-0.5">Version, source, publisher, and date for each schedule currently shown</p>
+                    </div>
+                    <div className="overflow-x-auto">
+                        <table className="w-full">
+                            <thead>
+                                <tr className="border-b border-gray-200 text-[10px]">
+                                    <th className="px-4 py-1.5 text-left font-semibold text-gray-600 uppercase bg-gray-50">Route</th>
+                                    <th className="px-2 py-1.5 text-center font-semibold text-gray-600 border-l border-gray-200 bg-blue-50/50">Weekday</th>
+                                    <th className="px-2 py-1.5 text-center font-semibold text-gray-600 border-l border-gray-200 bg-amber-50/50">Saturday</th>
+                                    <th className="px-2 py-1.5 text-center font-semibold text-gray-600 border-l border-gray-200 bg-purple-50/50">Sunday</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100">
+                                {ROUTE_ORDER.map(route => {
+                                    const routeSchedules = organizedSchedules[route];
+                                    const formatEntry = (entry: MasterScheduleEntry | undefined) => {
+                                        if (!entry) return <span className="text-gray-300">--</span>;
+                                        const date = entry.publishedAt || entry.updatedAt;
+                                        const dateStr = date instanceof Date
+                                            ? date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                                            : '';
+                                        return (
+                                            <div className="leading-tight">
+                                                <div className="font-medium text-gray-700">v{entry.currentVersion} · {entry.uploaderName}</div>
+                                                <div className="text-gray-400">{entry.source} · {dateStr}</div>
+                                            </div>
+                                        );
+                                    };
+                                    return (
+                                        <tr key={route} className="hover:bg-gray-50">
+                                            <td className="px-3 py-1.5">
+                                                <div className="flex items-center gap-2">
+                                                    <div
+                                                        className="w-5 h-5 rounded flex items-center justify-center text-[8px] font-bold"
+                                                        style={{
+                                                            backgroundColor: getRouteColor(route),
+                                                            color: getRouteTextColor(route)
+                                                        }}
+                                                    >
+                                                        {route}
+                                                    </div>
+                                                    <span className="font-medium text-gray-900 text-xs">{route}</span>
+                                                </div>
+                                            </td>
+                                            <td className="px-2 py-1.5 text-center text-[10px] border-l border-gray-100">{formatEntry(routeSchedules.Weekday)}</td>
+                                            <td className="px-2 py-1.5 text-center text-[10px] border-l border-gray-100">{formatEntry(routeSchedules.Saturday)}</td>
+                                            <td className="px-2 py-1.5 text-center text-[10px] border-l border-gray-100">{formatEntry(routeSchedules.Sunday)}</td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
         );
     };
@@ -1374,6 +1408,20 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
                             </div>
                         )}
                     </div>
+                    {selectedRoute !== 'platforms' && (() => {
+                        const ri = buildRouteIdentity(selectedRoute as string, selectedDayType);
+                        const entry = schedules.find(s => s.id === ri);
+                        if (!entry) return null;
+                        const date = entry.publishedAt || entry.updatedAt;
+                        const dateStr = date instanceof Date
+                            ? date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                            : '';
+                        return (
+                            <p className="text-xs text-gray-500 mt-1">
+                                v{entry.currentVersion} · Source: {entry.source} · Published by {entry.uploaderName} · {dateStr}
+                            </p>
+                        );
+                    })()}
                 </div>
             )}
 

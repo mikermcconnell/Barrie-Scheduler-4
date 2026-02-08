@@ -55,9 +55,12 @@ export const getBaseStopName = (stopName: string): string => {
 
 /**
  * Adjusts time for Operational Day sorting.
- * Day starts at 4:00 AM (240 min).
- * Trips before 4:00 AM are considered "Late Night" (end of previous day)
- * and are pushed to the end of the sort order (time + 24h).
+ * Transit operational day starts at 4:00 AM (240 min).
+ * Trips between midnight and 4:00 AM are "late-night" service — an extension
+ * of the previous evening, NOT early morning. They sort AFTER 11 PM trips.
+ *
+ * Use this for ALL trip display ordering. Only skip for raw time-proximity
+ * matching (e.g., terminal recovery calculation).
  */
 export const getOperationalSortTime = (minutes: number): number => {
     const DAY_START = 240; // 4:00 AM
