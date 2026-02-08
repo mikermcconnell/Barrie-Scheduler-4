@@ -104,17 +104,17 @@ export const QuickActionsBar: React.FC<QuickActionsBarProps> = ({
     const selectedHighlight = highlightOptions.find(h => h.value === filter.highlight);
 
     return (
-        <div className="flex items-center gap-3 px-4 py-2 bg-gray-50/80 border-b border-gray-100">
+        <div className="flex flex-wrap items-center gap-2 md:gap-3 px-3 md:px-4 py-2 bg-gray-50 border-b border-gray-200 rounded-lg">
             {/* Time Range Filter */}
-            <div className="flex items-center gap-2 bg-white rounded-lg border border-gray-200 px-2 py-1">
-                <Clock size={14} className="text-gray-400" />
+            <div className="flex items-center gap-2 bg-white rounded-lg border border-gray-300 px-2 py-1">
+                <Clock size={14} className="text-gray-500" />
                 <input
                     type="text"
                     value={startTimeInput}
                     onChange={(e) => setStartTimeInput(e.target.value)}
                     onBlur={handleStartTimeBlur}
                     placeholder="From"
-                    className="w-16 text-xs bg-transparent border-none focus:outline-none focus:ring-0 text-center"
+                    className="w-16 text-sm bg-transparent border-none text-center text-gray-800 placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-200 rounded"
                 />
                 <span className="text-gray-300">–</span>
                 <input
@@ -123,12 +123,12 @@ export const QuickActionsBar: React.FC<QuickActionsBarProps> = ({
                     onChange={(e) => setEndTimeInput(e.target.value)}
                     onBlur={handleEndTimeBlur}
                     placeholder="To"
-                    className="w-16 text-xs bg-transparent border-none focus:outline-none focus:ring-0 text-center"
+                    className="w-16 text-sm bg-transparent border-none text-center text-gray-800 placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-200 rounded"
                 />
                 {(filter.timeRange.start !== null || filter.timeRange.end !== null) && (
                     <button
                         onClick={clearTimeFilter}
-                        className="text-gray-400 hover:text-gray-600"
+                        className="text-gray-500 hover:text-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 rounded"
                         title="Clear time filter"
                     >
                         <X size={12} />
@@ -140,10 +140,10 @@ export const QuickActionsBar: React.FC<QuickActionsBarProps> = ({
             <div className="relative">
                 <button
                     onClick={() => setShowHighlightDropdown(!showHighlightDropdown)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300 ${
                         filter.highlight
-                            ? 'bg-amber-50 border-amber-200 text-amber-700'
-                            : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+                            ? 'bg-amber-50 border-amber-300 text-amber-800'
+                            : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'
                     }`}
                 >
                     <AlertTriangle size={12} />
@@ -152,10 +152,10 @@ export const QuickActionsBar: React.FC<QuickActionsBarProps> = ({
                 </button>
 
                 {showHighlightDropdown && (
-                    <div className="absolute top-full left-0 mt-1 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50 min-w-[180px]">
+                    <div className="absolute top-full left-0 mt-1 bg-white rounded-lg shadow-lg border border-gray-300 py-1 z-50 min-w-[210px]">
                         <button
                             onClick={() => handleHighlightSelect(null)}
-                            className={`w-full px-3 py-2 text-left text-xs hover:bg-gray-50 ${!filter.highlight ? 'bg-gray-50 font-medium' : ''}`}
+                            className={`w-full px-3 py-2 text-left text-sm hover:bg-gray-50 ${!filter.highlight ? 'bg-gray-50 font-medium' : ''}`}
                         >
                             None
                         </button>
@@ -165,8 +165,8 @@ export const QuickActionsBar: React.FC<QuickActionsBarProps> = ({
                                 onClick={() => handleHighlightSelect(option.value)}
                                 className={`w-full px-3 py-2 text-left hover:bg-gray-50 ${filter.highlight === option.value ? 'bg-amber-50' : ''}`}
                             >
-                                <div className="text-xs font-medium text-gray-700">{option.label}</div>
-                                <div className="text-[10px] text-gray-400">{option.description}</div>
+                                <div className="text-sm font-medium text-gray-800">{option.label}</div>
+                                <div className="text-xs text-gray-600">{option.description}</div>
                             </button>
                         ))}
                     </div>
@@ -174,19 +174,19 @@ export const QuickActionsBar: React.FC<QuickActionsBarProps> = ({
             </div>
 
             {/* Search Box */}
-            <div className="flex items-center gap-2 bg-white rounded-lg border border-gray-200 px-2 py-1 flex-1 max-w-xs">
-                <Search size={14} className="text-gray-400" />
+            <div className="flex items-center gap-2 bg-white rounded-lg border border-gray-300 px-2 py-1 flex-1 min-w-[220px] max-w-md">
+                <Search size={14} className="text-gray-500" />
                 <input
                     type="text"
                     value={filter.search}
                     onChange={handleSearchChange}
                     placeholder="Search blocks or stops..."
-                    className="flex-1 text-xs bg-transparent border-none focus:outline-none focus:ring-0"
+                    className="flex-1 text-sm bg-transparent border-none text-gray-800 placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-200 rounded"
                 />
                 {filter.search && (
                     <button
                         onClick={() => onFilterChange({ ...filter, search: '' })}
-                        className="text-gray-400 hover:text-gray-600"
+                        className="text-gray-500 hover:text-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 rounded"
                         title="Clear search"
                     >
                         <X size={12} />
@@ -194,14 +194,11 @@ export const QuickActionsBar: React.FC<QuickActionsBarProps> = ({
                 )}
             </div>
 
-            {/* Spacer */}
-            <div className="flex-1" />
-
             {/* Clear All Filters */}
             {hasActiveFilters && (
                 <button
                     onClick={clearAllFilters}
-                    className="flex items-center gap-1 px-2 py-1 text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
+                    className="ml-auto flex items-center gap-1 px-2 py-1 text-sm text-gray-700 hover:text-gray-900 hover:bg-gray-100 rounded transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
                 >
                     <X size={12} />
                     Clear filters

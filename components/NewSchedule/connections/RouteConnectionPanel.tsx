@@ -20,14 +20,15 @@ import type {
     RouteConnection,
     ConnectionLibrary,
     ConnectionTarget,
-    ConnectionType
+    ConnectionType,
+    StopInfo
 } from '../../../utils/connectionTypes';
 import { formatConnectionTime } from '../../../utils/connectionTypes';
 
 interface RouteConnectionPanelProps {
     config: RouteConnectionConfig | null;
     library: ConnectionLibrary | null;
-    availableStops: string[];
+    availableStops: StopInfo[];
     onUpdateConfig: (config: RouteConnectionConfig) => void;
     onAddConnection: (connection: Omit<RouteConnection, 'id'>) => void;
 }
@@ -44,12 +45,12 @@ export const RouteConnectionPanel: React.FC<RouteConnectionPanelProps> = ({
         targetId: string;
         connectionType: ConnectionType;
         bufferMinutes: number;
-        stopName: string;
+        stopCode: string;
     }>({
         targetId: '',
         connectionType: 'meet_departing',
         bufferMinutes: 5,
-        stopName: ''
+        stopCode: ''
     });
 
     if (!config || !library) {
@@ -96,24 +97,27 @@ export const RouteConnectionPanel: React.FC<RouteConnectionPanelProps> = ({
     };
 
     // Update connection stop
-    const handleUpdateStop = (connectionId: string, stopName: string) => {
+    const handleUpdateStop = (connectionId: string, stopCode: string) => {
+        const stopInfo = availableStops.find(s => s.code === stopCode);
         onUpdateConfig({
             ...config,
             connections: config.connections.map(c =>
-                c.id === connectionId ? { ...c, stopName } : c
+                c.id === connectionId ? { ...c, stopCode, stopName: stopInfo?.name } : c
             )
         });
     };
 
     // Add new connection
     const handleAddConnection = () => {
-        if (!newConnection.targetId || !newConnection.stopName) return;
+        if (!newConnection.targetId || !newConnection.stopCode) return;
 
+        const stopInfo = availableStops.find(s => s.code === newConnection.stopCode);
         onAddConnection({
             targetId: newConnection.targetId,
             connectionType: newConnection.connectionType,
             bufferMinutes: newConnection.bufferMinutes,
-            stopName: newConnection.stopName,
+            stopCode: newConnection.stopCode,
+            stopName: stopInfo?.name,
             priority: connections.length + 1,
             enabled: true
         });
@@ -123,7 +127,7 @@ export const RouteConnectionPanel: React.FC<RouteConnectionPanelProps> = ({
             targetId: '',
             connectionType: 'meet_departing',
             bufferMinutes: 5,
-            stopName: ''
+            stopCode: ''
         });
         setShowAddForm(false);
     };
@@ -205,12 +209,14 @@ export const RouteConnectionPanel: React.FC<RouteConnectionPanelProps> = ({
                                         <div className="flex items-center gap-2">
                                             <label className="text-xs text-gray-500">Stop:</label>
                                             <select
-                                                value={connection.stopName}
+                                                value={connection.stopCode}
                                                 onChange={(e) => handleUpdateStop(connection.id, e.target.value)}
                                                 className="text-xs border border-gray-200 rounded px-2 py-1"
                                             >
                                                 {availableStops.map(stop => (
-                                                    <option key={stop} value={stop}>{stop}</option>
+                                                    <option key={stop.code} value={stop.code}>
+                                                        {stop.name} (#{stop.code})
+                                                    </option>
                                                 ))}
                                             </select>
                                         </div>
@@ -296,13 +302,15 @@ export const RouteConnectionPanel: React.FC<RouteConnectionPanelProps> = ({
                             <div>
                                 <label className="block text-xs text-gray-500 mb-1">At Stop</label>
                                 <select
-                                    value={newConnection.stopName}
-                                    onChange={(e) => setNewConnection({ ...newConnection, stopName: e.target.value })}
+                                    value={newConnection.stopCode}
+                                    onChange={(e) => setNewConnection({ ...newConnection, stopCode: e.target.value })}
                                     className="w-full text-sm border border-gray-200 rounded px-2 py-1.5"
                                 >
                                     <option value="">Select stop...</option>
                                     {availableStops.map(stop => (
-                                        <option key={stop} value={stop}>{stop}</option>
+                                        <option key={stop.code} value={stop.code}>
+                                            {stop.name} (#{stop.code})
+                                        </option>
                                     ))}
                                 </select>
                             </div>
@@ -326,7 +334,7 @@ export const RouteConnectionPanel: React.FC<RouteConnectionPanelProps> = ({
                             <div className="flex gap-2 pt-2">
                                 <button
                                     onClick={handleAddConnection}
-                                    disabled={!newConnection.targetId || !newConnection.stopName}
+                                    disabled={!newConnection.targetId || !newConnection.stopCode}
                                     className="flex-1 px-3 py-1.5 bg-blue-600 text-white rounded text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
                                     Add Connection

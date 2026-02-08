@@ -98,17 +98,23 @@ function applyEffectiveCycleTimes(table: MasterRouteTable, routeNumber: string):
         ? table.stops[interlineInfo.interlineIdx + 1]
         : null;
 
-    // Helper: parse time string to minutes
+    // Helper: parse time string to minutes (fallback when stopMinutes not available)
     const parseTime = (timeStr: string | undefined): number | null => {
         if (!timeStr) return null;
-        const match = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+        const match = timeStr.match(/(\d{1,2}):(\d{2})\s*([ap]m?|[ap])?/i);
         if (!match) return null;
         let hours = parseInt(match[1]);
         const mins = parseInt(match[2]);
-        const period = match[3]?.toUpperCase();
-        if (period === 'PM' && hours !== 12) hours += 12;
-        if (period === 'AM' && hours === 12) hours = 0;
+        const period = match[3]?.toLowerCase()?.[0];
+        if (period === 'p' && hours !== 12) hours += 12;
+        if (period === 'a' && hours === 12) hours = 0;
         return hours * 60 + mins;
+    };
+
+    const getStopMinutes = (trip: typeof table.trips[number], stopName: string): number | null => {
+        const minutes = trip.stopMinutes?.[stopName];
+        if (minutes !== undefined) return minutes;
+        return parseTime(trip.stops[stopName]);
     };
 
     // Process each trip
@@ -116,7 +122,7 @@ function applyEffectiveCycleTimes(table: MasterRouteTable, routeNumber: string):
         // Get first stop time
         let firstTime: number | null = null;
         for (const stop of table.stops) {
-            const time = parseTime(trip.stops[stop]);
+            const time = getStopMinutes(trip, stop);
             if (time !== null) {
                 firstTime = time;
                 break;
@@ -124,18 +130,18 @@ function applyEffectiveCycleTimes(table: MasterRouteTable, routeNumber: string):
         }
 
         // Get interline arrival time
-        const interlineArr = parseTime(trip.stops[interlineStop]);
+        const interlineArr = getStopMinutes(trip, interlineStop);
 
         // Get recovery at interline
         const recovery = trip.recoveryTimes?.[interlineStop] ?? 0;
 
         // Get resume time (departure after interline)
-        const resumeTime = resumeStop ? parseTime(trip.stops[resumeStop]) : null;
+        const resumeTime = resumeStop ? getStopMinutes(trip, resumeStop) : null;
 
         // Get last stop time
         let lastTime: number | null = null;
         for (let i = table.stops.length - 1; i >= 0; i--) {
-            const time = parseTime(trip.stops[table.stops[i]]);
+            const time = getStopMinutes(trip, table.stops[i]);
             if (time !== null) {
                 lastTime = time;
                 break;

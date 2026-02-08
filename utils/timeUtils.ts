@@ -13,14 +13,13 @@ export const toMinutes = (timeStr: string | number): number | null => {
     if (timeStr === null || timeStr === undefined || timeStr === '') return null;
 
     // Handle Excel decimal days (e.g., 0.5 = 12:00 PM, 1.02 = 12:30 AM next day)
-    // CRITICAL: Values >= 1.0 represent times past midnight (the integer part is the day offset)
-    // Must extract only the fractional part to get the actual time
+    // Values >= 1.0 represent times past midnight (the integer part is the day offset)
     if (typeof timeStr === 'number') {
         if (timeStr >= 1) {
-            // Post-midnight or date+time: extract fractional part only
+            const wholeDays = Math.floor(timeStr);
             const fraction = timeStr % 1;
             if (fraction < 0.001) return null; // Pure date with no time
-            return Math.round(fraction * 24 * 60);
+            return (wholeDays * 24 * 60) + Math.round(fraction * 24 * 60);
         }
         // Pure time fraction (< 1.0): 0.5 = noon, 0.75 = 6 PM
         return Math.round(timeStr * 24 * 60);
@@ -38,15 +37,16 @@ export const toMinutes = (timeStr: string | number): number | null => {
     }
 
     // Parse time string
-    const match = str.match(/(\d{1,2}):(\d{2})\s*(am|pm)?/);
+    const match = str.match(/(\d{1,2}):(\d{2})\s*([ap]m?|[ap])?/);
     if (!match) return null;
 
     const [, hStr, mStr] = match;
     let h = parseInt(hStr);
     const m = parseInt(mStr);
 
-    if (str.includes('pm') && h !== 12) h += 12;
-    if (str.includes('am') && h === 12) h = 0;
+    const periodChar = match[3]?.toLowerCase()?.[0];
+    if (periodChar === 'p' && h !== 12) h += 12;
+    if (periodChar === 'a' && h === 12) h = 0;
 
     return (h * 60) + m;
 };

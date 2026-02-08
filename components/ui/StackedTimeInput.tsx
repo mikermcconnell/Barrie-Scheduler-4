@@ -22,7 +22,7 @@ export const StackedTimeCell: React.FC<StackedTimeCellProps> = ({ timeStr, class
         return <span className={`whitespace-nowrap ${className}`}>{timeStr || '-'}</span>;
     }
     return (
-        <span className={`text-[11px] font-medium text-gray-700 whitespace-nowrap ${className}`}>
+        <span className={`text-xs font-medium text-gray-800 whitespace-nowrap ${className}`}>
             {`${parsed.time} ${parsed.period}`}
         </span>
     );
@@ -142,7 +142,7 @@ export const StackedTimeInput: React.FC<StackedTimeInputProps> = ({
                 onChange={handleChange}
                 onBlur={handleBlur}
                 onKeyDown={handleKeyDown}
-                className={`w-full h-full bg-white font-medium text-[11px] text-gray-900 text-center ring-2 ${focusClass} outline-none px-1`}
+                className={`w-full h-full bg-white font-medium text-xs text-gray-900 text-center ring-2 ${focusClass} outline-none px-1`}
                 placeholder={placeholder}
                 disabled={disabled}
             />
@@ -156,9 +156,9 @@ export const StackedTimeInput: React.FC<StackedTimeInputProps> = ({
             onClick={handleStartEdit}
         >
             {parsed ? (
-                <span className="text-[11px] font-medium text-gray-700">{`${parsed.time} ${parsed.period}`}</span>
+                <span className="text-xs font-medium text-gray-800">{`${parsed.time} ${parsed.period}`}</span>
             ) : (
-                <span className="text-[11px] text-gray-400">{value || placeholder}</span>
+                <span className="text-xs text-gray-500">{value || placeholder}</span>
             )}
         </div>
     );

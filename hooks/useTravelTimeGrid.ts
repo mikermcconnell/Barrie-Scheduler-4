@@ -24,19 +24,47 @@ export interface UseTravelTimeGridResult {
 /**
  * Recalculate trip times based on stop values
  */
+const MIDNIGHT_ROLLOVER_THRESHOLD = 210; // 3:30 AM
+
 const recalculateTrip = (trip: MasterTrip, cols: string[]) => {
     let start: number | null = null;
     let end: number | null = null;
+    let offset = 0;
+    let lastAdjusted: number | null = null;
+    const stopMinutes: Record<string, number> = {};
+
     cols.forEach(col => {
-        const m = TimeUtils.toMinutes(trip.stops[col]);
-        if (m !== null) {
-            if (start === null) start = m;
-            end = m;
+        const raw = TimeUtils.toMinutes(trip.stops[col]);
+        if (raw !== null) {
+            let adjusted = raw;
+            if (raw >= 1440) {
+                adjusted = raw;
+                offset = Math.floor(raw / 1440) * 1440;
+            } else {
+                if (lastAdjusted !== null && raw + offset < lastAdjusted - 60) {
+                    offset += 1440;
+                }
+                adjusted = raw + offset;
+            }
+
+            if (start === null) start = adjusted;
+            end = adjusted;
+            lastAdjusted = adjusted;
+            stopMinutes[col] = adjusted;
         }
     });
+
     if (start !== null && end !== null) {
+        if (start < MIDNIGHT_ROLLOVER_THRESHOLD && !Object.values(stopMinutes).some(v => v >= 1440)) {
+            start += 1440;
+            end += 1440;
+            for (const key of Object.keys(stopMinutes)) {
+                stopMinutes[key] += 1440;
+            }
+        }
         trip.startTime = start;
         trip.endTime = end;
+        trip.stopMinutes = stopMinutes;
         trip.cycleTime = end - start;
         trip.travelTime = Math.max(0, trip.cycleTime - trip.recoveryTime);
     }

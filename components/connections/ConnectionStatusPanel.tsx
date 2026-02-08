@@ -157,8 +157,9 @@ export const ConnectionStatusPanel: React.FC<ConnectionStatusPanelProps> = ({
                                     <td className="px-3 py-2 text-gray-900 font-medium truncate max-w-[120px]" title={gap.targetName}>
                                         {gap.targetName}
                                     </td>
-                                    <td className="px-3 py-2 text-gray-600 truncate max-w-[100px]" title={gap.stopName}>
-                                        {gap.stopName}
+                                    <td className="px-3 py-2 text-gray-600 truncate max-w-[120px]" title={gap.stopName ? `${gap.stopName} (#${gap.stopCode})` : `#${gap.stopCode}`}>
+                                        {gap.stopName || `#${gap.stopCode}`}
+                                        {gap.stopCode && <span className="text-gray-400 text-[10px] ml-1">#{gap.stopCode}</span>}
                                     </td>
                                     <td className="px-3 py-2 text-center text-gray-700">
                                         {formatConnectionTime(gap.targetTime)}

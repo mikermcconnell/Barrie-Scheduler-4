@@ -14,7 +14,6 @@ import {
     Plus,
     Pencil,
     Trash2,
-    BarChart2,
     ArrowUpDown
 } from 'lucide-react';
 import {
@@ -35,7 +34,8 @@ import {
     calculateTripsPerHour,
     getBandRowColor,
     parseTimeInput,
-    validateSchedule
+    validateSchedule,
+    compareBlockIds
 } from '../../utils/scheduleEditorUtils';
 import {
     FilterState,
@@ -44,6 +44,10 @@ import {
     matchesSearch
 } from '../NewSchedule/QuickActionsBar';
 import { StackedTimeCell, StackedTimeInput } from '../ui/StackedTimeInput';
+import type { ConnectionLibrary } from '../../utils/connectionTypes';
+import type { DayType } from '../../utils/masterScheduleParser';
+import { getConnectionsForStop } from '../../utils/connectionUtils';
+import { ConnectionIndicator } from './ConnectionIndicator';
 
 // --- Spreadsheet-style column letters ---
 // Converts 0-indexed column number to Excel-style letter (A, B, C... Z, AA, AB...)
@@ -63,6 +67,56 @@ interface ColumnInfo {
     label: string; // e.g., "Block", "Stop Name ARR", etc.
 }
 
+type DensityMode = 'ultra' | 'compact' | 'comfortable';
+
+const STOP_ABBREVIATIONS: Array<[RegExp, string]> = [
+    [/barrie south go station/gi, 'B. South GO'],
+    [/barrie allandale transit terminal platforms?/gi, 'Allandale Term'],
+    [/barrie allandale transit terminal/gi, 'Allandale Term'],
+    [/georgian college/gi, 'Georgian Coll'],
+    [/park place/gi, 'Park Pl'],
+    [/downtown/gi, 'Downtown'],
+    [/station/gi, 'Stn'],
+    [/terminal/gi, 'Term'],
+    [/community centre/gi, 'Comm Ctr'],
+    [/community/gi, 'Comm'],
+    [/veterans/gi, 'Vets'],
+    [/mapleview/gi, 'Mapleview'],
+    [/essa at/gi, 'Essa @'],
+    [/peggy hill/gi, 'Peggy Hill']
+];
+
+const abbreviateStopName = (name: string): string => {
+    let out = name;
+    for (const [pattern, replacement] of STOP_ABBREVIATIONS) {
+        out = out.replace(pattern, replacement);
+    }
+    return out.replace(/\s+/g, ' ').trim();
+};
+
+const isMajorTimepointStop = (stopName: string, index: number, stops: string[]): boolean => {
+    if (index === 0 || index === stops.length - 1) return true;
+    const n = stopName.toLowerCase();
+    return (
+        n.includes('terminal') ||
+        n.includes('station') ||
+        n.includes('downtown') ||
+        n.includes('allandale') ||
+        n.includes('georgian') ||
+        n.includes('park place') ||
+        n.includes('college') ||
+        n.includes('go')
+    );
+};
+
+const pickDisplayStops = (stops: string[], timepointOnly: boolean): string[] => {
+    if (!timepointOnly || stops.length <= 3) return stops;
+    const filtered = stops.filter((s, i) => isMajorTimepointStop(s, i, stops));
+    if (filtered.length >= 3) return filtered;
+    const midpoint = stops[Math.floor(stops.length / 2)];
+    return Array.from(new Set([stops[0], midpoint, stops[stops.length - 1]]));
+};
+
 // --- Helper: Fuzzy stop name lookup ---
 // Handles "(2)", "(3)" suffixes in loop routes where column headers have suffixes
 // but trip data may not
@@ -81,6 +135,40 @@ const getStopValue = <T,>(record: Record<string, T> | undefined, stopName: strin
         if (lowerKey === lowerStop || lowerKey === lowerBase) return record[key];
     }
     return undefined;
+};
+
+const getArrivalDisplayTime = (trip: MasterTrip | undefined, stopName: string): string => {
+    if (!trip) return '';
+    return getStopValue(trip.arrivalTimes, stopName) || getStopValue(trip.stops, stopName) || '';
+};
+
+const getDepartureDisplayTime = (
+    trip: MasterTrip | undefined,
+    stopName: string,
+    routeName: string,
+    isLastSouthStop: boolean = false
+): string => {
+    if (!trip) return '';
+    const arrival = getArrivalDisplayTime(trip, stopName);
+    if (!arrival) return '';
+
+    let recovery = getStopValue(trip.recoveryTimes, stopName) || 0;
+    if (recovery === 0 && isLastSouthStop && isInterlineRoute(routeName)) {
+        recovery = 10;
+    }
+
+    return recovery === 0 ? arrival : TimeUtils.addMinutes(arrival, recovery);
+};
+
+const getDeltaMinutes = (currentTime: string, originalTime: string): number | null => {
+    const current = TimeUtils.toMinutes(currentTime);
+    const original = TimeUtils.toMinutes(originalTime);
+    if (current === null || original === null) return null;
+
+    let diff = current - original;
+    if (diff > 720) diff -= 1440;
+    if (diff < -720) diff += 1440;
+    return diff;
 };
 
 // --- Georgian College Pattern (moved up for use in getArrivalTimeForStop) ---
@@ -168,6 +256,22 @@ const isInterlineRoute = (routeName: string): boolean => {
     return INTERLINE_ROUTES.some(r => routeName.includes(r));
 };
 
+const normalizeRouteName = (raw: string): string => {
+    return raw
+        .replace(/\s*\((North|South)\)/gi, '')
+        .replace(/\s*\((Weekday|Saturday|Sunday)\)/gi, '')
+        .trim();
+};
+
+const getTripInterlineDepartureAtStop = (trip: MasterTrip, stopName: string): number | null => {
+    const arrStr = getStopValue(trip.stops, stopName) || getStopValue(trip.arrivalTimes, stopName);
+    if (!arrStr) return null;
+    const arrTime = TimeUtils.toMinutes(arrStr);
+    if (arrTime === null) return null;
+    const recovery = getStopValue(trip.recoveryTimes, stopName) || 0;
+    return arrTime + recovery;
+};
+
 /**
  * Check if this route is specifically 8A (for cycle time calculations).
  */
@@ -212,7 +316,8 @@ export const getInterlineDepartureTime = (
     currentTrip: MasterTrip,
     stopName: string,
     allTripsOnRoute: MasterTrip[],
-    routeName: string
+    routeName: string,
+    interlineTripLookup?: Map<string, MasterTrip>
 ): number | null => {
     // Only apply to interline routes (8A, 8B)
     if (!isInterlineRoute(routeName)) return null;
@@ -239,6 +344,20 @@ export const getInterlineDepartureTime = (
     if (!isInInterlineWindow(arrTime, routeName)) {
         console.log('[InterlineDEP] Trip', currentTrip.id, 'arrTime', arrTime, 'NOT in interline window for', routeName);
         return null;
+    }
+
+    // Prefer explicit interline metadata when available (from GTFS system import).
+    if (currentTrip.interlineNext) {
+        const linkedRoute = currentTrip.interlineNext.route;
+        const linkedTripId = currentTrip.interlineNext.tripId;
+        const linkedTrip = interlineTripLookup?.get(`${linkedRoute}|${linkedTripId}`);
+
+        if (linkedTrip) {
+            const linkedDep = getTripInterlineDepartureAtStop(linkedTrip, stopName);
+            if (linkedDep !== null && linkedDep > arrTime) {
+                return linkedDep;
+            }
+        }
     }
 
     console.log('[InterlineDEP] Trip', currentTrip.id, 'arrTime', arrTime, TimeUtils.fromMinutes(arrTime), 'IS in window, searching', allTripsOnRoute.length, 'trips');
@@ -338,7 +457,8 @@ const isPartialTripEndingAtGeorgian = (
 
     if (!hasDataBefore) return null;
 
-    // Get time at Georgian College - try stops/arrivalTimes first, fallback to trip.endTime
+    // Get time at Georgian College - try stops/arrivalTimes first.
+    // Only fall back to trip.endTime if the trip actually includes Georgian College.
     // This handles Sunday schedules where Georgian College may only have departure time
     const timeStr = getStopValue(trip.stops, georgianStop) ||
                     getStopValue(trip.arrivalTimes, georgianStop);
@@ -346,15 +466,22 @@ const isPartialTripEndingAtGeorgian = (
 
     if (timeStr) {
         arrivalTime = TimeUtils.toMinutes(timeStr);
-    } else if (trip.endTime !== undefined && trip.endTime !== null) {
-        // Use trip.endTime as the arrival time at Georgian College
-        arrivalTime = trip.endTime;
+    } else {
+        const hasGeorgianKey =
+            Object.keys(trip.stops || {}).some(k => isGeorgianCollegeStop(k)) ||
+            Object.keys(trip.arrivalTimes || {}).some(k => isGeorgianCollegeStop(k));
+        if (!hasGeorgianKey) return null;
+        if (trip.endTime !== undefined && trip.endTime !== null) {
+            // Use trip.endTime as the arrival time at Georgian College
+            arrivalTime = trip.endTime;
+        }
     }
 
     if (arrivalTime === null) return null;
 
     // Get recovery time at Georgian College (default to 0 if not set)
-    const recoveryTime = getStopValue(trip.recoveryTimes, georgianStop) || 0;
+    // Prefer per-stop recovery; fall back to total recovery if per-stop data is missing.
+    const recoveryTime = getStopValue(trip.recoveryTimes, georgianStop) ?? (trip.recoveryTime || 0);
 
     return { stopName: georgianStop, arrivalTime, recoveryTime };
 };
@@ -390,7 +517,8 @@ const isPartialTripStartingAtGeorgian = (
 
     if (!hasDataAfter) return null;
 
-    // Get time at Georgian College - try stops/arrivalTimes first, fallback to trip.startTime
+    // Get time at Georgian College - try stops/arrivalTimes first.
+    // Only fall back to trip.startTime if the trip actually includes Georgian College.
     // This handles Sunday schedules where Georgian College may only have the time in startTime
     const timeStr = getStopValue(trip.stops, georgianStop) ||
                     getStopValue(trip.arrivalTimes, georgianStop);
@@ -398,9 +526,15 @@ const isPartialTripStartingAtGeorgian = (
 
     if (timeStr) {
         departureTime = TimeUtils.toMinutes(timeStr);
-    } else if (trip.startTime !== undefined && trip.startTime !== null) {
-        // Use trip.startTime as the departure time from Georgian College
-        departureTime = trip.startTime;
+    } else {
+        const hasGeorgianKey =
+            Object.keys(trip.stops || {}).some(k => isGeorgianCollegeStop(k)) ||
+            Object.keys(trip.arrivalTimes || {}).some(k => isGeorgianCollegeStop(k));
+        if (!hasGeorgianKey) return null;
+        if (trip.startTime !== undefined && trip.startTime !== null) {
+            // Use trip.startTime as the departure time from Georgian College
+            departureTime = trip.startTime;
+        }
     }
 
     if (departureTime === null) return null;
@@ -619,14 +753,13 @@ export const mergeGeorgianTurnaroundTripsAcrossTables = (
         console.log(`[GeorgianLink]   South ${trip.id} departs ${info.departureTime} (${TimeUtils.fromMinutes(info.departureTime)}) gtfsBlockId=${trip.gtfsBlockId || 'NONE'}`);
     });
 
+    // Sort chronologically to keep pairings stable and intuitive.
+    endingTrips.sort((a, b) => a.info.arrivalTime - b.info.arrivalTime);
+    startingTrips.sort((a, b) => a.info.departureTime - b.info.departureTime);
+
     // Match ending trips with starting trips and link by block ID
     for (const { trip: endTrip, info: endInfo } of endingTrips) {
-        // Only link during interline hours
-        if (!isInInterlineWindow(endInfo.arrivalTime, routeName)) {
-            console.log(`[GeorgianLink] North ${endTrip.id} NOT in interline window (arrTime=${endInfo.arrivalTime})`);
-            linkedNorthTrips.push(endTrip);
-            continue;
-        }
+        const inInterlineWindow = isInInterlineWindow(endInfo.arrivalTime, routeName);
 
         console.log(`[GeorgianLink] Attempting to link North ${endTrip.id} (arr=${endInfo.arrivalTime}, gtfsBlockId=${endTrip.gtfsBlockId || 'NONE'})`);
 
@@ -636,7 +769,7 @@ export const mergeGeorgianTurnaroundTripsAcrossTables = (
         let bestMatch: { trip: MasterTrip; info: { stopName: string; departureTime: number }; diff: number } | null = null;
         const blockTimeWindow = 15; // Max minutes between arrival and departure for same-block match
 
-        if (endTrip.gtfsBlockId) {
+        if (inInterlineWindow && endTrip.gtfsBlockId) {
             for (const { trip: startTrip, info: startInfo } of startingTrips) {
                 if (usedStartingTrips.has(startTrip.id)) continue;
                 if (startTrip.gtfsBlockId === endTrip.gtfsBlockId) {
@@ -678,7 +811,28 @@ export const mergeGeorgianTurnaroundTripsAcrossTables = (
                 }
             }
         }
+
+        // PRIORITY 3: Final fallback - simple turnaround window match (arrival -> departure)
+        if (!bestMatch) {
+            const turnaroundWindow = 15; // minutes after arrival
+            for (const { trip: startTrip, info: startInfo } of startingTrips) {
+                if (usedStartingTrips.has(startTrip.id)) continue;
+                const diff = startInfo.departureTime - endInfo.arrivalTime;
+                if (diff >= 0 && diff <= turnaroundWindow) {
+                    if (!bestMatch || diff < bestMatch.diff) {
+                        bestMatch = { trip: startTrip, info: startInfo, diff };
+                    }
+                }
+            }
+        }
         const match = bestMatch;
+
+        // Outside interline hours, only link if we found a tight time-based match
+        if (!match && !inInterlineWindow) {
+            console.log(`[GeorgianLink] North ${endTrip.id} NOT linked (outside interline window, no tight match)`);
+            linkedNorthTrips.push(endTrip);
+            continue;
+        }
 
         if (match) {
             console.log(`[GeorgianLink] ✓ LINKED North ${endTrip.id} with South ${match.trip.id} (diff=${match.diff} min)`);
@@ -960,6 +1114,7 @@ export const linkInterlineTripsAtAllandale = (
 
 export interface RoundTripTableViewProps {
     schedules: MasterRouteTable[];
+    interlineScopeSchedules?: MasterRouteTable[];
     onCellEdit?: (tripId: string, col: string, val: string) => void;
     onTimeAdjust?: (tripId: string, stopName: string, delta: number) => void;
     onRecoveryEdit?: (tripId: string, stopName: string, delta: number) => void;
@@ -984,6 +1139,8 @@ export interface RoundTripTableViewProps {
     targetCycleTime?: number;
     targetHeadway?: number;
     readOnly?: boolean;
+    connectionLibrary?: ConnectionLibrary | null;
+    dayType?: DayType;
 }
 
 /** State for the Georgian College link picker popup */
@@ -1008,6 +1165,7 @@ type RoundTripPair = {
 
 export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
     schedules,
+    interlineScopeSchedules,
     onCellEdit,
     onTimeAdjust,
     onRecoveryEdit,
@@ -1022,13 +1180,46 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
     filter,
     targetCycleTime,
     targetHeadway,
-    readOnly = false
+    readOnly = false,
+    connectionLibrary,
+    dayType = 'Weekday'
 }) => {
-    const [showStats, setShowStats] = useState(true);
-    // Sort state: 'endTime' (default - end arrival), 'startTime', or a stop name
-    const [sortColumn, setSortColumn] = useState<string>('endTime');
+    // Sort state: 'blockFlow' (default), 'blockId', 'endTime', 'startTime', or a stop name
+    const [sortColumn, setSortColumn] = useState<string>('blockFlow');
+    const [focusMode, setFocusMode] = useState(true);
+    const [showDirectionLegend, setShowDirectionLegend] = useState(false);
+    const [density, setDensity] = useState<DensityMode>('compact');
+    const [timepointOnly, setTimepointOnly] = useState(false);
+    const [showMetaCols, setShowMetaCols] = useState(true);
+    const [showActionsCol, setShowActionsCol] = useState(false);
+    const [showRowNumberCol, setShowRowNumberCol] = useState(false);
     // State for Georgian College link picker popup
     const [linkPicker, setLinkPicker] = useState<LinkPickerState | null>(null);
+
+    const originalTripLookup = useMemo(() => {
+        const lookup = new Map<string, MasterTrip>();
+        (originalSchedules || []).forEach(table => {
+            table.trips.forEach(trip => {
+                lookup.set(`${table.routeName}::${trip.id}`, trip);
+            });
+        });
+        return lookup;
+    }, [originalSchedules]);
+
+    const getOriginalTrip = (routeName: string, tripId: string): MasterTrip | undefined =>
+        originalTripLookup.get(`${routeName}::${tripId}`);
+
+    const interlineTripLookup = useMemo(() => {
+        const lookup = new Map<string, MasterTrip>();
+        const scope = interlineScopeSchedules || schedules;
+        scope.forEach(table => {
+            const route = normalizeRouteName(table.routeName);
+            table.trips.forEach(trip => {
+                lookup.set(`${route}|${trip.id}`, trip);
+            });
+        });
+        return lookup;
+    }, [interlineScopeSchedules, schedules]);
 
     const roundTripData = useMemo(() => {
         const pairs: RoundTripPair[] = [];
@@ -1054,36 +1245,57 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
 
             if (tableDirection === 'North') routeGroups[baseName].north = table;
             else if (tableDirection === 'South') routeGroups[baseName].south = table;
+            else if (!routeGroups[baseName].north) routeGroups[baseName].north = table;
+            else routeGroups[baseName].south = table;
         });
 
         Object.entries(routeGroups).forEach(([baseName, group]) => {
-            if (group.north && group.south) {
-                console.log('[RoundTripData] Processing group:', baseName, 'north route:', group.north.routeName, 'trips:', group.north.trips.length);
+            if (!group.north && !group.south) return;
+
+            // Normalize to always have both tables so formatting stays consistent across
+            // directional and loop/single-sided routes.
+            const northTable: MasterRouteTable = group.north || {
+                routeName: `${baseName} (North)`,
+                stops: [],
+                stopIds: {},
+                trips: []
+            };
+            const southTable: MasterRouteTable = group.south || {
+                routeName: `${baseName} (South)`,
+                stops: [],
+                stopIds: {},
+                trips: []
+            };
+
+            const hasBothDirections = northTable.trips.length > 0 && southTable.trips.length > 0;
+
+            if (hasBothDirections) {
+                console.log('[RoundTripData] Processing group:', baseName, 'north route:', northTable.routeName, 'trips:', northTable.trips.length);
 
                 // Step 1: Link interline trips at Allandale Terminal during interline hours
                 // For 8A/8B trips passing through Allandale, creates partial trips (Start → Allandale)
                 // and pairs them with the next departure by time sequence
                 // Stores _interlineDepartureTime metadata for DEP column display
                 const interlineLinkedTrips = linkInterlineTripsAtAllandale(
-                    group.north.trips,
-                    group.north.stops,
-                    group.north.routeName
+                    northTable.trips,
+                    northTable.stops,
+                    northTable.routeName
                 );
-                console.log('[RoundTripData] After interline link:', interlineLinkedTrips.length, 'trips (was', group.north.trips.length, ')');
+                console.log('[RoundTripData] After interline link:', interlineLinkedTrips.length, 'trips (was', northTable.trips.length, ')');
 
                 // Step 2: Apply Georgian College turnaround merge for routes 8A/8B
                 // This merges North trips ending at Georgian with South trips starting there
                 const { mergedNorthTrips, mergedSouthTrips, mergedNorthStops, mergedSouthStops } = mergeGeorgianTurnaroundTripsAcrossTables(
                     interlineLinkedTrips,  // Use the interline-linked trips
-                    group.north.stops,
-                    group.south.trips,
-                    group.south.stops,
-                    group.north.routeName
+                    northTable.stops,
+                    southTable.trips,
+                    southTable.stops,
+                    northTable.routeName
                 );
 
                 // Create modified tables with merged trips AND stops (Georgian College may have been added)
-                const mergedNorth: MasterRouteTable = { ...group.north, trips: mergedNorthTrips, stops: mergedNorthStops };
-                const mergedSouth: MasterRouteTable = { ...group.south, trips: mergedSouthTrips, stops: mergedSouthStops };
+                const mergedNorth: MasterRouteTable = { ...northTable, trips: mergedNorthTrips, stops: mergedNorthStops };
+                const mergedSouth: MasterRouteTable = { ...southTable, trips: mergedSouthTrips, stops: mergedSouthStops };
 
                 const combined = buildRoundTripView(mergedNorth, mergedSouth);
                 const northTripOrder = new Map<string, number>();
@@ -1095,6 +1307,17 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                     southTripOrder.set(trip.id, idx + 1);
                 });
                 pairs.push({ north: mergedNorth, south: mergedSouth, combined, northTripOrder, southTripOrder });
+            } else {
+                const combined = buildRoundTripView(northTable, southTable);
+                const northTripOrder = new Map<string, number>();
+                northTable.trips.forEach((trip, idx) => {
+                    northTripOrder.set(trip.id, idx + 1);
+                });
+                const southTripOrder = new Map<string, number>();
+                southTable.trips.forEach((trip, idx) => {
+                    southTripOrder.set(trip.id, idx + 1);
+                });
+                pairs.push({ north: northTable, south: southTable, combined, northTripOrder, southTripOrder });
             }
         });
         return pairs;
@@ -1151,25 +1374,42 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                 const firstSouthStop = combined.southStops[0];
                 const hasMergedTerminus = lastNorthStop && firstSouthStop &&
                     lastNorthStop.toLowerCase() === firstSouthStop.toLowerCase();
-                const lastNorthStopIdx = combined.northStops.length - 1;
+                const northDisplayStops = pickDisplayStops(combined.northStops, timepointOnly);
+                const southDisplayStops = pickDisplayStops(combined.southStops, timepointOnly);
+                const lastNorthStopIdx = northDisplayStops.length - 1;
+                const showActions = !readOnly && showActionsCol;
+                const showRowNum = showRowNumberCol;
+                const densityClass =
+                    density === 'ultra'
+                        ? { cell: 'text-[10px]', header: 'text-[10px]', pad: 'p-1', rowH: 'h-8' }
+                        : density === 'comfortable'
+                            ? { cell: 'text-sm', header: 'text-sm', pad: 'p-2', rowH: 'h-12' }
+                            : { cell: 'text-xs', header: 'text-xs', pad: 'p-1.5', rowH: 'h-10' };
 
                 // Build column mapping for spreadsheet-style references (A, B, C...)
                 const columnMapping: ColumnInfo[] = [];
                 let colIdx = 0;
 
                 // Row # column (A)
-                columnMapping.push({ letter: getColumnLetter(colIdx++), label: 'Row #' });
+                if (showRowNum) {
+                    columnMapping.push({ letter: getColumnLetter(colIdx++), label: 'Row #' });
+                }
 
                 // Actions column (only if not readOnly)
-                if (!readOnly) {
+                if (showActions) {
                     columnMapping.push({ letter: getColumnLetter(colIdx++), label: 'Actions' });
+                }
+
+                // Pattern column (before Block ID)
+                if (showMetaCols) {
+                    columnMapping.push({ letter: getColumnLetter(colIdx++), label: 'Pattern' });
                 }
 
                 // Block ID column
                 columnMapping.push({ letter: getColumnLetter(colIdx++), label: 'Block' });
 
                 // North stops with sub-columns
-                combined.northStops.forEach((stop, i) => {
+                northDisplayStops.forEach((stop, i) => {
                     const isLastStop = i === lastNorthStopIdx;
                     const isMergedTerminusStop = isLastStop && hasMergedTerminus;
                     const hasRecovery = i > 0 && northStopsWithRecovery.has(stop);
@@ -1185,7 +1425,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                 });
 
                 // South stops with sub-columns
-                combined.southStops.forEach((stop, i) => {
+                southDisplayStops.forEach((stop, i) => {
                     const hasRecovery = i > 0 && southStopsWithRecovery.has(stop);
 
                     if (hasRecovery) {
@@ -1196,13 +1436,15 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                 });
 
                 // Metrics columns
-                columnMapping.push({ letter: getColumnLetter(colIdx++), label: 'Travel' });
-                columnMapping.push({ letter: getColumnLetter(colIdx++), label: 'Band' });
-                columnMapping.push({ letter: getColumnLetter(colIdx++), label: 'Rec' });
-                columnMapping.push({ letter: getColumnLetter(colIdx++), label: 'Ratio' });
-                columnMapping.push({ letter: getColumnLetter(colIdx++), label: 'Hdwy' });
-                columnMapping.push({ letter: getColumnLetter(colIdx++), label: 'Cycle' });
-                columnMapping.push({ letter: getColumnLetter(colIdx++), label: 'Trip #' });
+                if (showMetaCols) {
+                    columnMapping.push({ letter: getColumnLetter(colIdx++), label: 'Travel' });
+                    columnMapping.push({ letter: getColumnLetter(colIdx++), label: 'Band' });
+                    columnMapping.push({ letter: getColumnLetter(colIdx++), label: 'Rec' });
+                    columnMapping.push({ letter: getColumnLetter(colIdx++), label: 'Ratio' });
+                    columnMapping.push({ letter: getColumnLetter(colIdx++), label: 'Hdwy' });
+                    columnMapping.push({ letter: getColumnLetter(colIdx++), label: 'Cycle' });
+                    columnMapping.push({ letter: getColumnLetter(colIdx++), label: 'Trip #' });
+                }
 
                 // Calculate Route Totals for the Header
                 const totalTrips = combined.rows.length;
@@ -1229,52 +1471,82 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                 const maxTripsInHour = Math.max(...Object.values(tripsPerHour), 1);
 
                 return (
-                    <div key={combined.routeName} className="flex flex-col bg-white rounded-xl shadow-sm border border-gray-100 h-full min-h-0">
+                    <div key={combined.routeName} className="flex flex-col bg-white rounded-xl shadow-sm border border-gray-200 h-full min-h-0">
 
-                        {/* Compact Stats Header - Collapsible */}
-                        <div className="px-3 py-1.5 border-b border-gray-100 flex-shrink-0 bg-gray-50/50">
-                            <div className="flex items-center gap-4">
-                                {/* Toggle Button */}
+                        {/* Focus Toolbar + Optional Stats */}
+                        <div className="px-3 py-2 border-b border-gray-200 flex-shrink-0 bg-gray-50">
+                            <div className="flex flex-wrap items-center gap-2">
                                 <button
-                                    onClick={() => setShowStats(!showStats)}
-                                    className="flex items-center gap-1 text-gray-400 hover:text-gray-600 transition-colors"
-                                    title={showStats ? 'Hide stats' : 'Show stats'}
+                                    onClick={() => setFocusMode(v => !v)}
+                                    className={`px-2 py-1 rounded text-xs font-semibold border ${focusMode ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300'}`}
+                                    title="Focus mode prioritizes schedule grid space"
                                 >
-                                    <BarChart2 size={14} />
-                                    <ChevronDown size={12} className={`transition-transform ${showStats ? '' : '-rotate-90'}`} />
+                                    Focus
+                                </button>
+                                <button
+                                    onClick={() => setTimepointOnly(v => !v)}
+                                    className={`px-2 py-1 rounded text-xs font-semibold border ${timepointOnly ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-white text-gray-700 border-gray-300'}`}
+                                >
+                                    Timepoints
+                                </button>
+                                {!readOnly && (
+                                    <button
+                                        onClick={() => setShowActionsCol(v => !v)}
+                                        className={`px-2 py-1 rounded text-xs font-semibold border ${showActionsCol ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-white text-gray-700 border-gray-300'}`}
+                                    >
+                                        Actions
+                                    </button>
+                                )}
+                                <button
+                                    onClick={() => setShowRowNumberCol(v => !v)}
+                                    className={`px-2 py-1 rounded text-xs font-semibold border ${showRowNumberCol ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-white text-gray-700 border-gray-300'}`}
+                                >
+                                    Row #
+                                </button>
+                                <select
+                                    value={density}
+                                    onChange={(e) => setDensity(e.target.value as DensityMode)}
+                                    className="text-xs bg-white border border-gray-300 rounded px-2 py-1 text-gray-700"
+                                    title="Density"
+                                >
+                                    <option value="ultra">Ultra</option>
+                                    <option value="compact">Compact</option>
+                                    <option value="comfortable">Comfortable</option>
+                                </select>
+                                <button
+                                    onClick={() => setShowDirectionLegend(v => !v)}
+                                    className={`px-2 py-1 rounded text-xs font-semibold border ${showDirectionLegend ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-white text-gray-700 border-gray-300'}`}
+                                >
+                                    Legend
                                 </button>
 
                                 {/* Always-visible summary */}
-                                <div className="flex items-center gap-3 text-xs">
-                                    <span className="font-semibold text-gray-700">{serviceSpan.start} – {serviceSpan.end}</span>
-                                    <span className="text-gray-400">•</span>
-                                    <span className="text-gray-600"><span className="font-semibold">{peakVehicles}</span> vehicles</span>
-                                    <span className="text-gray-400">•</span>
-                                    <span className="text-gray-600"><span className="font-semibold">{totalTrips}</span> trips</span>
-                                    <span className="text-gray-400">•</span>
-                                    <span className={`font-semibold ${overallRatio > 25 ? 'text-amber-600' : overallRatio < 10 ? 'text-red-600' : 'text-gray-600'}`}>
-                                        {overallRatio.toFixed(0)}% recovery
-                                    </span>
-                                    <span className="text-gray-400">•</span>
-                                    <span className="text-gray-600"><span className="font-semibold">{headwayAnalysis.avg}</span> min headway</span>
-                                    <span className="text-gray-400">•</span>
+                                <div className="flex items-center gap-2 text-xs md:text-sm">
+                                    <span className="font-semibold text-gray-800">{serviceSpan.start} – {serviceSpan.end}</span>
+                                    <span className="text-gray-500">•</span>
+                                    <span className="text-gray-700"><span className="font-semibold">{peakVehicles}</span> vehicles</span>
+                                    <span className="text-gray-500">•</span>
+                                    <span className="text-gray-700"><span className="font-semibold">{totalTrips}</span> trips</span>
+                                    <span className="text-gray-500">•</span>
                                     {/* Sort dropdown */}
                                     <div className="flex items-center gap-1">
-                                        <ArrowUpDown size={12} className="text-gray-400" />
+                                        <ArrowUpDown size={12} className="text-gray-600" />
                                         <select
                                             value={sortColumn}
                                             onChange={(e) => setSortColumn(e.target.value)}
-                                            className="text-xs bg-transparent border-none focus:ring-0 text-gray-600 cursor-pointer hover:text-gray-900 pr-4"
+                                            className="text-xs md:text-sm bg-transparent border-none text-gray-700 cursor-pointer hover:text-gray-900 pr-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 rounded"
                                         >
+                                            <option value="blockFlow">Sort: Block Flow</option>
+                                            <option value="blockId">Sort: Block #</option>
                                             <option value="endTime">Sort: End Arrival</option>
                                             <option value="startTime">Sort: Start Time</option>
                                             <optgroup label="North Stops">
-                                                {combined.northStops.map(stop => (
+                                                {northDisplayStops.map(stop => (
                                                     <option key={`n-${stop}`} value={`north:${stop}`}>{stop}</option>
                                                 ))}
                                             </optgroup>
                                             <optgroup label="South Stops">
-                                                {combined.southStops.map(stop => (
+                                                {southDisplayStops.map(stop => (
                                                     <option key={`s-${stop}`} value={`south:${stop}`}>{stop}</option>
                                                 ))}
                                             </optgroup>
@@ -1283,10 +1555,14 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                 </div>
 
                                 {/* Expanded stats */}
-                                {showStats && (
+                                {!focusMode && (
                                     <>
                                         <div className="flex-1" />
-                                        <div className="flex items-center gap-4 text-xs text-gray-500">
+                                        <div className="flex items-center gap-4 text-sm text-gray-700">
+                                            <span className={`font-semibold ${overallRatio > 25 ? 'text-amber-700' : overallRatio < 10 ? 'text-red-700' : 'text-gray-700'}`}>
+                                                {overallRatio.toFixed(0)}% recovery
+                                            </span>
+                                            <span>{headwayAnalysis.avg} min avg headway</span>
                                             <span>{(totalCycleSum / 60).toFixed(1)}h service ({(totalTravelSum / 60).toFixed(1)}h travel + {(totalRecoverySum / 60).toFixed(1)}h recovery)</span>
                                             {!readOnly && (() => {
                                                 const hourCounts = Object.values(tripsPerHour).filter(c => c > 0);
@@ -1302,7 +1578,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                         </div>
 
                         {/* Direction Info Row */}
-                        {(() => {
+                        {showDirectionLegend && (() => {
                             // Extract route number - don't strip A/B suffix, let getRouteConfig handle it
                             // (8A/8B are distinct routes, not direction variants)
                             const baseRoute = combined.routeName.split(' ')[0];
@@ -1316,37 +1592,37 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                             const southTerminus = southSegment?.terminus ?? '';
 
                             return (
-                                <div className="px-6 py-2 bg-blue-50 border-b border-blue-100 flex items-center gap-6 text-xs">
-                                    <span className="font-semibold text-blue-700">Route Directions:</span>
+                                <div className="px-3 py-2 bg-blue-50 border-b border-blue-200 flex flex-wrap items-center gap-4 text-xs md:text-sm">
+                                    <span className="font-semibold text-blue-800">Route Directions:</span>
                                     {isLoop ? (
                                         <div className="flex items-center gap-2">
-                                            <span className="text-blue-600">🔄 Loop:</span>
+                                            <span className="text-blue-700">Loop:</span>
                                             <code className="bg-blue-100 px-2 py-0.5 rounded font-mono text-blue-800">
                                                 {config?.segments[0]?.name ?? 'Unknown'}
                                             </code>
-                                            <span className="text-gray-400">({(north?.trips?.length || 0) + (south?.trips?.length || 0)} trips)</span>
+                                            <span className="text-gray-600">({(north?.trips?.length || 0) + (south?.trips?.length || 0)} trips)</span>
                                         </div>
                                     ) : (
                                         <>
                                             <div className="flex items-center gap-2">
-                                                <span className="text-blue-600">↑ Northbound:</span>
+                                                <span className="text-blue-700">Northbound:</span>
                                                 <code className="bg-green-100 px-2 py-0.5 rounded font-mono text-green-800 font-bold">
                                                     {northVariant}
                                                 </code>
                                                 {northTerminus && (
-                                                    <span className="text-gray-500">→ {northTerminus}</span>
+                                                    <span className="text-gray-700">→ {northTerminus}</span>
                                                 )}
-                                                <span className="text-gray-400">({north?.trips?.length || 0} trips)</span>
+                                                <span className="text-gray-600">({north?.trips?.length || 0} trips)</span>
                                             </div>
                                             <div className="flex items-center gap-2">
-                                                <span className="text-blue-600">↓ Southbound:</span>
+                                                <span className="text-blue-700">Southbound:</span>
                                                 <code className="bg-orange-100 px-2 py-0.5 rounded font-mono text-orange-800 font-bold">
                                                     {southVariant}
                                                 </code>
                                                 {southTerminus && (
-                                                    <span className="text-gray-500">→ {southTerminus}</span>
+                                                    <span className="text-gray-700">→ {southTerminus}</span>
                                                 )}
-                                                <span className="text-gray-400">({south?.trips?.length || 0} trips)</span>
+                                                <span className="text-gray-600">({south?.trips?.length || 0} trips)</span>
                                             </div>
                                         </>
                                     )}
@@ -1360,13 +1636,14 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                         {/* Main Table Area */}
                         <div className="overflow-auto custom-scrollbar relative w-full flex-1 min-h-0">
 
-                            <table className="w-full text-left border-collapse text-[11px]" style={{ tableLayout: 'fixed' }}>
+                            <table className={`w-full text-left border-collapse ${densityClass.cell}`} style={{ tableLayout: 'fixed' }}>
                                 <colgroup>
                                     {/* Row number column - sticky */}
-                                    <col className="w-8" />
-                                    {!readOnly && <col className="w-16" />}
+                                    {showRowNum && <col className="w-8" />}
+                                    {showActions && <col className="w-16" />}
+                                    {showMetaCols && <col style={{ width: '200px' }} />}  {/* Pattern */}
                                     <col className="w-14" />
-                                    {combined.northStops.map((stop, i) => {
+                                    {northDisplayStops.map((stop, i) => {
                                         // For merged terminus, show ARR | R (no DEP) for last North stop
                                         const isLastStop = i === lastNorthStopIdx;
                                         const isMergedTerminusStop = isLastStop && hasMergedTerminus;
@@ -1381,40 +1658,44 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                             </React.Fragment>
                                         );
                                     })}
-                                    {combined.southStops.map((stop, i) => (
+                                    {southDisplayStops.map((stop, i) => (
                                         <React.Fragment key={`s-col-${i}`}>
                                             {i > 0 && southStopsWithRecovery.has(stop) && <col className="w-14" />}
                                             {i > 0 && southStopsWithRecovery.has(stop) && <col className="w-8" />}
                                             <col style={{ width: '80px' }} />
                                         </React.Fragment>
                                     ))}
-                                    <col className="w-10" />
-                                    <col className="w-8" />
-                                    <col className="w-10" />
-                                    <col className="w-10" />
-                                    <col className="w-10" />
-                                    <col className="w-10" />
+                                    {showMetaCols && <col style={{ width: '50px' }} />}  {/* Travel */}
+                                    {showMetaCols && <col style={{ width: '42px' }} />}  {/* Band */}
+                                    {showMetaCols && <col style={{ width: '38px' }} />}  {/* Rec */}
+                                    {showMetaCols && <col style={{ width: '46px' }} />}  {/* Ratio */}
+                                    {showMetaCols && <col style={{ width: '42px' }} />}  {/* Hdwy */}
+                                    {showMetaCols && <col style={{ width: '48px' }} />}  {/* Cycle */}
+                                    {showMetaCols && <col style={{ width: '46px' }} />}  {/* Trip # */}
                                 </colgroup>
                                 <thead className="sticky top-0 z-40 bg-white shadow-sm">
                                     {/* Column Letters Row (Spreadsheet-style) */}
-                                    <tr className="bg-gray-100 border-b border-gray-200">
-                                        {columnMapping.map((col, idx) => (
-                                            <th
-                                                key={`col-letter-${idx}`}
-                                                className="py-0.5 px-1 text-center text-[9px] font-mono font-medium text-gray-400 border-r border-gray-200 last:border-r-0"
-                                                title={col.label}
-                                            >
-                                                {col.letter}
-                                            </th>
-                                        ))}
-                                    </tr>
+                                    {!focusMode && (
+                                        <tr className="bg-gray-100 border-b border-gray-200">
+                                            {columnMapping.map((col, idx) => (
+                                                <th
+                                                    key={`col-letter-${idx}`}
+                                                    className="py-0.5 px-1 text-center text-xs font-mono font-medium text-gray-600 border-r border-gray-200 last:border-r-0"
+                                                    title={col.label}
+                                                >
+                                                    {col.letter}
+                                                </th>
+                                            ))}
+                                        </tr>
+                                    )}
                                     {/* Stop Names Row */}
                                     <tr className="bg-white">
                                         {/* Row # header - spans 2 rows */}
-                                        <th rowSpan={2} className="p-1 border-b border-gray-200 bg-gray-100 sticky left-0 z-50 text-[8px] font-mono font-medium text-gray-400 text-center align-middle">#</th>
-                                        {!readOnly && <th rowSpan={2} className="p-2 border-b border-gray-200 bg-gray-100 sticky left-8 z-50 text-[9px] font-medium text-gray-400 uppercase text-center align-middle"></th>}
-                                        <th rowSpan={2} className={`p-2 border-b border-gray-200 bg-gray-100 sticky ${readOnly ? 'left-8' : 'left-24'} z-50 text-[10px] font-semibold text-gray-500 uppercase tracking-wide text-center align-middle`}>Block</th>
-                                        {combined.northStops.map((stop, i) => {
+                                        {showRowNum && <th rowSpan={2} className="p-1 border-b border-gray-200 bg-gray-100 text-xs font-mono font-medium text-gray-600 text-center align-middle">#</th>}
+                                        {showActions && <th rowSpan={2} className="p-2 border-b border-gray-200 bg-gray-100 text-xs font-medium text-gray-600 uppercase text-center align-middle"></th>}
+                                        {showMetaCols && <th rowSpan={2} className={`py-1 px-1 border-b border-gray-200 bg-gray-50 text-center ${densityClass.header} font-semibold text-gray-700 uppercase align-middle whitespace-nowrap`} title="Shape/Pattern">Pattern</th>}
+                                        <th rowSpan={2} className={`p-2 border-b border-gray-200 bg-gray-100 sticky left-0 z-50 ${densityClass.header} font-semibold text-gray-700 uppercase tracking-wide text-center align-middle`}>Block</th>
+                                        {northDisplayStops.map((stop, i) => {
                                             const isLastStop = i === lastNorthStopIdx;
                                             const isMergedTerminusStop = isLastStop && hasMergedTerminus;
                                             const hasRecovery = i > 0 && northStopsWithRecovery.has(stop);
@@ -1422,67 +1703,75 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                             const colSpan = i === 0 ? 1 : (isMergedTerminusStop ? 2 : (hasRecovery ? 3 : 1));
                                             // For merged terminus, show "ARRIVE" prefix on last North stop
                                             const displayName = isMergedTerminusStop ? `ARRIVE ${stop}` : stop;
+                                            const stopCode = combined.northStopIds?.[stop];
                                             return (
                                                 <th
                                                     key={`n-name-${stop}`}
                                                     colSpan={colSpan}
-                                                    className="px-1 py-2 border-b border-l border-gray-200 bg-blue-50/50 text-[8px] font-semibold text-blue-700 uppercase tracking-tight text-center"
-                                                    title={stop}
+                                                    className={`px-1 py-1 border-b border-l border-gray-200 bg-blue-50/50 ${densityClass.header} font-semibold text-blue-800 uppercase tracking-tight text-center align-middle`}
+                                                    title={stopCode ? `${stop} (Stop #${stopCode})` : stop}
                                                 >
-                                                    <div className="leading-tight break-words" style={{ wordBreak: 'break-word' }}>
-                                                        {displayName}
+                                                    <div className="leading-tight line-clamp-2 overflow-hidden">
+                                                        {abbreviateStopName(displayName)}
                                                     </div>
+                                                    {stopCode && (
+                                                        <div className="text-[10px] font-normal text-blue-600/70 mt-0.5">#{stopCode}</div>
+                                                    )}
                                                 </th>
                                             );
                                         })}
-                                        {combined.southStops.map((stop, i) => {
+                                        {southDisplayStops.map((stop, i) => {
                                             const hasRecovery = i > 0 && southStopsWithRecovery.has(stop);
                                             const colSpan = i === 0 ? 1 : (hasRecovery ? 3 : 1);
                                             // For merged terminus, show "DEPART" prefix on first South stop
                                             const isFirstStop = i === 0;
                                             const displayName = (isFirstStop && hasMergedTerminus) ? `DEPART ${stop}` : stop;
+                                            const stopCode = combined.southStopIds?.[stop];
                                             return (
                                                 <th
                                                     key={`s-name-${stop}`}
                                                     colSpan={colSpan}
-                                                    className="px-1 py-2 border-b border-l border-gray-200 bg-orange-50/50 text-[8px] font-semibold text-orange-700 uppercase tracking-tight text-center"
-                                                    title={stop}
+                                                    className={`px-1 py-1 border-b border-l border-gray-200 bg-orange-50/50 ${densityClass.header} font-semibold text-orange-800 uppercase tracking-tight text-center align-middle`}
+                                                    title={stopCode ? `${stop} (Stop #${stopCode})` : stop}
                                                 >
-                                                    <div className="leading-tight break-words" style={{ wordBreak: 'break-word' }}>
-                                                        {displayName}
+                                                    <div className="leading-tight line-clamp-2 overflow-hidden">
+                                                        {abbreviateStopName(displayName)}
                                                     </div>
+                                                    {stopCode && (
+                                                        <div className="text-[10px] font-normal text-orange-600/70 mt-0.5">#{stopCode}</div>
+                                                    )}
                                                 </th>
                                             );
                                         })}
-                                        <th rowSpan={2} className="py-2 px-1 border-b border-gray-200 bg-gray-50 text-center text-[9px] font-medium text-gray-400 uppercase align-middle">Travel</th>
-                                        <th rowSpan={2} className="py-2 px-1 border-b border-gray-200 bg-gray-50 text-center text-[9px] font-medium text-gray-400 uppercase align-middle">Band</th>
-                                        <th rowSpan={2} className="py-2 px-1 border-b border-gray-200 bg-gray-50 text-center text-[9px] font-medium text-gray-400 uppercase align-middle">Rec</th>
-                                        <th rowSpan={2} className="py-2 px-1 border-b border-gray-200 bg-gray-50 text-center text-[9px] font-medium text-gray-400 uppercase align-middle">Ratio</th>
-                                        <th rowSpan={2} className="py-2 px-1 border-b border-gray-200 bg-gray-50 text-center text-[9px] font-medium text-gray-400 uppercase align-middle">Hdwy</th>
-                                        <th rowSpan={2} className="py-2 px-1 border-b border-gray-200 bg-gray-50 text-center text-[9px] font-medium text-gray-400 uppercase align-middle">Cycle</th>
-                                        <th rowSpan={2} className="py-2 px-1 border-b border-gray-200 bg-gray-50 text-center text-[9px] font-medium text-gray-400 uppercase align-middle">Trip #</th>
+                                        {showMetaCols && <th rowSpan={2} className={`py-1 px-1 border-b border-gray-200 bg-gray-50 text-center ${densityClass.header} font-semibold text-gray-700 uppercase align-middle whitespace-nowrap`} title="Travel Time">Travel</th>}
+                                        {showMetaCols && <th rowSpan={2} className={`py-1 px-1 border-b border-gray-200 bg-gray-50 text-center ${densityClass.header} font-semibold text-gray-700 uppercase align-middle whitespace-nowrap`} title="Time Band">Band</th>}
+                                        {showMetaCols && <th rowSpan={2} className={`py-1 px-1 border-b border-gray-200 bg-gray-50 text-center ${densityClass.header} font-semibold text-gray-700 uppercase align-middle whitespace-nowrap`} title="Recovery Time">Rec</th>}
+                                        {showMetaCols && <th rowSpan={2} className={`py-1 px-1 border-b border-gray-200 bg-gray-50 text-center ${densityClass.header} font-semibold text-gray-700 uppercase align-middle whitespace-nowrap`} title="Recovery Ratio">Ratio</th>}
+                                        {showMetaCols && <th rowSpan={2} className={`py-1 px-1 border-b border-gray-200 bg-gray-50 text-center ${densityClass.header} font-semibold text-gray-700 uppercase align-middle whitespace-nowrap`} title="Headway">Hdwy</th>}
+                                        {showMetaCols && <th rowSpan={2} className={`py-1 px-1 border-b border-gray-200 bg-gray-50 text-center ${densityClass.header} font-semibold text-gray-700 uppercase align-middle whitespace-nowrap`} title="Cycle Time">Cycle</th>}
+                                        {showMetaCols && <th rowSpan={2} className={`py-1 px-1 border-b border-gray-200 bg-gray-50 text-center ${densityClass.header} font-semibold text-gray-700 uppercase align-middle whitespace-nowrap`} title="Trip Number">Trip #</th>}
                                     </tr>
                                     {/* Sub-headers Row */}
                                     <tr className="bg-gray-50 text-gray-500">
-                                        {combined.northStops.map((stop, i) => {
+                                        {northDisplayStops.map((stop, i) => {
                                             const isLastStop = i === lastNorthStopIdx;
                                             const isMergedTerminusStop = isLastStop && hasMergedTerminus;
                                             const hasRecovery = i > 0 && northStopsWithRecovery.has(stop);
                                             const showArrRCols = hasRecovery || isMergedTerminusStop;
                                             return (
                                                 <React.Fragment key={`n-sub-${stop}`}>
-                                                    {showArrRCols && <th className="py-1 px-1 border-b border-gray-200 bg-blue-50/30 text-center text-[8px] font-medium text-gray-400 uppercase">Arr</th>}
-                                                    {showArrRCols && <th className="py-1 px-1 border-b border-gray-200 bg-blue-50/30 text-center text-[8px] font-medium text-gray-400">R</th>}
+                                                    {showArrRCols && <th className="py-1 px-1 border-b border-gray-200 bg-blue-50/30 text-center text-xs font-medium text-gray-700 uppercase">Arr</th>}
+                                                    {showArrRCols && <th className="py-1 px-1 border-b border-gray-200 bg-blue-50/30 text-center text-xs font-medium text-gray-700">R</th>}
                                                     {/* Skip DEP column for merged terminus - only show Arr | R */}
-                                                    {!isMergedTerminusStop && <th className="py-1 px-1 border-b border-gray-200 bg-blue-50/30 text-center text-[8px] font-medium text-gray-400 uppercase">Dep</th>}
+                                                    {!isMergedTerminusStop && <th className="py-1 px-1 border-b border-gray-200 bg-blue-50/30 text-center text-xs font-medium text-gray-700 uppercase">Dep</th>}
                                                 </React.Fragment>
                                             );
                                         })}
-                                        {combined.southStops.map((stop, i) => (
+                                        {southDisplayStops.map((stop, i) => (
                                             <React.Fragment key={`s-sub-${stop}`}>
-                                                {i > 0 && southStopsWithRecovery.has(stop) && <th className="py-1 px-1 border-b border-gray-200 bg-orange-50/30 text-center text-[8px] font-medium text-gray-400 uppercase">Arr</th>}
-                                                {i > 0 && southStopsWithRecovery.has(stop) && <th className="py-1 px-1 border-b border-gray-200 bg-orange-50/30 text-center text-[8px] font-medium text-gray-400">R</th>}
-                                                <th className="py-1 px-1 border-b border-gray-200 bg-orange-50/30 text-center text-[8px] font-medium text-gray-400 uppercase">Dep</th>
+                                                {i > 0 && southStopsWithRecovery.has(stop) && <th className="py-1 px-1 border-b border-gray-200 bg-orange-50/30 text-center text-xs font-medium text-gray-700 uppercase">Arr</th>}
+                                                {i > 0 && southStopsWithRecovery.has(stop) && <th className="py-1 px-1 border-b border-gray-200 bg-orange-50/30 text-center text-xs font-medium text-gray-700">R</th>}
+                                                <th className="py-1 px-1 border-b border-gray-200 bg-orange-50/30 text-center text-xs font-medium text-gray-700 uppercase">Dep</th>
                                             </React.Fragment>
                                         ))}
                                     </tr>
@@ -1518,7 +1807,21 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                         };
 
                                         // Sort rows by the selected column
-                                        const sortedRows = [...combined.rows].sort((a, b) => getSortTime(a) - getSortTime(b));
+                                        const sortedRows = [...combined.rows].sort((a, b) => {
+                                            if (sortColumn === 'blockFlow') {
+                                                const pairDiff = (a.pairIndex || 0) - (b.pairIndex || 0);
+                                                if (pairDiff !== 0) return pairDiff;
+                                                const timeDiff = getSortTime(a) - getSortTime(b);
+                                                if (timeDiff !== 0) return timeDiff;
+                                                const blockDiff = compareBlockIds(a.blockId, b.blockId);
+                                                if (blockDiff !== 0) return blockDiff;
+                                            }
+                                            if (sortColumn === 'blockId') {
+                                                const blockDiff = compareBlockIds(a.blockId, b.blockId);
+                                                if (blockDiff !== 0) return blockDiff;
+                                            }
+                                            return getSortTime(a) - getSortTime(b);
+                                        });
 
                                         return sortedRows.map((row, rowIdx) => {
                                         const northTrip = row.trips.find(t => t.direction === 'North');
@@ -1566,6 +1869,8 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                         const routeTripNumber = northIndex ?? southIndex ?? rowIdx + 1;
                                         const bandColor = getBandRowColor(assignedBand);
                                         const rowBg = bandColor || (rowIdx % 2 === 0 ? 'bg-white' : 'bg-gray-50/50');
+                                        const originalNorthTrip = northTrip ? getOriginalTrip(north.routeName, northTrip.id) : undefined;
+                                        const originalSouthTrip = southTrip ? getOriginalTrip(south.routeName, southTrip.id) : undefined;
 
                                         const tripStartTime = northTrip?.startTime || southTrip?.startTime || 0;
                                         const tripEndTime = northTrip?.endTime || southTrip?.endTime || 0;
@@ -1580,8 +1885,10 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                         // Calculate the display row number (1-indexed)
                                         const displayRowNum = rowIdx + 1;
 
-                                        // Track column index for cell references (starts after row#, actions, block)
-                                        let dataColIdx = readOnly ? 2 : 3; // Skip row#, (actions), block
+                                        // Track column index for cell references (starts after optional row#, optional actions, block)
+                                        let dataColIdx = 1; // block
+                                        if (showRowNum) dataColIdx += 1;
+                                        if (showActions) dataColIdx += 1;
                                         const getCellRef = () => {
                                             const col = columnMapping[dataColIdx];
                                             return col ? `${col.letter}${displayRowNum}` : '';
@@ -1598,20 +1905,22 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                 }}
                                             >
                                                 {/* Row Number Column */}
-                                                <td
-                                                    className="p-1 border-r border-gray-200 sticky left-0 bg-gray-50 z-30 text-center text-[9px] font-mono text-gray-400"
-                                                    title={`Row ${displayRowNum}`}
-                                                >
-                                                    {displayRowNum}
-                                                </td>
+                                                {showRowNum && (
+                                                    <td
+                                                        className="p-1 border-r border-gray-200 bg-gray-50 z-20 text-center text-xs font-mono text-gray-600"
+                                                        title={`Row ${displayRowNum}`}
+                                                    >
+                                                        {displayRowNum}
+                                                    </td>
+                                                )}
                                                 {/* Actions Column */}
-                                                {!readOnly && (
-                                                    <td className="p-1 border-r border-gray-100 sticky left-8 bg-white group-hover:bg-gray-100 z-30">
+                                                {showActions && (
+                                                    <td className="p-1 border-r border-gray-100 bg-white group-hover:bg-gray-100 z-20">
                                                         <div className="flex items-center justify-center gap-0.5">
                                                             {onAddTrip && (
                                                                 <button
                                                                     onClick={() => onAddTrip(row.blockId, lastTrip?.id || '')}
-                                                                    className="p-1 rounded hover:bg-green-50 text-gray-400 hover:text-green-600 transition-colors"
+                                                                    className="p-1 rounded hover:bg-green-50 text-gray-600 hover:text-green-700 transition-colors"
                                                                     title="Add trip to block"
                                                                     aria-label="Add trip"
                                                                 >
@@ -1626,7 +1935,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                             onMenuOpen(northTrip.id, rect.left, rect.bottom + 4, 'North', row.blockId, combined.northStops);
                                                                         }
                                                                     }}
-                                                                    className="p-1 rounded hover:bg-blue-50 text-gray-400 hover:text-blue-600 transition-colors"
+                                                                    className="p-1 rounded hover:bg-blue-50 text-gray-600 hover:text-blue-700 transition-colors"
                                                                     title="Edit trip"
                                                                     aria-label="Edit trip"
                                                                 >
@@ -1636,7 +1945,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                             {onDeleteTrip && northTrip && (
                                                                 <button
                                                                     onClick={() => onDeleteTrip(northTrip.id)}
-                                                                    className="p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors"
+                                                                    className="p-1 rounded hover:bg-red-50 text-gray-600 hover:text-red-600 transition-colors"
                                                                     title="Delete trip"
                                                                     aria-label="Delete trip"
                                                                 >
@@ -1647,8 +1956,18 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                     </td>
                                                 )}
 
+                                                {/* Pattern */}
+                                                {showMetaCols && (
+                                                    <td className="p-1 text-left text-xs text-gray-500" title={`${northTrip?.patternLabel || '-'}\n${southTrip?.patternLabel || '-'}`}>
+                                                        <div className="flex flex-col gap-0.5 leading-tight">
+                                                            <span className="truncate"><span className="font-semibold text-blue-700">N</span> {northTrip?.patternLabel || '-'}</span>
+                                                            <span className="truncate"><span className="font-semibold text-orange-600">S</span> {southTrip?.patternLabel || '-'}</span>
+                                                        </div>
+                                                    </td>
+                                                )}
+
                                                 {/* Block ID */}
-                                                <td className={`p-3 border-r border-gray-100 sticky ${readOnly ? 'left-8' : 'left-24'} bg-white group-hover:bg-gray-100 z-30 font-medium text-xs text-gray-700 text-center`}>
+                                                <td className={`p-2 border-r border-gray-100 sticky left-0 bg-white group-hover:bg-gray-100 z-30 font-medium text-xs text-gray-700 text-center`}>
                                                     <div className="flex flex-col items-center gap-0.5">
                                                         <span>{row.blockId}</span>
                                                         {lastTrip?.isBlockEnd && (
@@ -1658,7 +1977,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                 </td>
 
                                                 {/* North Cells */}
-                                                {combined.northStops.map((stop, i) => {
+                                                {northDisplayStops.map((stop, i) => {
                                                     // For merged terminus (A/B routes), show ARR | R but skip DEP for last North stop
                                                     const isMergedTerminusStop = i === lastNorthStopIdx && hasMergedTerminus;
                                                     const hasRecovery = i > 0 && northStopsWithRecovery.has(stop);
@@ -1667,7 +1986,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                     // Check if this is a partial trip that STARTS at this stop
                                                     // (no stops with times BEFORE this one - interline incoming from 8B)
                                                     const isPartialTripStartingHere = northTrip && i > 0 && (() => {
-                                                        const previousStops = combined.northStops.slice(0, i);
+                                                        const previousStops = northDisplayStops.slice(0, i);
                                                         return !previousStops.some(prevStop =>
                                                             getStopValue(northTrip.stops, prevStop) ||
                                                             getStopValue(northTrip.arrivalTimes, prevStop)
@@ -1675,7 +1994,55 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                     })();
 
                                                     // Get actual arrival time at this stop (used to decide if recovery should show)
-                                                    const northArrivalAtStop = isPartialTripStartingHere ? '' : getArrivalTimeForStop(northTrip, stop, i, combined.northStops.length);
+                                                    const northArrivalAtStop = isPartialTripStartingHere ? '' : getArrivalTimeForStop(northTrip, stop, i, northDisplayStops.length);
+                                                    const canAdjustNorthDep = !!northTrip && (() => {
+                                                        const arrival = getArrivalTimeForStop(northTrip, stop, i, northDisplayStops.length);
+                                                        if (!arrival) return false;
+
+                                                        const remainingStops = northDisplayStops.slice(i + 1);
+                                                        const hasContinuingStops = remainingStops.some(nextStop =>
+                                                            getStopValue(northTrip.stops, nextStop) ||
+                                                            getStopValue(northTrip.arrivalTimes, nextStop)
+                                                        );
+                                                        if (!hasContinuingStops) return false;
+
+                                                        const tripWithInterline = northTrip as MasterTrip & {
+                                                            _interlineDepartureTime?: number | null;
+                                                            _interlineStop?: string;
+                                                        };
+                                                        const isInterlineStopMatch = tripWithInterline?._interlineStop &&
+                                                            stop.toLowerCase().includes(tripWithInterline._interlineStop.toLowerCase());
+                                                        const metadataInterlineDepTime = isInterlineStopMatch ? tripWithInterline._interlineDepartureTime : null;
+                                                        const explicitInterlineDepTime = getInterlineDepartureTime(
+                                                            northTrip,
+                                                            stop,
+                                                            allNorthTrips,
+                                                            combined.routeName,
+                                                            interlineTripLookup
+                                                        );
+                                                        const interlineDepTime = explicitInterlineDepTime ?? metadataInterlineDepTime;
+
+                                                        if (isInterlineStop(stop) && !interlineDepTime) {
+                                                            const precedingStops = northDisplayStops.slice(0, i);
+                                                            const tripStartsHere = !precedingStops.some(prevStop =>
+                                                                getStopValue(northTrip.stops, prevStop) ||
+                                                                getStopValue(northTrip.arrivalTimes, prevStop)
+                                                            );
+
+                                                            if (!tripStartsHere) {
+                                                                const arrTimeStr = getStopValue(northTrip.stops, stop) ||
+                                                                    getStopValue(northTrip.arrivalTimes, stop);
+                                                                if (arrTimeStr) {
+                                                                    const arrTime = TimeUtils.toMinutes(arrTimeStr);
+                                                                    if (arrTime !== null && isInInterlineWindow(arrTime, combined.routeName)) {
+                                                                        return false;
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+
+                                                        return true;
+                                                    })();
 
                                                     // Get cell references for this stop's columns
                                                     const arrCellRef = showArrRCols ? columnMapping[dataColIdx]?.letter + displayRowNum : '';
@@ -1691,10 +2058,10 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                         {showArrRCols && (
                                                             <td className="p-0 relative h-10 group/arr" title={arrCellRef}>
                                                                 <div className="flex items-center justify-center h-full">
-                                                                    {onTimeAdjust && northTrip && (
+                                                                    {onTimeAdjust && northTrip && northArrivalAtStop && (
                                                                         <button
-                                                                            onClick={() => onTimeAdjust(northTrip.id, stop, -1)}
-                                                                            className="absolute left-0 top-0 bottom-0 w-3 opacity-0 group-hover/arr:opacity-100 flex items-center justify-center text-gray-300 hover:text-blue-500 transition-all"
+                                                                            onClick={() => onTimeAdjust(northTrip.id, `${stop}__ARR`, -1)}
+                                                                            className="absolute left-0 top-0 bottom-0 w-3 opacity-40 group-hover/arr:opacity-100 flex items-center justify-center text-gray-400 hover:text-blue-600 transition-all"
                                                                             title="-1 min"
                                                                         >
                                                                             <ChevronDown size={10} />
@@ -1711,12 +2078,22 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                         }}
                                                                         disabled={readOnly || !northTrip || !northArrivalAtStop}
                                                                         focusClass="focus:ring-blue-100"
-                                                                        onAdjust={onTimeAdjust && northTrip && northArrivalAtStop ? (delta) => onTimeAdjust(northTrip.id, stop, delta) : undefined}
+                                                                        onAdjust={onTimeAdjust && northTrip && northArrivalAtStop ? (delta) => onTimeAdjust(northTrip.id, `${stop}__ARR`, delta) : undefined}
                                                                     />
-                                                                    {onTimeAdjust && northTrip && (
+                                                                    {(() => {
+                                                                        const originalArrival = getArrivalDisplayTime(originalNorthTrip, stop);
+                                                                        const diff = getDeltaMinutes(northArrivalAtStop, originalArrival);
+                                                                        if (!diff) return null;
+                                                                        return (
+                                                                            <span className={`absolute top-0 right-0 text-[9px] font-bold px-0.5 rounded-bl ${diff > 0 ? 'text-green-600 bg-green-50' : 'text-red-600 bg-red-50'}`}>
+                                                                                {diff > 0 ? '+' : ''}{diff}
+                                                                            </span>
+                                                                        );
+                                                                    })()}
+                                                                    {onTimeAdjust && northTrip && northArrivalAtStop && (
                                                                         <button
-                                                                            onClick={() => onTimeAdjust(northTrip.id, stop, 1)}
-                                                                            className="absolute right-0 top-0 bottom-0 w-3 opacity-0 group-hover/arr:opacity-100 flex items-center justify-center text-gray-300 hover:text-blue-500 transition-all"
+                                                                            onClick={() => onTimeAdjust(northTrip.id, `${stop}__ARR`, 1)}
+                                                                            className="absolute right-0 top-0 bottom-0 w-3 opacity-40 group-hover/arr:opacity-100 flex items-center justify-center text-gray-400 hover:text-blue-600 transition-all"
                                                                             title="+1 min"
                                                                         >
                                                                             <ChevronUp size={10} />
@@ -1726,12 +2103,12 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                             </td>
                                                         )}
                                                         {showArrRCols && (
-                                                            <td className="p-0 relative h-8 group/rec text-center font-mono text-[10px] text-gray-500 font-medium" title={rCellRef}>
+                                                            <td className="p-0 relative h-8 group/rec text-center font-mono text-xs text-gray-700 font-medium" title={rCellRef}>
                                                                 <div className="flex items-center justify-center h-full">
                                                                     {onRecoveryEdit && northTrip && (
                                                                         <button
                                                                             onClick={() => onRecoveryEdit(northTrip.id, stop, -1)}
-                                                                            className="absolute left-0 top-0 bottom-0 w-3 opacity-0 group-hover/rec:opacity-100 flex items-center justify-center text-gray-300 hover:text-green-500 transition-all"
+                                                                            className="absolute left-0 top-0 bottom-0 w-3 opacity-40 group-hover/rec:opacity-100 flex items-center justify-center text-gray-400 hover:text-green-600 transition-all"
                                                                             title="-1 min recovery"
                                                                         >
                                                                             <ChevronDown size={10} />
@@ -1741,7 +2118,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                     {onRecoveryEdit && northTrip && (
                                                                         <button
                                                                             onClick={() => onRecoveryEdit(northTrip.id, stop, 1)}
-                                                                            className="absolute right-0 top-0 bottom-0 w-3 opacity-0 group-hover/rec:opacity-100 flex items-center justify-center text-gray-300 hover:text-green-500 transition-all"
+                                                                            className="absolute right-0 top-0 bottom-0 w-3 opacity-40 group-hover/rec:opacity-100 flex items-center justify-center text-gray-400 hover:text-green-600 transition-all"
                                                                             title="+1 min recovery"
                                                                         >
                                                                             <ChevronUp size={10} />
@@ -1751,13 +2128,25 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                             </td>
                                                         )}
                                                         {/* Skip DEP cell for merged terminus - South's first stop handles departure */}
-                                                        {!isMergedTerminusStop && (
-                                                            <td className={`p-0 relative h-10 group/cell ${i === 0 ? 'border-l border-dashed border-gray-100' : ''}`} title={depCellRef}>
-                                                                <div className="flex items-center justify-center h-full">
-                                                                    {onTimeAdjust && northTrip && (
+                                                        {!isMergedTerminusStop && (() => {
+                                                            // Compute departure time for connection indicator
+                                                            const arrival = getArrivalTimeForStop(northTrip, stop, i, northDisplayStops.length);
+                                                            const recovery = getStopValue(northTrip?.recoveryTimes, stop) || 0;
+                                                            const depTimeMinutes = arrival ? TimeUtils.toMinutes(
+                                                                recovery === 0 ? arrival : TimeUtils.addMinutes(arrival, recovery)
+                                                            ) : null;
+                                                            const stopCode = combined.northStopIds?.[stop] || '';
+                                                            const connections = connectionLibrary && stopCode && depTimeMinutes !== null
+                                                                ? getConnectionsForStop(stopCode, depTimeMinutes, connectionLibrary, dayType)
+                                                                : [];
+
+                                                            return (
+                                                            <td className={`p-0 relative ${connections.length > 0 ? 'h-14' : 'h-10'} group/cell ${i === 0 ? 'sticky left-14 z-20 bg-white border-l border-dashed border-gray-100' : ''}`} title={depCellRef}>
+                                                                <div className={`flex ${connections.length > 0 ? 'flex-col' : 'items-center'} justify-center h-full`}>
+                                                                    {onTimeAdjust && northTrip && canAdjustNorthDep && (
                                                                         <button
                                                                             onClick={() => onTimeAdjust(northTrip.id, stop, -1)}
-                                                                            className="absolute left-0 top-0 bottom-0 w-4 opacity-0 group-hover/cell:opacity-100 flex items-center justify-center text-gray-300 hover:text-blue-500 hover:bg-blue-50 transition-all"
+                                                                            className="absolute left-0 top-0 bottom-0 w-4 opacity-40 group-hover/cell:opacity-100 flex items-center justify-center text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-all"
                                                                             title="-1 min"
                                                                         >
                                                                             <ChevronDown size={12} />
@@ -1765,11 +2154,11 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                     )}
                                                                     {(() => {
                                                                         // Standard calculation: arrival + recovery
-                                                                        const arrival = getArrivalTimeForStop(northTrip, stop, i, combined.northStops.length);
+                                                                        const arrival = getArrivalTimeForStop(northTrip, stop, i, northDisplayStops.length);
                                                                         if (!arrival) return null;
 
                                                                         // Check if this is a trip that ENDS at this stop
-                                                                        const remainingStops = combined.northStops.slice(i + 1);
+                                                                        const remainingStops = northDisplayStops.slice(i + 1);
                                                                         const hasContinuingStops = northTrip ? remainingStops.some(nextStop =>
                                                                             getStopValue(northTrip.stops, nextStop) ||
                                                                             getStopValue(northTrip.arrivalTimes, nextStop)
@@ -1798,7 +2187,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                                                 availableSouthTrips: availableTrips
                                                                                             });
                                                                                         }}
-                                                                                        className="w-full h-full flex items-center justify-center text-gray-400 hover:text-blue-500 hover:bg-blue-50 transition-colors cursor-pointer"
+                                                                                        className="w-full h-full flex items-center justify-center text-gray-600 hover:text-blue-700 hover:bg-blue-50 transition-colors cursor-pointer"
                                                                                         title="Click to link South trip"
                                                                                     >
                                                                                         <Plus size={14} />
@@ -1823,12 +2212,20 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                         };
                                                                         const isInterlineStopMatch = tripWithInterline?._interlineStop &&
                                                                             stop.toLowerCase().includes(tripWithInterline._interlineStop.toLowerCase());
-                                                                        const interlineDepTime = isInterlineStopMatch ? tripWithInterline._interlineDepartureTime : null;
+                                                                        const metadataInterlineDepTime = isInterlineStopMatch ? tripWithInterline._interlineDepartureTime : null;
+                                                                        const explicitInterlineDepTime = getInterlineDepartureTime(
+                                                                            northTrip,
+                                                                            stop,
+                                                                            allNorthTrips,
+                                                                            combined.routeName,
+                                                                            interlineTripLookup
+                                                                        );
+                                                                        const interlineDepTime = explicitInterlineDepTime ?? metadataInterlineDepTime;
 
                                                                         // For interline stops (Allandale), handle DEP based on whether trip starts or arrives here
                                                                         // BUT if we have an interline departure time, show it instead of returning null
                                                                         if (northTrip && isInterlineStop(stop) && !interlineDepTime) {
-                                                                            const precedingStops = combined.northStops.slice(0, i);
+                                                                            const precedingStops = northDisplayStops.slice(0, i);
                                                                             const tripStartsHere = !precedingStops.some(prevStop =>
                                                                                 getStopValue(northTrip.stops, prevStop) ||
                                                                                 getStopValue(northTrip.arrivalTimes, prevStop)
@@ -1856,35 +2253,50 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                                 onChange={(val) => northTrip && onCellEdit?.(northTrip.id, stop, val)}
                                                                                 onBlur={(val) => {
                                                                                     if (northTrip && val && onCellEdit) {
-                                                                                        const originalValue = getArrivalTimeForStop(northTrip, stop, i, combined.northStops.length);
+                                                                                        const originalValue = getArrivalTimeForStop(northTrip, stop, i, northDisplayStops.length);
                                                                                         const formatted = parseTimeInput(val, originalValue);
                                                                                         if (formatted) onCellEdit(northTrip.id, stop, formatted);
                                                                                     }
                                                                                 }}
                                                                                 disabled={readOnly || !northTrip}
                                                                                 focusClass="focus:ring-blue-100"
-                                                                                onAdjust={onTimeAdjust && northTrip ? (delta) => onTimeAdjust(northTrip.id, stop, delta) : undefined}
+                                                                                onAdjust={onTimeAdjust && northTrip && canAdjustNorthDep ? (delta) => onTimeAdjust(northTrip.id, stop, delta) : undefined}
                                                                             />
                                                                         );
                                                                     })()}
-                                                                    {onTimeAdjust && northTrip && (
+                                                                    {onTimeAdjust && northTrip && canAdjustNorthDep && (
                                                                         <button
                                                                             onClick={() => onTimeAdjust(northTrip.id, stop, 1)}
-                                                                            className="absolute right-0 top-0 bottom-0 w-4 opacity-0 group-hover/cell:opacity-100 flex items-center justify-center text-gray-300 hover:text-blue-500 hover:bg-blue-50 transition-all"
+                                                                            className="absolute right-0 top-0 bottom-0 w-4 opacity-40 group-hover/cell:opacity-100 flex items-center justify-center text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-all"
                                                                             title="+1 min"
                                                                         >
                                                                             <ChevronUp size={12} />
                                                                         </button>
                                                                     )}
+                                                                    {connections.length > 0 && (
+                                                                        <ConnectionIndicator connections={connections} />
+                                                                    )}
+                                                                    {(() => {
+                                                                        const currentDep = northTrip ? getDepartureDisplayTime(northTrip, stop, combined.routeName, false) : '';
+                                                                        const originalDep = getDepartureDisplayTime(originalNorthTrip, stop, combined.routeName, false);
+                                                                        const diff = getDeltaMinutes(currentDep, originalDep);
+                                                                        if (!diff) return null;
+                                                                        return (
+                                                                            <span className={`absolute top-0 right-0 text-[9px] font-bold px-0.5 rounded-bl ${diff > 0 ? 'text-green-600 bg-green-50' : 'text-red-600 bg-red-50'}`}>
+                                                                                {diff > 0 ? '+' : ''}{diff}
+                                                                            </span>
+                                                                        );
+                                                                    })()}
                                                                 </div>
                                                             </td>
-                                                        )}
+                                                            );
+                                                        })()}
                                                     </React.Fragment>
                                                     );
                                                 })}
 
                                                 {/* South Cells */}
-                                                {combined.southStops.map((stop, i) => {
+                                                {southDisplayStops.map((stop, i) => {
                                                     const hasRecovery = i > 0 && southStopsWithRecovery.has(stop);
 
                                                     // Get cell references for this stop's columns
@@ -1896,22 +2308,24 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                     const stopColCount = (hasRecovery ? 2 : 0) + 1;
                                                     dataColIdx += stopColCount;
 
+                                                    const southArrivalAtStop = getStopValue(southTrip?.arrivalTimes, stop) || getStopValue(southTrip?.stops, stop) || '';
+
                                                     return (
                                                     <React.Fragment key={`s-${stop}`}>
                                                         {hasRecovery && (
                                                             <td className="p-0 relative h-10 group/arr" title={arrCellRef}>
                                                                 <div className="flex items-center justify-center h-full">
-                                                                    {onTimeAdjust && southTrip && (
+                                                                    {onTimeAdjust && southTrip && southArrivalAtStop && (
                                                                         <button
-                                                                            onClick={() => onTimeAdjust(southTrip.id, stop, -1)}
-                                                                            className="absolute left-0 top-0 bottom-0 w-3 opacity-0 group-hover/arr:opacity-100 flex items-center justify-center text-gray-300 hover:text-indigo-500 transition-all"
+                                                                            onClick={() => onTimeAdjust(southTrip.id, `${stop}__ARR`, -1)}
+                                                                            className="absolute left-0 top-0 bottom-0 w-3 opacity-40 group-hover/arr:opacity-100 flex items-center justify-center text-gray-400 hover:text-indigo-600 transition-all"
                                                                             title="-1 min"
                                                                         >
                                                                             <ChevronDown size={10} />
                                                                         </button>
                                                                     )}
                                                                     <StackedTimeInput
-                                                                        value={getStopValue(southTrip?.arrivalTimes, stop) || getStopValue(southTrip?.stops, stop) || ''}
+                                                                        value={southArrivalAtStop}
                                                                         onChange={(val) => southTrip && onCellEdit?.(southTrip.id, `${stop}__ARR`, val)}
                                                                         onBlur={(val) => {
                                                                             if (southTrip && val && onCellEdit) {
@@ -1920,14 +2334,24 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                                 if (formatted) onCellEdit(southTrip.id, `${stop}__ARR`, formatted);
                                                                             }
                                                                         }}
-                                                                        disabled={readOnly || !southTrip}
+                                                                        disabled={readOnly || !southTrip || !southArrivalAtStop}
                                                                         focusClass="focus:ring-indigo-100"
-                                                                        onAdjust={onTimeAdjust && southTrip ? (delta) => onTimeAdjust(southTrip.id, stop, delta) : undefined}
+                                                                        onAdjust={onTimeAdjust && southTrip && southArrivalAtStop ? (delta) => onTimeAdjust(southTrip.id, `${stop}__ARR`, delta) : undefined}
                                                                     />
-                                                                    {onTimeAdjust && southTrip && (
+                                                                    {(() => {
+                                                                        const originalArrival = getArrivalDisplayTime(originalSouthTrip, stop);
+                                                                        const diff = getDeltaMinutes(southArrivalAtStop, originalArrival);
+                                                                        if (!diff) return null;
+                                                                        return (
+                                                                            <span className={`absolute top-0 right-0 text-[9px] font-bold px-0.5 rounded-bl ${diff > 0 ? 'text-green-600 bg-green-50' : 'text-red-600 bg-red-50'}`}>
+                                                                                {diff > 0 ? '+' : ''}{diff}
+                                                                            </span>
+                                                                        );
+                                                                    })()}
+                                                                    {onTimeAdjust && southTrip && southArrivalAtStop && (
                                                                         <button
-                                                                            onClick={() => onTimeAdjust(southTrip.id, stop, 1)}
-                                                                            className="absolute right-0 top-0 bottom-0 w-3 opacity-0 group-hover/arr:opacity-100 flex items-center justify-center text-gray-300 hover:text-indigo-500 transition-all"
+                                                                            onClick={() => onTimeAdjust(southTrip.id, `${stop}__ARR`, 1)}
+                                                                            className="absolute right-0 top-0 bottom-0 w-3 opacity-40 group-hover/arr:opacity-100 flex items-center justify-center text-gray-400 hover:text-indigo-600 transition-all"
                                                                             title="+1 min"
                                                                         >
                                                                             <ChevronUp size={10} />
@@ -1937,12 +2361,12 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                             </td>
                                                         )}
                                                         {hasRecovery && (
-                                                            <td className="p-0 relative h-8 group/rec text-center font-mono text-[10px] text-gray-500 font-medium" title={rCellRef}>
+                                                            <td className="p-0 relative h-8 group/rec text-center font-mono text-xs text-gray-700 font-medium" title={rCellRef}>
                                                                 <div className="flex items-center justify-center h-full">
                                                                     {onRecoveryEdit && southTrip && (
                                                                         <button
                                                                             onClick={() => onRecoveryEdit(southTrip.id, stop, -1)}
-                                                                            className="absolute left-0 top-0 bottom-0 w-3 opacity-0 group-hover/rec:opacity-100 flex items-center justify-center text-gray-300 hover:text-green-500 transition-all"
+                                                                            className="absolute left-0 top-0 bottom-0 w-3 opacity-40 group-hover/rec:opacity-100 flex items-center justify-center text-gray-400 hover:text-green-600 transition-all"
                                                                             title="-1 min recovery"
                                                                         >
                                                                             <ChevronDown size={10} />
@@ -1952,7 +2376,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                     {onRecoveryEdit && southTrip && (
                                                                         <button
                                                                             onClick={() => onRecoveryEdit(southTrip.id, stop, 1)}
-                                                                            className="absolute right-0 top-0 bottom-0 w-3 opacity-0 group-hover/rec:opacity-100 flex items-center justify-center text-gray-300 hover:text-green-500 transition-all"
+                                                                            className="absolute right-0 top-0 bottom-0 w-3 opacity-40 group-hover/rec:opacity-100 flex items-center justify-center text-gray-400 hover:text-green-600 transition-all"
                                                                             title="+1 min recovery"
                                                                         >
                                                                             <ChevronUp size={10} />
@@ -1961,35 +2385,38 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                 </div>
                                                             </td>
                                                         )}
-                                                        <td className={`p-0 relative h-10 group/cell ${i === 0 ? 'border-l border-dashed border-gray-100' : ''}`} title={depCellRef}>
-                                                            <div className="flex items-center justify-center h-full">
-                                                                {onTimeAdjust && southTrip && (
+                                                        {(() => {
+                                                            // Compute departure time for connection indicator
+                                                            const southArrival = getStopValue(southTrip?.arrivalTimes, stop) || getStopValue(southTrip?.stops, stop);
+                                                            let southRecovery = getStopValue(southTrip?.recoveryTimes, stop) || 0;
+                                                            const isLastSouthStop = i === southDisplayStops.length - 1;
+                                                            if (southRecovery === 0 && isLastSouthStop && isInterlineRoute(combined.routeName)) {
+                                                                southRecovery = 10;
+                                                            }
+                                                            const southDepValue = southArrival
+                                                                ? (southRecovery === 0 ? southArrival : TimeUtils.addMinutes(southArrival, southRecovery))
+                                                                : '';
+                                                            const canAdjustSouthDep = !!southTrip && !!southDepValue;
+                                                            const southDepTimeMinutes = southDepValue ? TimeUtils.toMinutes(southDepValue) : null;
+                                                            const southStopCode = combined.southStopIds?.[stop] || '';
+                                                            const southConnections = connectionLibrary && southStopCode && southDepTimeMinutes !== null
+                                                                ? getConnectionsForStop(southStopCode, southDepTimeMinutes, connectionLibrary, dayType)
+                                                                : [];
+
+                                                            return (
+                                                        <td className={`p-0 relative ${southConnections.length > 0 ? 'h-14' : 'h-10'} group/cell ${i === 0 ? 'border-l border-dashed border-gray-100' : ''}`} title={depCellRef}>
+                                                            <div className={`flex ${southConnections.length > 0 ? 'flex-col' : 'items-center'} justify-center h-full`}>
+                                                                {onTimeAdjust && southTrip && canAdjustSouthDep && (
                                                                     <button
                                                                         onClick={() => onTimeAdjust(southTrip.id, stop, -1)}
-                                                                        className="absolute left-0 top-0 bottom-0 w-4 opacity-0 group-hover/cell:opacity-100 flex items-center justify-center text-gray-300 hover:text-indigo-500 hover:bg-indigo-50 transition-all"
+                                                                        className="absolute left-0 top-0 bottom-0 w-4 opacity-40 group-hover/cell:opacity-100 flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-all"
                                                                         title="-1 min"
                                                                     >
                                                                         <ChevronDown size={12} />
                                                                     </button>
                                                                 )}
                                                                 <StackedTimeInput
-                                                                    value={(() => {
-                                                                        // Standard calculation: arrival + recovery
-                                                                        const arrival = getStopValue(southTrip?.arrivalTimes, stop) || getStopValue(southTrip?.stops, stop);
-                                                                        if (!arrival) return '';
-                                                                        let recovery = getStopValue(southTrip?.recoveryTimes, stop) || 0;
-
-                                                                        // For interline routes (8A/8B), the terminal (last South stop) should have
-                                                                        // recovery time even if GTFS data shows 0. Default to 10 min for 8B South GO.
-                                                                        const isLastSouthStop = i === combined.southStops.length - 1;
-                                                                        if (recovery === 0 && isLastSouthStop && isInterlineRoute(combined.routeName)) {
-                                                                            // Use default terminal recovery of 10 min for interline routes
-                                                                            recovery = 10;
-                                                                        }
-
-                                                                        if (recovery === 0) return arrival;
-                                                                        return TimeUtils.addMinutes(arrival, recovery);
-                                                                    })()}
+                                                                    value={southDepValue}
                                                                     onChange={(val) => southTrip && onCellEdit?.(southTrip.id, stop, val)}
                                                                     onBlur={(val) => {
                                                                         if (southTrip && val && onCellEdit) {
@@ -2000,62 +2427,83 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                     }}
                                                                     disabled={readOnly || !southTrip}
                                                                     focusClass="focus:ring-indigo-100"
-                                                                    onAdjust={onTimeAdjust && southTrip ? (delta) => onTimeAdjust(southTrip.id, stop, delta) : undefined}
+                                                                    onAdjust={onTimeAdjust && southTrip && canAdjustSouthDep ? (delta) => onTimeAdjust(southTrip.id, stop, delta) : undefined}
                                                                 />
-                                                                {onTimeAdjust && southTrip && (
+                                                                {onTimeAdjust && southTrip && canAdjustSouthDep && (
                                                                     <button
                                                                         onClick={() => onTimeAdjust(southTrip.id, stop, 1)}
-                                                                        className="absolute right-0 top-0 bottom-0 w-4 opacity-0 group-hover/cell:opacity-100 flex items-center justify-center text-gray-300 hover:text-indigo-500 hover:bg-indigo-50 transition-all"
+                                                                        className="absolute right-0 top-0 bottom-0 w-4 opacity-40 group-hover/cell:opacity-100 flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-all"
                                                                         title="+1 min"
                                                                     >
                                                                         <ChevronUp size={12} />
                                                                     </button>
                                                                 )}
+                                                                {southConnections.length > 0 && (
+                                                                    <ConnectionIndicator connections={southConnections} />
+                                                                )}
+                                                                {(() => {
+                                                                    const isLastSouthStop = i === southDisplayStops.length - 1;
+                                                                    const currentDep = southTrip ? getDepartureDisplayTime(southTrip, stop, combined.routeName, isLastSouthStop) : '';
+                                                                    const originalDep = getDepartureDisplayTime(originalSouthTrip, stop, combined.routeName, isLastSouthStop);
+                                                                    const diff = getDeltaMinutes(currentDep, originalDep);
+                                                                    if (!diff) return null;
+                                                                    return (
+                                                                        <span className={`absolute top-0 right-0 text-[9px] font-bold px-0.5 rounded-bl ${diff > 0 ? 'text-green-600 bg-green-50' : 'text-red-600 bg-red-50'}`}>
+                                                                            {diff > 0 ? '+' : ''}{diff}
+                                                                        </span>
+                                                                    );
+                                                                })()}
                                                             </div>
                                                         </td>
+                                                            );
+                                                        })()}
                                                     </React.Fragment>
                                                     );
                                                 })}
 
                                                 {/* Metrics Columns */}
-                                                <td className="p-2 text-center text-xs font-medium text-gray-600 border-l border-gray-100" title={columnMapping[dataColIdx++]?.letter + displayRowNum}>{totalTravel}</td>
-                                                <td className="p-1 text-center" title={columnMapping[dataColIdx++]?.letter + displayRowNum}>
-                                                    {(() => {
-                                                        const displayBand = northTrip?.assignedBand || southTrip?.assignedBand || '-';
-                                                        return (
-                                                            <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-medium bg-gray-100 text-gray-600">
-                                                                {displayBand}
-                                                            </span>
-                                                        );
-                                                    })()}
-                                                </td>
-                                                <td className="p-2 text-center text-xs text-gray-500" title={columnMapping[dataColIdx++]?.letter + displayRowNum}>{totalRec}</td>
+                                                {showMetaCols && (
+                                                    <>
+                                                        <td className="p-2 text-center text-sm font-semibold text-gray-700 border-l border-gray-100" title={columnMapping[dataColIdx++]?.letter + displayRowNum}>{totalTravel}</td>
+                                                        <td className="p-1 text-center" title={columnMapping[dataColIdx++]?.letter + displayRowNum}>
+                                                            {(() => {
+                                                                const displayBand = northTrip?.assignedBand || southTrip?.assignedBand || '-';
+                                                                return (
+                                                                    <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700">
+                                                                        {displayBand}
+                                                                    </span>
+                                                                );
+                                                            })()}
+                                                        </td>
+                                                        <td className="p-2 text-center text-sm text-gray-700" title={columnMapping[dataColIdx++]?.letter + displayRowNum}>{totalRec}</td>
 
-                                                <td className={`p-2 text-center text-xs font-medium ${ratio > 25 ? 'text-amber-600' : ratio < 10 ? 'text-red-500' : 'text-gray-600'}`} title={columnMapping[dataColIdx++]?.letter + displayRowNum}>
-                                                    {ratio.toFixed(0)}%
-                                                </td>
+                                                        <td className={`p-2 text-center text-sm font-semibold ${ratio > 25 ? 'text-amber-700' : ratio < 10 ? 'text-red-700' : 'text-gray-700'}`} title={columnMapping[dataColIdx++]?.letter + displayRowNum}>
+                                                            {ratio.toFixed(0)}%
+                                                        </td>
 
-                                                <td className={`p-2 text-center text-xs ${targetHeadway && typeof headway === 'number' && headway !== targetHeadway
-                                                    ? 'text-amber-700 bg-amber-100 font-bold ring-1 ring-amber-300'
-                                                    : 'text-gray-400'
-                                                    }`} title={columnMapping[dataColIdx++]?.letter + displayRowNum}>
-                                                    {headway}
-                                                    {targetHeadway && typeof headway === 'number' && headway !== targetHeadway && (
-                                                        <span className="ml-1 text-[9px] font-semibold">({headway > targetHeadway ? '+' : ''}{headway - targetHeadway})</span>
-                                                    )}
-                                                </td>
+                                                        <td className={`p-2 text-center text-sm ${targetHeadway && typeof headway === 'number' && headway !== targetHeadway
+                                                            ? 'text-amber-700 bg-amber-100 font-bold ring-1 ring-amber-300'
+                                                            : 'text-gray-700'
+                                                            }`} title={columnMapping[dataColIdx++]?.letter + displayRowNum}>
+                                                            {headway}
+                                                            {targetHeadway && typeof headway === 'number' && headway !== targetHeadway && (
+                                                                <span className="ml-1 text-xs font-semibold">({headway > targetHeadway ? '+' : ''}{headway - targetHeadway})</span>
+                                                            )}
+                                                        </td>
 
-                                                <td className={`p-2 text-center text-xs font-semibold ${targetCycleTime && Math.round(displayCycleTime) !== targetCycleTime
-                                                    ? 'text-amber-700 bg-amber-100 font-bold ring-1 ring-amber-300'
-                                                    : 'text-gray-700'
-                                                    }`} title={columnMapping[dataColIdx++]?.letter + displayRowNum}>
-                                                    {Math.round(displayCycleTime)}
-                                                    {targetCycleTime && Math.round(displayCycleTime) !== targetCycleTime && (
-                                                        <span className="ml-1 text-[9px] font-semibold">({Math.round(displayCycleTime) > targetCycleTime ? '+' : ''}{Math.round(displayCycleTime) - targetCycleTime})</span>
-                                                    )}
-                                                </td>
+                                                        <td className={`p-2 text-center text-sm font-semibold ${targetCycleTime && Math.round(displayCycleTime) !== targetCycleTime
+                                                            ? 'text-amber-700 bg-amber-100 font-bold ring-1 ring-amber-300'
+                                                            : 'text-gray-800'
+                                                            }`} title={columnMapping[dataColIdx++]?.letter + displayRowNum}>
+                                                            {Math.round(displayCycleTime)}
+                                                            {targetCycleTime && Math.round(displayCycleTime) !== targetCycleTime && (
+                                                                <span className="ml-1 text-xs font-semibold">({Math.round(displayCycleTime) > targetCycleTime ? '+' : ''}{Math.round(displayCycleTime) - targetCycleTime})</span>
+                                                            )}
+                                                        </td>
 
-                                                <td className="p-2 text-center text-xs font-mono text-gray-600" title={columnMapping[dataColIdx++]?.letter + displayRowNum}>{routeTripNumber}</td>
+                                                        <td className="p-2 text-center text-sm font-mono text-gray-700" title={columnMapping[dataColIdx++]?.letter + displayRowNum}>{routeTripNumber}</td>
+                                                    </>
+                                                )}
 
                                             </tr>
                                         );
@@ -2076,12 +2524,12 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                 >
                     <div className="px-3 py-2 border-b border-gray-100 bg-gray-50 rounded-t-lg">
                         <div className="text-xs font-medium text-gray-600">Link South Trip</div>
-                        <div className="text-[10px] text-gray-400">
+                        <div className="text-xs text-gray-600">
                             Arr: {TimeUtils.fromMinutes(linkPicker.northArrivalTime)}
                         </div>
                     </div>
                     {linkPicker.availableSouthTrips.length === 0 ? (
-                        <div className="px-3 py-3 text-xs text-gray-400 text-center">
+                        <div className="px-3 py-3 text-sm text-gray-600 text-center">
                             No departures within 15 min
                         </div>
                     ) : (

@@ -29,6 +29,7 @@ export interface ParsedTrip {
     dayType: 'Weekday' | 'Saturday' | 'Sunday';
     timeBand: string;  // Morning, Midday, Evening, Peak, Night
     times: Record<string, string>;  // Stop name -> time string
+    timesMinutes?: Record<string, number>;  // Stop name -> minutes (supports >1440)
     recoveryTimes: Record<string, number>;  // Recovery column index -> minutes
     startTime: number | null;  // Minutes from midnight
     endTime: number | null;    // Minutes from midnight
@@ -64,24 +65,23 @@ export const parseTimeToMinutes = (value: any): number | null => {
     // - 0.99 = 11:45 PM
     // - 1.02 = 12:30 AM next day (the "1" = next day, 0.02 = 30 min)
     //
-    // CRITICAL FIX: Any value >= 1.0 needs the fractional part extracted.
-    // Previous bug: Values 1.0-2.0 were multiplied directly, causing
-    // 1.02 (12:30 AM) to become 1469 min instead of 30 min.
+    // CRITICAL FIX: Values >= 1.0 must preserve the day offset.
+    // Example: 1.02 (12:30 AM next day) becomes 1470 minutes.
     if (typeof value === 'number') {
         // Small integers (< 100) are likely block IDs, stop IDs, recovery minutes - NOT times
         if (Number.isInteger(value) && value < 100) {
             return null;
         }
 
-        // Values >= 1.0 are dates with time - extract just the time (fractional part)
-        // This handles post-midnight times correctly (1.02 = 12:30 AM)
+        // Values >= 1.0 are dates with time - preserve day offset
         if (value >= 1) {
+            const wholeDays = Math.floor(value);
             const timePortion = value % 1;
             // Reject very small fractions - likely residual data, not real times
             // 0.004 = ~6 minutes, so times before 12:06 AM from numeric sources are rejected
             // Legitimate early AM times like 12:07 AM (0.00486) will still pass
             if (timePortion < 0.004) return null;
-            return Math.round(timePortion * 24 * 60);
+            return (wholeDays * 24 * 60) + Math.round(timePortion * 24 * 60);
         }
 
         // Values < 1.0 are pure time fractions (0.5 = noon, 0.02 = 12:30 AM)
@@ -125,8 +125,10 @@ export const parseTimeToMinutes = (value: any): number | null => {
 
 const formatMinutesToTime = (minutes: number): string => {
     // Normalize hours to 0-23 range (handles times past midnight like 25:00 → 1:00)
-    let h = Math.floor(minutes / 60) % 24;
+    let h = Math.floor(minutes / 60);
     const m = Math.round(minutes % 60);
+    h = ((h % 24) + 24) % 24;
+
     const period = h >= 12 ? 'PM' : 'AM';
 
     if (h > 12) h -= 12;
@@ -134,6 +136,29 @@ const formatMinutesToTime = (minutes: number): string => {
 
     return `${h}:${m.toString().padStart(2, '0')} ${period}`;
 };
+
+const applyDayOffset = (
+    rawMinutes: number,
+    lastAdjusted: number | null,
+    offset: number
+): { adjusted: number; offset: number } => {
+    let adjusted = rawMinutes;
+    let nextOffset = offset;
+
+    if (rawMinutes >= 1440) {
+        adjusted = rawMinutes;
+        nextOffset = Math.floor(rawMinutes / 1440) * 1440;
+    } else {
+        if (lastAdjusted !== null && rawMinutes + nextOffset < lastAdjusted - 60) {
+            nextOffset += 1440;
+        }
+        adjusted = rawMinutes + nextOffset;
+    }
+
+    return { adjusted, offset: nextOffset };
+};
+
+const MIDNIGHT_ROLLOVER_THRESHOLD = 210; // 3:30 AM
 
 // --- Day Type Detection ---
 
@@ -422,9 +447,12 @@ const parseStopIdsRow = (row: any[], stops: StopInfo[]): void => {
 
 const parseTripRow = (row: any[], stops: StopInfo[], rowIdx: number): ParsedTrip | null => {
     const times: Record<string, string> = {};
+    const timesMinutes: Record<string, number> = {};
     const recoveryTimes: Record<string, number> = {};
     let startTime: number | null = null;
     let endTime: number | null = null;
+    let offset = 0;
+    let lastAdjusted: number | null = null;
 
     for (const stop of stops) {
         const cellValue = row[stop.columnIndex];
@@ -465,10 +493,16 @@ const parseTripRow = (row: any[], stops: StopInfo[], rowIdx: number): ParsedTrip
             const isValidStopTime = minutes !== null && (minutes >= 60 || isExcelTime || hasAmPmIndicator || hasTimeFormat);
 
             if (isValidStopTime) {
-                times[stop.name] = formatMinutesToTime(minutes);
+                const adjustedInfo = applyDayOffset(minutes, lastAdjusted, offset);
+                const adjusted = adjustedInfo.adjusted;
+                offset = adjustedInfo.offset;
+                lastAdjusted = adjusted;
 
-                if (startTime === null) startTime = minutes;
-                endTime = minutes;
+                times[stop.name] = formatMinutesToTime(adjusted);
+                timesMinutes[stop.name] = adjusted;
+
+                if (startTime === null) startTime = adjusted;
+                endTime = adjusted;
             }
         }
     }
@@ -477,6 +511,18 @@ const parseTripRow = (row: any[], stops: StopInfo[], rowIdx: number): ParsedTrip
     if (Object.keys(times).length < 2) return null;
 
     const timeBand = String(row[1] || '').trim();
+
+    if (startTime !== null && endTime !== null
+        && startTime < MIDNIGHT_ROLLOVER_THRESHOLD
+        && !Object.values(timesMinutes).some(v => v >= 1440)
+    ) {
+        startTime += 1440;
+        endTime += 1440;
+        for (const key of Object.keys(timesMinutes)) {
+            timesMinutes[key] += 1440;
+        }
+    }
+
     const travelTime = (startTime !== null && endTime !== null) ? (endTime - startTime) : 0;
 
     return {
@@ -484,6 +530,7 @@ const parseTripRow = (row: any[], stops: StopInfo[], rowIdx: number): ParsedTrip
         dayType: 'Weekday',  // Will be set by section
         timeBand,
         times,
+        timesMinutes,
         recoveryTimes,
         startTime,
         endTime,

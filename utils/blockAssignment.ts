@@ -111,14 +111,14 @@ const formatTime = (minutes: number): string => {
 };
 
 const parseTimeStr = (timeStr: string, tripStartMin: number): number | null => {
-    const match = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+    const match = timeStr.match(/(\d{1,2}):(\d{2})\s*([ap]m?|[ap])?/i);
     if (!match) return null;
     let h = parseInt(match[1]);
     const m = parseInt(match[2]);
-    const period = match[3]?.toUpperCase();
+    const period = match[3]?.toLowerCase()[0];
 
-    if (period === 'PM' && h < 12) h += 12;
-    if (period === 'AM' && h === 12) h = 0;
+    if (period === 'p' && h < 12) h += 12;
+    if (period === 'a' && h === 12) h = 0;
 
     let minutes = h * 60 + m;
 
@@ -468,7 +468,7 @@ const renumberBlocks = (blocks: Block[], primaryStopName: string): void => {
             // Check if this trip has a time for primaryStopName
             const timeStr = trip.times[primaryStopName];
             if (timeStr) {
-                const t = parseTimeStr(timeStr, trip.startTime ?? 0);
+                const t = trip.timesMinutes?.[primaryStopName] ?? parseTimeStr(timeStr, trip.startTime ?? 0);
                 if (t !== null) {
                     terminalTime = t;
                     break; // Found the first trips time!

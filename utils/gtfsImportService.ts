@@ -38,6 +38,7 @@ import type { MasterScheduleContent, DayType } from './masterScheduleTypes';
 import type { MasterTrip, MasterRouteTable } from './masterScheduleParser';
 import type { Direction } from './routeDirectionConfig';
 import { inferDirectionFromTerminus, getRouteConfig, parseRouteInfo } from './routeDirectionConfig';
+import { TimeUtils } from './timeUtils';
 import { saveDraft } from './draftService';
 import { saveSystemDraft, generateSystemDraftName } from './systemDraftService';
 import type { DraftScheduleInput, SystemDraftInput, SystemDraftRoute } from './scheduleTypes';
@@ -54,6 +55,132 @@ import {
 
 const DEFAULT_GTFS_URL = 'https://www.myridebarrie.ca/gtfs/google_transit.zip';
 const GTFS_PROXY_API = '/api/gtfs'; // Vercel serverless function
+const INTERLINE_ROUTE_SET = new Set(['8A', '8B']);
+const INTERLINE_STOP_PATTERN = 'allandale';
+const INTERLINE_MAX_MATCH_GAP = 120; // minutes
+
+const isInInterlineWindowForDayType = (minutes: number, dayType: DayType): boolean => {
+    if (dayType === 'Sunday') return true;
+    return minutes >= 1200 || minutes <= 120; // 8 PM -> 2 AM
+};
+
+const getInterlineStopName = (trip: MasterTrip): string | null => {
+    const keys = new Set<string>();
+    Object.keys(trip.stops || {}).forEach(k => keys.add(k));
+    Object.keys(trip.arrivalTimes || {}).forEach(k => keys.add(k));
+    for (const stopName of keys) {
+        if (stopName.toLowerCase().includes(INTERLINE_STOP_PATTERN)) {
+            return stopName;
+        }
+    }
+    return null;
+};
+
+const getTripInterlineDeparture = (trip: MasterTrip, stopName: string): number | null => {
+    const arrStr = trip.stops?.[stopName] || trip.arrivalTimes?.[stopName];
+    if (!arrStr) return null;
+    const arr = TimeUtils.toMinutes(arrStr);
+    if (arr === null) return null;
+    const recovery = trip.recoveryTimes?.[stopName] ?? 0;
+    return arr + recovery;
+};
+
+interface InterlineEvent {
+    route: string;
+    trip: MasterTrip;
+    tripKey: string;
+    blockId: string;
+    arrivalAtAllandale: number;
+    departureAtAllandale: number;
+}
+
+const buildInterlineEvents = (routes: SystemDraftRoute[], dayType: DayType): InterlineEvent[] => {
+    const events: InterlineEvent[] = [];
+
+    for (const route of routes) {
+        if (!INTERLINE_ROUTE_SET.has(route.routeNumber)) continue;
+
+        // Only northbound participates in interline behavior in current editor model.
+        for (const trip of route.northTable.trips) {
+            if (!trip.gtfsBlockId) continue;
+            const stopName = getInterlineStopName(trip);
+            if (!stopName) continue;
+            const arrStr = trip.stops?.[stopName] || trip.arrivalTimes?.[stopName];
+            if (!arrStr) continue;
+            const arrival = TimeUtils.toMinutes(arrStr);
+            if (arrival === null || !isInInterlineWindowForDayType(arrival, dayType)) continue;
+            const departure = getTripInterlineDeparture(trip, stopName);
+            if (departure === null) continue;
+
+            events.push({
+                route: route.routeNumber,
+                trip,
+                tripKey: `${route.routeNumber}|${trip.id}`,
+                blockId: trip.gtfsBlockId,
+                arrivalAtAllandale: arrival,
+                departureAtAllandale: departure,
+            });
+        }
+    }
+
+    events.sort((a, b) => a.arrivalAtAllandale - b.arrivalAtAllandale);
+    return events;
+};
+
+/**
+ * Link 8A/8B trips explicitly using GTFS block continuity at Allandale.
+ * This writes `interlineNext` / `interlinePrev` metadata on trips.
+ */
+export function applyExplicitInterlineLinks(routes: SystemDraftRoute[], dayType: DayType): void {
+    const events = buildInterlineEvents(routes, dayType);
+    if (events.length === 0) return;
+
+    const eventsByBlock = new Map<string, InterlineEvent[]>();
+    for (const event of events) {
+        if (!eventsByBlock.has(event.blockId)) {
+            eventsByBlock.set(event.blockId, []);
+        }
+        eventsByBlock.get(event.blockId)!.push(event);
+    }
+
+    for (const blockEvents of eventsByBlock.values()) {
+        blockEvents.sort((a, b) => a.arrivalAtAllandale - b.arrivalAtAllandale);
+
+        // A trip can have one explicit previous interline handoff.
+        const hasPrevAssigned = new Set<string>();
+
+        for (const source of blockEvents) {
+            let bestTarget: InterlineEvent | null = null;
+            let bestGap = Infinity;
+
+            for (const candidate of blockEvents) {
+                if (candidate.tripKey === source.tripKey) continue;
+                if (candidate.route === source.route) continue;
+                if (hasPrevAssigned.has(candidate.tripKey)) continue;
+
+                const gap = candidate.departureAtAllandale - source.arrivalAtAllandale;
+                if (gap < 0 || gap > INTERLINE_MAX_MATCH_GAP) continue;
+
+                if (gap < bestGap) {
+                    bestGap = gap;
+                    bestTarget = candidate;
+                }
+            }
+
+            if (!bestTarget) continue;
+
+            source.trip.interlineNext = {
+                route: bestTarget.route,
+                tripId: bestTarget.trip.id,
+            };
+            bestTarget.trip.interlinePrev = {
+                route: source.route,
+                tripId: source.trip.id,
+            };
+            hasPrevAssigned.add(bestTarget.tripKey);
+        }
+    }
+}
 
 // ============ FETCH & PARSE ============
 
@@ -388,6 +515,7 @@ export function processTripsForRoute(
             blockId: trip.block_id || null,
             direction,
             headsign: trip.trip_headsign || null,
+            shapeId: trip.shape_id || null,
             stopTimes: processedStopTimes,
             startTime: firstStop.departureMinutes,
             endTime: lastStop.arrivalMinutes,
@@ -476,6 +604,8 @@ function applyBlockAssignment(
     northStops: string[],
     southStops: string[]
 ): void {
+    const allMasterTrips = [...northTrips, ...southTrips];
+
     // Detect if this is a merged A/B route (e.g., 2A+2B where they meet at Downtown)
     const lastNorthStop = northStops[northStops.length - 1]?.toLowerCase() || '';
     const firstSouthStop = southStops[0]?.toLowerCase() || '';
@@ -501,14 +631,67 @@ function applyBlockAssignment(
 
     const northMatching = northTrips.map(t => convertToMatching(t, northStops, 'North'));
     const southMatching = southTrips.map(t => convertToMatching(t, southStops, 'South'));
+    const allMatching = [...northMatching, ...southMatching];
 
-    // Choose matching config based on route type
-    const config = isMergedRoute ? MatchConfigPresets.merged : MatchConfigPresets.gtfs;
+    // Prefer GTFS-provided block continuity when available.
+    // This is especially important for loop routes and routes with long or uneven layovers.
+    const gtfsBlockTrips = allMasterTrips.filter(t => !!t.gtfsBlockId && t.gtfsBlockId.trim() !== '');
+    const canUseGtfsBlocks = allMasterTrips.length > 0 &&
+        gtfsBlockTrips.length >= Math.max(2, Math.ceil(allMasterTrips.length * 0.7));
 
-    // Build blocks using core module
-    const blocks = isMergedRoute
-        ? buildBlocksBidirectional(northMatching, southMatching, routeShortName, config)
-        : buildBlocksBidirectional(northMatching, southMatching, routeShortName, config);
+    let blocks;
+    if (canUseGtfsBlocks) {
+        const tripsByGtfsBlock = new Map<string, MasterTrip[]>();
+        for (const trip of gtfsBlockTrips) {
+            const gtfsBlockId = trip.gtfsBlockId!.trim();
+            if (!tripsByGtfsBlock.has(gtfsBlockId)) tripsByGtfsBlock.set(gtfsBlockId, []);
+            tripsByGtfsBlock.get(gtfsBlockId)!.push(trip);
+        }
+
+        const orderedGtfsBlocks = Array.from(tripsByGtfsBlock.entries()).sort(([, aTrips], [, bTrips]) => {
+            const aStart = Math.min(...aTrips.map(t => getOperationalSortTime(t.startTime)));
+            const bStart = Math.min(...bTrips.map(t => getOperationalSortTime(t.startTime)));
+            if (aStart !== bStart) return aStart - bStart;
+            return (aTrips[0]?.gtfsBlockId || '').localeCompare(bTrips[0]?.gtfsBlockId || '', undefined, { numeric: true });
+        });
+
+        blocks = orderedGtfsBlocks.map(([_, blockTrips], idx) => {
+            const blockId = `${routeShortName}-${idx + 1}`;
+            const orderedTrips = [...blockTrips].sort((a, b) => {
+                const aStart = getOperationalSortTime(a.startTime);
+                const bStart = getOperationalSortTime(b.startTime);
+                if (aStart !== bStart) return aStart - bStart;
+                return a.endTime - b.endTime;
+            });
+
+            const matchingTrips = orderedTrips.map((t, tripIdx): TripForMatching => ({
+                id: t.id,
+                blockId,
+                tripNumber: tripIdx + 1,
+                direction: t.direction,
+                startTime: t.startTime,
+                endTime: t.endTime,
+                firstStopName: '',
+                lastStopName: '',
+                recoveryTimes: t.recoveryTimes
+            }));
+
+            return {
+                blockId,
+                trips: matchingTrips,
+                startTime: orderedTrips[0]?.startTime ?? 0,
+                endTime: orderedTrips[orderedTrips.length - 1]?.endTime ?? 0
+            };
+        });
+    } else {
+        // Choose matching config based on route type
+        const config = isMergedRoute ? MatchConfigPresets.merged : MatchConfigPresets.gtfs;
+
+        // Build blocks using core module
+        blocks = isMergedRoute
+            ? buildBlocksBidirectional(northMatching, southMatching, routeShortName, config)
+            : buildBlocks(allMatching, routeShortName, config);
+    }
 
     // Apply block assignments back to MasterTrips
     const tripLookup = new Map<string, MasterTrip>();
@@ -832,6 +1015,14 @@ export function convertToMasterSchedule(
     const northStopOccurrenceMap = buildStopOccurrenceMap(northUniqueStopNames);
     const southStopOccurrenceMap = buildStopOccurrenceMap(southUniqueStopNames);
 
+    /** Derive a pattern label from a trip's first and last stop names */
+    const derivePatternLabel = (trip: ProcessedGTFSTrip): string => {
+        if (trip.stopTimes.length < 2) return '-';
+        const first = trip.stopTimes[0].stopName;
+        const last = trip.stopTimes[trip.stopTimes.length - 1].stopName;
+        return `${first} → ${last}`;
+    };
+
     // Convert to MasterTrips with temporary IDs (will be reassigned by block assignment)
     const convertToMasterTrip = (
         trip: ProcessedGTFSTrip,
@@ -917,6 +1108,9 @@ export function convertToMasterSchedule(
             arrivalTimes: Object.keys(arrivalTimes).length > 0 ? arrivalTimes : undefined,
             // Preserve original GTFS block ID for linking trips on same physical bus
             gtfsBlockId: trip.blockId || undefined,
+            // GTFS shape/pattern identification
+            shapeId: trip.shapeId || undefined,
+            patternLabel: derivePatternLabel(trip),
         };
     };
 
@@ -1256,6 +1450,10 @@ export async function importAllRoutesFromGTFS(
         systemRoutes.sort((a, b) =>
             a.routeNumber.localeCompare(b.routeNumber, undefined, { numeric: true })
         );
+
+        // Add explicit 8A/8B interline metadata when both variants are present.
+        // This preserves true cross-route handoffs from GTFS block continuity.
+        applyExplicitInterlineLinks(systemRoutes, dayType);
 
         // Create system draft
         const systemDraftInput: SystemDraftInput = {

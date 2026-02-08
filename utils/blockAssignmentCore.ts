@@ -366,6 +366,14 @@ export function masterTripToMatching(
     trip: MasterTrip,
     table: MasterRouteTable
 ): TripForMatching {
+    const lastStopName = table.stops[table.stops.length - 1] || '';
+
+    // Bridge scalar recoveryTime to keyed recoveryTimes if keyed map is empty/missing.
+    // V1 parser creates trips with only scalar recoveryTime; findNextTrip needs keyed format.
+    const recoveryTimes = (trip.recoveryTimes && Object.keys(trip.recoveryTimes).length > 0)
+        ? trip.recoveryTimes
+        : (trip.recoveryTime ? { [lastStopName]: trip.recoveryTime } : undefined);
+
     return {
         id: trip.id,
         blockId: trip.blockId,
@@ -374,8 +382,8 @@ export function masterTripToMatching(
         startTime: trip.startTime,
         endTime: trip.endTime,
         firstStopName: table.stops[0] || '',
-        lastStopName: table.stops[table.stops.length - 1] || '',
-        recoveryTimes: trip.recoveryTimes,
+        lastStopName,
+        recoveryTimes,
         routeName: table.routeName
     };
 }
@@ -437,8 +445,18 @@ export function reassignBlocksForTables(
 
     if (allTrips.length === 0) return;
 
-    // Build blocks
-    const blocks = buildBlocks(allTrips, baseName, config);
+    // Detect if trips span both North and South directions
+    const directions = new Set(allTrips.map(t => t.direction));
+    const isBidirectional = directions.has('North') && directions.has('South');
+
+    let blocks: AssignedBlock[];
+    if (isBidirectional) {
+        const northTrips = allTrips.filter(t => t.direction === 'North');
+        const southTrips = allTrips.filter(t => t.direction === 'South');
+        blocks = buildBlocksBidirectional(northTrips, southTrips, baseName, config);
+    } else {
+        blocks = buildBlocks(allTrips, baseName, config);
+    }
 
     // Apply back to tables
     applyBlocksToMasterTrips(blocks, tables);

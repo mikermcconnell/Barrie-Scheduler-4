@@ -53,6 +53,12 @@ export function cascadeTripTimes(
                     }
                 }
 
+                if (trip.stopMinutes) {
+                    for (const [stop, minutes] of Object.entries(trip.stopMinutes)) {
+                        trip.stopMinutes[stop] = minutes + deltaMinutes;
+                    }
+                }
+
                 // Shift arrival times
                 if (trip.arrivalTimes) {
                     for (const [stop, timeStr] of Object.entries(trip.arrivalTimes)) {
@@ -110,6 +116,15 @@ export function updateSegmentTime(
             const mins = parseTimeToMinutes(editedTrip.stops[stop]);
             if (mins !== null) {
                 editedTrip.stops[stop] = formatMinutesToTime(mins + deltaMinutes);
+            }
+        }
+
+        if (editedTrip.stopMinutes && editedTrip.stopMinutes[stop] !== undefined) {
+            editedTrip.stopMinutes[stop] = editedTrip.stopMinutes[stop] + deltaMinutes;
+        } else if (editedTrip.stopMinutes && editedTrip.stops[stop]) {
+            const mins = parseTimeToMinutes(editedTrip.stops[stop]);
+            if (mins !== null) {
+                editedTrip.stopMinutes[stop] = mins + deltaMinutes;
             }
         }
 
@@ -187,13 +202,14 @@ export function setTripStartStop(
                     delete found.stops[s];
                     if (found.arrivalTimes) delete found.arrivalTimes[s];
                     if (found.recoveryTimes) delete found.recoveryTimes[s];
+                    if (found.stopMinutes) delete found.stopMinutes[s];
                 });
             }
 
             // Recalculate startTime based on new first stop
             if (startStopIndex < stops.length) {
                 const newFirstStop = stops[startStopIndex];
-                const newStartTime = parseTimeToMinutes(found.stops[newFirstStop] || '');
+                const newStartTime = found.stopMinutes?.[newFirstStop] ?? parseTimeToMinutes(found.stops[newFirstStop] || '');
                 if (newStartTime !== null) {
                     found.startTime = newStartTime;
                 }
@@ -228,13 +244,14 @@ export function setTripEndStop(
                     delete found.stops[s];
                     if (found.arrivalTimes) delete found.arrivalTimes[s];
                     if (found.recoveryTimes) delete found.recoveryTimes[s];
+                    if (found.stopMinutes) delete found.stopMinutes[s];
                 });
             }
 
             // Recalculate endTime based on new last stop
             if (endStopIndex < stops.length) {
                 const newLastStop = stops[endStopIndex];
-                const newEndTime = parseTimeToMinutes(found.stops[newLastStop] || '');
+                const newEndTime = found.stopMinutes?.[newLastStop] ?? parseTimeToMinutes(found.stops[newLastStop] || '');
                 if (newEndTime !== null) {
                     found.endTime = newEndTime;
                 }

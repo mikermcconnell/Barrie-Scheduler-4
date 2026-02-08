@@ -139,6 +139,7 @@ const MINUTES_IN_DAY = 1440; // 24 * 60
 
 export const normalizeTimeForSort = (minutes: number | null): number => {
     if (minutes === null) return 0;
+    if (minutes >= MINUTES_IN_DAY) return minutes;
     // Times from 12:00 AM (0) to 3:30 AM (210) are considered "next day"
     if (minutes <= MIDNIGHT_THRESHOLD) {
         return minutes + MINUTES_IN_DAY;
@@ -198,8 +199,8 @@ const compareTripsByOverlap = (t1: MasterTrip, t2: MasterTrip): number => {
 
     for (const stop of stops1) {
         if (t2.stops[stop]) {
-            const time1Raw = parseTimeToMinutes(t1.stops[stop]);
-            const time2Raw = parseTimeToMinutes(t2.stops[stop]);
+            const time1Raw = t1.stopMinutes?.[stop] ?? parseTimeToMinutes(t1.stops[stop]);
+            const time2Raw = t2.stopMinutes?.[stop] ?? parseTimeToMinutes(t2.stops[stop]);
 
             if (time1Raw !== null && time2Raw !== null) {
                 // Normalize times to handle midnight crossing
@@ -222,10 +223,14 @@ const compareTripsByOverlap = (t1: MasterTrip, t2: MasterTrip): number => {
 const convertTrip = (trip: BlockedTrip, stops: StopInfo[]): MasterTrip => {
     // Reconstruct stops record
     const stopRecord: Record<string, string> = {};
+    const stopMinutes: Record<string, number> = {};
 
     // We need to map the times back. `trip.times` has "Stop Name" -> "Time Str"
     for (const [name, time] of Object.entries(trip.times)) {
         stopRecord[name] = time;
+        if (trip.timesMinutes?.[name] !== undefined) {
+            stopMinutes[name] = trip.timesMinutes[name];
+        }
     }
 
     // Fix: Remap recovery times from "R" keys to the previous stop name
@@ -260,8 +265,8 @@ const convertTrip = (trip: BlockedTrip, stops: StopInfo[]): MasterTrip => {
                             const t2Str = trip.times[nextStop.name];
 
                             if (t1Str && t2Str) {
-                                const t1 = parseTimeToMinutes(t1Str);
-                                const t2 = parseTimeToMinutes(t2Str);
+                            const t1 = trip.timesMinutes?.[stop.name] ?? parseTimeToMinutes(t1Str);
+                            const t2 = trip.timesMinutes?.[nextStop.name] ?? parseTimeToMinutes(t2Str);
 
                                 if (t1 !== null && t2 !== null) {
                                     // Handle midnight crossing for inferred recovery
@@ -315,6 +320,7 @@ const convertTrip = (trip: BlockedTrip, stops: StopInfo[]): MasterTrip => {
         cycleTime: cycleTime,
         travelTime: cycleTime - totalRecovery,
         stops: stopRecord,
+        stopMinutes: Object.keys(stopMinutes).length > 0 ? stopMinutes : undefined,
         isOverlap: false, // Calculated later if needed
         isTightRecovery: (totalRecovery < 5),
     };

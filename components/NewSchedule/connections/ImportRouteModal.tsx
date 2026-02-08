@@ -16,7 +16,6 @@ import type {
     ConnectionTarget,
     ConnectionTargetType
 } from '../../../utils/connectionTypes';
-import { generateConnectionId } from '../../../utils/connectionTypes';
 import type { DayType, MasterRouteTable } from '../../../utils/masterScheduleParser';
 import { getAllMasterSchedules, getMasterSchedule } from '../../../utils/masterScheduleService';
 
@@ -26,6 +25,7 @@ interface ImportRouteModalProps {
     onImport: (target: Omit<ConnectionTarget, 'id' | 'createdAt' | 'updatedAt'>) => void;
     teamId: string;
     currentRouteIdentity: string; // Exclude current route from selection
+    existingTargetNames: string[];
 }
 
 interface RouteOption {
@@ -40,7 +40,8 @@ export const ImportRouteModal: React.FC<ImportRouteModalProps> = ({
     onClose,
     onImport,
     teamId,
-    currentRouteIdentity
+    currentRouteIdentity,
+    existingTargetNames
 }) => {
     const [routes, setRoutes] = useState<RouteOption[]>([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -132,9 +133,14 @@ export const ImportRouteModal: React.FC<ImportRouteModalProps> = ({
     );
 
     // Get stops for selected direction
-    const availableStops = selectedDirection === 'North'
-        ? routeData?.northTable?.stops || []
-        : routeData?.southTable?.stops || [];
+    const activeTable = selectedDirection === 'North'
+        ? routeData?.northTable
+        : routeData?.southTable;
+    const activeStopIds = activeTable?.stopIds || {};
+    const availableStops = (activeTable?.stops || []).map(stopName => ({
+        name: stopName,
+        code: activeStopIds[stopName] || ''
+    }));
 
     // Handle import
     const handleImport = () => {
@@ -143,10 +149,23 @@ export const ImportRouteModal: React.FC<ImportRouteModalProps> = ({
             return;
         }
 
+        const normalizedName = `route ${selectedRoute.routeNumber} (${selectedDirection})`.toLowerCase();
+        if (existingTargetNames.some(existing => existing.trim().toLowerCase() === normalizedName)) {
+            setError('A target with this name already exists');
+            return;
+        }
+
+        const stopCode = availableStops.find(stop => stop.name === selectedStop)?.code || '';
+        if (!stopCode) {
+            setError('Selected stop is missing a stop code');
+            return;
+        }
+
         onImport({
             name: `Route ${selectedRoute.routeNumber} (${selectedDirection})`,
             type: 'route' as ConnectionTargetType,
             routeIdentity: selectedRoute.routeIdentity,
+            stopCode,
             stopName: selectedStop,
             direction: selectedDirection,
             icon: 'bus',
@@ -302,15 +321,17 @@ export const ImportRouteModal: React.FC<ImportRouteModalProps> = ({
                                                 <label className="block text-sm font-medium text-gray-700 mb-1">
                                                     Connection Stop
                                                 </label>
-                                                <select
-                                                    value={selectedStop}
-                                                    onChange={(e) => setSelectedStop(e.target.value)}
-                                                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                                                >
-                                                    {availableStops.map(stop => (
-                                                        <option key={stop} value={stop}>{stop}</option>
-                                                    ))}
-                                                </select>
+                        <select
+                            value={selectedStop}
+                            onChange={(e) => setSelectedStop(e.target.value)}
+                            className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        >
+                            {availableStops.map(stop => (
+                                <option key={stop.name} value={stop.name}>
+                                    {stop.name}{stop.code ? ` (#${stop.code})` : ''}
+                                </option>
+                            ))}
+                        </select>
                                                 <p className="mt-1 text-xs text-gray-500">
                                                     Select the stop where connections will be made
                                                 </p>

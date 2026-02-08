@@ -11,6 +11,30 @@ import type { DayType } from './masterScheduleParser';
 
 export type ConnectionType = 'meet_departing' | 'feed_arriving';
 export type ConnectionTargetType = 'manual' | 'route';
+export type ConnectionEventType = 'departure' | 'arrival';
+export const MAX_SERVICE_MINUTES = 2160; // 36 hours, supports after-midnight service day spans
+export type ConnectionQuality = 'excellent' | 'good' | 'bad';
+
+/**
+ * Connection quality timing thresholds (all in minutes before target time).
+ * Example default:
+ * - Excellent: 5-10 min early
+ * - Good: 2-5 min early OR 10-15 min early
+ * - Bad: outside the good range (and all late arrivals)
+ */
+export interface ConnectionQualityWindowSettings {
+    excellentMin: number;
+    excellentMax: number;
+    goodMin: number;
+    goodMax: number;
+}
+
+export const DEFAULT_CONNECTION_QUALITY_WINDOW_SETTINGS: ConnectionQualityWindowSettings = {
+    excellentMin: 5,
+    excellentMax: 10,
+    goodMin: 2,
+    goodMax: 15
+};
 
 /**
  * A connection target in the team's connection library.
@@ -27,12 +51,18 @@ export interface ConnectionTarget {
 
     // For route-to-route connections
     routeIdentity?: string;                // "8B-Weekday" (references master schedule)
-    stopName?: string;                     // "Downtown Terminal"
+    stopCode: string;                      // Stop code (unique identifier, e.g., "777")
+    stopCodes?: string[];                  // Multiple stop codes for auto-populate (e.g., all Georgian College stops)
+    autoPopulateStops?: boolean;           // When true, apply to all stops matching stopCodes
+    stopName?: string;                     // Stop name for display (e.g., "Downtown Terminal")
     direction?: 'North' | 'South';
+    sourceScheduleUpdatedAt?: string;      // ISO timestamp of master schedule used to derive times
 
     // Visualization
     color?: string;                        // Badge color (hex or tailwind class)
     icon?: 'train' | 'clock' | 'bus';      // Icon identifier
+    qualityWindowSettings?: ConnectionQualityWindowSettings; // Optional per-target override
+    defaultEventType?: ConnectionEventType; // Default event type for times without explicit eventType
 
     // Metadata
     createdAt: string;                     // ISO timestamp
@@ -46,6 +76,7 @@ export interface ConnectionTime {
     id: string;
     time: number;                          // Minutes from midnight (e.g., 450 = 7:30 AM)
     label?: string;                        // "Express to Union" or "Morning Bell"
+    eventType?: ConnectionEventType;       // Optional override; undefined => inherit target defaultEventType
     daysActive: DayType[];                 // Which days this time applies
     enabled: boolean;
 }
@@ -58,8 +89,19 @@ export interface ConnectionTime {
  */
 export interface ConnectionLibrary {
     targets: ConnectionTarget[];
+    qualityWindowSettings?: ConnectionQualityWindowSettings;
+    changeLog?: ConnectionLibraryChangeLogEntry[];
     updatedAt: string;
     updatedBy: string;
+}
+
+export interface ConnectionLibraryChangeLogEntry {
+    id: string;
+    version: number;
+    timestamp: string;
+    userId: string;
+    action: string;
+    details?: string;
 }
 
 // === ROUTE CONNECTION CONFIG (Per-Route) ===
@@ -83,7 +125,8 @@ export interface RouteConnection {
     targetId: string;                      // Reference to ConnectionTarget.id
     connectionType: ConnectionType;        // 'meet_departing' | 'feed_arriving'
     bufferMinutes: number;                 // e.g., 5 = arrive 5 min before target departs
-    stopName: string;                      // Which stop on THIS route to optimize
+    stopCode: string;                      // Stop code (unique identifier) on THIS route to optimize
+    stopName?: string;                     // Stop name for display (optional, can be derived from stopCode)
     priority: number;                      // 1 = highest (for conflict resolution)
     enabled: boolean;
 
@@ -108,7 +151,8 @@ export interface ExternalConnection {
     tripArrivalTime: number;               // When THIS trip arrives at connection stop
     gapMinutes: number;                    // targetTime - tripArrivalTime (+ = early, - = late)
     meetsConnection: boolean;              // Is gap >= buffer requirement?
-    stopName: string;
+    stopCode: string;                      // Stop code (unique identifier)
+    stopName?: string;                     // Stop name for display (optional)
 }
 
 // === OPTIMIZATION RESULT ===
@@ -165,27 +209,38 @@ export function generateConnectionId(): string {
  * Format minutes from midnight to display time.
  */
 export function formatConnectionTime(minutes: number): string {
-    const hours = Math.floor(minutes / 60);
-    const mins = minutes % 60;
-    const period = hours >= 12 ? 'PM' : 'AM';
+    const normalized = ((minutes % 1440) + 1440) % 1440;
+    const hours = Math.floor(normalized / 60);
+    const mins = normalized % 60;
+    const period = hours >= 12 ? 'p' : 'a';
     const displayHours = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
-    return `${displayHours}:${mins.toString().padStart(2, '0')} ${period}`;
+    return `${displayHours}:${mins.toString().padStart(2, '0')}${period}`;
 }
 
 /**
  * Parse a time string to minutes from midnight.
  */
 export function parseConnectionTime(timeStr: string): number {
-    const match = timeStr.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
+    const trimmed = timeStr.trim();
+    if (!trimmed) return 0;
+
+    const match = trimmed.match(/^(\d{1,2}|\d{2}):(\d{2})\s*([ap]m?|[ap])?$/i);
     if (!match) return 0;
 
     let hours = parseInt(match[1], 10);
     const mins = parseInt(match[2], 10);
-    const period = match[3]?.toUpperCase();
+    const period = match[3]?.toLowerCase();
 
-    if (period === 'PM' && hours !== 12) hours += 12;
-    if (period === 'AM' && hours === 12) hours = 0;
+    if (period) {
+        const periodChar = period[0];
+        if (periodChar === 'p' && hours !== 12) hours += 12;
+        if (periodChar === 'a' && hours === 12) hours = 0;
+        if (hours > 23) return 0;
+        return hours * 60 + mins;
+    }
 
+    // 24-hour input without AM/PM
+    if (hours > 47) return 0;
     return hours * 60 + mins;
 }
 
@@ -214,4 +269,62 @@ export function getConnectionBadgeColors(
     return targetType === 'route'
         ? { bg: 'bg-purple-100', text: 'text-purple-700' }
         : { bg: 'bg-red-100', text: 'text-red-700' };
+}
+
+// === STOP CODE/NAME LOOKUP HELPERS ===
+
+/**
+ * Stop info with both code and name for UI display.
+ */
+export interface StopInfo {
+    code: string;
+    name: string;
+}
+
+/**
+ * Build a reverse lookup map from stop IDs: code -> name
+ */
+export function buildStopCodeToNameMap(stopIds: Record<string, string>): Record<string, string> {
+    const codeToName: Record<string, string> = {};
+    for (const [name, code] of Object.entries(stopIds)) {
+        if (code) {
+            codeToName[code] = name;
+        }
+    }
+    return codeToName;
+}
+
+/**
+ * Get stop name from stop code using the stopIds map.
+ */
+export function getStopNameByCode(
+    stopCode: string,
+    stopIds: Record<string, string>
+): string | undefined {
+    for (const [name, code] of Object.entries(stopIds)) {
+        if (code === stopCode) {
+            return name;
+        }
+    }
+    return undefined;
+}
+
+/**
+ * Get stop code from stop name using the stopIds map.
+ */
+export function getStopCodeByName(
+    stopName: string,
+    stopIds: Record<string, string>
+): string | undefined {
+    return stopIds[stopName];
+}
+
+/**
+ * Get available stops as StopInfo array from a schedule's stopIds.
+ */
+export function getAvailableStops(stopIds: Record<string, string>): StopInfo[] {
+    return Object.entries(stopIds)
+        .filter(([, code]) => code) // Only include stops with codes
+        .map(([name, code]) => ({ code, name }))
+        .sort((a, b) => a.name.localeCompare(b.name));
 }

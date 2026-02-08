@@ -31,7 +31,8 @@ export interface ConnectionCheckResult {
     connectionsMissed: number;
     gaps: Array<{
         targetName: string;
-        stopName: string;
+        stopCode: string;
+        stopName?: string;              // For display (derived from stopCode)
         targetTime: number;
         tripTime: number;
         gapMinutes: number;
@@ -64,6 +65,8 @@ interface GapAnalysis {
     meetsConnection: boolean;
     priority: number;
 }
+
+const MIDNIGHT_ROLLOVER_THRESHOLD = 210; // 3:30 AM
 
 // ============ CONNECTION STATUS CHECK ============
 
@@ -111,7 +114,8 @@ export function checkConnections(
         );
         return {
             targetName: gap.targetName,
-            stopName: pair?.connection.stopName || '',
+            stopCode: pair?.connection.stopCode || '',
+            stopName: pair?.connection.stopName,
             targetTime: gap.targetTime,
             tripTime: gap.tripTime,
             gapMinutes: gap.gap,
@@ -331,11 +335,22 @@ function optimizeIndividualTrips(
 
         // Update stop times
         if (trip.stops) {
-            for (const stopName of Object.keys(trip.stops)) {
-                const timeStr = trip.stops[stopName];
-                const minutes = parseTimeToMinutes(timeStr);
-                if (minutes !== null) {
-                    trip.stops[stopName] = formatMinutesToTime(minutes + neededAdjustment);
+            if (trip.stopMinutes) {
+                for (const [stopName, minutes] of Object.entries(trip.stopMinutes)) {
+                    const adjusted = minutes + neededAdjustment;
+                    trip.stopMinutes[stopName] = adjusted;
+                    if (trip.stops[stopName]) {
+                        trip.stops[stopName] = formatMinutesToTime(adjusted);
+                    }
+                }
+            } else {
+                for (const stopName of Object.keys(trip.stops)) {
+                    const timeStr = trip.stops[stopName];
+                    const rawMinutes = parseTimeToMinutes(timeStr);
+                    if (rawMinutes !== null) {
+                        const baseMinutes = normalizeTripMinutes(rawMinutes, trip.startTime);
+                        trip.stops[stopName] = formatMinutesToTime(baseMinutes + neededAdjustment);
+                    }
                 }
             }
         }
@@ -394,8 +409,8 @@ function buildConnectionPairs(
             for (let tripIndex = 0; tripIndex < table.trips.length; tripIndex++) {
                 const trip = table.trips[tripIndex];
 
-                // Check if trip has the connection stop
-                const stopTime = getTripStopTime(trip, connection.stopName);
+                // Check if trip has the connection stop (lookup by stop code)
+                const stopTime = getTripStopTimeByCode(trip, connection.stopCode, table.stopIds || {});
                 if (stopTime === null) continue;
 
                 // Apply time filter if set
@@ -503,24 +518,59 @@ function findClosestTargetTime(
  * Get all times from a connection target.
  */
 function getTargetTimes(target: ConnectionTarget): number[] {
-    if (target.type === 'manual' && target.times) {
+    if (target.times) {
         return target.times
             .filter(t => t.enabled)
             .map(t => t.time);
     }
-    // For route targets, times would be loaded from the master schedule
-    // This is a placeholder - actual implementation would query the master schedule
     return [];
 }
 
 /**
- * Get the time a trip is at a specific stop.
+ * Get the time a trip is at a specific stop by stop code.
+ * Uses stopIds to reverse-lookup the stop name from the code.
+ */
+function getTripStopTimeByCode(
+    trip: MasterTrip,
+    stopCode: string,
+    stopIds: Record<string, string>
+): number | null {
+    if (!trip.stops || !stopCode) return null;
+
+    // Reverse lookup: find stop name from stop code
+    const stopName = Object.entries(stopIds).find(([, code]) => code === stopCode)?.[0];
+    if (!stopName) return null;
+
+    const stopMinutes = trip.stopMinutes?.[stopName];
+    if (stopMinutes !== undefined) {
+        return stopMinutes;
+    }
+    if (!trip.stops[stopName]) return null;
+
+    const timeStr = trip.stops[stopName];
+    const parsed = parseTimeToMinutes(timeStr);
+    if (parsed === null) return null;
+
+    return normalizeTripMinutes(parsed, trip.startTime);
+}
+
+function normalizeTripMinutes(rawMinutes: number, tripStartTime: number): number {
+    if (rawMinutes >= 1440) return rawMinutes;
+    if (tripStartTime >= 1440) return rawMinutes + 1440;
+    if (tripStartTime < MIDNIGHT_ROLLOVER_THRESHOLD) return rawMinutes + 1440;
+    return rawMinutes;
+}
+
+/**
+ * Get the time a trip is at a specific stop by name (legacy, for internal use).
  */
 function getTripStopTime(trip: MasterTrip, stopName: string): number | null {
     if (!trip.stops || !trip.stops[stopName]) return null;
 
     const timeStr = trip.stops[stopName];
-    return parseTimeToMinutes(timeStr);
+    const parsed = parseTimeToMinutes(timeStr);
+    if (parsed === null) return null;
+    return normalizeTripMinutes(parsed, trip.startTime);
 }
 
 /**
@@ -538,12 +588,22 @@ function applyGlobalShift(schedules: MasterRouteTable[], shift: number): MasterR
             if (trip.stops) {
                 newTrip.stops = {};
                 for (const [stopName, timeStr] of Object.entries(trip.stops)) {
-                    const minutes = parseTimeToMinutes(timeStr);
-                    if (minutes !== null) {
-                        newTrip.stops[stopName] = formatMinutesToTime(minutes + shift);
+                    const rawMinutes = trip.stopMinutes?.[stopName] ?? parseTimeToMinutes(timeStr);
+                    if (rawMinutes !== null && rawMinutes !== undefined) {
+                        const baseMinutes = trip.stopMinutes?.[stopName] !== undefined
+                            ? rawMinutes
+                            : normalizeTripMinutes(rawMinutes, trip.startTime);
+                        newTrip.stops[stopName] = formatMinutesToTime(baseMinutes + shift);
                     } else {
                         newTrip.stops[stopName] = timeStr;
                     }
+                }
+            }
+
+            if (trip.stopMinutes) {
+                newTrip.stopMinutes = {};
+                for (const [stopName, minutes] of Object.entries(trip.stopMinutes)) {
+                    newTrip.stopMinutes[stopName] = minutes + shift;
                 }
             }
 
@@ -589,7 +649,8 @@ function addConnectionsToTrips(
                     tripArrivalTime: gap.tripTime,
                     gapMinutes: gap.gap,
                     meetsConnection: gap.meetsConnection,
-                    stopName: pair?.connection.stopName || ''
+                    stopCode: pair?.connection.stopCode || '',
+                    stopName: pair?.connection.stopName
                 };
             });
 
@@ -692,14 +753,14 @@ function parseTimeToMinutes(timeStr: string): number | null {
     if (!timeStr) return null;
 
     // Try "HH:MM AM/PM" format
-    const match12 = timeStr.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+    const match12 = timeStr.match(/^(\d{1,2}):(\d{2})\s*([ap]m?|[ap])$/i);
     if (match12) {
         let hours = parseInt(match12[1], 10);
         const mins = parseInt(match12[2], 10);
-        const period = match12[3].toUpperCase();
+        const periodChar = match12[3].toLowerCase()[0];
 
-        if (period === 'PM' && hours !== 12) hours += 12;
-        if (period === 'AM' && hours === 12) hours = 0;
+        if (periodChar === 'p' && hours !== 12) hours += 12;
+        if (periodChar === 'a' && hours === 12) hours = 0;
 
         return hours * 60 + mins;
     }

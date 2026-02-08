@@ -175,6 +175,7 @@ export interface ProcessedGTFSTrip {
     blockId: string | null;
     direction: Direction | 'Loop' | null;
     headsign: string | null;
+    shapeId: string | null;
     stopTimes: {
         stopId: string;
         stopName: string;

@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { Readable } from 'stream';
+import AdmZip from 'adm-zip';
 
 /**
  * GTFS Proxy API
@@ -50,88 +50,17 @@ function parseCSV(content: string): Record<string, string>[] {
     return records;
 }
 
-// Parse ZIP file (simple implementation for GTFS)
+// Parse ZIP file robustly using adm-zip.
 async function parseZip(buffer: ArrayBuffer): Promise<Map<string, string>> {
     const files = new Map<string, string>();
-    const view = new DataView(buffer);
-    const decoder = new TextDecoder('utf-8');
+    const zip = new AdmZip(Buffer.from(buffer));
+    const entries = zip.getEntries();
 
-    // ZIP local file header signature: 0x04034b50
-    let offset = 0;
-    while (offset < buffer.byteLength - 4) {
-        const signature = view.getUint32(offset, true);
-
-        if (signature === 0x04034b50) {
-            // Local file header
-            const compressionMethod = view.getUint16(offset + 8, true);
-            const compressedSize = view.getUint32(offset + 18, true);
-            const uncompressedSize = view.getUint32(offset + 22, true);
-            const fileNameLength = view.getUint16(offset + 26, true);
-            const extraFieldLength = view.getUint16(offset + 28, true);
-
-            const fileNameStart = offset + 30;
-            const fileNameBytes = new Uint8Array(buffer, fileNameStart, fileNameLength);
-            const fileName = decoder.decode(fileNameBytes);
-
-            const dataStart = fileNameStart + fileNameLength + extraFieldLength;
-
-            if (compressionMethod === 0) {
-                // Stored (no compression)
-                const dataBytes = new Uint8Array(buffer, dataStart, uncompressedSize);
-                files.set(fileName, decoder.decode(dataBytes));
-                offset = dataStart + uncompressedSize;
-            } else if (compressionMethod === 8) {
-                // Deflate compression - use DecompressionStream API
-                try {
-                    const compressedData = new Uint8Array(buffer, dataStart, compressedSize);
-
-                    // Create a readable stream from the compressed data
-                    const stream = new ReadableStream({
-                        start(controller) {
-                            controller.enqueue(compressedData);
-                            controller.close();
-                        }
-                    });
-
-                    // Decompress using DecompressionStream
-                    const decompressedStream = stream.pipeThrough(
-                        new DecompressionStream('deflate-raw')
-                    );
-
-                    const reader = decompressedStream.getReader();
-                    const chunks: Uint8Array[] = [];
-
-                    while (true) {
-                        const { done, value } = await reader.read();
-                        if (done) break;
-                        chunks.push(value);
-                    }
-
-                    // Combine chunks
-                    const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-                    const result = new Uint8Array(totalLength);
-                    let position = 0;
-                    for (const chunk of chunks) {
-                        result.set(chunk, position);
-                        position += chunk.length;
-                    }
-
-                    files.set(fileName, decoder.decode(result));
-                } catch (e) {
-                    console.warn(`Failed to decompress ${fileName}:`, e);
-                }
-                offset = dataStart + compressedSize;
-            } else {
-                // Unsupported compression
-                console.warn(`Unsupported compression method ${compressionMethod} for ${fileName}`);
-                offset = dataStart + compressedSize;
-            }
-        } else if (signature === 0x02014b50) {
-            // Central directory header - we're done with file data
-            break;
-        } else {
-            offset++;
-        }
+    for (const entry of entries) {
+        if (entry.isDirectory) continue;
+        const name = entry.entryName.split('/').pop() || entry.entryName;
+        if (!name.endsWith('.txt')) continue;
+        files.set(name, zip.readAsText(entry, 'utf8'));
     }
 
     return files;

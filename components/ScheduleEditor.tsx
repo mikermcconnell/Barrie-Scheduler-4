@@ -31,8 +31,6 @@ import {
     History,
     Maximize2,
     Minimize2,
-    Undo2,
-    Redo2,
     Minus,
     Clock,
     AlertTriangle,
@@ -41,8 +39,7 @@ import {
     MoreVertical,
     Pencil,
     Upload,
-    Database,
-    Link2
+    Database
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import ExcelJS from 'exceljs';
@@ -54,6 +51,8 @@ import {
     buildRoundTripView
 } from '../utils/masterScheduleParser';
 import { ConnectionsPanel } from './connections/ConnectionsPanel';
+import type { ConnectionLibrary } from '../utils/connectionTypes';
+import { getConnectionLibrary } from '../utils/connectionLibraryService';
 import { RouteSummary } from './RouteSummary';
 import { WorkspaceHeader } from './WorkspaceHeader';
 import { AutoSaveStatus } from '../hooks/useAutoSave';
@@ -66,7 +65,7 @@ import { ScenarioComparisonModal } from './ScenarioComparisonModal';
 import { AuditLogPanel, useAuditLog } from './AuditLogPanel';
 import { TripContextMenu, TripContextMenuAction } from './NewSchedule/TripContextMenu';
 import { SegmentTimeEditor } from './NewSchedule/SegmentTimeEditor';
-import { QuickActionsBar, FilterState, shouldGrayOutTrip, shouldHighlightTrip, matchesSearch } from './NewSchedule/QuickActionsBar';
+import { FilterState } from './NewSchedule/QuickActionsBar';
 import { TimelineView } from './NewSchedule/TimelineView';
 import {
     cascadeTripTimes,
@@ -106,7 +105,6 @@ import {
 } from '../utils/scheduleEditorUtils';
 import { StackedTimeCell, StackedTimeInput } from './ui/StackedTimeInput';
 import { RoundTripTableView } from './schedule/RoundTripTableView';
-import { SingleRouteView } from './schedule/SingleRouteView';
 import { getRouteConfig, extractDirectionFromName, parseRouteInfo } from '../utils/routeDirectionConfig';
 import { reassignBlocksForTables, MatchConfigPresets } from '../utils/blockAssignmentCore';
 import { useScheduleEditing, CascadeMode } from '../hooks/useScheduleEditing';
@@ -139,6 +137,9 @@ interface TripBucketAnalysisDisplay {
 
 export interface ScheduleEditorProps {
     schedules: MasterRouteTable[];
+    // Optional schedule scope used by Connections library validation/resolution.
+    // If omitted, defaults to the currently edited schedules.
+    connectionScopeSchedules?: MasterRouteTable[];
     onSchedulesChange?: (schedules: MasterRouteTable[]) => void;
     originalSchedules?: MasterRouteTable[];
     draftName?: string;
@@ -196,6 +197,7 @@ export interface ScheduleEditorProps {
 
 export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
     schedules,
+    connectionScopeSchedules,
     onSchedulesChange,
     originalSchedules,
     draftName = 'Schedule',
@@ -238,6 +240,21 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
 
     // Connections Panel State
     const [showConnectionsPanel, setShowConnectionsPanel] = useState(false);
+    const [connectionLibrary, setConnectionLibrary] = useState<ConnectionLibrary | null>(null);
+
+    // Load connection library when teamId is available
+    useEffect(() => {
+        if (!teamId) {
+            setConnectionLibrary(null);
+            return;
+        }
+        getConnectionLibrary(teamId)
+            .then(lib => setConnectionLibrary(lib))
+            .catch(err => {
+                console.error('Failed to load connection library:', err);
+                setConnectionLibrary(null);
+            });
+    }, [teamId]);
 
     // Quick Actions Bar Filter State
     const [filter, setFilter] = useState<FilterState>({
@@ -376,9 +393,18 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
     // Travel Time Grid Hook
     const gridHandlers = useTravelTimeGrid(schedules, onSchedulesChange, logAction);
 
-    // Auto-select day if current is invalid
+    // Keep active route/day selection valid as schedules change.
     useEffect(() => {
-        if (!consolidatedRoutes.length) return;
+        if (!consolidatedRoutes.length) {
+            if (activeRouteIdx !== 0) setActiveRouteIdx(0);
+            return;
+        }
+
+        if (activeRouteIdx >= consolidatedRoutes.length) {
+            setActiveRouteIdx(consolidatedRoutes.length - 1);
+            return;
+        }
+
         const group = consolidatedRoutes[activeRouteIdx];
         if (!group) return;
 
@@ -395,8 +421,10 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
             // Ctrl+S: Save version
             if (e.ctrlKey && e.key === 's') {
                 e.preventDefault();
-                onSaveVersion();
-                showSuccessToast('Version saved');
+                if (!readOnly && onSaveVersion) {
+                    void onSaveVersion();
+                    showSuccessToast?.('Version saved');
+                }
             }
             // Ctrl+Z: Undo
             if (e.ctrlKey && e.key === 'z' && !e.shiftKey) {
@@ -416,7 +444,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [canUndo, canRedo, undo, redo, onSaveVersion, showSuccessToast, isFullScreen]);
+    }, [canUndo, canRedo, undo, redo, onSaveVersion, showSuccessToast, isFullScreen, readOnly]);
 
     // Handlers
     const recalculateTrip = (trip: MasterTrip, cols: string[]) => {
@@ -466,7 +494,9 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         const isArrivalEdit = col.endsWith('__ARR');
         const stopName = isArrivalEdit ? col.replace('__ARR', '') : col;
 
-        const oldValue = trip.stops[stopName];
+        const oldValue = isArrivalEdit
+            ? (trip.arrivalTimes?.[stopName] ?? trip.stops[stopName])
+            : trip.stops[stopName];
         const oldTime = TimeUtils.toMinutes(oldValue);
         const newTime = TimeUtils.toMinutes(val);
         const colIdx = table.stops.indexOf(stopName);
@@ -482,24 +512,40 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
             });
         }
 
-        trip.stops[stopName] = val;
+        if (isArrivalEdit) {
+            if (!trip.arrivalTimes) trip.arrivalTimes = {};
+            trip.arrivalTimes[stopName] = val;
+            // Keep stops in sync so trip timing math (start/end/cycle) reflects ARR edits.
+            trip.stops[stopName] = val;
+        } else {
+            trip.stops[stopName] = val;
+            // Keep mirrored arrivalTimes in sync when present; many RoundTrip cells
+            // display arrivalTimes first, so stop-only updates can appear as no-op.
+            if (trip.arrivalTimes && trip.arrivalTimes[stopName] !== undefined) {
+                trip.arrivalTimes[stopName] = val;
+            }
+        }
 
-        if (oldTime !== null && newTime !== null && colIdx !== -1) {
+        if (cascadeMode !== 'none' && oldTime !== null && newTime !== null && colIdx !== -1) {
             const delta = newTime - oldTime;
             if (delta !== 0) {
                 for (let i = colIdx + 1; i < table.stops.length; i++) {
                     const nextStop = table.stops[i];
-                    const nextTime = TimeUtils.toMinutes(trip.stops[nextStop]);
+                    const nextTime = TimeUtils.toMinutes(trip.arrivalTimes?.[nextStop] ?? trip.stops[nextStop]);
                     if (nextTime !== null) {
                         const proposedTime = nextTime + delta;
                         // Validate: don't let time go before previous stop (would create negative segment)
                         const prevStop = table.stops[i - 1];
-                        const prevTime = TimeUtils.toMinutes(trip.stops[prevStop]);
+                        const prevTime = TimeUtils.toMinutes(trip.arrivalTimes?.[prevStop] ?? trip.stops[prevStop]);
                         if (prevTime !== null && proposedTime <= prevTime) {
                             // Skip cascade - would create invalid timing
                             break;
                         }
-                        trip.stops[nextStop] = TimeUtils.fromMinutes(proposedTime);
+                        const updatedTime = TimeUtils.fromMinutes(proposedTime);
+                        trip.stops[nextStop] = updatedTime;
+                        if (trip.arrivalTimes && trip.arrivalTimes[nextStop] !== undefined) {
+                            trip.arrivalTimes[nextStop] = updatedTime;
+                        }
                     }
                 }
             }
@@ -510,7 +556,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         const newEndTime = trip.endTime;
         const deltaEnd = newEndTime - oldEndTime;
 
-        if (deltaEnd !== 0) {
+        if (cascadeMode === 'always' && deltaEnd !== 0) {
             // Ripple to subsequent trips in the same block
             // Extract base route name using getTrueBaseRoute (handles 2A/2B direction variants)
             const baseName = getTrueBaseRoute(table.routeName);
@@ -544,7 +590,11 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                         const stopTime = nextTrip.stops[s];
                         // Use explicit check - "0:00 AM" would be falsy but is valid
                         if (stopTime !== null && stopTime !== undefined && stopTime !== '') {
-                            nextTrip.stops[s] = TimeUtils.addMinutes(stopTime, deltaEnd);
+                            const updatedStopTime = TimeUtils.addMinutes(stopTime, deltaEnd);
+                            nextTrip.stops[s] = updatedStopTime;
+                            if (nextTrip.arrivalTimes && nextTrip.arrivalTimes[s] !== undefined) {
+                                nextTrip.arrivalTimes[s] = updatedStopTime;
+                            }
                         }
                     });
                     recalculateTrip(nextTrip, nextTable.stops);
@@ -553,9 +603,6 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         }
 
         newScheds.forEach(t => validateRouteTable(t));
-
-        // Re-assign blocks after time changes to maintain proper linking
-        reassignBlocksForRelatedTables(newScheds, getTrueBaseRoute(table.routeName));
 
         onSchedulesChange(newScheds);
     };
@@ -573,6 +620,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         const maxRec = Math.max(0, trip.travelTime - 1);
         const newRec = Math.max(0, Math.min(oldRec + delta, maxRec));
         const actualDelta = newRec - oldRec; // May differ from requested delta if bounds were hit
+        const oldEndTime = trip.endTime;
 
         if (!trip.recoveryTimes) trip.recoveryTimes = {};
         trip.recoveryTimes[stopName] = newRec;
@@ -591,9 +639,42 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         }
         recalculateTrip(trip, table.stops);
         validateRouteTable(table);
+        const deltaEnd = trip.endTime - oldEndTime;
 
-        // Re-assign blocks after recovery time changes
-        reassignBlocksForRelatedTables(newScheds, getTrueBaseRoute(table.routeName));
+        if (cascadeMode === 'always' && deltaEnd !== 0) {
+            const baseName = getTrueBaseRoute(table.routeName);
+            const relatedTables = newScheds.filter(t => {
+                const tBase = getTrueBaseRoute(t.routeName);
+                return tBase === baseName;
+            });
+
+            const allBlockTrips: { trip: MasterTrip; table: MasterRouteTable }[] = [];
+            relatedTables.forEach(t => {
+                t.trips.filter(tr => tr.blockId === trip.blockId).forEach(tr => {
+                    allBlockTrips.push({ trip: tr, table: t });
+                });
+            });
+
+            allBlockTrips.sort((a, b) => a.trip.tripNumber - b.trip.tripNumber);
+            const startIdx = allBlockTrips.findIndex(item => item.trip.id === trip.id);
+
+            if (startIdx !== -1) {
+                for (let i = startIdx + 1; i < allBlockTrips.length; i++) {
+                    const { trip: nextTrip, table: nextTable } = allBlockTrips[i];
+                    nextTable.stops.forEach(s => {
+                        const stopTime = nextTrip.stops[s];
+                        if (stopTime !== null && stopTime !== undefined && stopTime !== '') {
+                            const updatedStopTime = TimeUtils.addMinutes(stopTime, deltaEnd);
+                            nextTrip.stops[s] = updatedStopTime;
+                            if (nextTrip.arrivalTimes && nextTrip.arrivalTimes[s] !== undefined) {
+                                nextTrip.arrivalTimes[s] = updatedStopTime;
+                            }
+                        }
+                    });
+                    recalculateTrip(nextTrip, nextTable.stops);
+                }
+            }
+        }
 
         onSchedulesChange(newScheds);
     };
@@ -602,13 +683,17 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         const newScheds = deepCloneSchedules(schedules);
         const result = findTableAndTrip(newScheds, tripId);
         if (!result) return;
-        const { table, trip } = result;
+        const { trip } = result;
 
-        const currentTime = trip.stops[stopName];
+        const isArrivalAdjust = stopName.endsWith('__ARR');
+        const baseStopName = isArrivalAdjust ? stopName.replace('__ARR', '') : stopName;
+        const currentTime = isArrivalAdjust
+            ? (trip.arrivalTimes?.[baseStopName] ?? trip.stops[baseStopName])
+            : (trip.arrivalTimes?.[baseStopName] ?? trip.stops[baseStopName]);
         if (!currentTime) return;
 
         const newTime = TimeUtils.addMinutes(currentTime, delta);
-        handleCellEdit(tripId, stopName, newTime);
+        handleCellEdit(tripId, isArrivalAdjust ? `${baseStopName}__ARR` : baseStopName, newTime);
     };
 
     const handleDeleteTrip = (tripId: string) => {
@@ -893,20 +978,50 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
 
         const { table, trip } = result;
         const oldStartTime = trip.startTime;
+        const oldDuration = Math.max(0, trip.endTime - trip.startTime);
+        const clampedDuration = Math.max(0, newDuration);
         const delta = newStartTime - oldStartTime;
+        const durationDelta = clampedDuration - oldDuration;
 
-        // Shift all stop times by the delta
+        // Shift all stop and arrival times by start delta.
         Object.keys(trip.stops).forEach(stop => {
             const t = TimeUtils.toMinutes(trip.stops[stop]);
             if (t !== null) {
                 trip.stops[stop] = TimeUtils.fromMinutes(t + delta);
             }
         });
+        Object.keys(trip.arrivalTimes || {}).forEach(stop => {
+            const t = TimeUtils.toMinutes(trip.arrivalTimes?.[stop]);
+            if (t !== null && trip.arrivalTimes) {
+                trip.arrivalTimes[stop] = TimeUtils.fromMinutes(t + delta);
+            }
+        });
+
+        // Apply duration delta to the last timed stop so resize persists after recalc.
+        if (durationDelta !== 0) {
+            let lastStopWithTime: string | null = null;
+            for (const stop of table.stops) {
+                const stopTime = TimeUtils.toMinutes(trip.stops[stop]);
+                if (stopTime !== null) lastStopWithTime = stop;
+            }
+
+            if (lastStopWithTime) {
+                const lastStopTime = TimeUtils.toMinutes(trip.stops[lastStopWithTime]);
+                if (lastStopTime !== null) {
+                    trip.stops[lastStopWithTime] = TimeUtils.fromMinutes(lastStopTime + durationDelta);
+                }
+
+                const lastArrivalTime = TimeUtils.toMinutes(trip.arrivalTimes?.[lastStopWithTime]);
+                if (lastArrivalTime !== null && trip.arrivalTimes) {
+                    trip.arrivalTimes[lastStopWithTime] = TimeUtils.fromMinutes(lastArrivalTime + durationDelta);
+                }
+            }
+        }
 
         // Update trip computed values
         trip.startTime = newStartTime;
-        trip.endTime = newStartTime + newDuration;
-        trip.travelTime = newDuration;
+        trip.endTime = newStartTime + clampedDuration;
+        trip.travelTime = clampedDuration;
 
         // Recalculate derived values
         recalculateTrip(trip, table.stops);
@@ -1329,7 +1444,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         return activeRoute.north || activeRoute.south || { routeName: 'Unknown', trips: [], stops: [], stopIds: {} };
     }, [activeRoute]);
 
-    if (!activeRouteGroup || !activeRoute) return <div className="p-8 text-center text-gray-400">No Routes Loaded</div>;
+    if (!activeRouteGroup || !activeRoute) return <div className="p-8 text-center text-gray-600">No Routes Loaded</div>;
 
     return (
         <>
@@ -1384,7 +1499,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                 onCancel={upload.closeBulkUpload}
             />
 
-            <div className={`h-full flex flex-col bg-gray-50/30 overflow-hidden ${isFullScreen ? 'fixed inset-0 z-[9999] bg-white' : ''}`}>
+            <div className={`h-full flex flex-col bg-gray-50 overflow-hidden ${isFullScreen ? 'fixed inset-0 z-[9999] bg-white' : ''}`}>
                 {/* WorkspaceHeader - hidden in embedded mode */}
                 {!embedded && (
                     <WorkspaceHeader
@@ -1416,17 +1531,18 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                         publishLabel={publishLabel}
                         isPublishing={isPublishing}
                         publishDisabled={publishDisabled}
+                        onOpenConnections={teamId && userId && !readOnly ? () => setShowConnectionsPanel(true) : undefined}
                     />
                 )}
 
-                <div className="flex-grow flex overflow-hidden">
+                <div className="flex-grow flex flex-col lg:flex-row overflow-hidden">
                     {/* Sidebar - hidden in embedded mode or when hideSidebar is true */}
                     {!isFullScreen && !embedded && !hideSidebar && (
-                        <div className="w-80 min-w-[320px] flex-shrink-0 bg-white border-r border-gray-200 flex flex-col overflow-hidden z-20">
+                        <div className="w-full lg:w-72 lg:min-w-[280px] lg:max-w-[320px] flex-shrink-0 bg-white border-b lg:border-b-0 lg:border-r border-gray-200 flex flex-col overflow-hidden z-20">
                             {/* Header */}
                             <div className="p-4 border-b border-gray-100 flex justify-between items-center">
-                                <h2 className="text-sm font-bold uppercase tracking-wider">{readOnly ? 'Master Schedule' : 'Route Tweaker'}</h2>
-                                {onClose && <button onClick={onClose} className="text-xs text-blue-600 flex items-center gap-1"><ArrowLeft size={10} /> Back</button>}
+                                <h2 className="text-sm font-bold uppercase tracking-wider text-gray-700">{readOnly ? 'Master Schedule' : 'Route Editor'}</h2>
+                                {onClose && <button onClick={onClose} className="text-sm text-blue-700 hover:text-blue-800 flex items-center gap-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 rounded px-1"><ArrowLeft size={12} /> Back</button>}
                             </div>
 
                             {/* Route List */}
@@ -1435,7 +1551,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                                     <div key={route.name} className="space-y-1">
                                         <button
                                             onClick={() => setActiveRouteIdx(i)}
-                                            className={`w-full text-left px-3 py-2 rounded-lg text-sm font-bold flex justify-between items-center ${i === activeRouteIdx ? 'bg-blue-50 text-blue-800' : 'text-gray-600 hover:bg-gray-50'}`}
+                                            className={`w-full text-left px-3 py-2 rounded-lg text-sm font-bold flex justify-between items-center ${i === activeRouteIdx ? 'bg-blue-50 text-blue-800' : 'text-gray-700 hover:bg-gray-50'}`}
                                             style={i === activeRouteIdx ? { backgroundColor: getRouteColor(route.name), color: getRouteTextColor(route.name) } : undefined}
                                         >
                                             Route {route.name}
@@ -1448,7 +1564,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                                                     <div key={day} className="flex items-center gap-1">
                                                         <button
                                                             onClick={() => setActiveDay(day)}
-                                                            className={`flex-1 text-left px-3 py-1.5 rounded text-xs flex items-center gap-2 ${activeDay === day ? 'bg-blue-100 font-bold text-blue-800' : 'text-gray-500 hover:bg-gray-50'}`}
+                                                            className={`flex-1 text-left px-3 py-1.5 rounded text-sm flex items-center gap-2 ${activeDay === day ? 'bg-blue-100 font-bold text-blue-800' : 'text-gray-700 hover:bg-gray-50'}`}
                                                         >
                                                             <div className={`w-1.5 h-1.5 rounded-full ${activeDay === day ? 'bg-blue-600' : 'bg-gray-300'}`} />
                                                             {day}
@@ -1459,7 +1575,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                                                                     e.stopPropagation();
                                                                     upload.initiateUpload(route.name, day as DayType);
                                                                 }}
-                                                                className="p-1.5 rounded text-gray-400 hover:text-green-600 hover:bg-green-50 transition-colors"
+                                                                className="p-1.5 rounded text-gray-600 hover:text-green-700 hover:bg-green-50 transition-colors"
                                                                 title={`Upload Route ${route.name} (${day}) to Master`}
                                                             >
                                                                 <Upload size={12} />
@@ -1495,22 +1611,10 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                                     {/* Editor Actions */}
                                     {subView === 'editor' && (
                                         <div className="p-4 flex gap-2 justify-center">
-                                            <button onClick={undo} disabled={!canUndo} className="p-2 bg-gray-100 rounded hover:bg-gray-200 disabled:opacity-50" title="Undo (Ctrl+Z)"><Undo2 size={16} /></button>
-                                            <button onClick={redo} disabled={!canRedo} className="p-2 bg-gray-100 rounded hover:bg-gray-200 disabled:opacity-50" title="Redo (Ctrl+Y)"><Redo2 size={16} /></button>
-                                            <div className="w-px bg-gray-200 mx-1" />
-                                            {teamId && (
-                                                <button
-                                                    onClick={() => setShowConnectionsPanel(true)}
-                                                    className="flex items-center gap-1.5 px-3 py-1.5 bg-green-100 text-green-700 rounded hover:bg-green-200 text-sm font-medium"
-                                                    title="Configure external connections (GO Train, College)"
-                                                >
-                                                    <Link2 size={14} /> Connections
-                                                </button>
-                                            )}
                                             <button
                                                 onClick={() => setShowComparisonModal(true)}
                                                 disabled={!originalSchedules}
-                                                className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-100 text-purple-700 rounded hover:bg-purple-200 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium"
+                                                className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-100 text-indigo-800 rounded hover:bg-indigo-200 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300"
                                                 title="Compare with original"
                                             >
                                                 <GitCompare size={14} /> Compare
@@ -1523,7 +1627,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                     )}
 
                     {/* Editor Content */}
-                    <div className="flex-grow min-w-0 overflow-auto flex flex-col p-4">
+                    <div className="flex-grow min-w-0 overflow-auto flex flex-col p-2 md:p-4">
                         {subView === 'matrix' ? (
                             <TravelTimeGrid
                                 schedules={[activeRoute.north, activeRoute.south].filter((t): t is MasterRouteTable => !!t)}
@@ -1543,49 +1647,34 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                                 selectedTripId={selectedTripId}
                             />
                         ) : (
-                            (activeRoute.combined && !forceSimpleView) ? (
-                                <>
-                                    {!isFullScreen && !embedded && (
-                                        <div className="flex items-center gap-3 mb-3">
-                                            <QuickActionsBar filter={filter} onFilterChange={setFilter} />
-                                            {!readOnly && (
-                                                <CascadeModeSelector mode={cascadeMode} onChange={setCascadeMode} />
-                                            )}
-                                        </div>
-                                    )}
-                                    <RoundTripTableView
-                                        schedules={schedules}
-                                        onCellEdit={readOnly ? undefined : handleCellEdit}
-                                        onTimeAdjust={readOnly ? undefined : handleTimeAdjust}
-                                        onRecoveryEdit={readOnly ? undefined : handleRecoveryEdit}
-                                        originalSchedules={originalSchedules}
-                                        onDeleteTrip={readOnly ? undefined : handleDeleteTrip}
-                                        onDuplicateTrip={readOnly ? undefined : handleDuplicateTrip}
-                                        onAddTrip={readOnly ? undefined : (_, tripId) => openAddTripModal(tripId, {})}
-                                        onTripRightClick={readOnly ? undefined : handleTripRightClick}
-                                        onMenuOpen={readOnly ? undefined : handleMenuOpen}
-                                        onLinkTrips={readOnly ? undefined : handleLinkTrips}
-                                        draftName={draftName}
-                                        filter={filter}
-                                        targetCycleTime={targetCycleTime}
-                                        targetHeadway={targetHeadway}
-                                        readOnly={readOnly}
-                                    />
-                                </>
-                            ) : (
-                                <SingleRouteView
-                                    table={activeRoute.north || activeRoute.south!}
-                                    originalTable={originalSchedules?.find(t => t.routeName === (activeRoute.north?.routeName || activeRoute.south?.routeName))}
+                            <>
+                                {!isFullScreen && !embedded && !readOnly && (
+                                    <div className="flex flex-wrap items-start gap-2 md:gap-3 mb-3">
+                                        <CascadeModeSelector mode={cascadeMode} onChange={setCascadeMode} />
+                                    </div>
+                                )}
+                                <RoundTripTableView
+                                    schedules={schedules}
+                                    interlineScopeSchedules={connectionScopeSchedules || schedules}
                                     onCellEdit={readOnly ? undefined : handleCellEdit}
-                                    onRecoveryEdit={readOnly ? undefined : handleRecoveryEdit}
                                     onTimeAdjust={readOnly ? undefined : handleTimeAdjust}
+                                    onRecoveryEdit={readOnly ? undefined : handleRecoveryEdit}
+                                    originalSchedules={originalSchedules}
                                     onDeleteTrip={readOnly ? undefined : handleDeleteTrip}
                                     onDuplicateTrip={readOnly ? undefined : handleDuplicateTrip}
                                     onAddTrip={readOnly ? undefined : (_, tripId) => openAddTripModal(tripId, {})}
-                                    onDirectionChange={readOnly ? undefined : handleDirectionChange}
+                                    onTripRightClick={readOnly ? undefined : handleTripRightClick}
+                                    onMenuOpen={readOnly ? undefined : handleMenuOpen}
+                                    onLinkTrips={readOnly ? undefined : handleLinkTrips}
+                                    draftName={draftName}
+                                    filter={filter}
+                                    targetCycleTime={targetCycleTime}
+                                    targetHeadway={targetHeadway}
                                     readOnly={readOnly}
+                                    connectionLibrary={connectionLibrary}
+                                    dayType={activeDay as DayType}
                                 />
-                            )
+                            </>
                         )}
                     </div>
                 </div>
@@ -1593,15 +1682,14 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
 
             {/* Connections Panel */}
             {showConnectionsPanel && teamId && userId && activeRouteGroup && (
-                <ConnectionsPanel
-                    schedules={schedules}
+                    <ConnectionsPanel
+                    schedules={connectionScopeSchedules || schedules}
                     routeIdentity={`${activeRouteGroup.name}-${activeDay}`}
                     dayType={activeDay as 'Weekday' | 'Saturday' | 'Sunday'}
                     teamId={teamId}
                     userId={userId}
+                    onLibraryChanged={setConnectionLibrary}
                     onClose={() => setShowConnectionsPanel(false)}
-                    onSchedulesChange={onSchedulesChange}
-                    showSuccessToast={showSuccessToast}
                 />
             )}
 

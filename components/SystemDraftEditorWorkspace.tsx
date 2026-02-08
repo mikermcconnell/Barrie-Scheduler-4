@@ -154,6 +154,7 @@ export const SystemDraftEditorWorkspace: React.FC<SystemDraftEditorWorkspaceProp
     const [lastSaved, setLastSaved] = useState<Date | null>(null);
     const [isPublishing, setIsPublishing] = useState(false);
     const [storagePath, setStoragePath] = useState<string | undefined>(initialDraft.storagePath);
+    const originalRoutesSnapshotRef = useRef<SystemDraftRoute[]>(initialDraft.routes);
 
     // Sidebar state
     const [routeSearch, setRouteSearch] = useState('');
@@ -178,8 +179,8 @@ export const SystemDraftEditorWorkspace: React.FC<SystemDraftEditorWorkspaceProp
 
     // Original tables for comparison (from initial load)
     const originalTables = useMemo(
-        () => getTablesForRoute(initialDraft.routes, currentRouteNumber),
-        [initialDraft.routes, currentRouteNumber]
+        () => getTablesForRoute(originalRoutesSnapshotRef.current, currentRouteNumber),
+        [currentRouteNumber]
     );
 
     // Handle route table changes from ScheduleEditor
@@ -422,6 +423,7 @@ export const SystemDraftEditorWorkspace: React.FC<SystemDraftEditorWorkspaceProp
                 {currentTables.length > 0 ? (
                     <ScheduleEditor
                         schedules={currentTables}
+                        connectionScopeSchedules={getAllTablesFromRoutes(allRoutes)}
                         onSchedulesChange={handleSchedulesChange}
                         originalSchedules={originalTables}
                         draftName={`${draftName} - Route ${currentRouteNumber}`}

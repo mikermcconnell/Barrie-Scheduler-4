@@ -25,20 +25,25 @@ import type { MasterRouteTable } from '../../../utils/masterScheduleParser';
 import type {
     ConnectionLibrary,
     ConnectionTarget,
+    ConnectionTime,
     RouteConnectionConfig,
     RouteConnection,
     OptimizationMode,
-    OptimizationResult
+    OptimizationResult,
+    StopInfo
 } from '../../../utils/connectionTypes';
-import { formatConnectionTime } from '../../../utils/connectionTypes';
+import { generateConnectionId, parseConnectionTime } from '../../../utils/connectionTypes';
 import { ConnectionLibraryPanel } from '../connections/ConnectionLibraryPanel';
 import { RouteConnectionPanel } from '../connections/RouteConnectionPanel';
 import { OptimizationPanel } from '../connections/OptimizationPanel';
-import { AddTargetModal } from '../connections/AddTargetModal';
+import { AddTargetModal, AddTargetInitialData } from '../connections/AddTargetModal';
 import { ImportRouteModal } from '../connections/ImportRouteModal';
+import { ConnectionAddChooser } from '../connections/ConnectionAddChooser';
 import { ConnectionStatusPanel } from '../../connections/ConnectionStatusPanel';
 import { getConnectionLibrary, saveConnectionLibrary } from '../../../utils/connectionLibraryService';
+import { getMasterSchedule } from '../../../utils/masterScheduleService';
 import { optimizeForConnections, checkConnections, ConnectionCheckResult } from '../../../utils/connectionOptimizer';
+import { appendLibraryChange } from '../../../utils/connectionLibraryUtils';
 
 interface Step5Props {
     schedules: MasterRouteTable[];
@@ -76,12 +81,96 @@ export const Step5Connections: React.FC<Step5Props> = ({
     // Local UI state
     const [isOptimizing, setIsOptimizing] = useState(false);
     const [optimizationResult, setOptimizationResult] = useState<OptimizationResult | null>(null);
+    const [showChooser, setShowChooser] = useState(false);
     const [showAddTargetModal, setShowAddTargetModal] = useState(false);
     const [showImportRouteModal, setShowImportRouteModal] = useState(false);
+    const [addTargetInitialData, setAddTargetInitialData] = useState<AddTargetInitialData | undefined>();
     const [expandedSection, setExpandedSection] = useState<'library' | 'config' | 'optimize' | null>('library');
     const [isLoadingLibrary, setIsLoadingLibrary] = useState(false);
     const [connectionStatus, setConnectionStatus] = useState<ConnectionCheckResult | null>(null);
     const [isCheckingStatus, setIsCheckingStatus] = useState(false);
+
+    const deriveRouteTargetTimes = useCallback((
+        table: MasterRouteTable,
+        stopName: string,
+        dayType: 'Weekday' | 'Saturday' | 'Sunday'
+    ): ConnectionTime[] => {
+        const normalizeTripMinutes = (rawMinutes: number, tripStartTime: number) => {
+            if (rawMinutes >= 1440) return rawMinutes;
+            if (tripStartTime >= 1440) return rawMinutes + 1440;
+            if (tripStartTime < 210) return rawMinutes + 1440;
+            return rawMinutes;
+        };
+
+        const uniqueTimes = new Set<number>();
+
+        for (const trip of table.trips) {
+            const stopMinutes = trip.stopMinutes?.[stopName];
+            if (stopMinutes !== undefined) {
+                uniqueTimes.add(stopMinutes);
+                continue;
+            }
+            const timeStr = trip.stops?.[stopName];
+            if (!timeStr) continue;
+            const parsed = parseConnectionTime(timeStr);
+            if (parsed === 0 && !/^12:00/i.test(timeStr) && !/^0?0:00/i.test(timeStr)) continue;
+            uniqueTimes.add(normalizeTripMinutes(parsed, trip.startTime));
+        }
+
+        const sortedTimes = Array.from(uniqueTimes).sort((a, b) => a - b);
+        return sortedTimes.map(time => ({
+            id: generateConnectionId(),
+            time,
+            daysActive: [dayType],
+            enabled: true
+        }));
+    }, []);
+
+    const getTemplateInitialData = useCallback((data: AddTargetInitialData): AddTargetInitialData => {
+        const name = (data.name || '').toLowerCase();
+        const location = (data.location || '').toLowerCase();
+        const isGoTemplate = data.icon === 'train' && (
+            name.includes('go')
+            || location.includes('go')
+            || name.includes('allandale')
+            || location.includes('allandale')
+        );
+        if (!isGoTemplate) return data;
+
+        const wantsBarrieSouth = name.includes('barrie south') || location.includes('barrie south');
+        const wantsAllandale = name.includes('allandale') || location.includes('allandale');
+
+        const stopMap = new Map<string, string>(); // code -> name
+        for (const table of schedules) {
+            Object.entries(table.stopIds || {}).forEach(([stopName, code]) => {
+                const normalizedName = stopName.toLowerCase();
+                const isBarrieSouthMatch = normalizedName.includes('barrie south')
+                    && (normalizedName.includes('terminal') || normalizedName.includes('go'));
+                const isAllandaleMatch = normalizedName.includes('allandale')
+                    && (normalizedName.includes('terminal') || normalizedName.includes('go'));
+                const stationMatch = wantsBarrieSouth
+                    ? isBarrieSouthMatch
+                    : wantsAllandale
+                        ? isAllandaleMatch
+                        : (isBarrieSouthMatch || isAllandaleMatch);
+                if (stationMatch && code) {
+                    stopMap.set(code, stopName);
+                }
+            });
+        }
+
+        const matchedStops = Array.from(stopMap.entries())
+            .map(([code, stopName]) => ({ code, name: stopName, enabled: true }));
+
+        if (matchedStops.length === 0) return data;
+
+        return {
+            ...data,
+            stops: matchedStops,
+            stopCode: matchedStops[0].code,
+            autoPopulateStops: true
+        };
+    }, [schedules]);
 
     // Load connection library from Firebase on mount
     useEffect(() => {
@@ -145,6 +234,103 @@ export const Step5Connections: React.FC<Step5Props> = ({
         }
     }, [routeIdentity, routeConnectionConfig, setRouteConnectionConfig]);
 
+    // Resolve route-based targets from master schedules (cache derived times)
+    useEffect(() => {
+        if (!teamId || !connectionLibrary || isLoadingLibrary) return;
+
+        const routeTargets = connectionLibrary.targets.filter(
+            target => target.type === 'route' && target.routeIdentity
+        );
+        if (routeTargets.length === 0) return;
+
+        let cancelled = false;
+
+        const resolveRouteTargets = async () => {
+            const uniqueRouteIds = Array.from(new Set(routeTargets.map(t => t.routeIdentity)));
+            const scheduleResults = await Promise.all(
+                uniqueRouteIds.map(async (routeId) => {
+                    if (!routeId) return [routeId, null] as const;
+                    try {
+                        const result = await getMasterSchedule(teamId, routeId as any);
+                        return [routeId, result] as const;
+                    } catch (error) {
+                        console.error('Error loading master schedule for connection target:', routeId, error);
+                        return [routeId, null] as const;
+                    }
+                })
+            );
+
+            const scheduleMap = new Map(scheduleResults);
+            let changed = false;
+
+            const updatedTargets = connectionLibrary.targets.map(target => {
+                if (target.type !== 'route' || !target.routeIdentity) return target;
+                const schedule = scheduleMap.get(target.routeIdentity);
+                if (!schedule) return target;
+
+                const sourceUpdatedAt = schedule.entry.updatedAt.toISOString();
+                const table = target.direction === 'South'
+                    ? schedule.content.southTable
+                    : schedule.content.northTable;
+                if (!table) return target;
+
+                const stopNameFromCode = target.stopCode
+                    ? Object.entries(table.stopIds || {}).find(([, code]) => code === target.stopCode)?.[0]
+                    : undefined;
+                const resolvedStopName = stopNameFromCode || target.stopName;
+                const resolvedStopCode = target.stopCode || (resolvedStopName ? table.stopIds?.[resolvedStopName] : '');
+
+                if (!resolvedStopName || !resolvedStopCode) return target;
+
+                const cacheValid = target.sourceScheduleUpdatedAt === sourceUpdatedAt
+                    && target.times
+                    && target.times.length > 0;
+
+                if (cacheValid) {
+                    if (target.stopName !== resolvedStopName || target.stopCode !== resolvedStopCode) {
+                        changed = true;
+                        return { ...target, stopName: resolvedStopName, stopCode: resolvedStopCode };
+                    }
+                    return target;
+                }
+
+                const derivedTimes = deriveRouteTargetTimes(table, resolvedStopName, schedule.entry.dayType);
+                if (derivedTimes.length === 0) {
+                    if (target.sourceScheduleUpdatedAt !== sourceUpdatedAt || target.stopName !== resolvedStopName || target.stopCode !== resolvedStopCode) {
+                        changed = true;
+                        return { ...target, stopName: resolvedStopName, stopCode: resolvedStopCode, sourceScheduleUpdatedAt: sourceUpdatedAt };
+                    }
+                    return target;
+                }
+
+                changed = true;
+                return {
+                    ...target,
+                    stopName: resolvedStopName,
+                    stopCode: resolvedStopCode,
+                    times: derivedTimes,
+                    sourceScheduleUpdatedAt: sourceUpdatedAt,
+                    updatedAt: new Date().toISOString()
+                };
+            });
+
+            if (!changed || cancelled) return;
+
+            setConnectionLibrary({
+                ...connectionLibrary,
+                targets: updatedTargets,
+                updatedAt: new Date().toISOString(),
+                updatedBy: userId
+            });
+        };
+
+        resolveRouteTargets();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [teamId, connectionLibrary, isLoadingLibrary, setConnectionLibrary, userId, deriveRouteTargetTimes]);
+
     // Check connection status whenever schedules, config, or library changes
     useEffect(() => {
         if (!connectionLibrary || !routeConnectionConfig || schedules.length === 0) {
@@ -164,13 +350,21 @@ export const Step5Connections: React.FC<Step5Props> = ({
         }
     }, [schedules, connectionLibrary, routeConnectionConfig]);
 
-    // Get stop names from current schedules
-    const availableStops = React.useMemo(() => {
-        const stops = new Set<string>();
+    // Get available stops from schedules (with codes)
+    const availableStops: StopInfo[] = React.useMemo(() => {
+        const stopMap = new Map<string, string>(); // code -> name
         schedules.forEach(table => {
-            table.stops.forEach(stop => stops.add(stop));
+            if (table.stopIds) {
+                Object.entries(table.stopIds).forEach(([name, code]) => {
+                    if (code && !stopMap.has(code)) {
+                        stopMap.set(code, name);
+                    }
+                });
+            }
         });
-        return Array.from(stops);
+        return Array.from(stopMap.entries())
+            .map(([code, name]) => ({ code, name }))
+            .sort((a, b) => a.name.localeCompare(b.name));
     }, [schedules]);
 
     // Count statistics
@@ -192,12 +386,12 @@ export const Step5Connections: React.FC<Step5Props> = ({
             updatedAt: new Date().toISOString()
         };
 
-        setConnectionLibrary({
+        setConnectionLibrary(appendLibraryChange({
             ...connectionLibrary,
             targets: [...connectionLibrary.targets, newTarget],
             updatedAt: new Date().toISOString(),
             updatedBy: userId
-        });
+        }, userId, 'add_target', `Added ${newTarget.name}`));
 
         setShowAddTargetModal(false);
     }, [connectionLibrary, setConnectionLibrary, userId]);
@@ -331,8 +525,10 @@ export const Step5Connections: React.FC<Step5Props> = ({
                         <ConnectionLibraryPanel
                             library={connectionLibrary}
                             onUpdateLibrary={setConnectionLibrary}
-                            onAddTarget={() => setShowAddTargetModal(true)}
+                            onAddTarget={() => setShowChooser(true)}
                             onImportRoute={() => setShowImportRouteModal(true)}
+                            schedules={schedules}
+                            validStopCodes={availableStops.map(stop => stop.code)}
                             userId={userId}
                             dayType={dayType}
                         />
@@ -417,11 +613,39 @@ export const Step5Connections: React.FC<Step5Props> = ({
             </div>
 
             {/* Modals */}
+            <ConnectionAddChooser
+                isOpen={showChooser}
+                onClose={() => setShowChooser(false)}
+                onSelectManual={() => {
+                    setAddTargetInitialData(undefined);
+                    setShowChooser(false);
+                    setShowAddTargetModal(true);
+                }}
+                onSelectTemplate={(data) => {
+                    setAddTargetInitialData(getTemplateInitialData(data));
+                    setShowChooser(false);
+                    setShowAddTargetModal(true);
+                }}
+                onSelectGtfsImport={() => {
+                    // For now, GTFS import opens the manual form with GO Train presets
+                    setShowChooser(false);
+                    setShowAddTargetModal(true);
+                }}
+                dayType={dayType}
+            />
+
             <AddTargetModal
                 isOpen={showAddTargetModal}
-                onClose={() => setShowAddTargetModal(false)}
+                onClose={() => {
+                    setShowAddTargetModal(false);
+                    setAddTargetInitialData(undefined);
+                }}
                 onAdd={handleAddTarget}
                 dayType={dayType}
+                existingTargetNames={connectionLibrary?.targets.map(t => t.name) || []}
+                validStopCodes={availableStops.map(stop => stop.code)}
+                defaultQualityWindowSettings={connectionLibrary?.qualityWindowSettings}
+                initialData={addTargetInitialData}
             />
 
             <ImportRouteModal
@@ -430,6 +654,7 @@ export const Step5Connections: React.FC<Step5Props> = ({
                 onImport={handleAddTarget}
                 teamId={teamId}
                 currentRouteIdentity={routeIdentity}
+                existingTargetNames={connectionLibrary?.targets.map(t => t.name) || []}
             />
         </div>
     );

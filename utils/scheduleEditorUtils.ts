@@ -104,6 +104,66 @@ export const calculateTripsPerHour = (trips: MasterTrip[]): Record<number, numbe
     return hourCounts;
 };
 
+/**
+ * Compare block IDs using numeric chunks (e.g. 10-2 < 10-12 < 100-1).
+ */
+export const compareBlockIds = (a: string, b: string): number => {
+    const aParts = (a || '')
+        .replace(/\D+/g, '-')
+        .split('-')
+        .filter(Boolean)
+        .map(Number)
+        .filter(n => !Number.isNaN(n));
+    const bParts = (b || '')
+        .replace(/\D+/g, '-')
+        .split('-')
+        .filter(Boolean)
+        .map(Number)
+        .filter(n => !Number.isNaN(n));
+
+    for (let i = 0; i < Math.max(aParts.length, bParts.length); i++) {
+        const diff = (aParts[i] || 0) - (bParts[i] || 0);
+        if (diff !== 0) return diff;
+    }
+
+    return (a || '').localeCompare(b || '', undefined, { numeric: true, sensitivity: 'base' });
+};
+
+/**
+ * Return trips sorted by block number, then by start time within each block.
+ */
+export const sortTripsByBlockNumber = (trips: MasterTrip[]): MasterTrip[] => {
+    return [...trips].sort((a, b) => {
+        const blockDiff = compareBlockIds(a.blockId, b.blockId);
+        if (blockDiff !== 0) return blockDiff;
+
+        const timeDiff = a.startTime - b.startTime;
+        if (timeDiff !== 0) return timeDiff;
+
+        return (a.tripNumber || 0) - (b.tripNumber || 0);
+    });
+};
+
+/**
+ * Return trips in round-robin block flow:
+ * first trip of each block (1,2,3...), then second trip of each block, etc.
+ */
+export const sortTripsByBlockFlow = (trips: MasterTrip[]): MasterTrip[] => {
+    return [...trips].sort((a, b) => {
+        const aSeq = a.tripNumber || 0;
+        const bSeq = b.tripNumber || 0;
+        if (aSeq !== bSeq) return aSeq - bSeq;
+
+        const timeDiff = a.startTime - b.startTime;
+        if (timeDiff !== 0) return timeDiff;
+
+        const blockDiff = compareBlockIds(a.blockId, b.blockId);
+        if (blockDiff !== 0) return blockDiff;
+
+        return (a.id || '').localeCompare(b.id || '', undefined, { numeric: true, sensitivity: 'base' });
+    });
+};
+
 // --- Vehicle & Service Calculations ---
 
 /**

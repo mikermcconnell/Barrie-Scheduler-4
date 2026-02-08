@@ -20,7 +20,10 @@ import type {
     RouteConnectionConfig,
     generateConnectionId
 } from './connectionTypes';
-import { generateConnectionId as genId } from './connectionTypes';
+import {
+    generateConnectionId as genId,
+    DEFAULT_CONNECTION_QUALITY_WINDOW_SETTINGS as DEFAULT_QUALITY_WINDOW_SETTINGS
+} from './connectionTypes';
 
 // ============ HELPER FUNCTIONS ============
 
@@ -78,6 +81,8 @@ export async function getConnectionLibrary(teamId: string): Promise<ConnectionLi
         const data = docSnap.data();
         return {
             targets: data.targets || [],
+            qualityWindowSettings: data.qualityWindowSettings || DEFAULT_QUALITY_WINDOW_SETTINGS,
+            changeLog: data.changeLog || [],
             updatedAt: timestampToISO(data.updatedAt),
             updatedBy: data.updatedBy || ''
         };
@@ -115,6 +120,10 @@ export async function saveConnectionLibrary(
         const cleanedTargets = removeUndefined(library.targets);
         await setDoc(docRef, {
             targets: cleanedTargets,
+            qualityWindowSettings: removeUndefined(
+                library.qualityWindowSettings || DEFAULT_QUALITY_WINDOW_SETTINGS
+            ),
+            changeLog: removeUndefined(library.changeLog || []),
             updatedAt: serverTimestamp(),
             updatedBy: userId
         });
@@ -331,6 +340,8 @@ export async function initializeConnectionLibrary(
 ): Promise<ConnectionLibrary> {
     const library: ConnectionLibrary = {
         targets: [],
+        qualityWindowSettings: DEFAULT_QUALITY_WINDOW_SETTINGS,
+        changeLog: [],
         updatedAt: new Date().toISOString(),
         updatedBy: userId
     };

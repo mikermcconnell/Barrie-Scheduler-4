@@ -1,6 +1,7 @@
 
 import * as XLSX from 'xlsx';
 import { extractDirectionFromName } from './routeDirectionConfig';
+import { buildBlocksBidirectional, TripForMatching, MatchConfigPresets } from './blockAssignmentCore';
 
 // --- Types ---
 
@@ -35,6 +36,7 @@ export interface MasterTrip {
 
     // Data
     stops: Record<string, string>; // Departure times per stop
+    stopMinutes?: Record<string, number>; // Departure times per stop (minutes from midnight, supports >1440)
     arrivalTimes?: Record<string, string>; // Arrival times per stop (before recovery)
 
     // External Connections (from Step 5 Connection Optimizer)
@@ -53,6 +55,14 @@ export interface MasterTrip {
 
     // Original GTFS block ID (for linking trips on same physical bus)
     gtfsBlockId?: string;
+
+    // Explicit interline links (used for cross-route continuity like 8A <-> 8B)
+    interlineNext?: { route: string; tripId: string };
+    interlinePrev?: { route: string; tripId: string };
+
+    // GTFS shape/pattern identification
+    shapeId?: string;
+    patternLabel?: string;
 }
 
 export interface MasterRouteTable {
@@ -94,21 +104,21 @@ const toMinutes = (timeStr: string | number): number | null => {
         // Excel decimal days: 0.5 = 12:00 PM, 0.99 = 11:45 PM
         // Post-midnight times: 1.02 = 12:30 AM (the "1" = next day, 0.02 = 30 min)
         //
-        // CRITICAL FIX: Any value >= 1.0 needs the fractional part extracted
-        // Previous bug: Values between 1.0 and 2.0 were multiplied by 24*60 directly,
-        // causing 1.02 (12:30 AM) to become 1469 min instead of 30 min.
+        // CRITICAL FIX: Values >= 1.0 must preserve the day offset.
+        // Example: 1.02 (12:30 AM next day) becomes 1470 minutes.
 
         // Small integers are NOT times - they're likely IDs or other data
         if (Number.isInteger(timeStr) && timeStr < 100) {
             return null;
         }
 
-        // Values >= 1.0 are dates with time component - extract just the time (fractional part)
+        // Values >= 1.0 are dates with time component - preserve day offset
         if (timeStr >= 1) {
+            const wholeDays = Math.floor(timeStr);
             const fraction = timeStr % 1;
             // If fraction is very small (pure integer date with no time), not a valid time
             if (fraction < 0.001) return null;
-            return Math.round(fraction * 24 * 60);
+            return (wholeDays * 24 * 60) + Math.round(fraction * 24 * 60);
         }
 
         // Values < 1.0 are pure time fractions (0.5 = noon, 0.75 = 6 PM)
@@ -148,7 +158,7 @@ const fromMinutes = (minutes: number): string => {
     }
 
     // Normalize hours to 0-23 range (handle times past midnight like 25:00 -> 1:00)
-    h = h % 24;
+    h = ((h % 24) + 24) % 24;
 
     const period = h >= 12 ? 'PM' : 'AM';
 
@@ -161,6 +171,29 @@ const fromMinutes = (minutes: number): string => {
 
     return `${h}:${m.toString().padStart(2, '0')} ${period}`;
 };
+
+const applyDayOffset = (
+    rawMinutes: number,
+    lastAdjusted: number | null,
+    offset: number
+): { adjusted: number; offset: number } => {
+    let adjusted = rawMinutes;
+    let nextOffset = offset;
+
+    if (rawMinutes >= 1440) {
+        adjusted = rawMinutes;
+        nextOffset = Math.floor(rawMinutes / 1440) * 1440;
+    } else {
+        if (lastAdjusted !== null && rawMinutes + nextOffset < lastAdjusted - 60) {
+            nextOffset += 1440;
+        }
+        adjusted = rawMinutes + nextOffset;
+    }
+
+    return { adjusted, offset: nextOffset };
+};
+
+const MIDNIGHT_ROLLOVER_THRESHOLD = 210; // 3:30 AM
 
 // Helper for handling midnight crossover - calculates duration when trip may cross midnight
 const getTripDuration = (startTime: number, endTime: number): number => {
@@ -350,11 +383,14 @@ export const parseMasterSchedule = (fileData: ArrayBuffer, mode: 'auto' | 'fixed
 
             // --- Parse North Trip ---
             const northStops: Record<string, string> = {};
+            const northStopMinutes: Record<string, number> = {};
             let nStart: number | null = null;
             let nEnd: number | null = null;
             let validNStops = 0;
             let nStartStopIndex: number | undefined = undefined;
             let nEndStopIndex: number | undefined = undefined;
+            let nOffset = 0;
+            let nLastAdjusted: number | null = null;
 
             northCols.forEach((col, stopIdx) => {
                 const val = row[col.idx];
@@ -362,14 +398,19 @@ export const parseMasterSchedule = (fileData: ArrayBuffer, mode: 'auto' | 'fixed
 
                 const mins = toMinutes(val);
                 if (mins !== null) {
+                    const adjustedInfo = applyDayOffset(mins, nLastAdjusted, nOffset);
+                    const adjusted = adjustedInfo.adjusted;
+                    nOffset = adjustedInfo.offset;
+                    nLastAdjusted = adjusted;
                     if (nStart === null) {
-                        nStart = mins;
+                        nStart = adjusted;
                         nStartStopIndex = stopIdx;
                     }
-                    nEnd = mins;
+                    nEnd = adjusted;
                     nEndStopIndex = stopIdx;
                     validNStops++;
-                    northStops[col.name] = fromMinutes(mins);
+                    northStops[col.name] = fromMinutes(adjusted);
+                    northStopMinutes[col.name] = adjusted;
                 } else if (val) {
                     northStops[col.name] = String(val);
                 }
@@ -377,6 +418,17 @@ export const parseMasterSchedule = (fileData: ArrayBuffer, mode: 'auto' | 'fixed
 
             let nRec = 0;
             if (northRecoveryIdx !== -1) nRec = parseInt(String(row[northRecoveryIdx])) || 0;
+
+            if (nStart !== null && nEnd !== null
+                && nStart < MIDNIGHT_ROLLOVER_THRESHOLD
+                && !Object.values(northStopMinutes).some(v => v >= 1440)
+            ) {
+                nStart += 1440;
+                nEnd += 1440;
+                for (const key of Object.keys(northStopMinutes)) {
+                    northStopMinutes[key] += 1440;
+                }
+            }
 
             // Use getTripDuration to handle midnight crossover
             const nTravelTime = nStart !== null && nEnd !== null ? getTripDuration(nStart, nEnd) : 0;
@@ -394,6 +446,7 @@ export const parseMasterSchedule = (fileData: ArrayBuffer, mode: 'auto' | 'fixed
                     travelTime: nTravelTime,
                     cycleTime: nTravelTime + nRec,
                     stops: northStops,
+                    stopMinutes: northStopMinutes,
                     // Track partial trip indices (only set if not starting/ending at first/last stop)
                     startStopIndex: nStartStopIndex !== 0 ? nStartStopIndex : undefined,
                     endStopIndex: nEndStopIndex !== northCols.length - 1 ? nEndStopIndex : undefined
@@ -402,11 +455,14 @@ export const parseMasterSchedule = (fileData: ArrayBuffer, mode: 'auto' | 'fixed
 
             // --- Parse South Trip ---
             const southStops: Record<string, string> = {};
+            const southStopMinutes: Record<string, number> = {};
             let sStart: number | null = null;
             let sEnd: number | null = null;
             let validSStops = 0;
             let sStartStopIndex: number | undefined = undefined;
             let sEndStopIndex: number | undefined = undefined;
+            let sOffset = 0;
+            let sLastAdjusted: number | null = null;
 
             southCols.forEach((col, stopIdx) => {
                 const val = row[col.idx];
@@ -414,14 +470,19 @@ export const parseMasterSchedule = (fileData: ArrayBuffer, mode: 'auto' | 'fixed
 
                 const mins = toMinutes(val);
                 if (mins !== null) {
+                    const adjustedInfo = applyDayOffset(mins, sLastAdjusted, sOffset);
+                    const adjusted = adjustedInfo.adjusted;
+                    sOffset = adjustedInfo.offset;
+                    sLastAdjusted = adjusted;
                     if (sStart === null) {
-                        sStart = mins;
+                        sStart = adjusted;
                         sStartStopIndex = stopIdx;
                     }
-                    sEnd = mins;
+                    sEnd = adjusted;
                     sEndStopIndex = stopIdx;
                     validSStops++;
-                    southStops[col.name] = fromMinutes(mins);
+                    southStops[col.name] = fromMinutes(adjusted);
+                    southStopMinutes[col.name] = adjusted;
                 } else if (val) {
                     southStops[col.name] = String(val);
                 }
@@ -429,6 +490,17 @@ export const parseMasterSchedule = (fileData: ArrayBuffer, mode: 'auto' | 'fixed
 
             let sRec = 0;
             if (southRecoveryIdx !== -1) sRec = parseInt(String(row[southRecoveryIdx])) || 0;
+
+            if (sStart !== null && sEnd !== null
+                && sStart < MIDNIGHT_ROLLOVER_THRESHOLD
+                && !Object.values(southStopMinutes).some(v => v >= 1440)
+            ) {
+                sStart += 1440;
+                sEnd += 1440;
+                for (const key of Object.keys(southStopMinutes)) {
+                    southStopMinutes[key] += 1440;
+                }
+            }
 
             // Use getTripDuration to handle midnight crossover
             const sTravelTime = sStart !== null && sEnd !== null ? getTripDuration(sStart, sEnd) : 0;
@@ -446,6 +518,7 @@ export const parseMasterSchedule = (fileData: ArrayBuffer, mode: 'auto' | 'fixed
                     travelTime: sTravelTime,
                     cycleTime: sTravelTime + sRec,
                     stops: southStops,
+                    stopMinutes: southStopMinutes,
                     // Track partial trip indices (only set if not starting/ending at first/last stop)
                     startStopIndex: sStartStopIndex !== 0 ? sStartStopIndex : undefined,
                     endStopIndex: sEndStopIndex !== southCols.length - 1 ? sEndStopIndex : undefined
@@ -459,62 +532,47 @@ export const parseMasterSchedule = (fileData: ArrayBuffer, mode: 'auto' | 'fixed
             if (rawTrips.length === 0) return;
 
             // --- Block Logic (Per Day) ---
-            // Uses EXACT time matching: Trip N endTime === Trip N+1 startTime (0 min tolerance)
-            // Chains N→S→N→S based on terminus time continuity
-            let blockCounter = 1;
-            const assignedTripIds = new Set<string>();
-            const northTrips = rawTrips.filter(t => t.direction === 'North').sort((a, b) => a.startTime - b.startTime);
-            const southTrips = rawTrips.filter(t => t.direction === 'South').sort((a, b) => a.startTime - b.startTime);
+            // Delegates to blockAssignmentCore.buildBlocksBidirectional which handles
+            // recovery time, two-pass tight-pair matching, and tolerance-based linking.
+            const northStopNames = northCols.map(c => c.name);
+            const southStopNames = southCols.map(c => c.name);
 
-            /**
-             * Find next trip in opposite direction where startTime exactly matches current endTime.
-             * This represents a bus immediately continuing from one trip to the next at the terminus.
-             */
-            const findMatchingTrip = (currentTrip: MasterTrip): MasterTrip | undefined => {
-                const targetTime = currentTrip.endTime; // Exact match required
-                const oppositeTrips = currentTrip.direction === 'North' ? southTrips : northTrips;
-
-                return oppositeTrips.find(t =>
-                    !assignedTripIds.has(t.id) &&
-                    t.startTime === targetTime // EXACT match, 0 tolerance
-                );
+            const toMatching = (trip: MasterTrip, stopNames: string[]): TripForMatching => {
+                const lastStop = stopNames[stopNames.length - 1] || '';
+                return {
+                    id: trip.id,
+                    blockId: trip.blockId,
+                    tripNumber: trip.tripNumber,
+                    direction: trip.direction,
+                    startTime: trip.startTime,
+                    endTime: trip.endTime,
+                    firstStopName: stopNames[0] || '',
+                    lastStopName: lastStop,
+                    recoveryTimes: (trip.recoveryTimes && Object.keys(trip.recoveryTimes).length > 0)
+                        ? trip.recoveryTimes
+                        : (trip.recoveryTime ? { [lastStop]: trip.recoveryTime } : undefined),
+                };
             };
 
-            // Start blocks from earliest North trips
-            northTrips.forEach(startTrip => {
-                if (assignedTripIds.has(startTrip.id)) return;
+            const northMatchTrips = rawTrips.filter(t => t.direction === 'North').map(t => toMatching(t, northStopNames));
+            const southMatchTrips = rawTrips.filter(t => t.direction === 'South').map(t => toMatching(t, southStopNames));
 
-                const currentBlockId = `${sheetName}-${blockCounter++}`; // e.g. "400-1"
-                let currentTrip: MasterTrip | undefined = startTrip;
-                let sequence = 1;
+            const blocks = buildBlocksBidirectional(northMatchTrips, southMatchTrips, sheetName, MatchConfigPresets.exact);
 
-                // Chain trips: N→S→N→S... using exact time matching
-                while (currentTrip) {
-                    currentTrip.blockId = currentBlockId;
-                    currentTrip.tripNumber = sequence++;
-                    assignedTripIds.add(currentTrip.id);
-
-                    // Find next matching trip in opposite direction
-                    currentTrip = findMatchingTrip(currentTrip);
+            // Apply block assignments back to rawTrips
+            const assignmentMap = new Map<string, { blockId: string; tripNumber: number }>();
+            for (const block of blocks) {
+                for (const t of block.trips) {
+                    assignmentMap.set(t.id, { blockId: t.blockId, tripNumber: t.tripNumber });
                 }
-            });
-
-            // Handle South trips that didn't chain from North (start new blocks)
-            southTrips.forEach(startTrip => {
-                if (assignedTripIds.has(startTrip.id)) return;
-
-                const currentBlockId = `${sheetName}-${blockCounter++}`;
-                let currentTrip: MasterTrip | undefined = startTrip;
-                let sequence = 1;
-
-                while (currentTrip) {
-                    currentTrip.blockId = currentBlockId;
-                    currentTrip.tripNumber = sequence++;
-                    assignedTripIds.add(currentTrip.id);
-
-                    currentTrip = findMatchingTrip(currentTrip);
+            }
+            for (const trip of rawTrips) {
+                const assignment = assignmentMap.get(trip.id);
+                if (assignment) {
+                    trip.blockId = assignment.blockId;
+                    trip.tripNumber = assignment.tripNumber;
                 }
-            });
+            }
 
             // Create Output Tables
             const dayLabel = day === 'Weekday' ? '' : ` (${day})`;
@@ -583,42 +641,23 @@ export const buildRoundTripView = (
         const northTrips = sortedTrips.filter(t => t.direction === 'North');
         const southTrips = sortedTrips.filter(t => t.direction === 'South');
 
-        // Pair by TIME SEQUENCE: find South trip that starts within 15 min of North trip ending
-        // This handles cases where blocks have unequal N/S counts or different start times
-        const MAX_PAIRING_GAP = 15; // minutes
-        const usedSouthTrips = new Set<string>();
+        // Pair by sequence within block to preserve manual/edited linkage.
+        // Time-gap-only pairing can split rows after larger edits.
         const pairedRows: { nTrip?: MasterTrip; sTrip?: MasterTrip; pairIndex: number }[] = [];
-
-        // First, pair each North trip with its matching South trip
-        northTrips.forEach((nTrip, idx) => {
-            // Find South trip that starts within MAX_PAIRING_GAP of North trip ending
-            let bestMatch: MasterTrip | undefined;
-            let bestGap = Infinity;
-
-            for (const sTrip of southTrips) {
-                if (usedSouthTrips.has(sTrip.id)) continue;
-                const gap = sTrip.startTime - nTrip.endTime;
-                if (gap >= 0 && gap <= MAX_PAIRING_GAP && gap < bestGap) {
-                    bestGap = gap;
-                    bestMatch = sTrip;
-                }
-            }
-
-            if (bestMatch) {
-                usedSouthTrips.add(bestMatch.id);
-                pairedRows.push({ nTrip, sTrip: bestMatch, pairIndex: idx });
-            } else {
-                // North trip with no matching South (end of day pullout)
-                pairedRows.push({ nTrip, sTrip: undefined, pairIndex: idx });
-            }
-        });
-
-        // Add any unpaired South trips (start of day pullin - South before first North)
-        southTrips.forEach(sTrip => {
-            if (!usedSouthTrips.has(sTrip.id)) {
-                pairedRows.push({ nTrip: undefined, sTrip, pairIndex: pairedRows.length });
-            }
-        });
+        const orderedNorthTrips = [...northTrips].sort((a, b) =>
+            (a.tripNumber - b.tripNumber) || (a.startTime - b.startTime)
+        );
+        const orderedSouthTrips = [...southTrips].sort((a, b) =>
+            (a.tripNumber - b.tripNumber) || (a.startTime - b.startTime)
+        );
+        const pairCount = Math.max(orderedNorthTrips.length, orderedSouthTrips.length);
+        for (let idx = 0; idx < pairCount; idx++) {
+            pairedRows.push({
+                nTrip: orderedNorthTrips[idx],
+                sTrip: orderedSouthTrips[idx],
+                pairIndex: idx
+            });
+        }
 
         // Sort paired rows by the earliest trip time in each pair
         pairedRows.sort((a, b) => {
