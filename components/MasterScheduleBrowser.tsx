@@ -1278,7 +1278,6 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
                             embedded={true}
                             draftName={`Route ${selectedRoute} - ${selectedDayType}`}
                             onClose={() => setIsFullScreen(false)}
-                            forceSimpleView={false}
                         />
                     </div>
                 </div>
@@ -1293,7 +1292,6 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
                     embedded={true}
                     draftName={`Route ${selectedRoute} - ${selectedDayType}`}
                     onClose={() => setSelectedRoute('overview')}
-                    forceSimpleView={false}
                 />
             </div>
         );

@@ -440,7 +440,6 @@ export const SystemDraftEditorWorkspace: React.FC<SystemDraftEditorWorkspaceProp
                         undo={undo}
                         redo={redo}
                         hideAutoSave={false}
-                        forceSimpleView={false}
                         onPublish={handlePublish}
                         publishLabel={`Publish All (${allRoutes.length} routes)`}
                         publishDisabled={!user || !team}

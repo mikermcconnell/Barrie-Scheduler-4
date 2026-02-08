@@ -14,7 +14,6 @@ import {
     Trash2,
     RefreshCw
 } from 'lucide-react';
-import { ScheduleTweakerWorkspace } from './ScheduleTweakerWorkspace';
 import { NewScheduleWizard } from './NewSchedule/NewScheduleWizard';
 import { MasterScheduleBrowser } from './MasterScheduleBrowser';
 import { ScheduleEditorWorkspace, SiblingDraft } from './ScheduleEditorWorkspace';
@@ -23,7 +22,6 @@ import { ReportsDashboard } from './Reports/ReportsDashboard';
 import { AnalyticsDashboard } from './Analytics/AnalyticsDashboard';
 import { GTFSImportModal } from './GTFSImport';
 import { SystemDraftList } from './SystemDraftList';
-import { ScheduleDraft, SavedFile } from '../utils/dataService';
 import type { MasterScheduleContent } from '../utils/masterScheduleTypes';
 import type { DraftBasedOn, DraftSchedule, SystemDraft } from '../utils/scheduleTypes';
 import { buildMasterContentFromTables } from '../utils/scheduleDraftAdapter';
@@ -32,11 +30,10 @@ import { getSystemDraft } from '../utils/systemDraftService';
 import { useAuth } from './AuthContext';
 import { useToast } from './ToastContext';
 
-type FixedRouteViewMode = 'dashboard' | 'tweaker' | 'editor' | 'new-schedule' | 'master' | 'reports' | 'analytics' | 'drafts' | 'system-editor';
+type FixedRouteViewMode = 'dashboard' | 'editor' | 'new-schedule' | 'master' | 'reports' | 'analytics' | 'drafts' | 'system-editor';
 
 const VIEW_MODE_LABELS: Record<FixedRouteViewMode, string> = {
     dashboard: '',
-    tweaker: 'Schedule Tweaker (Legacy)',
     'new-schedule': 'New Schedule',
     master: 'Master Schedule',
     reports: 'Reports',
@@ -82,9 +79,6 @@ export const FixedRouteWorkspace: React.FC = () => {
     const [viewMode, setViewMode] = useState<FixedRouteViewMode>('dashboard');
     const [showGTFSImport, setShowGTFSImport] = useState(false);
 
-    // Optional: Pass initial data to tweaker if we want to support "Open in Tweaker" from Dashboard in the future
-    // For now, Tweaker handles its own loading.
-    const [tweakerInitialData, setTweakerInitialData] = useState<{ draft?: ScheduleDraft, file?: SavedFile } | undefined>(undefined);
     const [editorInitialContent, setEditorInitialContent] = useState<MasterScheduleContent | null>(null);
 
     // Drafts list state
@@ -183,23 +177,12 @@ export const FixedRouteWorkspace: React.FC = () => {
 
     // --- Handlers ---
 
-    const handleOpenTweaker = () => {
-        setTweakerInitialData(undefined); // Start fresh
-        setViewMode('tweaker');
-    };
-
     const handleOpenNewSchedule = () => {
         setViewMode('new-schedule');
     };
 
     const handleOpenMasterSchedule = () => {
         setViewMode('master');
-    };
-
-    const handleExportToTweaker = (draft: ScheduleDraft) => {
-        // This is the bridge from New Schedule -> Tweaker
-        setTweakerInitialData({ draft });
-        setViewMode('tweaker');
     };
 
     const openEditorWorkspace = (content: MasterScheduleContent, basedOn?: DraftBasedOn) => {
@@ -394,15 +377,6 @@ export const FixedRouteWorkspace: React.FC = () => {
 
             <div className="flex-grow overflow-hidden relative bg-white rounded-3xl border-2 border-gray-100 shadow-sm">
                 <div className="absolute inset-0">
-                    {viewMode === 'tweaker' && (
-                        <ScheduleTweakerWorkspace
-                            key={tweakerInitialData?.draft?.id || tweakerInitialData?.file?.id || 'empty'}
-                            initialDraft={tweakerInitialData?.draft}
-                            initialFile={tweakerInitialData?.file}
-                            onClose={() => setViewMode('dashboard')}
-                        />
-                    )}
-
                     {viewMode === 'new-schedule' && (
                         <NewScheduleWizard
                             onBack={() => setViewMode('dashboard')}

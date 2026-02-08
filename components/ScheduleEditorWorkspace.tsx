@@ -381,7 +381,6 @@ export const ScheduleEditorWorkspace: React.FC<ScheduleEditorWorkspaceProps> = (
                     undo={undo}
                     redo={redo}
                     hideAutoSave={false}
-                    forceSimpleView={false}
                     onPublish={handlePublish}
                     publishDisabled={!user || !team}
                     isPublishing={isPublishing}

@@ -180,8 +180,6 @@ export interface ScheduleEditorProps {
     targetHeadway?: number;
     // Hide autosave when parent handles it
     hideAutoSave?: boolean;
-    // Force simple view even when both North/South tables exist
-    forceSimpleView?: boolean;
 
     // Upload to Master Schedule (optional - only shown if teamId is provided)
     teamId?: string;
@@ -216,7 +214,6 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
     targetCycleTime,
     targetHeadway,
     hideAutoSave,
-    forceSimpleView,
     teamId,
     userId,
     uploaderName,
