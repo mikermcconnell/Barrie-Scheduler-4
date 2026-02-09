@@ -29,20 +29,22 @@ import {
     getCacheAge
 } from '../../../utils/goTransitService';
 
+export interface ConnectionTemplateSelection {
+    name: string;
+    location: string;
+    stopCode: string;
+    icon: 'train' | 'clock';
+    defaultEventType?: 'departure' | 'arrival';
+    times: ConnectionTime[];
+    dataSource?: GoDataSource;
+}
+
 export interface ConnectionAddChooserProps {
     isOpen: boolean;
     onClose: () => void;
     onSelectManual: () => void;
-    onSelectTemplate: (data: {
-        name: string;
-        location: string;
-        stopCode: string;
-        icon: 'train' | 'clock';
-        defaultEventType?: 'departure' | 'arrival';
-        times: ConnectionTime[];
-        dataSource?: GoDataSource;
-    }) => void;
-    onSelectGtfsImport: () => void;
+    onSelectTemplate: (data: ConnectionTemplateSelection) => void;
+    onSelectGtfsImport: (targets: ConnectionTemplateSelection[]) => void;
     dayType: DayType;
 }
 
@@ -59,6 +61,12 @@ export const ConnectionAddChooser: React.FC<ConnectionAddChooserProps> = ({
     const [gtfsNotice, setGtfsNotice] = useState<string | null>(null);
 
     if (!isOpen) return null;
+    const goTemplateIds = [
+        'go-barrie-south-departures',
+        'go-barrie-south-arrivals',
+        'go-allandale-waterfront-departures',
+        'go-allandale-waterfront-arrivals'
+    ];
 
     const handleQuickTemplate = async (templateId: string) => {
         const template = QUICK_TEMPLATES.find(t => t.id === templateId);
@@ -90,14 +98,39 @@ export const ConnectionAddChooser: React.FC<ConnectionAddChooserProps> = ({
     const handleGtfsImport = async () => {
         setIsLoadingGtfs(true);
         setGtfsError(null);
+        setGtfsNotice(null);
+
+        let fetchErrorDetails = '';
 
         try {
             await fetchGoTransitGTFS();
-            onSelectGtfsImport();
         } catch (error) {
             console.error('Error fetching GTFS:', error);
+            fetchErrorDetails = error instanceof Error ? ` (${error.message})` : '';
+            setGtfsNotice(`GTFS refresh failed; importing fallback GO times${fetchErrorDetails}.`);
+        }
+
+        try {
+            const importedTargets = goTemplateIds
+                .map((id) => QUICK_TEMPLATES.find(t => t.id === id))
+                .filter((template): template is NonNullable<typeof template> => !!template)
+                .map(template => template.getData(dayType));
+
+            if (importedTargets.length === 0) {
+                setGtfsError('No GO template targets are configured.');
+                return;
+            }
+
+            const fallbackCount = importedTargets.filter(target => target.dataSource === 'fallback').length;
+            if (fallbackCount > 0 && !fetchErrorDetails) {
+                setGtfsNotice(`Imported with fallback GO times for ${fallbackCount} target(s).`);
+            }
+
+            onSelectGtfsImport(importedTargets);
+        } catch (error) {
+            console.error('Error importing GO targets:', error);
             const details = error instanceof Error ? ` ${error.message}` : '';
-            setGtfsError(`Failed to fetch GO Transit schedule.${details}`);
+            setGtfsError(`Failed to import GO connection targets.${details}`);
         } finally {
             setIsLoadingGtfs(false);
         }

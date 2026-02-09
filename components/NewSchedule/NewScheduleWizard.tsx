@@ -1,13 +1,10 @@
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { ArrowRight, Save, Loader2, Check, Upload } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { ArrowRight, Save, Loader2, Check, Upload, Cloud, HardDrive } from 'lucide-react';
 import { Step1Upload } from './steps/Step1Upload';
 import { Step2Analysis } from './steps/Step2Analysis';
 import { Step3Build, ScheduleConfig } from './steps/Step3Build';
 import { Step4Schedule } from './steps/Step4Schedule';
-import { Step5Connections } from './steps/Step5Connections';
-import type { ConnectionLibrary, RouteConnectionConfig, OptimizationResult } from '../../utils/connectionTypes';
-import { buildRouteIdentity as buildConnRouteIdentity } from '../../utils/masterScheduleTypes';
 import { parseRuntimeCSV, RuntimeData, SegmentRawData } from './utils/csvParser';
 import { calculateTotalTripTimes, detectOutliers, calculateBands, TripBucketAnalysis, TimeBand, DirectionBandSummary, computeDirectionBandSummary } from '../../utils/runtimeAnalysis';
 import { generateSchedule } from '../../utils/scheduleGenerator';
@@ -22,16 +19,33 @@ import { useTeam } from '../TeamContext';
 import { useToast } from '../ToastContext';
 import { saveProject, getProject } from '../../utils/newScheduleProjectService';
 import { UploadToMasterModal } from '../UploadToMasterModal';
-import { prepareUpload, uploadToMasterSchedule } from '../../utils/masterScheduleService';
+import { prepareUpload, uploadToMasterSchedule, getMasterSchedule, getAllStopsWithCodes } from '../../utils/masterScheduleService';
 import { extractRouteNumber, extractDayType, buildRouteIdentity } from '../../utils/masterScheduleTypes';
 import { extractDirectionFromName } from '../../utils/routeDirectionConfig';
 import type { UploadConfirmation, DayType as MasterDayType } from '../../utils/masterScheduleTypes';
+import { buildStopNameToIdMap } from '../../utils/gtfsStopLookup';
 
 // Constants - centralized magic numbers
 const DEFAULT_CYCLE_TIME = 60;
 const DEFAULT_ROUTE_NUMBER = '10';
 const DEFAULT_START_TIME = '06:00';
 const DEFAULT_END_TIME = '22:00';
+
+const normalizeStopLookupKey = (value: string): string => {
+    return value
+        .toLowerCase()
+        .replace(/&/g, ' and ')
+        .replace(/\bpl\b/g, ' place ')
+        .replace(/\bcoll\b/g, ' college ')
+        .replace(/\bctr\b/g, ' centre ')
+        .replace(/\bstn\b/g, ' station ')
+        .replace(/\bterm\b/g, ' terminal ')
+        .replace(/\bhwy\b/g, ' highway ')
+        .replace(/\bgovernors\b/g, 'govenors ')
+        .replace(/[()[\]{}'".,]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+};
 
 interface NewScheduleWizardProps {
     onBack: () => void;
@@ -49,6 +63,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
     const { user } = useAuth();
     const { team, hasTeam } = useTeam();
     const toast = useToast();
+    const gtfsStopLookup = useMemo(() => buildStopNameToIdMap(), []);
 
     const [step, setStep] = useState(1);
     const [maxStepReached, setMaxStepReached] = useState(1);
@@ -82,15 +97,83 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
     // State for Step 4 Schedule
     const [generatedSchedules, setGeneratedSchedules] = useState<MasterRouteTable[]>([]);
 
-    // State for Step 5 Connections
-    const [connectionLibrary, setConnectionLibrary] = useState<ConnectionLibrary | null>(null);
-    const [routeConnectionConfig, setRouteConnectionConfig] = useState<RouteConnectionConfig | null>(null);
-    const [originalSchedules, setOriginalSchedules] = useState<MasterRouteTable[]>([]); // Before optimization
-
     // Master Schedule Upload State
     const [showUploadModal, setShowUploadModal] = useState(false);
     const [uploadConfirmation, setUploadConfirmation] = useState<UploadConfirmation | null>(null);
     const [isUploading, setIsUploading] = useState(false);
+
+    // Compare to Master State (inline toggle, not modal)
+    const [isMasterCompareActive, setIsMasterCompareActive] = useState(false);
+    const [masterBaseline, setMasterBaseline] = useState<MasterRouteTable[] | null>(null);
+    const [isCompareLoading, setIsCompareLoading] = useState(false);
+
+    // Connection scope: load all master stop codes so ConnectionsPanel validation
+    // recognises stop IDs from other routes (mirrors editor workspace pattern).
+    const [masterStopCodes, setMasterStopCodes] = useState<Record<string, string>>({});
+
+    useEffect(() => {
+        if (!team?.id) return;
+        getAllStopsWithCodes(team.id)
+            .then(({ stopCodes }) => setMasterStopCodes(stopCodes))
+            .catch(err => console.error('Failed to load master stop codes:', err));
+    }, [team?.id]);
+
+    const connectionScopeSchedules = useMemo(() => {
+        if (Object.keys(masterStopCodes).length === 0) return undefined;
+        const scopeTable: MasterRouteTable = {
+            routeName: '_connectionScope',
+            stops: Object.keys(masterStopCodes),
+            stopIds: masterStopCodes,
+            trips: []
+        };
+        return [...generatedSchedules, scopeTable];
+    }, [generatedSchedules, masterStopCodes]);
+
+    // Backfill old generated schedules that used sequential stop IDs (#1, #2, ...)
+    // so existing projects immediately get real stop codes for connections.
+    useEffect(() => {
+        if (generatedSchedules.length === 0) return;
+
+        const normalizedLookup: Record<string, string> = {};
+        const addLookup = (lookup: Record<string, string>) => {
+            Object.entries(lookup).forEach(([name, code]) => {
+                const normalized = normalizeStopLookupKey(name);
+                if (normalized && code && !normalizedLookup[normalized]) {
+                    normalizedLookup[normalized] = code;
+                }
+            });
+        };
+        addLookup(gtfsStopLookup);
+        addLookup(masterStopCodes);
+
+        let changedAny = false;
+        const repaired = generatedSchedules.map(table => {
+            if (!table.stops?.length) return table;
+            const existingStopIds = table.stopIds || {};
+            let changedTable = false;
+            const repairedStopIds: Record<string, string> = { ...existingStopIds };
+
+            table.stops.forEach((stop, idx) => {
+                const current = (existingStopIds[stop] || '').trim();
+                const exact = gtfsStopLookup[stop] || masterStopCodes[stop];
+                const normalized = normalizedLookup[normalizeStopLookupKey(stop)];
+                const resolved = exact || normalized;
+                const isPlaceholder = current === String(idx + 1);
+                if (resolved && (!current || isPlaceholder) && current !== resolved) {
+                    repairedStopIds[stop] = resolved;
+                    changedTable = true;
+                }
+            });
+
+            if (!changedTable) return table;
+            changedAny = true;
+            return { ...table, stopIds: repairedStopIds };
+        });
+
+        if (changedAny) {
+            setGeneratedSchedules(repaired);
+        }
+    }, [generatedSchedules, masterStopCodes, gtfsStopLookup]);
 
     // Helper to extract unique segment names from analysis
     const extractSegmentNames = (analysisData: TripBucketAnalysis[]): string[] => {
@@ -123,6 +206,13 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
     const pendingSaveRef = useRef(false);
     const pendingOverridesRef = useRef<{ name?: string; generatedSchedules?: MasterRouteTable[]; isGenerated?: boolean } | null>(null);
     const saveTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+    // Cloud save tracking + dirty state
+    type CloudSaveStatus = 'idle' | 'saving' | 'saved' | 'error';
+    const [cloudSaveStatus, setCloudSaveStatus] = useState<CloudSaveStatus>('idle');
+    const [lastCloudSaveTime, setLastCloudSaveTime] = useState<Date | null>(null);
+    const stateVersionRef = useRef(0);
+    const lastSavedVersionRef = useRef(0);
 
     // Helper: Build localStorage save data structure
     const buildLocalSaveData = useCallback((overrides?: {
@@ -158,6 +248,20 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         ...(projectId ? { id: projectId } : {})
     }), [projectName, dayType, config, step, analysis, bands, generatedSchedules, parsedData, projectId]);
 
+    // Track state version for dirty detection - increment on meaningful changes
+    useEffect(() => {
+        if (!isLoadingProject) {
+            stateVersionRef.current += 1;
+        }
+    }, [step, dayType, files.length, analysis, bands, config, generatedSchedules, parsedData, isLoadingProject]);
+
+    // isDirty: true when state has changed since last cloud save
+    const isDirty = useMemo(() => {
+        return stateVersionRef.current > lastSavedVersionRef.current && files.length > 0;
+    // Re-evaluate whenever cloud save completes or state changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [stateVersionRef.current, lastSavedVersionRef.current, files.length]);
+
     // Helper: Save to localStorage (fast, synchronous)
     const saveToLocalStorage = useCallback((overrides?: { generatedSchedules?: MasterRouteTable[] }) => {
         if (step >= 1 && files.length > 0) {
@@ -181,12 +285,17 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         }
 
         setIsSaving(true);
+        setCloudSaveStatus('saving');
         try {
             const savedId = await saveProject(user.uid, buildFirebaseSaveData(overrides));
             setProjectId(savedId);
+            setCloudSaveStatus('saved');
+            setLastCloudSaveTime(new Date());
+            lastSavedVersionRef.current = stateVersionRef.current;
             return savedId;
         } catch (e) {
             console.error('Firebase save failed:', e);
+            setCloudSaveStatus('error');
             throw e;
         } finally {
             setIsSaving(false);
@@ -240,11 +349,6 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         window.addEventListener('beforeunload', handleBeforeUnload);
         return () => window.removeEventListener('beforeunload', handleBeforeUnload);
     }, [isSaving, step]);
-    // Compute wizard save status for header display
-    const wizardSaveStatus: AutoSaveStatus = isSaving ? 'saving' :
-                                             saveTimerRef.current !== null ? 'idle' :
-                                             'saved';
-    const wizardLastSaved = lastSaved; // Use parent's lastSaved if available
     // ========== END CONSOLIDATED SAVE SYSTEM ==========
 
     // Check for saved progress on mount
@@ -302,9 +406,9 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                 await saveToFirebase();
                 setManualSaveSuccess(true);
                 setTimeout(() => setManualSaveSuccess(false), 2000);
-                toast.success('Saved to Cloud', 'Your progress has been saved');
+                toast.success('Saved to Cloud', 'Schedule backed up securely');
             } catch (e) {
-                toast.warning('Partial Save', 'Saved locally. Cloud save failed.');
+                toast.error('Cloud Save Failed', 'Saved locally. Click "Save" to retry.');
             }
         } else {
             setManualSaveSuccess(true);
@@ -416,7 +520,9 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                 bands,
                 freshBandSummary,
                 groupedData,
-                dayType
+                dayType,
+                gtfsStopLookup,
+                masterStopCodes
             );
 
             if (generatedTables.length === 0) {
@@ -435,15 +541,12 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
             if (user?.uid && generatedTables.length > 0) {
                 try {
                     await saveToFirebase({ generatedSchedules: generatedTables, isGenerated: true });
+                    toast.success('Saved to Cloud', 'Schedule backed up securely');
                 } catch (e) {
-                    toast.warning('Cloud Save Failed', 'Schedule saved locally. Check your connection.');
+                    toast.error('Cloud Save Failed', 'Saved locally. Click "Save" to retry.');
                 }
             }
         } else if (step === 4) {
-            // Move to Step 5 - Connection Optimization
-            setStep(5);
-            toast.info('Connection Optimization', 'Configure connections to GO trains, College bells, or other routes');
-        } else if (step === 5) {
             // Finalize / Export
             if (onGenerate) {
                 onGenerate(generatedSchedules);
@@ -470,6 +573,39 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         setProjectName('New Schedule Project');
         setProjectId(undefined);
         toast.info('New Project', 'Starting fresh');
+    };
+
+    // ========== COMPARE TO MASTER (INLINE TOGGLE) ==========
+
+    const handleToggleMasterCompare = async () => {
+        // Toggle OFF
+        if (isMasterCompareActive) {
+            setIsMasterCompareActive(false);
+            setMasterBaseline(null);
+            return;
+        }
+
+        // Toggle ON - fetch master schedule
+        if (!team?.id) return;
+
+        setIsCompareLoading(true);
+        try {
+            const routeIdentity = buildRouteIdentity(config.routeNumber, dayType);
+            const result = await getMasterSchedule(team.id, routeIdentity);
+
+            if (!result) {
+                toast.warning('No Master Found', `No Master schedule found for Route ${config.routeNumber} ${dayType}`);
+                return;
+            }
+
+            setMasterBaseline([result.content.northTable, result.content.southTable]);
+            setIsMasterCompareActive(true);
+        } catch (error) {
+            console.error('Error fetching master schedule:', error);
+            toast.error('Compare Failed', 'Could not fetch Master schedule');
+        } finally {
+            setIsCompareLoading(false);
+        }
     };
 
     // ========== MASTER SCHEDULE UPLOAD ==========
@@ -552,6 +688,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                 onResume={handleResume}
                 onStartFresh={handleStartFresh}
                 onClose={() => setShowResumeModal(false)}
+                isAuthenticated={!!user?.uid}
             />
 
             <div className="flex flex-col h-full bg-gray-50/50">
@@ -567,15 +704,22 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                     onClose={onBack}
                     onStepClick={(s) => setStep(s)}
                     maxStepReached={maxStepReached}
-                    autoSaveStatus={wizardSaveStatus}
-                    lastSaved={wizardLastSaved}
+                    cloudSaveStatus={cloudSaveStatus}
+                    lastCloudSaveTime={lastCloudSaveTime}
+                    isDirty={isDirty}
+                    isAuthenticated={!!user?.uid}
+                    onRetrySave={handleSaveProgress}
                     routeNumber={step >= 3 ? config.routeNumber : undefined}
                     dayType={dayType}
+                    isMasterCompareActive={isMasterCompareActive}
+                    onToggleMasterCompare={handleToggleMasterCompare}
+                    isCompareLoading={isCompareLoading}
+                    compareAvailable={step === 4 && !!team?.id}
                 />
 
                 {/* Content Area */}
                 <div className="flex-grow p-8 overflow-auto">
-                    <div className={step === 4 || step === 5 || step === 2 ? "w-full" : "max-w-5xl mx-auto"}>
+                    <div className={step === 4 || step === 2 ? "w-full" : "max-w-5xl mx-auto"}>
                         {step === 1 && (
                             <Step1Upload
                                 files={files}
@@ -623,31 +767,10 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                                 lastSaved={lastSaved}
                                 targetCycleTime={(!config.cycleMode || config.cycleMode === 'Strict') ? config.cycleTime : undefined}
                                 targetHeadway={(!config.cycleMode || config.cycleMode === 'Strict') && config.blocks.length > 0 ? Math.round(config.cycleTime / config.blocks.length) : undefined}
-                            />
-                        )}
-                        {step === 5 && (
-                            <Step5Connections
-                                schedules={generatedSchedules}
-                                routeIdentity={buildRouteIdentity(config.routeNumber, dayType)}
-                                dayType={dayType}
-                                connectionLibrary={connectionLibrary}
-                                setConnectionLibrary={setConnectionLibrary}
-                                routeConnectionConfig={routeConnectionConfig}
-                                setRouteConnectionConfig={setRouteConnectionConfig}
-                                onOptimize={(result: OptimizationResult) => {
-                                    if (originalSchedules.length === 0) {
-                                        setOriginalSchedules(generatedSchedules);
-                                    }
-                                    setGeneratedSchedules(result.optimizedSchedules);
-                                }}
-                                onReset={() => {
-                                    if (originalSchedules.length > 0) {
-                                        setGeneratedSchedules(originalSchedules);
-                                        setOriginalSchedules([]);
-                                    }
-                                }}
-                                teamId={team?.id || ''}
-                                userId={user?.uid || ''}
+                                teamId={team?.id}
+                                userId={user?.uid}
+                                masterBaseline={isMasterCompareActive ? masterBaseline : null}
+                                connectionScopeSchedules={connectionScopeSchedules}
                             />
                         )}
                     </div>
@@ -664,14 +787,19 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                     </button>
 
                     <div className="flex items-center gap-3">
-                        {/* Save Progress Button */}
+                        {/* Save Progress Button - context-aware */}
                         {files.length > 0 && (
                             <button
                                 onClick={handleSaveProgress}
-                                disabled={isManualSaving}
-                                className={`px-4 py-2 rounded-lg border font-bold flex items-center gap-2 transition-all ${manualSaveSuccess
-                                    ? 'border-emerald-200 bg-emerald-50 text-emerald-600'
-                                    : 'border-gray-300 text-gray-600 hover:bg-gray-50'
+                                disabled={isManualSaving || (!isDirty && cloudSaveStatus === 'saved')}
+                                className={`px-4 py-2 rounded-lg border font-bold flex items-center gap-2 transition-all ${
+                                    cloudSaveStatus === 'error'
+                                        ? 'border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100'
+                                        : manualSaveSuccess
+                                            ? 'border-emerald-200 bg-emerald-50 text-emerald-600'
+                                            : (!isDirty && cloudSaveStatus === 'saved')
+                                                ? 'border-gray-200 text-gray-400 cursor-not-allowed'
+                                                : 'border-gray-300 text-gray-600 hover:bg-gray-50'
                                     }`}
                             >
                                 {isManualSaving ? (
@@ -684,17 +812,22 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                                         <Check size={16} />
                                         Saved!
                                     </>
-                                ) : (
+                                ) : cloudSaveStatus === 'error' ? (
                                     <>
                                         <Save size={16} />
-                                        Save Progress
+                                        Retry Save
+                                    </>
+                                ) : (
+                                    <>
+                                        {user?.uid ? <Cloud size={16} /> : <HardDrive size={16} />}
+                                        {user?.uid ? 'Save to Cloud' : 'Save Locally'}
                                     </>
                                 )}
                             </button>
                         )}
 
                         {/* Upload to Master Button (Step 4 or 5, if user has team) */}
-                        {(step === 4 || step === 5) && hasTeam && generatedSchedules.length > 0 && (
+                        {step === 4 && hasTeam && generatedSchedules.length > 0 && (
                             <button
                                 onClick={handleUploadToMaster}
                                 className="px-6 py-2 rounded-lg border-2 border-brand-green text-brand-green font-bold hover:bg-green-50 flex items-center gap-2"
@@ -704,13 +837,15 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                             </button>
                         )}
 
-                        <button
-                            onClick={handleNext}
-                            className="px-6 py-2 rounded-lg bg-brand-blue text-white font-bold hover:brightness-110 shadow-md shadow-blue-500/20 flex items-center gap-2"
-                        >
-                            {step === 5 ? 'Export to Dashboard' : step === 4 ? 'Optimize Connections' : (step === 3 ? 'Generate Schedule' : 'Next Step')}
-                            {step !== 5 && <ArrowRight size={18} />}
-                        </button>
+                        {step !== 4 && (
+                            <button
+                                onClick={handleNext}
+                                className="px-6 py-2 rounded-lg bg-brand-blue text-white font-bold hover:brightness-110 shadow-md shadow-blue-500/20 flex items-center gap-2"
+                            >
+                                {step === 3 ? 'Generate Schedule' : 'Next Step'}
+                                <ArrowRight size={18} />
+                            </button>
+                        )}
                     </div>
                 </div>
             </div>

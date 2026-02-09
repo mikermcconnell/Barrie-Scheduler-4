@@ -1,12 +1,12 @@
 /**
  * ResumeWizardModal
- * 
+ *
  * Prompt shown when wizard opens with saved progress.
  * Offers "Resume" or "Start Fresh" options.
  */
 
 import React from 'react';
-import { Clock, RotateCcw, Plus, X } from 'lucide-react';
+import { Clock, RotateCcw, Plus, X, HardDrive, Cloud } from 'lucide-react';
 import type { WizardProgress } from '../../hooks/useWizardProgress';
 
 interface Props {
@@ -15,6 +15,7 @@ interface Props {
     onResume: () => void;
     onStartFresh: () => void;
     onClose: () => void;
+    isAuthenticated?: boolean;
 }
 
 export const ResumeWizardModal: React.FC<Props> = ({
@@ -22,7 +23,8 @@ export const ResumeWizardModal: React.FC<Props> = ({
     progress,
     onResume,
     onStartFresh,
-    onClose
+    onClose,
+    isAuthenticated
 }) => {
     if (!isOpen || !progress) return null;
 
@@ -40,11 +42,14 @@ export const ResumeWizardModal: React.FC<Props> = ({
         return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
     };
 
-    const stepLabels = {
+    const stepLabels: Record<number, string> = {
         1: 'Upload Data',
         2: 'Runtime Analysis',
-        3: 'Build Schedule'
+        3: 'Build Schedule',
+        4: 'Generated Schedule'
     };
+
+    const hasGeneratedSchedules = progress.generatedSchedules && progress.generatedSchedules.length > 0;
 
     return (
         <div className="fixed inset-0 z-[100] flex items-center justify-center">
@@ -81,14 +86,14 @@ export const ResumeWizardModal: React.FC<Props> = ({
                     </p>
 
                     {/* Progress Summary */}
-                    <div className="bg-gray-50 rounded-xl p-4 mb-6 border border-gray-100">
+                    <div className="bg-gray-50 rounded-xl p-4 mb-4 border border-gray-100">
                         <div className="flex items-center gap-3 mb-3">
                             <div className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center">
                                 <Clock size={20} className="text-emerald-600" />
                             </div>
                             <div>
                                 <div className="font-bold text-gray-900">
-                                    Step {progress.step}: {stepLabels[progress.step]}
+                                    Step {progress.step}: {stepLabels[progress.step] || `Step ${progress.step}`}
                                 </div>
                                 <div className="text-sm text-gray-500">
                                     {formatDate(progress.updatedAt)}
@@ -97,14 +102,30 @@ export const ResumeWizardModal: React.FC<Props> = ({
                         </div>
 
                         <div className="text-sm text-gray-600 space-y-1">
-                            <div>• Day Type: <strong>{progress.dayType}</strong></div>
+                            <div>Day Type: <strong>{progress.dayType}</strong></div>
                             {progress.fileNames.length > 0 && (
-                                <div>• {progress.fileNames.length} file(s) uploaded</div>
+                                <div>{progress.fileNames.length} file(s) uploaded</div>
                             )}
                             {progress.config?.routeNumber && (
-                                <div>• Route: <strong>{progress.config.routeNumber}</strong></div>
+                                <div>Route: <strong>{progress.config.routeNumber}</strong></div>
+                            )}
+                            {hasGeneratedSchedules && (
+                                <div>{progress.generatedSchedules!.length} schedule(s) generated</div>
                             )}
                         </div>
+                    </div>
+
+                    {/* Save Source Indicator */}
+                    <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-50 border border-gray-100 mb-6 text-xs text-gray-500">
+                        <HardDrive size={14} className="text-gray-400 flex-shrink-0" />
+                        <span>Saved to your browser</span>
+                        {!isAuthenticated && (
+                            <>
+                                <span className="text-gray-300">|</span>
+                                <Cloud size={14} className="text-gray-300 flex-shrink-0" />
+                                <span className="text-gray-400">Sign in to save to cloud</span>
+                            </>
+                        )}
                     </div>
 
                     {/* Actions */}

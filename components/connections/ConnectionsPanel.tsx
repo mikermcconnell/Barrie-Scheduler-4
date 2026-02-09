@@ -23,7 +23,7 @@ import { generateConnectionId, parseConnectionTime } from '../../utils/connectio
 import { ConnectionLibraryPanel } from '../NewSchedule/connections/ConnectionLibraryPanel';
 import { AddTargetModal, AddTargetInitialData } from '../NewSchedule/connections/AddTargetModal';
 import { ImportRouteModal } from '../NewSchedule/connections/ImportRouteModal';
-import { ConnectionAddChooser } from '../NewSchedule/connections/ConnectionAddChooser';
+import { ConnectionAddChooser, ConnectionTemplateSelection } from '../NewSchedule/connections/ConnectionAddChooser';
 import {
     getConnectionLibrary,
     saveConnectionLibrary
@@ -326,16 +326,107 @@ export const ConnectionsPanel: React.FC<ConnectionsPanelProps> = ({
         setShowAddTargetModal(false);
     }, [connectionLibrary, userId]);
 
+    const handleImportGoGtfsTargets = useCallback((templates: ConnectionTemplateSelection[]) => {
+        if (!connectionLibrary) return;
+
+        const now = new Date().toISOString();
+        const normalizedTemplates = templates
+            .map(template => getTemplateInitialData(template))
+            .filter(template => (template.name || '').trim().length > 0)
+            .filter(template => (template.stopCode || '').trim().length > 0)
+            .filter(template => Array.isArray(template.times) && template.times.length > 0);
+
+        if (normalizedTemplates.length === 0) {
+            setShowChooser(false);
+            return;
+        }
+
+        const manualTargetsByName = new Map(
+            connectionLibrary.targets
+                .filter(target => target.type === 'manual')
+                .map(target => [target.name.trim().toLowerCase(), target] as const)
+        );
+
+        const nextTargets = [...connectionLibrary.targets];
+        let createdCount = 0;
+        let updatedCount = 0;
+
+        for (const template of normalizedTemplates) {
+            const effectiveStopCodes = (template.stops || [])
+                .filter(stop => stop.enabled)
+                .map(stop => stop.code)
+                .filter(code => !!code.trim());
+            const primaryStopCode = effectiveStopCodes[0] || (template.stopCode || '').trim();
+            if (!primaryStopCode) continue;
+
+            const normalizedName = (template.name || '').trim().toLowerCase();
+            const existing = manualTargetsByName.get(normalizedName);
+            const incoming: Omit<ConnectionTarget, 'id' | 'createdAt' | 'updatedAt'> = {
+                name: (template.name || '').trim(),
+                type: 'manual',
+                location: template.location?.trim() || undefined,
+                stopCode: primaryStopCode,
+                ...(template.autoPopulateStops && effectiveStopCodes.length > 0
+                    ? {
+                        stopCodes: effectiveStopCodes,
+                        autoPopulateStops: true
+                    }
+                    : {}),
+                icon: template.icon,
+                times: template.times,
+                color: template.icon === 'clock' ? 'teal' : 'green',
+                defaultEventType: template.defaultEventType || 'departure'
+            };
+
+            if (existing) {
+                const updatedTarget: ConnectionTarget = {
+                    ...existing,
+                    ...incoming,
+                    id: existing.id,
+                    createdAt: existing.createdAt,
+                    updatedAt: now
+                };
+                const index = nextTargets.findIndex(target => target.id === existing.id);
+                if (index >= 0) {
+                    nextTargets[index] = updatedTarget;
+                    updatedCount += 1;
+                }
+                manualTargetsByName.set(normalizedName, updatedTarget);
+            } else {
+                const newTarget: ConnectionTarget = {
+                    ...incoming,
+                    id: `target_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                    createdAt: now,
+                    updatedAt: now
+                };
+                nextTargets.push(newTarget);
+                manualTargetsByName.set(normalizedName, newTarget);
+                createdCount += 1;
+            }
+        }
+
+        if (createdCount === 0 && updatedCount === 0) {
+            setShowChooser(false);
+            return;
+        }
+
+        const total = createdCount + updatedCount;
+        setConnectionLibrary(appendLibraryChange({
+            ...connectionLibrary,
+            targets: nextTargets,
+            updatedAt: now,
+            updatedBy: userId
+        }, userId, 'import_go_gtfs', `Imported ${total} GO target(s): ${createdCount} new, ${updatedCount} updated`));
+
+        setShowChooser(false);
+        setShowAddTargetModal(false);
+        setAddTargetInitialData(undefined);
+    }, [connectionLibrary, getTemplateInitialData, userId]);
+
     return (
         <>
-            {/* Backdrop */}
-            <div
-                className="fixed inset-0 bg-black/20 z-[70]"
-                onClick={onClose}
-            />
-
             {/* Panel */}
-            <div className="fixed right-0 top-0 h-full w-[480px] bg-white shadow-2xl z-[71] flex flex-col overflow-hidden">
+            <div className="w-full lg:w-[420px] lg:min-w-[380px] lg:max-w-[480px] flex-shrink-0 bg-white border-l border-gray-200 z-20 flex flex-col overflow-hidden">
                 {/* Header */}
                 <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-gray-50">
                     <div className="flex items-center gap-2">
@@ -400,12 +491,7 @@ export const ConnectionsPanel: React.FC<ConnectionsPanelProps> = ({
                     setShowChooser(false);
                     setShowAddTargetModal(true);
                 }}
-                onSelectGtfsImport={() => {
-                    // For now, GTFS import opens the manual form with GO Train presets
-                    // A more sophisticated GTFS picker could be added later
-                    setShowChooser(false);
-                    setShowAddTargetModal(true);
-                }}
+                onSelectGtfsImport={handleImportGoGtfsTargets}
                 dayType={dayType}
             />
 

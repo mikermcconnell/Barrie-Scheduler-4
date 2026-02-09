@@ -46,12 +46,19 @@ export interface GoCalendar {
     sunday: string;
 }
 
+export interface GoCalendarDate {
+    service_id: string;
+    date: string; // YYYYMMDD
+    exception_type: string;
+}
+
 export interface GoTransitCache {
     fetchedAt: string;       // ISO timestamp
     barrieStops: GoStop[];
     stopTimes: GoStopTime[];
     trips: GoTrip[];
     calendar: GoCalendar[];
+    calendarDates?: GoCalendarDate[];
 }
 
 export type GoDataSource = 'gtfs' | 'fallback';
@@ -240,6 +247,7 @@ export async function fetchGoTransitGTFS(): Promise<GoTransitCache> {
         stopTimes?: Array<{ trip_id: string; stop_id: string; arrival_time: string; departure_time: string; stop_sequence: number }>;
         trips?: Array<{ trip_id: string; route_id: string; service_id: string; trip_headsign?: string; direction_id?: string | number }>;
         calendar?: Array<{ service_id: string; monday: string | number; tuesday: string | number; wednesday: string | number; thursday: string | number; friday: string | number; saturday: string | number; sunday: string | number }>;
+        calendarDates?: Array<{ service_id: string; date: string | number; exception_type: string | number }>;
     };
 
     const allStops = feed.stops || [];
@@ -287,6 +295,14 @@ export async function fetchGoTransitGTFS(): Promise<GoTransitCache> {
             sunday: String(c.sunday)
         }));
 
+    const calendarDates = (feed.calendarDates || [])
+        .filter(cd => serviceIdSet.has(cd.service_id))
+        .map(cd => ({
+            service_id: cd.service_id,
+            date: String(cd.date || ''),
+            exception_type: String(cd.exception_type ?? '')
+        }));
+
     const cache: GoTransitCache = {
         fetchedAt: new Date().toISOString(),
         barrieStops: matchedStops.map(s => ({
@@ -298,7 +314,8 @@ export async function fetchGoTransitGTFS(): Promise<GoTransitCache> {
         })),
         stopTimes,
         trips,
-        calendar
+        calendar,
+        calendarDates
     };
 
     saveCacheData(cache);
@@ -351,10 +368,73 @@ function getDayServiceFlag(dayType: DayType): keyof GoCalendar {
     return 'monday';
 }
 
-function isServiceActiveForDay(calendar: GoCalendar | undefined, dayType: DayType): boolean {
+type ServiceDayAvailability = {
+    Weekday: boolean;
+    Saturday: boolean;
+    Sunday: boolean;
+};
+
+function hasCalendarBaseline(calendar: GoCalendar | undefined): boolean {
     if (!calendar) return false;
-    const dayFlag = getDayServiceFlag(dayType);
-    return String(calendar[dayFlag]) === '1';
+    return String(calendar.monday) === '1'
+        || String(calendar.tuesday) === '1'
+        || String(calendar.wednesday) === '1'
+        || String(calendar.thursday) === '1'
+        || String(calendar.friday) === '1'
+        || String(calendar.saturday) === '1'
+        || String(calendar.sunday) === '1';
+}
+
+function getDayTypeForGtfsDate(dateStr: string): DayType | null {
+    if (!/^\d{8}$/.test(dateStr)) return null;
+    const year = Number(dateStr.slice(0, 4));
+    const month = Number(dateStr.slice(4, 6));
+    const day = Number(dateStr.slice(6, 8));
+    if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return null;
+    const dayOfWeek = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+    if (dayOfWeek === 0) return 'Sunday';
+    if (dayOfWeek === 6) return 'Saturday';
+    return 'Weekday';
+}
+
+function buildServiceDayAvailabilityMap(calendarDates: GoCalendarDate[] | undefined): Map<string, ServiceDayAvailability> {
+    const byService = new Map<string, ServiceDayAvailability>();
+    if (!Array.isArray(calendarDates)) return byService;
+
+    for (const calendarDate of calendarDates) {
+        if (!calendarDate?.service_id) continue;
+        if (String(calendarDate.exception_type) !== '1') continue;
+        const dayType = getDayTypeForGtfsDate(String(calendarDate.date || ''));
+        if (!dayType) continue;
+
+        const existing = byService.get(calendarDate.service_id) || {
+            Weekday: false,
+            Saturday: false,
+            Sunday: false
+        };
+        existing[dayType] = true;
+        byService.set(calendarDate.service_id, existing);
+    }
+
+    return byService;
+}
+
+function isServiceActiveForDay(
+    calendar: GoCalendar | undefined,
+    dayType: DayType,
+    serviceId: string,
+    derivedDayAvailability: Map<string, ServiceDayAvailability>
+): boolean {
+    if (hasCalendarBaseline(calendar)) {
+        const dayFlag = getDayServiceFlag(dayType);
+        return String(calendar?.[dayFlag] || '0') === '1';
+    }
+
+    const derived = derivedDayAvailability.get(serviceId);
+    if (derived) return Boolean(derived[dayType]);
+
+    // If neither calendar nor calendar_dates information exists, do not block data.
+    return !calendar && derivedDayAvailability.size === 0;
 }
 
 function inferTripDirection(trip: GoTrip): GoDirection | null {
@@ -468,6 +548,7 @@ export function getGoTrainTimesForStopDetailed(
     if (cache && cache.stopTimes.length > 0 && cache.trips.length > 0) {
         const tripById = new Map(cache.trips.map(t => [t.trip_id, t]));
         const calendarByService = new Map(cache.calendar.map(c => [c.service_id, c]));
+        const derivedDayAvailability = buildServiceDayAvailabilityMap(cache.calendarDates);
         const seen = new Set<number>();
 
         const extracted = cache.stopTimes
@@ -478,7 +559,7 @@ export function getGoTrainTimesForStopDetailed(
                 const inferredDirection = inferTripDirection(trip);
                 if (inferredDirection !== direction) return null;
                 const service = calendarByService.get(trip.service_id);
-                if (!isServiceActiveForDay(service, dayType)) return null;
+                if (!isServiceActiveForDay(service, dayType, trip.service_id, derivedDayAvailability)) return null;
                 const minutes = parseGtfsTime(st.departure_time);
                 if (!Number.isFinite(minutes)) return null;
                 if (seen.has(minutes)) return null;

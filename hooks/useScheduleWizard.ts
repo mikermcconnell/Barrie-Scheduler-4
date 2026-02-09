@@ -21,6 +21,7 @@ import { ScheduleConfig } from '../components/NewSchedule/steps/Step3Build';
 import { MasterRouteTable } from '../utils/masterScheduleParser';
 import { useWizardProgress, WizardProgress } from './useWizardProgress';
 import { saveProject, getProject, NewScheduleProject } from '../utils/newScheduleProjectService';
+import { buildStopNameToIdMap } from '../utils/gtfsStopLookup';
 
 // Constants
 export const DEFAULT_CYCLE_TIME = 60;
@@ -249,6 +250,9 @@ export const useScheduleWizard = (): UseScheduleWizardReturn => {
         const freshBandSummary = computeDirectionBandSummary(analysis, bands, groupedData);
         setBandSummary(freshBandSummary);
 
+        // Build GTFS stop name → stop_id lookup for real stop codes
+        const gtfsStopLookup = buildStopNameToIdMap();
+
         // Generate schedule
         const tables = generateSchedule(
             config,
@@ -256,7 +260,8 @@ export const useScheduleWizard = (): UseScheduleWizardReturn => {
             bands,
             freshBandSummary,
             groupedData,
-            dayType
+            dayType,
+            gtfsStopLookup
         );
 
         if (tables.length === 0) {

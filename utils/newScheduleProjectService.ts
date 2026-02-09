@@ -30,6 +30,31 @@ import type { RuntimeData } from '../components/NewSchedule/utils/csvParser';
 import type { TripBucketAnalysis, TimeBand } from './runtimeAnalysis';
 import type { ScheduleConfig } from '../components/NewSchedule/steps/Step3Build';
 
+function stripUndefinedDeep<T>(value: T): T {
+    if (Array.isArray(value)) {
+        return value
+            .map(item => stripUndefinedDeep(item))
+            .filter(item => item !== undefined) as unknown as T;
+    }
+
+    if (value && typeof value === 'object') {
+        const input = value as Record<string, unknown>;
+        const output: Record<string, unknown> = {};
+
+        Object.entries(input).forEach(([key, val]) => {
+            if (val === undefined) return;
+            const cleaned = stripUndefinedDeep(val);
+            if (cleaned !== undefined) {
+                output[key] = cleaned;
+            }
+        });
+
+        return output as T;
+    }
+
+    return value;
+}
+
 // ============ TYPES ============
 
 export interface NewScheduleProject {
@@ -68,6 +93,10 @@ export const saveProject = async (
     const docRef = project.id ? doc(projectsRef, project.id) : doc(projectsRef);
     const projectId = docRef.id;
 
+    const sanitizedConfig = project.config
+        ? stripUndefinedDeep(project.config as ScheduleConfig)
+        : undefined;
+
     // 1. Check if we have large data to store in Storage (Generated Schedules OR Raw Data OR Analysis)
     // We should save to storage if we have ANY of these heavy items.
     let storagePath: string | undefined;
@@ -81,7 +110,7 @@ export const saveProject = async (
             parsedData: project.parsedData, // Save raw data!
             analysis: project.analysis,
             bands: project.bands,
-            config: project.config
+            config: sanitizedConfig
         });
 
         const timestamp = Date.now();
@@ -102,7 +131,7 @@ export const saveProject = async (
         // Don't store large data in Firestore
         analysis: [],
         bands: [],
-        config: project.config || null,
+        config: sanitizedConfig || null,
         generatedSchedules: [],
         // parsedData is never stored in Firestore
         updatedAt: serverTimestamp()

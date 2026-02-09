@@ -118,18 +118,18 @@ Team
 - [x] CSV runtime import and parsing
 - [x] Schedule generation with time bands
 - [x] Schedule editing (ScheduleEditor)
-- [x] Master schedule publishing
-- [x] GTFS import with block assignment
-- [x] Connection optimization
+- [x] Master schedule publishing (Draft → Publish workflow)
+- [x] GTFS import with block assignment (including system-wide import)
+- [x] Connection library and optimization
 
 ### Should Have (Operations)
 - [x] Platform conflict detection
-- [x] Interlining analyzer
-- [x] Excel/PDF export
+- [x] Excel/PDF export (CSV shifts + PDF brochure)
 - [x] Version history
+- [ ] Interlining (8A/8B) - removed Feb 2026, pending reimplementation
 
 ### Nice to Have (Enhancements)
-- [ ] Public timetable brochure generator
+- [x] Public timetable brochure generator
 - [ ] Real-time GTFS export
 - [ ] Multi-route scenario comparison
 - [ ] Automated regression testing for schedules
@@ -162,8 +162,7 @@ Team
 See `.claude/context.md` for implementation details that must not change:
 - Segment rounding approach
 - Block assignment algorithm for merged routes
-- ARR/R/DEP column handling
-- Interline cycle calculation
+- ARR/R/DEP column handling at merged terminuses
 
 ---
 
@@ -184,3 +183,4 @@ When planning features, ask:
 | Date | Change |
 |------|--------|
 | 2026-01-17 | Initial vision document created |
+| 2026-02-09 | Updated feature status: brochure done, interline removed, draft→publish live |

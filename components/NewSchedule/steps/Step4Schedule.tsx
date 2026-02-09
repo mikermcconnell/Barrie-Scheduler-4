@@ -1,5 +1,5 @@
 
-import React, { useEffect } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { MasterRouteTable } from '../../../utils/masterScheduleParser';
 import { ScheduleEditor } from '../../ScheduleEditor';
 import { useUndoRedo } from '../../../hooks/useUndoRedo';
@@ -18,6 +18,10 @@ interface Step4ScheduleProps {
     lastSaved?: Date | null;
     targetCycleTime?: number;
     targetHeadway?: number;
+    teamId?: string;
+    userId?: string;
+    masterBaseline?: MasterRouteTable[] | null;
+    connectionScopeSchedules?: MasterRouteTable[];
 }
 
 export const Step4Schedule: React.FC<Step4ScheduleProps> = ({
@@ -30,17 +34,27 @@ export const Step4Schedule: React.FC<Step4ScheduleProps> = ({
     autoSaveStatus,
     lastSaved,
     targetCycleTime,
-    targetHeadway
+    targetHeadway,
+    teamId,
+    userId,
+    masterBaseline,
+    connectionScopeSchedules
 }) => {
+    // Snapshot the original schedules on first mount so deltas remain stable
+    // even after edits sync back to the parent via onUpdateSchedules
+    const [originalSnapshot, setOriginalSnapshot] = useState<MasterRouteTable[]>(() => initialSchedules);
+
     // We use a local Undo/Redo stack for the session in this step
     // syncing changes back to the parent for persistence
-    console.log('Step4Schedule received initialSchedules:', initialSchedules.length, initialSchedules.map(t => t.routeName));
     const {
         state: schedules,
         set: setSchedules,
         undo, redo, canUndo, canRedo
     } = useUndoRedo<MasterRouteTable[]>(initialSchedules, { maxHistory: 50 });
-    console.log('Step4Schedule useUndoRedo state:', schedules.length);
+
+    const handleResetOriginals = useCallback(() => {
+        setSchedules(originalSnapshot);
+    }, [originalSnapshot, setSchedules]);
 
     // Sync back to parent whenever schedules change
     useEffect(() => {
@@ -53,7 +67,8 @@ export const Step4Schedule: React.FC<Step4ScheduleProps> = ({
                 <ScheduleEditor
                     schedules={schedules}
                     onSchedulesChange={setSchedules}
-                    originalSchedules={initialSchedules}
+                    originalSchedules={originalSnapshot}
+                    onResetOriginals={handleResetOriginals}
                     draftName={projectName}
                     onRenameDraft={() => { }}
                     autoSaveStatus={autoSaveStatus || 'saved'}
@@ -73,6 +88,10 @@ export const Step4Schedule: React.FC<Step4ScheduleProps> = ({
                     targetCycleTime={targetCycleTime}
                     targetHeadway={targetHeadway}
                     hideAutoSave={true}
+                    teamId={teamId}
+                    userId={userId}
+                    masterBaseline={masterBaseline}
+                    connectionScopeSchedules={connectionScopeSchedules}
                 />
             </div>
         </div>

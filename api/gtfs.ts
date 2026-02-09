@@ -58,7 +58,7 @@ async function parseZip(buffer: ArrayBuffer): Promise<Map<string, string>> {
 
     for (const entry of entries) {
         if (entry.isDirectory) continue;
-        const name = entry.entryName.split('/').pop() || entry.entryName;
+        const name = (entry.entryName.split('/').pop() || entry.entryName).toLowerCase();
         if (!name.endsWith('.txt')) continue;
         files.set(name, zip.readAsText(entry, 'utf8'));
     }
@@ -99,11 +99,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         console.log('Extracted files:', Array.from(files.keys()));
 
         // Required GTFS files
-        const requiredFiles = ['routes.txt', 'trips.txt', 'stop_times.txt', 'stops.txt', 'calendar.txt'];
+        // Some feeds (including Metrolinx GO) publish calendar_dates.txt without calendar.txt.
+        const requiredFiles = ['routes.txt', 'trips.txt', 'stop_times.txt', 'stops.txt'];
         const missingFiles = requiredFiles.filter(f => !files.has(f));
 
         if (missingFiles.length > 0) {
             throw new Error(`Missing required GTFS files: ${missingFiles.join(', ')}`);
+        }
+
+        if (!files.has('calendar.txt') && !files.has('calendar_dates.txt')) {
+            throw new Error('Missing required GTFS service files: calendar.txt or calendar_dates.txt');
         }
 
         // Parse CSV files
@@ -153,18 +158,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 drop_off_type: st.drop_off_type ? parseInt(st.drop_off_type) : undefined,
                 timepoint: st.timepoint ? parseInt(st.timepoint) : undefined,
             })),
-            calendar: parseCSV(files.get('calendar.txt')!).map(c => ({
-                service_id: c.service_id,
-                monday: parseInt(c.monday) || 0,
-                tuesday: parseInt(c.tuesday) || 0,
-                wednesday: parseInt(c.wednesday) || 0,
-                thursday: parseInt(c.thursday) || 0,
-                friday: parseInt(c.friday) || 0,
-                saturday: parseInt(c.saturday) || 0,
-                sunday: parseInt(c.sunday) || 0,
-                start_date: c.start_date,
-                end_date: c.end_date,
-            })),
+            calendar: files.has('calendar.txt')
+                ? parseCSV(files.get('calendar.txt')!).map(c => ({
+                    service_id: c.service_id,
+                    monday: parseInt(c.monday) || 0,
+                    tuesday: parseInt(c.tuesday) || 0,
+                    wednesday: parseInt(c.wednesday) || 0,
+                    thursday: parseInt(c.thursday) || 0,
+                    friday: parseInt(c.friday) || 0,
+                    saturday: parseInt(c.saturday) || 0,
+                    sunday: parseInt(c.sunday) || 0,
+                    start_date: c.start_date,
+                    end_date: c.end_date,
+                }))
+                : [],
             calendarDates: files.has('calendar_dates.txt')
                 ? parseCSV(files.get('calendar_dates.txt')!).map(cd => ({
                     service_id: cd.service_id,

@@ -54,10 +54,10 @@ function parseGtfsZip(buffer: Buffer): Map<string, string> {
   const entries = zip.getEntries();
 
   for (const entry of entries) {
-    if (!entry.isDirectory && entry.entryName.endsWith('.txt')) {
+    if (!entry.isDirectory && entry.entryName.toLowerCase().endsWith('.txt')) {
       const content = entry.getData().toString('utf8');
       // Store with just the filename (strip directory path)
-      const fileName = entry.entryName.split('/').pop() || entry.entryName;
+      const fileName = (entry.entryName.split('/').pop() || entry.entryName).toLowerCase();
       files.set(fileName, content);
     }
   }
@@ -145,12 +145,16 @@ export default defineConfig(({ mode }) => {
             const normalizedFiles = parseGtfsZip(buffer);
             console.log('📂 Extracted files:', Array.from(normalizedFiles.keys()));
 
-            // Required GTFS files
-            const requiredFiles = ['routes.txt', 'trips.txt', 'stop_times.txt', 'stops.txt', 'calendar.txt'];
+            // Required GTFS files (calendar.txt is optional if calendar_dates.txt exists)
+            const requiredFiles = ['routes.txt', 'trips.txt', 'stop_times.txt', 'stops.txt'];
             const missingFiles = requiredFiles.filter(f => !normalizedFiles.has(f));
 
             if (missingFiles.length > 0) {
               throw new Error(`Missing required GTFS files: ${missingFiles.join(', ')}. Found: ${Array.from(normalizedFiles.keys()).join(', ')}`);
+            }
+
+            if (!normalizedFiles.has('calendar.txt') && !normalizedFiles.has('calendar_dates.txt')) {
+              throw new Error(`Missing required GTFS service files: calendar.txt or calendar_dates.txt. Found: ${Array.from(normalizedFiles.keys()).join(', ')}`);
             }
 
             // Parse CSV files (use normalizedFiles)
@@ -187,18 +191,20 @@ export default defineConfig(({ mode }) => {
                 stop_sequence: parseInt(st.stop_sequence) || 0,
                 timepoint: st.timepoint ? parseInt(st.timepoint) : undefined,
               })),
-              calendar: parseGtfsCsv(normalizedFiles.get('calendar.txt')!).map(c => ({
-                service_id: c.service_id,
-                monday: parseInt(c.monday) || 0,
-                tuesday: parseInt(c.tuesday) || 0,
-                wednesday: parseInt(c.wednesday) || 0,
-                thursday: parseInt(c.thursday) || 0,
-                friday: parseInt(c.friday) || 0,
-                saturday: parseInt(c.saturday) || 0,
-                sunday: parseInt(c.sunday) || 0,
-                start_date: c.start_date,
-                end_date: c.end_date,
-              })),
+              calendar: normalizedFiles.has('calendar.txt')
+                ? parseGtfsCsv(normalizedFiles.get('calendar.txt')!).map(c => ({
+                    service_id: c.service_id,
+                    monday: parseInt(c.monday) || 0,
+                    tuesday: parseInt(c.tuesday) || 0,
+                    wednesday: parseInt(c.wednesday) || 0,
+                    thursday: parseInt(c.thursday) || 0,
+                    friday: parseInt(c.friday) || 0,
+                    saturday: parseInt(c.saturday) || 0,
+                    sunday: parseInt(c.sunday) || 0,
+                    start_date: c.start_date,
+                    end_date: c.end_date,
+                  }))
+                : [],
               calendarDates: normalizedFiles.has('calendar_dates.txt')
                 ? parseGtfsCsv(normalizedFiles.get('calendar_dates.txt')!).map(cd => ({
                     service_id: cd.service_id,

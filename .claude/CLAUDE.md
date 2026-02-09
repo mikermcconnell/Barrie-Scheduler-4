@@ -6,6 +6,46 @@
 
 ---
 
+## 0. Quick Start
+
+```bash
+npm run dev          # Dev server on port 3008
+npm run build        # Production build (catches TS errors)
+npx vitest run       # Run all tests
+npx vitest run tests/timeUtils.test.ts  # Time parsing tests (run before any time changes)
+```
+
+**Stack:** Vite + React 19 + TypeScript + Firebase + Tailwind CSS
+
+---
+
+## 0b. Current Project State (Feb 2026)
+
+### Implemented and Working
+- CSV/Excel runtime import → schedule generation (5-step wizard)
+- GTFS import with block assignment (single route + system-wide)
+- Draft → Publish workflow with version history
+- Schedule editing (ScheduleEditor, RoundTripTableView, SingleRouteView)
+- Connection library (team-shared targets, GO Train times, college bells)
+- Public timetable brochure generator (jsPDF)
+- Platform conflict detection
+- AI optimization via Gemini (Generator → Critic two-pass)
+- Team-based multi-tenancy with roles
+
+### Known Issues
+- **Connections C7**: Edits in ConnectionsPanel don't refresh ScheduleEditor indicators without reopen
+- **Connections C4**: Stop code not validated against known stops
+
+### Removed / Pending Reimplementation
+- **Interlining (8A↔8B)**: All interline code removed Feb 2026. No `interlineNext`/`interlinePrev` fields on MasterTrip. Reimplementation pending.
+
+### Not Yet Built
+- Real-time GTFS export
+- Multi-route scenario comparison
+- Automated schedule regression testing
+
+---
+
 ## 1. Prompt Quality Scoring
 
 | Score | Meaning |
@@ -99,5 +139,6 @@ Route 8A and 8B have custom "Block Flow" sort logic in `RoundTripTableView.tsx`:
 ## 7. Session Memory
 
 - **Post-midnight time parsing** - Always run tests after touching time parsing
-- **Interline cycle calculation** - Use dynamic stop-name detection, not hardcoded indices
-- **ARR → R → DEP pattern** - Recognized as single stop, not duplicates
+- **Dynamic stop-name detection** - Never hardcode stop indices; use name-based matching
+- **ARR → R → DEP pattern** - At merged terminuses, recognized as single stop, not duplicates
+- **Interline code removed** - Don't reference `interlineNext`, `interlinePrev`, or interline functions; they no longer exist

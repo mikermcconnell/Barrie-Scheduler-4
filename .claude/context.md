@@ -84,6 +84,7 @@ cycleTime = schedule[schedule.length - 1].end - schedule[0].start
 | Index-based stop time lookup | Name-based stop matching |
 | Use `expectedStart` for merged routes | Use gap-based matching (`maxGap`) |
 | Check `timeTolerance` before `maxGap` | Check `maxGap` first when specified |
+| Reference old interline code | Interline was removed Feb 2026; reimplementation pending |
 
 ---
 

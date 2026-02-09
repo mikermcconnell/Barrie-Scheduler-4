@@ -1,116 +1,130 @@
 # Implementation Plan
 
-Development roadmap for Draft → Publish migration.
+Status and roadmap for the Barrie Transit Schedule Builder.
+
+> Last updated: February 2026
 
 ---
 
-## Prerequisites
+## Completed Phases
 
-Decisions required before starting:
+### Phase 1: Data Model Alignment ✅
 
-1. **Draft ownership**: Team-scoped (`teams/{teamId}/draftSchedules`) or per-user?
-2. **Route identity format**: Keep `{route}-{dayType}` or migrate to `{route}_{dayType}`?
-3. **Connection system**: Replace Step 5 optimizer with rules/delta system, or keep both?
+Draft → Publish workflow with unified schedule types.
 
----
-
-## Phase 1: Data Model Alignment
-
-**Goal:** Unified schedule type with Draft → Publish workflow.
-
-- [ ] `utils/scheduleTypes.ts` - DraftSchedule, PublishedSchedule, PublishedVersion types
-- [ ] `utils/draftService.ts` - CRUD for drafts
-- [ ] `utils/publishService.ts` - Publish draft to master, version history
-- [ ] `utils/masterScheduleTypes.ts` - Extend metadata (effectiveDate, notes, publishedAt/by)
-- [ ] `utils/masterScheduleService.ts` - Refactor to read-only; delegate writes to publishService
-- [ ] `utils/dataService.ts` - Deprecate legacy ScheduleDraft types
+- [x] `utils/scheduleTypes.ts` - DraftSchedule, PublishedSchedule types
+- [x] `utils/draftService.ts` - CRUD for drafts (save, load, update, delete)
+- [x] `utils/publishService.ts` - Publish draft to master, version history
+- [x] `utils/masterScheduleTypes.ts` - Extended metadata (effectiveDate, notes, publishedAt/by)
+- [x] `utils/masterScheduleService.ts` - Read-only master access
+- [x] `utils/systemDraftService.ts` - System-wide draft management
 - [ ] Tests for draft/publish services
 
----
+### Phase 2: View Refactor ✅
 
-## Phase 2: View Refactor
+All editing happens in Drafts; exports from Published.
 
-**Goal:** All editing in Drafts, all exports from Published.
+- [x] `components/ScheduleEditor.tsx` - Publish action added
+- [x] `components/ScheduleEditorWorkspace.tsx` - Renamed from ScheduleTweakerWorkspace
+- [x] `components/MasterScheduleBrowser.tsx` - Copy to Draft support
+- [x] `components/FixedRouteWorkspace.tsx` - Updated view routing
+- [x] `components/NewSchedule/NewScheduleWizard.tsx` - Outputs to Draft
+- [x] ScheduleTweakerWorkspace removed (commit `75c5088`, Feb 2026)
 
-- [ ] `components/ScheduleEditor.tsx` - Remove direct upload; add Publish action
-- [ ] `components/ScheduleTweakerWorkspace.tsx` → Rename to ScheduleEditorWorkspace
-- [ ] `components/MasterScheduleBrowser.tsx` → Rename to MasterScheduleView; add Copy to Draft
-- [ ] `components/FixedRouteWorkspace.tsx` - Update view names and routing
-- [ ] `components/NewSchedule/NewScheduleWizard.tsx` - Output to Draft instead of Master
+### Phase 3: GTFS Import ✅
 
----
+Import existing schedules from GTFS feed.
 
-## Phase 3: GTFS Import
+- [x] `utils/gtfsTypes.ts` - GTFS entity types (336 lines)
+- [x] `utils/gtfsImportService.ts` - Full pipeline: fetch, parse, block assign (1,573 lines)
+- [x] `utils/gtfsStopLookup.ts` - Stop name resolution
+- [x] `components/GTFSImport.tsx` - UI for selecting feed/route/day
+- [x] System-wide import (all routes for a day type)
+- [x] Merged A/B route handling (2A+2B, 7A+7B, 12A+12B)
 
-**Goal:** Import existing schedules from GTFS feed.
+### Phase 4: Connection Timing ✅ (Partial)
 
-- [ ] `utils/gtfsTypes.ts` - GTFS entities
-- [ ] `utils/gtfsImportService.ts` - Fetch, parse, cache GTFS, map to MasterScheduleContent
-- [ ] `components/ScheduleCreator/GTFSImport.tsx` - UI for selecting feed/route/day
-- [ ] Firebase rules for `teams/{teamId}/gtfsCache`
+Connection library with team-shared targets.
 
----
+- [x] `utils/connectionLibraryService.ts` - CRUD for targets and times
+- [x] `utils/connectionTypes.ts` - Type definitions
+- [x] `utils/connectionUtils.ts` - Stop matching, day filtering
+- [x] `components/connections/ConnectionsPanel.tsx` - Library management UI
+- [x] `components/NewSchedule/connections/` - Add target, import route, optimization panels
+- [x] `components/schedule/ConnectionIndicator.tsx` - Schedule cell indicators
+- [ ] **C7 bug**: Panel edits don't refresh editor indicators without reopen
+- [ ] **C4 gap**: Stop code not validated against known stops
 
-## Phase 4: Connection Timing
+### Phase 5: Brochure Generator ✅
 
-**Goal:** Rules-driven connection checks and manual adjustments.
+PDF brochure generation from Master Schedule.
 
-- [ ] `utils/connectionService.ts` - Rules CRUD, GO schedules, bell times
-- [ ] `components/connections/ConnectionRulesManager.tsx`
-- [ ] `components/connections/GOScheduleEditor.tsx`
-- [ ] `components/connections/BellTimesEditor.tsx`
-- [ ] `components/ScheduleEditor/DeltaCell.tsx` - Show deltas in schedule table
-- [ ] `components/connections/TripAdjustmentDialog.tsx` - Manual adjustments
+- [x] `components/Reports/PublicTimetable.tsx` - jsPDF brochure renderer (~800 lines)
+- [x] Route color integration from `utils/routeColors.ts`
+- [x] Direction labels with terminus info
+- [x] Route map upload/preview support
 
----
+### Phase 6: Platform Conflicts ✅ (Core)
 
-## Phase 5: Brochure Generator
+Platform analysis with hub configuration.
 
-**Goal:** PDF brochure generation from Master Schedule.
-
-- [ ] `utils/brochureTypes.ts`
-- [ ] `utils/brochureService.ts`
-- [ ] `components/pdf/BrochureDocument.tsx` - @react-pdf renderer
-- [ ] `components/MasterSchedule/BrochureTemplateEditor.tsx`
-- [ ] `components/MasterSchedule/BrochureGenerator.tsx`
-
----
-
-## Phase 6: Platform Conflicts
-
-**Goal:** Platform config in Firestore with publish-time checks.
-
-- [ ] `utils/platformConflictService.ts` - Read/write config in Firestore
-- [ ] `utils/platformAnalysis.ts` - Consume Firestore config with fallback
-- [ ] `components/MasterSchedule/PlatformConfigEditor.tsx`
-- [ ] `components/MasterSchedule/ConflictsPanel.tsx`
-- [ ] `utils/publishService.ts` - Run conflict analysis on publish
+- [x] `utils/platformAnalysis.ts` - Dwell events, conflict windows, peak detection
+- [x] `utils/platformConfig.ts` - Hub configs (Park Place, GO Station, Allandale, Downtown, Georgian)
+- [x] `components/PlatformSummary.tsx` - Visual platform analysis
+- [ ] Firestore-backed config editor (currently static config)
+- [ ] Publish-time conflict checks
 
 ---
 
-## Phase 7: Cleanup
+## Remaining Work
 
-- [ ] Remove deprecated `ScheduleDraft` from `utils/dataService.ts`
-- [ ] Remove `utils/parserAdapter.ts` if no longer needed
-- [ ] Update docs
+### Connections Polish
+
+| Item | Priority | Details |
+|------|----------|---------|
+| Fix C7 sync bug | High | Wire `ConnectionsPanel` state updates back to `ScheduleEditor` |
+| Add stop code validation (C4) | Medium | Validate against known GTFS stops on target creation |
+| Add test coverage | Medium | No connection-specific tests exist yet |
+
+### Interlining Reimplementation
+
+| Item | Priority | Details |
+|------|----------|---------|
+| Design new interline approach | High | Previous code removed Feb 2026; needs fresh design |
+| 8A↔8B evening linking | High | One bus serves both routes with 5-min terminal recovery |
+| Sunday all-day interlining | Medium | Reduced service = interline all day |
+| Terminal DEP column | Medium | Shows next same-route departure, not ARR + R |
+
+### Platform Enhancements
+
+| Item | Priority | Details |
+|------|----------|---------|
+| Firestore config editor | Low | Move hub/platform config from static file to Firestore |
+| Publish-time conflict check | Low | Auto-run analysis when publishing a draft |
+
+### Testing
+
+| Item | Priority | Details |
+|------|----------|---------|
+| Connection utils tests | Medium | Day filtering, stop-code matching |
+| Draft/publish service tests | Low | CRUD operations |
+| GTFS import mapping tests | Low | Stop name generation, block chaining |
+
+### Future Features
+
+- Real-time GTFS export
+- Multi-route scenario comparison
+- Automated schedule regression testing
 
 ---
 
-## Phase 8: Testing
+## Test Coverage
 
-- [ ] Keep `tests/timeUtils.test.ts` (locked parsing tests)
-- [ ] Add draft/publish service tests
-- [ ] Add GTFS import mapping tests
-- [ ] Add platform conflict test cases
-
----
-
-## Key Gaps (Current State)
-
-| Gap | Impact | Evidence |
-|-----|--------|----------|
-| Draft → Publish not implemented | High | Data split across 3 locations |
-| GTFS import missing | High | Still using CSV/Excel only |
-| Connection timing rules missing | Medium | No rules/delta UI in editor |
-| Brochure generator differs | Medium | Only jsPDF timetable exists |
-| Platform conflict enhancements | Medium | Config is static, no publish checks |
+| File | Tests | Status |
+|------|-------|--------|
+| `tests/timeUtils.test.ts` | 216 lines | Active - post-midnight handling |
+| `tests/connectionUtils.test.ts` | 73 lines | Active |
+| `tests/goTransitService.test.ts` | 66 lines | Active |
+| `tests/gtfsDirection.test.ts` | 64 lines | Active - 5 route config tests |
+| `tests/parser.test.ts` | 44 lines | Active |
+| `tests/scheduleDraftAdapter.test.ts` | 95 lines | Active |

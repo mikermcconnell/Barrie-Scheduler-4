@@ -38,7 +38,7 @@ import { RouteConnectionPanel } from '../connections/RouteConnectionPanel';
 import { OptimizationPanel } from '../connections/OptimizationPanel';
 import { AddTargetModal, AddTargetInitialData } from '../connections/AddTargetModal';
 import { ImportRouteModal } from '../connections/ImportRouteModal';
-import { ConnectionAddChooser } from '../connections/ConnectionAddChooser';
+import { ConnectionAddChooser, ConnectionTemplateSelection } from '../connections/ConnectionAddChooser';
 import { ConnectionStatusPanel } from '../../connections/ConnectionStatusPanel';
 import { getConnectionLibrary, saveConnectionLibrary } from '../../../utils/connectionLibraryService';
 import { getMasterSchedule } from '../../../utils/masterScheduleService';
@@ -47,6 +47,7 @@ import { appendLibraryChange } from '../../../utils/connectionLibraryUtils';
 
 interface Step5Props {
     schedules: MasterRouteTable[];
+    connectionScopeSchedules?: MasterRouteTable[];
     routeIdentity: string;
     dayType: 'Weekday' | 'Saturday' | 'Sunday';
 
@@ -67,6 +68,7 @@ interface Step5Props {
 
 export const Step5Connections: React.FC<Step5Props> = ({
     schedules,
+    connectionScopeSchedules,
     routeIdentity,
     dayType,
     connectionLibrary,
@@ -89,6 +91,7 @@ export const Step5Connections: React.FC<Step5Props> = ({
     const [isLoadingLibrary, setIsLoadingLibrary] = useState(false);
     const [connectionStatus, setConnectionStatus] = useState<ConnectionCheckResult | null>(null);
     const [isCheckingStatus, setIsCheckingStatus] = useState(false);
+    const validationSchedules = connectionScopeSchedules || schedules;
 
     const deriveRouteTargetTimes = useCallback((
         table: MasterRouteTable,
@@ -141,7 +144,7 @@ export const Step5Connections: React.FC<Step5Props> = ({
         const wantsAllandale = name.includes('allandale') || location.includes('allandale');
 
         const stopMap = new Map<string, string>(); // code -> name
-        for (const table of schedules) {
+        for (const table of validationSchedules) {
             Object.entries(table.stopIds || {}).forEach(([stopName, code]) => {
                 const normalizedName = stopName.toLowerCase();
                 const isBarrieSouthMatch = normalizedName.includes('barrie south')
@@ -170,7 +173,29 @@ export const Step5Connections: React.FC<Step5Props> = ({
             stopCode: matchedStops[0].code,
             autoPopulateStops: true
         };
+    }, [validationSchedules]);
+
+    const validStopCodes = React.useMemo(() => {
+        const codes = new Set<string>();
+        validationSchedules.forEach(table => {
+            Object.values(table.stopIds || {}).forEach(code => {
+                const trimmed = (code || '').trim();
+                if (trimmed) codes.add(trimmed);
+            });
+        });
+        return Array.from(codes);
+    }, [validationSchedules]);
+    const routeLocalStopCodeCount = React.useMemo(() => {
+        const codes = new Set<string>();
+        schedules.forEach(table => {
+            Object.values(table.stopIds || {}).forEach(code => {
+                const trimmed = (code || '').trim();
+                if (trimmed) codes.add(trimmed);
+            });
+        });
+        return codes.size;
     }, [schedules]);
+    const isMasterValidationScopeActive = Boolean(connectionScopeSchedules && connectionScopeSchedules.length > schedules.length);
 
     // Load connection library from Firebase on mount
     useEffect(() => {
@@ -396,6 +421,103 @@ export const Step5Connections: React.FC<Step5Props> = ({
         setShowAddTargetModal(false);
     }, [connectionLibrary, setConnectionLibrary, userId]);
 
+    const handleImportGoGtfsTargets = useCallback((templates: ConnectionTemplateSelection[]) => {
+        if (!connectionLibrary) return;
+
+        const now = new Date().toISOString();
+        const normalizedTemplates = templates
+            .map(template => getTemplateInitialData(template))
+            .filter(template => (template.name || '').trim().length > 0)
+            .filter(template => (template.stopCode || '').trim().length > 0)
+            .filter(template => Array.isArray(template.times) && template.times.length > 0);
+
+        if (normalizedTemplates.length === 0) {
+            setShowChooser(false);
+            return;
+        }
+
+        const manualTargetsByName = new Map(
+            connectionLibrary.targets
+                .filter(target => target.type === 'manual')
+                .map(target => [target.name.trim().toLowerCase(), target] as const)
+        );
+
+        const nextTargets = [...connectionLibrary.targets];
+        let createdCount = 0;
+        let updatedCount = 0;
+
+        for (const template of normalizedTemplates) {
+            const effectiveStopCodes = (template.stops || [])
+                .filter(stop => stop.enabled)
+                .map(stop => stop.code)
+                .filter(code => !!code.trim());
+            const primaryStopCode = effectiveStopCodes[0] || (template.stopCode || '').trim();
+            if (!primaryStopCode) continue;
+
+            const normalizedName = (template.name || '').trim().toLowerCase();
+            const existing = manualTargetsByName.get(normalizedName);
+            const incoming: Omit<ConnectionTarget, 'id' | 'createdAt' | 'updatedAt'> = {
+                name: (template.name || '').trim(),
+                type: 'manual',
+                location: template.location?.trim() || undefined,
+                stopCode: primaryStopCode,
+                ...(template.autoPopulateStops && effectiveStopCodes.length > 0
+                    ? {
+                        stopCodes: effectiveStopCodes,
+                        autoPopulateStops: true
+                    }
+                    : {}),
+                icon: template.icon,
+                times: template.times,
+                color: template.icon === 'clock' ? 'teal' : 'green',
+                defaultEventType: template.defaultEventType || 'departure'
+            };
+
+            if (existing) {
+                const updatedTarget: ConnectionTarget = {
+                    ...existing,
+                    ...incoming,
+                    id: existing.id,
+                    createdAt: existing.createdAt,
+                    updatedAt: now
+                };
+                const index = nextTargets.findIndex(target => target.id === existing.id);
+                if (index >= 0) {
+                    nextTargets[index] = updatedTarget;
+                    updatedCount += 1;
+                }
+                manualTargetsByName.set(normalizedName, updatedTarget);
+            } else {
+                const newTarget: ConnectionTarget = {
+                    ...incoming,
+                    id: `target_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                    createdAt: now,
+                    updatedAt: now
+                };
+                nextTargets.push(newTarget);
+                manualTargetsByName.set(normalizedName, newTarget);
+                createdCount += 1;
+            }
+        }
+
+        if (createdCount === 0 && updatedCount === 0) {
+            setShowChooser(false);
+            return;
+        }
+
+        const total = createdCount + updatedCount;
+        setConnectionLibrary(appendLibraryChange({
+            ...connectionLibrary,
+            targets: nextTargets,
+            updatedAt: now,
+            updatedBy: userId
+        }, userId, 'import_go_gtfs', `Imported ${total} GO target(s): ${createdCount} new, ${updatedCount} updated`));
+
+        setShowChooser(false);
+        setShowAddTargetModal(false);
+        setAddTargetInitialData(undefined);
+    }, [connectionLibrary, getTemplateInitialData, setConnectionLibrary, userId]);
+
     // Handle adding a connection
     const handleAddConnection = useCallback((connection: Omit<RouteConnection, 'id'>) => {
         if (!routeConnectionConfig) return;
@@ -485,6 +607,17 @@ export const Step5Connections: React.FC<Step5Props> = ({
                 onConfigureClick={() => setExpandedSection('config')}
             />
 
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-amber-700 mt-0.5 flex-shrink-0" />
+                <div className="text-xs text-amber-900">
+                    <p className="font-semibold">Validation Debug</p>
+                    <p>
+                        Scope: {isMasterValidationScopeActive ? 'Master + Route' : 'Route only'}.
+                        Loaded stop codes: {validStopCodes.length}. Current route stop codes: {routeLocalStopCodeCount}.
+                    </p>
+                </div>
+            </div>
+
             {/* Info banner if no connections */}
             {stats.targetCount === 0 && (
                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-start gap-3">
@@ -528,7 +661,7 @@ export const Step5Connections: React.FC<Step5Props> = ({
                             onAddTarget={() => setShowChooser(true)}
                             onImportRoute={() => setShowImportRouteModal(true)}
                             schedules={schedules}
-                            validStopCodes={availableStops.map(stop => stop.code)}
+                            validStopCodes={validStopCodes}
                             userId={userId}
                             dayType={dayType}
                         />
@@ -626,11 +759,7 @@ export const Step5Connections: React.FC<Step5Props> = ({
                     setShowChooser(false);
                     setShowAddTargetModal(true);
                 }}
-                onSelectGtfsImport={() => {
-                    // For now, GTFS import opens the manual form with GO Train presets
-                    setShowChooser(false);
-                    setShowAddTargetModal(true);
-                }}
+                onSelectGtfsImport={handleImportGoGtfsTargets}
                 dayType={dayType}
             />
 
@@ -643,7 +772,7 @@ export const Step5Connections: React.FC<Step5Props> = ({
                 onAdd={handleAddTarget}
                 dayType={dayType}
                 existingTargetNames={connectionLibrary?.targets.map(t => t.name) || []}
-                validStopCodes={availableStops.map(stop => stop.code)}
+                validStopCodes={validStopCodes}
                 defaultQualityWindowSettings={connectionLibrary?.qualityWindowSettings}
                 initialData={addTargetInitialData}
             />

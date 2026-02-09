@@ -63,4 +63,41 @@ describe('goTransitService data source behavior', () => {
         expect(departures.name.toLowerCase()).toContain('departures');
         expect(arrivals.name.toLowerCase()).toContain('arrivals');
     });
+
+    it('uses calendar_dates when calendar is not present', () => {
+        const cache = {
+            fetchedAt: new Date().toISOString(),
+            barrieStops: [{ stop_id: 'AL', stop_name: 'Allandale Waterfront GO' }],
+            stopTimes: [
+                {
+                    trip_id: 'trip1',
+                    stop_id: 'AL',
+                    arrival_time: '08:10:00',
+                    departure_time: '08:12:00',
+                    stop_sequence: 1
+                }
+            ],
+            trips: [{
+                trip_id: 'trip1',
+                route_id: 'BR',
+                service_id: 'SVC1',
+                trip_headsign: 'Union Station',
+                direction_id: '0'
+            }],
+            calendar: [],
+            calendarDates: [{
+                service_id: 'SVC1',
+                date: '20260209', // Monday
+                exception_type: '1'
+            }]
+        };
+        localStorage.setItem('goTransitGtfsCache', JSON.stringify(cache));
+
+        const weekday = getGoTrainTimesForStopDetailed('AL', 'Weekday', 'southbound');
+        const saturday = getGoTrainTimesForStopDetailed('AL', 'Saturday', 'southbound');
+
+        expect(weekday.source).toBe('gtfs');
+        expect(weekday.times.length).toBe(1);
+        expect(saturday.source).toBe('fallback');
+    });
 });

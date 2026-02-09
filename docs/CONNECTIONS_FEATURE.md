@@ -141,6 +141,23 @@ Notes:
 | Library UI | `components/NewSchedule/connections/ConnectionLibraryPanel.tsx` |
 | Add target modal | `components/NewSchedule/connections/AddTargetModal.tsx` |
 
+## Known Issues (Feb 2026 Review)
+
+| ID | Issue | Severity | Status | Details |
+|----|-------|----------|--------|---------|
+| **C4** | Stop code not validated against known stops | Medium | Open | Only checks non-empty; doesn't verify against GTFS stop list. `AddTargetModal.tsx:183` |
+| **C7** | Panel edits don't refresh editor indicators | High | Open | `ConnectionsPanel` maintains local state and doesn't notify parent `ScheduleEditor`. Indicators only update after closing/reopening panel. Fix: add `onLibraryChanged` callback prop. |
+| **C8** | Route-based target resync only in panel lifecycle | Medium | Open | Derivation/resync from master schedules happens in `ConnectionsPanel` local state, not wired to editor state. |
+
+### Untested Areas
+
+No connection-specific test coverage exists in `tests/`. Priority test targets:
+- `utils/connectionUtils.ts` - day filtering, stop-code matching
+- `AddTargetModal.tsx` - validation (required stop code, unique name, enabled time/day)
+- Panel → Editor sync (C7 regression guard)
+
+---
+
 ## Example
 
 ### GO Train Connection Target

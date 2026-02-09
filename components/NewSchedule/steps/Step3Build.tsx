@@ -18,6 +18,15 @@ export interface BlockConfig {
     id: string; // "100-1"
     startTime: string; // "06:00"
     endTime: string; // "20:00"
+    startStop?: string; // "Park Place" — first stop of block's earliest trip
+    endStop?: string; // "RVH Main" — last stop of block's latest trip
+}
+
+export interface BandRecoveryDefault {
+    bandId: string;           // 'A', 'B', 'C', etc.
+    avgCycleTime: number;     // Full round-trip cycle time (for Strict mode)
+    avgRecoveryRatio: number; // Recovery % (for Floating mode)
+    tripCount: number;        // Number of master trips that contributed
 }
 
 export interface ScheduleConfig {
@@ -28,6 +37,7 @@ export interface ScheduleConfig {
     recoveryDistribution?: 'End' | 'Proportional';
     // Headway is now calculated
     blocks: BlockConfig[];
+    bandRecoveryDefaults?: BandRecoveryDefault[];
 }
 
 interface Step3Props {
@@ -44,8 +54,30 @@ export const Step3Build: React.FC<Step3Props> = ({ dayType, bands, config, setCo
     const [autofillFromMaster, setAutofillFromMaster] = React.useState(true);
     const [isLoadingMaster, setIsLoadingMaster] = React.useState(false);
     const [masterStatus, setMasterStatus] = React.useState<'idle' | 'loaded' | 'not-found'>('idle');
+    const [usePerBandRecovery, setUsePerBandRecovery] = React.useState(true);
+    const [displayBandDefaults, setDisplayBandDefaults] = React.useState<BandRecoveryDefault[]>([]);
     const configRef = React.useRef(config);
     React.useEffect(() => { configRef.current = config; }, [config]);
+
+    // Keep display state in sync when autofill loads new data
+    React.useEffect(() => {
+        if (config.bandRecoveryDefaults && config.bandRecoveryDefaults.length > 0) {
+            setDisplayBandDefaults(config.bandRecoveryDefaults);
+        }
+    }, [config.bandRecoveryDefaults]);
+
+    // Sync per-band toggle: when unchecked, strip bandRecoveryDefaults from config
+    React.useEffect(() => {
+        if (usePerBandRecovery) {
+            if (displayBandDefaults.length > 0 && !config.bandRecoveryDefaults) {
+                setConfig({ ...config, bandRecoveryDefaults: displayBandDefaults });
+            }
+        } else {
+            if (config.bandRecoveryDefaults) {
+                setConfig({ ...config, bandRecoveryDefaults: undefined });
+            }
+        }
+    }, [usePerBandRecovery, displayBandDefaults, config, setConfig]);
 
     // Convert minutes-from-midnight to "HH:MM" string
     const minutesToTimeStr = (minutes: number): string => {
@@ -67,26 +99,29 @@ export const Step3Build: React.FC<Step3Props> = ({ dayType, bands, config, setCo
         return hours * 60 + minutes;
     };
 
-    // Extract effective min/max times from a trip by scanning all stop times
+    // Extract effective min/max times and their stop names from a trip
     const getEffectiveTimes = (trip: { startTime: number; endTime: number; stopMinutes?: Record<string, number>; stops?: Record<string, string> }) => {
         let start = trip.startTime;
         let end = trip.endTime;
+        let startStop = '';
+        let endStop = '';
 
         if (trip.stopMinutes && Object.keys(trip.stopMinutes).length > 0) {
-            const times = Object.values(trip.stopMinutes) as number[];
-            start = Math.min(start, ...times);
-            end = Math.max(end, ...times);
+            for (const [stopName, time] of Object.entries(trip.stopMinutes)) {
+                if (time <= start) { start = time; startStop = stopName; }
+                if (time >= end) { end = time; endStop = stopName; }
+            }
         } else if (trip.stops && Object.keys(trip.stops).length > 0) {
-            for (const timeStr of Object.values(trip.stops)) {
+            for (const [stopName, timeStr] of Object.entries(trip.stops)) {
                 const parsed = parseTimeToMinutes(timeStr as string);
                 if (parsed !== null) {
-                    if (parsed < start) start = parsed;
-                    if (parsed > end) end = parsed;
+                    if (parsed <= start) { start = parsed; startStop = stopName; }
+                    if (parsed >= end) { end = parsed; endStop = stopName; }
                 }
             }
         }
 
-        return { start, end };
+        return { start, end, startStop, endStop };
     };
 
     // Fetch and autofill blocks from master schedule
@@ -111,15 +146,21 @@ export const Step3Build: React.FC<Step3Props> = ({ dayType, bands, config, setCo
                 const allTrips = [...content.northTable.trips, ...content.southTable.trips];
 
                 // Group by blockId, scanning all stop times for true min/max
-                const blockMap = new Map<string, { startTime: number; endTime: number }>();
+                const blockMap = new Map<string, { startTime: number; endTime: number; startStop: string; endStop: string }>();
                 for (const trip of allTrips) {
-                    const { start, end } = getEffectiveTimes(trip);
+                    const { start, end, startStop, endStop } = getEffectiveTimes(trip);
                     const existing = blockMap.get(trip.blockId);
                     if (!existing) {
-                        blockMap.set(trip.blockId, { startTime: start, endTime: end });
+                        blockMap.set(trip.blockId, { startTime: start, endTime: end, startStop, endStop });
                     } else {
-                        if (start < existing.startTime) existing.startTime = start;
-                        if (end > existing.endTime) existing.endTime = end;
+                        if (start < existing.startTime) {
+                            existing.startTime = start;
+                            existing.startStop = startStop;
+                        }
+                        if (end > existing.endTime) {
+                            existing.endTime = end;
+                            existing.endStop = endStop;
+                        }
                     }
                 }
 
@@ -129,11 +170,56 @@ export const Step3Build: React.FC<Step3Props> = ({ dayType, bands, config, setCo
                     .map(([blockId, data]) => ({
                         id: blockId,
                         startTime: minutesToTimeStr(data.startTime),
-                        endTime: minutesToTimeStr(data.endTime)
+                        endTime: minutesToTimeStr(data.endTime),
+                        startStop: data.startStop || undefined,
+                        endStop: data.endStop || undefined
                     }));
 
+                // Second pass: extract per-band recovery defaults
+                const bandGroups = new Map<string, { cycleTimes: number[]; recoveryRatios: number[] }>();
+                for (const trip of allTrips) {
+                    if (!trip.assignedBand || !trip.travelTime || trip.travelTime <= 0) continue;
+                    const group = bandGroups.get(trip.assignedBand) || { cycleTimes: [], recoveryRatios: [] };
+                    group.cycleTimes.push(trip.cycleTime);
+                    if (trip.travelTime > 0) {
+                        group.recoveryRatios.push((trip.recoveryTime / trip.travelTime) * 100);
+                    }
+                    bandGroups.set(trip.assignedBand, group);
+                }
+
+                const bandRecoveryDefaults: BandRecoveryDefault[] = [];
+                for (const [bandId, group] of bandGroups) {
+                    const avgCycleTime = Math.round(
+                        group.cycleTimes.reduce((s, v) => s + v, 0) / group.cycleTimes.length * 2
+                    ); // × 2 for full round-trip
+                    const avgRecoveryRatio = Math.round(
+                        group.recoveryRatios.reduce((s, v) => s + v, 0) / group.recoveryRatios.length
+                    );
+                    bandRecoveryDefaults.push({ bandId, avgCycleTime, avgRecoveryRatio, tripCount: group.cycleTimes.length });
+                }
+                bandRecoveryDefaults.sort((a, b) => a.bandId.localeCompare(b.bandId));
+
+                // Compute global weighted averages from band data
+                let globalCycleTime = configRef.current.cycleTime;
+                let globalRecoveryRatio = configRef.current.recoveryRatio ?? 0;
+                if (bandRecoveryDefaults.length > 0) {
+                    const totalTrips = bandRecoveryDefaults.reduce((s, bd) => s + bd.tripCount, 0);
+                    globalCycleTime = Math.round(
+                        bandRecoveryDefaults.reduce((s, bd) => s + bd.avgCycleTime * bd.tripCount, 0) / totalTrips
+                    );
+                    globalRecoveryRatio = Math.round(
+                        bandRecoveryDefaults.reduce((s, bd) => s + bd.avgRecoveryRatio * bd.tripCount, 0) / totalTrips
+                    );
+                }
+
                 if (blocks.length > 0 && !cancelled) {
-                    setConfig({ ...configRef.current, blocks });
+                    setConfig({
+                        ...configRef.current,
+                        blocks,
+                        cycleTime: globalCycleTime,
+                        recoveryRatio: globalRecoveryRatio,
+                        bandRecoveryDefaults: bandRecoveryDefaults.length > 0 ? bandRecoveryDefaults : undefined
+                    });
                     setMasterStatus('loaded');
                 } else {
                     setMasterStatus('not-found');
@@ -348,6 +434,9 @@ export const Step3Build: React.FC<Step3Props> = ({ dayType, bands, config, setCo
                                     {Number.isInteger(computedHeadway) ? computedHeadway : computedHeadway.toFixed(1)}
                                     <span className="text-xs font-normal ml-0.5">m</span>
                                 </span>
+                                {displayBandDefaults.length > 0 && usePerBandRecovery && (
+                                    <span className="text-[10px] text-blue-500 italic">varies by band</span>
+                                )}
                             </div>
                             <div>
                                 <span className="text-xs text-blue-600 font-medium block">Blocks</span>
@@ -355,6 +444,48 @@ export const Step3Build: React.FC<Step3Props> = ({ dayType, bands, config, setCo
                             </div>
                         </div>
                     </div>
+
+                    {/* Per-Band Recovery Defaults */}
+                    {displayBandDefaults.length > 0 && (
+                        <div className={`p-4 rounded-xl flex flex-col gap-2 ${usePerBandRecovery ? 'bg-emerald-50 border border-emerald-100' : 'bg-gray-50 border border-gray-200'}`}>
+                            <h3 className={`text-xs font-bold uppercase ${usePerBandRecovery ? 'text-emerald-800' : 'text-gray-500'}`}>Master Recovery Defaults</h3>
+                            <table className="w-full text-left text-xs">
+                                <thead>
+                                    <tr className={usePerBandRecovery ? 'text-emerald-600' : 'text-gray-400'}>
+                                        <th className="py-1 font-bold">Band</th>
+                                        <th className="py-1 font-bold text-right">Cycle</th>
+                                        <th className="py-1 font-bold text-right">Recov%</th>
+                                        <th className="py-1 font-bold text-right">Trips</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {displayBandDefaults.map(bd => {
+                                        const bandColor = bands.find(b => b.id === bd.bandId)?.color;
+                                        return (
+                                            <tr key={bd.bandId} className={usePerBandRecovery ? 'text-emerald-900' : 'text-gray-500'}>
+                                                <td className="py-0.5 flex items-center gap-1.5">
+                                                    {bandColor && <div className="w-2 h-2 rounded-full" style={{ backgroundColor: bandColor, opacity: usePerBandRecovery ? 1 : 0.4 }} />}
+                                                    <span className="font-bold">{bd.bandId}</span>
+                                                </td>
+                                                <td className="py-0.5 text-right font-medium">{bd.avgCycleTime}m</td>
+                                                <td className="py-0.5 text-right font-medium">{bd.avgRecoveryRatio}%</td>
+                                                <td className="py-0.5 text-right">{bd.tripCount}</td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                            <label className="flex items-center gap-2 mt-1 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={usePerBandRecovery}
+                                    onChange={e => setUsePerBandRecovery(e.target.checked)}
+                                    className="rounded border-emerald-300 text-emerald-600 focus:ring-emerald-500"
+                                />
+                                <span className="text-xs font-medium text-emerald-700">Use per-band defaults</span>
+                            </label>
+                        </div>
+                    )}
                 </div>
 
                 {/* Right Column: Block Definitions */}
@@ -402,16 +533,18 @@ export const Step3Build: React.FC<Step3Props> = ({ dayType, bands, config, setCo
                         <table className="w-full text-left">
                             <thead className="bg-gray-50 border-b border-gray-200 sticky top-0 z-10">
                                 <tr>
-                                    <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase">Block ID</th>
-                                    <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase">Start Time</th>
-                                    <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase">End Time</th>
-                                    <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase text-right">Actions</th>
+                                    <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase">Block ID</th>
+                                    <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase">Start Time</th>
+                                    <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase">Start Stop</th>
+                                    <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase">End Time</th>
+                                    <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase">End Stop</th>
+                                    <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase text-right">Actions</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-100">
                                 {config.blocks.map((block, idx) => (
                                     <tr key={idx} className="hover:bg-gray-50 transition-colors">
-                                        <td className="px-6 py-4">
+                                        <td className="px-4 py-3">
                                             <input
                                                 type="text"
                                                 value={block.id}
@@ -419,7 +552,7 @@ export const Step3Build: React.FC<Step3Props> = ({ dayType, bands, config, setCo
                                                 className="bg-transparent font-bold text-gray-900 focus:outline-none focus:underline w-24"
                                             />
                                         </td>
-                                        <td className="px-6 py-4">
+                                        <td className="px-4 py-3">
                                             <input
                                                 type="time"
                                                 value={block.startTime}
@@ -428,7 +561,16 @@ export const Step3Build: React.FC<Step3Props> = ({ dayType, bands, config, setCo
                                                 title={idx > 0 ? "Auto-filled based on headway (editable)" : "Start time for Block 1"}
                                             />
                                         </td>
-                                        <td className="px-6 py-4">
+                                        <td className="px-4 py-3">
+                                            {block.startStop ? (
+                                                <span className="text-xs text-gray-500 truncate block max-w-[140px]" title={block.startStop}>
+                                                    {block.startStop}
+                                                </span>
+                                            ) : (
+                                                <span className="text-xs text-gray-300">—</span>
+                                            )}
+                                        </td>
+                                        <td className="px-4 py-3">
                                             <input
                                                 type="time"
                                                 value={block.endTime}
@@ -436,7 +578,16 @@ export const Step3Build: React.FC<Step3Props> = ({ dayType, bands, config, setCo
                                                 className="bg-gray-50 border border-gray-200 rounded-md px-2 py-1 text-sm font-medium focus:ring-2 focus:ring-brand-blue/20 focus:border-brand-blue outline-none"
                                             />
                                         </td>
-                                        <td className="px-6 py-4 text-right">
+                                        <td className="px-4 py-3">
+                                            {block.endStop ? (
+                                                <span className="text-xs text-gray-500 truncate block max-w-[140px]" title={block.endStop}>
+                                                    {block.endStop}
+                                                </span>
+                                            ) : (
+                                                <span className="text-xs text-gray-300">—</span>
+                                            )}
+                                        </td>
+                                        <td className="px-4 py-3 text-right">
                                             <button
                                                 onClick={() => removeBlock(idx)}
                                                 className="text-gray-400 hover:text-red-500 p-2 hover:bg-red-50 rounded-lg transition-colors"

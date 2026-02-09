@@ -5,6 +5,38 @@ import { TimeBand, TripBucketAnalysis, BandSummary, DirectionBandSummary } from 
 import { SegmentRawData, extractTimepointsFromSegments } from '../components/NewSchedule/utils/csvParser';
 import { getOperationalSortTime } from './blockAssignmentCore';
 
+const normalizeStopLookupKey = (value: string): string => {
+    return value
+        .toLowerCase()
+        .replace(/&/g, ' and ')
+        .replace(/\bpl\b/g, ' place ')
+        .replace(/\bcoll\b/g, ' college ')
+        .replace(/\bctr\b/g, ' centre ')
+        .replace(/\bstn\b/g, ' station ')
+        .replace(/\bterm\b/g, ' terminal ')
+        .replace(/\bhwy\b/g, ' highway ')
+        .replace(/\bgovernors\b/g, 'govenors ')
+        .replace(/[()[\]{}'".,]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+};
+
+const buildNormalizedLookup = (
+    ...lookups: Array<Record<string, string> | undefined>
+): Record<string, string> => {
+    const normalized: Record<string, string> = {};
+    lookups.forEach(lookup => {
+        if (!lookup) return;
+        Object.entries(lookup).forEach(([name, code]) => {
+            const n = normalizeStopLookupKey(name);
+            if (n && code && !normalized[n]) {
+                normalized[n] = code;
+            }
+        });
+    });
+    return normalized;
+};
+
 /**
  * Generates a complete schedule from configuration and runtime analysis data.
  *
@@ -19,7 +51,9 @@ export const generateSchedule = (
     bands: TimeBand[],
     bandSummary: DirectionBandSummary,
     segmentsMap: Record<string, SegmentRawData[]>,
-    dayType: string = 'Weekday'
+    dayType: string = 'Weekday',
+    gtfsStopLookup?: Record<string, string>,
+    fallbackStopLookup?: Record<string, string>
 ): MasterRouteTable[] => {
     // 1. Validation
     const cycleTimeMinutes = config.cycleTime;
@@ -37,11 +71,22 @@ export const generateSchedule = (
     // Extract timepoints for each direction
     const timepointsMap: Record<string, string[]> = {};
     const stopIdsMap: Record<string, Record<string, string>> = {};
+    const normalizedStopLookup = buildNormalizedLookup(gtfsStopLookup, fallbackStopLookup);
 
     directions.forEach(dir => {
         timepointsMap[dir] = extractTimepointsFromSegments(segmentsMap[dir]);
         stopIdsMap[dir] = {};
-        timepointsMap[dir].forEach((tp, i) => { stopIdsMap[dir][tp] = String(i + 1); });
+        timepointsMap[dir].forEach((tp, i) => {
+            const exactCode = gtfsStopLookup?.[tp] || fallbackStopLookup?.[tp];
+            if (exactCode) {
+                stopIdsMap[dir][tp] = exactCode;
+                return;
+            }
+
+            // Normalized fallback catches abbreviations/case/punctuation differences.
+            const normalizedCode = normalizedStopLookup[normalizeStopLookupKey(tp)];
+            stopIdsMap[dir][tp] = normalizedCode || String(i + 1);
+        });
     });
 
     // Helper: Convert "06:00" to minutes from midnight
@@ -151,7 +196,14 @@ export const generateSchedule = (
         const endMins = toMinutes(block.endTime);
         let currentTime = startMins;
 
+        // Determine starting direction: if startStop is not the North origin, start South
         let currentDir = hasNorth ? 'North' : directions[0];
+        if (isRoundTrip && block.startStop) {
+            const northOrigin = timepointsMap['North']?.[0];
+            if (northOrigin && block.startStop.toLowerCase() !== northOrigin.toLowerCase()) {
+                currentDir = 'South';
+            }
+        }
         let tripSequence = 1;
 
         // For round-trip routes, track the band determined at the START of the round trip
@@ -223,7 +275,10 @@ export const generateSchedule = (
                     directionTarget = Math.floor(bandTotal / 2);
                 } else {
                     // South leg: use remainder to hit exact total
-                    directionTarget = bandTotal - roundTripNorthTravelTime;
+                    // For pullout blocks starting South (no preceding North trip), use ceil of half
+                    directionTarget = roundTripNorthTravelTime > 0
+                        ? bandTotal - roundTripNorthTravelTime
+                        : Math.ceil(bandTotal / 2);
                 }
             } else {
                 // Single direction: use full target
@@ -256,13 +311,19 @@ export const generateSchedule = (
 
             if (config.cycleMode === 'Floating') {
                 // Floating: Cycle = Travel + (Travel * Ratio)
-                const ratio = (config.recoveryRatio ?? 0) / 100;  // Default 0% since GTFS times are complete
+                // Per-band lookup > global config > default 0%
+                const bandId = roundTripBandId || currentBand?.bandId;
+                const bandDefault = bandId ? config.bandRecoveryDefaults?.find(bd => bd.bandId === bandId) : undefined;
+                const ratio = (bandDefault?.avgRecoveryRatio ?? config.recoveryRatio ?? 0) / 100;
                 totalRecovery = Math.round(pureTravelTime * ratio);
                 tripCycleAllocated = pureTravelTime + totalRecovery;
                 nextTripStart = currentTime + tripCycleAllocated;
             } else {
                 // Strict: Cycle is Fixed. Recovery fills the gap.
-                const totalCycle = config.cycleTime;
+                // Per-band lookup > global config > default 60m
+                const bandId = roundTripBandId || currentBand?.bandId;
+                const bandDefault = bandId ? config.bandRecoveryDefaults?.find(bd => bd.bandId === bandId) : undefined;
+                const totalCycle = bandDefault?.avgCycleTime ?? config.cycleTime;
                 const allocated = isRoundTrip ? totalCycle / 2 : totalCycle;
                 tripCycleAllocated = allocated;
 

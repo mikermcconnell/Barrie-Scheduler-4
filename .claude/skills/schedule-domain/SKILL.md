@@ -321,188 +321,23 @@ MasterSchedule   // Published immutable schedule
 
 ---
 
-## Part 8: Interlining at Barrie Transit
+## Part 8: Interlining (REMOVED - Pending Reimplementation)
 
-### What is Interlining?
+> **Status:** All interline code was removed in February 2026. The functions `applyInterlineRules`, `calculateInterlineTerminalDepartures`, `findInterlineTarget`, and `tripMatchesRule` no longer exist. `MasterTrip` no longer has `interlineNext`, `interlinePrev`, or `interlineTerminalDep` fields.
 
-**Interlining** is when a bus transitions between different routes without returning to the garage. At Barrie Transit, Routes 8A and 8B interline during evening hours at the Barrie Allandale Transit Terminal.
+### Domain Context (for future reimplementation)
 
-```
-Weekday/Saturday Evening (8:00 PM - 1:35 AM):
-Bus operates: 8A → 8B → 8A → 8B → ...
+**Interlining** is when a bus transitions between different routes without returning to the garage. At Barrie Transit, Routes 8A and 8B interline at the Allandale Transit Terminal during reduced-service periods:
 
-Example sequence:
-1. 8A arrives at terminal     8:07 PM
-2. 8B departs from terminal   8:12 PM  (5 min recovery)
-3. 8B arrives back            8:37 PM
-4. 8A departs from terminal   8:42 PM  (5 min recovery)
-5. 8A arrives back            9:07 PM
-... cycle continues
-```
+- **Weekday/Saturday**: Evening only (8:00 PM - 1:35 AM)
+- **Sunday**: All day
 
-### Why Interline?
+One bus alternates: 8A → 8B → 8A → 8B, with ~5 min recovery at the terminal between route transitions.
 
-- **Efficiency**: One bus serves both routes instead of two buses sitting idle
-- **Lower evening demand**: Ridership doesn't justify separate vehicles
-- **Cost savings**: Reduces vehicle hours and driver shifts
+### Key Design Considerations (When Reimplementing)
 
-### Prerequisite: Load Both Routes
-
-**CRITICAL**: Both 8A and 8B schedules must be loaded for interline logic to work.
-
-The system needs to:
-1. Find 8A trips arriving at the terminal
-2. Find 8B trips departing from the terminal
-3. Link them into shared blocks
-4. Calculate when the same route next departs
-
-If only one route is loaded, none of this can happen.
-
-### The ARR | R | DEP Pattern at Terminal
-
-At interline terminals, the schedule displays three sub-columns:
-
-| Column | Meaning | Example |
-|--------|---------|---------|
-| **ARR** | When this trip arrives at terminal | 8:07 PM |
-| **R** | Recovery/layover minutes | 5 |
-| **DEP** | When the SAME ROUTE next departs | 8:42 PM |
-
-**Key insight**: DEP is NOT `ARR + R`. During interline:
-- The bus departs as a different route (8B at 8:12 PM)
-- DEP shows when the original route (8A) next departs (8:42 PM)
-- The 35-minute gap (8:07 → 8:42) signals to schedulers that an interline occurred
-
-### Interline Rules
-
-Rules define when and where interlining occurs:
-
-```typescript
-interface InterlineRule {
-  fromRoute: '8A' | '8B';
-  fromDirection: 'North';
-  toRoute: '8B' | '8A';
-  toDirection: 'North';
-  atStop: 'Barrie Allandale Transit Terminal - Platform 1';
-  timeRange: { start: 1200, end: 1535 };  // 8:00 PM - 1:35 AM
-  days: ['Weekday', 'Saturday'];
-  enabled: boolean;
-}
-```
-
-Default rules are auto-created when both 8A and 8B are detected in the loaded schedules.
-
-### Data Flow: How Interline Works
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│ 1. LOAD SCHEDULES                                               │
-│    Load both 8A and 8B tables into ScheduleEditor               │
-└─────────────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────────────┐
-│ 2. AUTO-DETECT RULES (ScheduleEditor.tsx)                       │
-│    - Detect 8A + 8B presence                                    │
-│    - Find terminal stop name from schedule                      │
-│    - Create default InterlineRule[] for Weekday/Saturday/Sunday │
-└─────────────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────────────┐
-│ 3. APPLY INTERLINE RULES (applyInterlineRules)                  │
-│    For each trip matching a rule:                               │
-│    - Find the target trip (8A→8B or 8B→8A)                      │
-│    - Set trip.interlineNext = { route, time, stopName }         │
-│    - Set target.interlinePrev = { route, time, stopName }       │
-│    - Assign shared blockId to linked trip chains                │
-└─────────────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────────────┐
-│ 4. CALCULATE TERMINAL DEP (calculateInterlineTerminalDepartures)│
-│    For each trip with interlineNext:                            │
-│    - Group all trips by blockId                                 │
-│    - Find next trip in block with SAME route number             │
-│    - Store that trip's terminal departure in interlineTerminalDep│
-└─────────────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────────────┐
-│ 5. RENDER DEP COLUMN (RoundTripTableView.tsx)                   │
-│    When displaying terminal stop:                               │
-│    - Check if trip.interlineTerminalDep[stop] exists            │
-│    - If yes: show that time (next same-route departure)         │
-│    - If no: show ARR + Recovery (standard calculation)          │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### Key Code Locations
-
-| Function | File | Purpose |
-|----------|------|---------|
-| `applyInterlineRules` | `masterScheduleParser.ts:1077` | Links trips and assigns shared blocks |
-| `calculateInterlineTerminalDepartures` | `masterScheduleParser.ts:1348` | Calculates DEP times for interlined trips |
-| `tripMatchesRule` | `masterScheduleParser.ts:863` | Checks if a trip matches an interline rule |
-| `findInterlineTarget` | `masterScheduleParser.ts:944` | Finds the target trip for interlining |
-| `getInterlineTerminalDep` | `RoundTripTableView.tsx:70` | Gets DEP time with fuzzy stop matching |
-| Auto-apply logic | `ScheduleEditor.tsx:282` | Creates and applies default rules on load |
-
-### MasterTrip Interline Fields
-
-```typescript
-interface MasterTrip {
-  // ... other fields ...
-
-  // Set by applyInterlineRules
-  interlineNext?: {
-    route: string;      // "8B" - route it becomes
-    time: number;       // Time at terminal (minutes)
-    stopName?: string;  // "Barrie Allandale Transit Terminal - Platform 1"
-  };
-  interlinePrev?: {
-    route: string;      // "8A" - route it came from
-    time: number;
-    stopName?: string;
-  };
-
-  // Set by calculateInterlineTerminalDepartures
-  interlineTerminalDep?: Record<string, number>;  // stopName → DEP time (minutes)
-}
-```
-
-### Stop Name Matching
-
-The terminal stop name may vary (platform numbers, abbreviations). The `stopNameMatches` function handles:
-
-- Exact match: `"Barrie Allandale Transit Terminal"` = `"Barrie Allandale Transit Terminal"`
-- Platform suffix: `"Barrie Allandale Transit Terminal - Platform 1"` matches `"Barrie Allandale Transit Terminal"`
-- Partial match: `"Allandale Terminal"` matches `"Barrie Allandale Transit Terminal"`
-- Numbered suffix: `"Terminal (2)"` matches `"Terminal"`
-
-### Debugging Interline Issues
-
-Enable console logging by loading schedules and checking browser DevTools:
-
-```
-[ApplyInterline] Enabled rules: 4 ["8A->8B at Barrie Allandale...", ...]
-[ApplyInterline] Trip matched rule: 8A (Weekday) trip ending 8:07 PM
-[ApplyInterline] Found target: 8B (Weekday) trip starting 8:12 PM
-[InterlineDEP] Found interline trip: 8A block=IL-W1 startTime=7:32 PM -> 8B
-[InterlineDEP] Looking for next 8A trip at terminal
-[InterlineDEP] Found same route! depTime at terminal = 8:42 PM
-```
-
-### Common Issues
-
-| Issue | Cause | Solution |
-|-------|-------|----------|
-| DEP shows ARR+R instead of next same-route | Only one route loaded | Load both 8A and 8B |
-| No interline applied | Rules not enabled or time outside range | Check InterlineConfigPanel |
-| Wrong terminal stop | Stop name mismatch | Check `atStop` in rules matches actual stop |
-| Trips not in same block | Target trip not found | Verify both routes have trips at matching times |
-
-### Sunday Behavior
-
-On Sundays, interlining runs **all day** (not just evenings) due to reduced service levels:
-
-```typescript
-// Sunday rules
-timeRange: { start: 0, end: 1535 }  // 12:00 AM - 1:35 AM (next day)
-```
+1. Both 8A and 8B schedules must be loaded simultaneously
+2. Terminal DEP column shows next **same-route** departure, not ARR + R
+3. Use dynamic stop-name matching (platform numbers vary)
+4. Block IDs must span across routes for interlined trips
+5. Time ranges differ by day type (evening-only vs all-day)
