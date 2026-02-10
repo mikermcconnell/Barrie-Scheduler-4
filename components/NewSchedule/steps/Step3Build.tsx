@@ -8,7 +8,7 @@ import type { RouteIdentity } from '../../../utils/masterScheduleTypes';
 // Configuration Constants
 export const SCHEDULE_DEFAULTS = {
     CYCLE_TIME: 60,           // Default cycle time in minutes
-    RECOVERY_RATIO: 0,        // Default recovery ratio (0% since GTFS times are complete)
+    RECOVERY_RATIO: 15,       // Default floating recovery ratio (%)
     START_TIME: '06:00',      // Default block start time
     END_TIME: '22:00',        // Default block end time
     ROUTE_NUMBER: '10'        // Default route number
@@ -79,6 +79,13 @@ export const Step3Build: React.FC<Step3Props> = ({ dayType, bands, config, setCo
         }
     }, [usePerBandRecovery, displayBandDefaults, config, setConfig]);
 
+    // Floating mode guardrail: always prefill target recovery at 15% when missing/zero.
+    React.useEffect(() => {
+        if (config.cycleMode !== 'Floating') return;
+        if ((config.recoveryRatio ?? 0) > 0) return;
+        setConfig({ ...config, recoveryRatio: SCHEDULE_DEFAULTS.RECOVERY_RATIO });
+    }, [config, setConfig]);
+
     // Convert minutes-from-midnight to "HH:MM" string
     const minutesToTimeStr = (minutes: number): string => {
         const normalized = ((minutes % 1440) + 1440) % 1440;
@@ -86,6 +93,9 @@ export const Step3Build: React.FC<Step3Props> = ({ dayType, bands, config, setCo
         const m = normalized % 60;
         return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
     };
+
+    // Transit service day: times before 4 AM are late-night service (sort after 23:59)
+    const toOperational = (minutes: number): number => minutes < 240 ? minutes + 1440 : minutes;
 
     // Parse "6:50 AM" / "10:30 PM" → minutes from midnight
     const parseTimeToMinutes = (timeStr: string): number | null => {
@@ -108,15 +118,17 @@ export const Step3Build: React.FC<Step3Props> = ({ dayType, bands, config, setCo
 
         if (trip.stopMinutes && Object.keys(trip.stopMinutes).length > 0) {
             for (const [stopName, time] of Object.entries(trip.stopMinutes)) {
-                if (time <= start) { start = time; startStop = stopName; }
-                if (time >= end) { end = time; endStop = stopName; }
+                const operationalTime = toOperational(time);
+                if (operationalTime <= start) { start = operationalTime; startStop = stopName; }
+                if (operationalTime >= end) { end = operationalTime; endStop = stopName; }
             }
         } else if (trip.stops && Object.keys(trip.stops).length > 0) {
             for (const [stopName, timeStr] of Object.entries(trip.stops)) {
                 const parsed = parseTimeToMinutes(timeStr as string);
                 if (parsed !== null) {
-                    if (parsed <= start) { start = parsed; startStop = stopName; }
-                    if (parsed >= end) { end = parsed; endStop = stopName; }
+                    const operationalTime = toOperational(parsed);
+                    if (operationalTime <= start) { start = operationalTime; startStop = stopName; }
+                    if (operationalTime >= end) { end = operationalTime; endStop = stopName; }
                 }
             }
         }
@@ -145,20 +157,27 @@ export const Step3Build: React.FC<Step3Props> = ({ dayType, bands, config, setCo
                 const { content } = result;
                 const allTrips = [...content.northTable.trips, ...content.southTable.trips];
 
-                // Group by blockId, scanning all stop times for true min/max
+                // Transit service day: times before 4 AM are late-night (sort after 23:59)
+                const toOperational = (min: number): number => min < 240 ? min + 1440 : min;
+
+                // Group by blockId, scanning all stop times for true min/max.
+                // Uses operational time so post-midnight trips (12-3:59 AM) are
+                // treated as end-of-day, not start-of-day.
                 const blockMap = new Map<string, { startTime: number; endTime: number; startStop: string; endStop: string }>();
                 for (const trip of allTrips) {
                     const { start, end, startStop, endStop } = getEffectiveTimes(trip);
+                    const opStart = toOperational(start);
+                    const opEnd = toOperational(end);
                     const existing = blockMap.get(trip.blockId);
                     if (!existing) {
-                        blockMap.set(trip.blockId, { startTime: start, endTime: end, startStop, endStop });
+                        blockMap.set(trip.blockId, { startTime: opStart, endTime: opEnd, startStop, endStop });
                     } else {
-                        if (start < existing.startTime) {
-                            existing.startTime = start;
+                        if (opStart < existing.startTime) {
+                            existing.startTime = opStart;
                             existing.startStop = startStop;
                         }
-                        if (end > existing.endTime) {
-                            existing.endTime = end;
+                        if (opEnd > existing.endTime) {
+                            existing.endTime = opEnd;
                             existing.endStop = endStop;
                         }
                     }
@@ -201,7 +220,7 @@ export const Step3Build: React.FC<Step3Props> = ({ dayType, bands, config, setCo
 
                 // Compute global weighted averages from band data
                 let globalCycleTime = configRef.current.cycleTime;
-                let globalRecoveryRatio = configRef.current.recoveryRatio ?? 0;
+                let globalRecoveryRatio = configRef.current.recoveryRatio ?? SCHEDULE_DEFAULTS.RECOVERY_RATIO;
                 if (bandRecoveryDefaults.length > 0) {
                     const totalTrips = bandRecoveryDefaults.reduce((s, bd) => s + bd.tripCount, 0);
                     globalCycleTime = Math.round(
@@ -252,6 +271,7 @@ export const Step3Build: React.FC<Step3Props> = ({ dayType, bands, config, setCo
     React.useEffect(() => {
         if (config.blocks.length <= 1) return;
         if (autofillFromMaster && masterStatus === 'loaded') return;
+        if (config.cycleMode === 'Floating' && (!config.cycleTime || config.cycleTime <= 0)) return;
 
         const cycleTime = config.cycleTime;
         const computedHeadway = config.blocks.length > 0 ? cycleTime / config.blocks.length : 0;
@@ -302,6 +322,24 @@ export const Step3Build: React.FC<Step3Props> = ({ dayType, bands, config, setCo
 
     const cycleTime = config.cycleTime;
     const computedHeadway = config.blocks.length > 0 ? cycleTime / config.blocks.length : 0;
+    const bandsWithData = bands.filter(b => b.count > 0 && b.avg > 0);
+    const suggestedStrictCycle = bandsWithData.length > 0
+        ? Math.round(
+            bandsWithData.reduce((sum, b) => sum + (b.avg * b.count), 0) /
+            bandsWithData.reduce((sum, b) => sum + b.count, 0)
+        )
+        : null;
+    const strictCycleDeltaPct = (suggestedStrictCycle && cycleTime > 0)
+        ? Math.round(((cycleTime - suggestedStrictCycle) / suggestedStrictCycle) * 100)
+        : null;
+    const strictCycleSeverity: 'warning' | 'critical' | null =
+        config.cycleMode === 'Floating' || strictCycleDeltaPct === null
+            ? null
+            : Math.abs(strictCycleDeltaPct) >= 35
+                ? 'critical'
+                : Math.abs(strictCycleDeltaPct) >= 20
+                    ? 'warning'
+                    : null;
 
     return (
         <div className="h-full flex flex-col animate-in fade-in duration-500 overflow-hidden">
@@ -372,7 +410,13 @@ export const Step3Build: React.FC<Step3Props> = ({ dayType, bands, config, setCo
                                     Strict
                                 </button>
                                 <button
-                                    onClick={() => setConfig({ ...config, cycleMode: 'Floating' })}
+                                    onClick={() => setConfig({
+                                        ...config,
+                                        cycleMode: 'Floating',
+                                        recoveryRatio: (config.recoveryRatio ?? 0) > 0
+                                            ? config.recoveryRatio
+                                            : SCHEDULE_DEFAULTS.RECOVERY_RATIO
+                                    })}
                                     className={`flex-1 py-1 text-xs font-bold rounded-md transition-all ${config.cycleMode === 'Floating' ? 'bg-white text-brand-blue shadow-sm' : 'text-gray-500'}`}
                                 >
                                     Floating
@@ -382,12 +426,13 @@ export const Step3Build: React.FC<Step3Props> = ({ dayType, bands, config, setCo
                             {config.cycleMode === 'Floating' ? (
                                 <div className="grid grid-cols-2 gap-4 animate-in fade-in slide-in-from-top-2 duration-200">
                                     <div>
-                                        <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Reference Cycle</label>
+                                        <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Reference Cycle (Optional)</label>
                                         <div className="relative">
                                             <input
                                                 type="number"
                                                 value={config.cycleTime}
                                                 onChange={e => setConfig({ ...config, cycleTime: parseInt(e.target.value) || 0 })}
+                                                placeholder="Optional"
                                                 className="w-full pl-8 px-2 py-1.5 border border-gray-200 bg-gray-50 rounded-lg text-gray-600 font-medium text-sm"
                                             />
                                             <Clock size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -399,7 +444,7 @@ export const Step3Build: React.FC<Step3Props> = ({ dayType, bands, config, setCo
                                             <input
                                                 type="number"
                                                 value={config.recoveryRatio ?? SCHEDULE_DEFAULTS.RECOVERY_RATIO}
-                                                onChange={e => setConfig({ ...config, recoveryRatio: parseInt(e.target.value) || 0 })}
+                                                onChange={e => setConfig({ ...config, recoveryRatio: parseInt(e.target.value) || SCHEDULE_DEFAULTS.RECOVERY_RATIO })}
                                                 className="w-full pl-3 pr-6 py-1.5 border border-brand-blue/30 bg-blue-50/50 rounded-lg focus:ring-2 focus:ring-brand-blue/20 focus:border-brand-blue font-bold text-brand-blue text-sm"
                                             />
                                             <span className="absolute right-3 top-1/2 -translate-y-1/2 text-brand-blue/50 font-bold text-xs">%</span>
@@ -419,6 +464,36 @@ export const Step3Build: React.FC<Step3Props> = ({ dayType, bands, config, setCo
                                         <Clock size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-brand-blue" />
                                     </div>
                                     <p className="text-[10px] text-gray-400 mt-1">Total round-trip time (min)</p>
+                                    {strictCycleSeverity && (
+                                        <div
+                                            className={`mt-2 rounded-lg px-2 py-1.5 ${
+                                                strictCycleSeverity === 'critical'
+                                                    ? 'border border-red-200 bg-red-50'
+                                                    : 'border border-amber-200 bg-amber-50'
+                                            }`}
+                                        >
+                                            <p
+                                                className={`text-[11px] font-semibold ${
+                                                    strictCycleSeverity === 'critical'
+                                                        ? 'text-red-800'
+                                                        : 'text-amber-800'
+                                                }`}
+                                            >
+                                                {strictCycleSeverity === 'critical' ? 'Strongly recommended:' : 'Check strict cycle:'} {cycleTime}m is {strictCycleDeltaPct! > 0 ? `${strictCycleDeltaPct}% above` : `${Math.abs(strictCycleDeltaPct!)}% below`} observed runtime (~{suggestedStrictCycle}m).
+                                            </p>
+                                            <button
+                                                type="button"
+                                                onClick={() => setConfig({ ...config, cycleTime: suggestedStrictCycle! })}
+                                                className={`mt-1 text-[11px] font-bold underline ${
+                                                    strictCycleSeverity === 'critical'
+                                                        ? 'text-red-700 hover:text-red-800'
+                                                        : 'text-amber-700 hover:text-amber-800'
+                                                }`}
+                                            >
+                                                Use suggested {suggestedStrictCycle}m
+                                            </button>
+                                        </div>
+                                    )}
                                 </div>
                             )}
                         </div>

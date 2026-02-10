@@ -120,11 +120,13 @@ function normalizeStopName(stopName: string): string {
  * @param stopName - The stop name from schedule data
  * @param stopId - The stop code/ID (optional but preferred)
  */
-export function matchStopToHub(stopName: string, stopId?: string): HubConfig | null {
+export function matchStopToHub(stopName: string, stopId?: string, hubs?: HubConfig[]): HubConfig | null {
+    const hubList = hubs || HUBS;
+
     // 1. Try matching by stop code first (most reliable)
     if (stopId) {
         const normalizedCode = stopId.trim();
-        for (const hub of HUBS) {
+        for (const hub of hubList) {
             if (hub.stopCodes.includes(normalizedCode)) {
                 return hub;
             }
@@ -133,7 +135,7 @@ export function matchStopToHub(stopName: string, stopId?: string): HubConfig | n
 
     // 2. Fallback to name matching
     const normalized = normalizeStopName(stopName);
-    for (const hub of HUBS) {
+    for (const hub of hubList) {
         for (const pattern of hub.stopNamePatterns) {
             if (normalized.includes(pattern)) {
                 return hub;
@@ -153,6 +155,13 @@ function getBaseRoute(routeNumber: string): string {
 }
 
 /**
+ * Determine whether a route string has a variant suffix (e.g., "8A", "12B").
+ */
+function hasVariantSuffix(routeNumber: string): boolean {
+    return /[A-Z]$/i.test(routeNumber.trim());
+}
+
+/**
  * Check if two routes are in the same family
  * e.g., "2" and "2A" are same family, "8A" and "8B" are same family
  */
@@ -163,20 +172,140 @@ function isSameRouteFamily(route1: string, route2: string): boolean {
 }
 
 /**
- * Get platform assignment for a route at a specific hub.
- * Matches route families - e.g., route "2" matches platforms with "2", "2A", or "2B"
+ * Extract platform stop code hints from platform ID labels.
+ * Examples:
+ * - "P3 (9003)" -> ["9003"]
+ * - "P12/13" -> []
+ * - "Stop 330" -> ["330"]
  */
-export function getPlatformForRoute(hub: HubConfig, routeNumber: string): PlatformAssignment | null {
-    const normalizedRoute = routeNumber.toUpperCase().trim();
+function extractPlatformStopCodes(platformId: string): string[] {
+    const codes: string[] = [];
 
-    for (const platform of hub.platforms) {
-        // Check if any platform route matches (same family)
-        for (const platformRoute of platform.routes) {
-            if (isSameRouteFamily(normalizedRoute, platformRoute)) {
+    // Parenthesized code, e.g. "(9003)"
+    const parenMatch = platformId.match(/\((\d+)\)/);
+    if (parenMatch?.[1]) {
+        codes.push(parenMatch[1]);
+    }
+
+    // "Stop 330" style
+    const stopMatch = platformId.match(/stop\s*(\d+)/i);
+    if (stopMatch?.[1]) {
+        codes.push(stopMatch[1]);
+    }
+
+    return codes;
+}
+
+function platformHasStopCode(platform: PlatformAssignment, stopId?: string): boolean {
+    if (!stopId) return false;
+    const normalizedStopId = stopId.trim();
+    if (!normalizedStopId) return false;
+    return extractPlatformStopCodes(platform.platformId).includes(normalizedStopId);
+}
+
+function routeMatchScore(
+    inputRoute: string,
+    platformRoute: string
+): 3 | 2 | 1 | 0 {
+    const input = inputRoute.trim().toUpperCase();
+    const candidate = platformRoute.trim().toUpperCase();
+    if (!input || !candidate) return 0;
+
+    if (input === candidate) return 3; // exact
+
+    const inputBase = getBaseRoute(input);
+    if (candidate === inputBase) return 2; // generic base mapping (e.g., 2 -> 2A)
+
+    if (isSameRouteFamily(input, candidate)) return 1; // family fallback
+
+    return 0;
+}
+
+function getBestRouteMatch(
+    platform: PlatformAssignment,
+    normalizedRoute: string
+): { score: 3 | 2 | 1 | 0; hasExact: boolean } {
+    let best: 3 | 2 | 1 | 0 = 0;
+    let hasExact = false;
+
+    for (const platformRoute of platform.routes) {
+        const score = routeMatchScore(normalizedRoute, platformRoute);
+        if (score === 3) hasExact = true;
+        if (score > best) best = score as 3 | 2 | 1 | 0;
+    }
+
+    return { score: best, hasExact };
+}
+
+/**
+ * Get platform assignment for a route at a specific hub.
+ * Priority:
+ * 1) Stop-code constrained exact route match
+ * 2) Hub-wide exact route match
+ * 3) Base-route match (e.g., "2" config serving "2A")
+ * 4) Family fallback (only when no exact variant exists at hub)
+ */
+export function getPlatformForRoute(hub: HubConfig, routeNumber: string, stopId?: string): PlatformAssignment | null {
+    const normalizedRoute = routeNumber.toUpperCase().trim();
+    if (!normalizedRoute) return null;
+
+    // If stop ID narrows to one or more platforms, prioritize those first.
+    const platformsByStop = stopId
+        ? hub.platforms.filter(p => platformHasStopCode(p, stopId))
+        : [];
+
+    const hasExactVariantAtHub = hub.platforms.some(p =>
+        p.routes.some(r => r.trim().toUpperCase() === normalizedRoute)
+    );
+
+    const variantsExistForBaseAtHub = hasVariantSuffix(normalizedRoute) && hub.platforms.some(p =>
+        p.routes.some(r => {
+            const candidate = r.trim().toUpperCase();
+            return hasVariantSuffix(candidate) && getBaseRoute(candidate) === getBaseRoute(normalizedRoute);
+        })
+    );
+
+    const chooseBest = (platforms: PlatformAssignment[]): PlatformAssignment | null => {
+        let bestPlatform: PlatformAssignment | null = null;
+        let bestScore: 3 | 2 | 1 | 0 = 0;
+
+        for (const platform of platforms) {
+            const { score, hasExact } = getBestRouteMatch(platform, normalizedRoute);
+            if (score === 0) continue;
+
+            // If this route has explicit variants configured in the hub, avoid family fallback.
+            // This prevents 8B from being mapped to an 8A platform.
+            if (score === 1 && variantsExistForBaseAtHub && !hasExact) {
+                continue;
+            }
+
+            if (score > bestScore) {
+                bestScore = score;
+                bestPlatform = platform;
+            }
+        }
+
+        return bestPlatform;
+    };
+
+    // 1) Try stop-specific platforms first
+    const byStop = chooseBest(platformsByStop);
+    if (byStop) return byStop;
+
+    // 2) Try all platforms with safe route matching
+    const bestOverall = chooseBest(hub.platforms);
+    if (bestOverall) return bestOverall;
+
+    // 3) Last resort: if exact variant exists in hub but stop filtering prevented match,
+    // return the first exact match anywhere in hub.
+    if (hasExactVariantAtHub) {
+        for (const platform of hub.platforms) {
+            if (platform.routes.some(r => r.trim().toUpperCase() === normalizedRoute)) {
                 return platform;
             }
         }
     }
+
     return null;
 }
 

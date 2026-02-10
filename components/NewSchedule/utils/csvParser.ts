@@ -106,6 +106,8 @@ export const parseRuntimeCSV = async (file: File): Promise<RuntimeData> => {
     // Examples:
     //   "400 N Observed Runtime-50%" -> route: 400, direction: North
     //   "400 S Observed Runtime-50%" -> route: 400, direction: South
+    //   "12A N Observed Runtime-50%" -> route: 12A, direction: North
+    //   "12B S Observed Runtime-50%" -> route: 12B, direction: South
     //   "8A Observed Runtime-50%"    -> route: 8, direction: A
     //   "8B Observed Runtime-50%"    -> route: 8, direction: B
     //   "100 Observed Runtime-50%"   -> route: 100, direction: Loop (no letter)
@@ -114,6 +116,18 @@ export const parseRuntimeCSV = async (file: File): Promise<RuntimeData> => {
 
     for (const row of rows) {
         const firstCol = row.split(',')[0].trim();
+
+        // Pattern 0: Route number with letter suffix, then separate N/S direction
+        // e.g., "12A N Observed..." or "12B S Observed..."
+        // The letter (A/B) is part of the route number, N/S is the direction.
+        const suffixDirPattern = firstCol.match(/^(\d+[A-Za-z])\s+([NS])\s/i);
+        if (suffixDirPattern) {
+            detectedRouteNumber = suffixDirPattern[1].toUpperCase();
+            const dirLetter = suffixDirPattern[2].toUpperCase();
+            if (dirLetter === 'N') detectedDirection = 'North';
+            else if (dirLetter === 'S') detectedDirection = 'South';
+            break;
+        }
 
         // Pattern 1: Route number followed by space and direction letter
         // e.g., "400 N Observed..." or "400 S Observed..."
@@ -130,6 +144,7 @@ export const parseRuntimeCSV = async (file: File): Promise<RuntimeData> => {
 
         // Pattern 2: Route number with attached direction letter (no space)
         // e.g., "8A Observed..." or "8B Observed..."
+        // Only matches when there is NO separate N/S direction after (Pattern 0 handles that)
         const attachedPattern = firstCol.match(/^(\d+)([AB])\s/i);
         if (attachedPattern) {
             detectedRouteNumber = attachedPattern[1];

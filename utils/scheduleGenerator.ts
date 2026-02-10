@@ -3,7 +3,7 @@ import { MasterRouteTable, MasterTrip } from './masterScheduleParser';
 import { ScheduleConfig } from '../components/NewSchedule/steps/Step3Build';
 import { TimeBand, TripBucketAnalysis, BandSummary, DirectionBandSummary } from './runtimeAnalysis';
 import { SegmentRawData, extractTimepointsFromSegments } from '../components/NewSchedule/utils/csvParser';
-import { getOperationalSortTime } from './blockAssignmentCore';
+import { getOperationalSortTime, reassignBlocksForTables } from './blockAssignmentCore';
 
 const normalizeStopLookupKey = (value: string): string => {
     return value
@@ -56,8 +56,9 @@ export const generateSchedule = (
     fallbackStopLookup?: Record<string, string>
 ): MasterRouteTable[] => {
     // 1. Validation
+    const isFloatingMode = config.cycleMode === 'Floating';
     const cycleTimeMinutes = config.cycleTime;
-    if (!cycleTimeMinutes || cycleTimeMinutes <= 0) return [];
+    if (!isFloatingMode && (!cycleTimeMinutes || cycleTimeMinutes <= 0)) return [];
 
     // 2. Identify available directions
     const directions = Object.keys(segmentsMap).filter(d => segmentsMap[d].length > 0);
@@ -193,7 +194,12 @@ export const generateSchedule = (
     // Generate Trips Block by Block
     config.blocks.forEach(block => {
         const startMins = toMinutes(block.startTime);
-        const endMins = toMinutes(block.endTime);
+        let endMins = toMinutes(block.endTime);
+        // Overnight block window: e.g., start 5:09 AM, end 12:33 AM (next day).
+        // Time inputs are clock-only, so treat end <= start as rollover to next day.
+        if (endMins <= startMins) {
+            endMins += 1440;
+        }
         let currentTime = startMins;
 
         // Determine starting direction: if startStop is not the North origin, start South
@@ -311,10 +317,10 @@ export const generateSchedule = (
 
             if (config.cycleMode === 'Floating') {
                 // Floating: Cycle = Travel + (Travel * Ratio)
-                // Per-band lookup > global config > default 0%
+                // Per-band lookup > global config > default 15%
                 const bandId = roundTripBandId || currentBand?.bandId;
                 const bandDefault = bandId ? config.bandRecoveryDefaults?.find(bd => bd.bandId === bandId) : undefined;
-                const ratio = (bandDefault?.avgRecoveryRatio ?? config.recoveryRatio ?? 0) / 100;
+                const ratio = (bandDefault?.avgRecoveryRatio ?? config.recoveryRatio ?? 15) / 100;
                 totalRecovery = Math.round(pureTravelTime * ratio);
                 tripCycleAllocated = pureTravelTime + totalRecovery;
                 nextTripStart = currentTime + tripCycleAllocated;
@@ -382,6 +388,7 @@ export const generateSchedule = (
                 direction: currentDir as 'North' | 'South',
                 startTime: currentTime,
                 endTime: currentStopMins,
+                endTimeIncludesRecovery: true,
                 tripNumber: tripSequence,
                 rowId: 0,
                 travelTime: pureTravelTime,
@@ -429,6 +436,19 @@ export const generateSchedule = (
                 trips: resultTrips[dir].sort((a, b) => getOperationalSortTime(a.startTime) - getOperationalSortTime(b.startTime))
             });
         }
+    });
+
+    // Reassign blocks using terminal continuity.
+    // Generated schedules can include terminal waits between opposite directions
+    // (e.g., ARR 6:29 -> DEP 6:44), so use gap-based matching with location checks.
+    const blockCount = Math.max(1, config.blocks?.length || 1);
+    const headway = Math.max(1, Math.round((config.cycleTime || 60) / blockCount));
+    const maxGap = Math.max(10, headway * 2); // Allow up to ~2 headways of terminal wait.
+
+    reassignBlocksForTables(allTables, config.routeNumber, {
+        timeTolerance: 1,
+        checkLocation: true,
+        maxGap
     });
 
     return allTables;

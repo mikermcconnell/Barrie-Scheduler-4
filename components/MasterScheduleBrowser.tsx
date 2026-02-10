@@ -5,13 +5,17 @@
  * Includes Overview tab with service hours and route-specific schedule views.
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
     Loader2,
     CalendarOff,
+    Calendar,
+    ChevronLeft,
+    ChevronRight,
     Maximize2,
     Minimize2,
-    Download
+    Download,
+    RotateCcw
 } from 'lucide-react';
 import ExcelJS from 'exceljs';
 import { useTeam } from './TeamContext';
@@ -33,17 +37,119 @@ import { buildRouteIdentity } from '../utils/masterScheduleTypes';
 import type { MasterRouteTable, MasterTrip } from '../utils/masterScheduleParser';
 import { buildRoundTripView } from '../utils/masterScheduleParser';
 import { getRouteColor, getRouteTextColor } from '../utils/routeColors';
-import { PlatformSummary } from './PlatformSummary';
+import { PlatformTimeline } from './PlatformTimeline';
 import { ScheduleEditor } from './ScheduleEditor';
 
 // Constants
 const ROUTE_ORDER = ['400', '100', '101', '2', '7', '8A', '8B', '10', '11', '12'] as const;
 const DAY_TYPES: DayType[] = ['Weekday', 'Saturday', 'Sunday'];
-const ANNUAL_MULTIPLIERS: Record<DayType, number> = {
-    Weekday: 252,
-    Saturday: 52,
-    Sunday: 61,
-};
+// Calculate day-type counts for a calendar year
+function calculateAnnualDays(year: number): Record<DayType, number> {
+    let weekdays = 0, saturdays = 0, sundays = 0;
+    const date = new Date(year, 0, 1);
+    while (date.getFullYear() === year) {
+        const day = date.getDay();
+        if (day === 0) sundays++;
+        else if (day === 6) saturdays++;
+        else weekdays++;
+        date.setDate(date.getDate() + 1);
+    }
+    return { Weekday: weekdays, Saturday: saturdays, Sunday: sundays };
+}
+
+// Holiday service level types
+type HolidayServiceLevel = 'No Service' | 'Sunday' | 'Saturday' | 'Weekday';
+
+interface Holiday {
+    name: string;
+    date: Date;
+    defaultServiceLevel: HolidayServiceLevel;
+    serviceLevel: HolidayServiceLevel;
+}
+
+// Anonymous Gregorian Easter algorithm
+function computeEasterSunday(year: number): Date {
+    const a = year % 19;
+    const b = Math.floor(year / 100);
+    const c = year % 100;
+    const d = Math.floor(b / 4);
+    const e = b % 4;
+    const f = Math.floor((b + 8) / 25);
+    const g = Math.floor((b - f + 1) / 3);
+    const h = (19 * a + b - d - g + 15) % 30;
+    const i = Math.floor(c / 4);
+    const k = c % 4;
+    const l = (32 + 2 * e + 2 * i - h - k) % 7;
+    const m = Math.floor((a + 11 * h + 22 * l) / 451);
+    const month = Math.floor((h + l - 7 * m + 114) / 31) - 1; // 0-indexed
+    const day = ((h + l - 7 * m + 114) % 31) + 1;
+    return new Date(year, month, day);
+}
+
+// Get Nth weekday of a month (e.g., 3rd Monday of February)
+function getNthWeekday(year: number, month: number, weekday: number, n: number): Date {
+    const first = new Date(year, month, 1);
+    const firstDay = first.getDay();
+    const date = 1 + ((weekday - firstDay + 7) % 7) + (n - 1) * 7;
+    return new Date(year, month, date);
+}
+
+// Get last occurrence of a weekday on or before a date
+function getWeekdayOnOrBefore(year: number, month: number, maxDay: number, weekday: number): Date {
+    const d = new Date(year, month, maxDay);
+    while (d.getDay() !== weekday) {
+        d.setDate(d.getDate() - 1);
+    }
+    return d;
+}
+
+function getDefaultHolidays(year: number): Holiday[] {
+    const easter = computeEasterSunday(year);
+    const goodFriday = new Date(easter);
+    goodFriday.setDate(easter.getDate() - 2);
+
+    const defs: { name: string; date: Date; defaultServiceLevel: HolidayServiceLevel }[] = [
+        { name: "New Year's Day", date: new Date(year, 0, 1), defaultServiceLevel: 'No Service' },
+        { name: 'Family Day', date: getNthWeekday(year, 1, 1, 3), defaultServiceLevel: 'Sunday' },
+        { name: 'Good Friday', date: goodFriday, defaultServiceLevel: 'No Service' },
+        { name: 'Easter Sunday', date: easter, defaultServiceLevel: 'No Service' },
+        { name: 'Victoria Day', date: getWeekdayOnOrBefore(year, 4, 24, 1), defaultServiceLevel: 'No Service' },
+        { name: 'Canada Day', date: new Date(year, 6, 1), defaultServiceLevel: 'Sunday' },
+        { name: 'Civic Holiday', date: getNthWeekday(year, 7, 1, 1), defaultServiceLevel: 'Sunday' },
+        { name: 'Labour Day', date: getNthWeekday(year, 8, 1, 1), defaultServiceLevel: 'Sunday' },
+        { name: 'Thanksgiving', date: getNthWeekday(year, 9, 1, 2), defaultServiceLevel: 'No Service' },
+        { name: 'Christmas Day', date: new Date(year, 11, 25), defaultServiceLevel: 'No Service' },
+        { name: 'Boxing Day', date: new Date(year, 11, 26), defaultServiceLevel: 'Sunday' },
+    ];
+
+    return defs.map(h => ({ ...h, serviceLevel: h.defaultServiceLevel }));
+}
+
+// Get the DayType a date falls on
+function getDayTypeForDate(date: Date): DayType {
+    const day = date.getDay();
+    if (day === 0) return 'Sunday';
+    if (day === 6) return 'Saturday';
+    return 'Weekday';
+}
+
+// Adjust day-type counts for holiday service levels
+function calculateEffectiveMultipliers(
+    baseDays: Record<DayType, number>,
+    holidays: Holiday[]
+): Record<DayType, number> {
+    const adjusted = { ...baseDays };
+    for (const holiday of holidays) {
+        const calendarDayType = getDayTypeForDate(holiday.date);
+        adjusted[calendarDayType] -= 1;
+        if (holiday.serviceLevel !== 'No Service') {
+            adjusted[holiday.serviceLevel] += 1;
+        }
+    }
+    return adjusted;
+}
+
+const SERVICE_LEVEL_OPTIONS: HolidayServiceLevel[] = ['No Service', 'Sunday', 'Saturday', 'Weekday'];
 
 interface MasterScheduleBrowserProps {
     onCopyToDraft?: (content: MasterScheduleContent, routeIdentity: RouteIdentity) => void;
@@ -79,6 +185,30 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
     const [contentCache, setContentCache] = useState<Map<RouteIdentity, MasterScheduleContent>>(new Map());
     const [loading, setLoading] = useState(true);
     const [loadingContent, setLoadingContent] = useState(false);
+
+    // Calendar year and holiday-adjusted annual calculations
+    const [calendarYear, setCalendarYear] = useState(new Date().getFullYear());
+    const [holidays, setHolidays] = useState<Holiday[]>(() => getDefaultHolidays(new Date().getFullYear()));
+
+    const BASE_DAYS = useMemo(() => calculateAnnualDays(calendarYear), [calendarYear]);
+    const ANNUAL_MULTIPLIERS = useMemo(() => calculateEffectiveMultipliers(BASE_DAYS, holidays), [BASE_DAYS, holidays]);
+    const holidaysAdjusted = BASE_DAYS.Weekday !== ANNUAL_MULTIPLIERS.Weekday ||
+        BASE_DAYS.Saturday !== ANNUAL_MULTIPLIERS.Saturday ||
+        BASE_DAYS.Sunday !== ANNUAL_MULTIPLIERS.Sunday;
+
+    // Regenerate holiday dates when year changes, preserving user overrides
+    useEffect(() => {
+        setHolidays(prev => {
+            const newDefaults = getDefaultHolidays(calendarYear);
+            return newDefaults.map(newH => {
+                const existing = prev.find(p => p.name === newH.name);
+                if (existing && existing.serviceLevel !== existing.defaultServiceLevel) {
+                    return { ...newH, serviceLevel: existing.serviceLevel };
+                }
+                return newH;
+            });
+        });
+    }, [calendarYear]);
 
     // Check if all schedule content is loaded for export
     const allContentLoaded = schedules.length > 0 && schedules.every(entry => {
@@ -238,21 +368,14 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
         );
     }
 
-    // Helper: Calculate service hours from content (uses pre-calculated cycleTime per trip)
+    // Helper: Calculate service hours from content (sum of travel + recovery per trip)
     const calculateServiceHours = (content: MasterScheduleContent | undefined): number => {
         if (!content) return 0;
 
-        let totalCycleMinutes = 0;
-
-        // Use pre-calculated cycleTime from each trip (includes interline adjustments)
         const allTrips = [...content.northTable.trips, ...content.southTable.trips];
-        allTrips.forEach(trip => {
-            if (trip.cycleTime > 0 && trip.cycleTime < 1440) { // Sanity check: less than 24 hours
-                totalCycleMinutes += trip.cycleTime;
-            }
-        });
+        const totalMinutes = allTrips.reduce((sum, trip) => sum + trip.travelTime + trip.recoveryTime, 0);
 
-        return totalCycleMinutes / 60; // Convert to hours
+        return totalMinutes / 60; // Convert to hours
     };
 
     // ========== EXCEL EXPORT ==========
@@ -451,10 +574,20 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
 
         // Footer note
         summarySheet.addRow([]);
-        const footerRow = summarySheet.addRow([`Annual multipliers: Weekday × ${ANNUAL_MULTIPLIERS.Weekday} | Saturday × ${ANNUAL_MULTIPLIERS.Saturday} | Sunday × ${ANNUAL_MULTIPLIERS.Sunday}`]);
+        const adjustedLabel = holidaysAdjusted ? ' (holiday-adjusted)' : '';
+        const footerRow = summarySheet.addRow([`Annual multipliers${adjustedLabel}: Weekday × ${ANNUAL_MULTIPLIERS.Weekday} | Saturday × ${ANNUAL_MULTIPLIERS.Saturday} | Sunday × ${ANNUAL_MULTIPLIERS.Sunday}`]);
         summarySheet.mergeCells(footerRow.number, 1, footerRow.number, 8);
         footerRow.getCell(1).font = { size: 9, italic: true, color: { argb: 'FF9CA3AF' } };
         footerRow.getCell(1).alignment = centerAlign;
+
+        // Holiday service levels
+        if (holidaysAdjusted) {
+            const holidaySummary = holidays.map(h => `${h.name} (${h.serviceLevel})`).join(', ');
+            const holidayRow = summarySheet.addRow([`${calendarYear} Holidays: ${holidaySummary}`]);
+            summarySheet.mergeCells(holidayRow.number, 1, holidayRow.number, 8);
+            holidayRow.getCell(1).font = { size: 9, italic: true, color: { argb: 'FF9CA3AF' } };
+            holidayRow.getCell(1).alignment = centerAlign;
+        }
 
         // ===== QUICK NAVIGATION SECTION =====
         summarySheet.addRow([]);
@@ -1131,7 +1264,7 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
                 </div>
 
                 <div className="px-3 py-2 bg-gray-50 border-t border-gray-200 text-[10px] text-gray-500">
-                    Annual: Weekday × {ANNUAL_MULTIPLIERS.Weekday} | Saturday × {ANNUAL_MULTIPLIERS.Saturday} | Sunday × {ANNUAL_MULTIPLIERS.Sunday} days
+                    Annual{holidaysAdjusted ? ' (holiday-adjusted)' : ''}: Weekday × {ANNUAL_MULTIPLIERS.Weekday} | Saturday × {ANNUAL_MULTIPLIERS.Saturday} | Sunday × {ANNUAL_MULTIPLIERS.Sunday} days
                 </div>
 
                 {/* Published Schedule Sources */}
@@ -1367,7 +1500,7 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
                     <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
                             <h2 className={`${isTableView ? 'text-base' : 'text-xl'} font-bold text-gray-900`}>
-                                {selectedRoute === 'platforms' ? 'Platform Summary' : `Route ${selectedRoute}`}
+                                {selectedRoute === 'platforms' ? 'Platform Timeline' : `Route ${selectedRoute}`}
                             </h2>
                             <span className="text-gray-400">•</span>
                             <div className="bg-gray-100/80 p-1 rounded-lg flex items-center">
@@ -1433,10 +1566,115 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
             {/* Content Area - fills remaining height */}
             {!loading && (
                 <div className="flex-1 min-h-0 overflow-hidden">
-                    {selectedRoute === 'overview' && <div className="h-full overflow-y-auto">{renderOverview()}</div>}
+                    {selectedRoute === 'overview' && (
+                        <div className="h-full overflow-y-auto">
+                            <div className="flex gap-4 p-4">
+                                <div className="flex-1 min-w-0">{renderOverview()}</div>
+                                {/* Calendar Side Panel */}
+                                <div className="w-72 flex-shrink-0">
+                                    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden sticky top-0">
+                                        <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
+                                            <div className="flex items-center gap-2">
+                                                <Calendar size={16} className="text-gray-600" />
+                                                <h3 className="text-sm font-bold text-gray-900">Annual Calendar</h3>
+                                            </div>
+                                        </div>
+                                        <div className="p-4">
+                                            <div className="flex items-center justify-between mb-4">
+                                                <button
+                                                    onClick={() => setCalendarYear(y => y - 1)}
+                                                    className="p-1 rounded hover:bg-gray-100 text-gray-500"
+                                                >
+                                                    <ChevronLeft size={16} />
+                                                </button>
+                                                <span className="text-2xl font-bold text-gray-900">{calendarYear}</span>
+                                                <button
+                                                    onClick={() => setCalendarYear(y => y + 1)}
+                                                    className="p-1 rounded hover:bg-gray-100 text-gray-500"
+                                                >
+                                                    <ChevronRight size={16} />
+                                                </button>
+                                            </div>
+                                            <div className="space-y-3">
+                                                <div className="flex items-center justify-between px-2 py-2 rounded-lg bg-blue-50">
+                                                    <span className="text-xs font-medium text-blue-800">Weekdays</span>
+                                                    <span className="text-lg font-bold text-blue-900">{ANNUAL_MULTIPLIERS.Weekday}</span>
+                                                </div>
+                                                <div className="flex items-center justify-between px-2 py-2 rounded-lg bg-amber-50">
+                                                    <span className="text-xs font-medium text-amber-800">Saturdays</span>
+                                                    <span className="text-lg font-bold text-amber-900">{ANNUAL_MULTIPLIERS.Saturday}</span>
+                                                </div>
+                                                <div className="flex items-center justify-between px-2 py-2 rounded-lg bg-purple-50">
+                                                    <span className="text-xs font-medium text-purple-800">Sundays</span>
+                                                    <span className="text-lg font-bold text-purple-900">{ANNUAL_MULTIPLIERS.Sunday}</span>
+                                                </div>
+                                                <div className="border-t border-gray-200 pt-3 mt-3">
+                                                    <div className="flex items-center justify-between px-2">
+                                                        <span className="text-xs font-medium text-gray-600">Total Service Days</span>
+                                                        <span className="text-lg font-bold text-gray-900">
+                                                            {ANNUAL_MULTIPLIERS.Weekday + ANNUAL_MULTIPLIERS.Saturday + ANNUAL_MULTIPLIERS.Sunday}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {/* Holidays */}
+                                            <div className="border-t border-gray-200 mt-4 pt-4">
+                                                <div className="flex items-center justify-between mb-3">
+                                                    <h4 className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Holidays</h4>
+                                                    <button
+                                                        onClick={() => setHolidays(getDefaultHolidays(calendarYear))}
+                                                        className="text-[10px] text-gray-400 hover:text-gray-600 flex items-center gap-1"
+                                                        title="Reset all to defaults"
+                                                    >
+                                                        <RotateCcw size={10} />
+                                                        Reset
+                                                    </button>
+                                                </div>
+                                                <div className="max-h-64 overflow-y-auto space-y-2 pr-1">
+                                                    {holidays.map((holiday, idx) => (
+                                                        <div key={holiday.name} className="text-xs">
+                                                            <div className="flex items-center justify-between mb-0.5">
+                                                                <span className="font-medium text-gray-800 truncate">{holiday.name}</span>
+                                                                <span className="text-gray-400 text-[10px] ml-1 flex-shrink-0">
+                                                                    {holiday.date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+                                                                </span>
+                                                            </div>
+                                                            <select
+                                                                value={holiday.serviceLevel}
+                                                                onChange={(e) => {
+                                                                    setHolidays(prev => prev.map((h, i) =>
+                                                                        i === idx ? { ...h, serviceLevel: e.target.value as HolidayServiceLevel } : h
+                                                                    ));
+                                                                }}
+                                                                className={`w-full px-2 py-1 rounded border text-xs font-medium cursor-pointer ${
+                                                                    holiday.serviceLevel === 'No Service' ? 'text-red-700 bg-red-50 border-red-200' :
+                                                                    holiday.serviceLevel === 'Sunday' ? 'text-purple-700 bg-purple-50 border-purple-200' :
+                                                                    holiday.serviceLevel === 'Saturday' ? 'text-amber-700 bg-amber-50 border-amber-200' :
+                                                                    'text-blue-700 bg-blue-50 border-blue-200'
+                                                                }`}
+                                                            >
+                                                                {SERVICE_LEVEL_OPTIONS.map(opt => (
+                                                                    <option key={opt} value={opt}>{opt}</option>
+                                                                ))}
+                                                            </select>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+
+                                            <p className="text-[10px] text-gray-400 mt-4 text-center">
+                                                Annual hours = daily × day count
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
                     {selectedRoute === 'platforms' && (
                         <div className="h-full overflow-y-auto">
-                            <PlatformSummary
+                            <PlatformTimeline
                                 dayType={selectedDayType}
                                 schedules={schedules}
                                 contentCache={contentCache}

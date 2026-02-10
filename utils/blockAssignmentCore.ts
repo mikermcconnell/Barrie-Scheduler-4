@@ -22,7 +22,11 @@ export interface TripForMatching {
     endTime: number;
     firstStopName: string;
     lastStopName: string;
+    firstStopId?: string;
+    lastStopId?: string;
     recoveryTimes?: Record<string, number>;
+    /** True when endTime is already the departure from last stop (recovery already applied). */
+    endTimeIncludesRecovery?: boolean;
     routeName?: string;
 }
 
@@ -51,6 +55,18 @@ export interface AssignedBlock {
  */
 export const getBaseStopName = (stopName: string): string => {
     return stopName.replace(/\s*\(\d+\)\s*$/, '').trim();
+};
+
+/**
+ * Normalize stop names for terminal continuity matching.
+ * Handles split terminals like "ARRIVE X" / "DEPART X" and loop suffixes.
+ */
+const normalizeStopNameForMatch = (stopName: string): string => {
+    return getBaseStopName(stopName)
+        .replace(/^(arrive|arrival|depart|departure)\s+/i, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase();
 };
 
 /**
@@ -114,7 +130,8 @@ export function findNextTrip(
     assignedSet: Set<string>,
     reservedSet?: Set<string>
 ): TripForMatching | undefined {
-    const currentEndLocation = getBaseStopName(current.lastStopName);
+    const currentEndLocation = normalizeStopNameForMatch(current.lastStopName);
+    const currentEndStopId = current.lastStopId?.trim();
 
     let bestMatch: TripForMatching | undefined;
     let bestGap = Infinity;
@@ -130,7 +147,7 @@ export function findNextTrip(
     const recoveryAtEnd = current.recoveryTimes?.[current.lastStopName]
         ?? current.recoveryTimes?.[baseLastStop]
         ?? 0;
-    const expectedStart = current.endTime + recoveryAtEnd;
+    const expectedStart = current.endTime + (current.endTimeIncludesRecovery ? 0 : recoveryAtEnd);
 
     for (const candidate of candidates) {
         // Skip already assigned
@@ -141,8 +158,15 @@ export function findNextTrip(
 
         // Check location if required
         if (config.checkLocation) {
-            const nextStartLocation = getBaseStopName(candidate.firstStopName);
-            if (nextStartLocation !== currentEndLocation) continue;
+            const nextStartStopId = candidate.firstStopId?.trim();
+            const canUseStopIds = !!currentEndStopId && !!nextStartStopId;
+
+            if (canUseStopIds) {
+                if (nextStartStopId !== currentEndStopId) continue;
+            } else {
+                const nextStartLocation = normalizeStopNameForMatch(candidate.firstStopName);
+                if (nextStartLocation !== currentEndLocation) continue;
+            }
         }
 
         if (useGapBasedMatching) {
@@ -369,7 +393,14 @@ export function masterTripToMatching(
     trip: MasterTrip,
     table: MasterRouteTable
 ): TripForMatching {
-    const lastStopName = table.stops[table.stops.length - 1] || '';
+    const firstStopIndex = typeof trip.startStopIndex === 'number' ? trip.startStopIndex : 0;
+    const lastStopIndex = typeof trip.endStopIndex === 'number'
+        ? trip.endStopIndex
+        : table.stops.length - 1;
+    const firstStopName = table.stops[firstStopIndex] || table.stops[0] || '';
+    const lastStopName = table.stops[lastStopIndex] || table.stops[table.stops.length - 1] || '';
+    const firstStopId = table.stopIds?.[firstStopName];
+    const lastStopId = table.stopIds?.[lastStopName];
 
     // Bridge scalar recoveryTime to keyed recoveryTimes if keyed map is empty/missing.
     // V1 parser creates trips with only scalar recoveryTime; findNextTrip needs keyed format.
@@ -384,9 +415,12 @@ export function masterTripToMatching(
         direction: trip.direction,
         startTime: trip.startTime,
         endTime: trip.endTime,
-        firstStopName: table.stops[0] || '',
+        firstStopName,
         lastStopName,
+        firstStopId,
+        lastStopId,
         recoveryTimes,
+        endTimeIncludesRecovery: trip.endTimeIncludesRecovery,
         routeName: table.routeName
     };
 }

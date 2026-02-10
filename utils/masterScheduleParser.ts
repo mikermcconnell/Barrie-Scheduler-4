@@ -59,6 +59,9 @@ export interface MasterTrip {
     // GTFS shape/pattern identification
     shapeId?: string;
     patternLabel?: string;
+
+    // True when endTime already includes final-stop recovery (endTime = departure, not arrival)
+    endTimeIncludesRecovery?: boolean;
 }
 
 export interface MasterRouteTable {

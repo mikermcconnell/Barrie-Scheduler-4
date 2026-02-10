@@ -296,15 +296,23 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
         originalTripLookup.get(`${routeName}::${tripId}`);
 
     // Time-based trip matching for master comparison mode
-    // Greedy 1-to-1 match: for each current trip, find nearest unmatched master trip within ±5 min
-    const { masterMatchMap, unmatchedMasterTrips } = useMemo(() => {
+    // Shift-aware greedy 1-to-1 match:
+    // 1) Detect best global shift per direction (e.g. +5 min),
+    // 2) Match nearest unmatched master trip within ±5 min after shift compensation.
+    const { masterMatchMap, unmatchedMasterTrips, masterShiftByDir } = useMemo(() => {
         if (!isMasterMode || !masterBaseline) {
-            return { masterMatchMap: new Map<string, MasterTrip>(), unmatchedMasterTrips: [] as MasterTrip[] };
+            return {
+                masterMatchMap: new Map<string, MasterTrip>(),
+                unmatchedMasterTrips: [] as MasterTrip[],
+                masterShiftByDir: {} as Record<string, number>
+            };
         }
 
         const THRESHOLD = 5; // minutes
+        const SHIFT_SEARCH_RANGE = 15; // minutes
         const matchMap = new Map<string, MasterTrip>();
-        const matchedMasterIds = new Set<string>();
+        const matchedMasterKeys = new Set<string>();
+        const shiftByDir: Record<string, number> = {};
 
         // Group master trips by direction
         const masterByDir: Record<string, MasterTrip[]> = { North: [], South: [] };
@@ -326,28 +334,71 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
             });
         });
 
+        const buildMasterKey = (dir: string, tripId: string): string => `${dir}::${tripId}`;
+
         // Match within each direction
         for (const dir of Object.keys(masterByDir)) {
             const masterTrips = [...(masterByDir[dir] || [])].sort((a, b) => a.startTime - b.startTime);
             const currentTrips = [...(currentByDir[dir] || [])].sort((a, b) => a.startTime - b.startTime);
 
-            for (const current of currentTrips) {
-                let bestMatch: MasterTrip | null = null;
-                let bestDiff = Infinity;
+            if (masterTrips.length === 0 || currentTrips.length === 0) continue;
 
-                for (const master of masterTrips) {
-                    if (matchedMasterIds.has(master.id)) continue;
-                    const diff = Math.abs(current.startTime - master.startTime);
-                    if (diff <= THRESHOLD && diff < bestDiff) {
-                        bestDiff = diff;
-                        bestMatch = master;
+            const runGreedyMatch = (shiftMinutes: number) => {
+                const localUsed = new Set<string>();
+                const pairs: Array<{ current: MasterTrip; master: MasterTrip }> = [];
+                let totalDiff = 0;
+
+                for (const current of currentTrips) {
+                    let bestMatch: MasterTrip | null = null;
+                    let bestDiff = Infinity;
+
+                    for (const master of masterTrips) {
+                        const masterKey = buildMasterKey(dir, master.id);
+                        if (localUsed.has(masterKey)) continue;
+                        if (matchedMasterKeys.has(masterKey)) continue;
+
+                        const adjustedStart = current.startTime - shiftMinutes;
+                        const diff = Math.abs(adjustedStart - master.startTime);
+                        if (diff <= THRESHOLD && diff < bestDiff) {
+                            bestDiff = diff;
+                            bestMatch = master;
+                        }
+                    }
+
+                    if (bestMatch) {
+                        const key = buildMasterKey(dir, bestMatch.id);
+                        localUsed.add(key);
+                        pairs.push({ current, master: bestMatch });
+                        totalDiff += bestDiff;
                     }
                 }
 
-                if (bestMatch) {
-                    matchMap.set(current.id, bestMatch);
-                    matchedMasterIds.add(bestMatch.id);
+                return { pairs, count: pairs.length, totalDiff };
+            };
+
+            // Detect the best global shift for this direction.
+            let bestShift = 0;
+            let bestCount = -1;
+            let bestTotalDiff = Infinity;
+
+            for (let shift = -SHIFT_SEARCH_RANGE; shift <= SHIFT_SEARCH_RANGE; shift++) {
+                const result = runGreedyMatch(shift);
+                if (
+                    result.count > bestCount ||
+                    (result.count === bestCount && result.totalDiff < bestTotalDiff) ||
+                    (result.count === bestCount && result.totalDiff === bestTotalDiff && Math.abs(shift) < Math.abs(bestShift))
+                ) {
+                    bestShift = shift;
+                    bestCount = result.count;
+                    bestTotalDiff = result.totalDiff;
                 }
+            }
+
+            const finalMatch = runGreedyMatch(bestShift);
+            shiftByDir[dir] = bestShift;
+            for (const pair of finalMatch.pairs) {
+                matchMap.set(pair.current.id, pair.master);
+                matchedMasterKeys.add(buildMasterKey(dir, pair.master.id));
             }
         }
 
@@ -356,15 +407,33 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
         masterBaseline.forEach(table => {
             const dir = extractDirectionFromName(table.routeName) || 'North';
             table.trips.forEach(trip => {
-                if (!matchedMasterIds.has(trip.id)) {
+                if (!matchedMasterKeys.has(buildMasterKey(dir, trip.id))) {
                     unmatched.push({ ...trip, direction: dir as 'North' | 'South' });
                 }
             });
         });
         unmatched.sort((a, b) => a.startTime - b.startTime);
 
-        return { masterMatchMap: matchMap, unmatchedMasterTrips: unmatched };
+        return { masterMatchMap: matchMap, unmatchedMasterTrips: unmatched, masterShiftByDir: shiftByDir };
     }, [masterBaseline, schedules, isMasterMode]);
+
+    const masterShiftLabel = useMemo(() => {
+        if (!isMasterMode) return null;
+
+        const north = masterShiftByDir.North;
+        const south = masterShiftByDir.South;
+        const fmt = (shift: number) => `${shift > 0 ? '+' : ''}${shift}m`;
+
+        if (north === undefined && south === undefined) return null;
+        if (north !== undefined && south !== undefined && north === south) {
+            return `Auto-align ${fmt(north)}`;
+        }
+
+        const parts: string[] = [];
+        if (north !== undefined) parts.push(`N ${fmt(north)}`);
+        if (south !== undefined) parts.push(`S ${fmt(south)}`);
+        return `Auto-align ${parts.join(' | ')}`;
+    }, [isMasterMode, masterShiftByDir]);
 
     const roundTripData = useMemo(() => {
         const pairs: RoundTripPair[] = [];
@@ -617,6 +686,14 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                         >
                                             {isMasterMode ? 'Master Deltas' : '+/- Deltas'}
                                         </button>
+                                        {isMasterMode && masterShiftLabel && (
+                                            <span
+                                                className="px-2 py-1 rounded text-xs font-semibold border bg-indigo-50 text-indigo-700 border-indigo-200"
+                                                title="Detected global time offset used to align current trips to master during comparison"
+                                            >
+                                                {masterShiftLabel}
+                                            </span>
+                                        )}
                                         {showDeltas && !isMasterMode && onResetOriginals && (
                                             <button
                                                 onClick={onResetOriginals}
@@ -631,6 +708,8 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
 
                                 {/* Always-visible summary */}
                                 <div className="flex items-center gap-2 text-xs md:text-sm">
+                                    <span className="text-base font-bold text-gray-900">{(totalCycleSum / 60).toFixed(1)}h cycle</span>
+                                    <span className="text-gray-500">•</span>
                                     <span className="font-semibold text-gray-800">{serviceSpan.start} – {serviceSpan.end}</span>
                                     <span className="text-gray-500">•</span>
                                     <span className="text-gray-700"><span className="font-semibold">{peakVehicles}</span> vehicles</span>

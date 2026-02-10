@@ -27,6 +27,7 @@ import { buildStopNameToIdMap } from '../../utils/gtfsStopLookup';
 
 // Constants - centralized magic numbers
 const DEFAULT_CYCLE_TIME = 60;
+const DEFAULT_RECOVERY_RATIO = 15;
 const DEFAULT_ROUTE_NUMBER = '10';
 const DEFAULT_START_TIME = '06:00';
 const DEFAULT_END_TIME = '22:00';
@@ -91,6 +92,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
     const [config, setConfig] = useState<ScheduleConfig>({
         routeNumber: DEFAULT_ROUTE_NUMBER,
         cycleTime: DEFAULT_CYCLE_TIME,
+        recoveryRatio: DEFAULT_RECOVERY_RATIO,
         blocks: []
     });
 
@@ -462,11 +464,22 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                 });
                 setSegmentsMap(groupedSegments);
 
-                // Auto-detect config from first file
-                if (results[0]?.detectedRouteNumber) {
+                // Auto-detect route number from parsed files
+                // When 2 files have the same numeric base but different letter suffixes
+                // (e.g., "12A" North + "12B" South), use the common base ("12") as the route.
+                let autoRouteNumber = results[0]?.detectedRouteNumber;
+                if (results.length === 2 && results[0]?.detectedRouteNumber && results[1]?.detectedRouteNumber) {
+                    const base0 = results[0].detectedRouteNumber.match(/^(\d+)/)?.[1];
+                    const base1 = results[1].detectedRouteNumber.match(/^(\d+)/)?.[1];
+                    if (base0 && base1 && base0 === base1
+                        && results[0].detectedRouteNumber !== results[1].detectedRouteNumber) {
+                        autoRouteNumber = base0;
+                    }
+                }
+                if (autoRouteNumber) {
                     setConfig(prev => ({
                         ...prev,
-                        routeNumber: results[0].detectedRouteNumber!
+                        routeNumber: autoRouteNumber!
                     }));
                 }
 
@@ -490,6 +503,29 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
             if (parsedData.length === 0) {
                 toast.error('No Data', 'No data found. Please go back to Step 1 and re-upload your files.');
                 return;
+            }
+
+            // Non-blocking guidance: strict cycle should be close to observed runtime bands.
+            if (config.cycleMode !== 'Floating') {
+                const bandsWithData = bands.filter(b => b.count > 0 && b.avg > 0);
+                if (bandsWithData.length > 0 && config.cycleTime > 0) {
+                    const suggested = Math.round(
+                        bandsWithData.reduce((sum, b) => sum + (b.avg * b.count), 0) /
+                        bandsWithData.reduce((sum, b) => sum + b.count, 0)
+                    );
+                    const deltaPct = Math.round(((config.cycleTime - suggested) / suggested) * 100);
+                    if (Math.abs(deltaPct) >= 35) {
+                        toast.error(
+                            'Strict Cycle Time Is Far Off',
+                            `${config.cycleTime}m vs observed ~${suggested}m (${deltaPct > 0 ? '+' : ''}${deltaPct}%).`
+                        );
+                    } else if (Math.abs(deltaPct) >= 20) {
+                        toast.warning(
+                            'Check Strict Cycle Time',
+                            `Configured ${config.cycleTime}m vs observed ~${suggested}m (${deltaPct > 0 ? '+' : ''}${deltaPct}%).`
+                        );
+                    }
+                }
             }
 
             // Sort parsed data by direction
