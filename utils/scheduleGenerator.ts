@@ -33,8 +33,94 @@ const buildNormalizedLookup = (
                 normalized[n] = code;
             }
         });
-    });
+        });
     return normalized;
+};
+
+const normalizeStopNameForDirectionMatch = (value: string): string => {
+    return value
+        .toLowerCase()
+        .replace(/^(arrive|arrival|depart|departure)\s+/i, '')
+        .replace(/\s*\(\d+\)\s*$/g, '')
+        .replace(/\bpl\b/g, ' place ')
+        .replace(/\bcoll\b/g, ' college ')
+        .replace(/\bctr\b/g, ' centre ')
+        .replace(/\bstn\b/g, ' station ')
+        .replace(/\bterm\b/g, ' terminal ')
+        .replace(/[()[\]{}'".,#]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+};
+
+const matchesStopNameForDirectionMatch = (
+    normalizedStop: string,
+    normalizedTarget: string
+): boolean => {
+    if (!normalizedStop || !normalizedTarget) return false;
+    return normalizedStop === normalizedTarget
+        || normalizedStop.includes(normalizedTarget)
+        || normalizedTarget.includes(normalizedStop);
+};
+
+const getStopMatchIndex = (stops: string[], normalizedTarget: string): number => {
+    const normalizedStops = stops.map(normalizeStopNameForDirectionMatch);
+    const exact = normalizedStops.findIndex(stop => stop === normalizedTarget);
+    if (exact >= 0) return exact;
+    return normalizedStops.findIndex(stop => matchesStopNameForDirectionMatch(stop, normalizedTarget));
+};
+
+const resolveInitialDirection = (
+    isRoundTrip: boolean,
+    blockStartStop: string | undefined,
+    hasNorth: boolean,
+    directions: string[],
+    timepointsMap: Record<string, string[]>
+): string => {
+    let initialDirection = hasNorth ? 'North' : directions[0];
+    if (!isRoundTrip || !blockStartStop) return initialDirection;
+
+    const normalizedStart = normalizeStopNameForDirectionMatch(blockStartStop);
+    const northStops = timepointsMap['North'] || [];
+    const southStops = timepointsMap['South'] || [];
+
+    const northOrigin = northStops[0];
+    const southOrigin = southStops[0];
+    const northTerminus = northStops[northStops.length - 1];
+    const southTerminus = southStops[southStops.length - 1];
+
+    const matchesNorthOrigin = !!northOrigin
+        && matchesStopNameForDirectionMatch(normalizeStopNameForDirectionMatch(northOrigin), normalizedStart);
+    const matchesSouthOrigin = !!southOrigin
+        && matchesStopNameForDirectionMatch(normalizeStopNameForDirectionMatch(southOrigin), normalizedStart);
+    const matchesNorthTerminus = !!northTerminus
+        && matchesStopNameForDirectionMatch(normalizeStopNameForDirectionMatch(northTerminus), normalizedStart);
+    const matchesSouthTerminus = !!southTerminus
+        && matchesStopNameForDirectionMatch(normalizeStopNameForDirectionMatch(southTerminus), normalizedStart);
+
+    if (matchesNorthOrigin && !matchesSouthOrigin) return 'North';
+    if (matchesSouthOrigin && !matchesNorthOrigin) return 'South';
+
+    const northHasStop = northStops.some(stop =>
+        matchesStopNameForDirectionMatch(normalizeStopNameForDirectionMatch(stop), normalizedStart)
+    );
+    const southHasStop = southStops.some(stop =>
+        matchesStopNameForDirectionMatch(normalizeStopNameForDirectionMatch(stop), normalizedStart)
+    );
+    if (northHasStop && !southHasStop) return 'North';
+    if (southHasStop && !northHasStop) return 'South';
+
+    // If both directions contain the stop, prefer the one where the stop appears earlier.
+    const northIndex = getStopMatchIndex(northStops, normalizedStart);
+    const southIndex = getStopMatchIndex(southStops, normalizedStart);
+    if (northIndex >= 0 && southIndex >= 0 && northIndex !== southIndex) {
+        return northIndex < southIndex ? 'North' : 'South';
+    }
+
+    // Starting at the opposite terminus means the first trip should depart in reverse.
+    if (matchesNorthTerminus && !matchesSouthTerminus) return 'South';
+    if (matchesSouthTerminus && !matchesNorthTerminus) return 'North';
+
+    return initialDirection;
 };
 
 /**
@@ -202,14 +288,14 @@ export const generateSchedule = (
         }
         let currentTime = startMins;
 
-        // Determine starting direction: if startStop is not the North origin, start South
-        let currentDir = hasNorth ? 'North' : directions[0];
-        if (isRoundTrip && block.startStop) {
-            const northOrigin = timepointsMap['North']?.[0];
-            if (northOrigin && block.startStop.toLowerCase() !== northOrigin.toLowerCase()) {
-                currentDir = 'South';
-            }
-        }
+        // Determine starting direction from block start stop when available.
+        let currentDir = resolveInitialDirection(
+            isRoundTrip,
+            block.startStop,
+            hasNorth,
+            directions,
+            timepointsMap
+        );
         let tripSequence = 1;
 
         // For round-trip routes, track the band determined at the START of the round trip
@@ -345,13 +431,13 @@ export const generateSchedule = (
                 let distributedSoFar = 0;
                 finalSegmentRuntimes.forEach((st, idx) => {
                     if (idx < finalSegmentRuntimes.length - 1) {
-                        const share = Math.round((st / pureTravelTime) * totalRecovery);
+                        const share = Math.floor((st / pureTravelTime) * totalRecovery);
                         stopPaddings[idx + 1] = share;
                         recoveryTimes[dirTimepoints[idx + 1]] = share;
                         distributedSoFar += share;
                     }
                 });
-                // Last stop: gets remainder to ensure total matches
+                // Last stop: gets remainder (always >= 0 since we used Math.floor above)
                 const lastIdx = dirTimepoints.length - 1;
                 const remainder = totalRecovery - distributedSoFar;
                 stopPaddings[lastIdx] = remainder;

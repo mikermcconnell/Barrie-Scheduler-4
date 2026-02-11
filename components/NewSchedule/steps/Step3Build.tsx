@@ -4,6 +4,7 @@ import { TimeBand } from '../../../utils/runtimeAnalysis';
 import { Clock, Bus, Plus, Trash2, LayoutGrid, Loader2, Database } from 'lucide-react';
 import { getMasterSchedule } from '../../../utils/masterScheduleService';
 import type { RouteIdentity } from '../../../utils/masterScheduleTypes';
+import { resolveBlockStartDirection, shouldShowStartDirectionForRoute, normalizeDirectionHint } from '../utils/blockStartDirection';
 
 // Configuration Constants
 export const SCHEDULE_DEFAULTS = {
@@ -20,6 +21,7 @@ export interface BlockConfig {
     endTime: string; // "20:00"
     startStop?: string; // "Park Place" — first stop of block's earliest trip
     endStop?: string; // "RVH Main" — last stop of block's latest trip
+    startDirection?: 'North' | 'South'; // Parser hint from earliest trip in block
 }
 
 export interface BandRecoveryDefault {
@@ -46,9 +48,12 @@ interface Step3Props {
     config: ScheduleConfig;
     setConfig: (c: ScheduleConfig) => void;
     teamId?: string;
+    stopSuggestions?: string[];
 }
 
-export const Step3Build: React.FC<Step3Props> = ({ dayType, bands, config, setConfig, teamId }) => {
+const START_STOP_SUGGESTIONS_ID = 'start-stop-suggestions';
+
+export const Step3Build: React.FC<Step3Props> = ({ dayType, bands, config, setConfig, teamId, stopSuggestions = [] }) => {
 
     // Autofill from Master Schedule state
     const [autofillFromMaster, setAutofillFromMaster] = React.useState(true);
@@ -110,31 +115,132 @@ export const Step3Build: React.FC<Step3Props> = ({ dayType, bands, config, setCo
     };
 
     // Extract effective min/max times and their stop names from a trip
-    const getEffectiveTimes = (trip: { startTime: number; endTime: number; stopMinutes?: Record<string, number>; stops?: Record<string, string> }) => {
-        let start = trip.startTime;
-        let end = trip.endTime;
+    const getEffectiveTimes = (trip: {
+        startTime: number;
+        endTime: number;
+        stopMinutes?: Record<string, number>;
+        stops?: Record<string, string>;
+        stopOrder?: string[];
+        startStopIndex?: number;
+        endStopIndex?: number;
+    }) => {
+        let start = toOperational(trip.startTime);
+        let end = toOperational(trip.endTime);
         let startStop = '';
         let endStop = '';
 
+        const resolveStopTime = (stopName: string): number | null => {
+            const fromMinutes = trip.stopMinutes?.[stopName];
+            if (typeof fromMinutes === 'number') return toOperational(fromMinutes);
+            const fromStops = trip.stops?.[stopName];
+            if (typeof fromStops === 'string') {
+                const parsed = parseTimeToMinutes(fromStops);
+                if (parsed !== null) return toOperational(parsed);
+            }
+            return null;
+        };
+
+        const stopOrder = trip.stopOrder && trip.stopOrder.length > 0
+            ? trip.stopOrder
+            : (trip.stops ? Object.keys(trip.stops) : []);
+
+        // Build a unified stop→minutes map from whichever source is available
+        const resolvedStopTimes: [string, number][] = [];
         if (trip.stopMinutes && Object.keys(trip.stopMinutes).length > 0) {
-            for (const [stopName, time] of Object.entries(trip.stopMinutes)) {
-                const operationalTime = toOperational(time);
-                if (operationalTime <= start) { start = operationalTime; startStop = stopName; }
-                if (operationalTime >= end) { end = operationalTime; endStop = stopName; }
+            for (const [name, time] of Object.entries(trip.stopMinutes)) {
+                resolvedStopTimes.push([name, toOperational(time)]);
             }
         } else if (trip.stops && Object.keys(trip.stops).length > 0) {
-            for (const [stopName, timeStr] of Object.entries(trip.stops)) {
+            for (const [name, timeStr] of Object.entries(trip.stops)) {
                 const parsed = parseTimeToMinutes(timeStr as string);
-                if (parsed !== null) {
-                    const operationalTime = toOperational(parsed);
-                    if (operationalTime <= start) { start = operationalTime; startStop = stopName; }
-                    if (operationalTime >= end) { end = operationalTime; endStop = stopName; }
+                if (parsed !== null) resolvedStopTimes.push([name, toOperational(parsed)]);
+            }
+        }
+
+        if (resolvedStopTimes.length > 0) {
+            let minStopTime = Infinity;
+            let minStopName = '';
+            let maxStopTime = -Infinity;
+            let maxStopName = '';
+            for (const [name, opTime] of resolvedStopTimes) {
+                if (opTime < start || (opTime === start && !startStop)) {
+                    start = opTime;
+                    startStop = name;
                 }
+                if (opTime >= end) { end = opTime; endStop = name; }
+                if (opTime < minStopTime) { minStopTime = opTime; minStopName = name; }
+                if (opTime > maxStopTime) { maxStopTime = opTime; maxStopName = name; }
+            }
+            // When trip.startTime is earlier than all stops (e.g. pullout from garage),
+            // use the stop with the minimum time as a better fallback than index-based.
+            if (!startStop && minStopName) startStop = minStopName;
+            if (!endStop && maxStopName) endStop = maxStopName;
+        }
+
+        // Fallback to configured stop order when parsed stop times don't resolve.
+        if ((!startStop || !endStop) && stopOrder.length > 0) {
+            const stopNames = stopOrder;
+            const fallbackStartIndex = typeof trip.startStopIndex === 'number'
+                ? Math.max(0, Math.min(stopNames.length - 1, trip.startStopIndex))
+                : 0;
+            const fallbackEndIndex = typeof trip.endStopIndex === 'number'
+                ? Math.max(0, Math.min(stopNames.length - 1, trip.endStopIndex))
+                : stopNames.length - 1;
+
+            if (!startStop && stopNames[fallbackStartIndex]) startStop = stopNames[fallbackStartIndex];
+            if (!endStop && stopNames[fallbackEndIndex]) endStop = stopNames[fallbackEndIndex];
+        }
+
+        // Parser-provided stop indices are authoritative for partial trips.
+        // Route 8A/8B can include duplicate terminal names (e.g., Park Place variants),
+        // so raw min/max stop scans may pick the wrong terminal for pullout trips.
+        if (stopOrder.length > 0 && typeof trip.startStopIndex === 'number') {
+            const index = Math.max(0, Math.min(stopOrder.length - 1, trip.startStopIndex));
+            const indexedStartStop = stopOrder[index];
+            const indexedStartTime = resolveStopTime(indexedStartStop);
+            if (indexedStartStop && indexedStartTime !== null) {
+                startStop = indexedStartStop;
+                start = indexedStartTime;
+            }
+        }
+
+        if (stopOrder.length > 0 && typeof trip.endStopIndex === 'number') {
+            const index = Math.max(0, Math.min(stopOrder.length - 1, trip.endStopIndex));
+            const indexedEndStop = stopOrder[index];
+            const indexedEndTime = resolveStopTime(indexedEndStop);
+            if (indexedEndStop && indexedEndTime !== null) {
+                endStop = indexedEndStop;
+                end = indexedEndTime;
             }
         }
 
         return { start, end, startStop, endStop };
     };
+
+    const combinedStopSuggestions = React.useMemo(() => {
+        const seen = new Set<string>();
+        const ordered: string[] = [];
+        const append = (value?: string) => {
+            const cleaned = value?.trim();
+            if (!cleaned) return;
+            const key = cleaned.toLowerCase();
+            if (seen.has(key)) return;
+            seen.add(key);
+            ordered.push(cleaned);
+        };
+
+        stopSuggestions.forEach(append);
+        config.blocks.forEach(block => {
+            append(block.startStop);
+            append(block.endStop);
+        });
+        return ordered;
+    }, [stopSuggestions, config.blocks]);
+
+    const showStartDirectionColumn = React.useMemo(
+        () => shouldShowStartDirectionForRoute(config.routeNumber),
+        [config.routeNumber]
+    );
 
     // Fetch and autofill blocks from master schedule
     React.useEffect(() => {
@@ -155,7 +261,10 @@ export const Step3Build: React.FC<Step3Props> = ({ dayType, bands, config, setCo
                 }
 
                 const { content } = result;
-                const allTrips = [...content.northTable.trips, ...content.southTable.trips];
+                const allTrips = [
+                    ...content.northTable.trips.map(trip => ({ ...trip, stopOrder: content.northTable.stops })),
+                    ...content.southTable.trips.map(trip => ({ ...trip, stopOrder: content.southTable.stops }))
+                ];
 
                 // Transit service day: times before 4 AM are late-night (sort after 23:59)
                 const toOperational = (min: number): number => min < 240 ? min + 1440 : min;
@@ -163,23 +272,40 @@ export const Step3Build: React.FC<Step3Props> = ({ dayType, bands, config, setCo
                 // Group by blockId, scanning all stop times for true min/max.
                 // Uses operational time so post-midnight trips (12-3:59 AM) are
                 // treated as end-of-day, not start-of-day.
-                const blockMap = new Map<string, { startTime: number; endTime: number; startStop: string; endStop: string }>();
+                const blockMap = new Map<string, {
+                    startTime: number;
+                    endTime: number;
+                    startStop: string;
+                    endStop: string;
+                    startDirection?: 'North' | 'South';
+                }>();
                 for (const trip of allTrips) {
                     const { start, end, startStop, endStop } = getEffectiveTimes(trip);
                     const opStart = toOperational(start);
                     const opEnd = toOperational(end);
+                    const directionHint = normalizeDirectionHint(trip.direction);
                     const existing = blockMap.get(trip.blockId);
                     if (!existing) {
-                        blockMap.set(trip.blockId, { startTime: opStart, endTime: opEnd, startStop, endStop });
+                        blockMap.set(trip.blockId, {
+                            startTime: opStart,
+                            endTime: opEnd,
+                            startStop,
+                            endStop,
+                            startDirection: directionHint || undefined
+                        });
                     } else {
                         if (opStart < existing.startTime) {
                             existing.startTime = opStart;
-                            existing.startStop = startStop;
+                            if (startStop) existing.startStop = startStop;
+                            if (directionHint) existing.startDirection = directionHint;
                         }
                         if (opEnd > existing.endTime) {
                             existing.endTime = opEnd;
-                            existing.endStop = endStop;
+                            if (endStop) existing.endStop = endStop;
                         }
+                        if (!existing.startStop && startStop) existing.startStop = startStop;
+                        if (!existing.endStop && endStop) existing.endStop = endStop;
+                        if (!existing.startDirection && directionHint) existing.startDirection = directionHint;
                     }
                 }
 
@@ -191,7 +317,8 @@ export const Step3Build: React.FC<Step3Props> = ({ dayType, bands, config, setCo
                         startTime: minutesToTimeStr(data.startTime),
                         endTime: minutesToTimeStr(data.endTime),
                         startStop: data.startStop || undefined,
-                        endStop: data.endStop || undefined
+                        endStop: data.endStop || undefined,
+                        startDirection: data.startDirection
                     }));
 
                 // Second pass: extract per-band recovery defaults
@@ -566,10 +693,20 @@ export const Step3Build: React.FC<Step3Props> = ({ dayType, bands, config, setCo
                 {/* Right Column: Block Definitions */}
                 <div className="lg:col-span-8 flex flex-col h-full min-h-0 bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                     <div className="p-4 border-b border-gray-200 bg-white flex items-center justify-between flex-shrink-0">
-                        <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-                            <LayoutGrid size={20} className="text-gray-400" />
-                            Block Configuration
-                        </h3>
+                        <div>
+                            <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                                <LayoutGrid size={20} className="text-gray-400" />
+                                Block Configuration
+                            </h3>
+                            <p className="text-[11px] text-gray-500 mt-1">
+                                Set <strong>Start Stop</strong> per block to control where each block pulls out from (for example, Park Place vs Georgian).
+                            </p>
+                            {showStartDirectionColumn && (
+                                <p className="text-[11px] text-blue-600 mt-1">
+                                    Route 8 tip: <strong>Park Place</strong> starts Northbound, <strong>Georgian College</strong> starts Southbound.
+                                </p>
+                            )}
+                        </div>
                         <div className="flex items-center gap-3">
                             {/* Autofill from Master Toggle */}
                             {teamId && (
@@ -611,13 +748,20 @@ export const Step3Build: React.FC<Step3Props> = ({ dayType, bands, config, setCo
                                     <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase">Block ID</th>
                                     <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase">Start Time</th>
                                     <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase">Start Stop</th>
+                                    {showStartDirectionColumn && <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase">Start Dir</th>}
                                     <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase">End Time</th>
                                     <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase">End Stop</th>
                                     <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase text-right">Actions</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-100">
-                                {config.blocks.map((block, idx) => (
+                                {config.blocks.map((block, idx) => {
+                                    const startDirection = resolveBlockStartDirection(
+                                        config.routeNumber,
+                                        block.startStop,
+                                        block.startDirection
+                                    );
+                                    return (
                                     <tr key={idx} className="hover:bg-gray-50 transition-colors">
                                         <td className="px-4 py-3">
                                             <input
@@ -637,14 +781,35 @@ export const Step3Build: React.FC<Step3Props> = ({ dayType, bands, config, setCo
                                             />
                                         </td>
                                         <td className="px-4 py-3">
-                                            {block.startStop ? (
-                                                <span className="text-xs text-gray-500 truncate block max-w-[140px]" title={block.startStop}>
-                                                    {block.startStop}
-                                                </span>
-                                            ) : (
-                                                <span className="text-xs text-gray-300">—</span>
-                                            )}
+                                            <input
+                                                type="text"
+                                                value={block.startStop || ''}
+                                                onChange={e => updateBlock(idx, 'startStop', e.target.value)}
+                                                list={START_STOP_SUGGESTIONS_ID}
+                                                placeholder={combinedStopSuggestions[0] || 'e.g. Park Place'}
+                                                className="w-full min-w-[150px] bg-white border border-gray-200 rounded-md px-2 py-1 text-sm text-gray-700 focus:ring-2 focus:ring-brand-blue/20 focus:border-brand-blue outline-none"
+                                                title="Optional: set where this block starts service"
+                                            />
                                         </td>
+                                        {showStartDirectionColumn && (
+                                            <td className="px-4 py-3">
+                                                {startDirection ? (
+                                                    <span
+                                                        className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold border ${
+                                                            startDirection === 'North'
+                                                                ? 'bg-blue-50 text-blue-700 border-blue-200'
+                                                                : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                                        }`}
+                                                    >
+                                                        {startDirection}
+                                                    </span>
+                                                ) : (
+                                                    <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-gray-50 text-gray-500 border border-gray-200">
+                                                        Unknown
+                                                    </span>
+                                                )}
+                                            </td>
+                                        )}
                                         <td className="px-4 py-3">
                                             <input
                                                 type="time"
@@ -672,9 +837,16 @@ export const Step3Build: React.FC<Step3Props> = ({ dayType, bands, config, setCo
                                             </button>
                                         </td>
                                     </tr>
-                                ))}
+                                )})}
                             </tbody>
                         </table>
+                        {combinedStopSuggestions.length > 0 && (
+                            <datalist id={START_STOP_SUGGESTIONS_ID}>
+                                {combinedStopSuggestions.map(stop => (
+                                    <option key={stop} value={stop} />
+                                ))}
+                            </datalist>
+                        )}
                         {config.blocks.length === 0 && (
                             <div className="p-8 text-center text-gray-400 italic">No blocks defined. Add a block to start.</div>
                         )}

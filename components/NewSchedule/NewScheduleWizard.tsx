@@ -17,13 +17,14 @@ import { AutoSaveStatus } from '../../hooks/useAutoSave';
 import { useAuth } from '../AuthContext';
 import { useTeam } from '../TeamContext';
 import { useToast } from '../ToastContext';
-import { saveProject, getProject } from '../../utils/newScheduleProjectService';
+import { saveProject, getProject, getAllProjects } from '../../utils/newScheduleProjectService';
 import { UploadToMasterModal } from '../UploadToMasterModal';
 import { prepareUpload, uploadToMasterSchedule, getMasterSchedule, getAllStopsWithCodes } from '../../utils/masterScheduleService';
 import { extractRouteNumber, extractDayType, buildRouteIdentity } from '../../utils/masterScheduleTypes';
 import { extractDirectionFromName } from '../../utils/routeDirectionConfig';
 import type { UploadConfirmation, DayType as MasterDayType } from '../../utils/masterScheduleTypes';
 import { buildStopNameToIdMap } from '../../utils/gtfsStopLookup';
+import { resolveAutoRouteNumber } from './utils/routeInference';
 
 // Constants - centralized magic numbers
 const DEFAULT_CYCLE_TIME = 60;
@@ -31,6 +32,7 @@ const DEFAULT_RECOVERY_RATIO = 15;
 const DEFAULT_ROUTE_NUMBER = '10';
 const DEFAULT_START_TIME = '06:00';
 const DEFAULT_END_TIME = '22:00';
+const DEFAULT_PROJECT_NAME = 'New Schedule Project';
 
 const normalizeStopLookupKey = (value: string): string => {
     return value
@@ -46,6 +48,73 @@ const normalizeStopLookupKey = (value: string): string => {
         .replace(/[()[\]{}'".,]/g, ' ')
         .replace(/\s+/g, ' ')
         .trim();
+};
+
+const stripExtension = (name: string): string => name.replace(/\.[^.]+$/, '');
+
+const cleanTitleFragment = (value: string): string => {
+    return stripExtension(value)
+        .replace(/[_\-]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .replace(/\b(final|latest|updated|copy|draft)\b/gi, ' ')
+        .replace(/\b(v|ver|rev)\s*\d+\b/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+};
+
+const buildSourceLabelFromFiles = (inputFiles: File[]): string => {
+    if (inputFiles.length === 0) return '';
+
+    const cleaned = inputFiles
+        .map(file => cleanTitleFragment(file.name))
+        .filter(Boolean);
+
+    if (cleaned.length === 0) return '';
+    if (cleaned.length === 1) return cleaned[0];
+
+    const tokenized = cleaned.map(name => name.toLowerCase().split(/\s+/).filter(Boolean));
+    const first = tokenized[0];
+    let prefixLen = first.length;
+    for (let i = 1; i < tokenized.length; i++) {
+        let j = 0;
+        while (j < prefixLen && j < tokenized[i].length && tokenized[i][j] === first[j]) j++;
+        prefixLen = j;
+        if (prefixLen === 0) break;
+    }
+
+    if (prefixLen >= 2) {
+        return cleaned[0].split(/\s+/).slice(0, prefixLen).join(' ');
+    }
+
+    const remainingCount = cleaned.length - 1;
+    return `${cleaned[0]} +${remainingCount} file${remainingCount === 1 ? '' : 's'}`;
+};
+
+const buildSuggestedProjectName = (
+    inputFiles: File[],
+    routeNumber: string,
+    dayType: 'Weekday' | 'Saturday' | 'Sunday'
+): string => {
+    const sourceLabel = buildSourceLabelFromFiles(inputFiles);
+    const routeLabel = routeNumber?.trim() ? `Route ${routeNumber.trim()}` : 'Route';
+    const base = sourceLabel
+        ? `${routeLabel} ${dayType} - ${sourceLabel}`
+        : `${routeLabel} ${dayType}`;
+    return base.replace(/\s+/g, ' ').trim();
+};
+
+const toCollisionSafeName = (requestedName: string, occupiedNames: Set<string>): string => {
+    const trimmed = requestedName.trim() || 'Untitled Project';
+    if (!occupiedNames.has(trimmed.toLowerCase())) return trimmed;
+
+    const root = trimmed.replace(/\s+\(\d+\)\s*$/, '').trim() || 'Untitled Project';
+    let suffix = 2;
+    let candidate = `${root} (${suffix})`;
+    while (occupiedNames.has(candidate.toLowerCase())) {
+        suffix += 1;
+        candidate = `${root} (${suffix})`;
+    }
+    return candidate;
 };
 
 interface NewScheduleWizardProps {
@@ -76,8 +145,10 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
 
     const [dayType, setDayType] = useState<'Weekday' | 'Saturday' | 'Sunday'>('Weekday');
     const [files, setFiles] = useState<File[]>([]);
-    const [projectName, setProjectName] = useState('New Schedule Project');
+    const [projectName, setProjectName] = useState(DEFAULT_PROJECT_NAME);
+    const [isAutoProjectName, setIsAutoProjectName] = useState(true);
     const [projectId, setProjectId] = useState<string | undefined>();
+    const projectIdRef = useRef<string | undefined>(undefined);
     const [showProjectManager, setShowProjectManager] = useState(false);
 
     // State for Step 2 Analysis
@@ -119,6 +190,22 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
             .then(({ stopCodes }) => setMasterStopCodes(stopCodes))
             .catch(err => console.error('Failed to load master stop codes:', err));
     }, [team?.id]);
+
+    useEffect(() => {
+        projectIdRef.current = projectId;
+    }, [projectId]);
+
+    const suggestedProjectName = useMemo(() => {
+        if (files.length === 0) return DEFAULT_PROJECT_NAME;
+        return buildSuggestedProjectName(files, config.routeNumber, dayType);
+    }, [files, config.routeNumber, dayType]);
+
+    useEffect(() => {
+        if (!isAutoProjectName) return;
+        if (projectName !== suggestedProjectName) {
+            setProjectName(suggestedProjectName);
+        }
+    }, [isAutoProjectName, projectName, suggestedProjectName]);
 
     const connectionScopeSchedules = useMemo(() => {
         if (Object.keys(masterStopCodes).length === 0) return undefined;
@@ -188,6 +275,29 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         return Array.from(names);
     };
 
+    const stopSuggestions = useMemo(() => {
+        const seen = new Set<string>();
+        const ordered: string[] = [];
+        const add = (value?: string) => {
+            const cleaned = value?.trim();
+            if (!cleaned) return;
+            const key = cleaned.toLowerCase();
+            if (seen.has(key)) return;
+            seen.add(key);
+            ordered.push(cleaned);
+        };
+
+        Object.values(segmentsMap).forEach(segments => {
+            segments.forEach(seg => {
+                const parts = seg.segmentName.split(' to ');
+                if (parts.length !== 2) return;
+                add(parts[0]);
+                add(parts[1]);
+            });
+        });
+        return ordered;
+    }, [segmentsMap]);
+
     // Helper to update analysis and recalc bands
     const handleAnalysisUpdate = (newAnalysis: TripBucketAnalysis[]) => {
         const { buckets, bands: newBands } = calculateBands(newAnalysis);
@@ -206,7 +316,12 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
     const [isSaving, setIsSaving] = useState(false);
     const [isLoadingProject, setIsLoadingProject] = useState(false);
     const pendingSaveRef = useRef(false);
-    const pendingOverridesRef = useRef<{ name?: string; generatedSchedules?: MasterRouteTable[]; isGenerated?: boolean } | null>(null);
+    const pendingOverridesRef = useRef<{
+        id?: string;
+        name?: string;
+        generatedSchedules?: MasterRouteTable[];
+        isGenerated?: boolean;
+    } | null>(null);
     const saveTimerRef = useRef<NodeJS.Timeout | null>(null);
 
     // Cloud save tracking + dirty state
@@ -215,6 +330,28 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
     const [lastCloudSaveTime, setLastCloudSaveTime] = useState<Date | null>(null);
     const stateVersionRef = useRef(0);
     const lastSavedVersionRef = useRef(0);
+
+    const resolveUniqueProjectName = useCallback(async (
+        requestedName: string,
+        existingProjectId?: string
+    ): Promise<string> => {
+        const trimmed = requestedName.trim() || 'Untitled Project';
+        if (!user?.uid) return trimmed;
+
+        try {
+            const projects = await getAllProjects(user.uid);
+            const occupiedNames = new Set(
+                projects
+                    .filter(p => p.id !== existingProjectId)
+                    .map(p => (p.name || '').trim().toLowerCase())
+                    .filter(Boolean)
+            );
+            return toCollisionSafeName(trimmed, occupiedNames);
+        } catch (error) {
+            console.warn('Failed to check project name collisions:', error);
+            return trimmed;
+        }
+    }, [user?.uid]);
 
     // Helper: Build localStorage save data structure
     const buildLocalSaveData = useCallback((overrides?: {
@@ -234,10 +371,13 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
 
     // Helper: Build Firebase save data structure
     const buildFirebaseSaveData = useCallback((overrides?: {
+        id?: string;
         name?: string;
         generatedSchedules?: MasterRouteTable[];
         isGenerated?: boolean;
-    }) => ({
+    }) => {
+        const effectiveProjectId = overrides?.id ?? projectId;
+        return ({
         name: overrides?.name || projectName,
         dayType,
         routeNumber: config.routeNumber,
@@ -247,8 +387,9 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         generatedSchedules: step >= 4 ? (overrides?.generatedSchedules || generatedSchedules) : undefined,
         parsedData: step >= 1 ? parsedData : undefined,
         isGenerated: overrides?.isGenerated ?? (step >= 4),
-        ...(projectId ? { id: projectId } : {})
-    }), [projectName, dayType, config, step, analysis, bands, generatedSchedules, parsedData, projectId]);
+        ...(effectiveProjectId ? { id: effectiveProjectId } : {})
+        });
+    }, [projectName, dayType, config, step, analysis, bands, generatedSchedules, parsedData, projectId]);
 
     // Track state version for dirty detection - increment on meaningful changes
     useEffect(() => {
@@ -257,22 +398,41 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         }
     }, [step, dayType, files.length, analysis, bands, config, generatedSchedules, parsedData, isLoadingProject]);
 
+    const hasProjectContent = useMemo(() => (
+        files.length > 0 ||
+        parsedData.length > 0 ||
+        analysis.length > 0 ||
+        bands.length > 0 ||
+        config.blocks.length > 0 ||
+        generatedSchedules.length > 0 ||
+        !!projectId
+    ), [
+        files.length,
+        parsedData.length,
+        analysis.length,
+        bands.length,
+        config.blocks.length,
+        generatedSchedules.length,
+        projectId
+    ]);
+
     // isDirty: true when state has changed since last cloud save
     const isDirty = useMemo(() => {
-        return stateVersionRef.current > lastSavedVersionRef.current && files.length > 0;
+        return stateVersionRef.current > lastSavedVersionRef.current && hasProjectContent;
     // Re-evaluate whenever cloud save completes or state changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [stateVersionRef.current, lastSavedVersionRef.current, files.length]);
+    }, [stateVersionRef.current, lastSavedVersionRef.current, hasProjectContent]);
 
     // Helper: Save to localStorage (fast, synchronous)
     const saveToLocalStorage = useCallback((overrides?: { generatedSchedules?: MasterRouteTable[] }) => {
-        if (step >= 1 && files.length > 0) {
+        if (step >= 1 && hasProjectContent) {
             save(buildLocalSaveData(overrides));
         }
-    }, [step, files.length, save, buildLocalSaveData]);
+    }, [step, hasProjectContent, save, buildLocalSaveData]);
 
     // Helper: Save to Firebase with lock to prevent race conditions
     const saveToFirebase = useCallback(async (overrides?: {
+        id?: string;
         name?: string;
         generatedSchedules?: MasterRouteTable[];
         isGenerated?: boolean;
@@ -289,8 +449,22 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         setIsSaving(true);
         setCloudSaveStatus('saving');
         try {
-            const savedId = await saveProject(user.uid, buildFirebaseSaveData(overrides));
+            const currentProjectId = overrides?.id ?? projectIdRef.current;
+            const requestedName = overrides?.name ?? projectName;
+            const uniqueName = await resolveUniqueProjectName(requestedName, currentProjectId);
+
+            const saveOverrides = {
+                ...overrides,
+                id: currentProjectId,
+                name: uniqueName
+            };
+
+            const savedId = await saveProject(user.uid, buildFirebaseSaveData(saveOverrides));
+            projectIdRef.current = savedId;
             setProjectId(savedId);
+            if (projectName !== uniqueName) {
+                setProjectName(uniqueName);
+            }
             setCloudSaveStatus('saved');
             setLastCloudSaveTime(new Date());
             lastSavedVersionRef.current = stateVersionRef.current;
@@ -307,15 +481,20 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                 pendingSaveRef.current = false;
                 pendingOverridesRef.current = null;
                 // Use setTimeout to avoid stack overflow
-                setTimeout(() => saveToFirebase(storedOverrides || undefined), 100);
+                setTimeout(() => {
+                    saveToFirebase(storedOverrides ? {
+                        ...storedOverrides,
+                        id: storedOverrides.id ?? projectIdRef.current
+                    } : { id: projectIdRef.current });
+                }, 100);
             }
         }
-    }, [user?.uid, isSaving, buildFirebaseSaveData]);
+    }, [user?.uid, isSaving, buildFirebaseSaveData, projectName, resolveUniqueProjectName]);
 
     // Debounced auto-save to localStorage (2 second delay)
     useEffect(() => {
         // Skip auto-save when loading a project to avoid redundant write
-        if (step >= 1 && files.length > 0 && !isLoadingProject) {
+        if (step >= 1 && hasProjectContent && !isLoadingProject) {
             // Clear any existing timer
             if (saveTimerRef.current) {
                 clearTimeout(saveTimerRef.current);
@@ -330,12 +509,12 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
             if (saveTimerRef.current) {
                 clearTimeout(saveTimerRef.current);
                 // Save immediately on unmount (debounced save might not have fired)
-                if (step >= 1 && files.length > 0) {
+                if (step >= 1 && hasProjectContent) {
                     save(buildLocalSaveData());
                 }
             }
         };
-    }, [step, dayType, files.length, analysis, bands, config, generatedSchedules, save, buildLocalSaveData, isLoadingProject]);
+    }, [step, dayType, hasProjectContent, analysis, bands, config, generatedSchedules, save, buildLocalSaveData, isLoadingProject]);
 
     // Warn before navigating away if there are unsaved changes
     useEffect(() => {
@@ -368,7 +547,10 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
             setStep(savedProgress.step);
             setMaxStepReached(Math.max(savedProgress.step, maxStepReached));
             setDayType(savedProgress.dayType);
-            if (savedProgress.projectName) setProjectName(savedProgress.projectName);
+            if (savedProgress.projectName) {
+                setProjectName(savedProgress.projectName);
+                setIsAutoProjectName(false);
+            }
             if (savedProgress.analysis) {
                 setAnalysis(savedProgress.analysis);
                 setSegmentNames(extractSegmentNames(savedProgress.analysis));
@@ -389,6 +571,11 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
 
     const handleStartFresh = () => {
         clear();
+        setProjectName(DEFAULT_PROJECT_NAME);
+        setIsAutoProjectName(true);
+        setIsMasterCompareActive(false);
+        setMasterBaseline(null);
+        setIsCompareLoading(false);
         setShowResumeModal(false);
     };
 
@@ -423,6 +610,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
     // Handle project rename with auto-save
     const handleRenameProject = async (newName: string) => {
         setProjectName(newName);
+        setIsAutoProjectName(false);
 
         // Auto-save the rename to Firebase if authenticated (uses consolidated helper with lock)
         if (user?.uid && projectId && !isSaving) {
@@ -467,15 +655,9 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                 // Auto-detect route number from parsed files
                 // When 2 files have the same numeric base but different letter suffixes
                 // (e.g., "12A" North + "12B" South), use the common base ("12") as the route.
-                let autoRouteNumber = results[0]?.detectedRouteNumber;
-                if (results.length === 2 && results[0]?.detectedRouteNumber && results[1]?.detectedRouteNumber) {
-                    const base0 = results[0].detectedRouteNumber.match(/^(\d+)/)?.[1];
-                    const base1 = results[1].detectedRouteNumber.match(/^(\d+)/)?.[1];
-                    if (base0 && base1 && base0 === base1
-                        && results[0].detectedRouteNumber !== results[1].detectedRouteNumber) {
-                        autoRouteNumber = base0;
-                    }
-                }
+                const autoRouteNumber = resolveAutoRouteNumber(
+                    results.map(r => r.detectedRouteNumber)
+                );
                 if (autoRouteNumber) {
                     setConfig(prev => ({
                         ...prev,
@@ -567,6 +749,44 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
             }
 
             setGeneratedSchedules(generatedTables);
+
+            // Sync block configs with actual generated start/end stops.
+            // The autofill from master may have different stops than the runtime
+            // data used for generation (e.g. B. South GO pullout stop).
+            const toOp = (m: number) => m < 240 ? m + 1440 : m;
+            const blockFirstTrip = new Map<string, { startTime: number; stops: Record<string, string>; direction: string }>();
+            const blockLastTrip = new Map<string, { endTime: number; stops: Record<string, string> }>();
+            for (const table of generatedTables) {
+                for (const trip of table.trips) {
+                    const opStart = toOp(trip.startTime);
+                    const opEnd = toOp(trip.endTime);
+                    const existing = blockFirstTrip.get(trip.blockId);
+                    if (!existing || opStart < toOp(existing.startTime)) {
+                        blockFirstTrip.set(trip.blockId, { startTime: trip.startTime, stops: trip.stops, direction: trip.direction });
+                    }
+                    const existingLast = blockLastTrip.get(trip.blockId);
+                    if (!existingLast || opEnd > toOp(existingLast.endTime)) {
+                        blockLastTrip.set(trip.blockId, { endTime: trip.endTime, stops: trip.stops });
+                    }
+                }
+            }
+            const updatedBlocks = config.blocks.map(block => {
+                const first = blockFirstTrip.get(block.id);
+                const last = blockLastTrip.get(block.id);
+                if (!first) return block;
+                const firstStops = Object.keys(first.stops);
+                const lastStops = last ? Object.keys(last.stops) : [];
+                return {
+                    ...block,
+                    // Preserve configured block start stop (from Step 3/master autofill).
+                    // Do not overwrite it with generated table column order.
+                    startStop: block.startStop || firstStops[0],
+                    endStop: lastStops[lastStops.length - 1] || block.endStop,
+                    startDirection: (first.direction === 'North' || first.direction === 'South') ? first.direction as 'North' | 'South' : block.startDirection,
+                };
+            });
+            setConfig({ ...config, blocks: updatedBlocks });
+
             setStep(4);
             toast.success('Schedule Generated', `Created ${generatedTables.length} schedule(s)`);
 
@@ -593,10 +813,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         }
     };
 
-    const handleNewProject = () => {
-        if (files.length > 0 || step > 1) {
-            if (!confirm('Start a new project? Current progress will be cleared.')) return;
-        }
+    const resetWizardState = useCallback(() => {
         clear();
         setStep(1);
         setMaxStepReached(1);
@@ -605,11 +822,67 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         setAnalysis([]);
         setBands([]);
         setSegmentNames([]);
-        setConfig({ routeNumber: DEFAULT_ROUTE_NUMBER, cycleTime: DEFAULT_CYCLE_TIME, blocks: [] });
-        setProjectName('New Schedule Project');
+        setConfig({
+            routeNumber: DEFAULT_ROUTE_NUMBER,
+            cycleTime: DEFAULT_CYCLE_TIME,
+            recoveryRatio: DEFAULT_RECOVERY_RATIO,
+            blocks: []
+        });
+        setProjectName(DEFAULT_PROJECT_NAME);
+        setIsAutoProjectName(true);
         setProjectId(undefined);
+        projectIdRef.current = undefined;
+        setIsMasterCompareActive(false);
+        setMasterBaseline(null);
+        setIsCompareLoading(false);
+    }, [clear]);
+
+    const handleNewProject = () => {
+        if (files.length > 0 || step > 1) {
+            if (!confirm('Start a new project? Current progress will be cleared.')) return;
+        }
+        resetWizardState();
         toast.info('New Project', 'Starting fresh');
     };
+
+    // Helper: Restore project data into wizard state (shared by load callbacks)
+    const restoreProjectData = useCallback((fullProject: {
+        id: string;
+        name: string;
+        dayType: 'Weekday' | 'Saturday' | 'Sunday';
+        analysis?: TripBucketAnalysis[];
+        bands?: TimeBand[];
+        config?: ScheduleConfig;
+        generatedSchedules?: MasterRouteTable[];
+        parsedData?: RuntimeData[];
+        isGenerated?: boolean;
+    }) => {
+        setIsMasterCompareActive(false);
+        setMasterBaseline(null);
+        setIsCompareLoading(false);
+        setProjectId(fullProject.id);
+        projectIdRef.current = fullProject.id;
+        setProjectName(fullProject.name);
+        setIsAutoProjectName(false);
+        setDayType(fullProject.dayType);
+
+        if (fullProject.analysis && fullProject.analysis.length > 0) {
+            setAnalysis(fullProject.analysis);
+            setSegmentNames(extractSegmentNames(fullProject.analysis));
+        }
+        if (fullProject.bands && fullProject.bands.length > 0) {
+            setBands(fullProject.bands);
+        }
+        if (fullProject.config) {
+            setConfig(fullProject.config);
+        }
+        if (fullProject.generatedSchedules && fullProject.generatedSchedules.length > 0) {
+            setGeneratedSchedules(fullProject.generatedSchedules);
+        }
+        if (fullProject.parsedData && fullProject.parsedData.length > 0) {
+            setParsedData(fullProject.parsedData);
+        }
+    }, []);
 
     // ========== COMPARE TO MASTER (INLINE TOGGLE) ==========
 
@@ -789,6 +1062,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                                 config={config}
                                 setConfig={setConfig}
                                 teamId={team?.id}
+                                stopSuggestions={stopSuggestions}
                             />
                         )}
                         {step === 4 && (
@@ -824,7 +1098,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
 
                     <div className="flex items-center gap-3">
                         {/* Save Progress Button - context-aware */}
-                        {files.length > 0 && (
+                        {hasProjectContent && (
                             <button
                                 onClick={handleSaveProgress}
                                 disabled={isManualSaving || (!isDirty && cloudSaveStatus === 'saved')}
@@ -893,54 +1167,30 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                 currentProjectId={projectId}
                 onClose={() => setShowProjectManager(false)}
                 onLoadProject={async (project) => {
-                    // Prevent redundant auto-save while loading
                     setIsLoadingProject(true);
+                    setIsMasterCompareActive(false);
+                    setMasterBaseline(null);
+                    setIsCompareLoading(false);
 
                     if (user?.uid) {
                         try {
                             const fullProject = await getProject(user.uid, project.id);
                             if (fullProject) {
-                                try {
-                                    // Set project identity
-                                    setProjectId(fullProject.id);
-                                    setProjectName(fullProject.name);
-                                    setDayType(fullProject.dayType);
+                                restoreProjectData(fullProject);
 
-                                    // Restore all data
-                                    if (fullProject.analysis && fullProject.analysis.length > 0) {
-                                        setAnalysis(fullProject.analysis);
-                                        setSegmentNames(extractSegmentNames(fullProject.analysis));
-                                    }
-                                    if (fullProject.bands && fullProject.bands.length > 0) {
-                                        setBands(fullProject.bands);
-                                    }
-                                    if (fullProject.config) {
-                                        setConfig(fullProject.config);
-                                    }
-                                    if (fullProject.generatedSchedules && fullProject.generatedSchedules.length > 0) {
-                                        setGeneratedSchedules(fullProject.generatedSchedules);
-                                    }
-                                    if (fullProject.parsedData && fullProject.parsedData.length > 0) {
-                                        setParsedData(fullProject.parsedData);
-                                    }
-
-                                    // Calculate which step to go to based on what data exists
-                                    let nextStep = 1;
-                                    if (fullProject.isGenerated && fullProject.generatedSchedules && fullProject.generatedSchedules.length > 0) {
-                                        nextStep = 4;
-                                    } else if (fullProject.config && fullProject.config.blocks && fullProject.config.blocks.length > 0) {
-                                        nextStep = 3;
-                                    } else if ((fullProject.analysis && fullProject.analysis.length > 0) || (fullProject.parsedData && fullProject.parsedData.length > 0)) {
-                                        nextStep = 2;
-                                    }
-
-                                    setStep(nextStep);
-                                    setMaxStepReached(nextStep);
-                                    toast.success('Project Loaded', `${fullProject.name} - Step ${nextStep}`);
-                                } catch (innerError) {
-                                    console.error('Error restoring project data:', innerError);
-                                    toast.error('Load Error', String(innerError));
+                                // Calculate which step to go to based on what data exists
+                                let nextStep = 1;
+                                if (fullProject.isGenerated && fullProject.generatedSchedules?.length) {
+                                    nextStep = 4;
+                                } else if (fullProject.config?.blocks?.length) {
+                                    nextStep = 3;
+                                } else if (fullProject.analysis?.length || fullProject.parsedData?.length) {
+                                    nextStep = 2;
                                 }
+
+                                setStep(nextStep);
+                                setMaxStepReached(nextStep);
+                                toast.success('Project Loaded', `${fullProject.name} - Step ${nextStep}`);
                             } else {
                                 toast.error('Load Failed', 'Project data not found');
                             }
@@ -957,32 +1207,34 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                     setTimeout(() => setIsLoadingProject(false), 3000);
                 }}
                 onLoadGeneratedSchedule={async (schedules, name, id) => {
-                    // For generated projects, restore full wizard state at step 4
                     setIsLoadingProject(true);
-                    setProjectId(id);
-                    setProjectName(name);
+                    setIsMasterCompareActive(false);
+                    setMasterBaseline(null);
+                    setIsCompareLoading(false);
+                    // Pre-set schedules so step 4 renders immediately
                     setGeneratedSchedules(schedules);
 
-                    // Also load the full project data to restore analysis, bands, config
                     if (user?.uid) {
                         try {
                             const fullProject = await getProject(user.uid, id);
                             if (fullProject) {
-                                setDayType(fullProject.dayType);
-                                if (fullProject.analysis && fullProject.analysis.length > 0) {
-                                    setAnalysis(fullProject.analysis);
-                                    setSegmentNames(extractSegmentNames(fullProject.analysis));
-                                }
-                                if (fullProject.bands) setBands(fullProject.bands);
-                                if (fullProject.config) setConfig(fullProject.config);
-                                if (fullProject.parsedData) setParsedData(fullProject.parsedData);
+                                restoreProjectData(fullProject);
                             }
                         } catch (e) {
                             console.error('Failed to load full project data:', e);
+                            // Fallback: set minimal identity if full load fails
+                            setProjectId(id);
+                            projectIdRef.current = id;
+                            setProjectName(name);
+                            setIsAutoProjectName(false);
                         }
+                    } else {
+                        setProjectId(id);
+                        projectIdRef.current = id;
+                        setProjectName(name);
+                        setIsAutoProjectName(false);
                     }
 
-                    // Navigate to step 4 (Schedule)
                     setStep(4);
                     setMaxStepReached(4);
                     toast.success('Schedule Loaded', `${name} - Step 4`);
@@ -990,12 +1242,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                     setTimeout(() => setIsLoadingProject(false), 1000);
                 }}
                 onNewProject={() => {
-                    clear();
-                    setStep(1);
-                    setMaxStepReached(1);
-                    setFiles([]);
-                    setProjectId(undefined);
-                    setProjectName('New Schedule Project');
+                    resetWizardState();
                     setShowProjectManager(false);
                 }}
             />

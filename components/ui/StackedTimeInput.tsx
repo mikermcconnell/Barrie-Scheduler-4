@@ -5,7 +5,7 @@
  * Shows time (e.g., "6:30") on top and period ("AM") below.
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useImperativeHandle, forwardRef } from 'react';
 import { parseStackedTime, sanitizeInput } from '../../utils/scheduleEditorUtils';
 
 // --- StackedTimeCell ---
@@ -31,6 +31,10 @@ export const StackedTimeCell: React.FC<StackedTimeCellProps> = ({ timeStr, class
 // --- StackedTimeInput ---
 // Editable input that shows stacked format when not editing
 
+export interface StackedTimeInputHandle {
+    startEdit: () => void;
+}
+
 export interface StackedTimeInputProps {
     value: string;
     onChange: (value: string) => void;
@@ -38,25 +42,54 @@ export interface StackedTimeInputProps {
     disabled?: boolean;
     focusClass?: string;
     placeholder?: string;
-    /** Callback for time adjustment (+/- minutes) via W/S or Arrow keys */
-    onAdjust?: (delta: number) => void;
-    /** Callback for cell navigation via A/D or Arrow keys */
-    onNavigate?: (direction: 'left' | 'right' | 'up' | 'down') => void;
+    /** Show blue selection outline (grid navigation active cell) */
+    isActive?: boolean;
+    /** Called when this cell is clicked (to set it as active in grid) */
+    onActivate?: () => void;
+    /** Called on ArrowUp/Down while editing: nudge time +-1 min */
+    onNudge?: (delta: number) => void;
+    /** Called on Enter/Tab/Escape to let grid navigation move the active cell */
+    onNavigateAway?: (direction: 'down' | 'right' | 'left' | 'cancel') => void;
+    /** External trigger to start editing (from grid navigation Enter key) */
+    externalEdit?: boolean;
 }
 
-export const StackedTimeInput: React.FC<StackedTimeInputProps> = ({
+export const StackedTimeInput = forwardRef<StackedTimeInputHandle, StackedTimeInputProps>(({
     value,
     onChange,
     onBlur,
     disabled = false,
     focusClass = 'focus:ring-blue-100',
     placeholder = '-',
-    onAdjust,
-    onNavigate
-}) => {
+    isActive = false,
+    onActivate,
+    onNudge,
+    onNavigateAway,
+    externalEdit = false,
+}, ref) => {
     const [isEditing, setIsEditing] = useState(false);
     const [editValue, setEditValue] = useState(value);
     const inputRef = useRef<HTMLInputElement>(null);
+    // Suppress blur-on-unmount when keyboard handler already handled save/cancel
+    const blurSuppressedRef = useRef(false);
+
+    // Expose startEdit via imperative handle
+    useImperativeHandle(ref, () => ({
+        startEdit: () => {
+            if (!disabled) {
+                setEditValue(value);
+                setIsEditing(true);
+            }
+        }
+    }), [disabled, value]);
+
+    // External edit trigger from grid navigation
+    useEffect(() => {
+        if (externalEdit && !disabled) {
+            setEditValue(value);
+            setIsEditing(true);
+        }
+    }, [externalEdit, disabled, value]);
 
     // Sync when external value changes (only when not editing)
     useEffect(() => {
@@ -75,6 +108,7 @@ export const StackedTimeInput: React.FC<StackedTimeInputProps> = ({
 
     const handleStartEdit = () => {
         if (disabled) return;
+        onActivate?.();
         setEditValue(value);
         setIsEditing(true);
     };
@@ -86,47 +120,54 @@ export const StackedTimeInput: React.FC<StackedTimeInputProps> = ({
     };
 
     const handleBlur = () => {
+        // Skip if keyboard handler already handled save/cancel (prevents blur-on-unmount double-fire)
+        if (blurSuppressedRef.current) {
+            blurSuppressedRef.current = false;
+            return;
+        }
         setIsEditing(false);
         onBlur(editValue);
     };
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'Enter') {
+            e.preventDefault();
+            e.stopPropagation();
+            blurSuppressedRef.current = true;
             setIsEditing(false);
             onBlur(editValue);
+            onNavigateAway?.('down');
         } else if (e.key === 'Escape') {
+            e.preventDefault();
+            e.stopPropagation();
+            blurSuppressedRef.current = true;
             setEditValue(value); // Revert
             setIsEditing(false);
-        } else if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') {
-            // Adjust time +1 minute
-            if (onAdjust) {
-                e.preventDefault();
-                onAdjust(1);
-            } else if (onNavigate && (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W')) {
-                e.preventDefault();
-                onNavigate('up');
-            }
-        } else if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') {
-            // Adjust time -1 minute
-            if (onAdjust) {
-                e.preventDefault();
-                onAdjust(-1);
-            } else if (onNavigate) {
-                e.preventDefault();
-                onNavigate('down');
-            }
-        } else if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') {
-            // Navigate left
-            if (onNavigate) {
-                e.preventDefault();
-                onNavigate('left');
-            }
-        } else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') {
-            // Navigate right
-            if (onNavigate) {
-                e.preventDefault();
-                onNavigate('right');
-            }
+            onNavigateAway?.('cancel');
+        } else if (e.key === 'Tab') {
+            e.preventDefault();
+            e.stopPropagation();
+            blurSuppressedRef.current = true;
+            setIsEditing(false);
+            onBlur(editValue);
+            onNavigateAway?.(e.shiftKey ? 'left' : 'right');
+        } else if (e.key === 'ArrowUp' && onNudge) {
+            e.preventDefault();
+            e.stopPropagation();
+            onNudge(1);
+        } else if (e.key === 'ArrowDown' && onNudge) {
+            e.preventDefault();
+            e.stopPropagation();
+            onNudge(-1);
+        }
+    };
+
+    const handleClick = () => {
+        if (disabled) return;
+        onActivate?.();
+        if (!isEditing) {
+            setEditValue(value);
+            setIsEditing(true);
         }
     };
 
@@ -152,8 +193,10 @@ export const StackedTimeInput: React.FC<StackedTimeInputProps> = ({
     // Display mode - show formatted time, click to edit
     return (
         <div
-            className={`flex items-center justify-center w-full h-full py-1 whitespace-nowrap ${disabled ? 'cursor-default' : 'cursor-text hover:bg-gray-50'}`}
-            onClick={handleStartEdit}
+            className={`flex items-center justify-center w-full h-full py-1 whitespace-nowrap ${
+                disabled ? 'cursor-default' : 'cursor-text hover:bg-gray-50'
+            }`}
+            onClick={handleClick}
         >
             {parsed ? (
                 <span className="text-xs font-medium text-gray-800">{`${parsed.time} ${parsed.period}`}</span>
@@ -162,4 +205,6 @@ export const StackedTimeInput: React.FC<StackedTimeInputProps> = ({
             )}
         </div>
     );
-};
+});
+
+StackedTimeInput.displayName = 'StackedTimeInput';

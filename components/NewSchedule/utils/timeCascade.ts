@@ -17,8 +17,7 @@ export function cascadeTripTimes(
     tripId: string,
     deltaMinutes: number
 ): MasterRouteTable[] {
-    // Deep clone to avoid mutation
-    const cloned: MasterRouteTable[] = JSON.parse(JSON.stringify(schedules));
+    const cloned: MasterRouteTable[] = structuredClone(schedules);
 
     // Find the edited trip and its block
     let editedTrip: MasterTrip | null = null;
@@ -89,7 +88,7 @@ export function updateSegmentTime(
     stopName: string,
     deltaMinutes: number
 ): MasterRouteTable[] {
-    const cloned: MasterRouteTable[] = JSON.parse(JSON.stringify(schedules));
+    const cloned: MasterRouteTable[] = structuredClone(schedules);
 
     // Find the trip
     let editedTrip: MasterTrip | null = null;
@@ -151,7 +150,7 @@ export function endBlockAtTrip(
     schedules: MasterRouteTable[],
     tripId: string
 ): MasterRouteTable[] {
-    const cloned: MasterRouteTable[] = JSON.parse(JSON.stringify(schedules));
+    const cloned: MasterRouteTable[] = structuredClone(schedules);
 
     // Find the trip
     let editedTrip: MasterTrip | null = null;
@@ -187,7 +186,7 @@ export function setTripStartStop(
     tripId: string,
     startStopIndex: number
 ): MasterRouteTable[] {
-    const cloned: MasterRouteTable[] = JSON.parse(JSON.stringify(schedules));
+    const cloned: MasterRouteTable[] = structuredClone(schedules);
 
     for (const table of cloned) {
         const found = table.trips.find(t => t.id === tripId);
@@ -229,7 +228,7 @@ export function setTripEndStop(
     tripId: string,
     endStopIndex: number
 ): MasterRouteTable[] {
-    const cloned: MasterRouteTable[] = JSON.parse(JSON.stringify(schedules));
+    const cloned: MasterRouteTable[] = structuredClone(schedules);
 
     for (const table of cloned) {
         const found = table.trips.find(t => t.id === tripId);

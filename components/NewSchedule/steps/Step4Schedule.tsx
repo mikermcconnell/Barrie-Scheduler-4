@@ -1,5 +1,5 @@
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { MasterRouteTable } from '../../../utils/masterScheduleParser';
 import { ScheduleEditor } from '../../ScheduleEditor';
 import { useUndoRedo } from '../../../hooks/useUndoRedo';
@@ -49,8 +49,17 @@ export const Step4Schedule: React.FC<Step4ScheduleProps> = ({
     const {
         state: schedules,
         set: setSchedules,
-        undo, redo, canUndo, canRedo
+        undo, redo, canUndo, canRedo,
+        reset: resetSchedules
     } = useUndoRedo<MasterRouteTable[]>(initialSchedules, { maxHistory: 50 });
+
+    // Keep local editor state in sync when parent loads a different project/schedule.
+    // If refs match, the change came from local edits echoed back up and should not reset history.
+    useEffect(() => {
+        if (initialSchedules === schedules) return;
+        setOriginalSnapshot(initialSchedules);
+        resetSchedules(initialSchedules);
+    }, [initialSchedules, schedules, resetSchedules]);
 
     const handleResetOriginals = useCallback(() => {
         setSchedules(originalSnapshot);

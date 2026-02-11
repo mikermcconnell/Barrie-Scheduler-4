@@ -1147,10 +1147,39 @@ const ConflictInspectorPanel: React.FC<ConflictInspectorPanelProps> = ({ conflic
         return [...conflict.window.events].sort((a, b) => a.arrivalMin - b.arrivalMin);
     }, [conflict]);
 
+    const miniTimelineLayout = useMemo(() => {
+        // Interval graph coloring: place each event in the first free lane where
+        // arrival >= lane end. Guarantees overlapping events render on separate rows.
+        const laneEnds: number[] = [];
+        const placed = sortedEvents.map(event => {
+            let lane = laneEnds.findIndex(endMin => event.arrivalMin >= endMin);
+            if (lane === -1) {
+                lane = laneEnds.length;
+                laneEnds.push(event.departureMin);
+            } else {
+                laneEnds[lane] = event.departureMin;
+            }
+            return { event, lane };
+        });
+        return {
+            placed,
+            laneCount: Math.max(1, laneEnds.length)
+        };
+    }, [sortedEvents]);
+
     const minT = Math.max(TIME_START, conflict.window.startMin - 10);
     const maxT = Math.min(TIME_END, conflict.window.endMin + 10);
     const span = Math.max(1, maxT - minT);
     const pct = (m: number) => ((m - minT) / span) * 100;
+
+    const MINI_LANE_HEIGHT = 12;
+    const MINI_BAR_HEIGHT = 9;
+    const MINI_TOP_PADDING = 4;
+    const MINI_BOTTOM_PADDING = 4;
+    const miniTimelineHeight =
+        MINI_TOP_PADDING +
+        miniTimelineLayout.laneCount * MINI_LANE_HEIGHT +
+        MINI_BOTTOM_PADDING;
 
     return (
         <aside className="w-[360px] shrink-0 bg-white border border-gray-200 rounded-lg p-4 space-y-4 sticky top-4">
@@ -1183,7 +1212,10 @@ const ConflictInspectorPanel: React.FC<ConflictInspectorPanelProps> = ({ conflic
 
             <div className="space-y-2">
                 <div className="text-xs font-medium text-gray-700">Mini Timeline</div>
-                <div className="relative h-14 bg-gray-50 border border-gray-200 rounded">
+                <div
+                    className="relative bg-gray-50 border border-gray-200 rounded"
+                    style={{ height: `${miniTimelineHeight}px` }}
+                >
                     <div
                         className="absolute top-0 bottom-0 bg-red-100 border-l border-r border-red-300"
                         style={{
@@ -1191,7 +1223,7 @@ const ConflictInspectorPanel: React.FC<ConflictInspectorPanelProps> = ({ conflic
                             width: `${Math.max(1, pct(conflict.window.endMin) - pct(conflict.window.startMin))}%`
                         }}
                     />
-                    {sortedEvents.map((event, idx) => {
+                    {miniTimelineLayout.placed.map(({ event, lane }) => {
                         const left = pct(event.arrivalMin);
                         const width = Math.max(1, pct(event.departureMin) - left);
                         return (
@@ -1201,8 +1233,8 @@ const ConflictInspectorPanel: React.FC<ConflictInspectorPanelProps> = ({ conflic
                                 style={{
                                     left: `${left}%`,
                                     width: `${width}%`,
-                                    top: `${4 + (idx % 3) * 12}px`,
-                                    height: '9px',
+                                    top: `${MINI_TOP_PADDING + lane * MINI_LANE_HEIGHT}px`,
+                                    height: `${MINI_BAR_HEIGHT}px`,
                                     backgroundColor: getRouteColor(event.route),
                                     opacity: 0.85
                                 }}
