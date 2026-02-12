@@ -7,8 +7,8 @@
 
 import React from 'react';
 import { Clock, Train, Bus } from 'lucide-react';
-import type { ConnectionMatch } from '../../utils/connectionUtils';
-import { formatGapTimeForEvent, getGapClasses } from '../../utils/connectionUtils';
+import type { ConnectionMatch } from '../../utils/connections/connectionUtils';
+import { formatGapTimeForEvent, getGapClasses } from '../../utils/connections/connectionUtils';
 
 interface ConnectionIndicatorProps {
     connections: ConnectionMatch[];

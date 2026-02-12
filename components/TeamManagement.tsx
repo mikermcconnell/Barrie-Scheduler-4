@@ -17,7 +17,7 @@ import {
     removeMember,
     updateMemberRole,
     regenerateInviteCode
-} from '../utils/teamService';
+} from '../utils/services/teamService';
 import type { TeamWithMembers, TeamMember, TeamRole } from '../utils/masterScheduleTypes';
 
 interface TeamManagementProps {

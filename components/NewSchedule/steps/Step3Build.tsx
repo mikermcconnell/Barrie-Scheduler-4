@@ -1,8 +1,8 @@
 
 import React from 'react';
-import { TimeBand } from '../../../utils/runtimeAnalysis';
+import { TimeBand } from '../../../utils/ai/runtimeAnalysis';
 import { Clock, Bus, Plus, Trash2, LayoutGrid, Loader2, Database } from 'lucide-react';
-import { getMasterSchedule } from '../../../utils/masterScheduleService';
+import { getMasterSchedule } from '../../../utils/services/masterScheduleService';
 import type { RouteIdentity } from '../../../utils/masterScheduleTypes';
 import { resolveBlockStartDirection, shouldShowStartDirectionForRoute, normalizeDirectionHint, inferBlockStartDirection } from '../utils/blockStartDirection';
 

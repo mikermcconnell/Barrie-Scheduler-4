@@ -1,8 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import { Plus, X, Clock, Eye, Bus, AlertTriangle, Calendar, MapPin } from 'lucide-react';
-import { MasterTrip, MasterRouteTable } from '../utils/masterScheduleParser';
+import { MasterTrip, MasterRouteTable } from '../utils/parsers/masterScheduleParser';
 import { TimeUtils } from '../utils/timeUtils';
-import { getDayTypeSuffix, getDayTypeLabel, DaySuffix } from '../utils/routeNameParser';
+import { getDayTypeSuffix, getDayTypeLabel, DaySuffix } from '../utils/config/routeNameParser';
 
 export interface AddTripModalContext {
     referenceTrip: MasterTrip;

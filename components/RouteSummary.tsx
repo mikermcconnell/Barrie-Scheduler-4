@@ -1,6 +1,6 @@
 
 import React, { useMemo } from 'react';
-import { MasterRouteTable, MasterTrip } from '../utils/masterScheduleParser';
+import { MasterRouteTable, MasterTrip } from '../utils/parsers/masterScheduleParser';
 import { TimeUtils } from '../utils/timeUtils';
 
 interface RouteSummaryProps {

@@ -11,7 +11,7 @@ import { useToast } from './ToastContext';
 import {
     getVersionHistory,
     rollbackToVersion
-} from '../utils/masterScheduleService';
+} from '../utils/services/masterScheduleService';
 import type { MasterScheduleVersion, RouteIdentity } from '../utils/masterScheduleTypes';
 
 interface VersionHistoryPanelProps {

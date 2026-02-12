@@ -6,10 +6,10 @@
  */
 
 import { useState, useCallback } from 'react';
-import type { TripBucketAnalysis, TimeBand } from '../utils/runtimeAnalysis';
+import type { TripBucketAnalysis, TimeBand } from '../utils/ai/runtimeAnalysis';
 import type { ScheduleConfig } from '../components/NewSchedule/steps/Step3Build';
 import type { RuntimeData } from '../components/NewSchedule/utils/csvParser';
-import type { MasterRouteTable } from '../utils/masterScheduleParser';
+import type { MasterRouteTable } from '../utils/parsers/masterScheduleParser';
 
 const WIZARD_PROGRESS_KEY = 'newScheduleWizard_progress';
 

@@ -1,4 +1,4 @@
-import { isDirectionVariant } from '../../../utils/routeDirectionConfig';
+import { isDirectionVariant } from '../../../utils/config/routeDirectionConfig';
 
 const getNumericBase = (routeNumber: string): string | undefined => {
     return routeNumber.match(/^(\d+)/)?.[1];

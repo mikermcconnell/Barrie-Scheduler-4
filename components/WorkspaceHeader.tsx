@@ -16,10 +16,10 @@ import {
     GanttChart,
     Link2
 } from 'lucide-react';
-import { MasterRouteTable } from '../utils/masterScheduleParser';
+import { MasterRouteTable } from '../utils/parsers/masterScheduleParser';
 import { AutoSaveStatus } from '../hooks/useAutoSave';
 import { RouteSummary } from './RouteSummary';
-import { getRouteColor, getRouteTextColor } from '../utils/routeColors';
+import { getRouteColor, getRouteTextColor } from '../utils/config/routeColors';
 
 // Time Band type
 interface TimeBandDisplay {

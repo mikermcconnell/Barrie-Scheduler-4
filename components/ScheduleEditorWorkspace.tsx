@@ -6,12 +6,12 @@ import { useToast } from './ToastContext';
 import { useUndoRedo } from '../hooks/useUndoRedo';
 import { ScheduleEditor } from './ScheduleEditor';
 import type { AutoSaveStatus } from '../hooks/useAutoSave';
-import type { MasterRouteTable } from '../utils/masterScheduleParser';
+import type { MasterRouteTable } from '../utils/parsers/masterScheduleParser';
 import type { MasterScheduleContent } from '../utils/masterScheduleTypes';
-import type { DraftBasedOn } from '../utils/scheduleTypes';
-import { buildMasterContentFromTables, buildTablesFromContent } from '../utils/scheduleDraftAdapter';
-import { saveDraft } from '../utils/draftService';
-import { publishDraft } from '../utils/publishService';
+import type { DraftBasedOn } from '../utils/schedule/scheduleTypes';
+import { buildMasterContentFromTables, buildTablesFromContent } from '../utils/schedule/scheduleDraftAdapter';
+import { saveDraft } from '../utils/services/draftService';
+import { publishDraft } from '../utils/services/publishService';
 
 // Minimal draft info for the route switcher
 export interface SiblingDraft {

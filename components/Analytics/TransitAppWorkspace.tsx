@@ -12,7 +12,7 @@ import {
     Train,
     CheckCircle2,
 } from 'lucide-react';
-import type { TransitAppDataSummary } from '../../utils/transitAppTypes';
+import type { TransitAppDataSummary } from '../../utils/transit-app/transitAppTypes';
 import { OverviewPanel } from './OverviewPanel';
 import { RoutePerformanceModule } from './RoutePerformanceModule';
 import { DemandModule } from './DemandModule';
@@ -37,10 +37,10 @@ interface TabConfig {
 
 const TAB_CONFIG: TabConfig[] = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard, status: 'complete' },
+    { id: 'demand', label: 'OD Pair', icon: MapPin, status: 'partial' },
+    { id: 'transfers', label: 'Transfer', icon: ArrowLeftRight, status: 'complete' },
+    { id: 'heatmaps', label: 'Heatmap', icon: MapPinned, status: 'partial' },
     { id: 'route-performance', label: 'Route Performance', icon: TrendingUp, status: 'complete' },
-    { id: 'demand', label: 'Demand & OD', icon: MapPin, status: 'partial' },
-    { id: 'heatmaps', label: 'Heatmaps', icon: MapPinned, status: 'partial' },
-    { id: 'transfers', label: 'Transfers', icon: ArrowLeftRight, status: 'complete' },
     { id: 'app-usage', label: 'App Usage', icon: Smartphone, status: 'complete' },
     { id: 'service-gaps', label: 'Service Gaps', icon: Clock, status: 'complete' },
     { id: 'stops', label: 'Stop Analysis', icon: MapPinned, status: 'complete' },
@@ -66,7 +66,7 @@ export const TransitAppWorkspace: React.FC<TransitAppWorkspaceProps> = ({
         [allowIncompleteTabs]
     );
     const defaultTabId =
-        tabs.find(tab => tab.id === 'demand' && tab.enabled)?.id ??
+        tabs.find(tab => tab.id === 'overview' && tab.enabled)?.id ??
         tabs.find(tab => tab.enabled)?.id ??
         'overview';
     const [activeTab, setActiveTab] = useState(defaultTabId);

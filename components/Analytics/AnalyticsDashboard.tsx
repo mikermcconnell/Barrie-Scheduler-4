@@ -9,10 +9,10 @@ import React, { useState, useEffect } from 'react';
 import { BarChart3, MapPin, ArrowRight, Loader2, Smartphone } from 'lucide-react';
 import { useTeam } from '../TeamContext';
 import { useAuth } from '../AuthContext';
-import { getTransitAppData, getTransitAppMetadata } from '../../utils/transitAppService';
+import { getTransitAppData, getTransitAppMetadata } from '../../utils/transit-app/transitAppService';
 import { TransitAppImport } from './TransitAppImport';
 import { TransitAppWorkspace } from './TransitAppWorkspace';
-import type { TransitAppDataSummary } from '../../utils/transitAppTypes';
+import type { TransitAppDataSummary } from '../../utils/transit-app/transitAppTypes';
 
 interface AnalyticsDashboardProps {
     onClose: () => void;

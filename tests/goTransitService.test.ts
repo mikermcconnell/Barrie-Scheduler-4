@@ -3,7 +3,7 @@ import {
     clearCache,
     getGoStationTemplateData,
     getGoTrainTimesForStopDetailed
-} from '../utils/goTransitService';
+} from '../utils/gtfs/goTransitService';
 
 describe('goTransitService data source behavior', () => {
     beforeEach(() => {

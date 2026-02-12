@@ -44,10 +44,55 @@ export const ChartCard: React.FC<{
     </div>
 );
 
-export const NoData: React.FC = () => (
+export const NoData: React.FC<{ message?: string }> = ({ message }) => (
     <div className="flex items-center justify-center h-[200px] text-gray-400 text-sm">
-        No data available
+        {message || 'No data available'}
     </div>
 );
 
 export const fmt = (n: number) => n.toLocaleString();
+
+/** Format time band codes to human labels: am_peak → "AM Peak" */
+export function formatTimeBand(band: string): string {
+    switch (band) {
+        case 'am_peak': return 'AM Peak';
+        case 'midday': return 'Midday';
+        case 'pm_peak': return 'PM Peak';
+        case 'evening': return 'Evening';
+        case 'overnight': return 'Overnight';
+        case 'all_day': return 'All Day';
+        default: return band.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    }
+}
+
+/** Format day type codes to human labels: weekday → "Weekday" */
+export function formatDayType(dayType: string): string {
+    switch (dayType) {
+        case 'weekday': return 'Weekday';
+        case 'saturday': return 'Saturday';
+        case 'sunday': return 'Sunday';
+        default: return dayType.charAt(0).toUpperCase() + dayType.slice(1);
+    }
+}
+
+/** Format season codes to human labels: jan → "January" */
+export function formatSeason(season: string): string {
+    switch (season) {
+        case 'jan': return 'January';
+        case 'jul': return 'July';
+        case 'sep': return 'September';
+        case 'other': return 'Other';
+        default: return season.charAt(0).toUpperCase() + season.slice(1);
+    }
+}
+
+/** Format season codes to short labels: jan → "Jan" */
+export function formatSeasonShort(season: string): string {
+    switch (season) {
+        case 'jan': return 'Jan';
+        case 'jul': return 'Jul';
+        case 'sep': return 'Sep';
+        case 'other': return 'Other';
+        default: return season.charAt(0).toUpperCase() + season.slice(1);
+    }
+}

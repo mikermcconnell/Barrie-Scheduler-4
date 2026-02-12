@@ -6,7 +6,7 @@
 
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { useAuth } from './AuthContext';
-import { getUserTeam } from '../utils/teamService';
+import { getUserTeam } from '../utils/services/teamService';
 import type { Team } from '../utils/masterScheduleTypes';
 
 interface TeamContextType {

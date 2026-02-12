@@ -3,9 +3,9 @@ import type {
     TransitAppFileStats,
     TransitAppParsedData,
     TransitAppTripLegRow,
-} from '../utils/transitAppTypes';
+} from '../utils/transit-app/transitAppTypes';
 
-vi.mock('../utils/transitAppGtfsNormalization', () => ({
+vi.mock('../utils/transit-app/transitAppGtfsNormalization', () => ({
     getScheduledTripsForRouteOnDate: () => 10,
     hasGtfsNormalizationData: () => true,
     hasGtfsSupplyProfiles: () => true,
@@ -53,7 +53,7 @@ vi.mock('../utils/transitAppGtfsNormalization', () => ({
     ],
 }));
 
-const { aggregateTransitAppData } = await import('../utils/transitAppAggregator');
+const { aggregateTransitAppData } = await import('../utils/transit-app/transitAppAggregator');
 
 const baseStats: TransitAppFileStats = {
     totalFiles: 0,

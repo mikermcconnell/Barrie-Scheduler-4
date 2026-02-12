@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { buildMasterContentFromTables, buildTablesFromContent } from '../utils/scheduleDraftAdapter';
-import type { MasterRouteTable } from '../utils/masterScheduleParser';
+import { buildMasterContentFromTables, buildTablesFromContent } from '../utils/schedule/scheduleDraftAdapter';
+import type { MasterRouteTable } from '../utils/parsers/masterScheduleParser';
 import type { MasterScheduleContent } from '../utils/masterScheduleTypes';
 
 const makeTable = (routeName: string, stopCount = 1): MasterRouteTable => ({

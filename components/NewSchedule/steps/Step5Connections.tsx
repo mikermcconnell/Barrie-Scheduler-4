@@ -21,7 +21,7 @@ import {
     CheckCircle2,
     Info
 } from 'lucide-react';
-import type { MasterRouteTable } from '../../../utils/masterScheduleParser';
+import type { MasterRouteTable } from '../../../utils/parsers/masterScheduleParser';
 import type {
     ConnectionLibrary,
     ConnectionTarget,
@@ -31,8 +31,8 @@ import type {
     OptimizationMode,
     OptimizationResult,
     StopInfo
-} from '../../../utils/connectionTypes';
-import { generateConnectionId, parseConnectionTime } from '../../../utils/connectionTypes';
+} from '../../../utils/connections/connectionTypes';
+import { generateConnectionId, parseConnectionTime } from '../../../utils/connections/connectionTypes';
 import { ConnectionLibraryPanel } from '../connections/ConnectionLibraryPanel';
 import { RouteConnectionPanel } from '../connections/RouteConnectionPanel';
 import { OptimizationPanel } from '../connections/OptimizationPanel';
@@ -40,10 +40,10 @@ import { AddTargetModal, AddTargetInitialData } from '../connections/AddTargetMo
 import { ImportRouteModal } from '../connections/ImportRouteModal';
 import { ConnectionAddChooser, ConnectionTemplateSelection } from '../connections/ConnectionAddChooser';
 import { ConnectionStatusPanel } from '../../connections/ConnectionStatusPanel';
-import { getConnectionLibrary, saveConnectionLibrary } from '../../../utils/connectionLibraryService';
-import { getMasterSchedule } from '../../../utils/masterScheduleService';
-import { optimizeForConnections, checkConnections, ConnectionCheckResult } from '../../../utils/connectionOptimizer';
-import { appendLibraryChange } from '../../../utils/connectionLibraryUtils';
+import { getConnectionLibrary, saveConnectionLibrary } from '../../../utils/connections/connectionLibraryService';
+import { getMasterSchedule } from '../../../utils/services/masterScheduleService';
+import { optimizeForConnections, checkConnections, ConnectionCheckResult } from '../../../utils/connections/connectionOptimizer';
+import { appendLibraryChange } from '../../../utils/connections/connectionLibraryUtils';
 
 interface Step5Props {
     schedules: MasterRouteTable[];

@@ -8,11 +8,11 @@ import {
     Tooltip,
     ResponsiveContainer,
 } from 'recharts';
-import type { TransitAppDataSummary, ODCoverageGap, ODPair } from '../../utils/transitAppTypes';
+import type { TransitAppDataSummary, ODCoverageGap, ODPair } from '../../utils/transit-app/transitAppTypes';
 import { TransitAppMap, type SeasonFilter, describeLocationRelativeToBarrie } from './TransitAppMap';
 import { ChartCard, NoData, fmt } from './AnalyticsShared';
-import { analyzeODCoverageGaps } from '../../utils/transitAppAggregator';
-import { findNearestStopName } from '../../utils/gtfsStopLookup';
+import { analyzeODCoverageGaps } from '../../utils/transit-app/transitAppAggregator';
+import { findNearestStopName } from '../../utils/gtfs/gtfsStopLookup';
 import { CoverageGapMap } from './CoverageGapMap';
 
 interface DemandModuleProps {
@@ -149,7 +149,7 @@ export const DemandModule: React.FC<DemandModuleProps> = ({ data }) => {
                                 onClick={() => setTimeFilter(key)}
                                 className={`px-3 py-1.5 text-xs font-medium transition-colors ${
                                     timeFilter === key
-                                        ? 'bg-cyan-500 text-white'
+                                        ? 'bg-gray-900 text-white'
                                         : 'bg-white text-gray-500 hover:bg-gray-50'
                                 }`}
                             >
@@ -210,6 +210,7 @@ export const DemandModule: React.FC<DemandModuleProps> = ({ data }) => {
                     locationDensity={locationDensity}
                     odPairs={odPairs}
                     height={520}
+                    defaultLayer="od"
                     seasonFilter={seasonFilter}
                     onSeasonFilterChange={setSeasonFilter}
                     onDisplayedODPairsChange={setDisplayedODPairs}

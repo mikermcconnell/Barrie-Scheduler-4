@@ -2,8 +2,8 @@
 import { describe, it, expect } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
-import { parseMasterScheduleV2 } from '../utils/masterScheduleParserV2';
-import { adaptV2ToV1 } from '../utils/parserAdapter';
+import { parseMasterScheduleV2 } from '../utils/parsers/masterScheduleParserV2';
+import { adaptV2ToV1 } from '../utils/parsers/parserAdapter';
 
 const FIXTURE_PATH = path.join(__dirname, 'fixtures/master_schedule.xlsx');
 

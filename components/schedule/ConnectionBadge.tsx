@@ -7,8 +7,8 @@
 
 import React from 'react';
 import { Train, Clock, Bus, ArrowRight, ArrowLeft } from 'lucide-react';
-import type { ExternalConnection } from '../../utils/connectionTypes';
-import { formatConnectionTime } from '../../utils/connectionTypes';
+import type { ExternalConnection } from '../../utils/connections/connectionTypes';
+import { formatConnectionTime } from '../../utils/connections/connectionTypes';
 
 interface ConnectionBadgeProps {
     connection: ExternalConnection;

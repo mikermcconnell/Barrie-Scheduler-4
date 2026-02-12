@@ -48,15 +48,15 @@ import {
     validateRouteTable,
     RoundTripTable,
     buildRoundTripView
-} from '../utils/masterScheduleParser';
+} from '../utils/parsers/masterScheduleParser';
 import { ConnectionsPanel } from './connections/ConnectionsPanel';
-import type { ConnectionLibrary } from '../utils/connectionTypes';
-import { getConnectionLibrary } from '../utils/connectionLibraryService';
+import type { ConnectionLibrary } from '../utils/connections/connectionTypes';
+import { getConnectionLibrary } from '../utils/connections/connectionLibraryService';
 import { RouteSummary } from './RouteSummary';
 import { WorkspaceHeader } from './WorkspaceHeader';
 import { AutoSaveStatus } from '../hooks/useAutoSave';
 import { TimeUtils } from '../utils/timeUtils';
-import { getRouteColor, getRouteTextColor } from '../utils/routeColors';
+import { getRouteColor, getRouteTextColor } from '../utils/config/routeColors';
 import { AddTripModal, AddTripModalContext } from './AddTripModal';
 import { useAddTrip } from '../hooks/useAddTrip';
 import { TravelTimeGrid } from './TravelTimeGrid';
@@ -77,7 +77,7 @@ import { BulkUploadToMasterModal, RouteForUpload } from './BulkUploadToMasterMod
 import {
     uploadToMasterSchedule,
     prepareUpload
-} from '../utils/masterScheduleService';
+} from '../utils/services/masterScheduleService';
 import {
     extractRouteNumber,
     extractDayType,
@@ -100,11 +100,11 @@ import {
     parseStackedTime,
     validateSchedule,
     type ValidationWarning
-} from '../utils/scheduleEditorUtils';
+} from '../utils/schedule/scheduleEditorUtils';
 import { StackedTimeCell, StackedTimeInput } from './ui/StackedTimeInput';
 import { RoundTripTableView } from './schedule/RoundTripTableView';
-import { getRouteConfig, extractDirectionFromName, parseRouteInfo } from '../utils/routeDirectionConfig';
-import { reassignBlocksForTables, MatchConfigPresets } from '../utils/blockAssignmentCore';
+import { getRouteConfig, extractDirectionFromName, parseRouteInfo } from '../utils/config/routeDirectionConfig';
+import { reassignBlocksForTables, MatchConfigPresets } from '../utils/blocks/blockAssignmentCore';
 import { useScheduleEditing, CascadeMode } from '../hooks/useScheduleEditing';
 import { useUploadToMaster, ConsolidatedRoute } from '../hooks/useUploadToMaster';
 import { useTravelTimeGrid } from '../hooks/useTravelTimeGrid';

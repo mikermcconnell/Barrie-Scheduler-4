@@ -26,7 +26,7 @@ import {
     getAllMasterSchedules,
     getMasterSchedule,
     deleteMasterSchedule
-} from '../utils/masterScheduleService';
+} from '../utils/services/masterScheduleService';
 import type {
     MasterScheduleEntry,
     MasterScheduleContent,
@@ -34,9 +34,9 @@ import type {
     DayType
 } from '../utils/masterScheduleTypes';
 import { buildRouteIdentity } from '../utils/masterScheduleTypes';
-import type { MasterRouteTable, MasterTrip } from '../utils/masterScheduleParser';
-import { buildRoundTripView } from '../utils/masterScheduleParser';
-import { getRouteColor, getRouteTextColor } from '../utils/routeColors';
+import type { MasterRouteTable, MasterTrip } from '../utils/parsers/masterScheduleParser';
+import { buildRoundTripView } from '../utils/parsers/masterScheduleParser';
+import { getRouteColor, getRouteTextColor } from '../utils/config/routeColors';
 import { PlatformTimeline } from './PlatformTimeline';
 import { ScheduleEditor } from './ScheduleEditor';
 

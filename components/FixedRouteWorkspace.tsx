@@ -20,20 +20,21 @@ import { ScheduleEditorWorkspace, SiblingDraft } from './ScheduleEditorWorkspace
 import { SystemDraftEditorWorkspace } from './SystemDraftEditorWorkspace';
 import { ReportsDashboard } from './Reports/ReportsDashboard';
 import { AnalyticsDashboard } from './Analytics/AnalyticsDashboard';
+import { PerformanceDashboard } from './Performance/PerformanceDashboard';
 import { GTFSImportModal } from './GTFSImport';
 import { SystemDraftList } from './SystemDraftList';
 import type { MasterScheduleContent } from '../utils/masterScheduleTypes';
-import type { DraftBasedOn, DraftSchedule, SystemDraft } from '../utils/scheduleTypes';
-import { buildMasterContentFromTables } from '../utils/scheduleDraftAdapter';
-import { getAllDrafts, getDraft, deleteDraft } from '../utils/draftService';
-import { getSystemDraft } from '../utils/systemDraftService';
+import type { DraftBasedOn, DraftSchedule, SystemDraft } from '../utils/schedule/scheduleTypes';
+import { buildMasterContentFromTables } from '../utils/schedule/scheduleDraftAdapter';
+import { getAllDrafts, getDraft, deleteDraft } from '../utils/services/draftService';
+import { getSystemDraft } from '../utils/services/systemDraftService';
 import { useAuth } from './AuthContext';
 import { useToast } from './ToastContext';
 
-type FixedRouteViewMode = 'dashboard' | 'editor' | 'new-schedule' | 'master' | 'reports' | 'analytics' | 'drafts' | 'system-editor';
+type FixedRouteViewMode = 'dashboard' | 'editor' | 'new-schedule' | 'master' | 'reports' | 'analytics' | 'performance' | 'drafts' | 'system-editor';
 
 const VALID_VIEW_MODES = new Set<string>([
-    'dashboard', 'editor', 'new-schedule', 'master', 'reports', 'analytics', 'drafts', 'system-editor'
+    'dashboard', 'editor', 'new-schedule', 'master', 'reports', 'analytics', 'performance', 'drafts', 'system-editor'
 ]);
 
 function parseHashViewMode(): FixedRouteViewMode {
@@ -51,6 +52,7 @@ const VIEW_MODE_LABELS: Record<FixedRouteViewMode, string> = {
     master: 'Master Schedule',
     reports: 'Reports',
     analytics: 'Analytics',
+    performance: 'Performance',
     editor: 'Schedule Editor',
     drafts: 'Schedule Editor',
     'system-editor': 'System Draft Editor'
@@ -323,6 +325,9 @@ export const FixedRouteWorkspace: React.FC = () => {
 
                     <DashboardCard onClick={() => setViewMode('analytics')} icon={<GitBranch size={20} />} color="cyan"
                         title="Analytics" description="Analyze rider demand, route performance, and connections from Transit App data." />
+
+                    <DashboardCard onClick={() => setViewMode('performance')} icon={<Clock size={20} />} color="amber"
+                        title="Performance" description="OTP, ridership, and load profiles from STREETS AVL/APC data. Replaces Transify." />
                 </div>
 
                 {/* GTFS Import Modal */}
@@ -622,6 +627,10 @@ export const FixedRouteWorkspace: React.FC = () => {
 
                     {viewMode === 'analytics' && (
                         <AnalyticsDashboard onClose={() => setViewMode('dashboard')} />
+                    )}
+
+                    {viewMode === 'performance' && (
+                        <PerformanceDashboard onClose={() => setViewMode('dashboard')} />
                     )}
                 </div>
             </div>

@@ -6,7 +6,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { getEffectiveConfig, type PlatformConfigDocument } from '../utils/platformConfigService';
+import { getEffectiveConfig, type PlatformConfigDocument } from '../utils/platform/platformConfigService';
 
 export function usePlatformConfig(teamId: string | undefined) {
     const [config, setConfig] = useState<PlatformConfigDocument | null>(null);

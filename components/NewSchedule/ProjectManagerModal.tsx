@@ -6,8 +6,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { X, FolderOpen, Clock, Trash2, Edit3, Check, Plus, CalendarPlus, Loader2, Copy, Search } from 'lucide-react';
-import { getAllProjects, deleteProject, getProject, duplicateProject, NewScheduleProject } from '../../utils/newScheduleProjectService';
-import type { MasterRouteTable } from '../../utils/masterScheduleParser';
+import { getAllProjects, deleteProject, getProject, duplicateProject, NewScheduleProject } from '../../utils/services/newScheduleProjectService';
+import type { MasterRouteTable } from '../../utils/parsers/masterScheduleParser';
 
 interface Props {
     isOpen: boolean;

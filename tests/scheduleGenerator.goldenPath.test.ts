@@ -10,10 +10,10 @@
  * and the fundamental invariants that should never regress.
  */
 import { describe, expect, it } from 'vitest';
-import { generateSchedule } from '../utils/scheduleGenerator';
-import type { MasterTrip } from '../utils/masterScheduleParser';
+import { generateSchedule } from '../utils/schedule/scheduleGenerator';
+import type { MasterTrip } from '../utils/parsers/masterScheduleParser';
 import type { ScheduleConfig } from '../components/NewSchedule/steps/Step3Build';
-import type { TripBucketAnalysis, TimeBand, DirectionBandSummary } from '../utils/runtimeAnalysis';
+import type { TripBucketAnalysis, TimeBand, DirectionBandSummary } from '../utils/ai/runtimeAnalysis';
 import type { SegmentRawData } from '../components/NewSchedule/utils/csvParser';
 
 // ── Realistic Route 7 fixtures (3 stops, round trip, 2 bands) ──

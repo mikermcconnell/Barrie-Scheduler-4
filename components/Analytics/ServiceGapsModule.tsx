@@ -11,14 +11,15 @@ import {
     XAxis,
     YAxis,
 } from 'recharts';
+import { Route, GitCompare, AlertTriangle, BarChart3 } from 'lucide-react';
 import type {
     RouteDemandSupplyProfile,
     ServiceGapType,
     TransitAppDataSummary,
     TransferDayType,
     TransferSeason,
-} from '../../utils/transitAppTypes';
-import { ChartCard, MetricCard, NoData, fmt } from './AnalyticsShared';
+} from '../../utils/transit-app/transitAppTypes';
+import { ChartCard, MetricCard, NoData, fmt, formatTimeBand, formatDayType, formatSeasonShort } from './AnalyticsShared';
 
 interface ServiceGapsModuleProps {
     data: TransitAppDataSummary;
@@ -186,15 +187,15 @@ export const ServiceGapsModule: React.FC<ServiceGapsModuleProps> = ({ data }) =>
     return (
         <div className="space-y-6">
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                <MetricCard icon={<span className="text-sm font-bold">R</span>} label="Routes with Demand" value={fmt(analysis.totals.routesWithDemand)} color="cyan" />
-                <MetricCard icon={<span className="text-sm font-bold">M</span>} label="Matched to GTFS" value={fmt(analysis.totals.matchedRoutes)} color="emerald" />
-                <MetricCard icon={<span className="text-sm font-bold">G</span>} label="Gap Rows" value={fmt(gapRegister.length)} color="amber" />
-                <MetricCard icon={<span className="text-sm font-bold">S</span>} label="Supply Profiles" value={fmt(analysis.supplyProfiles.length)} color="indigo" />
+                <MetricCard icon={<Route size={20} />} label="Routes with Demand" value={fmt(analysis.totals.routesWithDemand)} color="cyan" />
+                <MetricCard icon={<GitCompare size={20} />} label="Matched to GTFS" value={fmt(analysis.totals.matchedRoutes)} color="emerald" />
+                <MetricCard icon={<AlertTriangle size={20} />} label="Gap Rows" value={fmt(gapRegister.length)} color="amber" />
+                <MetricCard icon={<BarChart3 size={20} />} label="Supply Profiles" value={fmt(analysis.supplyProfiles.length)} color="indigo" />
             </div>
 
             <ChartCard
                 title="Demand vs Supply Overlay"
-                subtitle={`Route ${effectiveRoute || 'N/A'} • ${effectiveDayType} • ${effectiveSeason.toUpperCase()}`}
+                subtitle={`Route ${effectiveRoute || 'N/A'} • ${formatDayType(effectiveDayType)} • ${formatSeasonShort(effectiveSeason)}`}
                 headerExtra={(
                     <div className="flex items-center gap-2">
                         <select
@@ -279,7 +280,7 @@ export const ServiceGapsModule: React.FC<ServiceGapsModuleProps> = ({ data }) =>
                         </ResponsiveContainer>
                     </div>
                 ) : (
-                    <NoData />
+                    <NoData message="Select a route and season with GTFS supply data to view the overlay." />
                 )}
             </ChartCard>
 
@@ -297,9 +298,9 @@ export const ServiceGapsModule: React.FC<ServiceGapsModuleProps> = ({ data }) =>
                         </select>
                     </div>
                     {filteredGapRows.length > 0 ? (
-                        <div className="overflow-x-auto">
+                        <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
                             <table className="w-full text-sm">
-                                <thead>
+                                <thead className="sticky top-0 bg-white z-10">
                                     <tr className="border-b border-gray-200">
                                         <th className="text-left py-2 px-2 text-gray-500 font-medium">Type</th>
                                         <th className="text-left py-2 px-2 text-gray-500 font-medium">Day</th>
@@ -309,13 +310,13 @@ export const ServiceGapsModule: React.FC<ServiceGapsModuleProps> = ({ data }) =>
                                         <th className="text-right py-2 px-2 text-gray-500 font-medium">Supply/h</th>
                                     </tr>
                                 </thead>
-                                <tbody>
+                                <tbody className="tabular-nums">
                                     {filteredGapRows.slice(0, 40).map((row, idx) => (
                                         <tr key={`${row.route}-${row.gapType}-${row.dayType}-${row.timeBand}-${idx}`} className="border-b border-gray-50 hover:bg-gray-50">
                                             <td className="py-2 px-2">{gapLabel(row.gapType)}</td>
-                                            <td className="py-2 px-2 capitalize">{row.dayType}</td>
-                                            <td className="py-2 px-2">{row.timeBand.replace('_', ' ')}</td>
-                                            <td className="py-2 px-2 uppercase">{row.season}</td>
+                                            <td className="py-2 px-2">{formatDayType(row.dayType)}</td>
+                                            <td className="py-2 px-2">{formatTimeBand(row.timeBand)}</td>
+                                            <td className="py-2 px-2">{formatSeasonShort(row.season)}</td>
                                             <td className="py-2 px-2 text-right font-semibold">{row.appRequestsPerHour.toFixed(1)}</td>
                                             <td className="py-2 px-2 text-right">{row.scheduledTripsPerHour.toFixed(1)}</td>
                                         </tr>
@@ -324,15 +325,15 @@ export const ServiceGapsModule: React.FC<ServiceGapsModuleProps> = ({ data }) =>
                             </table>
                         </div>
                     ) : (
-                        <NoData />
+                        <NoData message="No gaps detected for the selected route and filter." />
                     )}
                 </ChartCard>
 
                 <ChartCard title="Route Gap Priority" subtitle="Routes with strongest demand-minus-supply signals">
                     {routeGapSummary.length > 0 ? (
-                        <div className="overflow-x-auto">
+                        <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
                             <table className="w-full text-sm">
-                                <thead>
+                                <thead className="sticky top-0 bg-white z-10">
                                     <tr className="border-b border-gray-200">
                                         <th className="text-left py-2 px-2 text-gray-500 font-medium">Route</th>
                                         <th className="text-right py-2 px-2 text-gray-500 font-medium">Gap Rows</th>
@@ -340,7 +341,7 @@ export const ServiceGapsModule: React.FC<ServiceGapsModuleProps> = ({ data }) =>
                                         <th className="text-left py-2 px-2 text-gray-500 font-medium">Primary Type</th>
                                     </tr>
                                 </thead>
-                                <tbody>
+                                <tbody className="tabular-nums">
                                     {routeGapSummary.map(row => (
                                         <tr key={row.route} className="border-b border-gray-50 hover:bg-gray-50">
                                             <td className="py-2 px-2 font-bold">{row.route}</td>
@@ -358,7 +359,7 @@ export const ServiceGapsModule: React.FC<ServiceGapsModuleProps> = ({ data }) =>
                 </ChartCard>
             </div>
 
-            <ChartCard title="UC2 Context" subtitle="Route engagement cross-reference for selected route">
+            <ChartCard title="Route Engagement Summary" subtitle="App activity cross-reference for selected route">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
                     <div className="bg-gray-50 border border-gray-100 rounded-lg p-3">
                         <p className="text-xs text-gray-500">Avg Daily Views</p>

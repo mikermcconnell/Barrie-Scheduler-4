@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { MasterRouteTable, MasterTrip } from '../utils/masterScheduleParser';
-import { reassignBlocksForTables, MatchConfigPresets } from '../utils/blockAssignmentCore';
+import type { MasterRouteTable, MasterTrip } from '../utils/parsers/masterScheduleParser';
+import { reassignBlocksForTables, MatchConfigPresets } from '../utils/blocks/blockAssignmentCore';
 
 const createTrip = (
     id: string,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { HubConfig } from '../utils/platformConfig';
-import { getPlatformForRoute } from '../utils/platformConfig';
+import type { HubConfig } from '../utils/platform/platformConfig';
+import { getPlatformForRoute } from '../utils/platform/platformConfig';
 
 describe('platformConfig getPlatformForRoute', () => {
     it('prefers exact route variant over family match', () => {

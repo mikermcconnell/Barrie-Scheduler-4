@@ -6,7 +6,7 @@
  * with both North and South directions stored together.
  */
 
-import type { MasterRouteTable } from './masterScheduleParser';
+import type { MasterRouteTable } from './parsers/masterScheduleParser';
 
 // ============ ENUMS AND TYPES ============
 

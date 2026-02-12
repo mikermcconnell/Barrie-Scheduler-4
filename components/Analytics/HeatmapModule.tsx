@@ -1,9 +1,10 @@
 import React, { useMemo, useState } from 'react';
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
-import type { HeatmapAtlasSliceId, TransitAppDataSummary, TransferSeason } from '../../utils/transitAppTypes';
+import { Radio, Filter, Layers, MessageCircle } from 'lucide-react';
+import type { HeatmapAtlasSliceId, TransitAppDataSummary, TransferSeason } from '../../utils/transit-app/transitAppTypes';
 import { TransitAppMap } from './TransitAppMap';
-import { ChartCard, MetricCard, NoData, fmt } from './AnalyticsShared';
+import { ChartCard, MetricCard, NoData, fmt, formatTimeBand, formatDayType, formatSeason } from './AnalyticsShared';
 
 
 interface HeatmapModuleProps {
@@ -94,7 +95,7 @@ export const HeatmapModule: React.FC<HeatmapModuleProps> = ({ data }) => {
 
         const head = [['Season', 'Slice', 'Points', 'Top Cell Count', 'Hotspot']];
         const body = atlasRows.map(row => [
-            row.season.toUpperCase(),
+            formatSeason(row.season),
             row.label,
             row.totalPoints.toLocaleString(),
             row.hotspotCount.toLocaleString(),
@@ -118,9 +119,9 @@ export const HeatmapModule: React.FC<HeatmapModuleProps> = ({ data }) => {
             .slice(0, 10);
         const calloutHead = [['Season', 'Day', 'Band', 'Points', 'Note']];
         const calloutBody = callouts.map(callout => [
-            callout.season.toUpperCase(),
-            callout.dayType,
-            callout.timeBand,
+            formatSeason(callout.season),
+            formatDayType(callout.dayType),
+            formatTimeBand(callout.timeBand),
             callout.pointCount.toLocaleString(),
             callout.note,
         ]);
@@ -152,15 +153,15 @@ export const HeatmapModule: React.FC<HeatmapModuleProps> = ({ data }) => {
     return (
         <div className="space-y-6">
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                <MetricCard icon={<span className="text-sm font-bold">R</span>} label="Raw Pings" value={fmt(heatmapAnalysis.debiasing.rawPoints)} color="cyan" />
-                <MetricCard icon={<span className="text-sm font-bold">D</span>} label="Debiased Pings" value={fmt(heatmapAnalysis.debiasing.debiasedPoints)} color="emerald" />
-                <MetricCard icon={<span className="text-sm font-bold">A</span>} label="Atlas Slices" value={fmt(atlas.length)} color="indigo" />
-                <MetricCard icon={<span className="text-sm font-bold">C</span>} label="Callouts" value={fmt(heatmapAnalysis.callouts.length)} color="amber" />
+                <MetricCard icon={<Radio size={20} />} label="Raw Pings" value={fmt(heatmapAnalysis.debiasing.rawPoints)} color="cyan" />
+                <MetricCard icon={<Filter size={20} />} label="Debiased Pings" value={fmt(heatmapAnalysis.debiasing.debiasedPoints)} color="emerald" />
+                <MetricCard icon={<Layers size={20} />} label="Atlas Slices" value={fmt(atlas.length)} color="indigo" />
+                <MetricCard icon={<MessageCircle size={20} />} label="Callouts" value={fmt(heatmapAnalysis.callouts.length)} color="amber" />
             </div>
 
             <ChartCard
                 title="Heatmap Atlas Viewer"
-                subtitle={`Season ${season.toUpperCase()} • Slice ${sliceId}`}
+                subtitle={`${formatSeason(season)} • ${ATLAS_ORDER.find(a => a.id === sliceId)?.label ?? sliceId}`}
                 headerExtra={(
                     <div className="flex items-center gap-2">
                         <select
@@ -211,6 +212,7 @@ export const HeatmapModule: React.FC<HeatmapModuleProps> = ({ data }) => {
                         locationDensity={mapDensity}
                         odPairs={odPairs}
                         height={560}
+                        defaultLayer="heatmap"
                     />
                 </div>
             </ChartCard>
@@ -218,9 +220,9 @@ export const HeatmapModule: React.FC<HeatmapModuleProps> = ({ data }) => {
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
                 <ChartCard title="Atlas Matrix (18 Slices)" subtitle="6 day/time slices x 3 seasons">
                     {atlasRows.length > 0 ? (
-                        <div className="overflow-x-auto">
+                        <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
                             <table className="w-full text-sm">
-                                <thead>
+                                <thead className="sticky top-0 bg-white z-10">
                                     <tr className="border-b border-gray-200">
                                         <th className="text-left py-2 px-2 text-gray-500 font-medium">Season</th>
                                         <th className="text-left py-2 px-2 text-gray-500 font-medium">Slice</th>
@@ -228,7 +230,7 @@ export const HeatmapModule: React.FC<HeatmapModuleProps> = ({ data }) => {
                                         <th className="text-right py-2 px-2 text-gray-500 font-medium">Top Cell</th>
                                     </tr>
                                 </thead>
-                                <tbody>
+                                <tbody className="tabular-nums">
                                     {atlasRows.map(row => (
                                         <tr
                                             key={`${row.season}-${row.id}`}
@@ -238,7 +240,7 @@ export const HeatmapModule: React.FC<HeatmapModuleProps> = ({ data }) => {
                                                 setSliceId(row.id);
                                             }}
                                         >
-                                            <td className="py-2 px-2 uppercase">{row.season}</td>
+                                            <td className="py-2 px-2">{formatSeason(row.season)}</td>
                                             <td className="py-2 px-2">{row.label}</td>
                                             <td className="py-2 px-2 text-right font-semibold">{fmt(row.totalPoints)}</td>
                                             <td className="py-2 px-2 text-right">{fmt(row.hotspotCount)}</td>
@@ -247,17 +249,17 @@ export const HeatmapModule: React.FC<HeatmapModuleProps> = ({ data }) => {
                                 </tbody>
                             </table>
                         </div>
-                    ) : <NoData />}
+                    ) : <NoData message="No atlas slices available for the selected filters." />}
                 </ChartCard>
 
-                <ChartCard title="Key Callouts" subtitle={`Top hotspots for ${season.toUpperCase()}`}>
+                <ChartCard title="Key Callouts" subtitle={`Top hotspots for ${formatSeason(season)}`}>
                     {topCallouts.length > 0 ? (
                         <div className="space-y-2">
                             {topCallouts.map((callout, idx) => (
                                 <div key={`${callout.season}-${callout.lat}-${callout.lon}-${idx}`} className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm">
                                     <div className="flex items-center justify-between">
                                         <span className="font-semibold text-gray-900">
-                                            {callout.dayType} • {callout.timeBand}
+                                            {formatDayType(callout.dayType)} • {formatTimeBand(callout.timeBand)}
                                         </span>
                                         <span className="text-xs text-gray-500">{fmt(callout.pointCount)} points</span>
                                     </div>
@@ -266,7 +268,7 @@ export const HeatmapModule: React.FC<HeatmapModuleProps> = ({ data }) => {
                                 </div>
                             ))}
                         </div>
-                    ) : <NoData />}
+                    ) : <NoData message="No hotspot callouts for the selected season." />}
                 </ChartCard>
             </div>
 

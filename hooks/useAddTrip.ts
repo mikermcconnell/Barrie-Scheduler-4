@@ -6,9 +6,9 @@
  */
 
 import { useState, useCallback } from 'react';
-import { MasterRouteTable, MasterTrip, validateRouteTable } from '../utils/masterScheduleParser';
+import { MasterRouteTable, MasterTrip, validateRouteTable } from '../utils/parsers/masterScheduleParser';
 import { TimeUtils } from '../utils/timeUtils';
-import { getDayTypeSuffix, getDayTypeLabel, parseBlockId } from '../utils/routeNameParser';
+import { getDayTypeSuffix, getDayTypeLabel, parseBlockId } from '../utils/config/routeNameParser';
 import type { AddTripModalContext, AddTripResult } from '../components/AddTripModal';
 
 // Deep clone helper

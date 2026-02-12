@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { X, GitCompare, ArrowRight, Plus, Minus, RotateCcw, TrendingUp, TrendingDown, Clock, Bus, Car } from 'lucide-react';
-import { MasterRouteTable, MasterTrip } from '../utils/masterScheduleParser';
+import { MasterRouteTable, MasterTrip } from '../utils/parsers/masterScheduleParser';
 
 interface ScenarioComparisonModalProps {
     isOpen: boolean;

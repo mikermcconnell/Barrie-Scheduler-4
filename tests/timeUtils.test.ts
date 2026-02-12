@@ -16,7 +16,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { toMinutes, fromMinutes } from '../utils/timeUtils';
-import { parseTimeToMinutes } from '../utils/masterScheduleParserV2';
+import { parseTimeToMinutes } from '../utils/parsers/masterScheduleParserV2';
 
 describe('toMinutes - Excel decimal time parsing', () => {
     describe('Standard times (before midnight)', () => {

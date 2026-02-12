@@ -6,8 +6,8 @@ import type {
     TransferPriorityTier,
     TransferTripAnchor,
     TransferTimeBand,
-} from '../../utils/transitAppTypes';
-import { ChartCard, MetricCard, NoData, fmt } from './AnalyticsShared';
+} from '../../utils/transit-app/transitAppTypes';
+import { ChartCard, MetricCard, NoData, fmt, formatTimeBand } from './AnalyticsShared';
 
 interface TransfersModuleProps {
     data: TransitAppDataSummary;
@@ -15,16 +15,6 @@ interface TransfersModuleProps {
 
 type SortField = 'count' | 'avgWaitMinutes';
 
-function formatTimeBand(band: TransferTimeBand): string {
-    switch (band) {
-        case 'am_peak': return 'AM Peak';
-        case 'midday': return 'Midday';
-        case 'pm_peak': return 'PM Peak';
-        case 'evening': return 'Evening';
-        case 'overnight': return 'Overnight';
-        default: return band;
-    }
-}
 
 function formatPriority(priority: TransferPriorityTier): string {
     switch (priority) {
@@ -345,7 +335,7 @@ export const TransfersModule: React.FC<TransfersModuleProps> = ({ data }) => {
                             onClick={() => setSortBy('count')}
                             className={`px-3 py-1.5 text-xs font-medium transition-colors ${
                                 sortBy === 'count'
-                                    ? 'bg-cyan-500 text-white'
+                                    ? 'bg-gray-900 text-white'
                                     : 'bg-white text-gray-500 hover:bg-gray-50'
                             }`}
                         >
@@ -355,7 +345,7 @@ export const TransfersModule: React.FC<TransfersModuleProps> = ({ data }) => {
                             onClick={() => setSortBy('avgWaitMinutes')}
                             className={`px-3 py-1.5 text-xs font-medium transition-colors ${
                                 sortBy === 'avgWaitMinutes'
-                                    ? 'bg-cyan-500 text-white'
+                                    ? 'bg-gray-900 text-white'
                                     : 'bg-white text-gray-500 hover:bg-gray-50'
                             }`}
                         >
@@ -370,7 +360,7 @@ export const TransfersModule: React.FC<TransfersModuleProps> = ({ data }) => {
                             onClick={() => setScope('barrie')}
                             className={`px-3 py-1.5 text-xs font-medium transition-colors ${
                                 scope === 'barrie'
-                                    ? 'bg-cyan-500 text-white'
+                                    ? 'bg-gray-900 text-white'
                                     : 'bg-white text-gray-500 hover:bg-gray-50'
                             }`}
                         >
@@ -380,7 +370,7 @@ export const TransfersModule: React.FC<TransfersModuleProps> = ({ data }) => {
                             onClick={() => setScope('regional')}
                             className={`px-3 py-1.5 text-xs font-medium transition-colors ${
                                 scope === 'regional'
-                                    ? 'bg-cyan-500 text-white'
+                                    ? 'bg-gray-900 text-white'
                                     : 'bg-white text-gray-500 hover:bg-gray-50'
                             }`}
                         >
@@ -390,7 +380,7 @@ export const TransfersModule: React.FC<TransfersModuleProps> = ({ data }) => {
                             onClick={() => setScope('all')}
                             className={`px-3 py-1.5 text-xs font-medium transition-colors ${
                                 scope === 'all'
-                                    ? 'bg-cyan-500 text-white'
+                                    ? 'bg-gray-900 text-white'
                                     : 'bg-white text-gray-500 hover:bg-gray-50'
                             }`}
                         >

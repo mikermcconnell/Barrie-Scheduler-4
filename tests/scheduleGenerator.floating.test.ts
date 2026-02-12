@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { generateSchedule } from '../utils/scheduleGenerator';
+import { generateSchedule } from '../utils/schedule/scheduleGenerator';
 import type { ScheduleConfig } from '../components/NewSchedule/steps/Step3Build';
-import type { TripBucketAnalysis, TimeBand, DirectionBandSummary } from '../utils/runtimeAnalysis';
+import type { TripBucketAnalysis, TimeBand, DirectionBandSummary } from '../utils/ai/runtimeAnalysis';
 import type { SegmentRawData } from '../components/NewSchedule/utils/csvParser';
 
 describe('scheduleGenerator floating mode defaults', () => {

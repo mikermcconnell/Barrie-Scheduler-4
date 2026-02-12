@@ -3,7 +3,7 @@ import React, { useCallback, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { Upload, FileUp, X, Calendar, Database, FileSpreadsheet, ArrowRight } from 'lucide-react';
 import { GTFSImport } from '../../GTFSImport';
-import type { GTFSImportResult } from '../../../utils/gtfsTypes';
+import type { GTFSImportResult } from '../../../utils/gtfs/gtfsTypes';
 
 type ImportMode = 'csv' | 'gtfs';
 

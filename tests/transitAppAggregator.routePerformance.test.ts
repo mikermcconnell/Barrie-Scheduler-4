@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { aggregateTransitAppData } from '../utils/transitAppAggregator';
+import { aggregateTransitAppData } from '../utils/transit-app/transitAppAggregator';
 import type {
     TransitAppFileStats,
     TransitAppLineRow,
     TransitAppParsedData,
     TransitAppTripLegRow,
-} from '../utils/transitAppTypes';
+} from '../utils/transit-app/transitAppTypes';
 
 function makeLine(route: string, date: string, views: number, taps: number, suggestions: number, goTrips: number): TransitAppLineRow {
     return {

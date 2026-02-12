@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { aggregateTransitAppData } from '../utils/transitAppAggregator';
-import type { TransitAppFileStats, TransitAppParsedData, TransitAppTripLegRow } from '../utils/transitAppTypes';
+import { aggregateTransitAppData } from '../utils/transit-app/transitAppAggregator';
+import type { TransitAppFileStats, TransitAppParsedData, TransitAppTripLegRow } from '../utils/transit-app/transitAppTypes';
 
 const baseStats: TransitAppFileStats = {
     totalFiles: 0,

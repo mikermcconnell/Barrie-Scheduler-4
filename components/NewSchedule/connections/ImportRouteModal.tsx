@@ -15,10 +15,10 @@ import {
 import type {
     ConnectionTarget,
     ConnectionTargetType
-} from '../../../utils/connectionTypes';
-import type { DayType, MasterRouteTable } from '../../../utils/masterScheduleParser';
+} from '../../../utils/connections/connectionTypes';
+import type { DayType, MasterRouteTable } from '../../../utils/parsers/masterScheduleParser';
 import type { RouteIdentity } from '../../../utils/masterScheduleTypes';
-import { getAllMasterSchedules, getMasterSchedule } from '../../../utils/masterScheduleService';
+import { getAllMasterSchedules, getMasterSchedule } from '../../../utils/services/masterScheduleService';
 
 interface ImportRouteModalProps {
     isOpen: boolean;

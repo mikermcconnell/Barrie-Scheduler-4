@@ -10,7 +10,7 @@ import {
     ResponsiveContainer,
 } from 'recharts';
 import { Users, MapPin, Route, Calendar, ArrowRight } from 'lucide-react';
-import type { TransitAppDataSummary } from '../../utils/transitAppTypes';
+import type { TransitAppDataSummary } from '../../utils/transit-app/transitAppTypes';
 import { MetricCard, ChartCard, NoData, fmt } from './AnalyticsShared';
 
 interface OverviewPanelProps {

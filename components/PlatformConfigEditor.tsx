@@ -11,8 +11,8 @@ import {
     getPlatformConfig,
     savePlatformConfig,
     seedFromDefaults
-} from '../utils/platformConfigService';
-import { HUBS, ROUTE_FAMILIES, type HubConfig, type PlatformAssignment } from '../utils/platformConfig';
+} from '../utils/platform/platformConfigService';
+import { HUBS, ROUTE_FAMILIES, type HubConfig, type PlatformAssignment } from '../utils/platform/platformConfig';
 
 interface PlatformConfigEditorProps {
     teamId: string;

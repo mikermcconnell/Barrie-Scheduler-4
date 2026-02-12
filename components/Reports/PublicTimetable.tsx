@@ -10,13 +10,13 @@ import { ArrowLeft, Download, RefreshCw, Eye, Check, FileText, Upload, Trash2, I
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
 import { useTeam } from '../TeamContext';
-import { getAllMasterSchedules, getMasterSchedule, uploadRouteMap, deleteRouteMap, getRouteMapUrl } from '../../utils/masterScheduleService';
+import { getAllMasterSchedules, getMasterSchedule, uploadRouteMap, deleteRouteMap, getRouteMapUrl } from '../../utils/services/masterScheduleService';
 import type { MasterScheduleEntry, DayType, RouteIdentity } from '../../utils/masterScheduleTypes';
-import type { MasterRouteTable, MasterTrip, RoundTripTable } from '../../utils/masterScheduleParser';
-import { buildRoundTripView } from '../../utils/masterScheduleParser';
+import type { MasterRouteTable, MasterTrip, RoundTripTable } from '../../utils/parsers/masterScheduleParser';
+import { buildRoundTripView } from '../../utils/parsers/masterScheduleParser';
 import { buildRouteIdentity } from '../../utils/masterScheduleTypes';
-import { getRouteConfig, getRouteDirections } from '../../utils/routeDirectionConfig';
-import { getRouteColor, getRouteTextColor } from '../../utils/routeColors';
+import { getRouteConfig, getRouteDirections } from '../../utils/config/routeDirectionConfig';
+import { getRouteColor, getRouteTextColor } from '../../utils/config/routeColors';
 
 // Extend jsPDF with autoTable
 declare module 'jspdf' {

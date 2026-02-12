@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { TransitAppFileStats, TransitAppParsedData } from '../utils/transitAppTypes';
+import type { TransitAppFileStats, TransitAppParsedData } from '../utils/transit-app/transitAppTypes';
 
-vi.mock('../utils/transitAppGtfsNormalization', () => ({
+vi.mock('../utils/transit-app/transitAppGtfsNormalization', () => ({
     getScheduledTripsForRouteOnDate: (): null => null,
     hasGtfsNormalizationData: () => false,
     hasGtfsSupplyProfiles: () => false,
@@ -16,7 +16,7 @@ vi.mock('../utils/gtfsStopLookup', () => ({
     ],
 }));
 
-const { aggregateTransitAppData } = await import('../utils/transitAppAggregator');
+const { aggregateTransitAppData } = await import('../utils/transit-app/transitAppAggregator');
 
 const baseStats: TransitAppFileStats = {
     totalFiles: 0,

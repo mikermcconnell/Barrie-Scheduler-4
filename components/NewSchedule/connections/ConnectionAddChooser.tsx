@@ -18,16 +18,16 @@ import {
     Loader2,
     RefreshCw
 } from 'lucide-react';
-import type { DayType } from '../../../utils/masterScheduleParser';
-import type { ConnectionTime } from '../../../utils/connectionTypes';
-import type { GoDataSource } from '../../../utils/goTransitService';
+import type { DayType } from '../../../utils/parsers/masterScheduleParser';
+import type { ConnectionTime } from '../../../utils/connections/connectionTypes';
+import type { GoDataSource } from '../../../utils/gtfs/goTransitService';
 import {
     QUICK_TEMPLATES,
     fetchGoTransitGTFS,
     getCachedData,
     isCacheFresh,
     getCacheAge
-} from '../../../utils/goTransitService';
+} from '../../../utils/gtfs/goTransitService';
 
 export interface ConnectionTemplateSelection {
     name: string;

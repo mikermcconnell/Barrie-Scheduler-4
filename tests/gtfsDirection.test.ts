@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { gtfsDirectionToDirection } from '../utils/gtfsTypes';
+import { gtfsDirectionToDirection } from '../utils/gtfs/gtfsTypes';
 
 describe('GTFS Direction Inference', () => {
     describe('headsign-based direction for Route 8A/8B', () => {

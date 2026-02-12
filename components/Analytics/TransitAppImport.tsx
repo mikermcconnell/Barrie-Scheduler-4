@@ -18,15 +18,15 @@ import {
     X,
     BarChart3,
 } from 'lucide-react';
-import { detectTransitAppFiles } from '../../utils/transitAppParsers';
-import { parseAllFiles } from '../../utils/transitAppParsers';
-import { aggregateTransitAppData } from '../../utils/transitAppAggregator';
-import { saveTransitAppData } from '../../utils/transitAppService';
+import { detectTransitAppFiles } from '../../utils/transit-app/transitAppParsers';
+import { parseAllFiles } from '../../utils/transit-app/transitAppParsers';
+import { aggregateTransitAppData } from '../../utils/transit-app/transitAppAggregator';
+import { saveTransitAppData } from '../../utils/transit-app/transitAppService';
 import type {
     DetectedTransitAppFile,
     TransitAppFileType,
     TransitAppFileStats,
-} from '../../utils/transitAppTypes';
+} from '../../utils/transit-app/transitAppTypes';
 
 interface TransitAppImportProps {
     teamId: string;

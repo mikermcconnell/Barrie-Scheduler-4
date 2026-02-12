@@ -21,16 +21,16 @@ import type {
     ConnectionTargetType,
     ConnectionEventType,
     ConnectionQualityWindowSettings
-} from '../../../utils/connectionTypes';
+} from '../../../utils/connections/connectionTypes';
 import {
     generateConnectionId,
     MAX_SERVICE_MINUTES,
     parseConnectionTime,
     formatConnectionTime,
     DEFAULT_CONNECTION_QUALITY_WINDOW_SETTINGS
-} from '../../../utils/connectionTypes';
-import type { DayType } from '../../../utils/masterScheduleParser';
-import { formatGapTimeForEvent } from '../../../utils/connectionUtils';
+} from '../../../utils/connections/connectionTypes';
+import type { DayType } from '../../../utils/parsers/masterScheduleParser';
+import { formatGapTimeForEvent } from '../../../utils/connections/connectionUtils';
 
 /**
  * Stop with name for auto-populate display.

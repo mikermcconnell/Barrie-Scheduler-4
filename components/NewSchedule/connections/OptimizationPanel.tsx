@@ -18,16 +18,16 @@ import {
     Minus,
     Info
 } from 'lucide-react';
-import type { MasterRouteTable } from '../../../utils/masterScheduleParser';
+import type { MasterRouteTable } from '../../../utils/parsers/masterScheduleParser';
 import type {
     ConnectionLibrary,
     RouteConnectionConfig,
     OptimizationMode,
     OptimizationResult,
     ConnectionReportEntry
-} from '../../../utils/connectionTypes';
-import { formatConnectionTime } from '../../../utils/connectionTypes';
-import { optimizeForConnections } from '../../../utils/connectionOptimizer';
+} from '../../../utils/connections/connectionTypes';
+import { formatConnectionTime } from '../../../utils/connections/connectionTypes';
+import { optimizeForConnections } from '../../../utils/connections/connectionOptimizer';
 
 interface OptimizationPanelProps {
     schedules: MasterRouteTable[];

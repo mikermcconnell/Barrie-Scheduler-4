@@ -6,7 +6,7 @@
  */
 
 import React, { useState, useEffect, useRef, useImperativeHandle, forwardRef } from 'react';
-import { parseStackedTime, sanitizeInput } from '../../utils/scheduleEditorUtils';
+import { parseStackedTime, sanitizeInput } from '../../utils/schedule/scheduleEditorUtils';
 
 // --- StackedTimeCell ---
 // Display-only component for showing times in stacked format

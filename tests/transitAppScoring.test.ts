@@ -8,7 +8,7 @@ import {
     median,
     safeRate,
     toMonthKey,
-} from '../utils/transitAppScoring';
+} from '../utils/transit-app/transitAppScoring';
 
 describe('transitAppScoring.safeRate', () => {
     it('returns null for zero denominator', () => {

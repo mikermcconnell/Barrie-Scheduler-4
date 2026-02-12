@@ -8,7 +8,7 @@ import {
     uploadFile,
     SavedFile,
     SavedSchedule
-} from '../utils/dataService';
+} from '../utils/services/dataService';
 import {
     FolderOpen,
     FileText,

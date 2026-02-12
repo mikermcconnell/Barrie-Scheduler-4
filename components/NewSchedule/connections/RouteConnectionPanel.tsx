@@ -22,8 +22,8 @@ import type {
     ConnectionTarget,
     ConnectionType,
     StopInfo
-} from '../../../utils/connectionTypes';
-import { formatConnectionTime } from '../../../utils/connectionTypes';
+} from '../../../utils/connections/connectionTypes';
+import { formatConnectionTime } from '../../../utils/connections/connectionTypes';
 
 interface RouteConnectionPanelProps {
     config: RouteConnectionConfig | null;

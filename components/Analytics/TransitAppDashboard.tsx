@@ -25,7 +25,7 @@ import {
     Calendar,
     ArrowUpDown,
 } from 'lucide-react';
-import type { TransitAppDataSummary } from '../../utils/transitAppTypes';
+import type { TransitAppDataSummary } from '../../utils/transit-app/transitAppTypes';
 import { TransitAppMap } from './TransitAppMap';
 
 interface TransitAppDashboardProps {

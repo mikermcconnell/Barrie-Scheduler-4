@@ -8,9 +8,9 @@
  */
 
 import { useState, useMemo, useCallback } from 'react';
-import type { MasterRouteTable } from '../utils/masterScheduleParser';
+import type { MasterRouteTable } from '../utils/parsers/masterScheduleParser';
 import type { DayType, UploadConfirmation } from '../utils/masterScheduleTypes';
-import { uploadToMasterSchedule, prepareUpload } from '../utils/masterScheduleService';
+import { uploadToMasterSchedule, prepareUpload } from '../utils/services/masterScheduleService';
 import type { RouteForUpload } from '../components/BulkUploadToMasterModal';
 
 export interface ConsolidatedRoute {

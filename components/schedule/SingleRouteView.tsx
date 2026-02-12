@@ -19,19 +19,19 @@ import {
     Copy,
     Trash2
 } from 'lucide-react';
-import { MasterRouteTable, MasterTrip } from '../../utils/masterScheduleParser';
+import { MasterRouteTable, MasterTrip } from '../../utils/parsers/masterScheduleParser';
 import { TimeUtils } from '../../utils/timeUtils';
-import { getRouteConfig, extractDirectionFromName } from '../../utils/routeDirectionConfig';
+import { getRouteConfig, extractDirectionFromName } from '../../utils/config/routeDirectionConfig';
 import {
     calculateHeadways,
     getRatioColor,
     parseTimeInput,
     sanitizeInput,
     sortTripsByBlockFlow
-} from '../../utils/scheduleEditorUtils';
-import type { ConnectionLibrary } from '../../utils/connectionTypes';
-import type { DayType } from '../../utils/masterScheduleParser';
-import { getConnectionsForStop } from '../../utils/connectionUtils';
+} from '../../utils/schedule/scheduleEditorUtils';
+import type { ConnectionLibrary } from '../../utils/connections/connectionTypes';
+import type { DayType } from '../../utils/parsers/masterScheduleParser';
+import { getConnectionsForStop } from '../../utils/connections/connectionUtils';
 import { ConnectionIndicator } from './ConnectionIndicator';
 
 export interface SingleRouteViewProps {

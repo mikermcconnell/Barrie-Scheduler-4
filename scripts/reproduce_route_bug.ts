@@ -1,6 +1,6 @@
 
 import * as XLSX from 'xlsx';
-import { parseMasterScheduleV2 } from '../utils/masterScheduleParserV2';
+import { parseMasterScheduleV2 } from '../utils/parsers/masterScheduleParserV2';
 
 // Create a mock workbook
 const wb = XLSX.utils.book_new();
@@ -39,7 +39,7 @@ XLSX.utils.book_append_sheet(wb, ws100, "100");
 // Write to buffer
 const buffer = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
 
-import { adaptV2ToV1 } from '../utils/parserAdapter';
+import { adaptV2ToV1 } from '../utils/parsers/parserAdapter';
 
 // ... (previous imports and setup)
 

@@ -2,7 +2,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as XLSX from 'xlsx';
-import { parseMasterScheduleV2, ParsedTrip } from '../utils/masterScheduleParserV2';
+import { parseMasterScheduleV2, ParsedTrip } from '../utils/parsers/masterScheduleParserV2';
 
 const filePath = path.resolve('August Master (3).xlsx');
 

@@ -12,7 +12,7 @@
 
 import React, { useState, useRef, useMemo, useCallback, useEffect } from 'react';
 import { ZoomIn, ZoomOut, Clock, AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-react';
-import { MasterRouteTable, MasterTrip } from '../../utils/masterScheduleParser';
+import { MasterRouteTable, MasterTrip } from '../../utils/parsers/masterScheduleParser';
 import { TimeUtils } from '../../utils/timeUtils';
 
 interface TimelineViewProps {

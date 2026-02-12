@@ -5,7 +5,7 @@ import {
     ReferenceLine, ScatterChart, Scatter, Cell
 } from 'recharts';
 import { OTPRecord, OTPMetrics } from '../utils/demandTypes';
-import { generateMockOTPData, analyzeConnectionSuccess } from '../utils/otpParser';
+import { generateMockOTPData, analyzeConnectionSuccess } from '../utils/parsers/otpParser';
 import { FileUpload } from './FileUpload';
 import { Filter, Calendar, MapPin, Train, AlertTriangle, CheckCircle2, Clock } from 'lucide-react';
 

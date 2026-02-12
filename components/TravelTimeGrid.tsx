@@ -1,8 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import { Timer, ArrowRight, Plus, Minus, Info, Clock, TrendingUp, Pause, Maximize2, Minimize2, ChevronUp, ChevronDown } from 'lucide-react';
-import { MasterRouteTable, MasterTrip } from '../utils/masterScheduleParser';
+import { MasterRouteTable, MasterTrip } from '../utils/parsers/masterScheduleParser';
 import { TimeUtils } from '../utils/timeUtils';
-import { getRouteColor, getRouteTextColor } from '../utils/routeColors';
+import { getRouteColor, getRouteTextColor } from '../utils/config/routeColors';
 
 // Time Band type
 interface TimeBandDisplay {

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { FileText, Trash2, Copy, Clock, ChevronRight, X, Loader2, FolderOpen, Plus, RotateCcw } from 'lucide-react';
-import { getAllDrafts, deleteDraft, getDraftVersions, restoreDraftVersion, ScheduleDraft, DraftVersion } from '../utils/dataService';
+import { getAllDrafts, deleteDraft, getDraftVersions, restoreDraftVersion, ScheduleDraft, DraftVersion } from '../utils/services/dataService';
 
 interface Props {
     isOpen: boolean;

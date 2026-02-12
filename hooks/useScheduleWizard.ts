@@ -15,13 +15,13 @@ import {
     TimeBand,
     DirectionBandSummary,
     computeDirectionBandSummary
-} from '../utils/runtimeAnalysis';
-import { generateSchedule } from '../utils/scheduleGenerator';
+} from '../utils/ai/runtimeAnalysis';
+import { generateSchedule } from '../utils/schedule/scheduleGenerator';
 import { ScheduleConfig } from '../components/NewSchedule/steps/Step3Build';
-import { MasterRouteTable } from '../utils/masterScheduleParser';
+import { MasterRouteTable } from '../utils/parsers/masterScheduleParser';
 import { useWizardProgress, WizardProgress } from './useWizardProgress';
-import { saveProject, getProject, NewScheduleProject } from '../utils/newScheduleProjectService';
-import { buildStopNameToIdMap } from '../utils/gtfsStopLookup';
+import { saveProject, getProject, NewScheduleProject } from '../utils/services/newScheduleProjectService';
+import { buildStopNameToIdMap } from '../utils/gtfs/gtfsStopLookup';
 
 // Constants
 export const DEFAULT_CYCLE_TIME = 60;

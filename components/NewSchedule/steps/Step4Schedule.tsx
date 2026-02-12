@@ -1,11 +1,11 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { MasterRouteTable } from '../../../utils/masterScheduleParser';
+import { MasterRouteTable } from '../../../utils/parsers/masterScheduleParser';
 import { ScheduleEditor } from '../../ScheduleEditor';
 import { useUndoRedo } from '../../../hooks/useUndoRedo';
 import { AutoSaveStatus } from '../../../hooks/useAutoSave';
 
-import { TimeBand, TripBucketAnalysis } from '../../../utils/runtimeAnalysis';
+import { TimeBand, TripBucketAnalysis } from '../../../utils/ai/runtimeAnalysis';
 
 interface Step4ScheduleProps {
     initialSchedules: MasterRouteTable[];

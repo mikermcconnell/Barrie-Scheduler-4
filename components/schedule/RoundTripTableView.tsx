@@ -21,9 +21,9 @@ import {
     MasterTrip,
     RoundTripTable,
     buildRoundTripView
-} from '../../utils/masterScheduleParser';
+} from '../../utils/parsers/masterScheduleParser';
 import { TimeUtils } from '../../utils/timeUtils';
-import { getRouteVariant, getRouteConfig, getDirectionDisplay, extractDirectionFromName, parseRouteInfo, isBidirectional } from '../../utils/routeDirectionConfig';
+import { getRouteVariant, getRouteConfig, getDirectionDisplay, extractDirectionFromName, parseRouteInfo, isBidirectional } from '../../utils/config/routeDirectionConfig';
 import { normalizeStopName, matchesStop } from '../NewSchedule/utils/blockStartDirection';
 import {
     calculateHeadways,
@@ -37,8 +37,8 @@ import {
     parseTimeInput,
     validateSchedule,
     compareBlockIds
-} from '../../utils/scheduleEditorUtils';
-import { getOperationalSortTime } from '../../utils/blockAssignmentCore';
+} from '../../utils/schedule/scheduleEditorUtils';
+import { getOperationalSortTime } from '../../utils/blocks/blockAssignmentCore';
 import {
     FilterState,
     shouldGrayOutTrip,
@@ -46,12 +46,12 @@ import {
     matchesSearch
 } from '../NewSchedule/QuickActionsBar';
 import { StackedTimeCell, StackedTimeInput } from '../ui/StackedTimeInput';
-import type { ConnectionLibrary } from '../../utils/connectionTypes';
-import type { DayType } from '../../utils/masterScheduleParser';
-import { getConnectionsForStop } from '../../utils/connectionUtils';
+import type { ConnectionLibrary } from '../../utils/connections/connectionTypes';
+import type { DayType } from '../../utils/parsers/masterScheduleParser';
+import { getConnectionsForStop } from '../../utils/connections/connectionUtils';
 import { ConnectionIndicator } from './ConnectionIndicator';
 import { useGridNavigation, GridColumn, GridRowInfo } from '../../hooks/useGridNavigation';
-import { getRowInsights, type ScheduleInsight } from '../../utils/scheduleInsights';
+import { getRowInsights, type ScheduleInsight } from '../../utils/schedule/scheduleInsights';
 
 // --- Spreadsheet-style column letters ---
 // Converts 0-indexed column number to Excel-style letter (A, B, C... Z, AA, AB...)

@@ -12,8 +12,8 @@
 import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import type { ODCoverageGap } from '../../utils/transitAppTypes';
-import { loadGtfsRouteShapes } from '../../utils/gtfsShapesLoader';
+import type { ODCoverageGap } from '../../utils/transit-app/transitAppTypes';
+import { loadGtfsRouteShapes } from '../../utils/gtfs/gtfsShapesLoader';
 
 interface CoverageGapMapProps {
     gaps: ODCoverageGap[];

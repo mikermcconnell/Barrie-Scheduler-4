@@ -17,7 +17,7 @@ import {
     ZoomOut,
     Settings
 } from 'lucide-react';
-import { getRouteColor, getRouteTextColor } from '../utils/routeColors';
+import { getRouteColor, getRouteTextColor } from '../utils/config/routeColors';
 import {
     aggregatePlatformData,
     formatMinutesToTime,
@@ -25,7 +25,7 @@ import {
     type PlatformAnalysis,
     type DwellEvent,
     type ConflictWindow
-} from '../utils/platformAnalysis';
+} from '../utils/platform/platformAnalysis';
 import type { MasterScheduleEntry, MasterScheduleContent, RouteIdentity, DayType } from '../utils/masterScheduleTypes';
 import { useTeam } from './TeamContext';
 import { useAuth } from './AuthContext';

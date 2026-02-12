@@ -1,5 +1,5 @@
 
-import { parseRideCo } from '../utils/csvParsers';
+import { parseRideCo } from '../utils/parsers/csvParsers';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as XLSX from 'xlsx';

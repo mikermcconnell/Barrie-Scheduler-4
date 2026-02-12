@@ -10,7 +10,7 @@ import {
     Legend,
 } from 'recharts';
 import { ArrowUpDown } from 'lucide-react';
-import type { RoutePerformanceScorecardRow, TransitAppDataSummary } from '../../utils/transitAppTypes';
+import type { RoutePerformanceScorecardRow, TransitAppDataSummary } from '../../utils/transit-app/transitAppTypes';
 import { ChartCard, NoData, fmt } from './AnalyticsShared';
 
 interface RoutePerformanceModuleProps {
@@ -144,9 +144,9 @@ export const RoutePerformanceModule: React.FC<RoutePerformanceModuleProps> = ({ 
                 }
             >
                 {watchlist.length > 0 ? (
-                    <div className="overflow-x-auto">
+                    <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
                         <table className="w-full text-sm">
-                            <thead>
+                            <thead className="sticky top-0 bg-white z-10">
                                 <tr className="border-b border-gray-200">
                                     <th className="text-left py-2 px-3 text-gray-500 font-medium">Route</th>
                                     <th className="text-right py-2 px-3 text-gray-500 font-medium">Score</th>
@@ -157,15 +157,15 @@ export const RoutePerformanceModule: React.FC<RoutePerformanceModuleProps> = ({ 
                                     <th className="text-right py-2 px-3 text-gray-500 font-medium">Priority</th>
                                 </tr>
                             </thead>
-                            <tbody>
+                            <tbody className="tabular-nums">
                                 {watchlist.slice(0, 15).map(row => (
                                     <tr key={row.route} className="border-b border-gray-50 hover:bg-gray-50">
                                         <td className="py-2 px-3 font-bold">{row.route}</td>
                                         <td className="py-2 px-3 text-right">{row.compositeScore?.toFixed(1) || 'N/A'}</td>
                                         <td className="py-2 px-3">{trendBadge(row.trend)}</td>
                                         <td className="py-2 px-3">{row.confidence}</td>
-                                        <td className="py-2 px-3">{row.diagnosisCode}</td>
-                                        <td className="py-2 px-3">{row.recommendedAction}</td>
+                                        <td className="py-2 px-3 text-gray-600">{row.diagnosisCode.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</td>
+                                        <td className="py-2 px-3 text-gray-600">{row.recommendedAction.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</td>
                                         <td className="py-2 px-3 text-right font-semibold">{row.priorityScore.toFixed(1)}</td>
                                     </tr>
                                 ))}
@@ -173,7 +173,7 @@ export const RoutePerformanceModule: React.FC<RoutePerformanceModuleProps> = ({ 
                         </table>
                     </div>
                 ) : (
-                    <NoData />
+                    <NoData message="No routes flagged for review. Re-import data to enable watchlist scoring." />
                 )}
             </ChartCard>
 
@@ -206,7 +206,7 @@ export const RoutePerformanceModule: React.FC<RoutePerformanceModuleProps> = ({ 
                             </ResponsiveContainer>
                         </>
                     ) : (
-                        <NoData />
+                        <NoData message="Select a route with monthly data to view score trends." />
                     )}
                 </ChartCard>
 
@@ -229,9 +229,9 @@ export const RoutePerformanceModule: React.FC<RoutePerformanceModuleProps> = ({ 
 
             <ChartCard title="Route Performance Scorecard" subtitle={`Routes: ${fmt(sortedScorecard.length)} • Months: ${months.length > 0 ? months.join(', ') : 'N/A'}`}>
                 {sortedScorecard.length > 0 ? (
-                    <div className="overflow-x-auto">
+                    <div className="overflow-x-auto max-h-[480px] overflow-y-auto">
                         <table className="w-full text-sm">
-                            <thead>
+                            <thead className="sticky top-0 bg-white z-10">
                                 <tr className="border-b border-gray-200">
                                     <SortableHeader label="Route" onClick={() => toggleSort('route')} />
                                     <SortableHeader label="Avg Daily Views" onClick={() => toggleSort('avgDailyViews')} align="right" />
@@ -248,7 +248,7 @@ export const RoutePerformanceModule: React.FC<RoutePerformanceModuleProps> = ({ 
                                     <th className="text-left py-2 px-3 text-gray-500 font-medium">Recommended Action</th>
                                 </tr>
                             </thead>
-                            <tbody>
+                            <tbody className="tabular-nums">
                                 {sortedScorecard.map(row => (
                                     <tr key={row.route} className="border-b border-gray-50 hover:bg-gray-50">
                                         <td className="py-2 px-3 font-bold">{row.route}</td>

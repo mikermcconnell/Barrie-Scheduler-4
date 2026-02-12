@@ -3,7 +3,7 @@
  * When a segment time changes, shift all subsequent trips in the same block.
  */
 
-import { MasterRouteTable, MasterTrip } from '../../../utils/masterScheduleParser';
+import { MasterRouteTable, MasterTrip } from '../../../utils/parsers/masterScheduleParser';
 
 /**
  * Cascade time changes to all subsequent trips in the same block.

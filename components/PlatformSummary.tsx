@@ -7,14 +7,14 @@
 
 import React, { useMemo, useState } from 'react';
 import { AlertTriangle, ChevronDown, ChevronRight, Clock, Bus, MapPin } from 'lucide-react';
-import { getRouteColor, getRouteTextColor } from '../utils/routeColors';
+import { getRouteColor, getRouteTextColor } from '../utils/config/routeColors';
 import {
     aggregatePlatformData,
     formatMinutesToTime,
     type HubAnalysis,
     type PlatformAnalysis,
     type ConflictWindow
-} from '../utils/platformAnalysis';
+} from '../utils/platform/platformAnalysis';
 import type { MasterScheduleEntry, MasterScheduleContent, RouteIdentity, DayType } from '../utils/masterScheduleTypes';
 
 interface PlatformSummaryProps {

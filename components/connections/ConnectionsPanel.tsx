@@ -13,13 +13,13 @@ import {
     Loader2,
     Plus
 } from 'lucide-react';
-import type { MasterRouteTable } from '../../utils/masterScheduleParser';
+import type { MasterRouteTable } from '../../utils/parsers/masterScheduleParser';
 import type {
     ConnectionLibrary,
     ConnectionTarget,
     ConnectionTime
-} from '../../utils/connectionTypes';
-import { generateConnectionId, parseConnectionTime } from '../../utils/connectionTypes';
+} from '../../utils/connections/connectionTypes';
+import { generateConnectionId, parseConnectionTime } from '../../utils/connections/connectionTypes';
 import { ConnectionLibraryPanel } from '../NewSchedule/connections/ConnectionLibraryPanel';
 import { AddTargetModal, AddTargetInitialData } from '../NewSchedule/connections/AddTargetModal';
 import { ImportRouteModal } from '../NewSchedule/connections/ImportRouteModal';
@@ -27,9 +27,9 @@ import { ConnectionAddChooser, ConnectionTemplateSelection } from '../NewSchedul
 import {
     getConnectionLibrary,
     saveConnectionLibrary
-} from '../../utils/connectionLibraryService';
-import { getMasterSchedule } from '../../utils/masterScheduleService';
-import { appendLibraryChange } from '../../utils/connectionLibraryUtils';
+} from '../../utils/connections/connectionLibraryService';
+import { getMasterSchedule } from '../../utils/services/masterScheduleService';
+import { appendLibraryChange } from '../../utils/connections/connectionLibraryUtils';
 
 interface ConnectionsPanelProps {
     schedules: MasterRouteTable[];

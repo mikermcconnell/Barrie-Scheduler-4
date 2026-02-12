@@ -1,4 +1,4 @@
-import { getRouteConfig } from '../../../utils/routeDirectionConfig';
+import { getRouteConfig } from '../../../utils/config/routeDirectionConfig';
 
 export type BlockStartDirection = 'North' | 'South';
 

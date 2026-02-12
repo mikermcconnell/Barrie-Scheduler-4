@@ -1,6 +1,6 @@
 
-import { adaptV2ToV1 } from '../utils/parserAdapter';
-import { ParsedRoute, ParsedTrip, StopInfo, ParseResult } from '../utils/masterScheduleParserV2';
+import { adaptV2ToV1 } from '../utils/parsers/parserAdapter';
+import { ParsedRoute, ParsedTrip, StopInfo, ParseResult } from '../utils/parsers/masterScheduleParserV2';
 import * as assert from 'assert';
 
 // Mock Data Helper

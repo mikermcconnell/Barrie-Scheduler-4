@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { getConnectionsForStop } from '../utils/connectionUtils';
-import type { ConnectionLibrary } from '../utils/connectionTypes';
+import { getConnectionsForStop } from '../utils/connections/connectionUtils';
+import type { ConnectionLibrary } from '../utils/connections/connectionTypes';
 
 const baseLibrary = (): ConnectionLibrary => ({
     targets: [],

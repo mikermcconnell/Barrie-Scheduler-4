@@ -13,8 +13,8 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { saveDraft, saveDraftVersion, getDraft, ScheduleDraft, withRetry } from '../utils/dataService';
-import type { MasterRouteTable } from '../utils/masterScheduleParser';
+import { saveDraft, saveDraftVersion, getDraft, ScheduleDraft, withRetry } from '../utils/services/dataService';
+import type { MasterRouteTable } from '../utils/parsers/masterScheduleParser';
 
 // localStorage keys for guest users
 const GUEST_DRAFT_KEY = 'scheduleDraft_current';

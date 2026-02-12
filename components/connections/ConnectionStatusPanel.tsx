@@ -16,8 +16,8 @@ import {
     Loader2,
     Settings2
 } from 'lucide-react';
-import type { ConnectionCheckResult } from '../../utils/connectionOptimizer';
-import { formatConnectionTime } from '../../utils/connectionTypes';
+import type { ConnectionCheckResult } from '../../utils/connections/connectionOptimizer';
+import { formatConnectionTime } from '../../utils/connections/connectionTypes';
 
 interface ConnectionStatusPanelProps {
     checkResult: ConnectionCheckResult | null;

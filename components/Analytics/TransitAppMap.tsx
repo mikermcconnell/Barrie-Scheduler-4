@@ -28,9 +28,10 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
-import type { LocationGridCell, ODPairData, ODPair, StopCoverageGapCluster } from '../../utils/transitAppTypes';
-import { loadGtfsRouteShapes, pointToPolylineDistanceKm } from '../../utils/gtfsShapesLoader';
-import { findNearestStopName, getAllStopsWithCoords } from '../../utils/gtfsStopLookup';
+import type { LocationGridCell, ODPairData, ODPair, StopCoverageGapCluster } from '../../utils/transit-app/transitAppTypes';
+import { loadGtfsRouteShapes, pointToPolylineDistanceKm } from '../../utils/gtfs/gtfsShapesLoader';
+import { findNearestStopName, getAllStopsWithCoords } from '../../utils/gtfs/gtfsStopLookup';
+import { formatTimeBand, formatDayType, formatSeason } from './AnalyticsShared';
 
 interface TransitAppMapProps {
     locationDensity: {
@@ -40,6 +41,7 @@ interface TransitAppMapProps {
     };
     odPairs?: ODPairData;
     height?: number;
+    defaultLayer?: MapLayer;
     seasonFilter?: SeasonFilter;
     onSeasonFilterChange?: (filter: SeasonFilter) => void;
     onDisplayedODPairsChange?: (pairs: ODPair[]) => void;
@@ -82,9 +84,28 @@ function isInBarrie(lat: number, lon: number): boolean {
 }
 
 function heatColor(t: number): string {
-    const r = t < 0.5 ? Math.round(255 * (t * 2)) : 255;
-    const g = t < 0.5 ? 255 : Math.round(255 * (1 - (t - 0.5) * 2));
-    return `rgb(${r},${g},0)`;
+    const clamped = Math.max(0, Math.min(1, t));
+    const stops: Array<{ t: number; rgb: [number, number, number] }> = [
+        { t: 0.00, rgb: [37, 52, 148] },   // deep indigo
+        { t: 0.25, rgb: [14, 116, 255] },  // vivid blue
+        { t: 0.50, rgb: [6, 182, 212] },   // cyan
+        { t: 0.70, rgb: [250, 204, 21] },  // yellow
+        { t: 0.85, rgb: [249, 115, 22] },  // orange
+        { t: 1.00, rgb: [220, 38, 38] },   // red
+    ];
+    for (let i = 0; i < stops.length - 1; i++) {
+        const a = stops[i];
+        const b = stops[i + 1];
+        if (clamped >= a.t && clamped <= b.t) {
+            const local = (clamped - a.t) / Math.max(0.0001, (b.t - a.t));
+            const r = Math.round(a.rgb[0] + (b.rgb[0] - a.rgb[0]) * local);
+            const g = Math.round(a.rgb[1] + (b.rgb[1] - a.rgb[1]) * local);
+            const bl = Math.round(a.rgb[2] + (b.rgb[2] - a.rgb[2]) * local);
+            return `rgb(${r},${g},${bl})`;
+        }
+    }
+    const last = stops[stops.length - 1].rgb;
+    return `rgb(${last[0]},${last[1]},${last[2]})`;
 }
 
 // Rank-based colors: 1-7 get distinct vivid colors, 8+ get dark→light grey
@@ -225,6 +246,7 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
     locationDensity,
     odPairs,
     height = 480,
+    defaultLayer,
     seasonFilter: externalSeasonFilter,
     onSeasonFilterChange,
     onDisplayedODPairsChange,
@@ -239,8 +261,14 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
     const coverageLayerRef = useRef<L.LayerGroup | null>(null);
     const odLineGroupsRef = useRef<{ lines: L.Path[]; pair: MergedODPair; origOpacity: number }[]>([]);
 
+    const hasODData = Boolean(odPairs && odPairs.pairs.length > 0);
+    const resolvedDefaultLayer: MapLayer =
+        defaultLayer === 'od' && !hasODData
+            ? 'heatmap'
+            : (defaultLayer ?? (hasODData ? 'od' : 'heatmap'));
+
     // Existing state
-    const [activeLayer, setActiveLayer] = useState<MapLayer>(odPairs && odPairs.pairs.length > 0 ? 'od' : 'heatmap');
+    const [activeLayer, setActiveLayer] = useState<MapLayer>(resolvedDefaultLayer);
     const [isFullscreen, setIsFullscreen] = useState(false);
     const [topN, setTopN] = useState(20);
     const [geoFilter, setGeoFilter] = useState<GeoFilter>('barrie');
@@ -507,18 +535,32 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
         const logMax = Math.log(maxCount + 1);
 
         for (const cell of filtered) {
-            const t = Math.log(cell.count + 1) / logMax;
-            const radius = 4 + t * 8;
+            // Non-linear boost to improve visual separation in dense downtown cells.
+            const normalized = Math.log(cell.count + 1) / Math.max(0.0001, logMax);
+            const t = Math.pow(normalized, 0.65);
+            const radius = 3 + Math.pow(t, 1.15) * 14;
+            const baseColor = heatColor(t);
             L.circleMarker([cell.latBin, cell.lonBin], {
                 radius,
-                fillColor: heatColor(t),
-                fillOpacity: 0.6,
-                color: heatColor(t),
-                weight: 0.5,
-                opacity: 0.8,
+                fillColor: baseColor,
+                fillOpacity: 0.2 + t * 0.75,
+                color: baseColor,
+                weight: 0.6 + t * 0.8,
+                opacity: 0.85,
             })
                 .bindTooltip(`${cell.count.toLocaleString()} data points`, { direction: 'top' })
                 .addTo(group);
+
+            // Extra outline for the hottest cells to make peak clusters pop.
+            if (t >= 0.9) {
+                L.circleMarker([cell.latBin, cell.lonBin], {
+                    radius: radius + 2.5,
+                    fillOpacity: 0,
+                    color: '#111827',
+                    weight: 1.2,
+                    opacity: 0.7,
+                }).addTo(group);
+            }
         }
 
         return group;
@@ -820,9 +862,9 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
                     <div><strong>Trips:</strong> ${cluster.tripCount.toLocaleString()}</div>
                     <div><strong>Nearest Stop:</strong> ${cluster.nearestStopName ?? 'Unknown'}</div>
                     <div><strong>Distance:</strong> ${cluster.avgNearestStopDistanceKm.toFixed(2)} km avg</div>
-                    <div><strong>Time:</strong> ${cluster.dominantTimeBand.replace('_', ' ')}</div>
-                    <div><strong>Day:</strong> ${cluster.dominantDayType}</div>
-                    <div><strong>Season:</strong> ${cluster.dominantSeason.toUpperCase()}</div>
+                    <div><strong>Time:</strong> ${formatTimeBand(cluster.dominantTimeBand)}</div>
+                    <div><strong>Day:</strong> ${formatDayType(cluster.dominantDayType)}</div>
+                    <div><strong>Season:</strong> ${formatSeason(cluster.dominantSeason)}</div>
                 </div>`
             );
             marker.addTo(group);
@@ -1337,8 +1379,8 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
                 <span className="text-[10px] text-gray-400 uppercase tracking-wider font-medium pt-0.5 shrink-0">Legend</span>
                 {activeLayer === 'heatmap' ? (
                     <div className="flex items-center gap-2 text-gray-500">
-                        <span className="w-12 h-2 rounded" style={{ background: 'linear-gradient(to right, rgb(0,255,0), rgb(255,255,0), rgb(255,0,0))' }} />
-                        Low → High trip planning density
+                        <span className="w-16 h-2 rounded" style={{ background: 'linear-gradient(to right, rgb(37,52,148), rgb(14,116,255), rgb(6,182,212), rgb(250,204,21), rgb(249,115,22), rgb(220,38,38))' }} />
+                        Cool (low) → Warm (high) trip planning density
                     </div>
                 ) : (
                     <div className="flex flex-col gap-1.5">

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import type { MasterTrip } from '../utils/masterScheduleParser';
+import type { MasterTrip } from '../utils/parsers/masterScheduleParser';
 import type { MasterScheduleContent } from '../utils/masterScheduleTypes';
-import type { HubConfig } from '../utils/platformConfig';
-import { aggregatePlatformData } from '../utils/platformAnalysis';
+import type { HubConfig } from '../utils/platform/platformConfig';
+import { aggregatePlatformData } from '../utils/platform/platformAnalysis';
 
 const TEST_HUBS: HubConfig[] = [
     {

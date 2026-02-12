@@ -20,7 +20,7 @@ import {
     X,
     Settings,
 } from 'lucide-react';
-import type { ParsedGTFSFeed, GTFSRouteOption, GTFSImportConfig, GTFSImportResult, GTFSImportOptions } from '../utils/gtfsTypes';
+import type { ParsedGTFSFeed, GTFSRouteOption, GTFSImportConfig, GTFSImportResult, GTFSImportOptions } from '../utils/gtfs/gtfsTypes';
 import {
     fetchGTFSFeed,
     getAvailableRoutes,
@@ -28,7 +28,7 @@ import {
     importAllRoutesFromGTFS,
     getDefaultGTFSConfig,
     type SystemImportResult,
-} from '../utils/gtfsImportService';
+} from '../utils/gtfs/gtfsImportService';
 import type { DayType } from '../utils/masterScheduleTypes';
 
 interface GTFSImportProps {

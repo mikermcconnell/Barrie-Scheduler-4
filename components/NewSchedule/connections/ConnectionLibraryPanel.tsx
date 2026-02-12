@@ -18,25 +18,25 @@ import {
     RefreshCw,
     Filter
 } from 'lucide-react';
-import type { MasterRouteTable } from '../../../utils/masterScheduleParser';
+import type { MasterRouteTable } from '../../../utils/parsers/masterScheduleParser';
 import type {
     ConnectionLibrary,
     ConnectionTarget,
     ConnectionTime,
     ConnectionEventType,
     ConnectionQualityWindowSettings
-} from '../../../utils/connectionTypes';
+} from '../../../utils/connections/connectionTypes';
 import {
     formatConnectionTime,
     DEFAULT_CONNECTION_QUALITY_WINDOW_SETTINGS
-} from '../../../utils/connectionTypes';
-import { fetchGoTransitGTFS, getCachedData, getCacheAge } from '../../../utils/goTransitService';
+} from '../../../utils/connections/connectionTypes';
+import { fetchGoTransitGTFS, getCachedData, getCacheAge } from '../../../utils/gtfs/goTransitService';
 import {
     appendLibraryChange,
     getTargetCoverageSummary,
     targetHasActiveTimesForDay,
     targetMatchesLoadedStops
-} from '../../../utils/connectionLibraryUtils';
+} from '../../../utils/connections/connectionLibraryUtils';
 import { AddTargetModal } from './AddTargetModal';
 
 interface ConnectionLibraryPanelProps {

@@ -10,12 +10,12 @@
  */
 
 import { useCallback } from 'react';
-import type { MasterRouteTable, MasterTrip } from '../utils/masterScheduleParser';
-import { validateRouteTable } from '../utils/masterScheduleParser';
+import type { MasterRouteTable, MasterTrip } from '../utils/parsers/masterScheduleParser';
+import { validateRouteTable } from '../utils/parsers/masterScheduleParser';
 import { TimeUtils } from '../utils/timeUtils';
-import { deepCloneSchedules, findTableAndTrip } from '../utils/scheduleEditorUtils';
-import { reassignBlocksForTables, MatchConfigPresets } from '../utils/blockAssignmentCore';
-import { parseRouteInfo } from '../utils/routeDirectionConfig';
+import { deepCloneSchedules, findTableAndTrip } from '../utils/schedule/scheduleEditorUtils';
+import { reassignBlocksForTables, MatchConfigPresets } from '../utils/blocks/blockAssignmentCore';
+import { parseRouteInfo } from '../utils/config/routeDirectionConfig';
 
 export type CascadeMode = 'always' | 'within-trip' | 'none';
 

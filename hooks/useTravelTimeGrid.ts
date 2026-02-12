@@ -9,10 +9,10 @@
  */
 
 import { useCallback } from 'react';
-import type { MasterRouteTable, MasterTrip } from '../utils/masterScheduleParser';
-import { validateRouteTable } from '../utils/masterScheduleParser';
+import type { MasterRouteTable, MasterTrip } from '../utils/parsers/masterScheduleParser';
+import { validateRouteTable } from '../utils/parsers/masterScheduleParser';
 import { TimeUtils } from '../utils/timeUtils';
-import { deepCloneSchedules } from '../utils/scheduleEditorUtils';
+import { deepCloneSchedules } from '../utils/schedule/scheduleEditorUtils';
 
 export interface UseTravelTimeGridResult {
     handleBulkAdjustTravelTime: (fromStop: string, toStop: string, delta: number, routeName: string) => void;
