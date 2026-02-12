@@ -29,3 +29,10 @@ dist-ssr
 *.sw?
 .vercel
 .env*.local
+
+# Data files (samples, images, analysis outputs)
+data/samples/
+data/images/
+data/analysis/
+*.xlsx
+*.JPG
