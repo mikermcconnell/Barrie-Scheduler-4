@@ -1,9 +1,9 @@
 import React, { useState, useMemo } from 'react';
-import { Shift, Requirement, TimeSlot, Zone, ZoneFilterType } from '../utils/demandTypes';
-import { GapChart } from './GapChart';
-import { calculateSchedule, formatSlotToTime, calculateMetrics } from '../utils/dataGenerator';
+import { Shift, Requirement, TimeSlot, Zone, ZoneFilterType } from '../../utils/demandTypes';
+import { GapChart } from '../GapChart';
+import { calculateSchedule, formatSlotToTime, calculateMetrics } from '../../utils/dataGenerator';
 import { Check, X, ArrowRight, AlertTriangle, Sparkles, CheckSquare, Square, Eye, EyeOff, BarChart } from 'lucide-react';
-import { SummaryCards } from './SummaryCards';
+import { SummaryCards } from '../SummaryCards';
 
 interface Props {
     currentShifts: Shift[];

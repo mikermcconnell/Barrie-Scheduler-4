@@ -10,7 +10,7 @@ import {
     ChevronDown,
     Menu,
 } from 'lucide-react';
-import { useAuth } from './AuthContext';
+import { useAuth } from '../contexts/AuthContext';
 
 export type View = 'home' | 'ondemand' | 'fixed';
 

@@ -1,18 +1,18 @@
 import React, { useState, useMemo } from 'react';
-import { generateRequirements, generateShifts, calculateSchedule, calculateMetrics } from '../utils/dataGenerator';
-import { optimizeScheduleWithGemini } from '../utils/ai/geminiOptimizer';
-import { SummaryCards } from './SummaryCards';
-import { GapChart } from './GapChart';
-import { FileUpload } from './FileUpload';
-import { ShiftEditor } from './ShiftEditor';
-import { ShiftEditorModal } from './ShiftEditorModal';
+import { generateRequirements, generateShifts, calculateSchedule, calculateMetrics } from '../../utils/dataGenerator';
+import { optimizeScheduleWithGemini } from '../../utils/ai/geminiOptimizer';
+import { SummaryCards } from '../SummaryCards';
+import { GapChart } from '../GapChart';
+import { FileUpload } from '../FileUpload';
+import { ShiftEditor } from '../ShiftEditor';
+import { ShiftEditorModal } from '../modals/ShiftEditorModal';
 
-import { OptimizationReviewModal } from './OptimizationReviewModal';
-import { FocusPromptModal } from './FocusPromptModal';
-import { FileManager } from './FileManager';
-import { useAuth } from './AuthContext';
-import { parseScheduleMaster, parseRideCo } from '../utils/parsers/csvParsers';
-import { parseMasterSchedule, convertMasterRouteTablesToRequirements } from '../utils/parsers/masterScheduleParser';
+import { OptimizationReviewModal } from '../modals/OptimizationReviewModal';
+import { FocusPromptModal } from '../modals/FocusPromptModal';
+import { FileManager } from '../FileManager';
+import { useAuth } from '../contexts/AuthContext';
+import { parseScheduleMaster, parseRideCo } from '../../utils/parsers/csvParsers';
+import { parseMasterSchedule, convertMasterRouteTablesToRequirements } from '../../utils/parsers/masterScheduleParser';
 import * as XLSX from 'xlsx';
 import {
     SavedFile,
@@ -20,14 +20,14 @@ import {
     downloadFileContent,
     saveSchedule,
     updateSchedule
-} from '../utils/services/dataService';
-import { generateRideCoCSV, downloadCSV } from '../utils/services/exportService';
-import { SummaryMetrics, Shift, Requirement, Zone, ZoneFilterType } from '../utils/demandTypes';
+} from '../../utils/services/dataService';
+import { generateRideCoCSV, downloadCSV } from '../../utils/services/exportService';
+import { SummaryMetrics, Shift, Requirement, Zone, ZoneFilterType } from '../../utils/demandTypes';
 import {
     Wand2, Users, BarChart3, Sparkles, AlertTriangle, Loader2,
     FolderOpen, Save, CloudDownload, Check, Edit3, RotateCcw
 } from 'lucide-react';
-import { SHIFT_DURATION_SLOTS, BREAK_DURATION_SLOTS } from '../utils/demandConstants';
+import { SHIFT_DURATION_SLOTS, BREAK_DURATION_SLOTS } from '../../utils/demandConstants';
 
 // Valid day types for shifts
 type DayType = 'Weekday' | 'Saturday' | 'Sunday';

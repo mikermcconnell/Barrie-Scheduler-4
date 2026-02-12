@@ -18,8 +18,8 @@ import {
     RotateCcw
 } from 'lucide-react';
 import ExcelJS from 'exceljs';
-import { useTeam } from './TeamContext';
-import { useToast } from './ToastContext';
+import { useTeam } from './contexts/TeamContext';
+import { useToast } from './contexts/ToastContext';
 import { TeamManagement } from './TeamManagement';
 import { VersionHistoryPanel } from './VersionHistoryPanel';
 import {

@@ -6,9 +6,9 @@
 
 import React, { useState, useEffect } from 'react';
 import { Users, Copy, Check, Trash2, Shield, User, LogOut, X } from 'lucide-react';
-import { useAuth } from './AuthContext';
-import { useTeam } from './TeamContext';
-import { useToast } from './ToastContext';
+import { useAuth } from './contexts/AuthContext';
+import { useTeam } from './contexts/TeamContext';
+import { useToast } from './contexts/ToastContext';
 import {
     createTeam,
     joinTeamByInviteCode,

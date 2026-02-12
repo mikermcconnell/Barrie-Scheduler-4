@@ -9,7 +9,7 @@ import { useState, useCallback } from 'react';
 import { MasterRouteTable, MasterTrip, validateRouteTable } from '../utils/parsers/masterScheduleParser';
 import { TimeUtils } from '../utils/timeUtils';
 import { getDayTypeSuffix, getDayTypeLabel, parseBlockId } from '../utils/config/routeNameParser';
-import type { AddTripModalContext, AddTripResult } from '../components/AddTripModal';
+import type { AddTripModalContext, AddTripResult } from '../components/modals/AddTripModal';
 
 // Deep clone helper
 const deepCloneSchedules = (schedules: MasterRouteTable[]): MasterRouteTable[] => {

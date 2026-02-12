@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { BarChart3, ArrowRight, Loader2, Activity } from 'lucide-react';
-import { useTeam } from '../TeamContext';
-import { useAuth } from '../AuthContext';
+import { useTeam } from '../contexts/TeamContext';
+import { useAuth } from '../contexts/AuthContext';
 import { getPerformanceData, getPerformanceMetadata } from '../../utils/performanceDataService';
 import { PerformanceImport } from './PerformanceImport';
 import { PerformanceWorkspace } from './PerformanceWorkspace';

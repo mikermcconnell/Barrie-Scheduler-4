@@ -27,8 +27,8 @@ import {
     type ConflictWindow
 } from '../utils/platform/platformAnalysis';
 import type { MasterScheduleEntry, MasterScheduleContent, RouteIdentity, DayType } from '../utils/masterScheduleTypes';
-import { useTeam } from './TeamContext';
-import { useAuth } from './AuthContext';
+import { useTeam } from './contexts/TeamContext';
+import { useAuth } from './contexts/AuthContext';
 import { usePlatformConfig } from '../hooks/usePlatformConfig';
 import { PlatformConfigEditor } from './PlatformConfigEditor';
 

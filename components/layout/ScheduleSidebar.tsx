@@ -20,8 +20,8 @@ import {
     Upload,
     Database
 } from 'lucide-react';
-import { getRouteColor, getRouteTextColor } from '../utils/config/routeColors';
-import type { DayType } from '../utils/masterScheduleTypes';
+import { getRouteColor, getRouteTextColor } from '../../utils/config/routeColors';
+import type { DayType } from '../../utils/masterScheduleTypes';
 
 export interface ConsolidatedRoute {
     name: string;

@@ -6,8 +6,8 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { ArrowLeft, RotateCcw, CheckCircle, Loader2, Clock } from 'lucide-react';
-import { useAuth } from './AuthContext';
-import { useToast } from './ToastContext';
+import { useAuth } from './contexts/AuthContext';
+import { useToast } from './contexts/ToastContext';
 import {
     getVersionHistory,
     rollbackToVersion

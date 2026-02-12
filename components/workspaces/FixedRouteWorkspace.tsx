@@ -14,22 +14,22 @@ import {
     Trash2,
     RefreshCw
 } from 'lucide-react';
-import { NewScheduleWizard } from './NewSchedule/NewScheduleWizard';
-import { MasterScheduleBrowser } from './MasterScheduleBrowser';
+import { NewScheduleWizard } from '../NewSchedule/NewScheduleWizard';
+import { MasterScheduleBrowser } from '../MasterScheduleBrowser';
 import { ScheduleEditorWorkspace, SiblingDraft } from './ScheduleEditorWorkspace';
 import { SystemDraftEditorWorkspace } from './SystemDraftEditorWorkspace';
-import { ReportsDashboard } from './Reports/ReportsDashboard';
-import { AnalyticsDashboard } from './Analytics/AnalyticsDashboard';
-import { PerformanceDashboard } from './Performance/PerformanceDashboard';
-import { GTFSImportModal } from './GTFSImport';
-import { SystemDraftList } from './SystemDraftList';
-import type { MasterScheduleContent } from '../utils/masterScheduleTypes';
-import type { DraftBasedOn, DraftSchedule, SystemDraft } from '../utils/schedule/scheduleTypes';
-import { buildMasterContentFromTables } from '../utils/schedule/scheduleDraftAdapter';
-import { getAllDrafts, getDraft, deleteDraft } from '../utils/services/draftService';
-import { getSystemDraft } from '../utils/services/systemDraftService';
-import { useAuth } from './AuthContext';
-import { useToast } from './ToastContext';
+import { ReportsDashboard } from '../Reports/ReportsDashboard';
+import { AnalyticsDashboard } from '../Analytics/AnalyticsDashboard';
+import { PerformanceDashboard } from '../Performance/PerformanceDashboard';
+import { GTFSImportModal } from '../GTFSImport';
+import { SystemDraftList } from '../layout/SystemDraftList';
+import type { MasterScheduleContent } from '../../utils/masterScheduleTypes';
+import type { DraftBasedOn, DraftSchedule, SystemDraft } from '../../utils/schedule/scheduleTypes';
+import { buildMasterContentFromTables } from '../../utils/schedule/scheduleDraftAdapter';
+import { getAllDrafts, getDraft, deleteDraft } from '../../utils/services/draftService';
+import { getSystemDraft } from '../../utils/services/systemDraftService';
+import { useAuth } from '../contexts/AuthContext';
+import { useToast } from '../contexts/ToastContext';
 
 type FixedRouteViewMode = 'dashboard' | 'editor' | 'new-schedule' | 'master' | 'reports' | 'analytics' | 'performance' | 'drafts' | 'system-editor';
 

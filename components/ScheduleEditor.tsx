@@ -53,11 +53,11 @@ import { ConnectionsPanel } from './connections/ConnectionsPanel';
 import type { ConnectionLibrary } from '../utils/connections/connectionTypes';
 import { getConnectionLibrary } from '../utils/connections/connectionLibraryService';
 import { RouteSummary } from './RouteSummary';
-import { WorkspaceHeader } from './WorkspaceHeader';
+import { WorkspaceHeader } from './layout/WorkspaceHeader';
 import { AutoSaveStatus } from '../hooks/useAutoSave';
 import { TimeUtils } from '../utils/timeUtils';
 import { getRouteColor, getRouteTextColor } from '../utils/config/routeColors';
-import { AddTripModal, AddTripModalContext } from './AddTripModal';
+import { AddTripModal, AddTripModalContext } from './modals/AddTripModal';
 import { useAddTrip } from '../hooks/useAddTrip';
 import { TravelTimeGrid } from './TravelTimeGrid';
 import { AuditLogPanel, useAuditLog } from './AuditLogPanel';
@@ -72,8 +72,8 @@ import {
     setTripStartStop,
     setTripEndStop
 } from './NewSchedule/utils/timeCascade';
-import { UploadToMasterModal } from './UploadToMasterModal';
-import { BulkUploadToMasterModal, RouteForUpload } from './BulkUploadToMasterModal';
+import { UploadToMasterModal } from './modals/UploadToMasterModal';
+import { BulkUploadToMasterModal, RouteForUpload } from './modals/BulkUploadToMasterModal';
 import {
     uploadToMasterSchedule,
     prepareUpload
@@ -108,7 +108,7 @@ import { reassignBlocksForTables, MatchConfigPresets } from '../utils/blocks/blo
 import { useScheduleEditing, CascadeMode } from '../hooks/useScheduleEditing';
 import { useUploadToMaster, ConsolidatedRoute } from '../hooks/useUploadToMaster';
 import { useTravelTimeGrid } from '../hooks/useTravelTimeGrid';
-import { ScheduleSidebar } from './ScheduleSidebar';
+import { ScheduleSidebar } from './layout/ScheduleSidebar';
 import { CascadeModeSelector } from './ui/CascadeModeSelector';
 // --- Main Editor Component ---
 

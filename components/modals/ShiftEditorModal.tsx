@@ -1,14 +1,14 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Shift, Requirement, TimeSlot, Zone, ZoneFilterType } from '../utils/demandTypes';
-import { GapChart } from './GapChart';
-import { calculateSchedule, formatSlotToTime } from '../utils/dataGenerator';
+import { Shift, Requirement, TimeSlot, Zone, ZoneFilterType } from '../../utils/demandTypes';
+import { GapChart } from '../GapChart';
+import { calculateSchedule, formatSlotToTime } from '../../utils/dataGenerator';
 import {
     MIN_SHIFT_HOURS,
     MAX_SHIFT_HOURS,
     BREAK_THRESHOLD_HOURS,
     BREAK_DURATION_SLOTS,
     TIME_SLOTS_PER_DAY
-} from '../utils/demandConstants';
+} from '../../utils/demandConstants';
 import { X, Save, AlertTriangle, CheckCircle2, Clock, Coffee, GripHorizontal, ChevronLeft, ChevronRight, GripVertical, Plus, Trash2 } from 'lucide-react';
 
 interface Props {

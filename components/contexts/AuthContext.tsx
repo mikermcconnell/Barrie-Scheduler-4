@@ -9,8 +9,8 @@ import {
     sendPasswordResetEmail
 } from 'firebase/auth';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
-import { auth, googleProvider } from '../utils/firebase';
-import { db } from '../utils/firebase';
+import { auth, googleProvider } from '../../utils/firebase';
+import { db } from '../../utils/firebase';
 
 interface AuthContextType {
     user: User | null;

@@ -7,7 +7,7 @@
 
 import React from 'react';
 import { AlertTriangle, Upload, X, Loader2, FileSpreadsheet } from 'lucide-react';
-import type { UploadConfirmation } from '../utils/masterScheduleTypes';
+import type { UploadConfirmation } from '../../utils/masterScheduleTypes';
 
 interface UploadToMasterModalProps {
     isOpen: boolean;

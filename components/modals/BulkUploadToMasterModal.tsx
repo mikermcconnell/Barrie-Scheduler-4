@@ -6,7 +6,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { Upload, X, Loader2, Check, AlertTriangle, CheckCircle2, XCircle } from 'lucide-react';
-import type { DayType } from '../utils/masterScheduleTypes';
+import type { DayType } from '../../utils/masterScheduleTypes';
 
 export interface RouteForUpload {
     routeNumber: string;

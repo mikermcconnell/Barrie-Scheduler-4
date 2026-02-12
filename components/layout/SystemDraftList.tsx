@@ -18,9 +18,9 @@ import {
     Bus,
     Database
 } from 'lucide-react';
-import { useAuth } from './AuthContext';
-import type { SystemDraftMetadata, SystemDraft } from '../utils/schedule/scheduleTypes';
-import { getAllSystemDrafts, getSystemDraft, deleteSystemDraft } from '../utils/services/systemDraftService';
+import { useAuth } from '../contexts/AuthContext';
+import type { SystemDraftMetadata, SystemDraft } from '../../utils/schedule/scheduleTypes';
+import { getAllSystemDrafts, getSystemDraft, deleteSystemDraft } from '../../utils/services/systemDraftService';
 
 interface SystemDraftListProps {
     onSelectDraft: (draft: SystemDraft) => void;

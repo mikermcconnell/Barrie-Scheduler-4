@@ -1,17 +1,17 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Bus, Search, X, Check, ChevronRight, ArrowLeft } from 'lucide-react';
-import { useAuth } from './AuthContext';
-import { useTeam } from './TeamContext';
-import { useToast } from './ToastContext';
-import { useUndoRedo } from '../hooks/useUndoRedo';
-import { ScheduleEditor } from './ScheduleEditor';
-import type { AutoSaveStatus } from '../hooks/useAutoSave';
-import type { MasterRouteTable } from '../utils/parsers/masterScheduleParser';
-import type { MasterScheduleContent } from '../utils/masterScheduleTypes';
-import type { DraftBasedOn } from '../utils/schedule/scheduleTypes';
-import { buildMasterContentFromTables, buildTablesFromContent } from '../utils/schedule/scheduleDraftAdapter';
-import { saveDraft } from '../utils/services/draftService';
-import { publishDraft } from '../utils/services/publishService';
+import { useAuth } from '../contexts/AuthContext';
+import { useTeam } from '../contexts/TeamContext';
+import { useToast } from '../contexts/ToastContext';
+import { useUndoRedo } from '../../hooks/useUndoRedo';
+import { ScheduleEditor } from '../ScheduleEditor';
+import type { AutoSaveStatus } from '../../hooks/useAutoSave';
+import type { MasterRouteTable } from '../../utils/parsers/masterScheduleParser';
+import type { MasterScheduleContent } from '../../utils/masterScheduleTypes';
+import type { DraftBasedOn } from '../../utils/schedule/scheduleTypes';
+import { buildMasterContentFromTables, buildTablesFromContent } from '../../utils/schedule/scheduleDraftAdapter';
+import { saveDraft } from '../../utils/services/draftService';
+import { publishDraft } from '../../utils/services/publishService';
 
 // Minimal draft info for the route switcher
 export interface SiblingDraft {

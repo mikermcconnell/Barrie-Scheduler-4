@@ -1,14 +1,14 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { OnDemandWorkspace } from './components/OnDemandWorkspace';
-import { FixedRouteWorkspace } from './components/FixedRouteWorkspace';
-import { AuthProvider, useAuth } from './components/AuthContext';
-import { TeamProvider } from './components/TeamContext';
-import { ToastProvider } from './components/ToastContext';
-import { AuthModal } from './components/AuthModal';
+import { OnDemandWorkspace } from './components/workspaces/OnDemandWorkspace';
+import { FixedRouteWorkspace } from './components/workspaces/FixedRouteWorkspace';
+import { AuthProvider, useAuth } from './components/contexts/AuthContext';
+import { TeamProvider } from './components/contexts/TeamContext';
+import { ToastProvider } from './components/contexts/ToastContext';
+import { AuthModal } from './components/modals/AuthModal';
 import { FileManager } from './components/FileManager';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { LayoutDashboard, Bus, Settings, Bell, ArrowRight, ArrowLeft, Map, User, LogOut, FolderOpen, ChevronDown, ChevronRight, Loader2, FileSpreadsheet, Plus, Download, CalendarPlus, Timer, BarChart2, Settings2, Sparkles } from 'lucide-react';
-import { Header, View } from './components/Header';
+import { Header, View } from './components/layout/Header';
 
 function parseHashView(): View {
   const hash = window.location.hash.slice(1);
