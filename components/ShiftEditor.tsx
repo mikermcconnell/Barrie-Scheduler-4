@@ -1,8 +1,8 @@
 import React from 'react';
-import { Shift, Zone, SummaryMetrics, ZoneFilterType } from '../types';
+import { Shift, Zone, SummaryMetrics, ZoneFilterType } from '../utils/demandTypes';
 import { formatSlotToTime } from '../utils/dataGenerator';
 import { Coffee, Trash2, Plus, Clock, ChevronRight, LayoutGrid, List } from 'lucide-react';
-import { TIME_SLOTS_PER_DAY } from '../constants';
+import { TIME_SLOTS_PER_DAY } from '../utils/demandConstants';
 import { SummaryCards } from './SummaryCards';
 
 interface Props {

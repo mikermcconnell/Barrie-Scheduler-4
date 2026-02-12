@@ -1,5 +1,5 @@
 import React from 'react';
-import { SummaryMetrics } from '../types';
+import { SummaryMetrics } from '../utils/demandTypes';
 import { Clock, TrendingUp, AlertCircle, CheckCircle2 } from 'lucide-react';
 
 interface Props {

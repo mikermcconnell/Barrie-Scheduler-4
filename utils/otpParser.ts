@@ -1,5 +1,5 @@
 
-import { OTPRecord } from '../types';
+import { OTPRecord } from './demandTypes';
 
 // Helper to convert HH:MM to minutes
 const toMins = (time: string): number => {

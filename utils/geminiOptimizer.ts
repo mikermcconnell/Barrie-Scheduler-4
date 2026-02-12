@@ -1,9 +1,9 @@
-import { Requirement, Shift, Zone } from "../types";
+import { Requirement, Shift, Zone } from "./demandTypes";
 import {
   SHIFT_DURATION_SLOTS,
   BREAK_DURATION_SLOTS,
   BREAK_THRESHOLD_HOURS
-} from "../constants";
+} from "./demandConstants";
 
 /**
  * Calls our secure serverless API to optimize the schedule.

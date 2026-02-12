@@ -22,12 +22,12 @@ import {
     updateSchedule
 } from '../utils/dataService';
 import { generateRideCoCSV, downloadCSV } from '../utils/exportService';
-import { SummaryMetrics, Shift, Requirement, Zone, ZoneFilterType } from '../types';
+import { SummaryMetrics, Shift, Requirement, Zone, ZoneFilterType } from '../utils/demandTypes';
 import {
     Wand2, Users, BarChart3, Sparkles, AlertTriangle, Loader2,
     FolderOpen, Save, CloudDownload, Check, Edit3, RotateCcw
 } from 'lucide-react';
-import { SHIFT_DURATION_SLOTS, BREAK_DURATION_SLOTS } from '../constants';
+import { SHIFT_DURATION_SLOTS, BREAK_DURATION_SLOTS } from '../utils/demandConstants';
 
 // Valid day types for shifts
 type DayType = 'Weekday' | 'Saturday' | 'Sunday';

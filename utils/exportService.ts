@@ -1,4 +1,4 @@
-import { Shift } from '../types';
+import { Shift } from './demandTypes';
 import { formatSlotToTime } from './dataGenerator';
 
 export const generateRideCoCSV = (shifts: Shift[]): string => {

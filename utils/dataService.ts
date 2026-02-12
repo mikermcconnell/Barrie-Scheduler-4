@@ -19,7 +19,7 @@ import {
     listAll
 } from 'firebase/storage';
 import { db, storage } from './firebase';
-import type { Shift, Requirement } from '../types';
+import type { Shift, Requirement } from './demandTypes';
 import type { MasterRouteTable } from './masterScheduleParser';
 
 // Types for saved data

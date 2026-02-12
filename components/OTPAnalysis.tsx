@@ -4,7 +4,7 @@ import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
     ReferenceLine, ScatterChart, Scatter, Cell
 } from 'recharts';
-import { OTPRecord, OTPMetrics } from '../types';
+import { OTPRecord, OTPMetrics } from '../utils/demandTypes';
 import { generateMockOTPData, analyzeConnectionSuccess } from '../utils/otpParser';
 import { FileUpload } from './FileUpload';
 import { Filter, Calendar, MapPin, Train, AlertTriangle, CheckCircle2, Clock } from 'lucide-react';

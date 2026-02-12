@@ -11,7 +11,7 @@ import {
   Cell,
   Line
 } from 'recharts';
-import { TimeSlot, ZoneFilterType } from '../types';
+import { TimeSlot, ZoneFilterType } from '../utils/demandTypes';
 import { MapPin, ChevronUp, ChevronDown } from 'lucide-react';
 
 const CustomXAxisTick = ({ x, y, payload }: any) => {

@@ -1,5 +1,5 @@
-import { TimeSlot, SummaryMetrics, Shift, Requirement, Zone } from '../types';
-import { TIME_SLOTS_PER_DAY, SHIFT_DURATION_SLOTS, BREAK_DURATION_SLOTS } from '../constants';
+import { TimeSlot, SummaryMetrics, Shift, Requirement, Zone } from './demandTypes';
+import { TIME_SLOTS_PER_DAY, SHIFT_DURATION_SLOTS, BREAK_DURATION_SLOTS } from './demandConstants';
 
 // Helper to format minutes from midnight to HH:mm
 export const formatTime = (totalMinutes: number): string => {

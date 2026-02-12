@@ -845,8 +845,8 @@ export const buildRoundTripView = (
 
 // --- Conversion Logic for OnDemandWorkspace ---
 
-import { Requirement } from '../types';
-import { TIME_SLOTS_PER_DAY } from '../constants';
+import { Requirement } from './demandTypes';
+import { TIME_SLOTS_PER_DAY } from './demandConstants';
 
 
 export const convertMasterRouteTablesToRequirements = (tables: MasterRouteTable[]): Record<string, Requirement[]> => {

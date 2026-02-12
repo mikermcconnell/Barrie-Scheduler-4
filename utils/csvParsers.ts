@@ -1,5 +1,5 @@
-import { Shift, Requirement, Zone } from '../types';
-import { TIME_SLOTS_PER_DAY } from '../constants';
+import { Shift, Requirement, Zone } from './demandTypes';
+import { TIME_SLOTS_PER_DAY } from './demandConstants';
 
 // Helper to parse time "HH:MM" or "HH:MM AM/PM" to slot index (0-95)
 const parseTimeToSlot = (timeStr: string): number => {
