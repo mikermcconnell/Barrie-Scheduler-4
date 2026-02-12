@@ -1,0 +1,1447 @@
+/**
+ * Transit App Map
+ *
+ * Leaflet map with two toggleable layers:
+ * 1. Location heatmap (circle markers, green→yellow→red by log count)
+ * 2. OD desire lines (curved arcs between origin-destination zone centroids)
+ *
+ * Features:
+ * - Named zones via nearest GTFS stop lookup
+ * - Rank-based color/width scaling
+ * - Min-count threshold + top-N sliders
+ * - Distance bands filter (short/medium/long)
+ * - Time-of-day filter (AM/Midday/PM/Evening)
+ * - Weekday/weekend filter
+ * - Route corridor filter (1km buffer around GTFS shape)
+ * - Click-to-isolate spider mode
+ * - Click pair detail popup with zone names
+ * - Bidirectional pair merging
+ * - GTFS route overlay
+ * - Collapsible OD summary table
+ * - PDF export via jsPDF + autoTable
+ *
+ * Uses raw Leaflet via useRef/useEffect (no react-leaflet) for React 19 compat.
+ */
+
+import React, { useRef, useEffect, useState, useMemo, useCallback } from 'react';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+import { jsPDF } from 'jspdf';
+import 'jspdf-autotable';
+import type { LocationGridCell, ODPairData, ODPair, StopCoverageGapCluster } from '../../utils/transitAppTypes';
+import { loadGtfsRouteShapes, pointToPolylineDistanceKm } from '../../utils/gtfsShapesLoader';
+import { findNearestStopName, getAllStopsWithCoords } from '../../utils/gtfsStopLookup';
+
+interface TransitAppMapProps {
+    locationDensity: {
+        cells: LocationGridCell[];
+        bounds: { minLat: number; maxLat: number; minLon: number; maxLon: number };
+        totalPoints: number;
+    };
+    odPairs?: ODPairData;
+    height?: number;
+    seasonFilter?: SeasonFilter;
+    onSeasonFilterChange?: (filter: SeasonFilter) => void;
+    onDisplayedODPairsChange?: (pairs: ODPair[]) => void;
+    coverageGapClusters?: StopCoverageGapCluster[];
+}
+
+type MapLayer = 'heatmap' | 'od';
+type GeoFilter = 'barrie' | 'all';
+type DistanceBand = 'all' | 'short' | 'medium' | 'long';
+type TimePeriod = 'all' | 'am' | 'midday' | 'pm' | 'evening';
+type DayFilter = 'all' | 'weekday' | 'weekend';
+export type SeasonFilter = 'all' | 'jan' | 'jul' | 'sep';
+
+
+
+// Merged pair extends ODPair with bidirectional info
+interface MergedODPair extends ODPair {
+    reverseCount: number;
+    netDirection: 'AB' | 'BA' | 'balanced';
+    isMerged: boolean;
+}
+
+const BARRIE_CENTER: [number, number] = [44.38, -79.69];
+const BARRIE_BOUNDS = { minLat: 44.28, maxLat: 44.48, minLon: -79.80, maxLon: -79.58 };
+// Tighter view bounds for fitBounds — urban core only
+const BARRIE_VIEW_BOUNDS = { minLat: 44.34, maxLat: 44.42, minLon: -79.73, maxLon: -79.64 };
+const SMOOTH_MAP_OPTIONS: Partial<L.MapOptions> = {
+    // Fractional zoom + reduced wheel sensitivity makes trackpad/mouse-wheel zoom feel less jumpy.
+    zoomSnap: 0.25,
+    zoomDelta: 0.25,
+    scrollWheelZoom: 'center',
+    wheelDebounceTime: 24,
+    wheelPxPerZoomLevel: 120,
+    preferCanvas: true,
+};
+
+function isInBarrie(lat: number, lon: number): boolean {
+    return lat >= BARRIE_BOUNDS.minLat && lat <= BARRIE_BOUNDS.maxLat
+        && lon >= BARRIE_BOUNDS.minLon && lon <= BARRIE_BOUNDS.maxLon;
+}
+
+function heatColor(t: number): string {
+    const r = t < 0.5 ? Math.round(255 * (t * 2)) : 255;
+    const g = t < 0.5 ? 255 : Math.round(255 * (1 - (t - 0.5) * 2));
+    return `rgb(${r},${g},0)`;
+}
+
+// Rank-based colors: 1-7 get distinct vivid colors, 8+ get dark→light grey
+const TOP_RANK_COLORS = [
+    '#dc2626', // 1 - Red
+    '#ea580c', // 2 - Red-orange
+    '#f97316', // 3 - Orange
+    '#eab308', // 4 - Amber
+    '#84cc16', // 5 - Yellow-green
+    '#22c55e', // 6 - Green
+    '#16a34a', // 7 - Dark green
+];
+
+function rankColor(rank: number): string {
+    if (rank < TOP_RANK_COLORS.length) return TOP_RANK_COLORS[rank];
+    // Ranks 8+: dark grey → light grey
+    const greyRank = rank - TOP_RANK_COLORS.length;
+    const t = Math.min(greyRank / 18, 1);
+    const r = Math.round(55 + t * 101);
+    const g = Math.round(65 + t * 98);
+    const b = Math.round(81 + t * 94);
+    return `rgb(${r},${g},${b})`;
+}
+
+function rankWeight(rank: number): number {
+    if (rank < TOP_RANK_COLORS.length) return 12 - rank; // 12 down to 6
+    const t = Math.min((rank - TOP_RANK_COLORS.length) / 18, 1);
+    return 5 - t * 3; // 5 down to 2
+}
+
+// Haversine distance in km
+function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+    const R = 6371;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) ** 2
+        + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180)
+        * Math.sin(dLon / 2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+/** Describe a lat/lon as a human-readable location relative to Barrie centre */
+export function describeLocationRelativeToBarrie(lat: number, lon: number): string {
+    const dist = haversineKm(BARRIE_CENTER[0], BARRIE_CENTER[1], lat, lon);
+    const dLat = lat - BARRIE_CENTER[0];
+    const dLon = lon - BARRIE_CENTER[1];
+    const angle = Math.atan2(dLon, dLat) * 180 / Math.PI;
+    let dir: string;
+    if (angle >= -22.5 && angle < 22.5) dir = 'N';
+    else if (angle >= 22.5 && angle < 67.5) dir = 'NE';
+    else if (angle >= 67.5 && angle < 112.5) dir = 'E';
+    else if (angle >= 112.5 && angle < 157.5) dir = 'SE';
+    else if (angle >= 157.5 || angle < -157.5) dir = 'S';
+    else if (angle >= -157.5 && angle < -112.5) dir = 'SW';
+    else if (angle >= -112.5 && angle < -67.5) dir = 'W';
+    else dir = 'NW';
+
+    if (dist < 1) return 'Central Barrie';
+    if (isInBarrie(lat, lon)) return `${dir} Barrie`;
+    return `${dist.toFixed(0)}km ${dir} of Barrie`;
+}
+
+function quadraticBezierArc(
+    origin: [number, number],
+    dest: [number, number],
+    curveDirection: 1 | -1 = 1,
+    segments: number = 16
+): [number, number][] {
+    const midLat = (origin[0] + dest[0]) / 2;
+    const midLon = (origin[1] + dest[1]) / 2;
+    const dLat = dest[0] - origin[0];
+    const dLon = dest[1] - origin[1];
+    const offsetLat = midLat + dLon * 0.2 * curveDirection;
+    const offsetLon = midLon - dLat * 0.2 * curveDirection;
+
+    const points: [number, number][] = [];
+    for (let i = 0; i <= segments; i++) {
+        const t = i / segments;
+        const u = 1 - t;
+        const lat = u * u * origin[0] + 2 * u * t * offsetLat + t * t * dest[0];
+        const lon = u * u * origin[1] + 2 * u * t * offsetLon + t * t * dest[1];
+        points.push([lat, lon]);
+    }
+    return points;
+}
+
+function arrowheadPoints(
+    arcPoints: [number, number][],
+    sizeDeg: number = 0.004
+): [number, number][][] {
+    const n = arcPoints.length;
+    if (n < 2) return [];
+    const tip = arcPoints[n - 1];
+    const prev = arcPoints[n - 2];
+    const dx = tip[1] - prev[1];
+    const dy = tip[0] - prev[0];
+    const len = Math.sqrt(dx * dx + dy * dy);
+    if (len === 0) return [];
+    const ux = dx / len;
+    const uy = dy / len;
+
+    const barb1: [number, number] = [
+        tip[0] - uy * sizeDeg + ux * sizeDeg * 0.5,
+        tip[1] - ux * sizeDeg - uy * sizeDeg * 0.5,
+    ];
+    const barb2: [number, number] = [
+        tip[0] - uy * sizeDeg - ux * sizeDeg * 0.5,
+        tip[1] - ux * sizeDeg + uy * sizeDeg * 0.5,
+    ];
+
+    return [[barb1, tip, barb2]];
+}
+
+// Time period hour ranges
+const TIME_RANGES: Record<TimePeriod, [number, number]> = {
+    all: [0, 24],
+    am: [6, 9],
+    midday: [9, 15],
+    pm: [15, 19],
+    evening: [19, 6], // wraps around midnight
+};
+
+function getCountForTimePeriod(pair: ODPair, period: TimePeriod): number {
+    if (period === 'all' || !pair.hourlyBins) return pair.count;
+    const [start, end] = TIME_RANGES[period];
+    let sum = 0;
+    if (start < end) {
+        for (let h = start; h < end; h++) sum += pair.hourlyBins[h];
+    } else {
+        // Evening wraps: 19-23 + 0-5
+        for (let h = start; h < 24; h++) sum += pair.hourlyBins[h];
+        for (let h = 0; h < end; h++) sum += pair.hourlyBins[h];
+    }
+    return sum;
+}
+
+export const TransitAppMap: React.FC<TransitAppMapProps> = ({
+    locationDensity,
+    odPairs,
+    height = 480,
+    seasonFilter: externalSeasonFilter,
+    onSeasonFilterChange,
+    onDisplayedODPairsChange,
+    coverageGapClusters,
+}) => {
+    const containerRef = useRef<HTMLDivElement>(null);
+    const mapRef = useRef<L.Map | null>(null);
+    const heatmapLayerRef = useRef<L.LayerGroup | null>(null);
+    const odLayerRef = useRef<L.LayerGroup | null>(null);
+    const routeLayerRef = useRef<L.LayerGroup | null>(null);
+    const stopLayerRef = useRef<L.LayerGroup | null>(null);
+    const coverageLayerRef = useRef<L.LayerGroup | null>(null);
+    const odLineGroupsRef = useRef<{ lines: L.Path[]; pair: MergedODPair; origOpacity: number }[]>([]);
+
+    // Existing state
+    const [activeLayer, setActiveLayer] = useState<MapLayer>(odPairs && odPairs.pairs.length > 0 ? 'od' : 'heatmap');
+    const [isFullscreen, setIsFullscreen] = useState(false);
+    const [topN, setTopN] = useState(20);
+    const [geoFilter, setGeoFilter] = useState<GeoFilter>('barrie');
+
+    // New state for features 3-12
+    const [minCount, setMinCount] = useState(1);
+    const [distanceBand, setDistanceBand] = useState<DistanceBand>('all');
+    const [isolatedZone, setIsolatedZone] = useState<string | null>(null);
+    const [timePeriod, setTimePeriod] = useState<TimePeriod>('all');
+    const [mergeBidirectional, setMergeBidirectional] = useState(false);
+    const [dayFilter, setDayFilter] = useState<DayFilter>('all');
+    const [showRoutes, setShowRoutes] = useState(false);
+    const [showStops, setShowStops] = useState(false);
+    const [corridorRoute, setCorridorRoute] = useState<string | null>(null);
+    const [showTable, setShowTable] = useState(false);
+    const [highlightedPairIdx, setHighlightedPairIdx] = useState<number | null>(null);
+    const [sortColumn, setSortColumn] = useState<'rank' | 'trips' | 'dist' | 'origin' | 'dest'>('rank');
+    const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+    const [localSeasonFilter, setLocalSeasonFilter] = useState<SeasonFilter>('all');
+    const seasonFilter = externalSeasonFilter ?? localSeasonFilter;
+    const setSeasonFilter = (v: SeasonFilter) => {
+        setLocalSeasonFilter(v);
+        onSeasonFilterChange?.(v);
+    };
+
+    // Feature 2: Unified filter pipeline via useMemo
+    const displayedPairs = useMemo((): MergedODPair[] => {
+        if (!odPairs || odPairs.pairs.length === 0) return [];
+
+        // Step 1: Geo filter
+        let filtered = geoFilter === 'barrie'
+            ? odPairs.pairs.filter(p =>
+                isInBarrie(p.originLat, p.originLon) && isInBarrie(p.destLat, p.destLon))
+            : [...odPairs.pairs];
+
+        // Step 2: Time period filter — recompute count from hourly bins
+        if (timePeriod !== 'all') {
+            filtered = filtered
+                .map(p => ({ ...p, count: getCountForTimePeriod(p, timePeriod) }))
+                .filter(p => p.count > 0);
+        }
+
+        // Step 2b: Day filter — use weekday/weekend counts
+        if (dayFilter !== 'all') {
+            filtered = filtered
+                .map(p => ({
+                    ...p,
+                    count: (dayFilter === 'weekday' ? p.weekdayCount : p.weekendCount) ?? p.count,
+                }))
+                .filter(p => p.count > 0);
+        }
+
+        // Step 2c: Season filter — recompute count from seasonBins
+        if (seasonFilter !== 'all') {
+            filtered = filtered
+                .map(p => ({
+                    ...p,
+                    count: p.seasonBins ? p.seasonBins[seasonFilter] : p.count,
+                }))
+                .filter(p => p.count > 0);
+        }
+
+        // Step 3: Min count threshold
+        filtered = filtered.filter(p => p.count >= minCount);
+
+        // Step 4: Distance band filter
+        if (distanceBand !== 'all') {
+            filtered = filtered.filter(p => {
+                const km = haversineKm(p.originLat, p.originLon, p.destLat, p.destLon);
+                if (distanceBand === 'short') return km < 3;
+                if (distanceBand === 'medium') return km >= 3 && km < 10;
+                return km >= 10; // long
+            });
+        }
+
+        // Step 4b: Route corridor filter
+        if (corridorRoute) {
+            try {
+                const shapes = loadGtfsRouteShapes();
+                const matchShape = shapes.find(s => s.routeShortName === corridorRoute);
+                if (matchShape && matchShape.points.length > 0) {
+                    const BUFFER_KM = 1.0;
+                    filtered = filtered.filter(p => {
+                        const oDist = pointToPolylineDistanceKm([p.originLat, p.originLon], matchShape.points);
+                        const dDist = pointToPolylineDistanceKm([p.destLat, p.destLon], matchShape.points);
+                        return oDist <= BUFFER_KM && dDist <= BUFFER_KM;
+                    });
+                }
+            } catch { /* shapes not available */ }
+        }
+
+        // Step 5: Re-sort by count desc
+        filtered.sort((a, b) => b.count - a.count);
+
+        // Step 6: Bidirectional merge (optional)
+        let merged: MergedODPair[];
+        if (mergeBidirectional) {
+            const mergeMap = new Map<string, MergedODPair>();
+            for (const p of filtered) {
+                // Canonical key: alphabetically smaller coord pair first
+                const keyAB = `${p.originLat.toFixed(4)}_${p.originLon.toFixed(4)}|${p.destLat.toFixed(4)}_${p.destLon.toFixed(4)}`;
+                const keyBA = `${p.destLat.toFixed(4)}_${p.destLon.toFixed(4)}|${p.originLat.toFixed(4)}_${p.originLon.toFixed(4)}`;
+                const canonical = keyAB < keyBA ? keyAB : keyBA;
+                const isForward = keyAB <= keyBA;
+
+                const existing = mergeMap.get(canonical);
+                if (existing) {
+                    if (isForward) {
+                        existing.count += p.count;
+                    } else {
+                        existing.reverseCount += p.count;
+                    }
+                    // Recalc net direction
+                    const diff = existing.count - existing.reverseCount;
+                    existing.netDirection = Math.abs(diff) < Math.max(existing.count, existing.reverseCount) * 0.2
+                        ? 'balanced' : diff > 0 ? 'AB' : 'BA';
+                } else {
+                    mergeMap.set(canonical, {
+                        originLat: isForward ? p.originLat : p.destLat,
+                        originLon: isForward ? p.originLon : p.destLon,
+                        destLat: isForward ? p.destLat : p.originLat,
+                        destLon: isForward ? p.destLon : p.originLon,
+                        count: isForward ? p.count : 0,
+                        reverseCount: isForward ? 0 : p.count,
+                        netDirection: 'AB',
+                        isMerged: true,
+                        hourlyBins: p.hourlyBins,
+                    });
+                }
+            }
+            merged = Array.from(mergeMap.values()).map(m => ({
+                ...m,
+                count: m.count + m.reverseCount, // total for display
+            }));
+            merged.sort((a, b) => b.count - a.count);
+        } else {
+            merged = filtered.map(p => ({
+                ...p,
+                reverseCount: 0,
+                netDirection: 'AB' as const,
+                isMerged: false,
+            }));
+        }
+
+        // Step 7: Isolated zone filter
+        if (isolatedZone) {
+            merged = merged.filter(p => {
+                const oKey = `${p.originLat.toFixed(4)}_${p.originLon.toFixed(4)}`;
+                const dKey = `${p.destLat.toFixed(4)}_${p.destLon.toFixed(4)}`;
+                return oKey === isolatedZone || dKey === isolatedZone;
+            });
+        }
+
+        // Step 8: Slice to topN
+        return merged.slice(0, topN);
+    }, [odPairs, geoFilter, timePeriod, dayFilter, seasonFilter, minCount, distanceBand, corridorRoute, mergeBidirectional, isolatedZone, topN]);
+
+    // Feature 4: Summary stats
+    const stats = useMemo(() => {
+        if (!odPairs) return null;
+        const totalTrips = displayedPairs.reduce((sum, p) => sum + p.count, 0);
+        const pctOfTotal = odPairs.totalTripsProcessed > 0
+            ? ((totalTrips / odPairs.totalTripsProcessed) * 100).toFixed(1)
+            : '0';
+        return { pairs: displayedPairs.length, trips: totalTrips, pct: pctOfTotal };
+    }, [displayedPairs, odPairs]);
+
+    useEffect(() => {
+        onDisplayedODPairsChange?.(displayedPairs);
+    }, [displayedPairs, onDisplayedODPairsChange]);
+
+    // Check if any pair has hourly data
+    const hasHourlyData = useMemo(() => {
+        if (!odPairs) return false;
+        return odPairs.pairs.some(p => p.hourlyBins && p.hourlyBins.some(b => b > 0));
+    }, [odPairs]);
+
+    // Available GTFS route short names for corridor filter
+    const availableRouteNames = useMemo(() => {
+        try {
+            return loadGtfsRouteShapes().map(s => s.routeShortName);
+        } catch { return []; }
+    }, []);
+
+    // Check if any pair has weekday/weekend data
+    const hasWeekdayData = useMemo(() => {
+        if (!odPairs) return false;
+        return odPairs.pairs.some(p => (p.weekdayCount ?? 0) > 0 || (p.weekendCount ?? 0) > 0);
+    }, [odPairs]);
+
+    // Check if any pair has season data
+    const hasSeasonData = useMemo(() => {
+        if (!odPairs) return false;
+        return odPairs.pairs.some(p => p.seasonBins && (p.seasonBins.jan > 0 || p.seasonBins.jul > 0 || p.seasonBins.sep > 0));
+    }, [odPairs]);
+
+    // Zone name cache: map coordinate key → nearest GTFS stop name
+    const zoneNameCache = useMemo(() => {
+        const cache = new Map<string, string>();
+        if (!displayedPairs.length) return cache;
+        for (const pair of displayedPairs) {
+            for (const [lat, lon] of [
+                [pair.originLat, pair.originLon],
+                [pair.destLat, pair.destLon],
+            ]) {
+                const key = `${lat.toFixed(4)}_${lon.toFixed(4)}`;
+                if (cache.has(key)) continue;
+                const name = findNearestStopName(lat, lon, 0.5);
+                cache.set(key, name ?? describeLocationRelativeToBarrie(lat, lon));
+            }
+        }
+        return cache;
+    }, [displayedPairs]);
+
+    const getZoneName = useCallback((lat: number, lon: number): string => {
+        const key = `${lat.toFixed(4)}_${lon.toFixed(4)}`;
+        return zoneNameCache.get(key) ?? describeLocationRelativeToBarrie(lat, lon);
+    }, [zoneNameCache]);
+
+    // Initialize map
+    useEffect(() => {
+        if (!containerRef.current || mapRef.current) return;
+
+        const map = L.map(containerRef.current, {
+            center: BARRIE_CENTER,
+            zoom: 13,
+            zoomControl: true,
+            ...SMOOTH_MAP_OPTIONS,
+        });
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap contributors',
+            maxZoom: 18,
+        }).addTo(map);
+
+        // Feature 6: Click map background to clear spider mode
+        map.on('click', () => {
+            setIsolatedZone(null);
+        });
+
+        mapRef.current = map;
+
+        const ro = new ResizeObserver(() => {
+            map.invalidateSize();
+        });
+        ro.observe(containerRef.current);
+
+        return () => {
+            ro.disconnect();
+            map.remove();
+            mapRef.current = null;
+        };
+    }, []);
+
+    // Build heatmap layer
+    const buildHeatmapLayer = useCallback(() => {
+        const group = L.layerGroup();
+        const filtered = geoFilter === 'barrie'
+            ? locationDensity.cells.filter(c => isInBarrie(c.latBin, c.lonBin))
+            : locationDensity.cells;
+        if (filtered.length === 0) return group;
+
+        const maxCount = filtered[0].count;
+        const logMax = Math.log(maxCount + 1);
+
+        for (const cell of filtered) {
+            const t = Math.log(cell.count + 1) / logMax;
+            const radius = 4 + t * 8;
+            L.circleMarker([cell.latBin, cell.lonBin], {
+                radius,
+                fillColor: heatColor(t),
+                fillOpacity: 0.6,
+                color: heatColor(t),
+                weight: 0.5,
+                opacity: 0.8,
+            })
+                .bindTooltip(`${cell.count.toLocaleString()} data points`, { direction: 'top' })
+                .addTo(group);
+        }
+
+        return group;
+    }, [locationDensity, geoFilter]);
+
+    // Build OD layer using pre-filtered displayedPairs
+    const buildODLayer = useCallback(() => {
+        const group = L.layerGroup();
+        odLineGroupsRef.current = [];
+        const pairs = displayedPairs;
+        if (pairs.length === 0) return group;
+
+        const resolution = odPairs?.resolution ?? 0.005;
+        const half = resolution / 2;
+
+        // Draw zone rectangles first (beneath lines)
+        const zoneMap = new Map<string, { lat: number; lon: number; isOrigin: boolean; isDest: boolean; trips: number }>();
+        for (const pair of pairs) {
+            const oKey = `${pair.originLat.toFixed(4)}_${pair.originLon.toFixed(4)}`;
+            const dKey = `${pair.destLat.toFixed(4)}_${pair.destLon.toFixed(4)}`;
+            const oZone = zoneMap.get(oKey);
+            if (oZone) {
+                oZone.isOrigin = true;
+                oZone.trips += pair.count;
+            } else {
+                zoneMap.set(oKey, { lat: pair.originLat, lon: pair.originLon, isOrigin: true, isDest: false, trips: pair.count });
+            }
+            const dZone = zoneMap.get(dKey);
+            if (dZone) {
+                dZone.isDest = true;
+                dZone.trips += pair.count;
+            } else {
+                zoneMap.set(dKey, { lat: pair.destLat, lon: pair.destLon, isOrigin: false, isDest: true, trips: pair.count });
+            }
+        }
+
+        for (const [zoneKey, zone] of zoneMap) {
+            const fillColor = zone.isOrigin && zone.isDest ? '#8b5cf6'
+                : zone.isOrigin ? '#10b981'
+                : '#ef4444';
+            const zoneName = getZoneName(zone.lat, zone.lon);
+
+            const rect = L.rectangle(
+                [[zone.lat - half, zone.lon - half], [zone.lat + half, zone.lon + half]],
+                {
+                    fillColor,
+                    fillOpacity: 0.25,
+                    color: fillColor,
+                    weight: 1,
+                    opacity: 0.5,
+                }
+            )
+                .bindTooltip(`${zoneName} — ${zone.trips.toLocaleString()} trips`, { direction: 'top' })
+                .addTo(group);
+
+            // Zone dots for spider mode click — visible + interactive
+            const zoneDot = L.circleMarker([zone.lat, zone.lon], {
+                radius: 8,
+                fillColor,
+                fillOpacity: 0.4,
+                color: '#ffffff',
+                weight: 1.5,
+                opacity: 0.7,
+            }).addTo(group);
+
+            // Hover feedback for click affordance
+            zoneDot.on('mouseover', function (this: L.CircleMarker) {
+                this.setStyle({ fillOpacity: 0.7, weight: 2.5, radius: 10 } as L.CircleMarkerOptions);
+            });
+            zoneDot.on('mouseout', function (this: L.CircleMarker) {
+                this.setStyle({ fillOpacity: 0.4, weight: 1.5, radius: 8 } as L.CircleMarkerOptions);
+            });
+
+            zoneDot.on('click', (e: L.LeafletMouseEvent) => {
+                L.DomEvent.stopPropagation(e);
+                setIsolatedZone(prev => prev === zoneKey ? null : zoneKey);
+            });
+
+            // Keep rect clickable too
+            rect.on('click', (e: L.LeafletMouseEvent) => {
+                L.DomEvent.stopPropagation(e);
+                setIsolatedZone(prev => prev === zoneKey ? null : zoneKey);
+            });
+        }
+
+        for (let i = 0; i < pairs.length; i++) {
+            const pair = pairs[i];
+            const lineElements: L.Path[] = [];
+
+            // Rank-based styling: 1-7 vivid red→green, 8+ grey gradient
+            const color = rankColor(i);
+            const weight = rankWeight(i);
+            const opacity = i < TOP_RANK_COLORS.length ? 0.85 : 0.7;
+
+            const curveDir: 1 | -1 = i % 2 === 0 ? 1 : -1;
+
+            // For merged bidirectional with BA net direction, swap origin/dest for arrow
+            let origin: [number, number] = [pair.originLat, pair.originLon];
+            let dest: [number, number] = [pair.destLat, pair.destLon];
+            if (pair.isMerged && pair.netDirection === 'BA') {
+                [origin, dest] = [dest, origin];
+            }
+
+            const arcPoints = quadraticBezierArc(origin, dest, curveDir);
+
+            const polyline = L.polyline(arcPoints, {
+                color,
+                weight,
+                opacity,
+                lineCap: 'round',
+                lineJoin: 'round',
+            });
+
+            // Hover tooltip (quick count preview)
+            const distKm = haversineKm(pair.originLat, pair.originLon, pair.destLat, pair.destLon);
+            polyline.bindTooltip(`${pair.count.toLocaleString()} trips (${distKm.toFixed(1)} km)`, {
+                direction: 'top', sticky: true,
+            });
+
+            // Feature 7: Click popup with details
+            const pctStr = odPairs && odPairs.totalTripsProcessed > 0
+                ? ((pair.count / odPairs.totalTripsProcessed) * 100).toFixed(2)
+                : '?';
+            const originName = getZoneName(pair.originLat, pair.originLon);
+            const destName = getZoneName(pair.destLat, pair.destLon);
+            let popupContent = `<div style="font-size:12px;line-height:1.4">
+                <b>${originName} → ${destName}</b><br/>
+                <b>${pair.count.toLocaleString()} trips</b> (${pctStr}% of total)<br/>
+                Distance: ${distKm.toFixed(1)} km`;
+            if (pair.isMerged) {
+                const fwd = pair.count - pair.reverseCount;
+                popupContent += `<br/>A→B: ${fwd.toLocaleString()} | B→A: ${pair.reverseCount.toLocaleString()}`;
+                popupContent += `<br/>Direction: ${pair.netDirection}`;
+            }
+            popupContent += '</div>';
+            polyline.bindPopup(popupContent);
+
+            polyline.addTo(group);
+            lineElements.push(polyline);
+
+            // Arrowhead (skip for balanced merged pairs)
+            if (!(pair.isMerged && pair.netDirection === 'balanced')) {
+                const arrowSize = i < TOP_RANK_COLORS.length ? 0.005 : 0.003;
+                const arrows = arrowheadPoints(arcPoints, arrowSize);
+                for (const pts of arrows) {
+                    const arrow = L.polyline(pts, {
+                        color,
+                        weight: Math.max(weight * 0.7, 1.5),
+                        opacity: Math.min(opacity + 0.15, 1),
+                        lineCap: 'round',
+                        lineJoin: 'round',
+                    }).addTo(group);
+                    lineElements.push(arrow);
+                }
+            }
+
+            // Dots
+            const dotRadius = i < TOP_RANK_COLORS.length ? 6 : 4;
+            const originDot = L.circleMarker([pair.originLat, pair.originLon], {
+                radius: dotRadius,
+                fillColor: '#10b981',
+                fillOpacity: 0.9,
+                color: '#ffffff',
+                weight: 2,
+            }).addTo(group);
+            lineElements.push(originDot);
+
+            const destDot = L.circleMarker([pair.destLat, pair.destLon], {
+                radius: dotRadius,
+                fillColor: '#ef4444',
+                fillOpacity: 0.9,
+                color: '#ffffff',
+                weight: 2,
+            }).addTo(group);
+            lineElements.push(destDot);
+
+            odLineGroupsRef.current.push({ lines: lineElements, pair, origOpacity: opacity });
+
+            // Rank badge on every displayed arc — numbered circle at arc midpoint
+            {
+                const midIdx = Math.floor(arcPoints.length / 2);
+                const midPt = arcPoints[midIdx];
+                const badgeSize = i < 5 ? 22 : 18;
+                const fontSize = i < 5 ? 11 : 9;
+                L.marker(midPt, {
+                    icon: L.divIcon({
+                        className: '',
+                        html: `<div style="
+                            background: ${color};
+                            color: white;
+                            width: ${badgeSize}px;
+                            height: ${badgeSize}px;
+                            border-radius: 50%;
+                            display: flex;
+                            align-items: center;
+                            justify-content: center;
+                            font-size: ${fontSize}px;
+                            font-weight: 700;
+                            border: 2px solid white;
+                            box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+                            pointer-events: none;
+                        ">${i + 1}</div>`,
+                        iconSize: [badgeSize, badgeSize],
+                        iconAnchor: [badgeSize / 2, badgeSize / 2],
+                    }),
+                    interactive: false,
+                }).addTo(group);
+            }
+
+            // Hover highlight (brighten hovered, dim others to 0.2)
+            const highlight = () => {
+                for (const g of odLineGroupsRef.current) {
+                    if (g.pair === pair) {
+                        for (const el of g.lines) el.setStyle({ opacity: 1 });
+                    } else {
+                        for (const el of g.lines) el.setStyle({ opacity: 0.2 });
+                    }
+                }
+                setHighlightedPairIdx(i);
+            };
+            const unhighlight = () => {
+                for (const g of odLineGroupsRef.current) {
+                    for (const el of g.lines) el.setStyle({ opacity: g.origOpacity });
+                }
+                setHighlightedPairIdx(null);
+            };
+
+            for (const el of lineElements) {
+                el.on('mouseover', highlight);
+                el.on('mouseout', unhighlight);
+            }
+        }
+
+        return group;
+    }, [displayedPairs, odPairs, getZoneName]);
+
+    // Feature 10: GTFS route overlay layer
+    const buildRouteLayer = useCallback(() => {
+        const group = L.layerGroup();
+        try {
+            const shapes = loadGtfsRouteShapes();
+            for (const shape of shapes) {
+                const color = `#${shape.routeColor}`;
+                L.polyline(shape.points, {
+                    color,
+                    weight: 3,
+                    opacity: 0.6,
+                    dashArray: '6 4',
+                    lineCap: 'round',
+                })
+                    .bindTooltip(`Route ${shape.routeShortName}`, { direction: 'top', sticky: true })
+                    .addTo(group);
+            }
+        } catch (e) {
+            console.warn('Failed to load GTFS shapes:', e);
+        }
+        return group;
+    }, []);
+
+    const buildStopLayer = useCallback(() => {
+        const group = L.layerGroup();
+        try {
+            const stops = getAllStopsWithCoords();
+            for (const stop of stops) {
+                L.circleMarker([stop.lat, stop.lon], {
+                    radius: 2,
+                    fillColor: '#111827',
+                    fillOpacity: 0.65,
+                    color: '#ffffff',
+                    weight: 0.5,
+                })
+                    .bindTooltip(stop.stop_name, { direction: 'top', sticky: true, opacity: 0.95 })
+                    .addTo(group);
+            }
+        } catch (e) {
+            console.warn('Failed to load GTFS stops:', e);
+        }
+        return group;
+    }, []);
+
+    const buildCoverageLayer = useCallback(() => {
+        const group = L.layerGroup();
+        if (!coverageGapClusters || coverageGapClusters.length === 0) return group;
+
+        const maxCount = Math.max(...coverageGapClusters.map(cluster => cluster.tripCount), 1);
+        for (const cluster of coverageGapClusters) {
+            const t = cluster.tripCount / maxCount;
+            const radius = 5 + t * 8;
+            const marker = L.circleMarker([cluster.lat, cluster.lon], {
+                radius,
+                fillColor: '#dc2626',
+                fillOpacity: 0.45,
+                color: '#7f1d1d',
+                weight: 1.5,
+            });
+            marker.bindPopup(
+                `<div style="font-size:12px;line-height:1.4;">
+                    <div style="font-weight:700;margin-bottom:4px;">Coverage Gap Cluster</div>
+                    <div><strong>Trips:</strong> ${cluster.tripCount.toLocaleString()}</div>
+                    <div><strong>Nearest Stop:</strong> ${cluster.nearestStopName ?? 'Unknown'}</div>
+                    <div><strong>Distance:</strong> ${cluster.avgNearestStopDistanceKm.toFixed(2)} km avg</div>
+                    <div><strong>Time:</strong> ${cluster.dominantTimeBand.replace('_', ' ')}</div>
+                    <div><strong>Day:</strong> ${cluster.dominantDayType}</div>
+                    <div><strong>Season:</strong> ${cluster.dominantSeason.toUpperCase()}</div>
+                </div>`
+            );
+            marker.addTo(group);
+        }
+
+        return group;
+    }, [coverageGapClusters]);
+
+    // Sync layers
+    useEffect(() => {
+        const map = mapRef.current;
+        if (!map) return;
+
+        if (heatmapLayerRef.current) {
+            map.removeLayer(heatmapLayerRef.current);
+            heatmapLayerRef.current = null;
+        }
+        if (odLayerRef.current) {
+            map.removeLayer(odLayerRef.current);
+            odLayerRef.current = null;
+        }
+
+        const barrieFit: L.LatLngBoundsLiteral = [
+            [BARRIE_VIEW_BOUNDS.minLat, BARRIE_VIEW_BOUNDS.minLon],
+            [BARRIE_VIEW_BOUNDS.maxLat, BARRIE_VIEW_BOUNDS.maxLon],
+        ];
+
+        if (activeLayer === 'heatmap') {
+            const layer = buildHeatmapLayer();
+            layer.addTo(map);
+            heatmapLayerRef.current = layer;
+
+            if (geoFilter === 'barrie') {
+                map.fitBounds(barrieFit, { padding: [20, 20] });
+            } else {
+                const b = locationDensity.bounds;
+                if (b.minLat !== 0 || b.maxLat !== 0) {
+                    map.fitBounds([[b.minLat, b.minLon], [b.maxLat, b.maxLon]], { padding: [20, 20] });
+                }
+            }
+        } else {
+            const layer = buildODLayer();
+            layer.addTo(map);
+            odLayerRef.current = layer;
+
+            if (geoFilter === 'barrie') {
+                map.fitBounds(barrieFit, { padding: [20, 20] });
+            } else if (odPairs && odPairs.bounds.minLat !== 0) {
+                const b = odPairs.bounds;
+                map.fitBounds([[b.minLat, b.minLon], [b.maxLat, b.maxLon]], { padding: [20, 20] });
+            }
+        }
+    }, [activeLayer, geoFilter, buildHeatmapLayer, buildODLayer, locationDensity.bounds, odPairs]);
+
+    // Feature 10: GTFS route overlay toggle
+    useEffect(() => {
+        const map = mapRef.current;
+        if (!map) return;
+
+        if (routeLayerRef.current) {
+            map.removeLayer(routeLayerRef.current);
+            routeLayerRef.current = null;
+        }
+
+        if (showRoutes) {
+            const layer = buildRouteLayer();
+            layer.addTo(map);
+            routeLayerRef.current = layer;
+        }
+    }, [showRoutes, buildRouteLayer]);
+
+    useEffect(() => {
+        const map = mapRef.current;
+        if (!map) return;
+
+        if (stopLayerRef.current) {
+            map.removeLayer(stopLayerRef.current);
+            stopLayerRef.current = null;
+        }
+
+        if (showStops) {
+            const layer = buildStopLayer();
+            layer.addTo(map);
+            stopLayerRef.current = layer;
+        }
+    }, [showStops, buildStopLayer]);
+
+    useEffect(() => {
+        const map = mapRef.current;
+        if (!map) return;
+
+        if (coverageLayerRef.current) {
+            map.removeLayer(coverageLayerRef.current);
+            coverageLayerRef.current = null;
+        }
+
+        if (coverageGapClusters && coverageGapClusters.length > 0) {
+            const layer = buildCoverageLayer();
+            layer.addTo(map);
+            coverageLayerRef.current = layer;
+        }
+    }, [coverageGapClusters, buildCoverageLayer]);
+
+    // Auto-enable GTFS overlay when corridor is selected
+    useEffect(() => {
+        if (corridorRoute && !showRoutes) setShowRoutes(true);
+    }, [corridorRoute]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    useEffect(() => {
+        if (coverageGapClusters && coverageGapClusters.length > 0 && !showStops) {
+            setShowStops(true);
+        }
+    }, [coverageGapClusters, showStops]);
+
+    // Export OD summary as PDF
+    const exportPDF = useCallback(() => {
+        if (!displayedPairs.length) return;
+        const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'letter' });
+        const pageWidth = doc.internal.pageSize.getWidth();
+        const margin = 14;
+
+        // Title
+        doc.setFontSize(14);
+        doc.setFont('helvetica', 'bold');
+        doc.text('Transit App — Origin-Destination Summary', pageWidth / 2, margin, { align: 'center' });
+
+        // Subtitle with active filters
+        const filters: string[] = [];
+        if (geoFilter === 'barrie') filters.push('Barrie only');
+        if (corridorRoute) filters.push(`Route ${corridorRoute} corridor`);
+        if (timePeriod !== 'all') filters.push(`Time: ${timePeriod}`);
+        if (dayFilter !== 'all') filters.push(`Day: ${dayFilter}`);
+        if (seasonFilter !== 'all') filters.push(`Season: ${seasonFilter.toUpperCase()}`);
+        if (distanceBand !== 'all') filters.push(`Distance: ${distanceBand}`);
+        if (mergeBidirectional) filters.push('Merged A↔B');
+        const subtitle = filters.length > 0 ? `Filters: ${filters.join(', ')}` : 'No filters applied';
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'normal');
+        doc.text(subtitle, pageWidth / 2, margin + 6, { align: 'center' });
+
+        // Summary line
+        const totalTrips = displayedPairs.reduce((s, p) => s + p.count, 0);
+        doc.text(
+            `${displayedPairs.length} pairs · ${totalTrips.toLocaleString()} trips · Top ${topN}`,
+            pageWidth / 2, margin + 11, { align: 'center' }
+        );
+
+        // Table
+        const head = [['#', 'Origin', 'Destination', 'Trips', '% Total', 'Dist (km)']];
+        if (hasWeekdayData) head[0].push('WD', 'WE');
+
+        const body = displayedPairs.map((pair, i) => {
+            const originName = getZoneName(pair.originLat, pair.originLon);
+            const destName = getZoneName(pair.destLat, pair.destLon);
+            const distKm = haversineKm(pair.originLat, pair.originLon, pair.destLat, pair.destLon);
+            const pct = odPairs && odPairs.totalTripsProcessed > 0
+                ? ((pair.count / odPairs.totalTripsProcessed) * 100).toFixed(2)
+                : '—';
+            const row = [
+                String(i + 1),
+                originName,
+                destName,
+                pair.count.toLocaleString(),
+                `${pct}%`,
+                distKm.toFixed(1),
+            ];
+            if (hasWeekdayData) {
+                row.push(String(pair.weekdayCount ?? '—'));
+                row.push(String(pair.weekendCount ?? '—'));
+            }
+            return row;
+        });
+
+        doc.autoTable({
+            head,
+            body,
+            startY: margin + 15,
+            theme: 'grid',
+            headStyles: { fillColor: [31, 41, 55], fontSize: 8 },
+            styles: { fontSize: 7, cellPadding: 1.5 },
+            columnStyles: { 0: { cellWidth: 8 }, 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right' } },
+            margin: { left: margin, right: margin },
+        });
+
+        // Footer
+        const footerY = doc.internal.pageSize.getHeight() - 8;
+        doc.setFontSize(7);
+        doc.setTextColor(150);
+        doc.text('Transit App sample data — not total ridership', margin, footerY);
+        doc.text(new Date().toLocaleDateString(), pageWidth - margin, footerY, { align: 'right' });
+
+        const date = new Date().toISOString().slice(0, 10);
+        doc.save(`transit-od-summary-${date}.pdf`);
+    }, [displayedPairs, getZoneName, geoFilter, corridorRoute, timePeriod, dayFilter, seasonFilter, distanceBand, mergeBidirectional, topN, hasWeekdayData, odPairs]);
+
+    const hasOD = odPairs && odPairs.pairs.length > 0;
+
+    // Sorted table data — maintains original index for map↔table linking
+    const sortedTableData = useMemo(() => {
+        const indexed = displayedPairs.map((pair, i) => ({ pair, idx: i }));
+        indexed.sort((a, b) => {
+            let cmp = 0;
+            switch (sortColumn) {
+                case 'rank': cmp = a.idx - b.idx; break;
+                case 'trips': cmp = a.pair.count - b.pair.count; break;
+                case 'dist':
+                    cmp = haversineKm(a.pair.originLat, a.pair.originLon, a.pair.destLat, a.pair.destLon)
+                        - haversineKm(b.pair.originLat, b.pair.originLon, b.pair.destLat, b.pair.destLon);
+                    break;
+                case 'origin':
+                    cmp = getZoneName(a.pair.originLat, a.pair.originLon)
+                        .localeCompare(getZoneName(b.pair.originLat, b.pair.originLon));
+                    break;
+                case 'dest':
+                    cmp = getZoneName(a.pair.destLat, a.pair.destLon)
+                        .localeCompare(getZoneName(b.pair.destLat, b.pair.destLon));
+                    break;
+            }
+            return sortDir === 'asc' ? cmp : -cmp;
+        });
+        return indexed;
+    }, [displayedPairs, sortColumn, sortDir, getZoneName]);
+
+    const handleSort = useCallback((col: typeof sortColumn) => {
+        if (sortColumn === col) {
+            setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+        } else {
+            setSortColumn(col);
+            setSortDir(col === 'trips' ? 'desc' : 'asc');
+        }
+    }, [sortColumn]);
+
+    // Table row → map arc highlight helpers
+    const highlightArc = useCallback((idx: number) => {
+        for (const g of odLineGroupsRef.current) {
+            for (const el of g.lines) el.setStyle({ opacity: 0.2 });
+        }
+        const group = odLineGroupsRef.current[idx];
+        if (group) {
+            for (const el of group.lines) el.setStyle({ opacity: 1 });
+        }
+        setHighlightedPairIdx(idx);
+    }, []);
+
+    const unhighlightArcs = useCallback(() => {
+        for (const g of odLineGroupsRef.current) {
+            for (const el of g.lines) el.setStyle({ opacity: g.origOpacity });
+        }
+        setHighlightedPairIdx(null);
+    }, []);
+
+    // Toggle button style helper
+    const toggleBtn = (active: boolean, disabled?: boolean) =>
+        `px-3 py-1.5 text-xs font-medium transition-colors ${
+            disabled ? 'bg-gray-50 text-gray-300 cursor-not-allowed'
+            : active ? 'bg-gray-900 text-white'
+            : 'bg-white text-gray-500 hover:bg-gray-50'
+        }`;
+
+    const fullscreenRef = useRef<HTMLDivElement>(null);
+    const toggleFullscreen = () => {
+        if (!fullscreenRef.current) return;
+        if (document.fullscreenElement) {
+            document.exitFullscreen();
+        } else {
+            fullscreenRef.current.requestFullscreen();
+        }
+    };
+
+    useEffect(() => {
+        const handler = () => {
+            setIsFullscreen(!!document.fullscreenElement);
+            // Invalidate map size after fullscreen transition
+            setTimeout(() => mapRef.current?.invalidateSize(), 100);
+        };
+        document.addEventListener('fullscreenchange', handler);
+        return () => document.removeEventListener('fullscreenchange', handler);
+    }, []);
+
+    return (
+        <div ref={fullscreenRef} className={`space-y-2 ${isFullscreen ? 'bg-white p-4 overflow-auto' : ''}`}>
+            {/* Row 1 — Primary controls */}
+            <div className="flex items-center flex-wrap gap-2">
+                {/* Layer toggle */}
+                <div className="flex rounded-lg border border-gray-200 overflow-hidden">
+                    <button onClick={() => setActiveLayer('heatmap')} className={toggleBtn(activeLayer === 'heatmap')}>
+                        Heatmap
+                    </button>
+                    <button
+                        onClick={() => hasOD && setActiveLayer('od')}
+                        className={toggleBtn(activeLayer === 'od', !hasOD)}
+                        title={hasOD ? 'Show OD desire lines' : 'No OD data — re-import to generate'}
+                    >
+                        OD Lines
+                    </button>
+                </div>
+
+                {/* Geo filter */}
+                <div className="flex rounded-lg border border-gray-200 overflow-hidden">
+                    <button onClick={() => setGeoFilter('barrie')} className={toggleBtn(geoFilter === 'barrie')}>
+                        Barrie
+                    </button>
+                    <button onClick={() => setGeoFilter('all')} className={toggleBtn(geoFilter === 'all')}>
+                        Regional
+                    </button>
+                </div>
+
+                {/* Route corridor */}
+                {availableRouteNames.length > 0 && (
+                    <div className="flex items-center gap-1">
+                        <span className="text-[10px] text-gray-400 uppercase tracking-wider">Route:</span>
+                        <select
+                            value={corridorRoute ?? ''}
+                            onChange={e => setCorridorRoute(e.target.value || null)}
+                            className="px-2 py-1.5 text-xs font-medium rounded-lg border border-gray-200 bg-white text-gray-600"
+                        >
+                            <option value="">All</option>
+                            {availableRouteNames.map(name => (
+                                <option key={name} value={name}>{name}</option>
+                            ))}
+                        </select>
+                    </div>
+                )}
+
+                {/* GTFS Routes */}
+                <button
+                    onClick={() => setShowRoutes(v => !v)}
+                    className={`${toggleBtn(showRoutes)} rounded-lg border ${showRoutes ? 'border-gray-900' : 'border-gray-200'}`}
+                >
+                    GTFS Routes
+                </button>
+
+                <button
+                    onClick={() => setShowStops(v => !v)}
+                    className={`${toggleBtn(showStops)} rounded-lg border ${showStops ? 'border-gray-900' : 'border-gray-200'}`}
+                >
+                    GTFS Stops
+                </button>
+
+                {/* Export PDF */}
+                {activeLayer === 'od' && displayedPairs.length > 0 && (
+                    <button
+                        onClick={exportPDF}
+                        className="px-3 py-1.5 text-xs font-medium rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 transition-colors"
+                    >
+                        Export PDF ↓
+                    </button>
+                )}
+
+                {/* Fullscreen toggle */}
+                <button
+                    onClick={toggleFullscreen}
+                    className="px-3 py-1.5 text-xs font-medium rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 transition-colors ml-auto"
+                    title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen map'}
+                >
+                    {isFullscreen ? '⊡ Exit' : '⛶ Fullscreen'}
+                </button>
+            </div>
+
+            {/* Row 2 — Filters (OD only) */}
+            {activeLayer === 'od' && hasOD && (
+                <div className="flex items-center flex-wrap gap-4 bg-gray-50 rounded-lg border border-gray-100 px-4 py-2">
+                    {/* Pairs slider */}
+                    <div className="flex flex-col">
+                        <span className="text-[10px] text-gray-400 uppercase tracking-wider">Pairs</span>
+                        <div className="flex items-center gap-1.5">
+                            <input type="range" min={5} max={50} value={topN}
+                                onChange={e => setTopN(Number(e.target.value))}
+                                className="w-16 accent-gray-900" />
+                            <span className="text-xs font-medium text-gray-700 w-5 text-right">{topN}</span>
+                        </div>
+                    </div>
+
+                    {/* Threshold slider */}
+                    <div className="flex flex-col">
+                        <span className="text-[10px] text-gray-400 uppercase tracking-wider">Threshold</span>
+                        <div className="flex items-center gap-1.5">
+                            <input type="range" min={1} max={50} value={minCount}
+                                onChange={e => setMinCount(Number(e.target.value))}
+                                className="w-16 accent-gray-900" />
+                            <span className="text-xs font-medium text-gray-700 w-5 text-right">{minCount}</span>
+                        </div>
+                    </div>
+
+                    {/* Distance bands */}
+                    <div className="flex flex-col">
+                        <span className="text-[10px] text-gray-400 uppercase tracking-wider">Distance</span>
+                        <div className="flex rounded border border-gray-200 overflow-hidden">
+                            {(['all', 'short', 'medium', 'long'] as DistanceBand[]).map(band => (
+                                <button key={band} onClick={() => setDistanceBand(band)}
+                                    className={`px-2 py-0.5 text-[11px] font-medium transition-colors ${
+                                        distanceBand === band ? 'bg-gray-900 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'
+                                    }`}>
+                                    {band === 'all' ? 'All' : band === 'short' ? '<3' : band === 'medium' ? '3-10' : '>10'}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Time-of-day filter */}
+                    {hasHourlyData && (
+                        <div className="flex flex-col">
+                            <span className="text-[10px] text-gray-400 uppercase tracking-wider">Time</span>
+                            <div className="flex rounded border border-gray-200 overflow-hidden">
+                                {([
+                                    { key: 'all', label: 'All' },
+                                    { key: 'am', label: 'AM' },
+                                    { key: 'midday', label: 'Mid' },
+                                    { key: 'pm', label: 'PM' },
+                                    { key: 'evening', label: 'Eve' },
+                                ] as { key: TimePeriod; label: string }[]).map(({ key, label }) => (
+                                    <button key={key} onClick={() => setTimePeriod(key)}
+                                        className={`px-2 py-0.5 text-[11px] font-medium transition-colors ${
+                                            timePeriod === key ? 'bg-gray-900 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'
+                                        }`}>
+                                        {label}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Day filter */}
+                    {hasWeekdayData && (
+                        <div className="flex flex-col">
+                            <span className="text-[10px] text-gray-400 uppercase tracking-wider">Day</span>
+                            <div className="flex rounded border border-gray-200 overflow-hidden">
+                                {([
+                                    { key: 'all', label: 'All' },
+                                    { key: 'weekday', label: 'WD' },
+                                    { key: 'weekend', label: 'WE' },
+                                ] as { key: DayFilter; label: string }[]).map(({ key, label }) => (
+                                    <button key={key} onClick={() => setDayFilter(key)}
+                                        className={`px-2 py-0.5 text-[11px] font-medium transition-colors ${
+                                            dayFilter === key ? 'bg-gray-900 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'
+                                        }`}>
+                                        {label}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Season filter */}
+                    {hasSeasonData && (
+                        <div className="flex flex-col">
+                            <span className="text-[10px] text-gray-400 uppercase tracking-wider">Season</span>
+                            <div className="flex rounded border border-gray-200 overflow-hidden">
+                                {([
+                                    { key: 'all', label: 'All' },
+                                    { key: 'jan', label: 'Jan' },
+                                    { key: 'jul', label: 'Jul' },
+                                    { key: 'sep', label: 'Sep' },
+                                ] as { key: SeasonFilter; label: string }[]).map(({ key, label }) => (
+                                    <button key={key} onClick={() => setSeasonFilter(key)}
+                                        className={`px-2 py-0.5 text-[11px] font-medium transition-colors ${
+                                            seasonFilter === key ? 'bg-gray-900 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'
+                                        }`}>
+                                        {label}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Merge toggle */}
+                    <div className="flex flex-col">
+                        <span className="text-[10px] text-gray-400 uppercase tracking-wider">&nbsp;</span>
+                        <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer py-0.5">
+                            <input type="checkbox" checked={mergeBidirectional}
+                                onChange={e => setMergeBidirectional(e.target.checked)}
+                                className="accent-gray-900" />
+                            Merge
+                        </label>
+                    </div>
+                </div>
+            )}
+
+            {/* Stats bar */}
+            {activeLayer === 'od' && stats && (
+                <div className="text-xs text-gray-500">
+                    <span className="font-medium text-gray-700">{stats.pairs}</span> pairs
+                    {' · '}
+                    <span className="font-medium text-gray-700">{stats.trips.toLocaleString()}</span> trips
+                    {' · '}
+                    <span className="font-medium text-gray-700">{stats.pct}%</span> of total
+                    <span className="text-gray-300"> · </span>
+                    <span className="text-gray-400 italic">Transit App sample — not total ridership</span>
+                    {isolatedZone && (() => {
+                        const [latStr, lonStr] = isolatedZone.split('_');
+                        const spiderName = getZoneName(parseFloat(latStr), parseFloat(lonStr));
+                        return (
+                            <>
+                                <span className="text-gray-300"> · </span>
+                                <span className="text-gray-600">Flows through {spiderName}</span>
+                                <button onClick={() => setIsolatedZone(null)} className="ml-1 text-gray-400 hover:text-gray-600">×</button>
+                            </>
+                        );
+                    })()}
+                </div>
+            )}
+
+            {/* Map container */}
+            <div
+                ref={containerRef}
+                style={{ height: isFullscreen ? 'calc(100vh - 200px)' : height, width: '100%' }}
+                className="rounded-lg overflow-hidden border border-gray-200"
+            />
+
+            {/* Legend */}
+            <div className="flex items-start gap-6 text-xs border border-gray-200 rounded-lg px-4 py-2.5 bg-gray-50/50">
+                <span className="text-[10px] text-gray-400 uppercase tracking-wider font-medium pt-0.5 shrink-0">Legend</span>
+                {activeLayer === 'heatmap' ? (
+                    <div className="flex items-center gap-2 text-gray-500">
+                        <span className="w-12 h-2 rounded" style={{ background: 'linear-gradient(to right, rgb(0,255,0), rgb(255,255,0), rgb(255,0,0))' }} />
+                        Low → High trip planning density
+                    </div>
+                ) : (
+                    <div className="flex flex-col gap-1.5">
+                        <div className="flex items-center gap-4 flex-wrap text-gray-500">
+                            <span className="flex items-center gap-1.5">
+                                <span className="w-3 h-3 rounded-full bg-emerald-500 border border-white shadow-sm" /> Origin zone
+                            </span>
+                            <span className="flex items-center gap-1.5">
+                                <span className="w-3 h-3 rounded-full bg-red-500 border border-white shadow-sm" /> Destination zone
+                            </span>
+                            <span className="flex items-center gap-1.5">
+                                <span className="w-12 h-2 rounded" style={{ background: 'linear-gradient(to right, #bfdbfe, #06b6d4, #f97316, #ef4444)' }} />
+                                Arc: low → high volume
+                            </span>
+                            <span className="flex items-center gap-1.5">
+                                <span className="w-4 h-4 rounded-full bg-gray-700 text-white text-[9px] font-bold flex items-center justify-center shrink-0">1</span>
+                                Rank badge
+                            </span>
+                        </div>
+                        <div className="flex items-center gap-4 text-gray-400 flex-wrap">
+                            <span><kbd className="px-1 py-0.5 bg-gray-200 text-gray-500 rounded text-[10px]">Click</kbd> zone → filter flows</span>
+                            <span><kbd className="px-1 py-0.5 bg-gray-200 text-gray-500 rounded text-[10px]">Click</kbd> arc → trip details</span>
+                            <span><kbd className="px-1 py-0.5 bg-gray-200 text-gray-500 rounded text-[10px]">Hover</kbd> → isolate pair</span>
+                        </div>
+                    </div>
+                )}
+            </div>
+
+            {/* OD Summary Table (collapsible, sortable, bidirectional highlight) */}
+            {activeLayer === 'od' && displayedPairs.length > 0 && (
+                <div>
+                    <button
+                        onClick={() => setShowTable(v => !v)}
+                        className="text-xs text-gray-500 hover:text-gray-700 underline"
+                    >
+                        {showTable ? 'Hide summary table' : 'Show summary table'}
+                    </button>
+                    {showTable && (
+                        <div className="mt-2 border border-gray-200 rounded-lg overflow-hidden max-h-[400px] overflow-y-auto">
+                            <table className="w-full text-xs">
+                                <thead className="sticky top-0 z-10">
+                                    <tr className="bg-gray-50 text-gray-500 uppercase tracking-wider text-[10px]">
+                                        <th className="px-3 py-2 text-left w-8 cursor-pointer hover:text-gray-700 select-none"
+                                            onClick={() => handleSort('rank')}>
+                                            # {sortColumn === 'rank' && (sortDir === 'asc' ? '↑' : '↓')}
+                                        </th>
+                                        <th className="px-3 py-2 text-left cursor-pointer hover:text-gray-700 select-none"
+                                            onClick={() => handleSort('origin')}>
+                                            Origin {sortColumn === 'origin' && (sortDir === 'asc' ? '↑' : '↓')}
+                                        </th>
+                                        <th className="px-3 py-2 text-left cursor-pointer hover:text-gray-700 select-none"
+                                            onClick={() => handleSort('dest')}>
+                                            Destination {sortColumn === 'dest' && (sortDir === 'asc' ? '↑' : '↓')}
+                                        </th>
+                                        <th className="px-3 py-2 text-right cursor-pointer hover:text-gray-700 select-none"
+                                            onClick={() => handleSort('trips')}>
+                                            Trips {sortColumn === 'trips' && (sortDir === 'asc' ? '↑' : '↓')}
+                                        </th>
+                                        <th className="px-3 py-2 text-right">% Total</th>
+                                        <th className="px-3 py-2 text-right cursor-pointer hover:text-gray-700 select-none"
+                                            onClick={() => handleSort('dist')}>
+                                            Dist (km) {sortColumn === 'dist' && (sortDir === 'asc' ? '↑' : '↓')}
+                                        </th>
+                                        {hasWeekdayData && <th className="px-3 py-2 text-right">WD</th>}
+                                        {hasWeekdayData && <th className="px-3 py-2 text-right">WE</th>}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {sortedTableData.map(({ pair, idx }) => {
+                                        const originName = getZoneName(pair.originLat, pair.originLon);
+                                        const destName = getZoneName(pair.destLat, pair.destLon);
+                                        const distKm = haversineKm(pair.originLat, pair.originLon, pair.destLat, pair.destLon);
+                                        const pct = odPairs && odPairs.totalTripsProcessed > 0
+                                            ? ((pair.count / odPairs.totalTripsProcessed) * 100).toFixed(2)
+                                            : '—';
+                                        const isHighlighted = highlightedPairIdx === idx;
+                                        return (
+                                            <tr
+                                                key={idx}
+                                                className={`border-t border-gray-100 cursor-pointer transition-colors ${
+                                                    isHighlighted ? 'bg-blue-50 ring-1 ring-blue-200' : 'hover:bg-gray-50'
+                                                }`}
+                                                onClick={() => highlightArc(idx)}
+                                                onMouseEnter={() => highlightArc(idx)}
+                                                onMouseLeave={unhighlightArcs}
+                                            >
+                                                <td className="px-3 py-1.5 text-gray-400 font-medium">{idx + 1}</td>
+                                                <td className="px-3 py-1.5 text-gray-700">{originName}</td>
+                                                <td className="px-3 py-1.5 text-gray-700">{destName}</td>
+                                                <td className="px-3 py-1.5 text-right font-medium text-gray-900">{pair.count.toLocaleString()}</td>
+                                                <td className="px-3 py-1.5 text-right text-gray-500">{pct}%</td>
+                                                <td className="px-3 py-1.5 text-right text-gray-500">{distKm.toFixed(1)}</td>
+                                                {hasWeekdayData && <td className="px-3 py-1.5 text-right text-gray-500">{pair.weekdayCount ?? '—'}</td>}
+                                                {hasWeekdayData && <td className="px-3 py-1.5 text-right text-gray-500">{pair.weekendCount ?? '—'}</td>}
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+};

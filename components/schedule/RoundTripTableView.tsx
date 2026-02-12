@@ -23,7 +23,8 @@ import {
     buildRoundTripView
 } from '../../utils/masterScheduleParser';
 import { TimeUtils } from '../../utils/timeUtils';
-import { getRouteVariant, getRouteConfig, getDirectionDisplay, extractDirectionFromName, parseRouteInfo } from '../../utils/routeDirectionConfig';
+import { getRouteVariant, getRouteConfig, getDirectionDisplay, extractDirectionFromName, parseRouteInfo, isBidirectional } from '../../utils/routeDirectionConfig';
+import { normalizeStopName, matchesStop } from '../NewSchedule/utils/blockStartDirection';
 import {
     calculateHeadways,
     getRatioColor,
@@ -95,6 +96,41 @@ const abbreviateStopName = (name: string): string => {
         out = out.replace(pattern, replacement);
     }
     return out.replace(/\s+/g, ' ').trim();
+};
+
+/**
+ * Resolve the "key stop" for Block Flow sorting on bidirectional routes.
+ * Route 8A/8B: hardcoded Allandale (CLAUDE.md §6).
+ * Other bidirectional routes: North terminus from config, fuzzy-matched in stop lists.
+ * Loops / unknown routes: returns null → pairIndex fallback.
+ */
+const resolveKeyStop = (
+    baseRoute: string,
+    northStops: string[],
+    southStops: string[]
+): { northStop: string | undefined; southStop: string | undefined; label: string } | null => {
+    // Route 8A/8B: hardcoded Allandale (preserves CLAUDE.md §6)
+    if (baseRoute === '8A' || baseRoute === '8B') {
+        const nStop = northStops.find(s => s.toLowerCase().includes('allandale'));
+        const sStop = southStops.find(s => s.toLowerCase().includes('allandale'));
+        if (nStop || sStop) return { northStop: nStop, southStop: sStop, label: 'Allandale' };
+        return null;
+    }
+
+    // Other routes: check config
+    const config = getRouteConfig(baseRoute);
+    if (!isBidirectional(config)) return null;
+
+    const northSegment = config!.segments.find(s => s.name === 'North');
+    const terminus = northSegment?.terminus;
+    if (!terminus) return null;
+
+    const normTerminus = normalizeStopName(terminus);
+    const nStop = northStops.find(s => matchesStop(normalizeStopName(s), normTerminus));
+    const sStop = southStops.find(s => matchesStop(normalizeStopName(s), normTerminus));
+    if (!nStop && !sStop) return null;
+
+    return { northStop: nStop, southStop: sStop, label: abbreviateStopName(terminus) };
 };
 
 const isMajorTimepointStop = (stopName: string, index: number, stops: string[]): boolean => {
@@ -581,29 +617,25 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
         };
 
         const baseRoute = combined.routeName.split(' ')[0];
-        const isR8 = baseRoute === '8A' || baseRoute === '8B';
-        const nAllandale = isR8
-            ? combined.northStops.find(s => s.toLowerCase().includes('allandale'))
-            : undefined;
-        const sAllandale = isR8
-            ? combined.southStops.find(s => s.toLowerCase().includes('allandale'))
-            : undefined;
+        const keyStop = resolveKeyStop(baseRoute, combined.northStops, combined.southStops);
 
         return [...combined.rows].sort((a, b) => {
             if (sortColumn === 'blockFlow') {
-                if (isR8 && nAllandale) {
-                    const r8Time = (row: typeof combined.rows[0]): number => {
-                        const n = row.trips.find(t => t.direction === 'North');
-                        const nt = n?.stops?.[nAllandale];
-                        if (nt) return TimeUtils.toMinutes(nt) ?? 0;
-                        if (sAllandale) {
+                if (keyStop) {
+                    const keyStopTime = (row: typeof combined.rows[0]): number => {
+                        if (keyStop.northStop) {
+                            const n = row.trips.find(t => t.direction === 'North');
+                            const nt = n?.stops?.[keyStop.northStop];
+                            if (nt) return TimeUtils.toMinutes(nt) ?? 0;
+                        }
+                        if (keyStop.southStop) {
                             const s = row.trips.find(t => t.direction === 'South');
-                            const st = s?.stops?.[sAllandale];
+                            const st = s?.stops?.[keyStop.southStop];
                             if (st) return TimeUtils.toMinutes(st) ?? 0;
                         }
                         return _getSortTime(row);
                     };
-                    const td = getOperationalSortTime(r8Time(a)) - getOperationalSortTime(r8Time(b));
+                    const td = getOperationalSortTime(keyStopTime(a)) - getOperationalSortTime(keyStopTime(b));
                     if (td !== 0) return td;
                     return compareBlockIds(a.blockId, b.blockId);
                 }
@@ -620,6 +652,15 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
             return _getSortTime(a) - _getSortTime(b);
         });
     }, [primaryPair, sortColumn]);
+
+    // Resolve key stop label for Block Flow dropdown
+    const keyStopLabel = useMemo(() => {
+        if (!primaryPair) return null;
+        const { combined } = primaryPair;
+        const baseRoute = combined.routeName.split(' ')[0];
+        const ks = resolveKeyStop(baseRoute, combined.northStops, combined.southStops);
+        return ks?.label ?? null;
+    }, [primaryPair]);
 
     // Build GridRowInfo for each sorted row
     const gridRows = useMemo<GridRowInfo[]>(() => {
@@ -934,7 +975,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                             onChange={(e) => setSortColumn(e.target.value)}
                                             className="text-xs md:text-sm bg-transparent border-none text-gray-700 cursor-pointer hover:text-gray-900 pr-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 rounded"
                                         >
-                                            <option value="blockFlow">Sort: Block Flow</option>
+                                            <option value="blockFlow">Sort: Block Flow{keyStopLabel ? ` (${keyStopLabel})` : ''}</option>
                                             <option value="blockId">Sort: Block #</option>
                                             <option value="endTime">Sort: End Arrival</option>
                                             <option value="startTime">Sort: Start Time</option>
@@ -1199,42 +1240,35 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                             return northTrip?.startTime ?? southTrip?.startTime ?? 0;
                                         };
 
-                                        // Route 8A/8B: default sort by North Allandale departure
+                                        // Resolve key stop for Block Flow sort (generalized from Route 8 Allandale)
                                         const baseRoute = combined.routeName.split(' ')[0];
-                                        const isRoute8 = baseRoute === '8A' || baseRoute === '8B';
-                                        const northAllandaleStop = isRoute8
-                                            ? combined.northStops.find(s => s.toLowerCase().includes('allandale'))
-                                            : undefined;
-                                        const southAllandaleStop = isRoute8
-                                            ? combined.southStops.find(s => s.toLowerCase().includes('allandale'))
-                                            : undefined;
+                                        const keyStop = resolveKeyStop(baseRoute, combined.northStops, combined.southStops);
 
                                         // Sort rows by the selected column
                                         const sortedRows = [...combined.rows].sort((a, b) => {
                                             if (sortColumn === 'blockFlow') {
-                                                if (isRoute8 && northAllandaleStop) {
-                                                    // Route 8A/8B: chronological by North Allandale Terminal departure
-                                                    // South-only pullout trips (no North leg) use South Allandale
-                                                    // arrival as fallback — keeps them grouped at top of morning
+                                                if (keyStop) {
+                                                    // Chronological by key stop time (North trip first, South fallback)
                                                     // Post-midnight trips (12am-3am) sort at bottom via operational time
-                                                    const getRoute8SortTime = (row: typeof combined.rows[0]): number => {
-                                                        const north = row.trips.find(t => t.direction === 'North');
-                                                        const northTime = north?.stops?.[northAllandaleStop];
-                                                        if (northTime) return TimeUtils.toMinutes(northTime) ?? 0;
-                                                        // South-only pullout: use South Allandale arrival
-                                                        if (southAllandaleStop) {
+                                                    const getKeyStopSortTime = (row: typeof combined.rows[0]): number => {
+                                                        if (keyStop.northStop) {
+                                                            const north = row.trips.find(t => t.direction === 'North');
+                                                            const northTime = north?.stops?.[keyStop.northStop];
+                                                            if (northTime) return TimeUtils.toMinutes(northTime) ?? 0;
+                                                        }
+                                                        if (keyStop.southStop) {
                                                             const south = row.trips.find(t => t.direction === 'South');
-                                                            const southTime = south?.stops?.[southAllandaleStop];
+                                                            const southTime = south?.stops?.[keyStop.southStop];
                                                             if (southTime) return TimeUtils.toMinutes(southTime) ?? 0;
                                                         }
                                                         return getSortTime(row);
                                                     };
-                                                    const timeDiff = getOperationalSortTime(getRoute8SortTime(a))
-                                                                   - getOperationalSortTime(getRoute8SortTime(b));
+                                                    const timeDiff = getOperationalSortTime(getKeyStopSortTime(a))
+                                                                   - getOperationalSortTime(getKeyStopSortTime(b));
                                                     if (timeDiff !== 0) return timeDiff;
                                                     return compareBlockIds(a.blockId, b.blockId);
                                                 }
-                                                // All other routes: block flow by pairIndex
+                                                // Loop / unknown routes: block flow by pairIndex
                                                 const pairDiff = (a.pairIndex || 0) - (b.pairIndex || 0);
                                                 if (pairDiff !== 0) return pairDiff;
                                                 const timeDiff = getSortTime(a) - getSortTime(b);

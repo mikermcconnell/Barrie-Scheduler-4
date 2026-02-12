@@ -4,7 +4,7 @@ import { TimeBand } from '../../../utils/runtimeAnalysis';
 import { Clock, Bus, Plus, Trash2, LayoutGrid, Loader2, Database } from 'lucide-react';
 import { getMasterSchedule } from '../../../utils/masterScheduleService';
 import type { RouteIdentity } from '../../../utils/masterScheduleTypes';
-import { resolveBlockStartDirection, shouldShowStartDirectionForRoute, normalizeDirectionHint } from '../utils/blockStartDirection';
+import { resolveBlockStartDirection, shouldShowStartDirectionForRoute, normalizeDirectionHint, inferBlockStartDirection } from '../utils/blockStartDirection';
 
 // Configuration Constants
 export const SCHEDULE_DEFAULTS = {
@@ -444,6 +444,11 @@ export const Step3Build: React.FC<Step3Props> = ({ dayType, bands, config, setCo
     const updateBlock = (index: number, field: keyof BlockConfig, value: string) => {
         const newBlocks = [...config.blocks];
         newBlocks[index] = { ...newBlocks[index], [field]: value };
+        // Auto-populate startDirection when startStop changes
+        if (field === 'startStop') {
+            const inferred = inferBlockStartDirection(config.routeNumber, value);
+            newBlocks[index].startDirection = inferred || undefined;
+        }
         setConfig({ ...config, blocks: newBlocks });
     };
 
@@ -793,21 +798,26 @@ export const Step3Build: React.FC<Step3Props> = ({ dayType, bands, config, setCo
                                         </td>
                                         {showStartDirectionColumn && (
                                             <td className="px-4 py-3">
-                                                {startDirection ? (
-                                                    <span
-                                                        className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold border ${
-                                                            startDirection === 'North'
-                                                                ? 'bg-blue-50 text-blue-700 border-blue-200'
-                                                                : 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                                                        }`}
-                                                    >
-                                                        {startDirection}
-                                                    </span>
-                                                ) : (
-                                                    <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-gray-50 text-gray-500 border border-gray-200">
-                                                        Unknown
-                                                    </span>
-                                                )}
+                                                <select
+                                                    value={block.startDirection || ''}
+                                                    onChange={e => {
+                                                        const newBlocks = [...config.blocks];
+                                                        const val = e.target.value as 'North' | 'South' | '';
+                                                        newBlocks[idx] = { ...newBlocks[idx], startDirection: val || undefined };
+                                                        setConfig({ ...config, blocks: newBlocks });
+                                                    }}
+                                                    className={`text-xs font-semibold rounded-full px-2 py-0.5 border outline-none cursor-pointer ${
+                                                        block.startDirection === 'North'
+                                                            ? 'bg-blue-50 text-blue-700 border-blue-200'
+                                                            : block.startDirection === 'South'
+                                                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                                                : 'bg-gray-50 text-gray-500 border-gray-200'
+                                                    }`}
+                                                >
+                                                    <option value="">—</option>
+                                                    <option value="North">North</option>
+                                                    <option value="South">South</option>
+                                                </select>
                                             </td>
                                         )}
                                         <td className="px-4 py-3">

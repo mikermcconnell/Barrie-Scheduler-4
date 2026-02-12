@@ -62,19 +62,13 @@ const matchesStopNameForDirectionMatch = (
         || normalizedTarget.includes(normalizedStop);
 };
 
-const getStopMatchIndex = (stops: string[], normalizedTarget: string): number => {
-    const normalizedStops = stops.map(normalizeStopNameForDirectionMatch);
-    const exact = normalizedStops.findIndex(stop => stop === normalizedTarget);
-    if (exact >= 0) return exact;
-    return normalizedStops.findIndex(stop => matchesStopNameForDirectionMatch(stop, normalizedTarget));
-};
-
 const resolveInitialDirection = (
     isRoundTrip: boolean,
     blockStartStop: string | undefined,
     hasNorth: boolean,
     directions: string[],
-    timepointsMap: Record<string, string[]>
+    timepointsMap: Record<string, string[]>,
+    blockStartDirection?: 'North' | 'South'
 ): string => {
     let initialDirection = hasNorth ? 'North' : directions[0];
     if (!isRoundTrip || !blockStartStop) return initialDirection;
@@ -100,6 +94,10 @@ const resolveInitialDirection = (
     if (matchesNorthOrigin && !matchesSouthOrigin) return 'North';
     if (matchesSouthOrigin && !matchesNorthOrigin) return 'South';
 
+    // Starting at the opposite terminus means the first trip should depart in reverse.
+    if (matchesNorthTerminus && !matchesSouthTerminus) return 'South';
+    if (matchesSouthTerminus && !matchesNorthTerminus) return 'North';
+
     const northHasStop = northStops.some(stop =>
         matchesStopNameForDirectionMatch(normalizeStopNameForDirectionMatch(stop), normalizedStart)
     );
@@ -109,16 +107,9 @@ const resolveInitialDirection = (
     if (northHasStop && !southHasStop) return 'North';
     if (southHasStop && !northHasStop) return 'South';
 
-    // If both directions contain the stop, prefer the one where the stop appears earlier.
-    const northIndex = getStopMatchIndex(northStops, normalizedStart);
-    const southIndex = getStopMatchIndex(southStops, normalizedStart);
-    if (northIndex >= 0 && southIndex >= 0 && northIndex !== southIndex) {
-        return northIndex < southIndex ? 'North' : 'South';
-    }
-
-    // Starting at the opposite terminus means the first trip should depart in reverse.
-    if (matchesNorthTerminus && !matchesSouthTerminus) return 'South';
-    if (matchesSouthTerminus && !matchesNorthTerminus) return 'North';
+    // Ambiguous mid-route stop (appears in both directions): use the explicit
+    // block start direction if provided, otherwise keep the default.
+    if (northHasStop && southHasStop) return blockStartDirection || initialDirection;
 
     return initialDirection;
 };
@@ -294,9 +285,32 @@ export const generateSchedule = (
             block.startStop,
             hasNorth,
             directions,
-            timepointsMap
+            timepointsMap,
+            block.startDirection
         );
         let tripSequence = 1;
+
+        // For mid-route starts: find start stop index in the first trip's direction.
+        // Only applies to the first trip of the block; cleared after generation.
+        let pendingStartStopIdx: number | undefined;
+        if (block.startStop) {
+            const normalizedBlockStart = normalizeStopNameForDirectionMatch(block.startStop);
+            const firstDirTimepoints = timepointsMap[currentDir];
+            if (firstDirTimepoints && normalizedBlockStart) {
+                const firstStopNorm = normalizeStopNameForDirectionMatch(firstDirTimepoints[0]);
+                if (!matchesStopNameForDirectionMatch(firstStopNorm, normalizedBlockStart)) {
+                    const idx = firstDirTimepoints.findIndex(tp =>
+                        matchesStopNameForDirectionMatch(
+                            normalizeStopNameForDirectionMatch(tp),
+                            normalizedBlockStart
+                        )
+                    );
+                    if (idx > 0) {
+                        pendingStartStopIdx = idx;
+                    }
+                }
+            }
+        }
 
         // For round-trip routes, track the band determined at the START of the round trip
         // This ensures North and South legs use the same band based on initial departure
@@ -335,6 +349,9 @@ export const generateSchedule = (
                 return segment?.avgTime ?? null;
             };
 
+            // Mid-route start: active segment index (0 = full trip)
+            const activeStartIdx = pendingStartStopIdx || 0;
+
             // First pass: collect raw segment times and sum
             const rawSegmentTimes: number[] = [];
             let rawSum = 0;
@@ -354,37 +371,51 @@ export const generateSchedule = (
                 }
 
                 rawSegmentTimes.push(segTime);
-                rawSum += segTime;
+                // Only count active segments toward raw sum
+                if (i >= activeStartIdx) {
+                    rawSum += segTime;
+                }
             }
 
             // Calculate direction target to ensure North + South = band's avgTotal exactly
             let directionTarget: number;
-            const bandTotal = Math.round(currentBand?.avgTotal || rawSum);
+            const isPartialTrip = activeStartIdx > 0;
 
-            if (isRoundTrip) {
-                if (currentDir === 'North') {
-                    // North leg: use floor of half to leave room for South
-                    directionTarget = Math.floor(bandTotal / 2);
-                } else {
-                    // South leg: use remainder to hit exact total
-                    // For pullout blocks starting South (no preceding North trip), use ceil of half
-                    directionTarget = roundTripNorthTravelTime > 0
-                        ? bandTotal - roundTripNorthTravelTime
-                        : Math.ceil(bandTotal / 2);
-                }
+            if (isPartialTrip) {
+                // Partial pullout trip: use actual segment sum, no band target forcing
+                directionTarget = Math.round(rawSum);
             } else {
-                // Single direction: use full target
-                directionTarget = bandTotal;
+                const bandTotal = Math.round(currentBand?.avgTotal || rawSum);
+
+                if (isRoundTrip) {
+                    if (currentDir === 'North') {
+                        // North leg: use floor of half to leave room for South
+                        directionTarget = Math.floor(bandTotal / 2);
+                    } else {
+                        // South leg: use remainder to hit exact total
+                        // For pullout blocks starting South (no preceding North trip), use ceil of half
+                        directionTarget = roundTripNorthTravelTime > 0
+                            ? bandTotal - roundTripNorthTravelTime
+                            : Math.ceil(bandTotal / 2);
+                    }
+                } else {
+                    // Single direction: use full target
+                    directionTarget = bandTotal;
+                }
             }
 
-            // Second pass: round each segment, then adjust last segment to hit target exactly
+            // Second pass: round each segment, then adjust last active segment to hit target exactly
             // LOCKED LOGIC: Round BEFORE summing
             const finalSegmentRuntimes: number[] = [];
             let allocatedTime = 0;
+            const lastActiveIdx = rawSegmentTimes.length - 1;
 
             for (let i = 0; i < rawSegmentTimes.length; i++) {
-                if (i === rawSegmentTimes.length - 1) {
-                    // Last segment: use remainder to hit target exactly
+                if (i < activeStartIdx) {
+                    // Inactive segment (before mid-route start): zero placeholder
+                    finalSegmentRuntimes.push(0);
+                } else if (i === lastActiveIdx) {
+                    // Last active segment: use remainder to hit target exactly
                     const lastSegTime = Math.max(1, directionTarget - allocatedTime);
                     finalSegmentRuntimes.push(lastSegTime);
                     allocatedTime += lastSegTime;
@@ -423,6 +454,18 @@ export const generateSchedule = (
                 nextTripStart = currentTime + allocated;
             }
 
+            // Partial pullout trips: use proportional recovery instead of cycle-gap.
+            // Without this, Strict mode assigns (halfCycle - tinyTravel) = inflated
+            // recovery (e.g., 59 min at Rose St for a 1-min Georgian Coll → Rose pullout).
+            if (isPartialTrip) {
+                const bandId = roundTripBandId || currentBand?.bandId;
+                const bandDefault = bandId ? config.bandRecoveryDefaults?.find(bd => bd.bandId === bandId) : undefined;
+                const ratio = (bandDefault?.avgRecoveryRatio ?? config.recoveryRatio ?? 15) / 100;
+                totalRecovery = Math.round(pureTravelTime * ratio);
+                tripCycleAllocated = pureTravelTime + totalRecovery;
+                nextTripStart = currentTime + tripCycleAllocated;
+            }
+
             // 4. Distribute Recovery PROPORTIONALLY across all stops (except first)
             const recoveryTimes: Record<string, number> = {};
             const stopPaddings: number[] = new Array(dirTimepoints.length).fill(0);
@@ -454,7 +497,10 @@ export const generateSchedule = (
             let currentStopMins = currentTime;
 
             dirTimepoints.forEach((stop, idx) => {
-                if (idx > 0) {
+                // Skip stops before the mid-route start
+                if (idx < activeStartIdx) return;
+
+                if (idx > activeStartIdx) {
                     currentStopMins += finalSegmentRuntimes[idx - 1];
                 }
 
@@ -483,7 +529,8 @@ export const generateSchedule = (
                 recoveryTimes: recoveryTimes,
                 recoveryTime: totalRecovery,
                 cycleTime: tripCycleAllocated,
-                assignedBand: roundTripBandId || currentBand?.bandId || undefined
+                assignedBand: roundTripBandId || currentBand?.bandId || undefined,
+                startStopIndex: activeStartIdx > 0 ? activeStartIdx : undefined
             };
 
             resultTrips[currentDir].push(newTrip);
@@ -496,6 +543,8 @@ export const generateSchedule = (
             // 6. Advance
             currentTime = nextTripStart;
             tripSequence++;
+            // Clear mid-route start after first trip — subsequent trips are full-route
+            pendingStartStopIdx = undefined;
 
             // Toggle Direction for Round Trip
             if (isRoundTrip) {

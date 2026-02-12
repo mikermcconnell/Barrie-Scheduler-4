@@ -4,9 +4,12 @@ import { ParsedRoute, ParsedTrip, StopInfo, ParseResult } from '../utils/masterS
 import * as assert from 'assert';
 
 // Mock Data Helper
-const createMockTrip = (id: string, time: string, rowIndex: number): ParsedTrip => ({
-    id,
+const createMockTrip = (_id: string, time: string, rowIndex: number): ParsedTrip => ({
     rowIndex,
+    dayType: 'Weekday',
+    timeBand: 'Morning',
+    endTime: null,
+    travelTime: 0,
     times: { 'StopA': time, 'StopB': time },
     startTime: parseInt(time) || 0,
     recoveryTimes: { 'StopB': 5 }
@@ -39,7 +42,8 @@ const runTest = () => {
 
     const result: ParseResult = {
         routes: [mockRoute],
-        errors: []
+        errors: [],
+        warnings: []
     };
 
     const tables = adaptV2ToV1(result);

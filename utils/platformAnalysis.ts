@@ -14,7 +14,7 @@ import { HUBS, type HubConfig } from './platformConfig';
 import { calculatePlatformMetrics } from './platformAnalysis/conflictEngine';
 import { populateDwellEvents } from './platformAnalysis/dwellEventBuilder';
 import { formatMinutesToTime } from './platformAnalysis/time';
-import type { HubAnalysis } from './platformAnalysis/types';
+import type { HubAnalysis, DwellEvent, ConflictWindow } from './platformAnalysis/types';
 
 export type {
     DwellEvent,
@@ -37,12 +37,12 @@ function initializeHubAnalyses(hubList: HubConfig[]): Map<string, HubAnalysis> {
                     platformId: p.platformId,
                     routes: p.routes,
                     capacity: p.capacity || 1,
-                    events: [],
+                    events: [] as DwellEvent[],
                     peakCount: 0,
-                    peakWindows: [],
+                    peakWindows: [] as ConflictWindow[],
                     totalVisits: 0,
                     hasConflict: false,
-                    conflictWindows: []
+                    conflictWindows: [] as ConflictWindow[]
                 })),
             totalDailyVisits: 0,
             conflictCount: 0,

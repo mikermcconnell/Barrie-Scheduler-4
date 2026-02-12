@@ -17,5 +17,10 @@ service firebase.storage {
     match /teams/{teamId}/routeMaps/{allPaths=**} {
       allow read, write: if request.auth != null;
     }
+
+    // Team transit app data (aggregated JSON)
+    match /teams/{teamId}/transitAppData/{allPaths=**} {
+      allow read, write: if request.auth != null;
+    }
   }
 }

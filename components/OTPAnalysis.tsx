@@ -41,7 +41,9 @@ export const OTPAnalysis: React.FC = () => {
         };
     }, [data, targetConnectionTime, transferBuffer]);
 
-    const handleFileUpload = (file: File) => {
+    const handleFileUpload = (files: File[]) => {
+        const file = files[0];
+        if (!file) return;
         // In real implementation: Parse file here.
         alert(`File uploaded: ${file.name}. Using simulated "Actual" data for demonstration.`);
         setData(generateMockOTPData());

@@ -239,9 +239,9 @@ export const getAllProjects = async (userId: string): Promise<NewScheduleProject
             routeNumber: data.routeNumber,
             isGenerated: data.isGenerated,
             config: data.config,
-            analysis: [],
-            bands: [],
-            generatedSchedules: [],
+            analysis: [] as TripBucketAnalysis[],
+            bands: [] as TimeBand[],
+            generatedSchedules: [] as MasterRouteTable[],
             storagePath: data.storagePath,
             createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate() : new Date(),
             updatedAt: data.updatedAt instanceof Timestamp ? data.updatedAt.toDate() : new Date()

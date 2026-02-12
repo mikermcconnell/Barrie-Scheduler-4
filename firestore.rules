@@ -43,6 +43,11 @@ service cloud.firestore {
           allow read, write: if isTeamMember(teamId);
         }
       }
+
+      // Transit App Data
+      match /transitAppData/{docId} {
+        allow read, write: if isTeamMember(teamId);
+      }
     }
 
     // ========== HELPER FUNCTIONS ==========

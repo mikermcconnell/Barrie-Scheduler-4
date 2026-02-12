@@ -24,6 +24,13 @@
       ]
     },
     "allowImportingTsExtensions": true,
-    "noEmit": true
-  }
+    "noEmit": true,
+    "noImplicitAny": true
+  },
+  "exclude": [
+    "node_modules",
+    "dist",
+    "components/Analytics/TransitApp*.tsx",
+    "utils/transitApp*.ts"
+  ]
 }

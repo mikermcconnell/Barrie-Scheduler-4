@@ -23,6 +23,7 @@ import type {
     ConnectionLibrary,
     ConnectionTarget,
     ConnectionTime,
+    ConnectionEventType,
     ConnectionQualityWindowSettings
 } from '../../../utils/connectionTypes';
 import {
@@ -221,7 +222,7 @@ export const ConnectionLibraryPanel: React.FC<ConnectionLibraryPanelProps> = ({
         name: editingTarget.name,
         location: editingTarget.location,
         stopCode: editingTarget.stopCode,
-        icon: editingTarget.icon === 'clock' ? 'clock' : 'train',
+        icon: (editingTarget.icon === 'clock' ? 'clock' : 'train') as 'train' | 'clock',
         defaultEventType: editingTarget.defaultEventType || 'departure',
         times: editingTarget.times,
         autoPopulateStops: editingTarget.autoPopulateStops,
@@ -300,7 +301,7 @@ export const ConnectionLibraryPanel: React.FC<ConnectionLibraryPanelProps> = ({
     };
 
     const handleBulkSetDefaultInheritance = (targetId: string) => {
-        updateTargetTimes(targetId, times => times.map(time => ({ ...time, eventType: undefined })), 'bulk_set_default_inheritance');
+        updateTargetTimes(targetId, times => times.map(time => ({ ...time, eventType: undefined as ConnectionEventType | undefined })), 'bulk_set_default_inheritance');
     };
 
     const shiftTime = (minutes: number, delta: number) => {

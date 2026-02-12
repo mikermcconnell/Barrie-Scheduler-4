@@ -84,7 +84,7 @@ describe('goTransitService data source behavior', () => {
                 trip_headsign: 'Union Station',
                 direction_id: '0'
             }],
-            calendar: [],
+            calendar: [] as unknown[],
             calendarDates: [{
                 service_id: 'SVC1',
                 date: '20260209', // Monday

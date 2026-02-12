@@ -17,6 +17,7 @@ import type {
     ConnectionTargetType
 } from '../../../utils/connectionTypes';
 import type { DayType, MasterRouteTable } from '../../../utils/masterScheduleParser';
+import type { RouteIdentity } from '../../../utils/masterScheduleTypes';
 import { getAllMasterSchedules, getMasterSchedule } from '../../../utils/masterScheduleService';
 
 interface ImportRouteModalProps {
@@ -29,7 +30,7 @@ interface ImportRouteModalProps {
 }
 
 interface RouteOption {
-    routeIdentity: string;
+    routeIdentity: RouteIdentity;
     routeNumber: string;
     dayType: DayType;
     tripCount: number;
@@ -71,9 +72,9 @@ export const ImportRouteModal: React.FC<ImportRouteModalProps> = ({
 
                 const schedules = await getAllMasterSchedules(teamId);
                 const routeOptions: RouteOption[] = schedules
-                    .filter(s => s.routeIdentity !== currentRouteIdentity)
+                    .filter(s => s.id !== currentRouteIdentity)
                     .map(s => ({
-                        routeIdentity: s.routeIdentity,
+                        routeIdentity: s.id as RouteIdentity,
                         routeNumber: s.routeNumber,
                         dayType: s.dayType,
                         tripCount: s.tripCount || 0

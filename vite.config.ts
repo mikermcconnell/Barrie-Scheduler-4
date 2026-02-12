@@ -73,9 +73,9 @@ export default defineConfig(({ mode }) => {
   // Define API Middleware Plugin
   const apiMiddlewarePlugin = () => ({
     name: 'configure-server',
-    configureServer(server) {
+    configureServer(server: any) {
       console.log('✅ Plugin configureServer called');
-      server.middlewares.use(async (req, res, next) => {
+      server.middlewares.use(async (req: any, res: any, next: any) => {
         console.log('Incoming request:', req.method, req.url);
 
         if (req.url === '/api/optimize' && req.method === 'POST') {

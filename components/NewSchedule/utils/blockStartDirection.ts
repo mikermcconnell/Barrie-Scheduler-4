@@ -2,7 +2,7 @@ import { getRouteConfig } from '../../../utils/routeDirectionConfig';
 
 export type BlockStartDirection = 'North' | 'South';
 
-const normalizeStopName = (value: string): string => {
+export const normalizeStopName = (value: string): string => {
     return value
         .toLowerCase()
         .replace(/^(arrive|arrival|depart|departure)\s+/i, '')
@@ -16,7 +16,7 @@ const isRoute8Family = (routeNumber: string): boolean => {
     return normalized === '8' || normalized === '8A' || normalized === '8B';
 };
 
-const matchesStop = (needle: string, target: string): boolean => {
+export const matchesStop = (needle: string, target: string): boolean => {
     return !!needle && !!target && (needle.includes(target) || target.includes(needle));
 };
 
@@ -68,7 +68,8 @@ export const inferBlockStartDirection = (
 };
 
 export const shouldShowStartDirectionForRoute = (routeNumber: string): boolean => {
-    return isRoute8Family(routeNumber);
+    const config = getRouteConfig(routeNumber.trim().toUpperCase());
+    return !!config && config.segments.length === 2;
 };
 
 export const normalizeDirectionHint = (value?: string): BlockStartDirection | null => {

@@ -77,7 +77,16 @@ npx vitest run tests/timeUtils.test.ts  # Time parsing tests (run before any tim
 
 ---
 
-## 3. Required Tests
+## 3. Build & Verification
+
+- **After adding packages** to `package.json`, always run `npm install` before considering the task complete.
+- **Before marking any task complete**, run `npm run build` and confirm it passes. Do not present work as done with an unverified build.
+- **For multi-phase work**, commit after each completed phase before moving to the next. Use descriptive commit messages so progress is recoverable.
+- **Post-edit hook** (`.claude/settings.json`) auto-runs `tsc --noEmit` after every Edit/Write. If it reports errors, fix them before continuing.
+
+---
+
+## 4. Required Tests
 
 Before touching time parsing or schedule parsing:
 
@@ -89,7 +98,7 @@ npx vitest run tests/timeUtils.test.ts
 
 ---
 
-## 4. Task Patterns
+## 5. Task Patterns
 
 ### Bug Fix
 1. Reproduce/understand the issue
@@ -97,6 +106,7 @@ npx vitest run tests/timeUtils.test.ts
 3. Propose fix with impact assessment
 4. Implement after confirmation
 5. Run relevant tests
+6. **Verify build** (`npm run build`) before marking done
 
 ### New Feature
 1. Clarify requirements (1-3 questions)
@@ -104,16 +114,18 @@ npx vitest run tests/timeUtils.test.ts
 3. **PM Quick Check** (auto-triggered, or `/pm-review` for complex features)
 4. Wait for "go" confirmation
 5. Implement with TodoWrite tracking
+6. **Verify build** (`npm run build`) before marking done
 
 ### Refactor
 1. Explain current state and proposed change
 2. Flag any behavioral changes
 3. **PM Quick Check** if touching core workflows or locked logic
 4. Get approval before proceeding
+5. **Verify build** (`npm run build`) before marking done
 
 ---
 
-## 5. Feedback Loop
+## 6. Feedback Loop
 
 When user provides feedback like `"7/10 - missed edge case"`:
 1. Acknowledge
@@ -122,7 +134,7 @@ When user provides feedback like `"7/10 - missed edge case"`:
 
 ---
 
-## 6. Route 8A/8B Sorting Rules
+## 7. Route 8A/8B Sorting Rules
 
 Route 8A and 8B have custom "Block Flow" sort logic in `RoundTripTableView.tsx`:
 
@@ -136,7 +148,25 @@ Route 8A and 8B have custom "Block Flow" sort logic in `RoundTripTableView.tsx`:
 
 ---
 
-## 7. Session Memory
+## 8. Danger Zones (Extra Verification Required)
+
+These files are high-risk for bugs. Apply extra caution and always run the listed verification:
+
+| File | Risk | Verify With |
+|------|------|-------------|
+| `scheduleGenerator.ts` | Locked logic, complex trip generation | `npx vitest run tests/scheduleGenerator` |
+| `blockAssignmentCore.ts` | Subtle gap-based matching | `npx vitest run tests/blockAssignmentCore` |
+| `masterScheduleParser*.ts` | Two parsers + adapter routing | `npx vitest run tests/parser.test.ts` |
+| `vite.config.ts` | 11K lines, API middleware | `npm run build` |
+| Any time parsing (`timeUtils.ts`, `excelTimeToString`, etc.) | Post-midnight >= 1.0 boundary | `npx vitest run tests/timeUtils.test.ts` |
+| `ScheduleEditor.tsx` | Largest component, intricate rendering | `npm run build` + manual verify |
+| `RoundTripTableView.tsx` | 8A/8B sort logic, stop-name matching | `npm run build` + check sort order |
+
+**Rule**: When editing a Danger Zone file, run its verification command BEFORE and AFTER changes.
+
+---
+
+## 9. Session Memory
 
 - **Post-midnight time parsing** - Always run tests after touching time parsing
 - **Dynamic stop-name detection** - Never hardcode stop indices; use name-based matching

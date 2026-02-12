@@ -13,6 +13,13 @@ interface GtfsStopRecord {
     stop_name: string;
 }
 
+export interface GtfsStopWithCoords {
+    stop_id: string;
+    stop_name: string;
+    lat: number;
+    lon: number;
+}
+
 function parseCsvRow(line: string): string[] {
     const values: string[] = [];
     let current = '';
@@ -88,4 +95,70 @@ export function buildStopNameToIdMap(): Record<string, string> {
         }
     }
     return map;
+}
+
+let cachedStopsWithCoords: GtfsStopWithCoords[] | null = null;
+
+/**
+ * Parse all stops with lat/lon coordinates from GTFS stops.txt.
+ * Cached after first call.
+ */
+export function getAllStopsWithCoords(): GtfsStopWithCoords[] {
+    if (cachedStopsWithCoords) return cachedStopsWithCoords;
+
+    const lines = stopsRaw.trim().split(/\r?\n/);
+    if (lines.length < 2) return [];
+
+    const headers = parseCsvRow(lines[0]).map(h => h.replace(/^\uFEFF/, '').trim());
+    const idIdx = headers.indexOf('stop_id');
+    const nameIdx = headers.indexOf('stop_name');
+    const latIdx = headers.indexOf('stop_lat');
+    const lonIdx = headers.indexOf('stop_lon');
+
+    if (idIdx === -1 || nameIdx === -1 || latIdx === -1 || lonIdx === -1) return [];
+
+    const results: GtfsStopWithCoords[] = [];
+    for (let i = 1; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (!line) continue;
+        const values = parseCsvRow(line);
+        const lat = parseFloat(values[latIdx]);
+        const lon = parseFloat(values[lonIdx]);
+        if (!values[nameIdx] || isNaN(lat) || isNaN(lon)) continue;
+        results.push({
+            stop_id: values[idIdx] || '',
+            stop_name: values[nameIdx],
+            lat,
+            lon,
+        });
+    }
+
+    cachedStopsWithCoords = results;
+    return results;
+}
+
+/**
+ * Find the nearest GTFS stop name within maxKm radius using haversine distance.
+ * Returns null if no stop is within range.
+ */
+export function findNearestStopName(lat: number, lon: number, maxKm: number = 0.5): string | null {
+    const stops = getAllStopsWithCoords();
+    const R = 6371;
+    let bestName: string | null = null;
+    let bestDist = maxKm;
+
+    for (const stop of stops) {
+        const dLat = (stop.lat - lat) * Math.PI / 180;
+        const dLon = (stop.lon - lon) * Math.PI / 180;
+        const a = Math.sin(dLat / 2) ** 2
+            + Math.cos(lat * Math.PI / 180) * Math.cos(stop.lat * Math.PI / 180)
+            * Math.sin(dLon / 2) ** 2;
+        const d = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        if (d < bestDist) {
+            bestDist = d;
+            bestName = stop.stop_name;
+        }
+    }
+
+    return bestName;
 }
