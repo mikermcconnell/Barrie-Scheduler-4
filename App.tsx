@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { OnDemandWorkspace } from './components/OnDemandWorkspace';
 import { FixedRouteWorkspace } from './components/FixedRouteWorkspace';
 import { AuthProvider, useAuth } from './components/AuthContext';
@@ -10,14 +10,34 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { LayoutDashboard, Bus, Settings, Bell, ArrowRight, ArrowLeft, Map, User, LogOut, FolderOpen, ChevronDown, ChevronRight, Loader2, FileSpreadsheet, Plus, Download, CalendarPlus, Timer, BarChart2, Settings2, Sparkles } from 'lucide-react';
 import { Header, View } from './components/Header';
 
+function parseHashView(): View {
+  const hash = window.location.hash.slice(1);
+  if (hash.startsWith('fixed')) return 'fixed';
+  if (hash.startsWith('ondemand')) return 'ondemand';
+  return 'home';
+}
+
 
 
 const AppContent: React.FC = () => {
   const { user, loading, signOut } = useAuth();
-  const [currentView, setCurrentView] = useState<View>('home');
+  const [currentView, setCurrentViewState] = useState<View>(parseHashView);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showFileManager, setShowFileManager] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
+
+  // Wrap navigation to sync URL hash
+  const setCurrentView = useCallback((view: View) => {
+    setCurrentViewState(view);
+    window.location.hash = view === 'home' ? '' : view;
+  }, []);
+
+  // Handle browser back/forward
+  useEffect(() => {
+    const handler = () => setCurrentViewState(parseHashView());
+    window.addEventListener('hashchange', handler);
+    return () => window.removeEventListener('hashchange', handler);
+  }, []);
 
   // Show loading state while checking auth
   if (loading) {

@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
     CalendarPlus,
     ArrowRight,
@@ -31,6 +31,19 @@ import { useAuth } from './AuthContext';
 import { useToast } from './ToastContext';
 
 type FixedRouteViewMode = 'dashboard' | 'editor' | 'new-schedule' | 'master' | 'reports' | 'analytics' | 'drafts' | 'system-editor';
+
+const VALID_VIEW_MODES = new Set<string>([
+    'dashboard', 'editor', 'new-schedule', 'master', 'reports', 'analytics', 'drafts', 'system-editor'
+]);
+
+function parseHashViewMode(): FixedRouteViewMode {
+    const hash = window.location.hash.slice(1);
+    const parts = hash.split('/');
+    if (parts[0] === 'fixed' && parts[1] && VALID_VIEW_MODES.has(parts[1])) {
+        return parts[1] as FixedRouteViewMode;
+    }
+    return 'dashboard';
+}
 
 const VIEW_MODE_LABELS: Record<FixedRouteViewMode, string> = {
     dashboard: '',
@@ -76,8 +89,21 @@ const DashboardCard: React.FC<DashboardCardProps> = ({ onClick, icon, title, des
 export const FixedRouteWorkspace: React.FC = () => {
     const { user } = useAuth();
     const toast = useToast();
-    const [viewMode, setViewMode] = useState<FixedRouteViewMode>('dashboard');
+    const [viewMode, setViewModeState] = useState<FixedRouteViewMode>(parseHashViewMode);
     const [showGTFSImport, setShowGTFSImport] = useState(false);
+
+    // Wrap navigation to sync URL hash
+    const setViewMode = useCallback((mode: FixedRouteViewMode) => {
+        setViewModeState(mode);
+        window.location.hash = mode === 'dashboard' ? 'fixed' : `fixed/${mode}`;
+    }, []);
+
+    // Handle browser back/forward
+    useEffect(() => {
+        const handler = () => setViewModeState(parseHashViewMode());
+        window.addEventListener('hashchange', handler);
+        return () => window.removeEventListener('hashchange', handler);
+    }, []);
 
     const [editorInitialContent, setEditorInitialContent] = useState<MasterScheduleContent | null>(null);
 
@@ -296,7 +322,7 @@ export const FixedRouteWorkspace: React.FC = () => {
                         title="Reports" description="Generate public timetables, GTFS exports, and driver sheets." />
 
                     <DashboardCard onClick={() => setViewMode('analytics')} icon={<GitBranch size={20} />} color="cyan"
-                        title="Analytics" description="Discover interlining opportunities and analyze route efficiency." />
+                        title="Analytics" description="Analyze rider demand, route performance, and connections from Transit App data." />
                 </div>
 
                 {/* GTFS Import Modal */}
