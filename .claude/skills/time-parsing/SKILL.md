@@ -36,9 +36,9 @@ function excelTimeToMinutes(value: number): number {
 | File | Lines | Function |
 |------|-------|----------|
 | `utils/timeUtils.ts` | 18-26 | Core time utilities |
-| `utils/masterScheduleParser.ts` | 119-129 | Schedule import |
-| `utils/masterScheduleParserV2.ts` | 55-84 | `parseTimeToMinutes` |
-| `utils/masterScheduleParserV2.ts` | 425 | `isExcelTime` check |
+| `utils/parsers/masterScheduleParser.ts` | 119-129 | Schedule import |
+| `utils/parsers/masterScheduleParserV2.ts` | 55-84 | `parseTimeToMinutes` |
+| `utils/parsers/masterScheduleParserV2.ts` | 425 | `isExcelTime` check |
 
 ## Before You Finish
 

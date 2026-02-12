@@ -67,7 +67,7 @@ Reduce complexity while preserving functionality. Focus on:
 ```
 ## Simplification Report
 
-**Target:** `utils/exportService.ts`
+**Target:** `utils/services/exportService.ts`
 **Lines before:** 450
 **Lines after:** 320
 **Reduction:** 130 lines (29%)
@@ -88,7 +88,7 @@ Reduce complexity while preserving functionality. Focus on:
 User: /simplify
 → Analyzes recently modified files, simplifies them
 
-User: /simplify utils/scheduleGenerator.ts
+User: /simplify utils/schedule/scheduleGenerator.ts
 → Focuses on that specific file
 
 User: /simplify handleExport

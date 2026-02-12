@@ -303,9 +303,9 @@ Recovery Ratio = Recovery Time ÷ Cycle Time (target: 15-20%)
 
 ### File Locations
 ```
-Schedule generation: utils/scheduleGenerator.ts
-Block assignment: utils/blockAssignment.ts (+ gtfsImportService.ts)
-Runtime analysis: components/NewSchedule/utils/runtimeAnalysis.ts
+Schedule generation: utils/schedule/scheduleGenerator.ts
+Block assignment: utils/blocks/blockAssignment.ts (+ gtfsImportService.ts)
+Runtime analysis: utils/ai/runtimeAnalysis.ts
 Time parsing: utils/timeUtils.ts
 GTFS handling: utils/gtfsImportService.ts
 ```

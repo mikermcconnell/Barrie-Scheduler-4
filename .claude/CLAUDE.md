@@ -154,9 +154,9 @@ These files are high-risk for bugs. Apply extra caution and always run the liste
 
 | File | Risk | Verify With |
 |------|------|-------------|
-| `scheduleGenerator.ts` | Locked logic, complex trip generation | `npx vitest run tests/scheduleGenerator` |
-| `blockAssignmentCore.ts` | Subtle gap-based matching | `npx vitest run tests/blockAssignmentCore` |
-| `masterScheduleParser*.ts` | Two parsers + adapter routing | `npx vitest run tests/parser.test.ts` |
+| `utils/schedule/scheduleGenerator.ts` | Locked logic, complex trip generation | `npx vitest run tests/scheduleGenerator` |
+| `utils/blocks/blockAssignmentCore.ts` | Subtle gap-based matching | `npx vitest run tests/blockAssignmentCore` |
+| `utils/parsers/masterScheduleParser*.ts` | Two parsers + adapter routing | `npx vitest run tests/parser.test.ts` |
 | `vite.config.ts` | 11K lines, API middleware | `npm run build` |
 | Any time parsing (`timeUtils.ts`, `excelTimeToString`, etc.) | Post-midnight >= 1.0 boundary | `npx vitest run tests/timeUtils.test.ts` |
 | `ScheduleEditor.tsx` | Largest component, intricate rendering | `npm run build` + manual verify |

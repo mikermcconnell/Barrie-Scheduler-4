@@ -10,12 +10,12 @@ const path = require('path');
 // Map source files to their test files
 const FILE_TEST_MAP = {
   'utils/timeUtils.ts': 'tests/timeUtils.test.ts',
-  'utils/scheduleGenerator.ts': 'tests/scheduleGenerator',
-  'utils/blockAssignmentCore.ts': 'tests/blockAssignmentCore.test.ts',
-  'utils/masterScheduleParser.ts': 'tests/parser.test.ts',
-  'utils/masterScheduleParserV2.ts': 'tests/parser.test.ts',
-  'utils/parserAdapter.ts': 'tests/parser.test.ts',
-  'utils/connectionUtils.ts': 'tests/connectionUtils.test.ts',
+  'utils/schedule/scheduleGenerator.ts': 'tests/scheduleGenerator',
+  'utils/blocks/blockAssignmentCore.ts': 'tests/blockAssignmentCore.test.ts',
+  'utils/parsers/masterScheduleParser.ts': 'tests/parser.test.ts',
+  'utils/parsers/masterScheduleParserV2.ts': 'tests/parser.test.ts',
+  'utils/parsers/parserAdapter.ts': 'tests/parser.test.ts',
+  'utils/connections/connectionUtils.ts': 'tests/connectionUtils.test.ts',
   'utils/goTransitService.ts': 'tests/goTransitService.test.ts',
   'utils/scheduleDraftAdapter.ts': 'tests/scheduleDraftAdapter.test.ts',
   'utils/platformConflictDetection.ts': 'tests/platformAnalysis.test.ts',

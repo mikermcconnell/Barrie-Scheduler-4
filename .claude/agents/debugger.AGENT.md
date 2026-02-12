@@ -28,7 +28,7 @@ Investigate bugs and issues **without modifying any code**. Your job is to:
 
 ### Time Parsing Issues
 - `utils/timeUtils.ts` - Excel time conversion
-- `utils/masterScheduleParser.ts` - Post-midnight handling
+- `utils/parsers/masterScheduleParser.ts` - Post-midnight handling
 - Look for values >= 1.0 (indicates next-day time)
 
 ### Block Assignment Bugs
