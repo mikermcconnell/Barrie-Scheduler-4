@@ -37,6 +37,23 @@ function generateInviteCode(): string {
 }
 
 /**
+ * Generate a unique invite code across all teams.
+ */
+async function generateUniqueInviteCode(excludeTeamId?: string): Promise<string> {
+    const teamsRef = collection(db, 'teams');
+    for (let attempt = 0; attempt < 25; attempt++) {
+        const candidate = generateInviteCode();
+        const q = query(teamsRef, where('inviteCode', '==', candidate));
+        const existing = await getDocs(q);
+        const usedByOtherTeam = existing.docs.some(d => d.id !== excludeTeamId);
+        if (!usedByOtherTeam) {
+            return candidate;
+        }
+    }
+    throw new Error('Unable to generate unique invite code');
+}
+
+/**
  * Convert Firestore Timestamp to Date
  */
 function timestampToDate(timestamp: Timestamp | Date): Date {
@@ -59,7 +76,7 @@ export async function createTeam(
     const teamDocRef = doc(teamsRef);
     const teamId = teamDocRef.id;
 
-    const inviteCode = generateInviteCode();
+    const inviteCode = await generateUniqueInviteCode();
 
     // Create team document
     await setDoc(teamDocRef, {
@@ -220,6 +237,10 @@ export async function findTeamByInviteCode(code: string): Promise<Team | null> {
         return null;
     }
 
+    if (querySnap.size > 1) {
+        throw new Error('Invite code conflict detected. Ask an admin to regenerate the code.');
+    }
+
     const teamDoc = querySnap.docs[0];
     const teamData = teamDoc.data();
 
@@ -331,7 +352,7 @@ export async function updateMemberRole(
  * Regenerate invite code (owner/admin only - enforcement via security rules)
  */
 export async function regenerateInviteCode(teamId: string): Promise<string> {
-    const newCode = generateInviteCode();
+    const newCode = await generateUniqueInviteCode(teamId);
     const teamRef = doc(db, 'teams', teamId);
     await updateDoc(teamRef, { inviteCode: newCode });
     return newCode;
