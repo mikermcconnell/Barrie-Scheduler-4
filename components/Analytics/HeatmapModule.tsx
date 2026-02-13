@@ -15,6 +15,7 @@ const SEASON_OPTIONS: { key: TransferSeason; label: string }[] = [
     { key: 'jan', label: 'January' },
     { key: 'jul', label: 'July' },
     { key: 'sep', label: 'September' },
+    { key: 'other', label: 'Other' },
 ];
 
 const ATLAS_ORDER: { id: HeatmapAtlasSliceId; label: string }[] = [
@@ -38,20 +39,18 @@ export const HeatmapModule: React.FC<HeatmapModuleProps> = ({ data }) => {
     ), [atlas, season, sliceId]);
 
     const atlasRows = useMemo(() => {
-        const rows = atlas
-            .filter(slice => slice.season !== 'other')
-            .map(slice => {
-                const hotspot = slice.cells[0];
-                return {
-                    season: slice.season,
-                    id: slice.id,
-                    label: ATLAS_ORDER.find(def => def.id === slice.id)?.label || slice.id,
-                    totalPoints: slice.totalPoints,
-                    hotspotCount: hotspot?.count || 0,
-                    hotspotLat: hotspot?.latBin ?? null,
-                    hotspotLon: hotspot?.lonBin ?? null,
-                };
-            });
+        const rows = atlas.map(slice => {
+            const hotspot = slice.cells[0];
+            return {
+                season: slice.season,
+                id: slice.id,
+                label: ATLAS_ORDER.find(def => def.id === slice.id)?.label || slice.id,
+                totalPoints: slice.totalPoints,
+                hotspotCount: hotspot?.count || 0,
+                hotspotLat: hotspot?.latBin ?? null,
+                hotspotLon: hotspot?.lonBin ?? null,
+            };
+        });
         return rows.sort((a, b) => b.totalPoints - a.totalPoints);
     }, [atlas]);
 
@@ -149,6 +148,13 @@ export const HeatmapModule: React.FC<HeatmapModuleProps> = ({ data }) => {
     }
 
     const seasonalTotals = heatmapAnalysis.seasonalTotals;
+    const selectedSeasonTotal = season === 'jan'
+        ? seasonalTotals.jan
+        : season === 'jul'
+            ? seasonalTotals.jul
+            : season === 'sep'
+                ? seasonalTotals.sep
+                : seasonalTotals.other;
 
     return (
         <div className="space-y-6">
@@ -195,9 +201,7 @@ export const HeatmapModule: React.FC<HeatmapModuleProps> = ({ data }) => {
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
                         <div className="bg-gray-50 border border-gray-100 rounded-lg p-3">
                             <p className="text-xs text-gray-500">Season Total</p>
-                            <p className="font-bold text-gray-900">
-                                {season === 'jan' ? fmt(seasonalTotals.jan) : season === 'jul' ? fmt(seasonalTotals.jul) : fmt(seasonalTotals.sep)}
-                            </p>
+                            <p className="font-bold text-gray-900">{fmt(selectedSeasonTotal)}</p>
                         </div>
                         <div className="bg-gray-50 border border-gray-100 rounded-lg p-3">
                             <p className="text-xs text-gray-500">Selected Slice Points</p>
@@ -218,7 +222,10 @@ export const HeatmapModule: React.FC<HeatmapModuleProps> = ({ data }) => {
             </ChartCard>
 
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-                <ChartCard title="Atlas Matrix (18 Slices)" subtitle="6 day/time slices x 3 seasons">
+                <ChartCard
+                    title={`Atlas Matrix (${atlas.length} Slices)`}
+                    subtitle={`6 day/time slices x ${new Set(atlas.map(slice => slice.season)).size} seasons`}
+                >
                     {atlasRows.length > 0 ? (
                         <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
                             <table className="w-full text-sm">
@@ -286,6 +293,12 @@ export const HeatmapModule: React.FC<HeatmapModuleProps> = ({ data }) => {
                         <p className="text-xs text-gray-500">September</p>
                         <p className="text-xl font-bold text-gray-900">{fmt(seasonalTotals.sep)}</p>
                     </div>
+                    {seasonalTotals.other > 0 && (
+                        <div className="rounded-lg border border-gray-200 p-3 bg-white">
+                            <p className="text-xs text-gray-500">Other</p>
+                            <p className="text-xl font-bold text-gray-900">{fmt(seasonalTotals.other)}</p>
+                        </div>
+                    )}
                 </div>
             </ChartCard>
 
@@ -293,7 +306,7 @@ export const HeatmapModule: React.FC<HeatmapModuleProps> = ({ data }) => {
                 <p className="text-sm text-gray-600 leading-relaxed">
                     Heatmap points are debiased to at most one ping per user per 15-minute window before aggregation.
                     These maps represent relative app activity concentration, not total ridership.
-                    Seasonal slices use Jan, Jul, and Sep records with consistent grid resolution.
+                    Seasonal slices use Jan/Jul/Sep, with an "Other" season included when present.
                     Use route and stop overlays in the map controls to contextualize hotspots against the existing network.
                 </p>
             </ChartCard>

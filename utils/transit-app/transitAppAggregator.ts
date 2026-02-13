@@ -541,7 +541,7 @@ function parseUtcDateTime(value: string): Date | null {
 }
 
 /** Convert a UTC Date to Eastern Time hour (0-23). Accounts for EDT/EST. */
-function utcToEasternHour(dt: Date): number {
+function getEasternOffsetHours(dt: Date): number {
     const month = dt.getUTCMonth(); // 0-indexed
     const day = dt.getUTCDate();
     // Approximate DST: EDT = second Sunday in March to first Sunday in November
@@ -549,20 +549,21 @@ function utcToEasternHour(dt: Date): number {
     const isEDT = (month > 2 && month < 10) ||
         (month === 2 && day >= 10) ||
         (month === 10 && day < 3);
-    const offset = isEDT ? -4 : -5;
-    return (dt.getUTCHours() + offset + 24) % 24;
+    return isEDT ? -4 : -5;
+}
+
+function utcToEasternDate(dt: Date): Date {
+    const offset = getEasternOffsetHours(dt);
+    return new Date(dt.getTime() + offset * 3600_000);
+}
+
+function utcToEasternHour(dt: Date): number {
+    return utcToEasternDate(dt).getUTCHours();
 }
 
 /** Convert a UTC Date to Eastern Time date string (YYYY-MM-DD), accounting for day rollover. */
 function utcToEasternDateStr(dt: Date): string {
-    const month = dt.getUTCMonth();
-    const day = dt.getUTCDate();
-    const isEDT = (month > 2 && month < 10) ||
-        (month === 2 && day >= 10) ||
-        (month === 10 && day < 3);
-    const offset = isEDT ? -4 : -5;
-    const localMs = dt.getTime() + offset * 3600_000;
-    const local = new Date(localMs);
+    const local = utcToEasternDate(dt);
     return local.toISOString().split('T')[0];
 }
 
@@ -585,14 +586,14 @@ function inferTimeBandForHour(hour: number): TransferTimeBand {
 }
 
 function inferDayTypeForDate(date: Date): TransferDayType {
-    const day = date.getUTCDay();
+    const day = utcToEasternDate(date).getUTCDay();
     if (day === 0) return 'sunday';
     if (day === 6) return 'saturday';
     return 'weekday';
 }
 
 function inferSeasonForDate(date: Date): TransferSeason {
-    const month = date.getUTCMonth() + 1;
+    const month = utcToEasternDate(date).getUTCMonth() + 1;
     if (month === 1) return 'jan';
     if (month === 7) return 'jul';
     if (month === 9) return 'sep';
@@ -1116,6 +1117,9 @@ function aggregateHeatmapAnalysis(locations: TransitAppParsedData['locations']):
         { id: 'sunday_all_day', dayType: 'sunday', timeBand: 'all_day' },
     ];
     const atlasSeasons: TransferSeason[] = ['jan', 'jul', 'sep'];
+    if (debiasedPoints.some(point => point.season === 'other')) {
+        atlasSeasons.push('other');
+    }
 
     const atlas: LocationAtlasSlice[] = [];
     for (const season of atlasSeasons) {
@@ -1437,9 +1441,17 @@ function aggregateAppUsage(users: TransitAppParsedData['users']): AppUsageDaily[
 
 function aggregateODPairs(trips: TransitAppTripRow[]): ODPairData {
     const RESOLUTION = 0.005; // ~500m grid cells
-    const MAX_PAIRS = 200;
+    // Keep a safety cap for memory, but high enough to support all-zones planning views.
+    const MAX_PAIRS = 5000;
 
-    const pairMap = new Map<string, { count: number; hourlyBins: number[]; weekdayCount: number; weekendCount: number; seasonBins: { jan: number; jul: number; sep: number; other: number } }>();
+    const pairMap = new Map<string, {
+        count: number;
+        hourlyBins: number[];
+        weekdayCount: number;
+        weekendCount: number;
+        seasonBins: { jan: number; jul: number; sep: number; other: number };
+        odFilterBins: Record<string, number>;
+    }>();
     let minLat = 90, maxLat = -90, minLon = 180, maxLon = -180;
     let skipped = 0;
 
@@ -1468,16 +1480,18 @@ function aggregateODPairs(trips: TransitAppTripRow[]): ODPairData {
 
         // Extract date, hour, and month from timestamp — convert UTC to Eastern Time
         let hour = -1;
-        let isWeekend = false;
+        let dayType: TransferDayType = 'weekday';
         let monthNum = -1;
         const tripDt = parseUtcDateTime(trip.timestamp);
         if (tripDt) {
             hour = utcToEasternHour(tripDt);
             const localDate = utcToEasternDateStr(tripDt);
-            isWeekend = isWeekendDate(localDate);
+            const localDay = new Date(`${localDate}T00:00:00Z`).getUTCDay();
+            dayType = localDay === 0 ? 'sunday' : localDay === 6 ? 'saturday' : 'weekday';
             monthNum = parseInt(localDate.split('-')[1], 10);
         }
 
+        const isWeekend = dayType === 'saturday' || dayType === 'sunday';
         const seasonKey: 'jan' | 'jul' | 'sep' | 'other' =
             monthNum === 1 ? 'jan' : monthNum === 7 ? 'jul' : monthNum === 9 ? 'sep' : 'other';
 
@@ -1489,17 +1503,26 @@ function aggregateODPairs(trips: TransitAppTripRow[]): ODPairData {
             if (isWeekend) existing.weekendCount++;
             else existing.weekdayCount++;
             if (monthNum > 0) existing.seasonBins[seasonKey]++;
+            if (hour >= 0 && hour < 24 && monthNum > 0) {
+                const filterKey = `${dayType}|${seasonKey}|${hour}`;
+                existing.odFilterBins[filterKey] = (existing.odFilterBins[filterKey] || 0) + 1;
+            }
         } else {
             const bins = new Array(24).fill(0);
             if (hour >= 0 && hour < 24) bins[hour]++;
             const sBins = { jan: 0, jul: 0, sep: 0, other: 0 };
             if (monthNum > 0) sBins[seasonKey]++;
+            const odFilterBins: Record<string, number> = {};
+            if (hour >= 0 && hour < 24 && monthNum > 0) {
+                odFilterBins[`${dayType}|${seasonKey}|${hour}`] = 1;
+            }
             pairMap.set(key, {
                 count: 1,
                 hourlyBins: bins,
                 weekdayCount: isWeekend ? 0 : 1,
                 weekendCount: isWeekend ? 1 : 0,
                 seasonBins: sBins,
+                odFilterBins,
             });
         }
 
@@ -1527,6 +1550,7 @@ function aggregateODPairs(trips: TransitAppTripRow[]): ODPairData {
                 weekdayCount: data.weekdayCount,
                 weekendCount: data.weekendCount,
                 seasonBins: data.seasonBins,
+                odFilterBins: data.odFilterBins,
             };
         })
         .sort((a, b) => b.count - a.count)

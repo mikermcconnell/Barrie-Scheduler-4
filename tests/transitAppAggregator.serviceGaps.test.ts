@@ -91,22 +91,22 @@ function makeLeg(route: string, start: string, id: string): TransitAppTripLegRow
 describe('aggregateTransitAppData service gap analysis (UC4)', () => {
     it('builds demand-supply profiles and flags key gap types', () => {
         const janWeekdayLegs = [
-            makeLeg('100', '2025-01-06 05:10:00 UTC', 'w1'), // span-start
-            makeLeg('100', '2025-01-06 22:10:00 UTC', 'w2'), // span-end
-            makeLeg('100', '2025-01-06 12:15:00 UTC', 'w3'), // low jan midday baseline
+            makeLeg('100', '2025-01-06 09:10:00 UTC', 'w1'), // 04:10 ET span-start
+            makeLeg('100', '2025-01-07 02:10:00 UTC', 'w2'), // 21:10 ET span-end
+            makeLeg('100', '2025-01-06 17:15:00 UTC', 'w3'), // 12:15 ET low jan midday baseline
         ];
         const julWeekdayMiddaySpike = [
-            makeLeg('100', '2025-07-07 12:00:00 UTC', 'j1'),
-            makeLeg('100', '2025-07-07 12:05:00 UTC', 'j2'),
-            makeLeg('100', '2025-07-07 12:10:00 UTC', 'j3'),
-            makeLeg('100', '2025-07-07 12:15:00 UTC', 'j4'),
-            makeLeg('100', '2025-07-07 12:20:00 UTC', 'j5'),
-            makeLeg('100', '2025-07-07 12:25:00 UTC', 'j6'),
+            makeLeg('100', '2025-07-07 16:00:00 UTC', 'j1'),
+            makeLeg('100', '2025-07-07 16:05:00 UTC', 'j2'),
+            makeLeg('100', '2025-07-07 16:10:00 UTC', 'j3'),
+            makeLeg('100', '2025-07-07 16:15:00 UTC', 'j4'),
+            makeLeg('100', '2025-07-07 16:20:00 UTC', 'j5'),
+            makeLeg('100', '2025-07-07 16:25:00 UTC', 'j6'),
         ];
         const saturdayDemand = [
-            makeLeg('100', '2025-01-11 20:05:00 UTC', 's1'), // after weekend span
-            makeLeg('100', '2025-01-11 20:10:00 UTC', 's2'),
-            makeLeg('100', '2025-01-11 20:20:00 UTC', 's3'),
+            makeLeg('100', '2025-01-12 01:05:00 UTC', 's1'), // 20:05 ET Saturday, after weekend span
+            makeLeg('100', '2025-01-12 01:10:00 UTC', 's2'),
+            makeLeg('100', '2025-01-12 01:20:00 UTC', 's3'),
         ];
 
         const parsed: TransitAppParsedData = {

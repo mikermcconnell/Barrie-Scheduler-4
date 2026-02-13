@@ -128,6 +128,21 @@ function parseUtcDate(value: string): Date | null {
     return Number.isNaN(dt.getTime()) ? null : dt;
 }
 
+function getEasternOffsetHours(dt: Date): number {
+    const month = dt.getUTCMonth(); // 0-indexed
+    const day = dt.getUTCDate();
+    // Approximate DST: EDT = second Sunday in March to first Sunday in November.
+    const isEDT = (month > 2 && month < 10)
+        || (month === 2 && day >= 10)
+        || (month === 10 && day < 3);
+    return isEDT ? -4 : -5;
+}
+
+function utcToEasternDate(dt: Date): Date {
+    const offset = getEasternOffsetHours(dt);
+    return new Date(dt.getTime() + offset * 3600_000);
+}
+
 function normalizeWhitespace(value: string): string {
     return value.replace(/\s+/g, ' ').trim();
 }
@@ -154,7 +169,7 @@ function toRate(numerator: number, denominator: number): number {
 }
 
 function inferTimeBand(date: Date): TransferTimeBand {
-    const hour = date.getUTCHours();
+    const hour = utcToEasternDate(date).getUTCHours();
     if (hour >= 6 && hour < 9) return 'am_peak';
     if (hour >= 9 && hour < 15) return 'midday';
     if (hour >= 15 && hour < 18) return 'pm_peak';
@@ -163,14 +178,14 @@ function inferTimeBand(date: Date): TransferTimeBand {
 }
 
 function inferDayType(date: Date): TransferDayType {
-    const day = date.getUTCDay();
+    const day = utcToEasternDate(date).getUTCDay();
     if (day === 0) return 'sunday';
     if (day === 6) return 'saturday';
     return 'weekday';
 }
 
 function inferSeason(date: Date): TransferSeason {
-    const month = date.getUTCMonth() + 1;
+    const month = utcToEasternDate(date).getUTCMonth() + 1;
     if (month === 1) return 'jan';
     if (month === 7) return 'jul';
     if (month === 9) return 'sep';
@@ -408,7 +423,8 @@ function dominantTimeBands(counts: Map<TransferTimeBand, number>): TransferTimeB
 }
 
 function minuteOfDay(date: Date): number {
-    return (date.getUTCHours() * 60) + date.getUTCMinutes();
+    const local = utcToEasternDate(date);
+    return (local.getUTCHours() * 60) + local.getUTCMinutes();
 }
 
 function formatMinuteOfDay(minute: number): string {

@@ -408,6 +408,7 @@ export interface ODPair {
     weekdayCount?: number;
     weekendCount?: number;
     seasonBins?: { jan: number; jul: number; sep: number; other: number };
+    odFilterBins?: Record<string, number>; // key: `${dayType}|${season}|${hour}`
 }
 
 export interface ODPairData {

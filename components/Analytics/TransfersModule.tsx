@@ -68,16 +68,17 @@ function isBarrieTransferStop(
     toRoute: string | null | undefined
 ): boolean {
     if (transferStopId) return true;
+    const routeSuggestsBarrie = isBarrieRoute(fromRoute || '') && isBarrieRoute(toRoute || '');
 
     const stopHints = [transferStopName, fromStop, toStop]
         .filter((value): value is string => Boolean(value && value.trim().length > 0));
 
     if (stopHints.length > 0) {
-        return stopHints.some(looksBarrieStopName);
+        return stopHints.some(looksBarrieStopName) || routeSuggestsBarrie;
     }
 
     // Backward-compatibility fallback for older saved rows with no stop metadata.
-    return isBarrieRoute(fromRoute || '') && isBarrieRoute(toRoute || '');
+    return routeSuggestsBarrie;
 }
 
 function matchesScope(isBarrieStop: boolean, scope: ScopeFilter): boolean {

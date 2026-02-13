@@ -71,19 +71,63 @@ export function detectTransitAppFiles(files: File[]): {
 // ============ GENERIC CSV HELPERS ============
 
 function parseCSVRows(text: string): string[][] {
-    const lines = text.split('\n');
     const rows: string[][] = [];
-    for (const line of lines) {
-        const trimmed = line.trim();
-        if (trimmed.length === 0) continue;
-        rows.push(trimmed.split(',').map(cell => cell.trim()));
+    let row: string[] = [];
+    let cell = '';
+    let inQuotes = false;
+
+    const pushCell = () => {
+        row.push(cell.trim());
+        cell = '';
+    };
+
+    const pushRow = () => {
+        if (row.length === 0) return;
+        const hasData = row.some(value => value.length > 0);
+        if (hasData) rows.push(row);
+        row = [];
+    };
+
+    for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+        if (ch === '"') {
+            if (inQuotes && text[i + 1] === '"') {
+                cell += '"';
+                i++;
+                continue;
+            }
+            inQuotes = !inQuotes;
+            continue;
+        }
+
+        if (ch === ',' && !inQuotes) {
+            pushCell();
+            continue;
+        }
+
+        if ((ch === '\n' || ch === '\r') && !inQuotes) {
+            pushCell();
+            pushRow();
+            if (ch === '\r' && text[i + 1] === '\n') i++;
+            continue;
+        }
+
+        cell += ch;
     }
+
+    if (cell.length > 0 || row.length > 0) {
+        pushCell();
+        pushRow();
+    }
+
     return rows;
 }
 
-function safeFloat(val: string): number {
-    const n = parseFloat(val);
-    return isNaN(n) ? 0 : n;
+function parseFloatOrNull(val: string | undefined): number | null {
+    const normalized = (val || '').trim();
+    if (!normalized) return null;
+    const parsed = Number.parseFloat(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
 }
 
 function safeInt(val: string): number {
@@ -147,12 +191,21 @@ export function parseTripsFile(text: string): { rows: TransitAppTripRow[]; skipp
     for (let i = 1; i < csvRows.length; i++) {
         const r = csvRows[i];
         if (!r[uidIdx] || !r[tsIdx]) { skipped++; continue; }
+
+        const startLonParsed = sLonIdx >= 0 ? parseFloatOrNull(r[sLonIdx]) : null;
+        const startLatParsed = sLatIdx >= 0 ? parseFloatOrNull(r[sLatIdx]) : null;
+        const endLonParsed = eLonIdx >= 0 ? parseFloatOrNull(r[eLonIdx]) : null;
+        const endLatParsed = eLatIdx >= 0 ? parseFloatOrNull(r[eLatIdx]) : null;
+
+        const startCoordsValid = startLonParsed !== null && startLatParsed !== null;
+        const endCoordsValid = endLonParsed !== null && endLatParsed !== null;
+
         rows.push({
             user_id: r[uidIdx],
-            start_longitude: sLonIdx >= 0 ? safeFloat(r[sLonIdx]) : 0,
-            start_latitude: sLatIdx >= 0 ? safeFloat(r[sLatIdx]) : 0,
-            end_longitude: eLonIdx >= 0 ? safeFloat(r[eLonIdx]) : 0,
-            end_latitude: eLatIdx >= 0 ? safeFloat(r[eLatIdx]) : 0,
+            start_longitude: startCoordsValid ? startLonParsed : 0,
+            start_latitude: startCoordsValid ? startLatParsed : 0,
+            end_longitude: endCoordsValid ? endLonParsed : 0,
+            end_latitude: endCoordsValid ? endLatParsed : 0,
             timestamp: r[tsIdx],
             arrive_by: arrIdx >= 0 ? (r[arrIdx] || '') : '',
             leave_at: leaveIdx >= 0 ? (r[leaveIdx] || '') : '',
@@ -179,8 +232,9 @@ export function parseLocationsFile(text: string): { rows: TransitAppLocationRow[
 
     for (let i = 1; i < csvRows.length; i++) {
         const r = csvRows[i];
-        const lon = safeFloat(r[lonIdx]);
-        const lat = safeFloat(r[latIdx]);
+        const lon = parseFloatOrNull(r[lonIdx]);
+        const lat = parseFloatOrNull(r[latIdx]);
+        if (lat === null || lon === null) { skipped++; continue; }
         if (lat === 0 && lon === 0) { skipped++; continue; }
         rows.push({
             user_id: uidIdx >= 0 ? (r[uidIdx] || '') : '',
@@ -223,22 +277,33 @@ export function parseTripLegsFile(text: string): { rows: TransitAppTripLegRow[];
     for (let i = 1; i < csvRows.length; i++) {
         const r = csvRows[i];
         if (!r[tripIdx]) { skipped++; continue; }
+
+        const startLonParsed = sLonIdx >= 0 ? parseFloatOrNull(r[sLonIdx]) : null;
+        const startLatParsed = sLatIdx >= 0 ? parseFloatOrNull(r[sLatIdx]) : null;
+        const endLonParsed = eLonIdx >= 0 ? parseFloatOrNull(r[eLonIdx]) : null;
+        const endLatParsed = eLatIdx >= 0 ? parseFloatOrNull(r[eLatIdx]) : null;
+
+        const startCoordsValid = startLonParsed !== null && startLatParsed !== null;
+        const endCoordsValid = endLonParsed !== null && endLatParsed !== null;
+
         const row: TransitAppTripLegRow = {
             user_trip_id: r[tripIdx],
             start_time: startIdx >= 0 ? (r[startIdx] || '') : '',
             end_time: endIdx >= 0 ? (r[endIdx] || '') : '',
-            start_longitude: sLonIdx >= 0 ? safeFloat(r[sLonIdx]) : 0,
-            start_latitude: sLatIdx >= 0 ? safeFloat(r[sLatIdx]) : 0,
-            end_longitude: eLonIdx >= 0 ? safeFloat(r[eLonIdx]) : 0,
-            end_latitude: eLatIdx >= 0 ? safeFloat(r[eLatIdx]) : 0,
+            start_longitude: startCoordsValid ? startLonParsed : 0,
+            start_latitude: startCoordsValid ? startLatParsed : 0,
+            end_longitude: endCoordsValid ? endLonParsed : 0,
+            end_latitude: endCoordsValid ? endLatParsed : 0,
             service_name: svcIdx >= 0 ? (r[svcIdx] || '') : '',
             route_short_name: routeIdx >= 0 ? (r[routeIdx] || '') : '',
             mode: modeIdx >= 0 ? (r[modeIdx] || '') : '',
             start_stop_name: sStopIdx >= 0 ? (r[sStopIdx] || '') : '',
             end_stop_name: eStopIdx >= 0 ? (r[eStopIdx] || '') : '',
         };
-        if (distIdx >= 0 && r[distIdx]) row.distance = safeFloat(r[distIdx]);
-        if (progIdx >= 0 && r[progIdx]) row.progression = safeFloat(r[progIdx]);
+        const distance = distIdx >= 0 ? parseFloatOrNull(r[distIdx]) : null;
+        const progression = progIdx >= 0 ? parseFloatOrNull(r[progIdx]) : null;
+        if (distance !== null) row.distance = distance;
+        if (progression !== null) row.progression = progression;
         if (helpIdx >= 0 && r[helpIdx]) row.users_helped = safeInt(r[helpIdx]);
         rows.push(row);
     }

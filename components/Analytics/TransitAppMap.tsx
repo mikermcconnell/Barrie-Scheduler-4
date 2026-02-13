@@ -53,7 +53,9 @@ type GeoFilter = 'barrie' | 'all';
 type DistanceBand = 'all' | 'short' | 'medium' | 'long';
 type TimePeriod = 'all' | 'am' | 'midday' | 'pm' | 'evening';
 type DayFilter = 'all' | 'weekday' | 'weekend';
-export type SeasonFilter = 'all' | 'jan' | 'jul' | 'sep';
+type ODPlannerView = 'map' | 'matrix';
+type AllZonesRenderMode = 'focused' | 'overview' | 'corridor' | 'detail';
+export type SeasonFilter = 'all' | 'jan' | 'jul' | 'sep' | 'other';
 
 
 
@@ -118,6 +120,11 @@ const TOP_RANK_COLORS = [
     '#22c55e', // 6 - Green
     '#16a34a', // 7 - Dark green
 ];
+const OVERVIEW_ZOOM_MAX = 11.75;
+const CORRIDOR_ZOOM_MAX = 13.25;
+const CORRIDOR_MAX_ARCS = 140;
+const DETAIL_MAX_ARCS = 260;
+const MATRIX_PAGE_SIZE = 40;
 
 function rankColor(rank: number): string {
     if (rank < TOP_RANK_COLORS.length) return TOP_RANK_COLORS[rank];
@@ -242,6 +249,72 @@ function getCountForTimePeriod(pair: ODPair, period: TimePeriod): number {
     return sum;
 }
 
+function getCountForFilters(
+    pair: ODPair,
+    timePeriod: TimePeriod,
+    dayFilter: DayFilter,
+    seasonFilter: SeasonFilter
+): number {
+    if (pair.odFilterBins && (timePeriod !== 'all' || dayFilter !== 'all' || seasonFilter !== 'all')) {
+        const days: Array<'weekday' | 'saturday' | 'sunday'> =
+            dayFilter === 'weekday'
+                ? ['weekday']
+                : dayFilter === 'weekend'
+                    ? ['saturday', 'sunday']
+                    : ['weekday', 'saturday', 'sunday'];
+
+        const seasons: Array<'jan' | 'jul' | 'sep' | 'other'> =
+            seasonFilter === 'all'
+                ? ['jan', 'jul', 'sep', 'other']
+                : [seasonFilter];
+
+        const [start, end] = TIME_RANGES[timePeriod];
+        const hours: number[] = [];
+        if (timePeriod === 'all') {
+            for (let h = 0; h < 24; h++) hours.push(h);
+        } else if (start < end) {
+            for (let h = start; h < end; h++) hours.push(h);
+        } else {
+            for (let h = start; h < 24; h++) hours.push(h);
+            for (let h = 0; h < end; h++) hours.push(h);
+        }
+
+        let exact = 0;
+        for (const day of days) {
+            for (const season of seasons) {
+                for (const hour of hours) {
+                    exact += pair.odFilterBins[`${day}|${season}|${hour}`] || 0;
+                }
+            }
+        }
+        return exact;
+    }
+
+    const activeCounts: number[] = [];
+    if (timePeriod !== 'all') {
+        activeCounts.push(getCountForTimePeriod(pair, timePeriod));
+    }
+
+    if (dayFilter !== 'all') {
+        const dayCount = dayFilter === 'weekday' ? pair.weekdayCount : pair.weekendCount;
+        if (typeof dayCount === 'number') activeCounts.push(dayCount);
+    }
+
+    if (seasonFilter !== 'all') {
+        const seasonCount = pair.seasonBins?.[seasonFilter];
+        if (typeof seasonCount === 'number') activeCounts.push(seasonCount);
+    }
+
+    if (activeCounts.length === 0) return pair.count;
+    // We do not have cross-tab data (time x day x season), so use a conservative
+    // intersection proxy: the minimum count across active dimensions.
+    return Math.min(pair.count, ...activeCounts);
+}
+
+function coordKey(lat: number, lon: number): string {
+    return `${lat.toFixed(4)}_${lon.toFixed(4)}`;
+}
+
 export const TransitAppMap: React.FC<TransitAppMapProps> = ({
     locationDensity,
     odPairs,
@@ -260,6 +333,12 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
     const stopLayerRef = useRef<L.LayerGroup | null>(null);
     const coverageLayerRef = useRef<L.LayerGroup | null>(null);
     const odLineGroupsRef = useRef<{ lines: L.Path[]; pair: MergedODPair; origOpacity: number }[]>([]);
+    const lastFitTriggerRef = useRef<{
+        activeLayer: MapLayer;
+        geoFilter: GeoFilter;
+        odPairsRef?: ODPairData;
+        locationBoundsRef: TransitAppMapProps['locationDensity']['bounds'];
+    } | null>(null);
 
     const hasODData = Boolean(odPairs && odPairs.pairs.length > 0);
     const resolvedDefaultLayer: MapLayer =
@@ -269,8 +348,11 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
 
     // Existing state
     const [activeLayer, setActiveLayer] = useState<MapLayer>(resolvedDefaultLayer);
+    const [plannerView, setPlannerView] = useState<ODPlannerView>('map');
     const [isFullscreen, setIsFullscreen] = useState(false);
     const [topN, setTopN] = useState(20);
+    const [allZonesMode, setAllZonesMode] = useState(false);
+    const [mapZoom, setMapZoom] = useState(13);
     const [geoFilter, setGeoFilter] = useState<GeoFilter>('barrie');
 
     // New state for features 3-12
@@ -287,6 +369,8 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
     const [highlightedPairIdx, setHighlightedPairIdx] = useState<number | null>(null);
     const [sortColumn, setSortColumn] = useState<'rank' | 'trips' | 'dist' | 'origin' | 'dest'>('rank');
     const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+    const [matrixSearch, setMatrixSearch] = useState('');
+    const [matrixPage, setMatrixPage] = useState(1);
     const [localSeasonFilter, setLocalSeasonFilter] = useState<SeasonFilter>('all');
     const seasonFilter = externalSeasonFilter ?? localSeasonFilter;
     const setSeasonFilter = (v: SeasonFilter) => {
@@ -295,7 +379,7 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
     };
 
     // Feature 2: Unified filter pipeline via useMemo
-    const displayedPairs = useMemo((): MergedODPair[] => {
+    const filteredPairs = useMemo((): MergedODPair[] => {
         if (!odPairs || odPairs.pairs.length === 0) return [];
 
         // Step 1: Geo filter
@@ -304,32 +388,13 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
                 isInBarrie(p.originLat, p.originLon) && isInBarrie(p.destLat, p.destLon))
             : [...odPairs.pairs];
 
-        // Step 2: Time period filter — recompute count from hourly bins
-        if (timePeriod !== 'all') {
-            filtered = filtered
-                .map(p => ({ ...p, count: getCountForTimePeriod(p, timePeriod) }))
-                .filter(p => p.count > 0);
-        }
-
-        // Step 2b: Day filter — use weekday/weekend counts
-        if (dayFilter !== 'all') {
-            filtered = filtered
-                .map(p => ({
-                    ...p,
-                    count: (dayFilter === 'weekday' ? p.weekdayCount : p.weekendCount) ?? p.count,
-                }))
-                .filter(p => p.count > 0);
-        }
-
-        // Step 2c: Season filter — recompute count from seasonBins
-        if (seasonFilter !== 'all') {
-            filtered = filtered
-                .map(p => ({
-                    ...p,
-                    count: p.seasonBins ? p.seasonBins[seasonFilter] : p.count,
-                }))
-                .filter(p => p.count > 0);
-        }
+        // Step 2: Apply time/day/season filters together with conservative count intersection.
+        filtered = filtered
+            .map(p => ({
+                ...p,
+                count: getCountForFilters(p, timePeriod, dayFilter, seasonFilter),
+            }))
+            .filter(p => p.count > 0);
 
         // Step 3: Min count threshold
         filtered = filtered.filter(p => p.count >= minCount);
@@ -422,9 +487,20 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
             });
         }
 
-        // Step 8: Slice to topN
-        return merged.slice(0, topN);
-    }, [odPairs, geoFilter, timePeriod, dayFilter, seasonFilter, minCount, distanceBand, corridorRoute, mergeBidirectional, isolatedZone, topN]);
+        return merged;
+    }, [odPairs, geoFilter, timePeriod, dayFilter, seasonFilter, minCount, distanceBand, corridorRoute, mergeBidirectional, isolatedZone]);
+
+    const displayedPairs = useMemo(
+        () => allZonesMode ? filteredPairs : filteredPairs.slice(0, topN),
+        [allZonesMode, filteredPairs, topN]
+    );
+
+    const allZonesRenderMode = useMemo((): AllZonesRenderMode => {
+        if (!allZonesMode) return 'focused';
+        if (mapZoom <= OVERVIEW_ZOOM_MAX) return 'overview';
+        if (mapZoom <= CORRIDOR_ZOOM_MAX) return 'corridor';
+        return 'detail';
+    }, [allZonesMode, mapZoom]);
 
     // Feature 4: Summary stats
     const stats = useMemo(() => {
@@ -433,12 +509,21 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
         const pctOfTotal = odPairs.totalTripsProcessed > 0
             ? ((totalTrips / odPairs.totalTripsProcessed) * 100).toFixed(1)
             : '0';
-        return { pairs: displayedPairs.length, trips: totalTrips, pct: pctOfTotal };
-    }, [displayedPairs, odPairs]);
+        return {
+            pairs: displayedPairs.length,
+            totalFilteredPairs: filteredPairs.length,
+            trips: totalTrips,
+            pct: pctOfTotal,
+        };
+    }, [displayedPairs, filteredPairs.length, odPairs]);
 
     useEffect(() => {
         onDisplayedODPairsChange?.(displayedPairs);
     }, [displayedPairs, onDisplayedODPairsChange]);
+
+    useEffect(() => {
+        setMatrixPage(1);
+    }, [matrixSearch, filteredPairs, allZonesMode]);
 
     // Check if any pair has hourly data
     const hasHourlyData = useMemo(() => {
@@ -462,7 +547,11 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
     // Check if any pair has season data
     const hasSeasonData = useMemo(() => {
         if (!odPairs) return false;
-        return odPairs.pairs.some(p => p.seasonBins && (p.seasonBins.jan > 0 || p.seasonBins.jul > 0 || p.seasonBins.sep > 0));
+        return odPairs.pairs.some(p => p.seasonBins && (p.seasonBins.jan > 0 || p.seasonBins.jul > 0 || p.seasonBins.sep > 0 || p.seasonBins.other > 0));
+    }, [odPairs]);
+    const hasOtherSeasonData = useMemo(() => {
+        if (!odPairs) return false;
+        return odPairs.pairs.some(p => (p.seasonBins?.other || 0) > 0);
     }, [odPairs]);
 
     // Zone name cache: map coordinate key → nearest GTFS stop name
@@ -508,6 +597,10 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
         map.on('click', () => {
             setIsolatedZone(null);
         });
+        map.on('zoomend', () => {
+            setMapZoom(map.getZoom());
+        });
+        setMapZoom(map.getZoom());
 
         mapRef.current = map;
 
@@ -570,17 +663,34 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
     const buildODLayer = useCallback(() => {
         const group = L.layerGroup();
         odLineGroupsRef.current = [];
-        const pairs = displayedPairs;
-        if (pairs.length === 0) return group;
+        if (displayedPairs.length === 0) return group;
+
+        const map = mapRef.current;
+        const bounds = map?.getBounds();
+        const paddedBounds = bounds ? bounds.pad(0.2) : null;
+        const inViewport = (pair: MergedODPair) => {
+            if (!paddedBounds) return true;
+            return paddedBounds.contains([pair.originLat, pair.originLon])
+                || paddedBounds.contains([pair.destLat, pair.destLon]);
+        };
 
         const resolution = odPairs?.resolution ?? 0.005;
         const half = resolution / 2;
+        const showArcs = !(allZonesMode && allZonesRenderMode === 'overview');
 
-        // Draw zone rectangles first (beneath lines)
+        let arcPairs = displayedPairs;
+        if (allZonesMode && (allZonesRenderMode === 'corridor' || allZonesRenderMode === 'detail')) {
+            arcPairs = arcPairs.filter(inViewport);
+            arcPairs = allZonesRenderMode === 'corridor'
+                ? arcPairs.slice(0, CORRIDOR_MAX_ARCS)
+                : arcPairs.slice(0, DETAIL_MAX_ARCS);
+        }
+
+        const zoneSourcePairs = allZonesMode ? displayedPairs : arcPairs;
         const zoneMap = new Map<string, { lat: number; lon: number; isOrigin: boolean; isDest: boolean; trips: number }>();
-        for (const pair of pairs) {
-            const oKey = `${pair.originLat.toFixed(4)}_${pair.originLon.toFixed(4)}`;
-            const dKey = `${pair.destLat.toFixed(4)}_${pair.destLon.toFixed(4)}`;
+        for (const pair of zoneSourcePairs) {
+            const oKey = coordKey(pair.originLat, pair.originLon);
+            const dKey = coordKey(pair.destLat, pair.destLon);
             const oZone = zoneMap.get(oKey);
             if (oZone) {
                 oZone.isOrigin = true;
@@ -597,41 +707,43 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
             }
         }
 
+        const maxZoneTrips = Math.max(...Array.from(zoneMap.values()).map(z => z.trips), 1);
         for (const [zoneKey, zone] of zoneMap) {
             const fillColor = zone.isOrigin && zone.isDest ? '#8b5cf6'
                 : zone.isOrigin ? '#10b981'
                 : '#ef4444';
             const zoneName = getZoneName(zone.lat, zone.lon);
+            const t = zone.trips / maxZoneTrips;
+            const isOverview = allZonesMode && allZonesRenderMode === 'overview';
 
             const rect = L.rectangle(
                 [[zone.lat - half, zone.lon - half], [zone.lat + half, zone.lon + half]],
                 {
                     fillColor,
-                    fillOpacity: 0.25,
+                    fillOpacity: isOverview ? 0.14 + t * 0.12 : 0.25,
                     color: fillColor,
-                    weight: 1,
-                    opacity: 0.5,
+                    weight: isOverview ? 0.8 : 1,
+                    opacity: isOverview ? 0.35 : 0.5,
                 }
             )
                 .bindTooltip(`${zoneName} — ${zone.trips.toLocaleString()} trips`, { direction: 'top' })
                 .addTo(group);
 
-            // Zone dots for spider mode click — visible + interactive
+            const baseRadius = isOverview ? 4 + t * 7 : 8;
             const zoneDot = L.circleMarker([zone.lat, zone.lon], {
-                radius: 8,
+                radius: baseRadius,
                 fillColor,
-                fillOpacity: 0.4,
+                fillOpacity: isOverview ? 0.55 : 0.4,
                 color: '#ffffff',
                 weight: 1.5,
                 opacity: 0.7,
             }).addTo(group);
 
-            // Hover feedback for click affordance
             zoneDot.on('mouseover', function (this: L.CircleMarker) {
-                this.setStyle({ fillOpacity: 0.7, weight: 2.5, radius: 10 } as L.CircleMarkerOptions);
+                this.setStyle({ fillOpacity: 0.75, weight: 2.2, radius: baseRadius + 1.8 } as L.CircleMarkerOptions);
             });
             zoneDot.on('mouseout', function (this: L.CircleMarker) {
-                this.setStyle({ fillOpacity: 0.4, weight: 1.5, radius: 8 } as L.CircleMarkerOptions);
+                this.setStyle({ fillOpacity: isOverview ? 0.55 : 0.4, weight: 1.5, radius: baseRadius } as L.CircleMarkerOptions);
             });
 
             zoneDot.on('click', (e: L.LeafletMouseEvent) => {
@@ -639,31 +751,33 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
                 setIsolatedZone(prev => prev === zoneKey ? null : zoneKey);
             });
 
-            // Keep rect clickable too
             rect.on('click', (e: L.LeafletMouseEvent) => {
                 L.DomEvent.stopPropagation(e);
                 setIsolatedZone(prev => prev === zoneKey ? null : zoneKey);
             });
         }
 
-        for (let i = 0; i < pairs.length; i++) {
-            const pair = pairs[i];
+        if (!showArcs || arcPairs.length === 0) {
+            return group;
+        }
+
+        const allZonesDetail = allZonesMode && allZonesRenderMode === 'detail';
+        for (let i = 0; i < arcPairs.length; i++) {
+            const pair = arcPairs[i];
             const lineElements: L.Path[] = [];
 
-            // Rank-based styling: 1-7 vivid red→green, 8+ grey gradient
-            const color = rankColor(i);
-            const weight = rankWeight(i);
-            const opacity = i < TOP_RANK_COLORS.length ? 0.85 : 0.7;
+            const color = allZonesMode ? '#334155' : rankColor(i);
+            const weight = allZonesMode ? (allZonesDetail ? 2.2 : 1.5) : rankWeight(i);
+            const opacity = allZonesMode
+                ? (allZonesDetail ? 0.46 : 0.34)
+                : (i < TOP_RANK_COLORS.length ? 0.85 : 0.7);
 
             const curveDir: 1 | -1 = i % 2 === 0 ? 1 : -1;
-
-            // For merged bidirectional with BA net direction, swap origin/dest for arrow
             let origin: [number, number] = [pair.originLat, pair.originLon];
             let dest: [number, number] = [pair.destLat, pair.destLon];
             if (pair.isMerged && pair.netDirection === 'BA') {
                 [origin, dest] = [dest, origin];
             }
-
             const arcPoints = quadraticBezierArc(origin, dest, curveDir);
 
             const polyline = L.polyline(arcPoints, {
@@ -674,13 +788,11 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
                 lineJoin: 'round',
             });
 
-            // Hover tooltip (quick count preview)
             const distKm = haversineKm(pair.originLat, pair.originLon, pair.destLat, pair.destLon);
             polyline.bindTooltip(`${pair.count.toLocaleString()} trips (${distKm.toFixed(1)} km)`, {
                 direction: 'top', sticky: true,
             });
 
-            // Feature 7: Click popup with details
             const pctStr = odPairs && odPairs.totalTripsProcessed > 0
                 ? ((pair.count / odPairs.totalTripsProcessed) * 100).toFixed(2)
                 : '?';
@@ -701,8 +813,7 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
             polyline.addTo(group);
             lineElements.push(polyline);
 
-            // Arrowhead (skip for balanced merged pairs)
-            if (!(pair.isMerged && pair.netDirection === 'balanced')) {
+            if (!allZonesMode && !(pair.isMerged && pair.netDirection === 'balanced')) {
                 const arrowSize = i < TOP_RANK_COLORS.length ? 0.005 : 0.003;
                 const arrows = arrowheadPoints(arcPoints, arrowSize);
                 for (const pts of arrows) {
@@ -717,30 +828,30 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
                 }
             }
 
-            // Dots
-            const dotRadius = i < TOP_RANK_COLORS.length ? 6 : 4;
-            const originDot = L.circleMarker([pair.originLat, pair.originLon], {
-                radius: dotRadius,
-                fillColor: '#10b981',
-                fillOpacity: 0.9,
-                color: '#ffffff',
-                weight: 2,
-            }).addTo(group);
-            lineElements.push(originDot);
+            if (!allZonesMode || allZonesDetail) {
+                const dotRadius = allZonesMode ? 3 : (i < TOP_RANK_COLORS.length ? 6 : 4);
+                const originDot = L.circleMarker([pair.originLat, pair.originLon], {
+                    radius: dotRadius,
+                    fillColor: '#10b981',
+                    fillOpacity: 0.9,
+                    color: '#ffffff',
+                    weight: allZonesMode ? 1 : 2,
+                }).addTo(group);
+                lineElements.push(originDot);
 
-            const destDot = L.circleMarker([pair.destLat, pair.destLon], {
-                radius: dotRadius,
-                fillColor: '#ef4444',
-                fillOpacity: 0.9,
-                color: '#ffffff',
-                weight: 2,
-            }).addTo(group);
-            lineElements.push(destDot);
+                const destDot = L.circleMarker([pair.destLat, pair.destLon], {
+                    radius: dotRadius,
+                    fillColor: '#ef4444',
+                    fillOpacity: 0.9,
+                    color: '#ffffff',
+                    weight: allZonesMode ? 1 : 2,
+                }).addTo(group);
+                lineElements.push(destDot);
+            }
 
             odLineGroupsRef.current.push({ lines: lineElements, pair, origOpacity: opacity });
 
-            // Rank badge on every displayed arc — numbered circle at arc midpoint
-            {
+            if (!allZonesMode) {
                 const midIdx = Math.floor(arcPoints.length / 2);
                 const midPt = arcPoints[midIdx];
                 const badgeSize = i < 5 ? 22 : 18;
@@ -770,7 +881,6 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
                 }).addTo(group);
             }
 
-            // Hover highlight (brighten hovered, dim others to 0.2)
             const highlight = () => {
                 for (const g of odLineGroupsRef.current) {
                     if (g.pair === pair) {
@@ -795,7 +905,7 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
         }
 
         return group;
-    }, [displayedPairs, odPairs, getZoneName]);
+    }, [displayedPairs, odPairs, getZoneName, allZonesMode, allZonesRenderMode]);
 
     // Feature 10: GTFS route overlay layer
     const buildRouteLayer = useCallback(() => {
@@ -891,15 +1001,21 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
             [BARRIE_VIEW_BOUNDS.minLat, BARRIE_VIEW_BOUNDS.minLon],
             [BARRIE_VIEW_BOUNDS.maxLat, BARRIE_VIEW_BOUNDS.maxLon],
         ];
+        const prev = lastFitTriggerRef.current;
+        const shouldRefit = !prev
+            || prev.activeLayer !== activeLayer
+            || prev.geoFilter !== geoFilter
+            || prev.odPairsRef !== odPairs
+            || prev.locationBoundsRef !== locationDensity.bounds;
 
         if (activeLayer === 'heatmap') {
             const layer = buildHeatmapLayer();
             layer.addTo(map);
             heatmapLayerRef.current = layer;
 
-            if (geoFilter === 'barrie') {
+            if (shouldRefit && geoFilter === 'barrie') {
                 map.fitBounds(barrieFit, { padding: [20, 20] });
-            } else {
+            } else if (shouldRefit) {
                 const b = locationDensity.bounds;
                 if (b.minLat !== 0 || b.maxLat !== 0) {
                     map.fitBounds([[b.minLat, b.minLon], [b.maxLat, b.maxLon]], { padding: [20, 20] });
@@ -910,13 +1026,20 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
             layer.addTo(map);
             odLayerRef.current = layer;
 
-            if (geoFilter === 'barrie') {
+            if (shouldRefit && geoFilter === 'barrie') {
                 map.fitBounds(barrieFit, { padding: [20, 20] });
-            } else if (odPairs && odPairs.bounds.minLat !== 0) {
+            } else if (shouldRefit && odPairs && odPairs.bounds.minLat !== 0) {
                 const b = odPairs.bounds;
                 map.fitBounds([[b.minLat, b.minLon], [b.maxLat, b.maxLon]], { padding: [20, 20] });
             }
         }
+
+        lastFitTriggerRef.current = {
+            activeLayer,
+            geoFilter,
+            odPairsRef: odPairs,
+            locationBoundsRef: locationDensity.bounds,
+        };
     }, [activeLayer, geoFilter, buildHeatmapLayer, buildODLayer, locationDensity.bounds, odPairs]);
 
     // Feature 10: GTFS route overlay toggle
@@ -1008,7 +1131,7 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
         // Summary line
         const totalTrips = displayedPairs.reduce((s, p) => s + p.count, 0);
         doc.text(
-            `${displayedPairs.length} pairs · ${totalTrips.toLocaleString()} trips · Top ${topN}`,
+            `${displayedPairs.length} pairs · ${totalTrips.toLocaleString()} trips · ${allZonesMode ? 'All filtered zones' : `Top ${topN}`}`,
             pageWidth / 2, margin + 11, { align: 'center' }
         );
 
@@ -1058,7 +1181,7 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
 
         const date = new Date().toISOString().slice(0, 10);
         doc.save(`transit-od-summary-${date}.pdf`);
-    }, [displayedPairs, getZoneName, geoFilter, corridorRoute, timePeriod, dayFilter, seasonFilter, distanceBand, mergeBidirectional, topN, hasWeekdayData, odPairs]);
+    }, [displayedPairs, getZoneName, geoFilter, corridorRoute, timePeriod, dayFilter, seasonFilter, distanceBand, mergeBidirectional, topN, hasWeekdayData, odPairs, allZonesMode]);
 
     const hasOD = odPairs && odPairs.pairs.length > 0;
 
@@ -1097,17 +1220,90 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
         }
     }, [sortColumn]);
 
+    const matrixSourcePairs = useMemo(
+        () => allZonesMode ? filteredPairs : displayedPairs,
+        [allZonesMode, filteredPairs, displayedPairs]
+    );
+
+    const matrixRows = useMemo(() => {
+        const rows = matrixSourcePairs.map((pair, idx) => {
+            const originKey = coordKey(pair.originLat, pair.originLon);
+            const destKey = coordKey(pair.destLat, pair.destLon);
+            const originName = getZoneName(pair.originLat, pair.originLon);
+            const destName = getZoneName(pair.destLat, pair.destLon);
+            const distKm = haversineKm(pair.originLat, pair.originLon, pair.destLat, pair.destLon);
+            const pct = odPairs && odPairs.totalTripsProcessed > 0
+                ? ((pair.count / odPairs.totalTripsProcessed) * 100)
+                : 0;
+            return {
+                idx,
+                pair,
+                originKey,
+                destKey,
+                originName,
+                destName,
+                distKm,
+                pct,
+            };
+        });
+
+        const q = matrixSearch.trim().toLowerCase();
+        if (!q) return rows;
+        return rows.filter(row =>
+            row.originName.toLowerCase().includes(q)
+            || row.destName.toLowerCase().includes(q)
+        );
+    }, [matrixSourcePairs, getZoneName, odPairs, matrixSearch]);
+
+    const matrixPages = Math.max(1, Math.ceil(matrixRows.length / MATRIX_PAGE_SIZE));
+    const matrixPageRows = useMemo(() => {
+        const clampedPage = Math.min(matrixPage, matrixPages);
+        const start = (clampedPage - 1) * MATRIX_PAGE_SIZE;
+        return matrixRows.slice(start, start + MATRIX_PAGE_SIZE);
+    }, [matrixRows, matrixPage, matrixPages]);
+
+    useEffect(() => {
+        setMatrixPage(p => Math.min(p, matrixPages));
+    }, [matrixPages]);
+
+    const matrixZoneHeaders = useMemo(() => {
+        const zoneWeights = new Map<string, { key: string; name: string; trips: number }>();
+        for (const row of matrixRows) {
+            const o = zoneWeights.get(row.originKey);
+            if (o) o.trips += row.pair.count;
+            else zoneWeights.set(row.originKey, { key: row.originKey, name: row.originName, trips: row.pair.count });
+
+            const d = zoneWeights.get(row.destKey);
+            if (d) d.trips += row.pair.count;
+            else zoneWeights.set(row.destKey, { key: row.destKey, name: row.destName, trips: row.pair.count });
+        }
+        return Array.from(zoneWeights.values())
+            .sort((a, b) => b.trips - a.trips)
+            .slice(0, 12);
+    }, [matrixRows]);
+
+    const matrixHeat = useMemo(() => {
+        const lookup = new Map<string, number>();
+        for (const row of matrixRows) {
+            const key = `${row.originKey}|${row.destKey}`;
+            lookup.set(key, (lookup.get(key) ?? 0) + row.pair.count);
+        }
+        const maxCell = Math.max(...Array.from(lookup.values()), 1);
+        return { lookup, maxCell };
+    }, [matrixRows]);
+
     // Table row → map arc highlight helpers
-    const highlightArc = useCallback((idx: number) => {
+    const highlightArc = useCallback((pair: MergedODPair) => {
         for (const g of odLineGroupsRef.current) {
             for (const el of g.lines) el.setStyle({ opacity: 0.2 });
         }
-        const group = odLineGroupsRef.current[idx];
+        const group = odLineGroupsRef.current.find(g => g.pair === pair);
         if (group) {
             for (const el of group.lines) el.setStyle({ opacity: 1 });
         }
-        setHighlightedPairIdx(idx);
-    }, []);
+        const idx = displayedPairs.indexOf(pair);
+        setHighlightedPairIdx(idx >= 0 ? idx : null);
+    }, [displayedPairs]);
 
     const unhighlightArcs = useCallback(() => {
         for (const g of odLineGroupsRef.current) {
@@ -1144,6 +1340,17 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
         return () => document.removeEventListener('fullscreenchange', handler);
     }, []);
 
+    useEffect(() => {
+        if (plannerView === 'map') {
+            setTimeout(() => mapRef.current?.invalidateSize(), 80);
+        }
+    }, [plannerView]);
+
+    const showMatrixPlanner = activeLayer === 'od' && hasOD && plannerView === 'matrix';
+    const matrixCurrentPage = Math.min(matrixPage, matrixPages);
+    const matrixStartRow = matrixRows.length === 0 ? 0 : ((matrixCurrentPage - 1) * MATRIX_PAGE_SIZE) + 1;
+    const matrixEndRow = Math.min(matrixCurrentPage * MATRIX_PAGE_SIZE, matrixRows.length);
+
     return (
         <div ref={fullscreenRef} className={`space-y-2 ${isFullscreen ? 'bg-white p-4 overflow-auto' : ''}`}>
             {/* Row 1 — Primary controls */}
@@ -1171,6 +1378,17 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
                         Regional
                     </button>
                 </div>
+
+                {activeLayer === 'od' && hasOD && (
+                    <div className="flex rounded-lg border border-gray-200 overflow-hidden">
+                        <button onClick={() => setPlannerView('map')} className={toggleBtn(plannerView === 'map')}>
+                            Map
+                        </button>
+                        <button onClick={() => setPlannerView('matrix')} className={toggleBtn(plannerView === 'matrix')}>
+                            Matrix
+                        </button>
+                    </div>
+                )}
 
                 {/* Route corridor */}
                 {availableRouteNames.length > 0 && (
@@ -1227,14 +1445,31 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
             {/* Row 2 — Filters (OD only) */}
             {activeLayer === 'od' && hasOD && (
                 <div className="flex items-center flex-wrap gap-4 bg-gray-50 rounded-lg border border-gray-100 px-4 py-2">
+                    {/* All zones toggle */}
+                    <div className="flex flex-col">
+                        <span className="text-[10px] text-gray-400 uppercase tracking-wider">&nbsp;</span>
+                        <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer py-0.5">
+                            <input
+                                type="checkbox"
+                                checked={allZonesMode}
+                                onChange={e => setAllZonesMode(e.target.checked)}
+                                className="accent-gray-900"
+                            />
+                            All zones
+                        </label>
+                    </div>
+
                     {/* Pairs slider */}
                     <div className="flex flex-col">
                         <span className="text-[10px] text-gray-400 uppercase tracking-wider">Pairs</span>
                         <div className="flex items-center gap-1.5">
                             <input type="range" min={5} max={50} value={topN}
                                 onChange={e => setTopN(Number(e.target.value))}
-                                className="w-16 accent-gray-900" />
-                            <span className="text-xs font-medium text-gray-700 w-5 text-right">{topN}</span>
+                                disabled={allZonesMode}
+                                className="w-16 accent-gray-900 disabled:opacity-40 disabled:cursor-not-allowed" />
+                            <span className="text-xs font-medium text-gray-700 w-9 text-right">
+                                {allZonesMode ? 'All' : topN}
+                            </span>
                         </div>
                     </div>
 
@@ -1318,6 +1553,7 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
                                     { key: 'jan', label: 'Jan' },
                                     { key: 'jul', label: 'Jul' },
                                     { key: 'sep', label: 'Sep' },
+                                    ...(hasOtherSeasonData ? [{ key: 'other', label: 'Other' }] : []),
                                 ] as { key: SeasonFilter; label: string }[]).map(({ key, label }) => (
                                     <button key={key} onClick={() => setSeasonFilter(key)}
                                         className={`px-2 py-0.5 text-[11px] font-medium transition-colors ${
@@ -1347,10 +1583,24 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
             {activeLayer === 'od' && stats && (
                 <div className="text-xs text-gray-500">
                     <span className="font-medium text-gray-700">{stats.pairs}</span> pairs
+                    {allZonesMode && (
+                        <>
+                            <span className="text-gray-300"> / </span>
+                            <span className="font-medium text-gray-700">{stats.totalFilteredPairs}</span> filtered
+                        </>
+                    )}
                     {' · '}
                     <span className="font-medium text-gray-700">{stats.trips.toLocaleString()}</span> trips
                     {' · '}
                     <span className="font-medium text-gray-700">{stats.pct}%</span> of total
+                    {allZonesMode && (
+                        <>
+                            <span className="text-gray-300"> · </span>
+                            <span className="text-gray-600">All zones: {allZonesRenderMode}</span>
+                            <span className="text-gray-300"> @ </span>
+                            <span className="text-gray-600">{mapZoom.toFixed(2)}x zoom</span>
+                        </>
+                    )}
                     <span className="text-gray-300"> · </span>
                     <span className="text-gray-400 italic">Transit App sample — not total ridership</span>
                     {isolatedZone && (() => {
@@ -1371,117 +1621,251 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
             <div
                 ref={containerRef}
                 style={{ height: isFullscreen ? 'calc(100vh - 200px)' : height, width: '100%' }}
-                className="rounded-lg overflow-hidden border border-gray-200"
+                className={`rounded-lg overflow-hidden border border-gray-200 ${showMatrixPlanner ? 'hidden' : ''}`}
             />
 
-            {/* Legend */}
-            <div className="flex items-start gap-6 text-xs border border-gray-200 rounded-lg px-4 py-2.5 bg-gray-50/50">
-                <span className="text-[10px] text-gray-400 uppercase tracking-wider font-medium pt-0.5 shrink-0">Legend</span>
-                {activeLayer === 'heatmap' ? (
-                    <div className="flex items-center gap-2 text-gray-500">
-                        <span className="w-16 h-2 rounded" style={{ background: 'linear-gradient(to right, rgb(37,52,148), rgb(14,116,255), rgb(6,182,212), rgb(250,204,21), rgb(249,115,22), rgb(220,38,38))' }} />
-                        Cool (low) → Warm (high) trip planning density
+            {!showMatrixPlanner ? (
+                <>
+                    {/* Legend */}
+                    <div className="flex items-start gap-6 text-xs border border-gray-200 rounded-lg px-4 py-2.5 bg-gray-50/50">
+                        <span className="text-[10px] text-gray-400 uppercase tracking-wider font-medium pt-0.5 shrink-0">Legend</span>
+                        {activeLayer === 'heatmap' ? (
+                            <div className="flex items-center gap-2 text-gray-500">
+                                <span className="w-16 h-2 rounded" style={{ background: 'linear-gradient(to right, rgb(37,52,148), rgb(14,116,255), rgb(6,182,212), rgb(250,204,21), rgb(249,115,22), rgb(220,38,38))' }} />
+                                Cool (low) → Warm (high) trip planning density
+                            </div>
+                        ) : (
+                            <div className="flex flex-col gap-1.5">
+                                <div className="flex items-center gap-4 flex-wrap text-gray-500">
+                                    <span className="flex items-center gap-1.5">
+                                        <span className="w-3 h-3 rounded-full bg-emerald-500 border border-white shadow-sm" /> Origin zone
+                                    </span>
+                                    <span className="flex items-center gap-1.5">
+                                        <span className="w-3 h-3 rounded-full bg-red-500 border border-white shadow-sm" /> Destination zone
+                                    </span>
+                                    <span className="flex items-center gap-1.5">
+                                        <span className="w-12 h-2 rounded" style={{ background: 'linear-gradient(to right, #bfdbfe, #06b6d4, #f97316, #ef4444)' }} />
+                                        Arc: low → high volume
+                                    </span>
+                                    {!allZonesMode && (
+                                        <span className="flex items-center gap-1.5">
+                                            <span className="w-4 h-4 rounded-full bg-gray-700 text-white text-[9px] font-bold flex items-center justify-center shrink-0">1</span>
+                                            Rank badge
+                                        </span>
+                                    )}
+                                </div>
+                                <div className="flex items-center gap-4 text-gray-400 flex-wrap">
+                                    <span><kbd className="px-1 py-0.5 bg-gray-200 text-gray-500 rounded text-[10px]">Click</kbd> zone → filter flows</span>
+                                    <span><kbd className="px-1 py-0.5 bg-gray-200 text-gray-500 rounded text-[10px]">Click</kbd> arc → trip details</span>
+                                    <span><kbd className="px-1 py-0.5 bg-gray-200 text-gray-500 rounded text-[10px]">Hover</kbd> → isolate pair</span>
+                                    {allZonesMode && (
+                                        <span className="text-gray-500">Zoom out for zones, zoom in for corridor/detail lines</span>
+                                    )}
+                                </div>
+                            </div>
+                        )}
                     </div>
-                ) : (
-                    <div className="flex flex-col gap-1.5">
-                        <div className="flex items-center gap-4 flex-wrap text-gray-500">
-                            <span className="flex items-center gap-1.5">
-                                <span className="w-3 h-3 rounded-full bg-emerald-500 border border-white shadow-sm" /> Origin zone
-                            </span>
-                            <span className="flex items-center gap-1.5">
-                                <span className="w-3 h-3 rounded-full bg-red-500 border border-white shadow-sm" /> Destination zone
-                            </span>
-                            <span className="flex items-center gap-1.5">
-                                <span className="w-12 h-2 rounded" style={{ background: 'linear-gradient(to right, #bfdbfe, #06b6d4, #f97316, #ef4444)' }} />
-                                Arc: low → high volume
-                            </span>
-                            <span className="flex items-center gap-1.5">
-                                <span className="w-4 h-4 rounded-full bg-gray-700 text-white text-[9px] font-bold flex items-center justify-center shrink-0">1</span>
-                                Rank badge
-                            </span>
-                        </div>
-                        <div className="flex items-center gap-4 text-gray-400 flex-wrap">
-                            <span><kbd className="px-1 py-0.5 bg-gray-200 text-gray-500 rounded text-[10px]">Click</kbd> zone → filter flows</span>
-                            <span><kbd className="px-1 py-0.5 bg-gray-200 text-gray-500 rounded text-[10px]">Click</kbd> arc → trip details</span>
-                            <span><kbd className="px-1 py-0.5 bg-gray-200 text-gray-500 rounded text-[10px]">Hover</kbd> → isolate pair</span>
-                        </div>
-                    </div>
-                )}
-            </div>
 
-            {/* OD Summary Table (collapsible, sortable, bidirectional highlight) */}
-            {activeLayer === 'od' && displayedPairs.length > 0 && (
-                <div>
-                    <button
-                        onClick={() => setShowTable(v => !v)}
-                        className="text-xs text-gray-500 hover:text-gray-700 underline"
-                    >
-                        {showTable ? 'Hide summary table' : 'Show summary table'}
-                    </button>
-                    {showTable && (
-                        <div className="mt-2 border border-gray-200 rounded-lg overflow-hidden max-h-[400px] overflow-y-auto">
+                    {/* OD Summary Table (collapsible, sortable, bidirectional highlight) */}
+                    {activeLayer === 'od' && displayedPairs.length > 0 && (
+                        <div>
+                            <button
+                                onClick={() => setShowTable(v => !v)}
+                                className="text-xs text-gray-500 hover:text-gray-700 underline"
+                            >
+                                {showTable ? 'Hide summary table' : 'Show summary table'}
+                            </button>
+                            {showTable && (
+                                <div className="mt-2 border border-gray-200 rounded-lg overflow-hidden max-h-[400px] overflow-y-auto">
+                                    <table className="w-full text-xs">
+                                        <thead className="sticky top-0 z-10">
+                                            <tr className="bg-gray-50 text-gray-500 uppercase tracking-wider text-[10px]">
+                                                <th className="px-3 py-2 text-left w-8 cursor-pointer hover:text-gray-700 select-none"
+                                                    onClick={() => handleSort('rank')}>
+                                                    # {sortColumn === 'rank' && (sortDir === 'asc' ? '↑' : '↓')}
+                                                </th>
+                                                <th className="px-3 py-2 text-left cursor-pointer hover:text-gray-700 select-none"
+                                                    onClick={() => handleSort('origin')}>
+                                                    Origin {sortColumn === 'origin' && (sortDir === 'asc' ? '↑' : '↓')}
+                                                </th>
+                                                <th className="px-3 py-2 text-left cursor-pointer hover:text-gray-700 select-none"
+                                                    onClick={() => handleSort('dest')}>
+                                                    Destination {sortColumn === 'dest' && (sortDir === 'asc' ? '↑' : '↓')}
+                                                </th>
+                                                <th className="px-3 py-2 text-right cursor-pointer hover:text-gray-700 select-none"
+                                                    onClick={() => handleSort('trips')}>
+                                                    Trips {sortColumn === 'trips' && (sortDir === 'asc' ? '↑' : '↓')}
+                                                </th>
+                                                <th className="px-3 py-2 text-right">% Total</th>
+                                                <th className="px-3 py-2 text-right cursor-pointer hover:text-gray-700 select-none"
+                                                    onClick={() => handleSort('dist')}>
+                                                    Dist (km) {sortColumn === 'dist' && (sortDir === 'asc' ? '↑' : '↓')}
+                                                </th>
+                                                {hasWeekdayData && <th className="px-3 py-2 text-right">WD</th>}
+                                                {hasWeekdayData && <th className="px-3 py-2 text-right">WE</th>}
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {sortedTableData.map(({ pair, idx }) => {
+                                                const originName = getZoneName(pair.originLat, pair.originLon);
+                                                const destName = getZoneName(pair.destLat, pair.destLon);
+                                                const distKm = haversineKm(pair.originLat, pair.originLon, pair.destLat, pair.destLon);
+                                                const pct = odPairs && odPairs.totalTripsProcessed > 0
+                                                    ? ((pair.count / odPairs.totalTripsProcessed) * 100).toFixed(2)
+                                                    : '—';
+                                                const isHighlighted = highlightedPairIdx === idx;
+                                                return (
+                                                    <tr
+                                                        key={idx}
+                                                        className={`border-t border-gray-100 cursor-pointer transition-colors ${
+                                                            isHighlighted ? 'bg-blue-50 ring-1 ring-blue-200' : 'hover:bg-gray-50'
+                                                        }`}
+                                                        onClick={() => highlightArc(pair)}
+                                                        onMouseEnter={() => highlightArc(pair)}
+                                                        onMouseLeave={unhighlightArcs}
+                                                    >
+                                                        <td className="px-3 py-1.5 text-gray-400 font-medium">{idx + 1}</td>
+                                                        <td className="px-3 py-1.5 text-gray-700">{originName}</td>
+                                                        <td className="px-3 py-1.5 text-gray-700">{destName}</td>
+                                                        <td className="px-3 py-1.5 text-right font-medium text-gray-900">{pair.count.toLocaleString()}</td>
+                                                        <td className="px-3 py-1.5 text-right text-gray-500">{pct}%</td>
+                                                        <td className="px-3 py-1.5 text-right text-gray-500">{distKm.toFixed(1)}</td>
+                                                        {hasWeekdayData && <td className="px-3 py-1.5 text-right text-gray-500">{pair.weekdayCount ?? '—'}</td>}
+                                                        {hasWeekdayData && <td className="px-3 py-1.5 text-right text-gray-500">{pair.weekendCount ?? '—'}</td>}
+                                                    </tr>
+                                                );
+                                            })}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </>
+            ) : (
+                <div className="space-y-3">
+                    {!allZonesMode && (
+                        <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                            Matrix is currently scoped to top {topN} pairs. Enable <span className="font-semibold">All zones</span> to review the full filtered OD network.
+                        </div>
+                    )}
+
+                    <div className="border border-gray-200 rounded-lg overflow-auto">
+                        <div className="px-3 py-2 border-b border-gray-200 bg-gray-50 text-xs text-gray-600">
+                            OD matrix (top {matrixZoneHeaders.length} zones by combined demand)
+                        </div>
+                        <table className="min-w-full text-[11px]">
+                            <thead>
+                                <tr className="bg-gray-50 text-gray-500 uppercase tracking-wider text-[10px]">
+                                    <th className="px-3 py-2 text-left sticky left-0 bg-gray-50 z-10">Origin \ Dest</th>
+                                    {matrixZoneHeaders.map(zone => (
+                                        <th key={zone.key} className="px-2 py-2 text-right min-w-[84px]">{zone.name}</th>
+                                    ))}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {matrixZoneHeaders.map(origin => (
+                                    <tr key={origin.key} className="border-t border-gray-100">
+                                        <td className="px-3 py-1.5 font-medium text-gray-700 sticky left-0 bg-white z-10">{origin.name}</td>
+                                        {matrixZoneHeaders.map(dest => {
+                                            const cellCount = matrixHeat.lookup.get(`${origin.key}|${dest.key}`) ?? 0;
+                                            const intensity = matrixHeat.maxCell > 0 ? (cellCount / matrixHeat.maxCell) : 0;
+                                            const bg = cellCount > 0 ? `rgba(17, 24, 39, ${0.05 + intensity * 0.7})` : 'transparent';
+                                            const fg = intensity >= 0.42 ? '#ffffff' : '#374151';
+                                            return (
+                                                <td
+                                                    key={`${origin.key}|${dest.key}`}
+                                                    className="px-2 py-1.5 text-right tabular-nums"
+                                                    style={{ backgroundColor: bg, color: fg }}
+                                                >
+                                                    {cellCount > 0 ? cellCount.toLocaleString() : '—'}
+                                                </td>
+                                            );
+                                        })}
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div className="border border-gray-200 rounded-lg overflow-hidden">
+                        <div className="px-3 py-2 border-b border-gray-200 bg-gray-50 flex items-center gap-2 flex-wrap">
+                            <input
+                                type="text"
+                                value={matrixSearch}
+                                onChange={e => setMatrixSearch(e.target.value)}
+                                placeholder="Search origin or destination zone"
+                                className="px-2 py-1.5 text-xs rounded border border-gray-200 min-w-[240px]"
+                            />
+                            <span className="text-xs text-gray-500">{matrixRows.length.toLocaleString()} pairs</span>
+                            <span className="text-xs text-gray-400">Showing {matrixStartRow}-{matrixEndRow}</span>
+                            <div className="ml-auto flex items-center gap-1">
+                                <button
+                                    onClick={() => setMatrixPage(p => Math.max(1, p - 1))}
+                                    disabled={matrixCurrentPage <= 1}
+                                    className="px-2 py-1 text-xs border border-gray-200 rounded disabled:opacity-40 disabled:cursor-not-allowed"
+                                >
+                                    Prev
+                                </button>
+                                <span className="text-xs text-gray-500 px-1">{matrixCurrentPage} / {matrixPages}</span>
+                                <button
+                                    onClick={() => setMatrixPage(p => Math.min(matrixPages, p + 1))}
+                                    disabled={matrixCurrentPage >= matrixPages}
+                                    className="px-2 py-1 text-xs border border-gray-200 rounded disabled:opacity-40 disabled:cursor-not-allowed"
+                                >
+                                    Next
+                                </button>
+                            </div>
+                        </div>
+                        <div className="max-h-[420px] overflow-auto">
                             <table className="w-full text-xs">
-                                <thead className="sticky top-0 z-10">
-                                    <tr className="bg-gray-50 text-gray-500 uppercase tracking-wider text-[10px]">
-                                        <th className="px-3 py-2 text-left w-8 cursor-pointer hover:text-gray-700 select-none"
-                                            onClick={() => handleSort('rank')}>
-                                            # {sortColumn === 'rank' && (sortDir === 'asc' ? '↑' : '↓')}
-                                        </th>
-                                        <th className="px-3 py-2 text-left cursor-pointer hover:text-gray-700 select-none"
-                                            onClick={() => handleSort('origin')}>
-                                            Origin {sortColumn === 'origin' && (sortDir === 'asc' ? '↑' : '↓')}
-                                        </th>
-                                        <th className="px-3 py-2 text-left cursor-pointer hover:text-gray-700 select-none"
-                                            onClick={() => handleSort('dest')}>
-                                            Destination {sortColumn === 'dest' && (sortDir === 'asc' ? '↑' : '↓')}
-                                        </th>
-                                        <th className="px-3 py-2 text-right cursor-pointer hover:text-gray-700 select-none"
-                                            onClick={() => handleSort('trips')}>
-                                            Trips {sortColumn === 'trips' && (sortDir === 'asc' ? '↑' : '↓')}
-                                        </th>
+                                <thead className="sticky top-0 bg-gray-50 z-10">
+                                    <tr className="text-gray-500 uppercase tracking-wider text-[10px]">
+                                        <th className="px-3 py-2 text-left w-8">#</th>
+                                        <th className="px-3 py-2 text-left">Origin</th>
+                                        <th className="px-3 py-2 text-left">Destination</th>
+                                        <th className="px-3 py-2 text-right">Trips</th>
                                         <th className="px-3 py-2 text-right">% Total</th>
-                                        <th className="px-3 py-2 text-right cursor-pointer hover:text-gray-700 select-none"
-                                            onClick={() => handleSort('dist')}>
-                                            Dist (km) {sortColumn === 'dist' && (sortDir === 'asc' ? '↑' : '↓')}
-                                        </th>
-                                        {hasWeekdayData && <th className="px-3 py-2 text-right">WD</th>}
-                                        {hasWeekdayData && <th className="px-3 py-2 text-right">WE</th>}
+                                        <th className="px-3 py-2 text-right">Dist (km)</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {sortedTableData.map(({ pair, idx }) => {
-                                        const originName = getZoneName(pair.originLat, pair.originLon);
-                                        const destName = getZoneName(pair.destLat, pair.destLon);
-                                        const distKm = haversineKm(pair.originLat, pair.originLon, pair.destLat, pair.destLon);
-                                        const pct = odPairs && odPairs.totalTripsProcessed > 0
-                                            ? ((pair.count / odPairs.totalTripsProcessed) * 100).toFixed(2)
-                                            : '—';
-                                        const isHighlighted = highlightedPairIdx === idx;
-                                        return (
-                                            <tr
-                                                key={idx}
-                                                className={`border-t border-gray-100 cursor-pointer transition-colors ${
-                                                    isHighlighted ? 'bg-blue-50 ring-1 ring-blue-200' : 'hover:bg-gray-50'
-                                                }`}
-                                                onClick={() => highlightArc(idx)}
-                                                onMouseEnter={() => highlightArc(idx)}
-                                                onMouseLeave={unhighlightArcs}
-                                            >
-                                                <td className="px-3 py-1.5 text-gray-400 font-medium">{idx + 1}</td>
-                                                <td className="px-3 py-1.5 text-gray-700">{originName}</td>
-                                                <td className="px-3 py-1.5 text-gray-700">{destName}</td>
-                                                <td className="px-3 py-1.5 text-right font-medium text-gray-900">{pair.count.toLocaleString()}</td>
-                                                <td className="px-3 py-1.5 text-right text-gray-500">{pct}%</td>
-                                                <td className="px-3 py-1.5 text-right text-gray-500">{distKm.toFixed(1)}</td>
-                                                {hasWeekdayData && <td className="px-3 py-1.5 text-right text-gray-500">{pair.weekdayCount ?? '—'}</td>}
-                                                {hasWeekdayData && <td className="px-3 py-1.5 text-right text-gray-500">{pair.weekendCount ?? '—'}</td>}
-                                            </tr>
-                                        );
-                                    })}
+                                    {matrixPageRows.map((row, i) => (
+                                        <tr
+                                            key={`${row.originKey}|${row.destKey}|${row.idx}`}
+                                            className="border-t border-gray-100 hover:bg-gray-50 cursor-pointer"
+                                            onClick={() => {
+                                                setPlannerView('map');
+                                                setTimeout(() => {
+                                                    const map = mapRef.current;
+                                                    if (map) {
+                                                        map.invalidateSize();
+                                                        map.fitBounds(
+                                                            [[row.pair.originLat, row.pair.originLon], [row.pair.destLat, row.pair.destLon]],
+                                                            { padding: [32, 32], maxZoom: 14 }
+                                                        );
+                                                    }
+                                                    highlightArc(row.pair);
+                                                }, 90);
+                                            }}
+                                        >
+                                            <td className="px-3 py-1.5 text-gray-400 font-medium">{matrixStartRow + i}</td>
+                                            <td className="px-3 py-1.5 text-gray-700">{row.originName}</td>
+                                            <td className="px-3 py-1.5 text-gray-700">{row.destName}</td>
+                                            <td className="px-3 py-1.5 text-right font-medium text-gray-900">{row.pair.count.toLocaleString()}</td>
+                                            <td className="px-3 py-1.5 text-right text-gray-500">{row.pct.toFixed(2)}%</td>
+                                            <td className="px-3 py-1.5 text-right text-gray-500">{row.distKm.toFixed(1)}</td>
+                                        </tr>
+                                    ))}
+                                    {matrixPageRows.length === 0 && (
+                                        <tr>
+                                            <td colSpan={6} className="px-3 py-6 text-center text-gray-400">No OD pairs match the current filter/search.</td>
+                                        </tr>
+                                    )}
                                 </tbody>
                             </table>
                         </div>
-                    )}
+                    </div>
                 </div>
             )}
         </div>

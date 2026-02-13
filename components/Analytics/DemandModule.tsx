@@ -29,12 +29,17 @@ const TIME_FILTERS: { key: TimeFilter; label: string; hours: string }[] = [
     { key: 'evening', label: 'Evening/Night', hours: '19-6' },
 ];
 
-const SEASON_FILTERS: { key: SeasonFilter; label: string }[] = [
+const BASE_SEASON_FILTERS: { key: SeasonFilter; label: string }[] = [
     { key: 'all', label: 'All' },
     { key: 'jan', label: 'Jan' },
     { key: 'jul', label: 'Jul' },
     { key: 'sep', label: 'Sep' },
 ];
+
+const BARRIE_BOUNDS = { minLat: 44.28, maxLat: 44.48, minLon: -79.80, maxLon: -79.58 };
+const isInBarrie = (lat: number, lon: number): boolean =>
+    lat >= BARRIE_BOUNDS.minLat && lat <= BARRIE_BOUNDS.maxLat
+    && lon >= BARRIE_BOUNDS.minLon && lon <= BARRIE_BOUNDS.maxLon;
 
 export const DemandModule: React.FC<DemandModuleProps> = ({ data }) => {
     const [timeFilter, setTimeFilter] = useState<TimeFilter>('all');
@@ -69,8 +74,16 @@ export const DemandModule: React.FC<DemandModuleProps> = ({ data }) => {
     // Check if season data is available
     const hasSeasonData = useMemo(() => {
         if (!odPairs) return false;
-        return odPairs.pairs.some(p => p.seasonBins && (p.seasonBins.jan > 0 || p.seasonBins.jul > 0 || p.seasonBins.sep > 0));
+        return odPairs.pairs.some(p => p.seasonBins && (p.seasonBins.jan > 0 || p.seasonBins.jul > 0 || p.seasonBins.sep > 0 || p.seasonBins.other > 0));
     }, [odPairs]);
+    const hasOtherSeasonData = useMemo(() => {
+        if (!odPairs) return false;
+        return odPairs.pairs.some(p => (p.seasonBins?.other || 0) > 0);
+    }, [odPairs]);
+    const seasonFilters = useMemo(
+        () => hasOtherSeasonData ? [...BASE_SEASON_FILTERS, { key: 'other' as SeasonFilter, label: 'Other' }] : BASE_SEASON_FILTERS,
+        [hasOtherSeasonData]
+    );
 
     // Top OD pairs ranked table — mirrors the current TransitAppMap ranking/filter state
     const topODPairs = useMemo(() => {
@@ -117,7 +130,17 @@ export const DemandModule: React.FC<DemandModuleProps> = ({ data }) => {
     const coverageGaps = useMemo((): ODCoverageGap[] => {
         if (!odPairs) return [];
         try {
-            return analyzeODCoverageGaps(odPairs, 25);
+            const barrieOnlyPairs = odPairs.pairs.filter(pair =>
+                isInBarrie(pair.originLat, pair.originLon) && isInBarrie(pair.destLat, pair.destLon)
+            );
+            if (barrieOnlyPairs.length === 0) return [];
+            return analyzeODCoverageGaps(
+                {
+                    ...odPairs,
+                    pairs: barrieOnlyPairs,
+                },
+                25
+            );
         } catch {
             return [];
         }
@@ -163,7 +186,7 @@ export const DemandModule: React.FC<DemandModuleProps> = ({ data }) => {
                     <div className="flex items-center gap-2">
                         <span className="text-sm text-gray-500 font-medium mr-2">Season:</span>
                         <div className="flex rounded-lg border border-gray-200 overflow-hidden">
-                            {SEASON_FILTERS.map(({ key, label }) => (
+                            {seasonFilters.map(({ key, label }) => (
                                 <button
                                     key={key}
                                     onClick={() => setSeasonFilter(key)}
@@ -257,8 +280,8 @@ export const DemandModule: React.FC<DemandModuleProps> = ({ data }) => {
                 <ChartCard
                     title="Coverage Gap Analysis"
                     subtitle={gapStats
-                        ? `${gapStats.gapCount} of top ${gapStats.totalAnalyzed} OD pairs lack direct route service (${gapStats.gapPct}% of trip volume)`
-                        : 'Analyzing route coverage for top OD pairs'}
+                        ? `${gapStats.gapCount} of top ${gapStats.totalAnalyzed} Barrie-only OD pairs lack direct route service (${gapStats.gapPct}% of trip volume)`
+                        : 'Analyzing route coverage for top Barrie-only OD pairs'}
                 >
                     <CoverageGapMap
                         gaps={coverageGaps}
