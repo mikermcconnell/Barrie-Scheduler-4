@@ -33,6 +33,7 @@ interface TabConfig {
     label: string;
     icon: React.FC<{ size?: number }>;
     status: 'complete' | 'partial' | 'not-started';
+    underDevelopment?: boolean;
 }
 
 const TAB_CONFIG: TabConfig[] = [
@@ -42,10 +43,10 @@ const TAB_CONFIG: TabConfig[] = [
     { id: 'heatmaps', label: 'Heatmap', icon: MapPinned, status: 'partial' },
     { id: 'route-performance', label: 'Route Performance', icon: TrendingUp, status: 'complete' },
     { id: 'app-usage', label: 'App Usage', icon: Smartphone, status: 'complete' },
-    { id: 'service-gaps', label: 'Service Gaps', icon: Clock, status: 'complete' },
     { id: 'stops', label: 'Stop Analysis', icon: MapPinned, status: 'complete' },
     { id: 'go-integration', label: 'GO Integration', icon: Train, status: 'partial' },
     { id: 'validation', label: 'Validation', icon: CheckCircle2, status: 'not-started' },
+    { id: 'service-gaps', label: 'Service Gaps', icon: Clock, status: 'partial', underDevelopment: true },
 ];
 
 export const TransitAppWorkspace: React.FC<TransitAppWorkspaceProps> = ({
@@ -55,7 +56,10 @@ export const TransitAppWorkspace: React.FC<TransitAppWorkspaceProps> = ({
 }) => {
     const allowIncompleteTabs = true;
     const tabs = useMemo(
-        () => TAB_CONFIG.map(tab => ({ ...tab, enabled: tab.status === 'complete' || allowIncompleteTabs })),
+        () => TAB_CONFIG.map(tab => ({
+            ...tab,
+            enabled: !tab.underDevelopment && (tab.status === 'complete' || allowIncompleteTabs),
+        })),
         [allowIncompleteTabs]
     );
     const defaultTabId =
@@ -150,6 +154,7 @@ export const TransitAppWorkspace: React.FC<TransitAppWorkspaceProps> = ({
                         const Icon = tab.icon;
                         const isActive = activeTab === tab.id;
                         const isDisabled = !tab.enabled;
+                        const isUnderDevelopment = !!tab.underDevelopment;
 
                         return (
                             <button
@@ -166,7 +171,7 @@ export const TransitAppWorkspace: React.FC<TransitAppWorkspaceProps> = ({
                                             : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
                                     }
                                 `}
-                                title={isDisabled ? 'In progress (available on localhost only)' : tab.label}
+                                title={isDisabled ? (isUnderDevelopment ? 'Under development' : 'In progress (available on localhost only)') : tab.label}
                             >
                                 <Icon size={15} />
                                 <span>{tab.label}</span>
@@ -175,7 +180,7 @@ export const TransitAppWorkspace: React.FC<TransitAppWorkspaceProps> = ({
                                 )}
                                 {isDisabled && (
                                     <span className="px-1.5 py-0 bg-gray-200 text-gray-400 text-[9px] font-bold rounded-full uppercase tracking-wide ml-1">
-                                        Soon
+                                        {isUnderDevelopment ? 'Under Dev' : 'Soon'}
                                     </span>
                                 )}
                             </button>
