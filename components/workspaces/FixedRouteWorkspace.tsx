@@ -308,7 +308,7 @@ export const FixedRouteWorkspace: React.FC = () => {
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 px-4">
                     <DashboardCard onClick={handleOpenMasterSchedule} icon={<FileSpreadsheet size={20} />} color="purple"
-                        title="Master Schedule" description="Browse your team's source of truth. View versions and manage all routes." />
+                        title="Master Schedule" description="Browse Barrie Transits Current Schedule." />
 
                     <DashboardCard onClick={() => setViewMode('drafts')} icon={<Edit3 size={20} />} color="indigo"
                         title="Schedule Editor" description="Edit drafts and publish to Master Schedule. The main workflow for schedule changes." />
@@ -327,7 +327,7 @@ export const FixedRouteWorkspace: React.FC = () => {
                         title="Analytics" description="Analyze rider demand, route performance, and connections from Transit App data." />
 
                     <DashboardCard onClick={() => setViewMode('performance')} icon={<Clock size={20} />} color="amber"
-                        title="Performance" description="OTP, ridership, and load profiles from STREETS AVL/APC data. Replaces Transify." />
+                        title="Performance" description="OTP, ridership, and load profiles from STREETS AVL/APC data." />
                 </div>
 
                 {/* GTFS Import Modal */}
