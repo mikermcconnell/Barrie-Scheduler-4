@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { getPerformanceData, getPerformanceMetadata } from '../../utils/performanceDataService';
 import { PerformanceImport } from './PerformanceImport';
 import { PerformanceWorkspace } from './PerformanceWorkspace';
+import { TeamManagement } from '../TeamManagement';
 import type { PerformanceDataSummary } from '../../utils/performanceDataTypes';
 
 interface PerformanceDashboardProps {
@@ -81,8 +82,12 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onCl
     if (!team) {
         return (
             <div className="h-full overflow-auto custom-scrollbar p-6">
-                <div className="max-w-4xl mx-auto text-center py-16">
-                    <p className="text-gray-500">Join or create a team to access Performance Dashboard.</p>
+                <div className="max-w-4xl mx-auto">
+                    <div className="mb-6 text-center">
+                        <h2 className="text-2xl font-bold text-gray-900 tracking-tight mb-2">Performance Dashboard</h2>
+                        <p className="text-gray-500">Set up or join a team to continue.</p>
+                    </div>
+                    <TeamManagement onClose={onClose} />
                 </div>
             </div>
         );

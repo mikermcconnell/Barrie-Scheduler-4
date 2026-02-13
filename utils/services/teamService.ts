@@ -336,3 +336,26 @@ export async function regenerateInviteCode(teamId: string): Promise<string> {
     await updateDoc(teamRef, { inviteCode: newCode });
     return newCode;
 }
+
+/**
+ * Set a custom invite code (owner/admin only - enforcement via security rules)
+ * Must be 6 alphanumeric characters and unique across teams.
+ */
+export async function setInviteCode(teamId: string, inviteCode: string): Promise<string> {
+    const normalized = inviteCode.trim().toUpperCase();
+    if (!/^[A-Z0-9]{6}$/.test(normalized)) {
+        throw new Error('Invite code must be exactly 6 letters/numbers');
+    }
+
+    const teamsRef = collection(db, 'teams');
+    const q = query(teamsRef, where('inviteCode', '==', normalized));
+    const existing = await getDocs(q);
+    const usedByOtherTeam = existing.docs.some(d => d.id !== teamId);
+    if (usedByOtherTeam) {
+        throw new Error('Invite code is already in use');
+    }
+
+    const teamRef = doc(db, 'teams', teamId);
+    await updateDoc(teamRef, { inviteCode: normalized });
+    return normalized;
+}

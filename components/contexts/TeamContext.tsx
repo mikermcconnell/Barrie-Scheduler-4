@@ -16,14 +16,17 @@ interface TeamContextType {
     hasTeam: boolean;
 }
 
-const TeamContext = createContext<TeamContextType | undefined>(undefined);
+const fallbackTeamContext: TeamContextType = {
+    team: null,
+    loading: false,
+    refreshTeam: async () => { },
+    hasTeam: false
+};
+
+const TeamContext = createContext<TeamContextType>(fallbackTeamContext);
 
 export const useTeam = (): TeamContextType => {
-    const context = useContext(TeamContext);
-    if (!context) {
-        throw new Error('useTeam must be used within a TeamProvider');
-    }
-    return context;
+    return useContext(TeamContext);
 };
 
 interface TeamProviderProps {

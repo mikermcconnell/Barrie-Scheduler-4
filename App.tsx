@@ -7,6 +7,8 @@ import { ToastProvider } from './components/contexts/ToastContext';
 import { AuthModal } from './components/modals/AuthModal';
 import { FileManager } from './components/FileManager';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { Modal } from './components/ui/Modal';
+import { TeamManagement } from './components/TeamManagement';
 import { LayoutDashboard, Bus, Settings, Bell, ArrowRight, ArrowLeft, Map, User, LogOut, FolderOpen, ChevronDown, ChevronRight, Loader2, FileSpreadsheet, Plus, Download, CalendarPlus, Timer, BarChart2, Settings2, Sparkles } from 'lucide-react';
 import { Header, View } from './components/layout/Header';
 
@@ -24,6 +26,7 @@ const AppContent: React.FC = () => {
   const [currentView, setCurrentViewState] = useState<View>(parseHashView);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showFileManager, setShowFileManager] = useState(false);
+  const [showTeamManagement, setShowTeamManagement] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
 
   // Wrap navigation to sync URL hash
@@ -80,11 +83,25 @@ const AppContent: React.FC = () => {
         />
       )}
 
+      {/* Team Management Modal */}
+      <Modal
+        isOpen={showTeamManagement}
+        onClose={() => setShowTeamManagement(false)}
+        size="lg"
+        zIndex="high"
+      >
+        <Modal.Header>Team Management</Modal.Header>
+        <Modal.Body className="p-4 bg-gray-50">
+          <TeamManagement />
+        </Modal.Body>
+      </Modal>
+
       {/* Global Header */}
       <Header
         currentView={currentView}
         onNavigate={setCurrentView}
         onShowFileManager={() => setShowFileManager(true)}
+        onShowTeamManagement={() => setShowTeamManagement(true)}
         onShowAuthModal={() => setShowAuthModal(true)}
       />
 

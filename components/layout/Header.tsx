@@ -5,6 +5,7 @@ import {
     Bell,
     Settings,
     User,
+    Users,
     LogOut,
     FolderOpen,
     ChevronDown,
@@ -18,6 +19,7 @@ interface HeaderProps {
     currentView: View;
     onNavigate: (view: View) => void;
     onShowFileManager: () => void;
+    onShowTeamManagement: () => void;
     onShowAuthModal: () => void;
 }
 
@@ -25,6 +27,7 @@ export const Header: React.FC<HeaderProps> = ({
     currentView,
     onNavigate,
     onShowFileManager,
+    onShowTeamManagement,
     onShowAuthModal,
 }) => {
     const { user, signOut } = useAuth();
@@ -128,6 +131,12 @@ export const Header: React.FC<HeaderProps> = ({
                                                     className="w-full px-3 py-2 text-left text-sm font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-50 rounded-lg flex items-center gap-3 transition-colors"
                                                 >
                                                     <Settings size={16} /> Preferences
+                                                </button>
+                                                <button
+                                                    onClick={() => { onShowTeamManagement(); setShowUserMenu(false); }}
+                                                    className="w-full px-3 py-2 text-left text-sm font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-50 rounded-lg flex items-center gap-3 transition-colors"
+                                                >
+                                                    <Users size={16} /> Team Management
                                                 </button>
                                             </div>
 

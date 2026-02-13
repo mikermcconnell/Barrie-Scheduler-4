@@ -16,7 +16,8 @@ import {
     leaveTeam,
     removeMember,
     updateMemberRole,
-    regenerateInviteCode
+    regenerateInviteCode,
+    setInviteCode as setTeamInviteCode
 } from '../utils/services/teamService';
 import type { TeamWithMembers, TeamMember, TeamRole } from '../utils/masterScheduleTypes';
 
@@ -36,6 +37,9 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
     const [loading, setLoading] = useState(false);
     const [teamDetails, setTeamDetails] = useState<TeamWithMembers | null>(null);
     const [copiedCode, setCopiedCode] = useState(false);
+    const [isEditingInviteCode, setIsEditingInviteCode] = useState(false);
+    const [customInviteCode, setCustomInviteCode] = useState('');
+    const [savingInviteCode, setSavingInviteCode] = useState(false);
 
     // Load full team details with members
     useEffect(() => {
@@ -121,11 +125,33 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
         if (!team) return;
 
         try {
-            const newCode = await regenerateInviteCode(team.id);
+            await regenerateInviteCode(team.id);
             toast?.success('New invite code generated');
+            setIsEditingInviteCode(false);
             await refreshTeam();
         } catch (error) {
             toast?.error('Failed to regenerate code');
+        }
+    };
+
+    const handleSetCustomInviteCode = async () => {
+        if (!team) return;
+        const normalized = customInviteCode.trim().toUpperCase();
+        if (!/^[A-Z0-9]{6}$/.test(normalized)) {
+            toast?.error('Invite code must be exactly 6 letters/numbers');
+            return;
+        }
+
+        setSavingInviteCode(true);
+        try {
+            await setTeamInviteCode(team.id, normalized);
+            await refreshTeam();
+            setIsEditingInviteCode(false);
+            toast?.success(`Invite code set to ${normalized}`);
+        } catch (error: any) {
+            toast?.error(error?.message || 'Failed to set invite code');
+        } finally {
+            setSavingInviteCode(false);
         }
     };
 
@@ -338,15 +364,50 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                             {copiedCode ? <Check size={20} /> : <Copy size={20} />}
                         </button>
                         {isOwnerOrAdmin() && (
-                            <button
-                                onClick={handleRegenerateCode}
-                                className="px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-100 text-gray-700 text-sm"
-                            >
-                                Regenerate
-                            </button>
+                            <>
+                                <button
+                                    onClick={() => {
+                                        if (!isEditingInviteCode) setCustomInviteCode(team.inviteCode);
+                                        setIsEditingInviteCode(v => !v);
+                                    }}
+                                    className="px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-100 text-gray-700 text-sm"
+                                >
+                                    {isEditingInviteCode ? 'Cancel' : 'Set Code'}
+                                </button>
+                                <button
+                                    onClick={handleRegenerateCode}
+                                    className="px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-100 text-gray-700 text-sm"
+                                >
+                                    Regenerate
+                                </button>
+                            </>
                         )}
                     </div>
                 </div>
+                {isOwnerOrAdmin() && isEditingInviteCode && (
+                    <div className="mt-3">
+                        <div className="flex gap-2">
+                            <input
+                                type="text"
+                                value={customInviteCode}
+                                onChange={(e) => setCustomInviteCode(
+                                    e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6)
+                                )}
+                                maxLength={6}
+                                placeholder="BARRIE"
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-green focus:border-brand-green uppercase text-center text-lg tracking-wider font-mono"
+                            />
+                            <button
+                                onClick={handleSetCustomInviteCode}
+                                disabled={savingInviteCode || customInviteCode.trim().length !== 6}
+                                className="px-4 py-2 bg-brand-green text-white font-bold rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                            >
+                                {savingInviteCode ? 'Saving...' : 'Save'}
+                            </button>
+                        </div>
+                        <p className="mt-2 text-xs text-gray-500">Use exactly 6 letters/numbers (example: BARRIE).</p>
+                    </div>
+                )}
             </div>
 
             {/* Members List */}
