@@ -314,14 +314,14 @@ export const FixedRouteWorkspace: React.FC = () => {
                         title="Schedule Editor" description="Edit drafts and publish to Master Schedule. The main workflow for schedule changes." />
 
                     <DashboardCard onClick={handleOpenNewSchedule} icon={<CalendarPlus size={20} />} color="emerald"
-                        title="New Schedules" description="Generate optimized schedules from scratch using AI-powered run cutting." />
+                        title="New Schedules" description="Generate optimized schedules from scratch using Transify data." />
 
                     <DashboardCard onClick={() => user ? setShowGTFSImport(true) : toast.warning('Sign In Required', 'Please sign in to import from GTFS')}
                         icon={<Database size={20} />} color="indigo"
                         title="Import from GTFS" description="Import existing Barrie Transit schedules from the GTFS feed." />
 
                     <DashboardCard onClick={() => setViewMode('reports')} icon={<FileText size={20} />} color="amber"
-                        title="Reports" description="Generate public timetables, GTFS exports, and driver sheets." />
+                        title="Reports" description="Generate public timetables and GTFS exports." />
 
                     <DashboardCard onClick={() => setViewMode('analytics')} icon={<GitBranch size={20} />} color="cyan"
                         title="Analytics" description="Analyze rider demand, route performance, and connections from Transit App data." />

@@ -6,7 +6,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { BarChart3, MapPin, ArrowRight, Loader2, Smartphone } from 'lucide-react';
+import { MapPin, ArrowRight, Loader2, Smartphone } from 'lucide-react';
 import { useTeam } from '../contexts/TeamContext';
 import { useAuth } from '../contexts/AuthContext';
 import { getTransitAppData, getTransitAppMetadata } from '../../utils/transit-app/transitAppService';
@@ -174,33 +174,15 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
                         </p>
                     </button>
 
-                    {/* Block Efficiency Card - Coming Soon */}
+                    {/* Coverage Gaps Card - Phase 2 */}
                     <div className="relative bg-gray-50 p-6 rounded-xl border border-gray-200 shadow-sm text-left flex flex-col h-full opacity-60 cursor-not-allowed">
                         <div className="absolute top-3 right-3 px-2 py-0.5 bg-gray-200 text-gray-500 text-[10px] font-bold rounded-full uppercase tracking-wide">
-                            Coming Soon
-                        </div>
-                        <div className="flex items-center justify-between mb-4">
-                            <div className="bg-gray-100 p-2.5 rounded-lg text-gray-400">
-                                <BarChart3 size={20} />
-                            </div>
-                            <ArrowRight size={16} className="text-gray-300" />
-                        </div>
-                        <h3 className="text-lg font-bold text-gray-500 mb-1">Block Efficiency</h3>
-                        <p className="text-sm text-gray-400 leading-relaxed">
-                            Analyze vehicle utilization and identify consolidation opportunities.
-                        </p>
-                    </div>
-
-                    {/* Coverage Gaps Card - Coming Soon */}
-                    <div className="relative bg-gray-50 p-6 rounded-xl border border-gray-200 shadow-sm text-left flex flex-col h-full opacity-60 cursor-not-allowed">
-                        <div className="absolute top-3 right-3 px-2 py-0.5 bg-gray-200 text-gray-500 text-[10px] font-bold rounded-full uppercase tracking-wide">
-                            Coming Soon
+                            Phase 2
                         </div>
                         <div className="flex items-center justify-between mb-4">
                             <div className="bg-gray-100 p-2.5 rounded-lg text-gray-400">
                                 <MapPin size={20} />
                             </div>
-                            <ArrowRight size={16} className="text-gray-300" />
                         </div>
                         <h3 className="text-lg font-bold text-gray-500 mb-1">Coverage Gaps</h3>
                         <p className="text-sm text-gray-400 leading-relaxed">
