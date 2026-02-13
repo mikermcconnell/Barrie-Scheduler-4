@@ -26,7 +26,10 @@ service cloud.firestore {
 
       // Team Members
       match /members/{memberId} {
-        allow read: if isTeamMember(teamId);
+        // Allow users to read their own membership doc (needed for invite join flow)
+        // and full member list only when already in the team.
+        allow read: if request.auth != null &&
+                       (request.auth.uid == memberId || isTeamMember(teamId));
         // Allow creating your own member document when joining/creating team
         // OR being an owner/admin to manage others
         allow create: if request.auth != null &&
