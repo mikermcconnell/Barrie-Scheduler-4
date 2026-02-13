@@ -48,19 +48,12 @@ const TAB_CONFIG: TabConfig[] = [
     { id: 'validation', label: 'Validation', icon: CheckCircle2, status: 'not-started' },
 ];
 
-const LOCALHOST_HOSTNAMES = new Set(['localhost', '127.0.0.1', '::1']);
-
-const isLocalhost = () => {
-    if (typeof window === 'undefined') return false;
-    return LOCALHOST_HOSTNAMES.has(window.location.hostname);
-};
-
 export const TransitAppWorkspace: React.FC<TransitAppWorkspaceProps> = ({
     data,
     onReimport,
     onBack,
 }) => {
-    const allowIncompleteTabs = import.meta.env.DEV || isLocalhost();
+    const allowIncompleteTabs = true;
     const tabs = useMemo(
         () => TAB_CONFIG.map(tab => ({ ...tab, enabled: tab.status === 'complete' || allowIncompleteTabs })),
         [allowIncompleteTabs]
