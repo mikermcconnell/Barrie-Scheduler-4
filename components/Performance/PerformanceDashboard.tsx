@@ -23,20 +23,44 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onCl
     const [hasExistingData, setHasExistingData] = useState(false);
 
     useEffect(() => {
+        let cancelled = false;
+        setView('landing');
+        setData(null);
+        setHasExistingData(false);
+
         if (!team?.id) {
             setLoading(false);
-            return;
+            return () => {
+                cancelled = true;
+            };
         }
+
+        setLoading(true);
         (async () => {
             try {
                 const metadata = await getPerformanceMetadata(team.id);
-                setHasExistingData(!!metadata);
+                if (cancelled) return;
+                if (metadata) {
+                    setHasExistingData(true);
+                    const loaded = await getPerformanceData(team.id);
+                    if (cancelled) return;
+                    if (loaded) {
+                        setData(loaded);
+                        setView('workspace');
+                    }
+                }
             } catch (error) {
                 console.error('Error checking performance data:', error);
             } finally {
-                setLoading(false);
+                if (!cancelled) {
+                    setLoading(false);
+                }
             }
         })();
+
+        return () => {
+            cancelled = true;
+        };
     }, [team?.id]);
 
     const handleCardClick = async () => {
@@ -156,7 +180,9 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onCl
                         </div>
                         <h3 className="text-lg font-bold text-gray-900 mb-1">STREETS AVL Data</h3>
                         <p className="text-sm text-gray-500 leading-relaxed">
-                            Import AVL/APC data to view OTP, ridership trends, and load profiles by route.
+                            {hasExistingData
+                                ? 'View OTP, ridership trends, and load profiles. Data updates daily.'
+                                : 'Import AVL/APC data to view OTP, ridership trends, and load profiles by route.'}
                         </p>
                     </button>
 

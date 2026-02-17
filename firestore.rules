@@ -51,6 +51,11 @@ service cloud.firestore {
       match /transitAppData/{docId} {
         allow read, write: if isTeamMember(teamId);
       }
+
+      // Performance Data
+      match /performanceData/{docId} {
+        allow read, write: if isTeamMember(teamId);
+      }
     }
 
     // ========== HELPER FUNCTIONS ==========

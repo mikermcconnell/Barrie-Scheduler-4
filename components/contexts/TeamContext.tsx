@@ -65,6 +65,7 @@ export const TeamProvider: React.FC<TeamProviderProps> = ({ children }) => {
         loadTeam();
     }, [user]);
 
+
     const value: TeamContextType = {
         team,
         loading,

@@ -1,14 +1,13 @@
-// Performance Dashboard Types — STREETS Datawarehouse AVL/APC data
-// Schema: 35 columns per stop-event record, ~36K records/day
+// Performance Data Types — server-side copy for Cloud Functions
+// Mirrors utils/performanceDataTypes.ts (source of truth is client-side)
 
-// ─── Day Type ───────────────────────────────────────────────────────
 export type DayType = 'weekday' | 'saturday' | 'sunday';
 
 export function parseDayType(raw: string): DayType {
   switch (raw) {
     case 'SATURDAY': return 'saturday';
     case 'SUNDAY': return 'sunday';
-    default: return 'weekday'; // DAY_OF_WEEK
+    default: return 'weekday';
   }
 }
 
@@ -20,46 +19,44 @@ export function deriveDayTypeFromDate(dateStr: string): DayType {
   return 'weekday';
 }
 
-// ─── Raw Record (1:1 with STREETS row) ──────────────────────────────
 export interface STREETSRecord {
   vehicleLocationTPKey: number;
   vehicleId: string;
   inBetween: boolean;
   isTripper: boolean;
-  date: string;              // YYYY-MM-DD
-  month: string;             // YYYY-MM
-  day: string;               // DAY_OF_WEEK | SATURDAY | SUNDAY
-  arrivalTime: string;       // HH:MM (scheduled)
-  observedArrivalTime: string | null;  // HH:MM:SS (actual)
-  stopTime: string;          // HH:MM
-  observedDepartureTime: string | null; // HH:MM:SS
+  date: string;
+  month: string;
+  day: string;
+  arrivalTime: string;
+  observedArrivalTime: string | null;
+  stopTime: string;
+  observedDepartureTime: string | null;
   wheelchairUsageCount: number;
   departureLoad: number;
   boardings: number;
   alightings: number;
   apcSource: number;
-  block: string;             // e.g. "10-17"
+  block: string;
   operatorId: string;
-  tripName: string;          // e.g. "10 - 10FD - 12:40"
+  tripName: string;
   stopName: string;
-  routeName: string;         // STREETS name e.g. "NORTH LOOP"
-  branch: string;            // e.g. "10 FULL", "8A SB Full"
-  routeId: string;           // route number e.g. "10", "12A", "8A"
+  routeName: string;
+  branch: string;
+  routeId: string;
   routeStopIndex: number;
   stopId: string;
-  direction: string;         // CW, CCW, N, S
+  direction: string;
   isDetour: boolean;
   stopLat: number;
   stopLon: number;
   timePoint: boolean;
   distance: number;
   previousStopName: string | null;
-  tripId: string;            // GUID
+  tripId: string;
   internalTripId: number;
-  terminalDepartureTime: string; // HH:MM
+  terminalDepartureTime: string;
 }
 
-// Required columns for schema validation
 export const STREETS_REQUIRED_COLUMNS = [
   'VehicleID', 'InBetween', 'Date', 'Day', 'ArrivalTime', 'ObservedArrivalTime',
   'StopTime', 'ObservedDepartureTime', 'DepartureLoad', 'Boardings', 'Alightings',
@@ -68,15 +65,11 @@ export const STREETS_REQUIRED_COLUMNS = [
   'TerminalDepartureTime', 'WheelchairUsageCount',
 ] as const;
 
-// ─── OTP Classification ─────────────────────────────────────────────
 export type OTPStatus = 'early' | 'on-time' | 'late';
 
-// APC load sanitization — cap absurd departureLoad values from hardware malfunctions
-export const DEFAULT_LOAD_CAP = 65; // just above crush load of 60
-
 export const OTP_THRESHOLDS = {
-  earlySeconds: -180,   // > 3 min early
-  lateSeconds: 300,     // > 5 min late
+  earlySeconds: -180,
+  lateSeconds: 300,
 } as const;
 
 export function classifyOTP(deviationSeconds: number): OTPStatus {
@@ -84,8 +77,6 @@ export function classifyOTP(deviationSeconds: number): OTPStatus {
   if (deviationSeconds > OTP_THRESHOLDS.lateSeconds) return 'late';
   return 'on-time';
 }
-
-// ─── Aggregated Metrics ─────────────────────────────────────────────
 
 export interface OTPBreakdown {
   total: number;
@@ -113,7 +104,7 @@ export interface RouteMetrics {
 }
 
 export interface HourMetrics {
-  hour: number;          // 0-23
+  hour: number;
   otp: OTPBreakdown;
   boardings: number;
   alightings: number;
@@ -130,7 +121,7 @@ export interface StopMetrics {
   boardings: number;
   alightings: number;
   avgLoad: number;
-  routeCount: number;     // how many routes serve this stop
+  routeCount: number;
 }
 
 export interface TripMetrics {
@@ -168,12 +159,12 @@ export interface RouteLoadProfile {
 export interface DataQuality {
   totalRecords: number;
   inBetweenFiltered: number;
-  missingAVL: number;       // null ObservedArrivalTime
-  missingAPC: number;       // records with 0 APC source
+  missingAVL: number;
+  missingAPC: number;
   detourRecords: number;
   tripperRecords: number;
-  loadCapped: number;       // records where departureLoad was capped at DEFAULT_LOAD_CAP
-  apcExcludedFromLoad: number; // records with apcSource === 0 excluded from load calcs
+  loadCapped: number;
+  apcExcludedFromLoad: number;
 }
 
 export interface SystemMetrics {
@@ -188,10 +179,8 @@ export interface SystemMetrics {
   peakLoad: number;
 }
 
-// ─── Daily Summary (stored in Firebase) ─────────────────────────────
-
 export interface DailySummary {
-  date: string;              // YYYY-MM-DD
+  date: string;
   dayType: DayType;
   system: SystemMetrics;
   byRoute: RouteMetrics[];
@@ -205,15 +194,11 @@ export interface DailySummary {
 
 export const PERFORMANCE_SCHEMA_VERSION = 1;
 
-// ─── Multi-Day Summary (for trend views) ────────────────────────────
-
 export interface PerformanceDataSummary {
   dailySummaries: DailySummary[];
   metadata: PerformanceMetadata;
   schemaVersion: number;
 }
-
-// ─── Firebase Metadata ──────────────────────────────────────────────
 
 export interface PerformanceMetadata {
   importedAt: string;
@@ -223,35 +208,3 @@ export interface PerformanceMetadata {
   totalRecords: number;
   storagePath?: string;
 }
-
-// ─── Import State (ephemeral, not stored) ───────────────────────────
-
-export type PerformanceImportPhase = 'select' | 'preview' | 'processing' | 'complete' | 'error';
-
-export interface ImportProgress {
-  phase: string;
-  current: number;
-  total: number;
-}
-
-export interface ImportPreview {
-  fileName: string;
-  fileSize: number;
-  rowCount: number;
-  dateRange: { start: string; end: string };
-  dayTypes: DayType[];
-  routeIds: string[];
-  sampleRows: STREETSRecord[];
-  warnings: string[];
-}
-
-// ─── Tab Configuration ──────────────────────────────────────────────
-
-export type PerformanceTab =
-  | 'overview'
-  | 'otp'
-  | 'ridership'
-  | 'load-profiles'
-  | 'route-detail'
-  | 'stop-detail'
-  | 'connections';

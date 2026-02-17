@@ -22,5 +22,10 @@ service firebase.storage {
     match /teams/{teamId}/transitAppData/{allPaths=**} {
       allow read, write: if request.auth != null;
     }
+
+    // Team performance data (STREETS summaries)
+    match /teams/{teamId}/performanceData/{allPaths=**} {
+      allow read, write: if request.auth != null;
+    }
   }
 }

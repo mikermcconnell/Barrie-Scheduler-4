@@ -5,6 +5,7 @@ import {
   ImportPreview,
   ImportProgress,
   parseDayType,
+  DEFAULT_LOAD_CAP,
 } from './performanceDataTypes';
 
 const COLUMN_MAP: Record<string, keyof STREETSRecord> = {
@@ -50,7 +51,7 @@ function toBoolean(val: unknown): boolean {
   if (typeof val === 'number') return val !== 0;
   if (typeof val === 'string') {
     const lower = val.toLowerCase().trim();
-    return lower === 'true' || lower === '1';
+    return lower === 'true' || lower === '1' || lower === 'yes';
   }
   return false;
 }
@@ -228,6 +229,18 @@ export function generatePreview(
   const detours = records.filter(r => r.isDetour).length;
   if (detours > 0) {
     warnings.push(`${detours} detour records detected`);
+  }
+
+  const overCap = records.filter(r => r.departureLoad > DEFAULT_LOAD_CAP).length;
+  if (overCap > 0) {
+    const pct = ((overCap / records.length) * 100).toFixed(1);
+    warnings.push(`${overCap} records (${pct}%) have load > ${DEFAULT_LOAD_CAP} (will be capped — possible APC malfunction)`);
+  }
+
+  const noApc = records.filter(r => r.apcSource === 0).length;
+  if (noApc > 0) {
+    const pct = ((noApc / records.length) * 100).toFixed(1);
+    warnings.push(`${noApc} records (${pct}%) have no APC data (excluded from load calculations)`);
   }
 
   const sampleRows = records.slice(0, 5);

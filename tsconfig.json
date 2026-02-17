@@ -25,7 +25,8 @@
     },
     "allowImportingTsExtensions": true,
     "noEmit": true,
-    "noImplicitAny": true
+    "noImplicitAny": true,
+    "resolveJsonModule": true
   },
   "exclude": [
     "node_modules",

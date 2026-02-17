@@ -4,7 +4,7 @@ export const MetricCard: React.FC<{
     icon: React.ReactNode;
     label: string;
     value: string;
-    color: 'cyan' | 'indigo' | 'emerald' | 'amber';
+    color: 'cyan' | 'indigo' | 'emerald' | 'amber' | 'red';
     subValue?: string;
 }> = ({ icon, label, value, color, subValue }) => {
     const colors = {
@@ -12,6 +12,7 @@ export const MetricCard: React.FC<{
         indigo: 'bg-indigo-50 text-indigo-600',
         emerald: 'bg-emerald-50 text-emerald-600',
         amber: 'bg-amber-50 text-amber-600',
+        red: 'bg-red-50 text-red-600',
     };
 
     return (

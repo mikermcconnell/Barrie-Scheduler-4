@@ -627,7 +627,10 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
         const maxCount = filtered[0].count;
         const logMax = Math.log(maxCount + 1);
 
-        for (const cell of filtered) {
+        // Render lowest values first so highest-value bubbles draw on top
+        const ascending = [...filtered].reverse();
+
+        for (const cell of ascending) {
             // Non-linear boost to improve visual separation in dense downtown cells.
             const normalized = Math.log(cell.count + 1) / Math.max(0.0001, logMax);
             const t = Math.pow(normalized, 0.65);

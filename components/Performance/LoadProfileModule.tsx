@@ -5,6 +5,7 @@ import {
 } from 'recharts';
 import { ChartCard } from '../Analytics/AnalyticsShared';
 import type { PerformanceDataSummary, DayType, RouteLoadProfile } from '../../utils/performanceDataTypes';
+import { DEFAULT_LOAD_CAP } from '../../utils/performanceDataTypes';
 
 interface LoadProfileModuleProps {
     data: PerformanceDataSummary;
@@ -60,9 +61,9 @@ export const LoadProfileModule: React.FC<LoadProfileModuleProps> = ({ data }) =>
         for (const { profile, dayCount } of profileMap.values()) {
             if (dayCount > 1) {
                 for (const s of profile.stops) {
-                    s.avgBoardings = Math.round((s.avgBoardings / dayCount) * 10) / 10;
-                    s.avgAlightings = Math.round((s.avgAlightings / dayCount) * 10) / 10;
-                    s.avgLoad = Math.round((s.avgLoad / dayCount) * 10) / 10;
+                    s.avgBoardings = Math.round(s.avgBoardings / dayCount);
+                    s.avgAlightings = Math.round(s.avgAlightings / dayCount);
+                    s.avgLoad = Math.round(s.avgLoad / dayCount);
                 }
             }
         }
@@ -97,15 +98,25 @@ export const LoadProfileModule: React.FC<LoadProfileModuleProps> = ({ data }) =>
         }
     }, [profileOptions, selectedProfile]);
 
+    const qualityStats = useMemo(() => {
+        let loadCapped = 0;
+        let apcExcludedFromLoad = 0;
+        for (const day of filtered) {
+            loadCapped += day.dataQuality.loadCapped;
+            apcExcludedFromLoad += day.dataQuality.apcExcludedFromLoad;
+        }
+        return { loadCapped, apcExcludedFromLoad };
+    }, [filtered]);
+
     const chartData = useMemo(() => {
         if (!activeProfile) return [];
         return activeProfile.stops.map(s => ({
             name: s.stopName.length > 20 ? s.stopName.slice(0, 18) + '...' : s.stopName,
             fullName: s.stopName,
-            boardings: s.avgBoardings,
-            alightings: s.avgAlightings,
-            load: s.avgLoad,
-            maxLoad: s.maxLoad,
+            boardings: Math.round(s.avgBoardings),
+            alightings: Math.round(s.avgAlightings),
+            load: Math.round(s.avgLoad),
+            maxLoad: Math.round(s.maxLoad),
             isTimepoint: s.isTimepoint,
         }));
     }, [activeProfile]);
@@ -144,6 +155,22 @@ export const LoadProfileModule: React.FC<LoadProfileModuleProps> = ({ data }) =>
                     </select>
                 </div>
             </div>
+
+            {/* Data quality badges */}
+            {(qualityStats.loadCapped > 0 || qualityStats.apcExcludedFromLoad > 0) && (
+                <div className="flex items-center gap-3 flex-wrap">
+                    {qualityStats.loadCapped > 0 && (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-full bg-amber-50 text-amber-700 border border-amber-200">
+                            ⚠ {qualityStats.loadCapped.toLocaleString()} records capped at {DEFAULT_LOAD_CAP} — possible APC issues
+                        </span>
+                    )}
+                    {qualityStats.apcExcludedFromLoad > 0 && (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-full bg-blue-50 text-blue-600 border border-blue-200">
+                            {qualityStats.apcExcludedFromLoad.toLocaleString()} records excluded (no APC)
+                        </span>
+                    )}
+                </div>
+            )}
 
             {activeProfile && (
                 <>
@@ -240,10 +267,10 @@ export const LoadProfileModule: React.FC<LoadProfileModuleProps> = ({ data }) =>
                                             <td className="py-1.5 px-2 text-center">
                                                 {s.isTimepoint && <span className="text-amber-500 text-xs font-bold">TP</span>}
                                             </td>
-                                            <td className="py-1.5 px-2 text-right text-emerald-600 font-medium">{s.avgBoardings}</td>
-                                            <td className="py-1.5 px-2 text-right text-purple-600 font-medium">{s.avgAlightings}</td>
-                                            <td className="py-1.5 px-2 text-right font-bold text-gray-900">{s.avgLoad}</td>
-                                            <td className="py-1.5 px-2 text-right text-gray-500">{s.maxLoad}</td>
+                                            <td className="py-1.5 px-2 text-right text-emerald-600 font-medium">{Math.round(s.avgBoardings)}</td>
+                                            <td className="py-1.5 px-2 text-right text-purple-600 font-medium">{Math.round(s.avgAlightings)}</td>
+                                            <td className="py-1.5 px-2 text-right font-bold text-gray-900">{Math.round(s.avgLoad)}</td>
+                                            <td className="py-1.5 px-2 text-right text-gray-500">{Math.round(s.maxLoad)}</td>
                                         </tr>
                                     ))}
                                 </tbody>

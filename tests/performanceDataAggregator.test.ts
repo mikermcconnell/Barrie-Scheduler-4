@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { aggregateDailySummaries } from '../utils/performanceDataAggregator';
-import { classifyOTP, parseDayType, OTP_THRESHOLDS } from '../utils/performanceDataTypes';
+import { classifyOTP, parseDayType, OTP_THRESHOLDS, DEFAULT_LOAD_CAP } from '../utils/performanceDataTypes';
 import type { STREETSRecord } from '../utils/performanceDataTypes';
 
 // ─── Helper: make a minimal valid STREETS record ────────────────────
@@ -107,32 +107,35 @@ describe('aggregateDailySummaries', () => {
     });
 
     it('filters inBetween records from OTP calculation', () => {
+        // Need routeStopIndex < max per trip so records aren't excluded as "last timepoint"
         const records = [
-            makeRecord({ timePoint: true, inBetween: false, observedArrivalTime: '12:01:00' }),
-            makeRecord({ timePoint: true, inBetween: true, observedArrivalTime: '12:10:00' }),  // late but inBetween
-            makeRecord({ timePoint: true, inBetween: false, observedArrivalTime: '12:02:00' }),
+            makeRecord({ timePoint: true, inBetween: false, routeStopIndex: 0, stopId: 'stop-a', observedDepartureTime: '12:01:00' }),
+            makeRecord({ timePoint: true, inBetween: true, routeStopIndex: 1, stopId: 'stop-b', observedDepartureTime: '12:10:00' }),  // late but inBetween
+            makeRecord({ timePoint: true, inBetween: false, routeStopIndex: 2, stopId: 'stop-c', observedDepartureTime: '12:02:00' }),
+            makeRecord({ timePoint: true, routeStopIndex: 3, stopId: 'last' }),  // last timepoint (excluded)
         ];
         const summaries = aggregateDailySummaries(records);
-        // Only 2 records should be OTP-eligible (both on-time: +60s and +120s)
+        // Records at idx 0 and 2 are eligible (on-time: +60s and +120s). idx 1 excluded (inBetween), idx 3 excluded (last TP)
         expect(summaries[0].system.otp.total).toBe(2);
         expect(summaries[0].system.otp.onTime).toBe(2);
         expect(summaries[0].system.otp.onTimePercent).toBe(100);
     });
 
-    it('excludes null ObservedArrivalTime from OTP', () => {
+    it('excludes null ObservedDepartureTime from OTP', () => {
         const records = [
-            makeRecord({ timePoint: true, observedArrivalTime: '12:01:00' }),
-            makeRecord({ timePoint: true, observedArrivalTime: null }),  // missing AVL
+            makeRecord({ timePoint: true, routeStopIndex: 0, observedDepartureTime: '12:01:00' }),
+            makeRecord({ timePoint: true, routeStopIndex: 1, stopId: 'stop-b', observedDepartureTime: null }),  // missing departure
+            makeRecord({ timePoint: true, routeStopIndex: 2, stopId: 'last' }),  // last timepoint (excluded)
         ];
         const summaries = aggregateDailySummaries(records);
         expect(summaries[0].system.otp.total).toBe(1);
-        expect(summaries[0].dataQuality.missingAVL).toBe(1);
     });
 
     it('only counts timepoint stops for OTP', () => {
         const records = [
-            makeRecord({ timePoint: true, observedArrivalTime: '12:01:00' }),
-            makeRecord({ timePoint: false, observedArrivalTime: '12:10:00' }),  // late but not a timepoint
+            makeRecord({ timePoint: true, routeStopIndex: 0, observedDepartureTime: '12:01:00' }),
+            makeRecord({ timePoint: false, routeStopIndex: 1, stopId: 'stop-b', observedDepartureTime: '12:10:00' }),  // late but not a timepoint
+            makeRecord({ timePoint: true, routeStopIndex: 2, stopId: 'last' }),  // last timepoint (excluded)
         ];
         const summaries = aggregateDailySummaries(records);
         expect(summaries[0].system.otp.total).toBe(1);
@@ -140,22 +143,35 @@ describe('aggregateDailySummaries', () => {
     });
 
     it('calculates OTP deviation correctly', () => {
-        // Scheduled 12:00, arrived 12:06:00 = +360s = LATE
+        // Scheduled stopTime 12:00, departed 12:06:00 = +360s = LATE
         const records = [
-            makeRecord({ arrivalTime: '12:00', observedArrivalTime: '12:06:00', timePoint: true }),
+            makeRecord({ stopTime: '12:00', observedDepartureTime: '12:06:00', timePoint: true, routeStopIndex: 0 }),
+            makeRecord({ timePoint: true, routeStopIndex: 1, stopId: 'last' }),  // last timepoint (excluded)
         ];
         const summaries = aggregateDailySummaries(records);
         expect(summaries[0].system.otp.late).toBe(1);
         expect(summaries[0].system.otp.avgDeviationSeconds).toBe(360);
     });
 
-    it('classifies early arrivals correctly', () => {
-        // Scheduled 12:00, arrived 11:55:00 = -300s = EARLY
+    it('classifies early departures correctly', () => {
+        // Scheduled stopTime 12:00, departed 11:55:00 = -300s = EARLY (> 3 min early)
         const records = [
-            makeRecord({ arrivalTime: '12:00', observedArrivalTime: '11:55:00', timePoint: true }),
+            makeRecord({ stopTime: '12:00', observedDepartureTime: '11:55:00', timePoint: true, routeStopIndex: 0 }),
+            makeRecord({ timePoint: true, routeStopIndex: 1, stopId: 'last' }),  // last timepoint (excluded)
         ];
         const summaries = aggregateDailySummaries(records);
         expect(summaries[0].system.otp.early).toBe(1);
+    });
+
+    it('excludes tripper records from OTP', () => {
+        const records = [
+            makeRecord({ timePoint: true, routeStopIndex: 0, isTripper: false, observedDepartureTime: '12:01:00' }),
+            makeRecord({ timePoint: true, routeStopIndex: 1, stopId: 'stop-b', isTripper: true, observedDepartureTime: '12:10:00' }),  // late but tripper
+            makeRecord({ timePoint: true, routeStopIndex: 2, stopId: 'last' }),  // last timepoint (excluded)
+        ];
+        const summaries = aggregateDailySummaries(records);
+        expect(summaries[0].system.otp.total).toBe(1);
+        expect(summaries[0].system.otp.onTime).toBe(1);
     });
 
     it('counts ridership from boardings', () => {
@@ -192,6 +208,26 @@ describe('aggregateDailySummaries', () => {
         const route12A = summaries[0].byRoute.find(r => r.routeId === '12A');
         expect(route10?.ridership).toBe(8);
         expect(route12A?.ridership).toBe(7);
+    });
+
+    it('calculates route service hours correctly across midnight', () => {
+        const records = [
+            makeRecord({ tripId: 'overnight-trip', routeId: '10', routeStopIndex: 0, arrivalTime: '23:45', stopId: 'A' }),
+            makeRecord({ tripId: 'overnight-trip', routeId: '10', routeStopIndex: 1, arrivalTime: '23:55', stopId: 'B' }),
+            makeRecord({ tripId: 'overnight-trip', routeId: '10', routeStopIndex: 2, arrivalTime: '00:10', stopId: 'C' }),
+        ];
+        const summaries = aggregateDailySummaries(records);
+        const route10 = summaries[0].byRoute.find(r => r.routeId === '10');
+        expect(route10?.serviceHours).toBeCloseTo(25 / 60, 3);
+    });
+
+    it('sorts decimal terminal departures with next-day values correctly', () => {
+        const records = [
+            makeRecord({ tripId: 'trip-A', routeId: '10', routeStopIndex: 0, terminalDepartureTime: '0.99', stopId: 'A' }),
+            makeRecord({ tripId: 'trip-B', routeId: '10', routeStopIndex: 0, terminalDepartureTime: '1.01', stopId: 'B' }),
+        ];
+        const summaries = aggregateDailySummaries(records);
+        expect(summaries[0].byTrip.map(t => t.tripId)).toEqual(['trip-A', 'trip-B']);
     });
 
     it('aggregates by hour', () => {
@@ -242,5 +278,95 @@ describe('aggregateDailySummaries', () => {
     it('handles empty input', () => {
         const summaries = aggregateDailySummaries([]);
         expect(summaries).toHaveLength(0);
+    });
+});
+
+// ─── APC Load Sanitization Tests ────────────────────────────────────
+
+describe('APC load sanitization', () => {
+    it('caps departureLoad values above DEFAULT_LOAD_CAP', () => {
+        const records = [
+            makeRecord({ departureLoad: 130, apcSource: 1 }),  // absurd value
+            makeRecord({ departureLoad: 40, apcSource: 1 }),   // normal
+            makeRecord({ departureLoad: 65, apcSource: 1 }),   // at cap — no change
+        ];
+        const summaries = aggregateDailySummaries(records);
+        // 130 capped to 65, 40 stays, 65 stays → avg = (65+40+65)/3
+        expect(summaries[0].system.avgSystemLoad).toBeCloseTo((65 + 40 + 65) / 3, 1);
+        expect(summaries[0].system.peakLoad).toBe(DEFAULT_LOAD_CAP);
+    });
+
+    it('tracks loadCapped count in dataQuality', () => {
+        const records = [
+            makeRecord({ departureLoad: 130, apcSource: 1 }),
+            makeRecord({ departureLoad: 200, apcSource: 1 }),
+            makeRecord({ departureLoad: 40, apcSource: 1 }),
+        ];
+        const summaries = aggregateDailySummaries(records);
+        expect(summaries[0].dataQuality.loadCapped).toBe(2);
+    });
+
+    it('excludes apcSource === 0 records from load calculations', () => {
+        const records = [
+            makeRecord({ departureLoad: 50, apcSource: 1, boardings: 5 }),
+            makeRecord({ departureLoad: 30, apcSource: 0, boardings: 3 }),  // no APC
+        ];
+        const summaries = aggregateDailySummaries(records);
+        // Only the apcSource=1 record contributes to load
+        expect(summaries[0].system.avgSystemLoad).toBe(50);
+        expect(summaries[0].system.peakLoad).toBe(50);
+        // But boardings still count for ridership
+        expect(summaries[0].system.totalRidership).toBe(8);
+        expect(summaries[0].system.totalBoardings).toBe(8);
+    });
+
+    it('tracks apcExcludedFromLoad count in dataQuality', () => {
+        const records = [
+            makeRecord({ apcSource: 1 }),
+            makeRecord({ apcSource: 0 }),
+            makeRecord({ apcSource: 0 }),
+        ];
+        const summaries = aggregateDailySummaries(records);
+        expect(summaries[0].dataQuality.apcExcludedFromLoad).toBe(2);
+    });
+
+    it('only counts apcSource === 0 toward apcExcludedFromLoad', () => {
+        const records = [
+            makeRecord({ apcSource: 1, departureLoad: 0 }),
+            makeRecord({ apcSource: 0, departureLoad: 25 }),
+        ];
+        const summaries = aggregateDailySummaries(records);
+        expect(summaries[0].dataQuality.apcExcludedFromLoad).toBe(1);
+    });
+
+    it('excludes apcSource === 0 from route-level load metrics', () => {
+        const records = [
+            makeRecord({ routeId: '10', departureLoad: 50, apcSource: 1 }),
+            makeRecord({ routeId: '10', departureLoad: 30, apcSource: 0 }),
+        ];
+        const summaries = aggregateDailySummaries(records);
+        const route10 = summaries[0].byRoute.find(r => r.routeId === '10');
+        expect(route10?.avgLoad).toBe(50);
+        expect(route10?.maxLoad).toBe(50);
+    });
+
+    it('excludes apcSource === 0 from hour-level load metrics', () => {
+        const records = [
+            makeRecord({ arrivalTime: '12:00', departureLoad: 40, apcSource: 1 }),
+            makeRecord({ arrivalTime: '12:30', departureLoad: 20, apcSource: 0 }),
+        ];
+        const summaries = aggregateDailySummaries(records);
+        const hour12 = summaries[0].byHour.find(h => h.hour === 12);
+        expect(hour12?.avgLoad).toBe(40);
+    });
+
+    it('excludes apcSource === 0 from trip-level maxLoad', () => {
+        const records = [
+            makeRecord({ tripId: 'T1', departureLoad: 30, apcSource: 1 }),
+            makeRecord({ tripId: 'T1', departureLoad: 99, apcSource: 0 }),
+        ];
+        const summaries = aggregateDailySummaries(records);
+        const trip = summaries[0].byTrip.find(t => t.tripId === 'T1');
+        expect(trip?.maxLoad).toBe(30);
     });
 });

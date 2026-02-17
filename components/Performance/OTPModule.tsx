@@ -20,7 +20,6 @@ export const OTPModule: React.FC<OTPModuleProps> = ({ data }) => {
     }, [data]);
 
     const [dayTypeFilter, setDayTypeFilter] = useState<DayType | 'all'>('all');
-    const [timepointOnly, setTimepointOnly] = useState(true);
 
     const filtered = useMemo(() => {
         if (dayTypeFilter === 'all') return data.dailySummaries;
@@ -139,10 +138,7 @@ export const OTPModule: React.FC<OTPModuleProps> = ({ data }) => {
                         ))}
                     </div>
                 </div>
-                <label className="flex items-center gap-2 text-xs font-medium text-gray-500 cursor-pointer">
-                    <input type="checkbox" checked={timepointOnly} onChange={e => setTimepointOnly(e.target.checked)} className="rounded" />
-                    Timepoints only
-                </label>
+                <span className="text-xs font-medium text-gray-500">OTP is calculated from timepoints only (STREETS standard).</span>
             </div>
 
             {/* Hourly OTP Pattern */}
@@ -215,7 +211,8 @@ export const OTPModule: React.FC<OTPModuleProps> = ({ data }) => {
                         <p key={d.date}>
                             {d.date}: {d.dataQuality.totalRecords.toLocaleString()} records,
                             {' '}{d.dataQuality.inBetweenFiltered.toLocaleString()} in-between filtered,
-                            {' '}{d.dataQuality.missingAVL.toLocaleString()} missing AVL
+                            {' '}{d.dataQuality.missingAVL.toLocaleString()} missing AVL,
+                            {' '}OTP eligible: {d.system.otp.total.toLocaleString()} ({d.system.otp.onTime} on-time, {d.system.otp.early} early, {d.system.otp.late} late = {d.system.otp.onTimePercent.toFixed(1)}%)
                         </p>
                     ))}
                 </div>

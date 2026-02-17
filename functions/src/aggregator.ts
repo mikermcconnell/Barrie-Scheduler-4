@@ -1,30 +1,17 @@
-// Performance Data Aggregator — transforms ~36K STREETS records into compact daily summaries
+// Server-side aggregator — mirrors utils/performanceDataAggregator.ts
 import {
-  STREETSRecord, DailySummary, DayType, parseDayType, deriveDayTypeFromDate,
+  STREETSRecord, DailySummary, parseDayType, deriveDayTypeFromDate,
   SystemMetrics, RouteMetrics, HourMetrics, StopMetrics, TripMetrics,
-  RouteLoadProfile, LoadProfileStop, DataQuality, OTPBreakdown, OTPStatus,
-  classifyOTP, OTP_THRESHOLDS, PERFORMANCE_SCHEMA_VERSION, DEFAULT_LOAD_CAP,
-} from './performanceDataTypes';
+  RouteLoadProfile, LoadProfileStop, DataQuality, OTPBreakdown,
+  classifyOTP, PERFORMANCE_SCHEMA_VERSION,
+} from './types';
 
-// ─── Helpers ──────────────────────────────────────────────────────────
-
-/** Parse "HH:MM", "HH:MM:SS", or Excel decimal (0.529166 = 12:42) to seconds since midnight.
- *  Excel stores times as fraction-of-day; values >= 1.0 are next-day (post-midnight). */
 function timeToSeconds(time: string): number {
-  const normalized = time.trim();
-  if (normalized.includes(':')) {
-    const parts = normalized.split(':');
-    const h = parseInt(parts[0], 10);
-    const m = parseInt(parts[1], 10);
-    const s = parts.length > 2 ? parseInt(parts[2], 10) : 0;
-    return h * 3600 + m * 60 + s;
-  }
-  // Excel decimal time: fraction of 24 hours (e.g. 0.5 = 12:00, 1.02 = 00:29 next day)
-  const dec = parseFloat(normalized);
-  if (isNaN(dec) || dec < 0) return 0;
-  const wholeDays = Math.floor(dec);
-  const dayFraction = dec - wholeDays;
-  return wholeDays * 86400 + Math.round(dayFraction * 86400);
+  const parts = time.split(':');
+  const h = parseInt(parts[0], 10);
+  const m = parseInt(parts[1], 10);
+  const s = parts.length > 2 ? parseInt(parts[2], 10) : 0;
+  return h * 3600 + m * 60 + s;
 }
 
 function safeDivide(numerator: number, denominator: number): number {
@@ -35,7 +22,6 @@ function mean(values: number[]): number {
   return safeDivide(values.reduce((a, b) => a + b, 0), values.length);
 }
 
-/** Group an array by a key function. */
 function groupBy<T>(items: T[], keyFn: (item: T) => string): Map<string, T[]> {
   const map = new Map<string, T[]>();
   for (const item of items) {
@@ -50,32 +36,6 @@ function groupBy<T>(items: T[], keyFn: (item: T) => string): Map<string, T[]> {
   return map;
 }
 
-/** Returns true if the record has usable load data. */
-function isLoadReliable(r: STREETSRecord): boolean {
-  return r.apcSource !== 0 && r.departureLoad > 0;
-}
-
-/** Cap departureLoad values and return sanitization counts. */
-function sanitizeRecords(records: STREETSRecord[]): { loadCapped: number; apcExcludedFromLoad: number } {
-  let loadCapped = 0;
-  let apcExcludedFromLoad = 0;
-  for (const r of records) {
-    if (r.departureLoad > DEFAULT_LOAD_CAP) {
-      r.departureLoad = DEFAULT_LOAD_CAP;
-      loadCapped++;
-    }
-    if (r.apcSource === 0) {
-      apcExcludedFromLoad++;
-    }
-  }
-  return { loadCapped, apcExcludedFromLoad };
-}
-
-// ─── OTP Computation ──────────────────────────────────────────────────
-
-/** Filter to OTP-eligible records: timepoint stops, not inBetween, not tripper,
- *  has observed departure, deduplicated by trip+stop (closest to schedule),
- *  excluding last stop per trip (not last timepoint — a TP may be followed by non-TP stops). */
 function otpEligible(records: STREETSRecord[]): STREETSRecord[] {
   // Find max routeStopIndex per trip across ALL records (last stop, not last TP).
   // A timepoint that is the last TP but not the last stop is still eligible for OTP.
@@ -86,13 +46,12 @@ function otpEligible(records: STREETSRecord[]): STREETSRecord[] {
   }
 
   // Collect eligible records, then dedup by trip+stop keeping closest to schedule.
-  // At terminals (Downtown Hub, Allandale), STREETS records both arrival and departure
-  // passes as separate observations. Keeping the closest-to-schedule observation matches
-  // the STREETS CoDisplay OTP calculation.
+  // At terminals, STREETS can emit multiple observations for the same trip+stop.
   const groups = new Map<string, STREETSRecord[]>();
   for (const r of records) {
     if (!r.timePoint || r.inBetween || r.isTripper) continue;
     if (!r.observedDepartureTime) continue;
+    // Exclude last stop per trip
     if (r.routeStopIndex >= (tripMaxIdx.get(r.tripId) || 0)) continue;
     const key = `${r.tripId}|${r.stopId}`;
     const arr = groups.get(key);
@@ -104,17 +63,22 @@ function otpEligible(records: STREETSRecord[]): STREETSRecord[] {
   for (const recs of groups.values()) {
     if (recs.length === 1) {
       result.push(recs[0]);
-    } else {
-      // Keep record with smallest absolute deviation from scheduled time
-      let best = recs[0];
-      let bestDev = Math.abs(timeToSeconds(best.observedDepartureTime!) - timeToSeconds(best.stopTime));
-      for (let i = 1; i < recs.length; i++) {
-        const dev = Math.abs(timeToSeconds(recs[i].observedDepartureTime!) - timeToSeconds(recs[i].stopTime));
-        if (dev < bestDev) { best = recs[i]; bestDev = dev; }
-      }
-      result.push(best);
+      continue;
     }
+
+    // Keep record with smallest absolute deviation from scheduled time.
+    let best = recs[0];
+    let bestDev = Math.abs(timeToSeconds(best.observedDepartureTime!) - timeToSeconds(best.stopTime));
+    for (let i = 1; i < recs.length; i++) {
+      const dev = Math.abs(timeToSeconds(recs[i].observedDepartureTime!) - timeToSeconds(recs[i].stopTime));
+      if (dev < bestDev) {
+        best = recs[i];
+        bestDev = dev;
+      }
+    }
+    result.push(best);
   }
+
   return result;
 }
 
@@ -160,11 +124,8 @@ function computeOTP(records: STREETSRecord[]): OTPBreakdown {
   };
 }
 
-// ─── Aggregation Sections ─────────────────────────────────────────────
-
 function buildSystemMetrics(records: STREETSRecord[]): SystemMetrics {
   const otp = computeOTP(records);
-
   let totalBoardings = 0;
   let totalAlightings = 0;
   let peakLoad = 0;
@@ -173,16 +134,11 @@ function buildSystemMetrics(records: STREETSRecord[]): SystemMetrics {
   const trips = new Set<string>();
   const wheelchairTrips = new Set<string>();
 
-  let loadCount = 0;
-
   for (const r of records) {
     totalBoardings += r.boardings;
     totalAlightings += r.alightings;
-    if (isLoadReliable(r)) {
-      loadSum += r.departureLoad;
-      loadCount++;
-      if (r.departureLoad > peakLoad) peakLoad = r.departureLoad;
-    }
+    loadSum += r.departureLoad;
+    if (r.departureLoad > peakLoad) peakLoad = r.departureLoad;
     vehicles.add(r.vehicleId);
     trips.add(r.tripId);
     if (r.wheelchairUsageCount > 0) wheelchairTrips.add(r.tripId);
@@ -196,7 +152,7 @@ function buildSystemMetrics(records: STREETSRecord[]): SystemMetrics {
     vehicleCount: vehicles.size,
     tripCount: trips.size,
     wheelchairTrips: wheelchairTrips.size,
-    avgSystemLoad: safeDivide(loadSum, loadCount),
+    avgSystemLoad: safeDivide(loadSum, records.length),
     peakLoad,
   };
 }
@@ -211,19 +167,14 @@ function buildRouteMetrics(records: STREETSRecord[]): RouteMetrics[] {
     let alightings = 0;
     let maxLoad = 0;
     let loadSum = 0;
-    let loadCount = 0;
     const trips = new Set<string>();
     const wheelchairTrips = new Set<string>();
     let routeName = '';
-
     for (const r of recs) {
       ridership += r.boardings;
       alightings += r.alightings;
-      if (isLoadReliable(r)) {
-        loadSum += r.departureLoad;
-        loadCount++;
-        if (r.departureLoad > maxLoad) maxLoad = r.departureLoad;
-      }
+      loadSum += r.departureLoad;
+      if (r.departureLoad > maxLoad) maxLoad = r.departureLoad;
       trips.add(r.tripId);
       if (r.wheelchairUsageCount > 0) wheelchairTrips.add(r.tripId);
       if (!routeName) routeName = r.routeName;
@@ -233,17 +184,14 @@ function buildRouteMetrics(records: STREETSRecord[]): RouteMetrics[] {
     const byTrip = groupBy(recs, r => r.tripId);
     let serviceSeconds = 0;
     for (const [, tripRecs] of byTrip) {
-      const orderedTripRecs = [...tripRecs].sort((a, b) => a.routeStopIndex - b.routeStopIndex);
+      const ordered = [...tripRecs].sort((a, b) => a.routeStopIndex - b.routeStopIndex);
       let minTime = Infinity;
       let maxTime = -Infinity;
       let previousTime: number | null = null;
-      for (const r of orderedTripRecs) {
+      for (const r of ordered) {
         let t = timeToSeconds(r.arrivalTime);
-        // Normalize overnight trips so times continue increasing after midnight.
         if (previousTime !== null) {
-          while (t < previousTime) {
-            t += 86400;
-          }
+          while (t < previousTime) t += 86400;
         }
         if (t < minTime) minTime = t;
         if (t > maxTime) maxTime = t;
@@ -253,6 +201,8 @@ function buildRouteMetrics(records: STREETSRecord[]): RouteMetrics[] {
         serviceSeconds += maxTime - minTime;
       }
     }
+    const tripCount = trips.size;
+    const serviceHours = serviceSeconds / 3600;
 
     results.push({
       routeId,
@@ -260,9 +210,9 @@ function buildRouteMetrics(records: STREETSRecord[]): RouteMetrics[] {
       otp,
       ridership,
       alightings,
-      tripCount: trips.size,
-      serviceHours: serviceSeconds / 3600,
-      avgLoad: safeDivide(loadSum, loadCount),
+      tripCount,
+      serviceHours,
+      avgLoad: safeDivide(loadSum, recs.length),
       maxLoad,
       avgDeviationSeconds: otp.avgDeviationSeconds,
       wheelchairTrips: wheelchairTrips.size,
@@ -286,15 +236,11 @@ function buildHourMetrics(records: STREETSRecord[]): HourMetrics[] {
     let boardings = 0;
     let alightings = 0;
     let loadSum = 0;
-    let loadCount = 0;
 
     for (const r of recs) {
       boardings += r.boardings;
       alightings += r.alightings;
-      if (isLoadReliable(r)) {
-        loadSum += r.departureLoad;
-        loadCount++;
-      }
+      loadSum += r.departureLoad;
     }
 
     results.push({
@@ -302,7 +248,7 @@ function buildHourMetrics(records: STREETSRecord[]): HourMetrics[] {
       otp,
       boardings,
       alightings,
-      avgLoad: safeDivide(loadSum, loadCount),
+      avgLoad: safeDivide(loadSum, recs.length),
     });
   }
 
@@ -323,15 +269,10 @@ function buildStopMetrics(records: STREETSRecord[]): StopMetrics[] {
     let lon = 0;
     let isTimepoint = false;
 
-    let loadCount = 0;
-
     for (const r of recs) {
       boardings += r.boardings;
       alightings += r.alightings;
-      if (isLoadReliable(r)) {
-        loadSum += r.departureLoad;
-        loadCount++;
-      }
+      loadSum += r.departureLoad;
       routes.add(r.routeId);
       if (!lat) { lat = r.stopLat; lon = r.stopLon; }
       if (r.timePoint) isTimepoint = true;
@@ -348,7 +289,7 @@ function buildStopMetrics(records: STREETSRecord[]): StopMetrics[] {
       otp,
       boardings,
       alightings,
-      avgLoad: safeDivide(loadSum, loadCount),
+      avgLoad: safeDivide(loadSum, recs.length),
       routeCount: routes.size,
     });
   }
@@ -373,7 +314,7 @@ function buildTripMetrics(records: STREETSRecord[]): TripMetrics[] {
 
     for (const r of recs) {
       boardings += r.boardings;
-      if (isLoadReliable(r) && r.departureLoad > maxLoad) maxLoad = r.departureLoad;
+      if (r.departureLoad > maxLoad) maxLoad = r.departureLoad;
       if (!tripName) {
         tripName = r.tripName;
         block = r.block;
@@ -406,7 +347,6 @@ function buildTripMetrics(records: STREETSRecord[]): TripMetrics[] {
 }
 
 function buildLoadProfiles(records: STREETSRecord[]): RouteLoadProfile[] {
-  // Group by route+direction
   const byRouteDir = groupBy(records, r => `${r.routeId}||${r.direction}`);
   const results: RouteLoadProfile[] = [];
 
@@ -414,21 +354,15 @@ function buildLoadProfiles(records: STREETSRecord[]): RouteLoadProfile[] {
     const [routeId, direction] = key.split('||');
     const routeName = recs[0].routeName;
 
-    // Count unique trips in this route+direction
     const tripIds = new Set<string>();
     for (const r of recs) tripIds.add(r.tripId);
     const tripCount = tripIds.size;
 
-    // Group by routeStopIndex within this route+direction
     const byStopIdx = groupBy(recs, r => String(r.routeStopIndex));
-
-    // For each stop position, compute per-trip values then average
     const stops: LoadProfileStop[] = [];
 
     for (const [idxStr, stopRecs] of byStopIdx) {
       const routeStopIndex = parseInt(idxStr, 10);
-
-      // Aggregate per trip at this stop, then average across trips
       const byTrip = groupBy(stopRecs, r => r.tripId);
 
       const tripBoardings: number[] = [];
@@ -443,14 +377,10 @@ function buildLoadProfiles(records: STREETSRecord[]): RouteLoadProfile[] {
         let b = 0;
         let a = 0;
         let load = 0;
-        let hasReliableLoad = false;
         for (const r of tripRecs) {
           b += r.boardings;
           a += r.alightings;
-          if (isLoadReliable(r) && r.departureLoad > load) {
-            load = r.departureLoad;
-            hasReliableLoad = true;
-          }
+          if (r.departureLoad > load) load = r.departureLoad;
           if (!stopName) {
             stopName = r.stopName;
             stopId = r.stopId;
@@ -459,10 +389,8 @@ function buildLoadProfiles(records: STREETSRecord[]): RouteLoadProfile[] {
         }
         tripBoardings.push(b);
         tripAlightings.push(a);
-        if (hasReliableLoad) {
-          tripLoads.push(load);
-          if (load > maxLoad) maxLoad = load;
-        }
+        tripLoads.push(load);
+        if (load > maxLoad) maxLoad = load;
       }
 
       stops.push({
@@ -477,9 +405,7 @@ function buildLoadProfiles(records: STREETSRecord[]): RouteLoadProfile[] {
       });
     }
 
-    // Sort stops by routeStopIndex
     stops.sort((a, b) => a.routeStopIndex - b.routeStopIndex);
-
     results.push({ routeId, routeName, direction, tripCount, stops });
   }
 
@@ -490,10 +416,7 @@ function buildLoadProfiles(records: STREETSRecord[]): RouteLoadProfile[] {
   });
 }
 
-function buildDataQuality(
-  records: STREETSRecord[],
-  sanitization: { loadCapped: number; apcExcludedFromLoad: number }
-): DataQuality {
+function buildDataQuality(records: STREETSRecord[]): DataQuality {
   let inBetweenFiltered = 0;
   let missingAVL = 0;
   let missingAPC = 0;
@@ -515,12 +438,10 @@ function buildDataQuality(
     missingAPC,
     detourRecords,
     tripperRecords,
-    loadCapped: sanitization.loadCapped,
-    apcExcludedFromLoad: sanitization.apcExcludedFromLoad,
+    loadCapped: 0,
+    apcExcludedFromLoad: 0,
   };
 }
-
-// ─── Single-Day Aggregation ───────────────────────────────────────────
 
 function aggregateSingleDay(date: string, records: STREETSRecord[]): DailySummary {
   const rawDay = records[0].day;
@@ -528,7 +449,6 @@ function aggregateSingleDay(date: string, records: STREETSRecord[]): DailySummar
     rawDay === 'TUESDAY' || rawDay === 'WEDNESDAY' || rawDay === 'THURSDAY' || rawDay === 'FRIDAY')
     ? parseDayType(rawDay)
     : deriveDayTypeFromDate(date);
-  const sanitization = sanitizeRecords(records);
 
   return {
     date,
@@ -539,28 +459,19 @@ function aggregateSingleDay(date: string, records: STREETSRecord[]): DailySummar
     byStop: buildStopMetrics(records),
     byTrip: buildTripMetrics(records),
     loadProfiles: buildLoadProfiles(records),
-    dataQuality: buildDataQuality(records, sanitization),
+    dataQuality: buildDataQuality(records),
     schemaVersion: PERFORMANCE_SCHEMA_VERSION,
   };
 }
 
-// ─── Main Export ──────────────────────────────────────────────────────
-
-export function aggregateDailySummaries(
-  records: STREETSRecord[],
-  onProgress?: (p: { phase: string; current: number; total: number }) => void
-): DailySummary[] {
+export function aggregateDailySummaries(records: STREETSRecord[]): DailySummary[] {
   const byDate = groupBy(records, r => r.date);
   const dates = Array.from(byDate.keys()).sort();
-  const total = dates.length;
   const summaries: DailySummary[] = [];
 
-  for (let i = 0; i < dates.length; i++) {
-    const date = dates[i];
-    onProgress?.({ phase: `Aggregating ${date}`, current: i + 1, total });
+  for (const date of dates) {
     summaries.push(aggregateSingleDay(date, byDate.get(date)!));
   }
 
-  onProgress?.({ phase: 'Complete', current: total, total });
   return summaries;
 }

@@ -1,5 +1,5 @@
 {
-  "name": "bus-scheduler",
+  "name": "transit-scheduler",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -10,7 +10,8 @@
     "build": "vite build",
     "lint": "eslint . --max-warnings 20",
     "preview": "vite preview",
-    "prepare": "husky"
+    "prepare": "husky",
+    "gtfs:index": "npx tsx scripts/buildGtfsTripIndex.ts"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

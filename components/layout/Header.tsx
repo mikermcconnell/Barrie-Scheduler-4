@@ -53,7 +53,7 @@ export const Header: React.FC<HeaderProps> = ({
                     </div>
                     <div className="flex flex-col">
                         <h1 className="text-xl font-bold text-gray-900 tracking-tight leading-none group-hover:text-emerald-700 transition-colors">
-                            Bus<span className="text-brand-green">Scheduler</span>
+                            Transit<span className="text-brand-green">Scheduler</span>
                         </h1>
                         <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mt-0.5">Enterprise Edition</span>
                     </div>
