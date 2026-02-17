@@ -1,12 +1,16 @@
-import React, { useMemo, useState } from 'react';
-import { ArrowUpDown } from 'lucide-react';
+import React, { useMemo, useState, useRef, useEffect } from 'react';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+import { ArrowUpDown, Map as MapIcon, Table } from 'lucide-react';
 import type {
     TransitAppDataSummary,
     TransferPattern,
+    TransferPairSummary,
     TransferPriorityTier,
     TransferTripAnchor,
     TransferTimeBand,
 } from '../../utils/transit-app/transitAppTypes';
+import { getAllStopsWithCoords } from '../../utils/gtfs/gtfsStopLookup';
 import { ChartCard, MetricCard, NoData, fmt, formatTimeBand } from './AnalyticsShared';
 
 interface TransfersModuleProps {
@@ -14,6 +18,8 @@ interface TransfersModuleProps {
 }
 
 type SortField = 'count' | 'avgWaitMinutes';
+type ViewMode = 'table' | 'map';
+type MapLimit = 10 | 20 | 'all';
 
 
 function formatPriority(priority: TransferPriorityTier): string {
@@ -87,10 +93,202 @@ function matchesScope(isBarrieStop: boolean, scope: ScopeFilter): boolean {
     return !isBarrieStop;
 }
 
+// ── Transfer Map Sub-Component ──────────────────────────────────────────────
+
+const BARRIE_CENTER: [number, number] = [44.39, -79.69];
+
+interface GeocodedTransferPair extends TransferPairSummary {
+    lat: number;
+    lon: number;
+}
+
+function markerColor(rank: number): string {
+    if (rank === 0) return '#dc2626'; // red-600
+    if (rank === 1) return '#ea580c'; // orange-600
+    if (rank === 2) return '#d97706'; // amber-600
+    if (rank < 6) return '#0891b2';   // cyan-600
+    return '#64748b';                 // slate-500
+}
+
+const TransferMap: React.FC<{ pairs: TransferPairSummary[] }> = ({ pairs }) => {
+    const containerRef = useRef<HTMLDivElement>(null);
+    const mapRef = useRef<L.Map | null>(null);
+    const layerRef = useRef<L.LayerGroup | null>(null);
+
+    // Build stop name → coords lookup once
+    const stopCoordMap = useMemo(() => {
+        const allStops = getAllStopsWithCoords();
+        const map = new Map<string, { lat: number; lon: number }>();
+        for (const s of allStops) {
+            const key = s.stop_name.toLowerCase().trim();
+            if (!map.has(key)) {
+                map.set(key, { lat: s.lat, lon: s.lon });
+            }
+        }
+        return map;
+    }, []);
+
+    // Geocode pairs
+    const geoPairs = useMemo((): GeocodedTransferPair[] => {
+        const results: GeocodedTransferPair[] = [];
+        for (const pair of pairs) {
+            if (!pair.transferStopName) continue;
+            const coords = stopCoordMap.get(pair.transferStopName.toLowerCase().trim());
+            if (coords) {
+                results.push({ ...pair, lat: coords.lat, lon: coords.lon });
+            }
+        }
+        return results;
+    }, [pairs, stopCoordMap]);
+
+    // Initialize map once
+    useEffect(() => {
+        if (!containerRef.current || mapRef.current) return;
+        const map = L.map(containerRef.current, {
+            center: BARRIE_CENTER,
+            zoom: 13,
+            zoomSnap: 0.25,
+            zoomDelta: 0.25,
+            scrollWheelZoom: 'center',
+            wheelPxPerZoomLevel: 120,
+            preferCanvas: true,
+        });
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
+            maxZoom: 19,
+        }).addTo(map);
+        layerRef.current = L.layerGroup().addTo(map);
+        mapRef.current = map;
+
+        return () => {
+            map.remove();
+            mapRef.current = null;
+            layerRef.current = null;
+        };
+    }, []);
+
+    // Update markers when geoPairs change
+    useEffect(() => {
+        const layer = layerRef.current;
+        if (!layer) return;
+        layer.clearLayers();
+
+        if (geoPairs.length === 0) return;
+
+        // Group by location to handle overlapping stops
+        const byLocation = new Map<string, GeocodedTransferPair[]>();
+        for (const gp of geoPairs) {
+            const locKey = `${gp.lat.toFixed(5)},${gp.lon.toFixed(5)}`;
+            const existing = byLocation.get(locKey);
+            if (existing) existing.push(gp);
+            else byLocation.set(locKey, [gp]);
+        }
+
+        const maxCount = Math.max(...geoPairs.map(p => p.totalCount), 1);
+        let globalRank = 0;
+
+        // Sort ascending so highest-volume renders on top
+        const sortedGroups = Array.from(byLocation.entries())
+            .sort((a, b) => {
+                const sumA = a[1].reduce((s, p) => s + p.totalCount, 0);
+                const sumB = b[1].reduce((s, p) => s + p.totalCount, 0);
+                return sumA - sumB;
+            });
+
+        for (const [, groupPairs] of sortedGroups) {
+            // Sort within group by volume ascending (highest on top)
+            const sorted = [...groupPairs].sort((a, b) => a.totalCount - b.totalCount);
+            const angleStep = sorted.length > 1 ? (2 * Math.PI) / sorted.length : 0;
+            const offsetDistance = sorted.length > 1 ? 0.0003 : 0;
+
+            for (let i = 0; i < sorted.length; i++) {
+                const gp = sorted[i];
+                const rank = globalRank++;
+
+                // Angular offset for overlapping stops
+                const angle = angleStep * i;
+                const lat = gp.lat + offsetDistance * Math.sin(angle);
+                const lon = gp.lon + offsetDistance * Math.cos(angle);
+
+                // Log-scale radius: min 6, max 22
+                const logScale = Math.log(gp.totalCount + 1) / Math.log(maxCount + 1);
+                const radius = 6 + logScale * 16;
+
+                const circle = L.circleMarker([lat, lon], {
+                    radius,
+                    fillColor: markerColor(rank),
+                    fillOpacity: 0.75,
+                    color: '#fff',
+                    weight: 1.5,
+                });
+
+                circle.bindTooltip(
+                    `Route ${gp.fromRoute} → Route ${gp.toRoute} at ${gp.transferStopName}`,
+                    { direction: 'top', offset: [0, -radius] }
+                );
+
+                const popupHtml = `
+                    <div style="font-size:13px;min-width:180px">
+                        <div style="font-weight:600;margin-bottom:4px">
+                            ${gp.fromRoute} → ${gp.toRoute}
+                        </div>
+                        <div style="color:#666;margin-bottom:6px">${gp.transferStopName}</div>
+                        <table style="font-size:12px;width:100%">
+                            <tr><td style="color:#888">Volume</td><td style="text-align:right;font-weight:600">${gp.totalCount.toLocaleString()}</td></tr>
+                            <tr><td style="color:#888">Avg Wait</td><td style="text-align:right">${gp.avgWaitMinutes} min</td></tr>
+                            <tr><td style="color:#888">Peak Bands</td><td style="text-align:right">${gp.dominantTimeBands.map(formatTimeBand).join(', ') || 'N/A'}</td></tr>
+                            <tr><td style="color:#888">Arrivals</td><td style="text-align:right;font-size:11px">${formatTripAnchorsHtml(gp.fromTripAnchors)}</td></tr>
+                            <tr><td style="color:#888">Departures</td><td style="text-align:right;font-size:11px">${formatTripAnchorsHtml(gp.toTripAnchors)}</td></tr>
+                        </table>
+                    </div>
+                `;
+                circle.bindPopup(popupHtml, { maxWidth: 280 });
+                circle.addTo(layer);
+            }
+        }
+
+        // Fit bounds to markers
+        if (geoPairs.length > 0) {
+            const bounds = L.latLngBounds(geoPairs.map(gp => [gp.lat, gp.lon] as [number, number]));
+            mapRef.current?.fitBounds(bounds, { padding: [30, 30], maxZoom: 15 });
+        }
+    }, [geoPairs]);
+
+    const unmatchedCount = pairs.filter(p => {
+        if (!p.transferStopName) return true;
+        return !stopCoordMap.has(p.transferStopName.toLowerCase().trim());
+    }).length;
+
+    return (
+        <div className="relative">
+            <div ref={containerRef} style={{ height: 500 }} className="rounded-lg border border-gray-200" />
+            {geoPairs.length === 0 && (
+                <div className="absolute inset-0 flex items-center justify-center bg-gray-50/80 rounded-lg">
+                    <p className="text-gray-500 text-sm">No transfer stops could be matched to GTFS coordinates</p>
+                </div>
+            )}
+            {unmatchedCount > 0 && geoPairs.length > 0 && (
+                <p className="text-xs text-gray-400 mt-1">
+                    {unmatchedCount} pair{unmatchedCount > 1 ? 's' : ''} not shown (no GTFS coordinate match)
+                </p>
+            )}
+        </div>
+    );
+};
+
+function formatTripAnchorsHtml(anchors?: TransferTripAnchor[]): string {
+    if (!anchors || anchors.length === 0) return 'N/A';
+    return anchors.slice(0, 2).map(a => `${a.timeLabel} (${a.sharePct}%)`).join(', ');
+}
+
+// ── Main Module ─────────────────────────────────────────────────────────────
+
 export const TransfersModule: React.FC<TransfersModuleProps> = ({ data }) => {
     const [sortBy, setSortBy] = useState<SortField>('count');
     const [groupByRoute, setGroupByRoute] = useState(false);
     const [scope, setScope] = useState<ScopeFilter>('barrie');
+    const [viewMode, setViewMode] = useState<ViewMode>('table');
+    const [mapLimit, setMapLimit] = useState<MapLimit>(10);
     const { transferPatterns, transferAnalysis } = data;
 
     const sortedPatterns = useMemo(() => {
@@ -174,6 +372,11 @@ export const TransfersModule: React.FC<TransfersModuleProps> = ({ data }) => {
         );
     }, [transferAnalysis, scope]);
 
+    const mapPairs = useMemo(() => {
+        if (mapLimit === 'all') return filteredTopPairs;
+        return filteredTopPairs.slice(0, mapLimit);
+    }, [filteredTopPairs, mapLimit]);
+
     return (
         <div className="space-y-6">
             {transferAnalysis && (
@@ -206,10 +409,58 @@ export const TransfersModule: React.FC<TransfersModuleProps> = ({ data }) => {
                     </div>
 
                     <ChartCard
-                        title="Top 15 Transfer Pairs"
-                        subtitle="Ranked by planned transfer volume"
+                        title="Top Transfer Pairs"
+                        subtitle={viewMode === 'map'
+                            ? `Showing ${mapLimit === 'all' ? mapPairs.length : mapLimit} on map`
+                            : 'Ranked by planned transfer volume'
+                        }
+                        headerExtra={
+                            <div className="flex items-center gap-2">
+                                {viewMode === 'map' && (
+                                    <div className="flex rounded-lg border border-gray-200 overflow-hidden mr-2">
+                                        {([10, 20, 'all'] as const).map(limit => (
+                                            <button
+                                                key={String(limit)}
+                                                onClick={() => setMapLimit(limit)}
+                                                className={`px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                                                    mapLimit === limit
+                                                        ? 'bg-gray-900 text-white'
+                                                        : 'bg-white text-gray-500 hover:bg-gray-50'
+                                                }`}
+                                            >
+                                                {limit === 'all' ? 'All' : `Top ${limit}`}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                                <div className="flex rounded-lg border border-gray-200 overflow-hidden">
+                                    <button
+                                        onClick={() => setViewMode('table')}
+                                        className={`px-2.5 py-1 text-[11px] font-medium transition-colors flex items-center gap-1 ${
+                                            viewMode === 'table'
+                                                ? 'bg-gray-900 text-white'
+                                                : 'bg-white text-gray-500 hover:bg-gray-50'
+                                        }`}
+                                    >
+                                        <Table size={12} /> Table
+                                    </button>
+                                    <button
+                                        onClick={() => setViewMode('map')}
+                                        className={`px-2.5 py-1 text-[11px] font-medium transition-colors flex items-center gap-1 ${
+                                            viewMode === 'map'
+                                                ? 'bg-gray-900 text-white'
+                                                : 'bg-white text-gray-500 hover:bg-gray-50'
+                                        }`}
+                                    >
+                                        <MapIcon size={12} /> Map
+                                    </button>
+                                </div>
+                            </div>
+                        }
                     >
-                        {filteredTopPairs.length > 0 ? (
+                        {viewMode === 'map' ? (
+                            <TransferMap pairs={mapPairs} />
+                        ) : filteredTopPairs.length > 0 ? (
                             <div className="overflow-x-auto">
                                 <table className="w-full text-sm">
                                     <thead>
