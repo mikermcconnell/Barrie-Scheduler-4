@@ -56,6 +56,16 @@ service cloud.firestore {
       match /performanceData/{docId} {
         allow read, write: if isTeamMember(teamId);
       }
+
+      // OD Matrix Data
+      match /odMatrixData/{docId} {
+        allow read, write: if isTeamMember(teamId);
+
+        // Import history subcollection
+        match /imports/{importId} {
+          allow read, write: if isTeamMember(teamId);
+        }
+      }
     }
 
     // ========== HELPER FUNCTIONS ==========
