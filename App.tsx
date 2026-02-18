@@ -9,15 +9,13 @@ import { FileManager } from './components/FileManager';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Modal } from './components/ui/Modal';
 import { TeamManagement } from './components/TeamManagement';
-import { LayoutDashboard, Bus, Settings, Bell, ArrowRight, ArrowLeft, Map, User, LogOut, FolderOpen, ChevronDown, ChevronRight, Loader2, FileSpreadsheet, Plus, Download, CalendarPlus, Timer, BarChart2, Settings2, Sparkles, Network } from 'lucide-react';
+import { LayoutDashboard, Bus, Settings, Bell, ArrowRight, ArrowLeft, Map, User, LogOut, FolderOpen, ChevronDown, ChevronRight, Loader2, FileSpreadsheet, Plus, Download, CalendarPlus, Timer, BarChart2, Settings2, Sparkles } from 'lucide-react';
 import { Header, View } from './components/layout/Header';
-import { ODMatrixDashboard } from './components/Analytics/ODMatrixDashboard';
 
 function parseHashView(): View {
   const hash = window.location.hash.slice(1);
   if (hash.startsWith('fixed')) return 'fixed';
   if (hash.startsWith('ondemand')) return 'ondemand';
-  if (hash.startsWith('od-matrix')) return 'od-matrix';
   return 'home';
 }
 
@@ -117,7 +115,7 @@ const AppContent: React.FC = () => {
               <h2 className="text-4xl font-extrabold text-gray-800 mb-4">Select Workspace</h2>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto pb-12">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-4xl mx-auto pb-12">
               {/* On Demand Card */}
               <button
                 onClick={() => setCurrentView('ondemand')}
@@ -157,25 +155,6 @@ const AppContent: React.FC = () => {
                   Enter Workspace <ArrowRight size={16} />
                 </div>
               </button>
-              {/* OD Matrix Card */}
-              <button
-                onClick={() => setCurrentView('od-matrix')}
-                className="group relative bg-white rounded-3xl border-b-8 border-gray-200 p-8 hover:border-violet-500 hover:-translate-y-1 transition-all duration-200 text-left overflow-hidden"
-              >
-                <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:opacity-20 transition-opacity">
-                  <Network size={120} />
-                </div>
-                <div className="bg-violet-100 w-16 h-16 rounded-2xl flex items-center justify-center text-violet-600 mb-6 group-hover:scale-110 transition-transform">
-                  <Network size={32} />
-                </div>
-                <h3 className="text-2xl font-extrabold text-gray-800 mb-2 group-hover:text-violet-600 transition-colors">OD Matrix Analysis</h3>
-                <p className="text-gray-500 font-bold mb-6">
-                  Import origin-destination ridership data, visualize travel patterns, and analyze station connectivity.
-                </p>
-                <div className="flex items-center gap-2 text-violet-600 font-extrabold uppercase tracking-wide text-sm">
-                  Enter Workspace <ArrowRight size={16} />
-                </div>
-              </button>
             </div>
 
           </div>
@@ -192,11 +171,7 @@ const AppContent: React.FC = () => {
             <FixedRouteWorkspace />
           </ErrorBoundary>
         )}
-        {currentView === 'od-matrix' && (
-          <ErrorBoundary fallbackTitle="Workspace Error">
-            <ODMatrixDashboard />
-          </ErrorBoundary>
-        )}
+
 
       </main>
     </div>
