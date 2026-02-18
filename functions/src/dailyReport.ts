@@ -1,5 +1,6 @@
 import * as admin from 'firebase-admin';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
+import { onRequest } from 'firebase-functions/v2/https';
 import { defineSecret } from 'firebase-functions/params';
 import { buildReportHtml } from './reportHtml';
 import { PerformanceDataSummary } from './types';
@@ -77,5 +78,39 @@ export const sendDailyReport = onSchedule(
     });
 
     console.log(`Daily report queued for ${to.length} recipient(s): ${latestDay.date}`);
+  }
+);
+
+/** Temporary test endpoint — send report to a specific email */
+export const testDailyReport = onRequest(
+  { memory: '512MiB', timeoutSeconds: 120, region: 'us-central1' },
+  async (req, res) => {
+    const to = (req.query.to as string) || '';
+    if (!to || !to.includes('@')) {
+      res.status(400).json({ error: 'Pass ?to=email@example.com' });
+      return;
+    }
+
+    const db = admin.firestore();
+    const bucket = admin.storage().bucket();
+
+    const metadataSnap = await db
+      .doc(`teams/${DEFAULT_TEAM_ID}/performanceData/metadata`)
+      .get();
+    if (!metadataSnap.exists) { res.status(404).json({ error: 'No data' }); return; }
+
+    const storagePath = metadataSnap.data()!.storagePath as string;
+    const [content] = await bucket.file(storagePath).download();
+    const summary: PerformanceDataSummary = JSON.parse(content.toString('utf-8'));
+
+    const sorted = [...summary.dailySummaries].sort((a, b) => b.date.localeCompare(a.date));
+    const latestDay = sorted[0];
+    const trendDays = sorted.slice(0, 7).reverse();
+
+    const html = buildReportHtml({ latestDay, trendDays, teamName: TEAM_NAME });
+    const subject = `[TEST] ${TEAM_NAME} Performance — ${latestDay.date} — OTP ${latestDay.system.otp.onTimePercent.toFixed(1)}%`;
+
+    await db.collection('mail').add({ to: [to], message: { subject, html } });
+    res.json({ success: true, sentTo: to, subject });
   }
 );

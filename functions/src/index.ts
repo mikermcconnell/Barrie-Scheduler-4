@@ -2,14 +2,14 @@ import * as admin from 'firebase-admin';
 import { onRequest } from 'firebase-functions/v2/https';
 import { defineSecret } from 'firebase-functions/params';
 import { parseSTREETSCSV } from './parser';
-export { sendDailyReport } from './dailyReport';
+export { sendDailyReport, testDailyReport } from './dailyReport';
 import { aggregateDailySummaries } from './aggregator';
 import { PerformanceDataSummary, PERFORMANCE_SCHEMA_VERSION } from './types';
 
 admin.initializeApp();
 
-const db = admin.firestore();
-const bucket = admin.storage().bucket();
+function getDb() { return admin.firestore(); }
+function getBucket() { return admin.storage().bucket(); }
 
 // API key stored as a Firebase secret — prevents unauthorized access
 const INGEST_API_KEY = defineSecret('INGEST_API_KEY');
@@ -103,7 +103,7 @@ export const ingestPerformanceData = onRequest(
       console.log(`Aggregated ${newSummaries.length} day(s): ${newDates.join(', ')}`);
 
       // --- Load existing data (to append) ---
-      const metadataRef = db.doc(`teams/${teamId}/performanceData/metadata`);
+      const metadataRef = getDb().doc(`teams/${teamId}/performanceData/metadata`);
       const metadataSnap = await metadataRef.get();
 
       let existingSummaries: PerformanceDataSummary['dailySummaries'] = [];
@@ -115,7 +115,7 @@ export const ingestPerformanceData = onRequest(
 
         if (oldStoragePath) {
           try {
-            const file = bucket.file(oldStoragePath);
+            const file = getBucket().file(oldStoragePath);
             const [content] = await file.download();
             const existing: PerformanceDataSummary = JSON.parse(content.toString('utf-8'));
             existingSummaries = existing.dailySummaries || [];
@@ -161,14 +161,14 @@ export const ingestPerformanceData = onRequest(
       const storagePath = `teams/${teamId}/performanceData/${timestamp}.json`;
       const jsonStr = JSON.stringify(summary);
 
-      const file = bucket.file(storagePath);
+      const file = getBucket().file(storagePath);
       await file.save(jsonStr, { contentType: 'application/json' });
       console.log(`Saved ${(jsonStr.length / 1024 / 1024).toFixed(2)} MB to ${storagePath}`);
 
       // --- Clean up old storage file ---
       if (oldStoragePath) {
         try {
-          await bucket.file(oldStoragePath).delete();
+          await getBucket().file(oldStoragePath).delete();
         } catch {
           // Old file may already be gone
         }

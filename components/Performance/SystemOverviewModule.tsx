@@ -272,10 +272,12 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
         let totalServiceHours = 0;
         for (const day of filtered) {
             for (const h of day.byHour) {
-                hours[h.hour].boardings += h.boardings;
+                const idx = h.hour % 24;
+                if (idx < 0 || idx >= 24) continue;
+                hours[idx].boardings += h.boardings;
                 if (h.otp.total > 0) {
-                    hours[h.hour].otp += h.otp.onTimePercent;
-                    hours[h.hour].otpCount++;
+                    hours[idx].otp += h.otp.onTimePercent;
+                    hours[idx].otpCount++;
                 }
             }
             for (const r of day.byRoute) {

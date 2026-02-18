@@ -52,6 +52,28 @@ function formatDateLong(dateStr: string): string {
   return d.toLocaleDateString('en-CA', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 }
 
+function bphColor(value: number): string {
+  if (value >= 30) return '#16a34a'; // green
+  if (value <= 10) return '#dc2626'; // red
+  return '#374151'; // neutral
+}
+
+function bphBg(value: number): string {
+  if (value >= 30) return '#f0fdf4';
+  if (value <= 10) return '#fef2f2';
+  return 'transparent';
+}
+
+function bphPill(value: number): string {
+  const bg = bphBg(value);
+  const color = bphColor(value);
+  return `<span style="background:${bg};color:${color};padding:2px 8px;border-radius:4px;font-weight:700;font-size:12px;">${value.toFixed(1)}</span>`;
+}
+
+function stopLabel(name: string, id: string): string {
+  return `${name} <span style="color:#9ca3af;font-weight:400;">(${id})</span>`;
+}
+
 function sectionHeader(title: string, subtitle?: string): string {
   return `
     <div style="margin:24px 0 10px;">
@@ -78,20 +100,42 @@ function otpBar(earlyPct: number, onTimePct: number, latePct: number): string {
       <tr>
         <td colspan="3" style="padding-top:3px;">
           <div style="font-size:10px;color:#9ca3af;text-align:center;">
-            <span style="color:#f59e0b;">● Early</span> &nbsp;
-            <span style="color:#10b981;">● On Time</span> &nbsp;
-            <span style="color:#ef4444;">● Late</span>
+            <span style="color:#f59e0b;">● Early ${pct(earlyPct)}</span> &nbsp;
+            <span style="color:#10b981;">● On Time ${pct(onTimePct)}</span> &nbsp;
+            <span style="color:#ef4444;">● Late ${pct(latePct)}</span>
           </div>
         </td>
       </tr>
     </table>`;
 }
 
-function buildWorthWatching(latestDay: DailySummary): string {
+function buildWorthWatching(latestDay: DailySummary, trendDays: DailySummary[]): string {
+  const totalDays = trendDays.length;
+
+  // Count how many days each route was below 85% OTP
+  const routeDaysBelow = new Map<string, number>();
+  for (const day of trendDays) {
+    for (const r of day.byRoute) {
+      if (r.otp.onTimePercent < 85) {
+        routeDaysBelow.set(r.routeId, (routeDaysBelow.get(r.routeId) || 0) + 1);
+      }
+    }
+  }
+
   const belowTarget = latestDay.byRoute
     .filter(r => r.otp.onTimePercent < 85)
     .sort((a, b) => a.otp.onTimePercent - b.otp.onTimePercent)
     .slice(0, 5);
+
+  // Count how many days each trip was late (>5 min)
+  const tripDaysLate = new Map<string, number>();
+  for (const day of trendDays) {
+    for (const t of day.byTrip) {
+      if (t.otp.avgDeviationSeconds > 300) {
+        tripDaysLate.set(t.tripName, (tripDaysLate.get(t.tripName) || 0) + 1);
+      }
+    }
+  }
 
   const lateTrips = latestDay.byTrip
     .filter(t => t.otp.avgDeviationSeconds > 300)
@@ -107,16 +151,18 @@ function buildWorthWatching(latestDay: DailySummary): string {
 
   let html = `
     <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:14px;margin-top:12px;">
-      <div style="font-size:14px;font-weight:700;color:#92400e;margin-bottom:10px;">Worth Watching</div>`;
+      <div style="font-size:14px;font-weight:700;color:#92400e;margin-bottom:2px;">Worth Watching</div>
+      <div style="font-size:11px;color:#b45309;margin-bottom:10px;">Based on ${totalDays} day${totalDays > 1 ? 's' : ''} of data</div>`;
 
   if (belowTarget.length > 0) {
     html += `<div style="font-size:11px;font-weight:600;color:#78350f;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.3px;">Routes Below 85% OTP</div>`;
-    html += belowTarget.map(r =>
-      `<div style="font-size:12px;color:#374151;margin-bottom:4px;padding:4px 0;border-bottom:1px solid #fef3c7;">
+    html += belowTarget.map(r => {
+      const daysBelow = routeDaysBelow.get(r.routeId) || 1;
+      return `<div style="font-size:12px;color:#374151;margin-bottom:4px;padding:4px 0;border-bottom:1px solid #fef3c7;">
         <strong>${r.routeId} ${r.routeName}</strong>
-        <span style="float:right;">${otpPill(r.otp.onTimePercent)} <span style="color:#9ca3af;font-size:11px;">${pct(r.otp.latePercent)} late</span></span>
-      </div>`
-    ).join('');
+        <span style="float:right;">${otpPill(r.otp.onTimePercent)} <span style="color:#9ca3af;font-size:11px;">${daysBelow}/${totalDays} days</span></span>
+      </div>`;
+    }).join('');
   }
 
   if (lateTrips.length > 0) {
@@ -124,10 +170,12 @@ function buildWorthWatching(latestDay: DailySummary): string {
     html += `<div style="font-size:11px;font-weight:600;color:#78350f;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.3px;">Late-Running Trips</div>`;
     html += lateTrips.map(t => {
       const delayMin = Math.round(t.otp.avgDeviationSeconds / 60);
+      const daysLate = tripDaysLate.get(t.tripName) || 1;
       return `<div style="font-size:12px;color:#374151;margin-bottom:4px;padding:4px 0;border-bottom:1px solid #fef3c7;">
         <strong>${t.tripName}</strong>
         <span style="color:#9ca3af;font-size:11px;">Route ${t.routeId} · ${t.terminalDepartureTime}</span>
         <span style="float:right;color:#d97706;font-weight:600;">avg +${delayMin} min</span>
+        <span style="color:#9ca3af;font-size:11px;float:right;margin-right:8px;">${daysLate}/${totalDays} days ·</span>
       </div>`;
     }).join('');
   }
@@ -136,27 +184,29 @@ function buildWorthWatching(latestDay: DailySummary): string {
   return html;
 }
 
-function buildHourlyTable(byHour: HourMetrics[]): string {
+function buildHourlyTable(byHour: HourMetrics[], totalServiceHours: number): string {
   const active = byHour.filter(h => h.boardings > 0).sort((a, b) => a.hour - b.hour);
   if (active.length === 0) return '';
 
   const peakHour = active.reduce((a, b) => b.boardings > a.boardings ? b : a);
-  const totalBoards = active.reduce((s, h) => s + h.boardings, 0);
+  const maxBoards = peakHour.boardings;
+  const serviceHoursPerHour = active.length > 0 ? totalServiceHours / active.length : 1;
 
   const rows = active.map((h, i) => {
     const hourLabel = `${h.hour.toString().padStart(2, '0')}:00`;
     const isPeak = h.hour === peakHour.hour;
     const bg = isPeak ? '#ecfdf5' : (i % 2 === 0 ? '#ffffff' : '#f9fafb');
-    const sharePct = totalBoards > 0 ? (h.boardings / totalBoards * 100) : 0;
-    // Simple inline bar for visual weight
-    const barWidth = Math.max(2, Math.round(sharePct * 2.5));
+    // Scale bars relative to peak hour for clear differentiation
+    const barWidth = maxBoards > 0 ? Math.max(3, Math.round((h.boardings / maxBoards) * 100)) : 3;
+    const bph = serviceHoursPerHour > 0 ? (h.boardings / serviceHoursPerHour).toFixed(1) : '—';
     return `
       <tr style="background:${bg};">
         <td style="padding:5px 10px;font-size:12px;color:#374151;border-bottom:1px solid #f3f4f6;font-weight:${isPeak ? '700' : '400'};">${hourLabel}${isPeak ? ' ★' : ''}</td>
         <td style="padding:5px 10px;font-size:12px;text-align:right;color:#374151;border-bottom:1px solid #f3f4f6;">${num(h.boardings)}</td>
         <td style="padding:5px 10px;font-size:12px;border-bottom:1px solid #f3f4f6;">
-          <div style="background:#06b6d4;height:10px;width:${barWidth}%;border-radius:3px;min-width:4px;"></div>
+          <div style="background:#06b6d4;height:12px;width:${barWidth}%;border-radius:3px;min-width:4px;"></div>
         </td>
+        <td style="padding:5px 10px;font-size:12px;text-align:right;font-weight:600;color:#0891b2;border-bottom:1px solid #f3f4f6;">${bph}</td>
         <td style="padding:5px 10px;font-size:12px;text-align:right;border-bottom:1px solid #f3f4f6;">${h.otp.total > 0 ? otpPill(h.otp.onTimePercent) : '<span style="color:#d1d5db;">—</span>'}</td>
       </tr>`;
   }).join('');
@@ -168,6 +218,7 @@ function buildHourlyTable(byHour: HourMetrics[]): string {
         <th style="padding:5px 10px;text-align:left;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Hour</th>
         <th style="padding:5px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Boards</th>
         <th style="padding:5px 10px;text-align:left;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;"></th>
+        <th style="padding:5px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">BPH</th>
         <th style="padding:5px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">OTP</th>
       </tr>
       ${rows}
@@ -175,13 +226,13 @@ function buildHourlyTable(byHour: HourMetrics[]): string {
 }
 
 function buildRouteScorecard(routes: RouteMetrics[]): string {
-  const sorted = [...routes].sort((a, b) => b.otp.onTimePercent - a.otp.onTimePercent);
-  const routesWithBph = sorted.map(r => ({
+  const routesWithBph = routes.map(r => ({
     ...r,
     bph: r.serviceHours > 0 ? Math.round(r.ridership / r.serviceHours * 10) / 10 : 0,
   }));
+  const sorted = [...routesWithBph].sort((a, b) => b.bph - a.bph);
 
-  const rows = routesWithBph.map((r, i) => {
+  const rows = sorted.map((r, i) => {
     const bg = i % 2 === 0 ? '#ffffff' : '#f9fafb';
     return `
       <tr style="background:${bg};">
@@ -192,12 +243,12 @@ function buildRouteScorecard(routes: RouteMetrics[]): string {
         <td style="padding:6px 10px;font-size:12px;text-align:right;color:#dc2626;border-bottom:1px solid #f3f4f6;">${pct(r.otp.latePercent)}</td>
         <td style="padding:6px 10px;font-size:12px;text-align:right;color:#374151;border-bottom:1px solid #f3f4f6;">${num(r.ridership)}</td>
         <td style="padding:6px 10px;font-size:12px;text-align:right;color:#374151;border-bottom:1px solid #f3f4f6;">${num(r.alightings)}</td>
-        <td style="padding:6px 10px;font-size:12px;text-align:right;font-weight:600;color:#0891b2;border-bottom:1px solid #f3f4f6;">${r.bph.toFixed(1)}</td>
+        <td style="padding:6px 10px;font-size:12px;text-align:right;border-bottom:1px solid #f3f4f6;">${bphPill(r.bph)}</td>
       </tr>`;
   }).join('');
 
   return `
-    ${sectionHeader('Route Scorecard', 'Sorted by OTP — all routes')}
+    ${sectionHeader('Route Scorecard', 'Sorted by BPH (highest to lowest) — all routes')}
     <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;">
       <tr style="background:#f9fafb;">
         <th style="padding:6px 10px;text-align:left;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Route</th>
@@ -235,7 +286,7 @@ function buildTopStops(stops: StopMetrics[]): string {
     </tr>
     ${busiestStops.map((s, i) => `
     <tr style="background:${i % 2 === 0 ? '#ffffff' : '#f9fafb'};">
-      <td style="padding:5px 10px;font-size:12px;font-weight:600;color:#374151;border-bottom:1px solid #f3f4f6;">${s.stopName}</td>
+      <td style="padding:5px 10px;font-size:12px;font-weight:600;color:#374151;border-bottom:1px solid #f3f4f6;">${stopLabel(s.stopName, s.stopId)}</td>
       <td style="padding:5px 10px;font-size:12px;text-align:right;color:#374151;border-bottom:1px solid #f3f4f6;">${num(s.boardings)}</td>
       <td style="padding:5px 10px;font-size:12px;text-align:right;color:#374151;border-bottom:1px solid #f3f4f6;">${num(s.alightings)}</td>
       <td style="padding:5px 10px;font-size:12px;text-align:right;color:#6b7280;border-bottom:1px solid #f3f4f6;">${s.routeCount}</td>
@@ -253,7 +304,7 @@ function buildTopStops(stops: StopMetrics[]): string {
       </tr>
       ${worstOtpStops.filter(s => s.otp.onTimePercent < 85).map((s, i) => `
       <tr style="background:${i % 2 === 0 ? '#ffffff' : '#f9fafb'};">
-        <td style="padding:5px 10px;font-size:12px;font-weight:600;color:#374151;border-bottom:1px solid #f3f4f6;">${s.stopName}</td>
+        <td style="padding:5px 10px;font-size:12px;font-weight:600;color:#374151;border-bottom:1px solid #f3f4f6;">${stopLabel(s.stopName, s.stopId)}</td>
         <td style="padding:5px 10px;font-size:12px;text-align:right;border-bottom:1px solid #f3f4f6;">${otpPill(s.otp.onTimePercent)}</td>
         <td style="padding:5px 10px;font-size:12px;text-align:right;color:#6b7280;border-bottom:1px solid #f3f4f6;">${num(s.otp.total)} obs</td>
       </tr>`).join('')}
@@ -266,14 +317,44 @@ function buildTopStops(stops: StopMetrics[]): string {
 function buildTripDetail(trips: TripMetrics[]): string {
   if (trips.length === 0) return '';
 
+  // Late-running trips: avg delay > 10 min OR OTP ≤ 75%
+  const lateTrips = [...trips]
+    .filter(t => t.otp.total > 0 && (t.otp.avgDeviationSeconds > 600 || t.otp.onTimePercent <= 75))
+    .sort((a, b) => b.otp.avgDeviationSeconds - a.otp.avgDeviationSeconds)
+    .slice(0, 8);
+
   // Highest ridership trips
   const busiestTrips = [...trips].sort((a, b) => b.boardings - a.boardings).slice(0, 8);
 
-  // Highest load trips
-  const highLoadTrips = [...trips].filter(t => t.maxLoad > 0).sort((a, b) => b.maxLoad - a.maxLoad).slice(0, 5);
+  let html = sectionHeader('Trip Highlights', 'Late-running trips and busiest trips by boardings');
 
-  let html = sectionHeader('Trip Highlights', 'Busiest trips and highest loads');
+  // Late-running trips subsection
+  if (lateTrips.length > 0) {
+    html += `<div style="font-size:11px;font-weight:600;color:#dc2626;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.3px;">Late-Running Trips <span style="font-weight:400;color:#9ca3af;text-transform:none;">(avg delay &gt;10 min or OTP &le;75%, measured across all stops)</span></div>`;
+    html += `<table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #fecaca;border-radius:6px;overflow:hidden;margin-bottom:12px;">
+      <tr style="background:#fef2f2;">
+        <th style="padding:5px 10px;text-align:left;font-size:11px;color:#991b1b;border-bottom:1px solid #fecaca;">Trip</th>
+        <th style="padding:5px 10px;text-align:left;font-size:11px;color:#991b1b;border-bottom:1px solid #fecaca;">Route</th>
+        <th style="padding:5px 10px;text-align:right;font-size:11px;color:#991b1b;border-bottom:1px solid #fecaca;">Depart</th>
+        <th style="padding:5px 10px;text-align:right;font-size:11px;color:#991b1b;border-bottom:1px solid #fecaca;">Avg Delay</th>
+        <th style="padding:5px 10px;text-align:right;font-size:11px;color:#991b1b;border-bottom:1px solid #fecaca;">OTP</th>
+      </tr>
+      ${lateTrips.map((t, i) => {
+        const delayMin = Math.round(t.otp.avgDeviationSeconds / 60);
+        const bg = i % 2 === 0 ? '#fff5f5' : '#fef2f2';
+        return `
+      <tr style="background:${bg};">
+        <td style="padding:5px 10px;font-size:12px;font-weight:600;color:#374151;border-bottom:1px solid #fecaca;">${t.tripName}</td>
+        <td style="padding:5px 10px;font-size:12px;color:#6b7280;border-bottom:1px solid #fecaca;">${t.routeId}</td>
+        <td style="padding:5px 10px;font-size:12px;text-align:right;color:#374151;border-bottom:1px solid #fecaca;">${t.terminalDepartureTime}</td>
+        <td style="padding:5px 10px;font-size:12px;text-align:right;font-weight:700;color:#dc2626;border-bottom:1px solid #fecaca;">+${delayMin} min</td>
+        <td style="padding:5px 10px;font-size:12px;text-align:right;border-bottom:1px solid #fecaca;">${otpPill(t.otp.onTimePercent)}</td>
+      </tr>`;
+      }).join('')}
+    </table>`;
+  }
 
+  // Busiest trips subsection
   html += `<div style="font-size:11px;font-weight:600;color:#1e3a5f;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.3px;">Busiest Trips</div>`;
   html += `<table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;margin-bottom:12px;">
     <tr style="background:#f9fafb;">
@@ -292,25 +373,6 @@ function buildTripDetail(trips: TripMetrics[]): string {
       <td style="padding:5px 10px;font-size:12px;text-align:right;border-bottom:1px solid #f3f4f6;">${t.otp.total > 0 ? otpPill(t.otp.onTimePercent) : '<span style="color:#d1d5db;">—</span>'}</td>
     </tr>`).join('')}
   </table>`;
-
-  if (highLoadTrips.length > 0) {
-    html += `<div style="font-size:11px;font-weight:600;color:#1e3a5f;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.3px;">Highest Peak Load</div>`;
-    html += `<table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;">
-      <tr style="background:#f9fafb;">
-        <th style="padding:5px 10px;text-align:left;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Trip</th>
-        <th style="padding:5px 10px;text-align:left;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Route</th>
-        <th style="padding:5px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Max Load</th>
-        <th style="padding:5px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Boards</th>
-      </tr>
-      ${highLoadTrips.map((t, i) => `
-      <tr style="background:${i % 2 === 0 ? '#ffffff' : '#f9fafb'};">
-        <td style="padding:5px 10px;font-size:12px;font-weight:600;color:#374151;border-bottom:1px solid #f3f4f6;">${t.tripName}</td>
-        <td style="padding:5px 10px;font-size:12px;color:#6b7280;border-bottom:1px solid #f3f4f6;">${t.routeId} · ${t.terminalDepartureTime}</td>
-        <td style="padding:5px 10px;font-size:12px;text-align:right;font-weight:700;color:#d97706;border-bottom:1px solid #f3f4f6;">${t.maxLoad}</td>
-        <td style="padding:5px 10px;font-size:12px;text-align:right;color:#374151;border-bottom:1px solid #f3f4f6;">${num(t.boardings)}</td>
-      </tr>`).join('')}
-    </table>`;
-  }
 
   return html;
 }
@@ -366,9 +428,12 @@ export function buildReportHtml(data: ReportData): string {
       ${otpBar(sys.otp.earlyPercent, sys.otp.onTimePercent, sys.otp.latePercent)}
 
       <!-- ═══ 2. WORTH WATCHING ═══ -->
-      ${buildWorthWatching(latestDay)}
+      ${buildWorthWatching(latestDay, trendDays)}
 
-      <!-- ═══ 3. OTP TREND ═══ -->
+      <!-- ═══ 3. ROUTE SCORECARD ═══ -->
+      ${buildRouteScorecard(latestDay.byRoute)}
+
+      <!-- ═══ 4. OTP TREND ═══ -->
       ${trendDays.length > 1 ? `
       ${sectionHeader(`OTP Trend — Last ${trendDays.length} Days`)}
       <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;">
@@ -396,11 +461,8 @@ export function buildReportHtml(data: ReportData): string {
         }).join('')}
       </table>` : ''}
 
-      <!-- ═══ 4. BOARDINGS BY HOUR ═══ -->
-      ${buildHourlyTable(latestDay.byHour)}
-
-      <!-- ═══ 5. ROUTE SCORECARD ═══ -->
-      ${buildRouteScorecard(latestDay.byRoute)}
+      <!-- ═══ 5. BOARDINGS BY HOUR ═══ -->
+      ${buildHourlyTable(latestDay.byHour, totalServiceHours)}
 
       <!-- ═══ 6. STOP HIGHLIGHTS ═══ -->
       ${buildTopStops(latestDay.byStop)}
