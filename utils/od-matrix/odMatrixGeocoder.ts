@@ -97,7 +97,7 @@ export async function geocodeStations(
 ): Promise<GeocodeResult> {
     const cache: GeocodeCache = {
         stations: { ...(existingCache?.stations || {}) },
-        lastUpdated: new Date().toISOString(),
+        lastUpdated: '',
     };
 
     let geocoded = 0;
@@ -108,45 +108,26 @@ export async function geocodeStations(
         if (abortSignal?.aborted) break;
 
         const station = stations[i];
+        const report = (status: GeocodeProgress['status']) =>
+            onProgress?.({ current: i + 1, total: stations.length, stationName: station.name, status });
 
         // Check cache first
         if (cache.stations[station.name]) {
             cached++;
-            onProgress?.({
-                current: i + 1,
-                total: stations.length,
-                stationName: station.name,
-                status: 'cached',
-            });
+            report('cached');
             continue;
         }
 
-        onProgress?.({
-            current: i + 1,
-            total: stations.length,
-            stationName: station.name,
-            status: 'geocoding',
-        });
-
+        report('geocoding');
         const result = await geocodeStation(station.name);
 
         if (result) {
             cache.stations[station.name] = result;
             geocoded++;
-            onProgress?.({
-                current: i + 1,
-                total: stations.length,
-                stationName: station.name,
-                status: 'success',
-            });
+            report('success');
         } else {
             failed.push(station.name);
-            onProgress?.({
-                current: i + 1,
-                total: stations.length,
-                stationName: station.name,
-                status: 'failed',
-            });
+            report('failed');
         }
 
         // Rate limit (skip delay on last station)

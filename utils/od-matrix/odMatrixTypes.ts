@@ -53,7 +53,6 @@ export interface ODMatrixMetadata {
     importedBy: string;
     fileName: string;
     dateRange?: string;
-    description?: string;
     stationCount: number;
     totalJourneys: number;
 }

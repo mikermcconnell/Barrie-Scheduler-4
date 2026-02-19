@@ -19,6 +19,38 @@ import { TeamManagement } from '../TeamManagement';
 import type { TransitAppDataSummary } from '../../utils/transit-app/transitAppTypes';
 import type { ODMatrixDataSummary, GeocodeCache } from '../../utils/od-matrix/odMatrixTypes';
 
+interface AnalyticsCardProps {
+    color: 'cyan' | 'violet';
+    icon: React.ReactNode;
+    title: string;
+    description: string;
+    hasData: boolean;
+    onClick: () => void;
+}
+
+const AnalyticsCard: React.FC<AnalyticsCardProps> = ({ color, icon, title, description, hasData, onClick }) => (
+    <button
+        onClick={onClick}
+        className={`group bg-white p-6 rounded-xl border border-gray-200 shadow-sm hover:shadow-md hover:border-${color}-300 transition-all text-left flex flex-col h-full active:scale-[0.99]`}
+    >
+        <div className="flex items-center justify-between mb-4">
+            <div className={`bg-${color}-50/50 p-2.5 rounded-lg text-${color}-600 group-hover:bg-${color}-100 transition-colors`}>
+                {icon}
+            </div>
+            <div className="flex items-center gap-2">
+                {hasData && (
+                    <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-[10px] font-bold rounded-full uppercase tracking-wide">
+                        Data Loaded
+                    </span>
+                )}
+                <ArrowRight size={16} className={`text-gray-300 group-hover:text-${color}-500 transition-colors`} />
+            </div>
+        </div>
+        <h3 className="text-lg font-bold text-gray-900 mb-1">{title}</h3>
+        <p className="text-sm text-gray-500 leading-relaxed">{description}</p>
+    </button>
+);
+
 interface AnalyticsDashboardProps {
     onClose: () => void;
 }
@@ -108,37 +140,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
         }
     };
 
-    // Handle clicking the OD Matrix card
-    const handleODMatrixClick = async () => {
-        if (!team?.id) return;
-
-        if (hasODData) {
-            setLoading(true);
-            try {
-                const [loadedData, cache] = await Promise.all([
-                    getODMatrixData(team.id),
-                    loadGeocodeCache(team.id),
-                ]);
-                if (loadedData) {
-                    setOdData(loadedData);
-                    setOdGeocodeCache(cache);
-                    setView('od-workspace');
-                } else {
-                    setHasODData(false);
-                    setView('od-import');
-                }
-            } catch (error) {
-                console.error('Error loading OD matrix data:', error);
-            } finally {
-                setLoading(false);
-            }
-        } else {
-            setView('od-import');
-        }
-    };
-
-    // Handle OD import complete
-    const handleODImportComplete = async () => {
+    const loadODData = async (opts: { fallbackToImport?: boolean; markAsLoaded?: boolean }) => {
         if (!team?.id) return;
         setLoading(true);
         try {
@@ -149,15 +151,25 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
             if (loadedData) {
                 setOdData(loadedData);
                 setOdGeocodeCache(cache);
-                setHasODData(true);
+                if (opts.markAsLoaded) setHasODData(true);
                 setView('od-workspace');
+            } else if (opts.fallbackToImport) {
+                setHasODData(false);
+                setView('od-import');
             }
         } catch (error) {
-            console.error('Error loading imported OD data:', error);
+            console.error('Error loading OD matrix data:', error);
         } finally {
             setLoading(false);
         }
     };
+
+    const handleODMatrixClick = async () => {
+        if (hasODData) { await loadODData({ fallbackToImport: true }); }
+        else { setView('od-import'); }
+    };
+
+    const handleODImportComplete = () => loadODData({ markAsLoaded: true });
 
     // No team guard: show direct team setup instead of a dead-end message.
     if (!team) {
@@ -252,53 +264,22 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {/* Transit App Data Card */}
-                    <button
+                    <AnalyticsCard
+                        color="cyan"
+                        icon={<Smartphone size={20} />}
+                        title="Transit App Data"
+                        description="Import and analyze rider demand, trip patterns, and route engagement from Transit App."
+                        hasData={hasExistingData}
                         onClick={handleTransitAppClick}
-                        className="group bg-white p-6 rounded-xl border border-gray-200 shadow-sm hover:shadow-md hover:border-cyan-300 transition-all text-left flex flex-col h-full active:scale-[0.99]"
-                    >
-                        <div className="flex items-center justify-between mb-4">
-                            <div className="bg-cyan-50/50 p-2.5 rounded-lg text-cyan-600 group-hover:bg-cyan-100 transition-colors">
-                                <Smartphone size={20} />
-                            </div>
-                            <div className="flex items-center gap-2">
-                                {hasExistingData && (
-                                    <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-[10px] font-bold rounded-full uppercase tracking-wide">
-                                        Data Loaded
-                                    </span>
-                                )}
-                                <ArrowRight size={16} className="text-gray-300 group-hover:text-cyan-500 transition-colors" />
-                            </div>
-                        </div>
-                        <h3 className="text-lg font-bold text-gray-900 mb-1">Transit App Data</h3>
-                        <p className="text-sm text-gray-500 leading-relaxed">
-                            Import and analyze rider demand, trip patterns, and route engagement from Transit App.
-                        </p>
-                    </button>
-
-                    {/* OD Matrix Card */}
-                    <button
+                    />
+                    <AnalyticsCard
+                        color="violet"
+                        icon={<Network size={20} />}
+                        title="OD Matrix"
+                        description="Import origin-destination ridership matrices, visualize travel patterns, and analyze station connectivity."
+                        hasData={hasODData}
                         onClick={handleODMatrixClick}
-                        className="group bg-white p-6 rounded-xl border border-gray-200 shadow-sm hover:shadow-md hover:border-violet-300 transition-all text-left flex flex-col h-full active:scale-[0.99]"
-                    >
-                        <div className="flex items-center justify-between mb-4">
-                            <div className="bg-violet-50/50 p-2.5 rounded-lg text-violet-600 group-hover:bg-violet-100 transition-colors">
-                                <Network size={20} />
-                            </div>
-                            <div className="flex items-center gap-2">
-                                {hasODData && (
-                                    <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-[10px] font-bold rounded-full uppercase tracking-wide">
-                                        Data Loaded
-                                    </span>
-                                )}
-                                <ArrowRight size={16} className="text-gray-300 group-hover:text-violet-500 transition-colors" />
-                            </div>
-                        </div>
-                        <h3 className="text-lg font-bold text-gray-900 mb-1">OD Matrix</h3>
-                        <p className="text-sm text-gray-500 leading-relaxed">
-                            Import origin-destination ridership matrices, visualize travel patterns, and analyze station connectivity.
-                        </p>
-                    </button>
+                    />
 
                     {/* Coverage Gaps Card - Phase 2 */}
                     <div className="relative bg-gray-50 p-6 rounded-xl border border-gray-200 shadow-sm text-left flex flex-col h-full opacity-60 cursor-not-allowed">

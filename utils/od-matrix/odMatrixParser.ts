@@ -9,6 +9,10 @@
 import * as XLSX from 'xlsx';
 import type { ODStation, ODPairRecord, ODMatrixParseResult } from './odMatrixTypes';
 
+function emptyResult(warning: string): ODMatrixParseResult {
+    return { stations: [], pairs: [], totalJourneys: 0, stationCount: 0, topPairs: [], warnings: [warning] };
+}
+
 const SKIP_LABELS = new Set([
     'grand total',
     '(blank)',
@@ -37,7 +41,7 @@ export function parseODMatrixFromExcel(buffer: ArrayBuffer): ODMatrixParseResult
     const workbook = XLSX.read(buffer, { type: 'array' });
     const sheetName = workbook.SheetNames[0];
     if (!sheetName) {
-        return { stations: [], pairs: [], totalJourneys: 0, stationCount: 0, topPairs: [], warnings: ['No sheets found in workbook'] };
+        return emptyResult('No sheets found in workbook');
     }
 
     const sheet = workbook.Sheets[sheetName];
@@ -48,7 +52,7 @@ export function parseODMatrixFromExcel(buffer: ArrayBuffer): ODMatrixParseResult
     });
 
     if (rows.length < 2) {
-        return { stations: [], pairs: [], totalJourneys: 0, stationCount: 0, topPairs: [], warnings: ['Sheet has fewer than 2 rows'] };
+        return emptyResult('Sheet has fewer than 2 rows');
     }
 
     const warnings: string[] = [];
@@ -79,9 +83,7 @@ export function parseODMatrixFromExcel(buffer: ArrayBuffer): ODMatrixParseResult
     }
 
     // Collect all unique station names
-    const allStationNames = new Set<string>();
-    originNames.forEach(n => allStationNames.add(n));
-    destNames.forEach(n => allStationNames.add(n));
+    const allStationNames = new Set<string>([...originNames, ...destNames]);
 
     // Build pairs (sparse — non-zero only)
     const pairs: ODPairRecord[] = [];
@@ -111,12 +113,11 @@ export function parseODMatrixFromExcel(buffer: ArrayBuffer): ODMatrixParseResult
     }
 
     // Build station objects
-    const stations: ODStation[] = Array.from(allStationNames).map(name => ({
-        name,
-        totalOrigin: originTotals.get(name) || 0,
-        totalDestination: destTotals.get(name) || 0,
-        totalVolume: (originTotals.get(name) || 0) + (destTotals.get(name) || 0),
-    }));
+    const stations: ODStation[] = Array.from(allStationNames).map(name => {
+        const totalOrigin = originTotals.get(name) || 0;
+        const totalDestination = destTotals.get(name) || 0;
+        return { name, totalOrigin, totalDestination, totalVolume: totalOrigin + totalDestination };
+    });
 
     // Sort stations by total volume descending
     stations.sort((a, b) => b.totalVolume - a.totalVolume);

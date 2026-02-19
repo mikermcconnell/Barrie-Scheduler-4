@@ -62,9 +62,8 @@ export async function saveODMatrixData(
     userId: string,
     summary: ODMatrixDataSummary
 ): Promise<string> {
-    const timestamp = Date.now().toString();
-    const storagePath = getStoragePath(teamId, timestamp);
-    const importId = timestamp;
+    const importId = Date.now().toString();
+    const storagePath = getStoragePath(teamId, importId);
 
     // Upload full summary JSON to Storage
     const storageRef = ref(storage, storagePath);
@@ -146,8 +145,7 @@ export async function getODMatrixData(teamId: string): Promise<ODMatrixDataSumma
         const response = await fetch(url);
         if (!response.ok) return null;
 
-        const summary: ODMatrixDataSummary = await response.json();
-        return summary;
+        return await response.json() as ODMatrixDataSummary;
     } catch (error) {
         console.error('Error getting OD matrix data:', error);
         return null;

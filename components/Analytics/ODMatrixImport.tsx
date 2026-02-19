@@ -9,7 +9,6 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
 import {
     Upload,
-    FileSpreadsheet,
     CheckCircle2,
     Loader2,
     ArrowRight,
@@ -21,7 +20,11 @@ import {
 import { parseODMatrixFromExcel } from '../../utils/od-matrix/odMatrixParser';
 import { geocodeStations, applyGeocodesToStations } from '../../utils/od-matrix/odMatrixGeocoder';
 import { saveODMatrixData, saveGeocodeCache, loadGeocodeCache } from '../../utils/od-matrix/odMatrixService';
-import type { ODMatrixParseResult, ODMatrixDataSummary, GeocodeCache } from '../../utils/od-matrix/odMatrixTypes';
+import type { ODMatrixParseResult, ODMatrixDataSummary, ODStation } from '../../utils/od-matrix/odMatrixTypes';
+
+function formatError(prefix: string, err: unknown): string {
+    return `${prefix}: ${err instanceof Error ? err.message : 'Unknown error'}`;
+}
 
 interface ODMatrixImportProps {
     teamId: string;
@@ -87,7 +90,7 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
             setErrorMessage('');
             setPhase('preview');
         } catch (err) {
-            setErrorMessage(`Failed to parse file: ${err instanceof Error ? err.message : 'Unknown error'}`);
+            setErrorMessage(formatError('Failed to parse file', err));
         }
     }, []);
 
@@ -102,6 +105,23 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
             'application/vnd.ms-excel': ['.xls'],
         },
         multiple: false,
+    });
+
+    const buildSummary = (stations: ODStation[]): ODMatrixDataSummary => ({
+        schemaVersion: 1,
+        stations,
+        pairs: parseResult!.pairs,
+        totalJourneys: parseResult!.totalJourneys,
+        stationCount: parseResult!.stationCount,
+        topPairs: parseResult!.topPairs,
+        metadata: {
+            importedAt: new Date().toISOString(),
+            importedBy: userId,
+            fileName,
+            dateRange: dateRange || undefined,
+            stationCount: parseResult!.stationCount,
+            totalJourneys: parseResult!.totalJourneys,
+        },
     });
 
     const handleStartGeocoding = async () => {
@@ -138,29 +158,8 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
                 abortController.signal,
             );
 
-            // Apply geocodes to stations
             const geocodedStations = applyGeocodesToStations(parseResult.stations, geocodeResult.cache);
-
-            // Build summary
-            const summary: ODMatrixDataSummary = {
-                schemaVersion: 1,
-                stations: geocodedStations,
-                pairs: parseResult.pairs,
-                totalJourneys: parseResult.totalJourneys,
-                stationCount: parseResult.stationCount,
-                topPairs: parseResult.topPairs,
-                metadata: {
-                    importedAt: new Date().toISOString(),
-                    importedBy: userId,
-                    fileName,
-                    dateRange: dateRange || undefined,
-                    stationCount: parseResult.stationCount,
-                    totalJourneys: parseResult.totalJourneys,
-                },
-            };
-
-            // Save to Firebase
-            await saveODMatrixData(teamId, userId, summary);
+            await saveODMatrixData(teamId, userId, buildSummary(geocodedStations));
             await saveGeocodeCache(teamId, geocodeResult.cache);
 
             setCompletedStats({
@@ -173,7 +172,7 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
             setPhase('complete');
         } catch (err) {
             if (!abortController.signal.aborted) {
-                setErrorMessage(`Import failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+                setErrorMessage(formatError('Import failed', err));
                 setPhase('preview');
             }
         }
@@ -184,24 +183,7 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
         setPhase('geocoding');
 
         try {
-            const summary: ODMatrixDataSummary = {
-                schemaVersion: 1,
-                stations: parseResult.stations,
-                pairs: parseResult.pairs,
-                totalJourneys: parseResult.totalJourneys,
-                stationCount: parseResult.stationCount,
-                topPairs: parseResult.topPairs,
-                metadata: {
-                    importedAt: new Date().toISOString(),
-                    importedBy: userId,
-                    fileName,
-                    dateRange: dateRange || undefined,
-                    stationCount: parseResult.stationCount,
-                    totalJourneys: parseResult.totalJourneys,
-                },
-            };
-
-            await saveODMatrixData(teamId, userId, summary);
+            await saveODMatrixData(teamId, userId, buildSummary(parseResult.stations));
 
             setCompletedStats({
                 stations: parseResult.stationCount,
@@ -212,10 +194,31 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
             });
             setPhase('complete');
         } catch (err) {
-            setErrorMessage(`Import failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+            setErrorMessage(formatError('Import failed', err));
             setPhase('preview');
         }
     };
+
+    // ============ SHARED UI ============
+
+    const PhaseHeader = ({ title, subtitle }: { title: string; subtitle: string }) => (
+        <div className="flex items-center justify-between mb-6">
+            <div>
+                <h2 className="text-xl font-bold text-gray-900">{title}</h2>
+                <p className="text-sm text-gray-500">{subtitle}</p>
+            </div>
+            <button onClick={onCancel} className="p-2 text-gray-400 hover:text-gray-600 transition-colors">
+                <X size={20} />
+            </button>
+        </div>
+    );
+
+    const errorBanner = errorMessage ? (
+        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2">
+            <AlertTriangle size={16} className="text-red-500 mt-0.5 shrink-0" />
+            <p className="text-sm text-red-700">{errorMessage}</p>
+        </div>
+    ) : null;
 
     // ============ RENDER PHASES ============
 
@@ -223,22 +226,8 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
     if (phase === 'select') {
         return (
             <div className="max-w-2xl mx-auto">
-                <div className="flex items-center justify-between mb-6">
-                    <div>
-                        <h2 className="text-xl font-bold text-gray-900">Import OD Matrix</h2>
-                        <p className="text-sm text-gray-500">Upload an Excel origin-destination matrix file</p>
-                    </div>
-                    <button onClick={onCancel} className="p-2 text-gray-400 hover:text-gray-600 transition-colors">
-                        <X size={20} />
-                    </button>
-                </div>
-
-                {errorMessage && (
-                    <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2">
-                        <AlertTriangle size={16} className="text-red-500 mt-0.5 shrink-0" />
-                        <p className="text-sm text-red-700">{errorMessage}</p>
-                    </div>
-                )}
+                <PhaseHeader title="Import OD Matrix" subtitle="Upload an Excel origin-destination matrix file" />
+                {errorBanner}
 
                 <div
                     {...getRootProps()}
@@ -265,22 +254,8 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
         const sampleStations = parseResult.stations.slice(0, 8);
         return (
             <div className="max-w-2xl mx-auto">
-                <div className="flex items-center justify-between mb-6">
-                    <div>
-                        <h2 className="text-xl font-bold text-gray-900">Preview Import</h2>
-                        <p className="text-sm text-gray-500">{fileName}</p>
-                    </div>
-                    <button onClick={onCancel} className="p-2 text-gray-400 hover:text-gray-600 transition-colors">
-                        <X size={20} />
-                    </button>
-                </div>
-
-                {errorMessage && (
-                    <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2">
-                        <AlertTriangle size={16} className="text-red-500 mt-0.5 shrink-0" />
-                        <p className="text-sm text-red-700">{errorMessage}</p>
-                    </div>
-                )}
+                <PhaseHeader title="Preview Import" subtitle={fileName} />
+                {errorBanner}
 
                 {/* Stats */}
                 <div className="grid grid-cols-3 gap-4 mb-6">
