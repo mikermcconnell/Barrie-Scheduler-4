@@ -2,6 +2,7 @@ import path from 'path';
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import { optimizeImplementation } from './api/optimize';
+import { performanceQueryHandler } from './api/performance-query';
 import AdmZip from 'adm-zip';
 
 /**
@@ -112,6 +113,41 @@ export default defineConfig(({ mode }) => {
 
           } catch (error: any) {
             console.error('❌ API Error:', error);
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: 'Internal Server Error', message: error.message }));
+          }
+          return;
+        }
+
+        // Performance Query endpoint
+        if (req.url === '/api/performance-query' && req.method === 'POST') {
+          try {
+            const buffers: Buffer[] = [];
+            for await (const chunk of req) {
+              buffers.push(chunk);
+            }
+            const bodyString = Buffer.concat(buffers).toString();
+            if (!bodyString) throw new Error('Empty request body');
+
+            const { question, context } = JSON.parse(bodyString);
+            const apiKey = env.GEMINI_API_KEY;
+
+            if (!apiKey) {
+              res.statusCode = 500;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ error: 'Missing GEMINI_API_KEY' }));
+              return;
+            }
+
+            console.log('🤖 Performance query:', question?.slice(0, 80));
+            const result = await performanceQueryHandler(question, context, apiKey);
+
+            res.statusCode = 200;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify(result));
+          } catch (error: any) {
+            console.error('❌ Performance query error:', error);
             res.statusCode = 500;
             res.setHeader('Content-Type', 'application/json');
             res.end(JSON.stringify({ error: 'Internal Server Error', message: error.message }));

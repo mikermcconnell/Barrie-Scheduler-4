@@ -1,13 +1,14 @@
 import React, { useMemo, useRef, useState } from 'react';
 import {
     ArrowLeft, RefreshCw, LayoutDashboard, Clock, TrendingUp,
-    BarChart3, Route, MapPin, Train,
+    BarChart3, Route, MapPin, Train, FileText,
 } from 'lucide-react';
 import type { PerformanceDataSummary, PerformanceTab } from '../../utils/performanceDataTypes';
 import { SystemOverviewModule } from './SystemOverviewModule';
 import { OTPModule } from './OTPModule';
 import { RidershipModule } from './RidershipModule';
 import { LoadProfileModule } from './LoadProfileModule';
+import { ReportsModule } from './ReportsModule';
 
 interface PerformanceWorkspaceProps {
     data: PerformanceDataSummary;
@@ -27,6 +28,7 @@ const TAB_CONFIG: TabConfig[] = [
     { id: 'otp', label: 'OTP Analysis', icon: Clock, status: 'complete' },
     { id: 'ridership', label: 'Ridership', icon: TrendingUp, status: 'complete' },
     { id: 'load-profiles', label: 'Load Profiles', icon: BarChart3, status: 'complete' },
+    { id: 'reports', label: 'Reports', icon: FileText, status: 'complete' },
     { id: 'route-detail', label: 'Route Detail', icon: Route, status: 'not-started' },
     { id: 'stop-detail', label: 'Stop Detail', icon: MapPin, status: 'not-started' },
     { id: 'connections', label: 'Connections', icon: Train, status: 'not-started' },
@@ -63,6 +65,8 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data
                 return <RidershipModule data={data} />;
             case 'load-profiles':
                 return <LoadProfileModule data={data} />;
+            case 'reports':
+                return <ReportsModule data={data} />;
             default:
                 return (
                     <div className="flex items-center justify-center h-[400px] text-gray-400">

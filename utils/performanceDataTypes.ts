@@ -252,6 +252,7 @@ export type PerformanceTab =
   | 'otp'
   | 'ridership'
   | 'load-profiles'
+  | 'reports'
   | 'route-detail'
   | 'stop-detail'
   | 'connections';
