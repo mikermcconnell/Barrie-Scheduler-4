@@ -5,11 +5,15 @@ import {
 } from 'recharts';
 import {
     Clock, Users, Bus, AlertTriangle, ArrowRight,
-    Calendar, Database, ClipboardList,
+    Calendar, Database, ClipboardList, ChevronDown,
 } from 'lucide-react';
 import { MetricCard, ChartCard } from '../Analytics/AnalyticsShared';
 import type { PerformanceDataSummary, DayType, DailySummary, DataQuality } from '../../utils/performanceDataTypes';
-import { getScheduledTrips, hasGtfsCoverage, bestFitScheduledTrips, type ScheduledTrip } from '../../utils/gtfs/gtfsScheduleIndex';
+import {
+    getScheduledTrips, hasGtfsCoverage, getTripsForDayType,
+    buildObservedKeys, hasRouteTimeMatch, countRouteTimeMatches,
+    type ScheduledTrip,
+} from '../../utils/gtfs/gtfsScheduleIndex';
 
 interface SystemOverviewModuleProps {
     data: PerformanceDataSummary;
@@ -63,13 +67,6 @@ function freshness(importedAt: string): string {
     return `Updated ${days}d ago`;
 }
 
-function countMatches(scheduled: ScheduledTrip[], observedIds: Set<string>): number {
-    let n = 0;
-    for (const s of scheduled) {
-        if (observedIds.has(s.tripId)) n++;
-    }
-    return n;
-}
 
 export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data, onNavigate }) => {
     const sortedDates = useMemo(() =>
@@ -82,6 +79,7 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
         sortedDates.length > 0 ? sortedDates[sortedDates.length - 1] : 'all'
     );
     const [dayTypeFilter, setDayTypeFilter] = useState<DayType | 'all'>('all');
+    const [missedTripsExpanded, setMissedTripsExpanded] = useState(false);
 
     const availableDayTypes = useMemo(() => {
         const types = new Set(data.dailySummaries.map(d => d.dayType));
@@ -210,7 +208,7 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
     const missedTrips = useMemo(() => {
         let totalScheduled = 0;
         let totalMatched = 0;
-        const missedByRoute = new Map<string, { routeId: string; count: number; earliestDep: string }>();
+        const missedByRoute = new Map<string, { routeId: string; count: number; earliestDep: string; trips: ScheduledTrip[] }>();
         let hasCoverage = false;
         let skippedDays = 0;
 
@@ -219,20 +217,24 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
             hasCoverage = true;
 
             const observedRoutes = new Set(day.byTrip.map(t => t.routeId));
-            const observedIds = new Set(day.byTrip.map(t => t.tripId));
+            const observedKeys = buildObservedKeys(day.byTrip);
 
             // Primary attempt: uses holiday calendar + STREETS dayType
             let scheduled = getScheduledTrips(day.date, day.dayType);
             let relevantScheduled = scheduled.filter(s => observedRoutes.has(s.routeId));
-            let dayMatched = countMatches(relevantScheduled, observedIds);
+            let dayMatched = countRouteTimeMatches(relevantScheduled, observedKeys);
 
             // Best-fit fallback: if < 25% matched, try all service types
             if (relevantScheduled.length > 0 && dayMatched / relevantScheduled.length < 0.25) {
-                const bestFit = bestFitScheduledTrips(day.date, observedIds);
-                if (bestFit && bestFit.matchCount > dayMatched) {
-                    scheduled = bestFit.trips;
-                    relevantScheduled = scheduled.filter(s => observedRoutes.has(s.routeId));
-                    dayMatched = countMatches(relevantScheduled, observedIds);
+                for (const dt of ['weekday', 'saturday', 'sunday'] as const) {
+                    const altTrips = getTripsForDayType(day.date, dt);
+                    const altRelevant = altTrips.filter(s => observedRoutes.has(s.routeId));
+                    const altMatched = countRouteTimeMatches(altRelevant, observedKeys);
+                    if (altMatched > dayMatched) {
+                        scheduled = altTrips;
+                        relevantScheduled = altRelevant;
+                        dayMatched = altMatched;
+                    }
                 }
             }
 
@@ -247,20 +249,23 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
             totalMatched += dayMatched;
 
             for (const s of relevantScheduled) {
-                if (observedIds.has(s.tripId)) continue;
+                if (hasRouteTimeMatch(s.routeId, s.departure, observedKeys)) continue;
                 const existing = missedByRoute.get(s.routeId);
                 if (existing) {
                     existing.count++;
+                    existing.trips.push(s);
                     if (s.departure < existing.earliestDep) existing.earliestDep = s.departure;
                 } else {
-                    missedByRoute.set(s.routeId, { routeId: s.routeId, count: 1, earliestDep: s.departure });
+                    missedByRoute.set(s.routeId, { routeId: s.routeId, count: 1, earliestDep: s.departure, trips: [s] });
                 }
             }
         }
 
         const totalMissed = totalScheduled - totalMatched;
         const missedPct = totalScheduled > 0 ? (totalMissed / totalScheduled) * 100 : 0;
-        const routesMissed = Array.from(missedByRoute.values()).sort((a, b) => b.count - a.count);
+        const routesMissed = Array.from(missedByRoute.values())
+            .map(r => ({ ...r, trips: r.trips.sort((a, b) => a.departure.localeCompare(b.departure)) }))
+            .sort((a, b) => b.count - a.count);
 
         return { hasCoverage, totalScheduled, totalObserved: totalMatched, totalMissed, missedPct, routesMissed, skippedDays };
     }, [filtered]);
@@ -587,6 +592,63 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                         </button>
                 </div>
             </div>
+            )}
+
+            {/* ── 3b. Missed Trips Detail ──────────────────────────── */}
+            {hasMissedTrips && (
+                <div className="bg-white border border-gray-200 rounded-xl">
+                    <button
+                        onClick={() => setMissedTripsExpanded(v => !v)}
+                        className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-gray-50 rounded-xl transition-colors"
+                    >
+                        <div className="flex items-center gap-2">
+                            <ClipboardList size={14} className="text-red-500" />
+                            <span className="text-sm font-bold text-gray-900">
+                                Missed Trips Detail
+                            </span>
+                            <span className="text-xs text-gray-400">
+                                {missedTrips.totalMissed} trip{missedTrips.totalMissed !== 1 ? 's' : ''} across {missedTrips.routesMissed.length} route{missedTrips.routesMissed.length !== 1 ? 's' : ''}
+                            </span>
+                        </div>
+                        <ChevronDown size={16} className={`text-gray-400 transition-transform ${missedTripsExpanded ? 'rotate-180' : ''}`} />
+                    </button>
+                    {missedTripsExpanded && (
+                        <div className="px-4 pb-4">
+                            <table className="w-full text-sm">
+                                <thead>
+                                    <tr className="border-b border-gray-100">
+                                        <th className="text-left py-1.5 px-2 font-bold text-gray-500 text-xs uppercase">Departure</th>
+                                        <th className="text-left py-1.5 px-2 font-bold text-gray-500 text-xs uppercase">Headsign</th>
+                                        <th className="text-left py-1.5 px-2 font-bold text-gray-500 text-xs uppercase">Block</th>
+                                        <th className="text-left py-1.5 px-2 font-bold text-gray-500 text-xs uppercase">Trip ID</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {missedTrips.routesMissed.map(route => (
+                                        <React.Fragment key={route.routeId}>
+                                            <tr className="bg-gray-50">
+                                                <td colSpan={4} className="py-1.5 px-2 font-bold text-gray-700 text-xs">
+                                                    Route {route.routeId}
+                                                    <span className="ml-2 font-normal text-gray-400">
+                                                        {route.count} missed
+                                                    </span>
+                                                </td>
+                                            </tr>
+                                            {route.trips.map(trip => (
+                                                <tr key={trip.tripId} className="border-b border-gray-50 hover:bg-gray-50">
+                                                    <td className="py-1 px-2 text-gray-900 font-medium">{trip.departure}</td>
+                                                    <td className="py-1 px-2 text-gray-600">{trip.headsign || '—'}</td>
+                                                    <td className="py-1 px-2 text-gray-500 font-mono text-xs">{trip.blockId || '—'}</td>
+                                                    <td className="py-1 px-2 text-gray-400 font-mono text-xs">{trip.tripId}</td>
+                                                </tr>
+                                            ))}
+                                        </React.Fragment>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+                </div>
             )}
 
             {/* ── 4. Charts Row: OTP Donut + OTP Trend ─────────────── */}

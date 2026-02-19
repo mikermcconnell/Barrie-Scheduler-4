@@ -1,4 +1,4 @@
-import { DailySummary, RouteMetrics, HourMetrics, StopMetrics, TripMetrics } from './types';
+import { DailySummary, RouteMetrics, HourMetrics, StopMetrics } from './types';
 
 export interface ReportData {
   latestDay: DailySummary;
@@ -123,7 +123,7 @@ function buildWorthWatching(latestDay: DailySummary, trendDays: DailySummary[]):
   }
 
   const belowTarget = latestDay.byRoute
-    .filter(r => r.otp.onTimePercent < 85)
+    .filter(r => r.otp.onTimePercent < 85 && (routeDaysBelow.get(r.routeId) || 0) >= 3)
     .sort((a, b) => a.otp.onTimePercent - b.otp.onTimePercent)
     .slice(0, 5);
 
@@ -138,7 +138,7 @@ function buildWorthWatching(latestDay: DailySummary, trendDays: DailySummary[]):
   }
 
   const lateTrips = latestDay.byTrip
-    .filter(t => t.otp.avgDeviationSeconds > 300)
+    .filter(t => t.otp.avgDeviationSeconds > 300 && (tripDaysLate.get(t.tripName) || 0) >= 3)
     .sort((a, b) => b.otp.avgDeviationSeconds - a.otp.avgDeviationSeconds)
     .slice(0, 5);
 
@@ -314,69 +314,6 @@ function buildTopStops(stops: StopMetrics[]): string {
   return html;
 }
 
-function buildTripDetail(trips: TripMetrics[]): string {
-  if (trips.length === 0) return '';
-
-  // Late-running trips: avg delay > 10 min OR OTP ≤ 75%
-  const lateTrips = [...trips]
-    .filter(t => t.otp.total > 0 && (t.otp.avgDeviationSeconds > 600 || t.otp.onTimePercent <= 75))
-    .sort((a, b) => b.otp.avgDeviationSeconds - a.otp.avgDeviationSeconds)
-    .slice(0, 8);
-
-  // Highest ridership trips
-  const busiestTrips = [...trips].sort((a, b) => b.boardings - a.boardings).slice(0, 8);
-
-  let html = sectionHeader('Trip Highlights', 'Late-running trips and busiest trips by boardings');
-
-  // Late-running trips subsection
-  if (lateTrips.length > 0) {
-    html += `<div style="font-size:11px;font-weight:600;color:#dc2626;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.3px;">Late-Running Trips <span style="font-weight:400;color:#9ca3af;text-transform:none;">(avg delay &gt;10 min or OTP &le;75%, measured across all stops)</span></div>`;
-    html += `<table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #fecaca;border-radius:6px;overflow:hidden;margin-bottom:12px;">
-      <tr style="background:#fef2f2;">
-        <th style="padding:5px 10px;text-align:left;font-size:11px;color:#991b1b;border-bottom:1px solid #fecaca;">Trip</th>
-        <th style="padding:5px 10px;text-align:left;font-size:11px;color:#991b1b;border-bottom:1px solid #fecaca;">Route</th>
-        <th style="padding:5px 10px;text-align:right;font-size:11px;color:#991b1b;border-bottom:1px solid #fecaca;">Depart</th>
-        <th style="padding:5px 10px;text-align:right;font-size:11px;color:#991b1b;border-bottom:1px solid #fecaca;">Avg Delay</th>
-        <th style="padding:5px 10px;text-align:right;font-size:11px;color:#991b1b;border-bottom:1px solid #fecaca;">OTP</th>
-      </tr>
-      ${lateTrips.map((t, i) => {
-        const delayMin = Math.round(t.otp.avgDeviationSeconds / 60);
-        const bg = i % 2 === 0 ? '#fff5f5' : '#fef2f2';
-        return `
-      <tr style="background:${bg};">
-        <td style="padding:5px 10px;font-size:12px;font-weight:600;color:#374151;border-bottom:1px solid #fecaca;">${t.tripName}</td>
-        <td style="padding:5px 10px;font-size:12px;color:#6b7280;border-bottom:1px solid #fecaca;">${t.routeId}</td>
-        <td style="padding:5px 10px;font-size:12px;text-align:right;color:#374151;border-bottom:1px solid #fecaca;">${t.terminalDepartureTime}</td>
-        <td style="padding:5px 10px;font-size:12px;text-align:right;font-weight:700;color:#dc2626;border-bottom:1px solid #fecaca;">+${delayMin} min</td>
-        <td style="padding:5px 10px;font-size:12px;text-align:right;border-bottom:1px solid #fecaca;">${otpPill(t.otp.onTimePercent)}</td>
-      </tr>`;
-      }).join('')}
-    </table>`;
-  }
-
-  // Busiest trips subsection
-  html += `<div style="font-size:11px;font-weight:600;color:#1e3a5f;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.3px;">Busiest Trips</div>`;
-  html += `<table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;margin-bottom:12px;">
-    <tr style="background:#f9fafb;">
-      <th style="padding:5px 10px;text-align:left;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Trip</th>
-      <th style="padding:5px 10px;text-align:left;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Route</th>
-      <th style="padding:5px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Depart</th>
-      <th style="padding:5px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Boards</th>
-      <th style="padding:5px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">OTP</th>
-    </tr>
-    ${busiestTrips.map((t, i) => `
-    <tr style="background:${i % 2 === 0 ? '#ffffff' : '#f9fafb'};">
-      <td style="padding:5px 10px;font-size:12px;font-weight:600;color:#374151;border-bottom:1px solid #f3f4f6;">${t.tripName}</td>
-      <td style="padding:5px 10px;font-size:12px;color:#6b7280;border-bottom:1px solid #f3f4f6;">${t.routeId}</td>
-      <td style="padding:5px 10px;font-size:12px;text-align:right;color:#374151;border-bottom:1px solid #f3f4f6;">${t.terminalDepartureTime}</td>
-      <td style="padding:5px 10px;font-size:12px;text-align:right;color:#374151;border-bottom:1px solid #f3f4f6;">${num(t.boardings)}</td>
-      <td style="padding:5px 10px;font-size:12px;text-align:right;border-bottom:1px solid #f3f4f6;">${t.otp.total > 0 ? otpPill(t.otp.onTimePercent) : '<span style="color:#d1d5db;">—</span>'}</td>
-    </tr>`).join('')}
-  </table>`;
-
-  return html;
-}
-
 export function buildReportHtml(data: ReportData): string {
   const { latestDay, trendDays, teamName } = data;
   const sys = latestDay.system;
@@ -434,8 +371,10 @@ export function buildReportHtml(data: ReportData): string {
       ${buildRouteScorecard(latestDay.byRoute)}
 
       <!-- ═══ 4. OTP TREND ═══ -->
-      ${trendDays.length > 1 ? `
-      ${sectionHeader(`OTP Trend — Last ${trendDays.length} Days`)}
+      ${trendDays.length > 1 ? (() => {
+        const recentTrend = trendDays.slice(-7);
+        return `
+      ${sectionHeader(`OTP Trend — Last ${recentTrend.length} Days`)}
       <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;">
         <tr style="background:#f9fafb;">
           <th style="padding:6px 10px;text-align:left;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Date</th>
@@ -445,7 +384,7 @@ export function buildReportHtml(data: ReportData): string {
           <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Vehicles</th>
           <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Peak Load</th>
         </tr>
-        ${trendDays.map((day, i) => {
+        ${recentTrend.map((day, i) => {
           const isLatest = day.date === latestDay.date;
           const bg = isLatest ? '#eff6ff' : (i % 2 === 0 ? '#ffffff' : '#f9fafb');
           const dayLabel = day.dayType === 'weekday' ? 'Wk' : day.dayType === 'saturday' ? 'Sat' : 'Sun';
@@ -459,16 +398,14 @@ export function buildReportHtml(data: ReportData): string {
           <td style="padding:6px 10px;font-size:12px;text-align:right;color:#374151;border-bottom:1px solid #f3f4f6;">${num(day.system.peakLoad)}</td>
         </tr>`;
         }).join('')}
-      </table>` : ''}
+      </table>`;
+      })() : ''}
 
       <!-- ═══ 5. BOARDINGS BY HOUR ═══ -->
       ${buildHourlyTable(latestDay.byHour, totalServiceHours)}
 
       <!-- ═══ 6. STOP HIGHLIGHTS ═══ -->
       ${buildTopStops(latestDay.byStop)}
-
-      <!-- ═══ 7. TRIP HIGHLIGHTS ═══ -->
-      ${buildTripDetail(latestDay.byTrip)}
 
       <!-- ═══ 8. DATA QUALITY ═══ -->
       <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:12px;margin-top:20px;">

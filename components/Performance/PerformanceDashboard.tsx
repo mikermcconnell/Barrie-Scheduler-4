@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { BarChart3, ArrowRight, Loader2, Activity } from 'lucide-react';
+import { ArrowRight, Loader2, Activity } from 'lucide-react';
 import { useTeam } from '../contexts/TeamContext';
 import { useAuth } from '../contexts/AuthContext';
 import { getPerformanceData, getPerformanceMetadata } from '../../utils/performanceDataService';
@@ -186,20 +186,6 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onCl
                         </p>
                     </button>
 
-                    <div className="relative bg-gray-50 p-6 rounded-xl border border-gray-200 shadow-sm text-left flex flex-col h-full opacity-60 cursor-not-allowed">
-                        <div className="absolute top-3 right-3 px-2 py-0.5 bg-gray-200 text-gray-500 text-[10px] font-bold rounded-full uppercase tracking-wide">
-                            Phase 2
-                        </div>
-                        <div className="flex items-center justify-between mb-4">
-                            <div className="bg-gray-100 p-2.5 rounded-lg text-gray-400">
-                                <BarChart3 size={20} />
-                            </div>
-                        </div>
-                        <h3 className="text-lg font-bold text-gray-500 mb-1">Connection Analysis</h3>
-                        <p className="text-sm text-gray-400 leading-relaxed">
-                            GO Train and inter-route connection reliability analysis.
-                        </p>
-                    </div>
                 </div>
             </div>
         </div>

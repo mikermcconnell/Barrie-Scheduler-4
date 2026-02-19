@@ -1,14 +1,13 @@
 import React, { useMemo, useRef, useState } from 'react';
 import {
     ArrowLeft, RefreshCw, LayoutDashboard, Clock, TrendingUp,
-    BarChart3, Route, MapPin, Train, FileText,
+    BarChart3, ExternalLink,
 } from 'lucide-react';
 import type { PerformanceDataSummary, PerformanceTab } from '../../utils/performanceDataTypes';
 import { SystemOverviewModule } from './SystemOverviewModule';
 import { OTPModule } from './OTPModule';
 import { RidershipModule } from './RidershipModule';
 import { LoadProfileModule } from './LoadProfileModule';
-import { ReportsModule } from './ReportsModule';
 
 interface PerformanceWorkspaceProps {
     data: PerformanceDataSummary;
@@ -28,10 +27,6 @@ const TAB_CONFIG: TabConfig[] = [
     { id: 'otp', label: 'OTP Analysis', icon: Clock, status: 'complete' },
     { id: 'ridership', label: 'Ridership', icon: TrendingUp, status: 'complete' },
     { id: 'load-profiles', label: 'Load Profiles', icon: BarChart3, status: 'complete' },
-    { id: 'reports', label: 'Reports', icon: FileText, status: 'complete' },
-    { id: 'route-detail', label: 'Route Detail', icon: Route, status: 'not-started' },
-    { id: 'stop-detail', label: 'Stop Detail', icon: MapPin, status: 'not-started' },
-    { id: 'connections', label: 'Connections', icon: Train, status: 'not-started' },
 ];
 
 const LOCALHOST_HOSTNAMES = new Set(['localhost', '127.0.0.1', '::1']);
@@ -65,17 +60,8 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data
                 return <RidershipModule data={data} />;
             case 'load-profiles':
                 return <LoadProfileModule data={data} />;
-            case 'reports':
-                return <ReportsModule data={data} />;
             default:
-                return (
-                    <div className="flex items-center justify-center h-[400px] text-gray-400">
-                        <div className="text-center">
-                            <BarChart3 size={48} className="mx-auto mb-3 opacity-30" />
-                            <p className="font-medium">Coming in Phase 2</p>
-                        </div>
-                    </div>
-                );
+                return null;
         }
     };
 
@@ -91,7 +77,7 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data
                         <ArrowLeft size={14} /> Back
                     </button>
                     <div className="h-4 w-px bg-gray-300" />
-                    <h2 className="text-lg font-bold text-gray-900">Performance Dashboard</h2>
+                    <h2 className="text-lg font-bold text-gray-900">Operations Dashboard</h2>
                     <span className="text-xs text-gray-400">
                         {data.metadata.dateRange.start} — {data.metadata.dateRange.end}
                         {' · '}{data.metadata.dayCount} day{data.metadata.dayCount !== 1 ? 's' : ''}
@@ -137,6 +123,15 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data
                             </button>
                         );
                     })}
+                    <div className="ml-auto flex items-center pr-2">
+                        <button
+                            onClick={() => { window.location.hash = 'fixed/perf-reports'; }}
+                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-cyan-600 hover:text-cyan-700 hover:bg-cyan-50 rounded-md transition-colors whitespace-nowrap"
+                        >
+                            <ExternalLink size={13} />
+                            STREETS Reports
+                        </button>
+                    </div>
                 </div>
             </div>
 

@@ -151,7 +151,7 @@ function toGtfsDate(dateStr: string): string {
 }
 
 /** Build the list of scheduled trips for a date + service type. */
-function getTripsForDayType(dateStr: string, dayType: DayType): ScheduledTrip[] {
+export function getTripsForDayType(dateStr: string, dayType: DayType): ScheduledTrip[] {
     const gtfsDate = toGtfsDate(dateStr);
     const exceptions = calendarDatesByDate.get(gtfsDate) || [];
 
@@ -245,6 +245,47 @@ export function bestFitScheduledTrips(
     }
 
     return best && best.matchCount > 0 ? best : null;
+}
+
+// ─── Route + departure-time matching (resilient to GTFS feed ID changes) ────
+
+const MATCH_TOLERANCE_MINS = 2;
+
+function timeToMinutes(hhmm: string): number {
+    const [h, m] = hhmm.split(':').map(Number);
+    return h * 60 + m;
+}
+
+/** Build route|time keys from observed trips for O(1) matching */
+export function buildObservedKeys(trips: { routeId: string; terminalDepartureTime: string }[]): Set<string> {
+    const keys = new Set<string>();
+    for (const t of trips) {
+        keys.add(`${t.routeId}|${t.terminalDepartureTime}`);
+    }
+    return keys;
+}
+
+/** Check if a scheduled trip matches any observed trip within ±2 min tolerance */
+export function hasRouteTimeMatch(routeId: string, departure: string, keys: Set<string>): boolean {
+    if (keys.has(`${routeId}|${departure}`)) return true;
+    const mins = timeToMinutes(departure);
+    for (let offset = -MATCH_TOLERANCE_MINS; offset <= MATCH_TOLERANCE_MINS; offset++) {
+        if (offset === 0) continue;
+        const adj = mins + offset;
+        if (adj < 0) continue;
+        const hh = String(Math.floor(adj / 60)).padStart(2, '0');
+        const mm = String(adj % 60).padStart(2, '0');
+        if (keys.has(`${routeId}|${hh}:${mm}`)) return true;
+    }
+    return false;
+}
+
+export function countRouteTimeMatches(scheduled: ScheduledTrip[], keys: Set<string>): number {
+    let n = 0;
+    for (const s of scheduled) {
+        if (hasRouteTimeMatch(s.routeId, s.departure, keys)) n++;
+    }
+    return n;
 }
 
 /** Quick summary for diagnostics */

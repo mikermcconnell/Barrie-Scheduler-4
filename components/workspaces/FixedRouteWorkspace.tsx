@@ -21,6 +21,7 @@ import { SystemDraftEditorWorkspace } from './SystemDraftEditorWorkspace';
 import { ReportsDashboard } from '../Reports/ReportsDashboard';
 import { AnalyticsDashboard } from '../Analytics/AnalyticsDashboard';
 import { PerformanceDashboard } from '../Performance/PerformanceDashboard';
+import { ReportsWorkspace as PerfReportsWorkspace } from './ReportsWorkspace';
 import { GTFSImportModal } from '../GTFSImport';
 import { SystemDraftList } from '../layout/SystemDraftList';
 import type { MasterScheduleContent } from '../../utils/masterScheduleTypes';
@@ -31,10 +32,10 @@ import { getSystemDraft } from '../../utils/services/systemDraftService';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 
-type FixedRouteViewMode = 'dashboard' | 'editor' | 'new-schedule' | 'master' | 'reports' | 'analytics' | 'performance' | 'drafts' | 'system-editor';
+type FixedRouteViewMode = 'dashboard' | 'editor' | 'new-schedule' | 'master' | 'reports' | 'analytics' | 'performance' | 'perf-reports' | 'drafts' | 'system-editor';
 
 const VALID_VIEW_MODES = new Set<string>([
-    'dashboard', 'editor', 'new-schedule', 'master', 'reports', 'analytics', 'performance', 'drafts', 'system-editor'
+    'dashboard', 'editor', 'new-schedule', 'master', 'reports', 'analytics', 'performance', 'perf-reports', 'drafts', 'system-editor'
 ]);
 
 function parseHashViewMode(): FixedRouteViewMode {
@@ -50,9 +51,10 @@ const VIEW_MODE_LABELS: Record<FixedRouteViewMode, string> = {
     dashboard: '',
     'new-schedule': 'New Schedule',
     master: 'Master Schedule',
-    reports: 'Reports',
+    reports: 'Timetable Publisher',
     analytics: 'Analytics',
-    performance: 'Performance',
+    performance: 'Operations Dashboard',
+    'perf-reports': 'STREETS Reports',
     editor: 'Schedule Editor',
     drafts: 'Schedule Editor',
     'system-editor': 'System Draft Editor'
@@ -321,13 +323,16 @@ export const FixedRouteWorkspace: React.FC = () => {
                         title="Import from GTFS" description="Import existing Barrie Transit schedules from the GTFS feed." />
 
                     <DashboardCard onClick={() => setViewMode('reports')} icon={<FileText size={20} />} color="amber"
-                        title="Reports" description="Generate public timetables and GTFS exports." />
+                        title="Timetable Publisher" description="Generate public timetables and GTFS exports." />
 
                     <DashboardCard onClick={() => setViewMode('analytics')} icon={<GitBranch size={20} />} color="cyan"
                         title="Analytics" description="Analyze rider demand, route performance, and connections from Transit App data." />
 
                     <DashboardCard onClick={() => setViewMode('performance')} icon={<Clock size={20} />} color="amber"
-                        title="Performance" description="OTP, ridership, and load profiles from STREETS AVL/APC data." />
+                        title="Operations Dashboard" description="OTP, ridership, and load profiles from STREETS AVL/APC data." />
+
+                    <DashboardCard onClick={() => setViewMode('perf-reports')} icon={<FileText size={20} />} color="cyan"
+                        title="STREETS Reports" description="Weekly summaries, route deep-dives, and AI-powered analysis of STREETS data." />
                 </div>
 
                 {/* GTFS Import Modal */}
@@ -631,6 +636,10 @@ export const FixedRouteWorkspace: React.FC = () => {
 
                     {viewMode === 'performance' && (
                         <PerformanceDashboard onClose={() => setViewMode('dashboard')} />
+                    )}
+
+                    {viewMode === 'perf-reports' && (
+                        <PerfReportsWorkspace onClose={() => setViewMode('dashboard')} />
                     )}
                 </div>
             </div>

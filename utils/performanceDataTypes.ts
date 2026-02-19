@@ -165,6 +165,31 @@ export interface RouteLoadProfile {
   stops: LoadProfileStop[];
 }
 
+// ─── Ridership Heatmap (stop × trip matrix) ─────────────────────────
+
+export interface RidershipHeatmapTrip {
+  terminalDepartureTime: string;  // "HH:MM" - stable key across days
+  tripName: string;
+  block: string;
+  direction: string;
+}
+
+export interface RidershipHeatmapStop {
+  stopName: string;
+  stopId: string;
+  routeStopIndex: number;
+  isTimepoint: boolean;
+}
+
+export interface RouteRidershipHeatmap {
+  routeId: string;
+  routeName: string;
+  direction: string;
+  trips: RidershipHeatmapTrip[];         // columns (sorted by departure time)
+  stops: RidershipHeatmapStop[];         // rows (sorted by routeStopIndex)
+  cells: ([number, number] | null)[][];  // [stopIdx][tripIdx] = [boardings, alightings]
+}
+
 export interface DataQuality {
   totalRecords: number;
   inBetweenFiltered: number;
@@ -199,6 +224,7 @@ export interface DailySummary {
   byStop: StopMetrics[];
   byTrip: TripMetrics[];
   loadProfiles: RouteLoadProfile[];
+  ridershipHeatmaps?: RouteRidershipHeatmap[];
   dataQuality: DataQuality;
   schemaVersion: number;
 }
@@ -252,7 +278,4 @@ export type PerformanceTab =
   | 'otp'
   | 'ridership'
   | 'load-profiles'
-  | 'reports'
-  | 'route-detail'
-  | 'stop-detail'
-  | 'connections';
+  | 'reports';

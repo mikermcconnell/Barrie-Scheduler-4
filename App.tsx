@@ -155,6 +155,7 @@ const AppContent: React.FC = () => {
                   Enter Workspace <ArrowRight size={16} />
                 </div>
               </button>
+
             </div>
 
           </div>

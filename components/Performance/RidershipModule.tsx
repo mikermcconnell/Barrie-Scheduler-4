@@ -4,6 +4,7 @@ import {
     LineChart, Line, Legend,
 } from 'recharts';
 import { ChartCard } from '../Analytics/AnalyticsShared';
+import { RidershipHeatmapSection } from './RidershipHeatmapSection';
 import type { PerformanceDataSummary, DayType } from '../../utils/performanceDataTypes';
 
 interface RidershipModuleProps {
@@ -191,6 +192,9 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({ data }) => {
                     </ResponsiveContainer>
                 </ChartCard>
             )}
+
+            {/* Stop × Trip Heatmap */}
+            <RidershipHeatmapSection data={data} />
         </div>
     );
 };

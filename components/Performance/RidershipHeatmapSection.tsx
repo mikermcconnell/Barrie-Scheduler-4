@@ -5,26 +5,33 @@ import type {
 
 // ─── Color helpers ───────────────────────────────────────────────────
 
+/** Sqrt-scaled color interpolation for better low-value visibility. */
 function interpolateColor(value: number, max: number, channel: 'green' | 'purple'): string {
     if (value === 0 || max === 0) return '#ffffff';
-    const ratio = Math.min(value / max, 1);
+    const ratio = Math.sqrt(Math.min(value / max, 1)); // sqrt for better spread
     if (channel === 'green') {
         // white → #22c55e (green-500)
-        const r = Math.round(255 - ratio * 221); // 255 → 34
-        const g = Math.round(255 - ratio * 58);  // 255 → 197
-        const b = Math.round(255 - ratio * 161); // 255 → 94
+        const r = Math.round(255 - ratio * 221);
+        const g = Math.round(255 - ratio * 58);
+        const b = Math.round(255 - ratio * 161);
         return `rgb(${r}, ${g}, ${b})`;
     }
     // white → #a78bfa (violet-400)
-    const r = Math.round(255 - ratio * 88);  // 255 → 167
-    const g = Math.round(255 - ratio * 116); // 255 → 139
-    const b = Math.round(255 - ratio * 5);   // 255 → 250
+    const r = Math.round(255 - ratio * 88);
+    const g = Math.round(255 - ratio * 116);
+    const b = Math.round(255 - ratio * 5);
     return `rgb(${r}, ${g}, ${b})`;
 }
 
 function textColor(value: number, max: number): string {
     if (max === 0) return '#6b7280';
-    return value / max > 0.6 ? '#ffffff' : '#374151';
+    const ratio = Math.sqrt(Math.min(value / max, 1));
+    return ratio > 0.55 ? '#ffffff' : '#374151';
+}
+
+function fmtVal(v: number): string {
+    if (v === 0) return '';
+    return v % 1 === 0 ? String(v) : v.toFixed(1);
 }
 
 // ─── Types ───────────────────────────────────────────────────────────
@@ -44,7 +51,6 @@ function mergeHeatmaps(heatmaps: RouteRidershipHeatmap[]): RouteRidershipHeatmap
     if (heatmaps.length === 1) return heatmaps[0];
 
     const base = heatmaps[0];
-    // Union of all trips (keyed by terminalDepartureTime)
     const tripMap = new Map<string, { trip: typeof base.trips[0]; idx: number }>();
     const allTrips = [...base.trips];
     base.trips.forEach((t, i) => tripMap.set(t.terminalDepartureTime, { trip: t, idx: i }));
@@ -58,7 +64,6 @@ function mergeHeatmaps(heatmaps: RouteRidershipHeatmap[]): RouteRidershipHeatmap
         }
     }
 
-    // Sort trips by departure time — use a simple HH:MM parse
     const timeToSec = (t: string) => {
         const [h, m] = t.split(':').map(Number);
         return h * 3600 + (m || 0) * 60;
@@ -69,17 +74,14 @@ function mergeHeatmaps(heatmaps: RouteRidershipHeatmap[]): RouteRidershipHeatmap
     const newTripIdx = new Map<string, number>();
     sortedTrips.forEach((t, i) => newTripIdx.set(t.terminalDepartureTime, i));
 
-    // Use the first day's stop list (route stops are stable across days)
     const stops = base.stops;
     const stopIdx = new Map<number, number>();
     stops.forEach((s, i) => stopIdx.set(s.routeStopIndex, i));
 
-    // Accumulator: [boardings, alightings, dayCount]
     const acc: ([number, number, number] | null)[][] =
         stops.map(() => sortedTrips.map((): [number, number, number] | null => null));
 
     for (const hm of heatmaps) {
-        // Build this day's trip index
         const dayTripIdx = new Map<string, number>();
         hm.trips.forEach((t, i) => dayTripIdx.set(t.terminalDepartureTime, i));
 
@@ -101,7 +103,6 @@ function mergeHeatmaps(heatmaps: RouteRidershipHeatmap[]): RouteRidershipHeatmap
         }
     }
 
-    // Average
     const cells: ([number, number] | null)[][] = acc.map(row =>
         row.map(c => c ? [Math.round(c[0] / c[2] * 10) / 10, Math.round(c[1] / c[2] * 10) / 10] : null)
     );
@@ -124,19 +125,16 @@ export const RidershipHeatmapSection: React.FC<Props> = ({ data }) => {
     const [selectedKey, setSelectedKey] = useState<string>('');
     const [hoveredCell, setHoveredCell] = useState<{ row: number; col: number } | null>(null);
 
-    // Check if any day has heatmap data
     const hasHeatmaps = useMemo(() =>
         data.dailySummaries.some(d => d.ridershipHeatmaps && d.ridershipHeatmaps.length > 0),
         [data]
     );
 
-    // Available day types
     const availableDayTypes = useMemo(() => {
         const types = new Set(data.dailySummaries.map(d => d.dayType));
         return (['weekday', 'saturday', 'sunday'] as DayType[]).filter(t => types.has(t));
     }, [data]);
 
-    // Filter by date range + day type
     const filtered = useMemo(() => {
         const sorted = [...data.dailySummaries].sort((a, b) => b.date.localeCompare(a.date));
         if (sorted.length === 0) return [];
@@ -162,7 +160,6 @@ export const RidershipHeatmapSection: React.FC<Props> = ({ data }) => {
         });
     }, [data, dateRange, dayTypeFilter]);
 
-    // Collect all route+direction options across filtered days
     const profileOptions = useMemo(() => {
         const seen = new Map<string, { routeId: string; routeName: string; direction: string }>();
         for (const day of filtered) {
@@ -178,12 +175,10 @@ export const RidershipHeatmapSection: React.FC<Props> = ({ data }) => {
             .sort((a, b) => a.routeId.localeCompare(b.routeId, undefined, { numeric: true }) || a.direction.localeCompare(b.direction));
     }, [filtered]);
 
-    // Auto-select first option
     const activeKey = selectedKey && profileOptions.some(p => p.key === selectedKey)
         ? selectedKey
         : profileOptions[0]?.key || '';
 
-    // Merge heatmaps for the selected route+direction across filtered days
     const merged = useMemo(() => {
         if (!activeKey) return null;
         const heatmaps: RouteRidershipHeatmap[] = [];
@@ -197,20 +192,28 @@ export const RidershipHeatmapSection: React.FC<Props> = ({ data }) => {
         return mergeHeatmaps(heatmaps);
     }, [filtered, activeKey]);
 
-    // Compute max values for color scaling
-    const { maxBoard, maxAlight } = useMemo(() => {
-        if (!merged) return { maxBoard: 0, maxAlight: 0 };
+    // Color scaling + totals
+    const { maxBoard, maxAlight, rowTotals, colTotals } = useMemo(() => {
+        if (!merged) return { maxBoard: 0, maxAlight: 0, rowTotals: [], colTotals: [] };
         let maxB = 0;
         let maxA = 0;
-        for (const row of merged.cells) {
-            for (const cell of row) {
+        const rTotals = merged.stops.map(() => ({ b: 0, a: 0 }));
+        const cTotals = merged.trips.map(() => ({ b: 0, a: 0 }));
+
+        for (let si = 0; si < merged.stops.length; si++) {
+            for (let ti = 0; ti < merged.trips.length; ti++) {
+                const cell = merged.cells[si]?.[ti];
                 if (cell) {
                     if (cell[0] > maxB) maxB = cell[0];
                     if (cell[1] > maxA) maxA = cell[1];
+                    rTotals[si].b += cell[0];
+                    rTotals[si].a += cell[1];
+                    cTotals[ti].b += cell[0];
+                    cTotals[ti].a += cell[1];
                 }
             }
         }
-        return { maxBoard: maxB, maxAlight: maxA };
+        return { maxBoard: maxB, maxAlight: maxA, rowTotals: rTotals, colTotals: cTotals };
     }, [merged]);
 
     if (!hasHeatmaps) {
@@ -234,6 +237,10 @@ export const RidershipHeatmapSection: React.FC<Props> = ({ data }) => {
     }
 
     const tripCount = merged.trips.length;
+    // +1 pair of columns for row totals
+    const gridCols = `160px repeat(${tripCount}, 44px 44px) 50px 50px`;
+    // header rows + data rows + totals row
+    const gridRows = `auto auto repeat(${merged.stops.length}, 28px) 28px`;
 
     return (
         <div className="bg-white rounded-xl border border-gray-200 p-4">
@@ -241,7 +248,6 @@ export const RidershipHeatmapSection: React.FC<Props> = ({ data }) => {
             <div className="flex flex-wrap items-center gap-3 mb-4">
                 <h3 className="text-sm font-bold text-gray-900">Ridership Heatmap</h3>
 
-                {/* Route selector */}
                 <select
                     value={activeKey}
                     onChange={e => setSelectedKey(e.target.value)}
@@ -252,7 +258,6 @@ export const RidershipHeatmapSection: React.FC<Props> = ({ data }) => {
                     ))}
                 </select>
 
-                {/* Date range pills */}
                 <div className="flex gap-1">
                     <span className="text-xs font-bold text-gray-400 uppercase tracking-wider self-center mr-1">Range:</span>
                     {([['yesterday', 'Yesterday'], ['week', 'Past Week'], ['month', 'Past Month']] as [DateRange, string][]).map(([val, label]) => (
@@ -260,7 +265,6 @@ export const RidershipHeatmapSection: React.FC<Props> = ({ data }) => {
                     ))}
                 </div>
 
-                {/* Day type pills */}
                 <div className="flex gap-1">
                     <span className="text-xs font-bold text-gray-400 uppercase tracking-wider self-center mr-1">Day:</span>
                     <FilterPill active={dayTypeFilter === 'all'} onClick={() => setDayTypeFilter('all')}>All</FilterPill>
@@ -286,101 +290,150 @@ export const RidershipHeatmapSection: React.FC<Props> = ({ data }) => {
                     <div className="w-3 h-3 rounded" style={{ backgroundColor: '#a78bfa' }} />
                     <span>Alightings</span>
                 </div>
+                <div className="flex items-center gap-1.5">
+                    <div className="w-3 h-3 rounded border border-gray-200" style={{ backgroundColor: '#f3f4f6', backgroundImage: 'repeating-linear-gradient(135deg, transparent, transparent 2px, #e5e7eb 2px, #e5e7eb 3px)' }} />
+                    <span>Not served</span>
+                </div>
                 {filtered.length > 1 && (
                     <span className="italic">Values are daily averages</span>
                 )}
             </div>
 
             {/* Heatmap grid */}
-            <div className="overflow-x-auto">
+            <div className="overflow-auto max-h-[70vh]">
                 <div
                     className="inline-grid"
-                    style={{
-                        gridTemplateColumns: `160px repeat(${tripCount}, 44px 44px)`,
-                        gridTemplateRows: `auto auto repeat(${merged.stops.length}, 28px)`,
-                    }}
+                    style={{ gridTemplateColumns: gridCols, gridTemplateRows: gridRows }}
                 >
-                    {/* Row 1: Trip time headers spanning 2 cols each */}
-                    <div className="sticky left-0 z-20 bg-white" />
+                    {/* ── Row 1: Trip time headers ── */}
+                    <div className="sticky left-0 top-0 z-30 bg-white" />
                     {merged.trips.map((t, ti) => (
                         <div
                             key={`hdr-${ti}`}
-                            className="text-[10px] font-bold text-gray-600 text-center border-b border-gray-200 pb-1 whitespace-nowrap"
+                            className="sticky top-0 z-20 bg-white text-[10px] font-bold text-gray-600 text-center border-b border-gray-200 pb-1 whitespace-nowrap flex items-end justify-center"
                             style={{ gridColumn: `${2 + ti * 2} / span 2` }}
                             title={`${t.tripName} · Block ${t.block}`}
                         >
                             {t.terminalDepartureTime}
                         </div>
                     ))}
+                    {/* Total header */}
+                    <div
+                        className="sticky top-0 z-20 bg-gray-50 text-[10px] font-bold text-gray-600 text-center border-b border-gray-200 pb-1 flex items-end justify-center"
+                        style={{ gridColumn: `${2 + tripCount * 2} / span 2` }}
+                    >
+                        Total
+                    </div>
 
-                    {/* Row 2: B/A sub-headers */}
-                    <div className="sticky left-0 z-20 bg-white text-[9px] font-bold text-gray-400 uppercase flex items-center pl-1">
+                    {/* ── Row 2: B/A sub-headers ── */}
+                    <div className="sticky left-0 top-[21px] z-30 bg-white text-[9px] font-bold text-gray-400 uppercase flex items-center pl-1 border-b border-gray-200">
                         Stop
                     </div>
                     {merged.trips.map((_, ti) => (
                         <React.Fragment key={`sub-${ti}`}>
-                            <div className="text-[9px] font-bold text-green-600 text-center border-b border-gray-100 pb-0.5">B</div>
-                            <div className="text-[9px] font-bold text-violet-500 text-center border-b border-gray-100 pb-0.5">A</div>
+                            <div className="sticky top-[21px] z-20 bg-white text-[9px] font-bold text-green-600 text-center border-b border-gray-200 flex items-center justify-center">B</div>
+                            <div className="sticky top-[21px] z-20 bg-white text-[9px] font-bold text-violet-500 text-center border-b border-gray-200 flex items-center justify-center">A</div>
                         </React.Fragment>
                     ))}
+                    <div className="sticky top-[21px] z-20 bg-gray-50 text-[9px] font-bold text-green-600 text-center border-b border-gray-200 flex items-center justify-center">B</div>
+                    <div className="sticky top-[21px] z-20 bg-gray-50 text-[9px] font-bold text-violet-500 text-center border-b border-gray-200 flex items-center justify-center">A</div>
 
-                    {/* Data rows */}
-                    {merged.stops.map((stop, si) => (
-                        <React.Fragment key={`row-${si}`}>
-                            {/* Sticky stop name */}
-                            <div
-                                className={`sticky left-0 z-10 bg-white text-[10px] truncate pr-2 flex items-center border-b border-gray-50 ${
-                                    stop.isTimepoint ? 'font-bold text-gray-800' : 'text-gray-500'
-                                } ${hoveredCell?.row === si ? 'bg-gray-50' : ''}`}
-                                title={`${stop.stopName} (${stop.stopId})`}
-                            >
-                                {stop.stopName}
+                    {/* ── Data rows ── */}
+                    {merged.stops.map((stop, si) => {
+                        const isEven = si % 2 === 0;
+                        const stripeBg = isEven ? 'bg-white' : 'bg-gray-50/50';
+                        const rowTotal = rowTotals[si];
+
+                        return (
+                            <React.Fragment key={`row-${si}`}>
+                                {/* Sticky stop name */}
+                                <div
+                                    className={`sticky left-0 z-10 text-[10px] truncate pr-2 flex items-center border-b border-gray-50 ${stripeBg} ${
+                                        stop.isTimepoint ? 'font-bold text-gray-800 border-l-2 border-l-cyan-400 pl-1.5' : 'text-gray-500 pl-2'
+                                    } ${hoveredCell?.row === si ? '!bg-cyan-50' : ''}`}
+                                    title={`${stop.stopName} (${stop.stopId})`}
+                                >
+                                    {stop.stopName}
+                                </div>
+                                {/* Data cells */}
+                                {merged.trips.map((trip, ti) => {
+                                    const cell = merged.cells[si]?.[ti];
+                                    const isNull = cell === null;
+                                    const board = cell ? cell[0] : 0;
+                                    const alight = cell ? cell[1] : 0;
+                                    const isHovered = hoveredCell?.row === si && hoveredCell?.col === ti;
+                                    const isAxisHighlight = hoveredCell && (hoveredCell.row === si || hoveredCell.col === ti);
+
+                                    const nullStyle = isNull ? {
+                                        backgroundColor: '#f3f4f6',
+                                        backgroundImage: 'repeating-linear-gradient(135deg, transparent, transparent 3px, #e5e7eb 3px, #e5e7eb 4px)',
+                                    } : undefined;
+
+                                    return (
+                                        <React.Fragment key={`cell-${si}-${ti}`}>
+                                            <div
+                                                className={`flex items-center justify-center border-[0.5px] border-gray-100 text-[10px] cursor-default ${
+                                                    isHovered ? 'ring-2 ring-green-500 z-10' : ''
+                                                } ${isAxisHighlight && !isHovered ? 'opacity-80' : ''}`}
+                                                style={isNull ? nullStyle : {
+                                                    backgroundColor: interpolateColor(board, maxBoard, 'green'),
+                                                    color: textColor(board, maxBoard),
+                                                }}
+                                                title={isNull ? `${stop.stopName}: not served by ${trip.terminalDepartureTime} trip` : `${stop.stopName} · ${trip.terminalDepartureTime}\nBoard: ${board}`}
+                                                onMouseEnter={() => setHoveredCell({ row: si, col: ti })}
+                                                onMouseLeave={() => setHoveredCell(null)}
+                                            >
+                                                {isNull ? '' : fmtVal(board)}
+                                            </div>
+                                            <div
+                                                className={`flex items-center justify-center border-[0.5px] border-gray-100 text-[10px] cursor-default ${
+                                                    isHovered ? 'ring-2 ring-violet-500 z-10' : ''
+                                                } ${isAxisHighlight && !isHovered ? 'opacity-80' : ''}`}
+                                                style={isNull ? nullStyle : {
+                                                    backgroundColor: interpolateColor(alight, maxAlight, 'purple'),
+                                                    color: textColor(alight, maxAlight),
+                                                }}
+                                                title={isNull ? `${stop.stopName}: not served by ${trip.terminalDepartureTime} trip` : `${stop.stopName} · ${trip.terminalDepartureTime}\nAlight: ${alight}`}
+                                                onMouseEnter={() => setHoveredCell({ row: si, col: ti })}
+                                                onMouseLeave={() => setHoveredCell(null)}
+                                            >
+                                                {isNull ? '' : fmtVal(alight)}
+                                            </div>
+                                        </React.Fragment>
+                                    );
+                                })}
+                                {/* Row totals */}
+                                <div className={`flex items-center justify-center border-[0.5px] border-gray-200 text-[10px] font-bold text-green-700 ${stripeBg} border-b border-gray-50`}>
+                                    {fmtVal(Math.round(rowTotal.b * 10) / 10) || '0'}
+                                </div>
+                                <div className={`flex items-center justify-center border-[0.5px] border-gray-200 text-[10px] font-bold text-violet-600 ${stripeBg} border-b border-gray-50`}>
+                                    {fmtVal(Math.round(rowTotal.a * 10) / 10) || '0'}
+                                </div>
+                            </React.Fragment>
+                        );
+                    })}
+
+                    {/* ── Column totals row ── */}
+                    <div className="sticky left-0 z-10 bg-gray-50 text-[10px] font-bold text-gray-700 flex items-center pl-2 border-t border-gray-300">
+                        Total
+                    </div>
+                    {colTotals.map((ct, ti) => (
+                        <React.Fragment key={`ctot-${ti}`}>
+                            <div className="flex items-center justify-center bg-gray-50 border-t border-gray-300 border-[0.5px] border-gray-200 text-[10px] font-bold text-green-700">
+                                {fmtVal(Math.round(ct.b * 10) / 10) || '0'}
                             </div>
-                            {/* Cells */}
-                            {merged.trips.map((trip, ti) => {
-                                const cell = merged.cells[si]?.[ti];
-                                const board = cell ? cell[0] : 0;
-                                const alight = cell ? cell[1] : 0;
-                                const isHovered = hoveredCell?.row === si && hoveredCell?.col === ti;
-                                const isAxisHighlight = hoveredCell && (hoveredCell.row === si || hoveredCell.col === ti);
-
-                                return (
-                                    <React.Fragment key={`cell-${si}-${ti}`}>
-                                        {/* Boarding cell */}
-                                        <div
-                                            className={`flex items-center justify-center border-[0.5px] border-gray-100 text-[10px] cursor-default transition-shadow ${
-                                                isHovered ? 'ring-2 ring-green-500 z-10' : ''
-                                            } ${isAxisHighlight && !isHovered ? 'opacity-90' : ''}`}
-                                            style={{
-                                                backgroundColor: cell ? interpolateColor(board, maxBoard, 'green') : '#f9fafb',
-                                                color: cell ? textColor(board, maxBoard) : '#d1d5db',
-                                            }}
-                                            title={cell ? `${stop.stopName} · ${trip.terminalDepartureTime}\nBoard: ${board}` : 'No data'}
-                                            onMouseEnter={() => setHoveredCell({ row: si, col: ti })}
-                                            onMouseLeave={() => setHoveredCell(null)}
-                                        >
-                                            {cell ? (board % 1 === 0 ? board : board.toFixed(1)) : ''}
-                                        </div>
-                                        {/* Alighting cell */}
-                                        <div
-                                            className={`flex items-center justify-center border-[0.5px] border-gray-100 text-[10px] cursor-default transition-shadow ${
-                                                isHovered ? 'ring-2 ring-violet-500 z-10' : ''
-                                            } ${isAxisHighlight && !isHovered ? 'opacity-90' : ''}`}
-                                            style={{
-                                                backgroundColor: cell ? interpolateColor(alight, maxAlight, 'purple') : '#f9fafb',
-                                                color: cell ? textColor(alight, maxAlight) : '#d1d5db',
-                                            }}
-                                            title={cell ? `${stop.stopName} · ${trip.terminalDepartureTime}\nAlight: ${alight}` : 'No data'}
-                                            onMouseEnter={() => setHoveredCell({ row: si, col: ti })}
-                                            onMouseLeave={() => setHoveredCell(null)}
-                                        >
-                                            {cell ? (alight % 1 === 0 ? alight : alight.toFixed(1)) : ''}
-                                        </div>
-                                    </React.Fragment>
-                                );
-                            })}
+                            <div className="flex items-center justify-center bg-gray-50 border-t border-gray-300 border-[0.5px] border-gray-200 text-[10px] font-bold text-violet-600">
+                                {fmtVal(Math.round(ct.a * 10) / 10) || '0'}
+                            </div>
                         </React.Fragment>
                     ))}
+                    {/* Grand total */}
+                    <div className="flex items-center justify-center bg-gray-100 border-t border-gray-300 border-[0.5px] border-gray-200 text-[10px] font-extrabold text-green-800">
+                        {Math.round(colTotals.reduce((s, c) => s + c.b, 0))}
+                    </div>
+                    <div className="flex items-center justify-center bg-gray-100 border-t border-gray-300 border-[0.5px] border-gray-200 text-[10px] font-extrabold text-violet-700">
+                        {Math.round(colTotals.reduce((s, c) => s + c.a, 0))}
+                    </div>
                 </div>
             </div>
         </div>

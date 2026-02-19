@@ -4,7 +4,12 @@ import {
     ScatterChart, Scatter, Cell, ReferenceLine,
 } from 'recharts';
 import { ChartCard } from '../Analytics/AnalyticsShared';
-import type { PerformanceDataSummary, DayType, DailySummary } from '../../utils/performanceDataTypes';
+import type { PerformanceDataSummary, DayType } from '../../utils/performanceDataTypes';
+import {
+    getScheduledTrips, hasGtfsCoverage, getTripsForDayType,
+    buildObservedKeys, hasRouteTimeMatch, countRouteTimeMatches,
+    type ScheduledTrip,
+} from '../../utils/gtfs/gtfsScheduleIndex';
 
 interface OTPModuleProps {
     data: PerformanceDataSummary;
@@ -123,6 +128,57 @@ export const OTPModule: React.FC<OTPModuleProps> = ({ data }) => {
             .sort((a, b) => a.hour.localeCompare(b.hour));
     }, [filtered]);
 
+    // ── Missed trips (GTFS vs STREETS route+time cross-reference) ────
+    const missedTrips = useMemo(() => {
+        const allMissed: { date: string; routeId: string; departure: string; headsign: string; blockId: string }[] = [];
+
+        for (const day of filtered) {
+            if (!hasGtfsCoverage(day.date)) continue;
+
+            const observedRoutes = new Set(day.byTrip.map(t => t.routeId));
+            const observedKeys = buildObservedKeys(day.byTrip);
+
+            let scheduled = getScheduledTrips(day.date, day.dayType);
+            let relevantScheduled = scheduled.filter(s => observedRoutes.has(s.routeId));
+            let dayMatched = countRouteTimeMatches(relevantScheduled, observedKeys);
+
+            // Best-fit fallback
+            if (relevantScheduled.length > 0 && dayMatched / relevantScheduled.length < 0.25) {
+                for (const dt of ['weekday', 'saturday', 'sunday'] as const) {
+                    const altTrips = getTripsForDayType(day.date, dt);
+                    const altRelevant = altTrips.filter(s => observedRoutes.has(s.routeId));
+                    const altMatched = countRouteTimeMatches(altRelevant, observedKeys);
+                    if (altMatched > dayMatched) {
+                        scheduled = altTrips;
+                        relevantScheduled = altRelevant;
+                        dayMatched = altMatched;
+                    }
+                }
+            }
+
+            if (relevantScheduled.length === 0 || dayMatched / relevantScheduled.length < 0.25) continue;
+
+            for (const s of relevantScheduled) {
+                if (hasRouteTimeMatch(s.routeId, s.departure, observedKeys)) continue;
+                allMissed.push({
+                    date: day.date,
+                    routeId: s.routeId,
+                    departure: s.departure,
+                    headsign: s.headsign,
+                    blockId: s.blockId,
+                });
+            }
+        }
+
+        return allMissed.sort((a, b) => {
+            const d = a.date.localeCompare(b.date);
+            if (d !== 0) return d;
+            const r = a.routeId.localeCompare(b.routeId, undefined, { numeric: true });
+            if (r !== 0) return r;
+            return a.departure.localeCompare(b.departure);
+        });
+    }, [filtered]);
+
     return (
         <div className="space-y-6">
             {/* Filters */}
@@ -195,6 +251,40 @@ export const OTPModule: React.FC<OTPModuleProps> = ({ data }) => {
                                         <td className="py-1.5 px-2 text-gray-700">{t.tripName}</td>
                                         <td className="py-1.5 px-2 text-gray-500">{t.block}</td>
                                         <td className="py-1.5 px-2 text-right font-bold text-red-600">+{t.deviation} min</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </ChartCard>
+            )}
+
+            {/* Missed Trips Table */}
+            {missedTrips.length > 0 && (
+                <ChartCard title="Missed Trips" subtitle={`${missedTrips.length} scheduled trips not observed in STREETS data`}>
+                    <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
+                        <table className="w-full text-sm">
+                            <thead className="sticky top-0 bg-white">
+                                <tr className="border-b border-gray-100">
+                                    {filtered.length > 1 && (
+                                        <th className="text-left py-2 px-2 font-bold text-gray-500 text-xs uppercase">Date</th>
+                                    )}
+                                    <th className="text-left py-2 px-2 font-bold text-gray-500 text-xs uppercase">Route</th>
+                                    <th className="text-left py-2 px-2 font-bold text-gray-500 text-xs uppercase">Departure</th>
+                                    <th className="text-left py-2 px-2 font-bold text-gray-500 text-xs uppercase">Headsign</th>
+                                    <th className="text-left py-2 px-2 font-bold text-gray-500 text-xs uppercase">Block</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {missedTrips.map((t, i) => (
+                                    <tr key={i} className="border-b border-gray-50 hover:bg-gray-50">
+                                        {filtered.length > 1 && (
+                                            <td className="py-1.5 px-2 text-gray-500">{t.date}</td>
+                                        )}
+                                        <td className="py-1.5 px-2 font-bold text-gray-900">{t.routeId}</td>
+                                        <td className="py-1.5 px-2 font-medium text-gray-900">{t.departure}</td>
+                                        <td className="py-1.5 px-2 text-gray-600">{t.headsign || '—'}</td>
+                                        <td className="py-1.5 px-2 text-gray-500 font-mono text-xs">{t.blockId || '—'}</td>
                                     </tr>
                                 ))}
                             </tbody>

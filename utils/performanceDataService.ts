@@ -21,6 +21,8 @@ import {
 } from 'firebase/storage';
 import { db, storage } from './firebase';
 import type { PerformanceDataSummary, PerformanceMetadata } from './performanceDataTypes';
+import { aggregateMonthlySnapshots } from './performanceDataAggregator';
+import { saveMonthlySnapshots } from './performanceSnapshotService';
 
 // ============ HELPERS ============
 
@@ -55,6 +57,22 @@ export async function savePerformanceData(
     if (existing.exists()) {
         const oldPath = existing.data().storagePath;
         if (oldPath) {
+            // Snapshot old data before deleting — best-effort, never blocks import
+            try {
+                const oldRef = ref(storage, oldPath);
+                const oldUrl = await getDownloadURL(oldRef);
+                const oldResponse = await fetch(oldUrl);
+                if (oldResponse.ok) {
+                    const oldSummary: PerformanceDataSummary = await oldResponse.json();
+                    const snapshots = aggregateMonthlySnapshots(oldSummary.dailySummaries);
+                    if (snapshots.length > 0) {
+                        await saveMonthlySnapshots(teamId, snapshots);
+                    }
+                }
+            } catch (snapshotErr) {
+                console.error('Snapshot archive failed (non-blocking):', snapshotErr);
+            }
+
             try {
                 await deleteObject(ref(storage, oldPath));
             } catch {
