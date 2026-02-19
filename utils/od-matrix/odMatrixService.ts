@@ -44,11 +44,11 @@ function getGeocodeCacheRef(teamId: string) {
 }
 
 function getImportRef(teamId: string, importId: string) {
-    return doc(db, 'teams', teamId, 'odMatrixData', 'imports', importId);
+    return doc(db, 'teams', teamId, 'odMatrixData', 'default', 'imports', importId);
 }
 
 function getImportsCollectionRef(teamId: string) {
-    return collection(db, 'teams', teamId, 'odMatrixData', 'imports');
+    return collection(db, 'teams', teamId, 'odMatrixData', 'default', 'imports');
 }
 
 function getStoragePath(teamId: string, timestamp: string) {
