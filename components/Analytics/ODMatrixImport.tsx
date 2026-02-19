@@ -5,7 +5,7 @@
  * Handles Excel cross-tab OD matrix files.
  */
 
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
 import {
     Upload,
@@ -61,6 +61,12 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
     } | null>(null);
     const abortRef = useRef<AbortController | null>(null);
 
+    useEffect(() => {
+        return () => {
+            abortRef.current?.abort();
+        };
+    }, []);
+
     const handleFile = useCallback(async (file: File) => {
         if (!file.name.match(/\.xlsx?$/i)) {
             setErrorMessage('Please upload an Excel file (.xlsx or .xls)');
@@ -107,6 +113,7 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
 
         let geocodedCount = 0;
         let cachedCount = 0;
+        let failedCount = 0;
 
         try {
             const existingCache = await loadGeocodeCache(teamId);
@@ -116,7 +123,8 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
                 existingCache,
                 (progress) => {
                     if (progress.status === 'cached') cachedCount++;
-                    if (progress.status === 'geocoding') geocodedCount++;
+                    if (progress.status === 'success') geocodedCount++;
+                    if (progress.status === 'failed') failedCount++;
                     setGeocodeProgress({
                         current: progress.current,
                         total: progress.total,
@@ -124,7 +132,7 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
                         status: progress.status,
                         geocoded: geocodedCount,
                         cached: cachedCount,
-                        failed: 0,
+                        failed: failedCount,
                     });
                 },
                 abortController.signal,

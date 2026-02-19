@@ -15,7 +15,7 @@ interface GeocodeProgress {
     current: number;
     total: number;
     stationName: string;
-    status: 'geocoding' | 'cached' | 'failed' | 'skipped';
+    status: 'geocoding' | 'cached' | 'failed' | 'skipped' | 'success';
 }
 
 interface GeocodeResult {
@@ -133,6 +133,12 @@ export async function geocodeStations(
         if (result) {
             cache.stations[station.name] = result;
             geocoded++;
+            onProgress?.({
+                current: i + 1,
+                total: stations.length,
+                stationName: station.name,
+                status: 'success',
+            });
         } else {
             failed.push(station.name);
             onProgress?.({

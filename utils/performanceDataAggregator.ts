@@ -3,8 +3,11 @@ import {
   STREETSRecord, DailySummary, DayType, parseDayType, deriveDayTypeFromDate,
   SystemMetrics, RouteMetrics, HourMetrics, StopMetrics, TripMetrics,
   RouteLoadProfile, LoadProfileStop, DataQuality, OTPBreakdown, OTPStatus,
+  RouteRidershipHeatmap, RidershipHeatmapTrip, RidershipHeatmapStop,
   classifyOTP, OTP_THRESHOLDS, PERFORMANCE_SCHEMA_VERSION, DEFAULT_LOAD_CAP,
 } from './performanceDataTypes';
+import type { MonthlySnapshot, MonthlyRouteSnapshot, MonthlyDayTypeSnapshot } from './performanceSnapshotTypes';
+import { SNAPSHOT_VERSION } from './performanceSnapshotTypes';
 
 // ─── Helpers ──────────────────────────────────────────────────────────
 
@@ -490,6 +493,76 @@ function buildLoadProfiles(records: STREETSRecord[]): RouteLoadProfile[] {
   });
 }
 
+function buildRidershipHeatmaps(records: STREETSRecord[]): RouteRidershipHeatmap[] {
+  const byRouteDir = groupBy(records, r => `${r.routeId}||${r.direction}`);
+  const results: RouteRidershipHeatmap[] = [];
+
+  for (const [key, recs] of byRouteDir) {
+    const [routeId, direction] = key.split('||');
+    const routeName = recs[0].routeName;
+
+    // Identify unique trips by terminalDepartureTime, and unique stops by routeStopIndex
+    const tripMap = new Map<string, RidershipHeatmapTrip>();
+    const stopMap = new Map<number, RidershipHeatmapStop>();
+
+    for (const r of recs) {
+      if (!tripMap.has(r.terminalDepartureTime)) {
+        tripMap.set(r.terminalDepartureTime, {
+          terminalDepartureTime: r.terminalDepartureTime,
+          tripName: r.tripName,
+          block: r.block,
+          direction: r.direction,
+        });
+      }
+      if (!stopMap.has(r.routeStopIndex)) {
+        stopMap.set(r.routeStopIndex, {
+          stopName: r.stopName,
+          stopId: r.stopId,
+          routeStopIndex: r.routeStopIndex,
+          isTimepoint: r.timePoint,
+        });
+      }
+    }
+
+    // Sort trips by departure time, stops by routeStopIndex
+    const trips = Array.from(tripMap.values())
+      .sort((a, b) => timeToSeconds(a.terminalDepartureTime) - timeToSeconds(b.terminalDepartureTime));
+    const stops = Array.from(stopMap.values())
+      .sort((a, b) => a.routeStopIndex - b.routeStopIndex);
+
+    // Build index lookups for O(1) cell placement
+    const tripIdx = new Map<string, number>();
+    trips.forEach((t, i) => tripIdx.set(t.terminalDepartureTime, i));
+    const stopIdx = new Map<number, number>();
+    stops.forEach((s, i) => stopIdx.set(s.routeStopIndex, i));
+
+    // Initialize cells as null
+    const cells: ([number, number] | null)[][] = stops.map(() => trips.map((): [number, number] | null => null));
+
+    // Single pass: accumulate boardings/alightings per cell
+    for (const r of recs) {
+      const si = stopIdx.get(r.routeStopIndex);
+      const ti = tripIdx.get(r.terminalDepartureTime);
+      if (si === undefined || ti === undefined) continue;
+      const existing = cells[si][ti];
+      if (existing) {
+        existing[0] += r.boardings;
+        existing[1] += r.alightings;
+      } else {
+        cells[si][ti] = [r.boardings, r.alightings];
+      }
+    }
+
+    results.push({ routeId, routeName, direction, trips, stops, cells });
+  }
+
+  return results.sort((a, b) => {
+    const cmp = a.routeId.localeCompare(b.routeId, undefined, { numeric: true });
+    if (cmp !== 0) return cmp;
+    return a.direction.localeCompare(b.direction);
+  });
+}
+
 function buildDataQuality(
   records: STREETSRecord[],
   sanitization: { loadCapped: number; apcExcludedFromLoad: number }
@@ -539,6 +612,7 @@ function aggregateSingleDay(date: string, records: STREETSRecord[]): DailySummar
     byStop: buildStopMetrics(records),
     byTrip: buildTripMetrics(records),
     loadProfiles: buildLoadProfiles(records),
+    ridershipHeatmaps: buildRidershipHeatmaps(records),
     dataQuality: buildDataQuality(records, sanitization),
     schemaVersion: PERFORMANCE_SCHEMA_VERSION,
   };
@@ -563,4 +637,187 @@ export function aggregateDailySummaries(
 
   onProgress?.({ phase: 'Complete', current: total, total });
   return summaries;
+}
+
+// ─── Monthly Snapshot Aggregation ──────────────────────────────────────
+
+/** Merge multiple OTP breakdowns by summing raw counts, then recomputing percentages.
+ *  This avoids the "averaging percentages" error. */
+export function mergeOTPBreakdowns(breakdowns: OTPBreakdown[]): OTPBreakdown {
+  let total = 0;
+  let onTime = 0;
+  let early = 0;
+  let late = 0;
+  let weightedDeviation = 0;
+
+  for (const b of breakdowns) {
+    total += b.total;
+    onTime += b.onTime;
+    early += b.early;
+    late += b.late;
+    weightedDeviation += b.avgDeviationSeconds * b.total;
+  }
+
+  return {
+    total,
+    onTime,
+    early,
+    late,
+    onTimePercent: safeDivide(onTime * 100, total),
+    earlyPercent: safeDivide(early * 100, total),
+    latePercent: safeDivide(late * 100, total),
+    avgDeviationSeconds: safeDivide(weightedDeviation, total),
+  };
+}
+
+/** Roll up daily summaries into compact monthly snapshots. */
+export function aggregateMonthlySnapshots(dailySummaries: DailySummary[]): MonthlySnapshot[] {
+  const byMonth = groupBy(dailySummaries, d => d.date.slice(0, 7));
+  const months = Array.from(byMonth.keys()).sort();
+  const snapshots: MonthlySnapshot[] = [];
+
+  for (const month of months) {
+    const days = byMonth.get(month)!;
+
+    // Day type counts
+    let weekday = 0;
+    let saturday = 0;
+    let sunday = 0;
+    for (const d of days) {
+      if (d.dayType === 'weekday') weekday++;
+      else if (d.dayType === 'saturday') saturday++;
+      else sunday++;
+    }
+
+    // System-level sums
+    let totalRidership = 0;
+    let totalBoardings = 0;
+    let totalAlightings = 0;
+    let tripCount = 0;
+    let wheelchairTrips = 0;
+    let serviceHours = 0;
+    let peakLoad = 0;
+    let vehicleSum = 0;
+    let loadWeightedSum = 0;
+    let loadWeightDenom = 0;
+    const systemOTPs: OTPBreakdown[] = [];
+
+    for (const d of days) {
+      const s = d.system;
+      totalRidership += s.totalRidership;
+      totalBoardings += s.totalBoardings;
+      totalAlightings += s.totalAlightings;
+      tripCount += s.tripCount;
+      wheelchairTrips += s.wheelchairTrips;
+      vehicleSum += s.vehicleCount;
+      if (s.peakLoad > peakLoad) peakLoad = s.peakLoad;
+      systemOTPs.push(s.otp);
+
+      // Weighted avg load: weight by trip count (proxy for number of observations)
+      loadWeightedSum += s.avgSystemLoad * s.tripCount;
+      loadWeightDenom += s.tripCount;
+
+      // Sum service hours from route-level
+      for (const r of d.byRoute) {
+        serviceHours += r.serviceHours;
+      }
+    }
+
+    // Route rollup
+    const routeMap = new Map<string, { name: string; ridership: number; otps: OTPBreakdown[]; trips: number; hours: number }>();
+    for (const d of days) {
+      for (const r of d.byRoute) {
+        const existing = routeMap.get(r.routeId);
+        if (existing) {
+          existing.ridership += r.ridership;
+          existing.otps.push(r.otp);
+          existing.trips += r.tripCount;
+          existing.hours += r.serviceHours;
+        } else {
+          routeMap.set(r.routeId, {
+            name: r.routeName,
+            ridership: r.ridership,
+            otps: [r.otp],
+            trips: r.tripCount,
+            hours: r.serviceHours,
+          });
+        }
+      }
+    }
+
+    const byRoute: MonthlyRouteSnapshot[] = [];
+    for (const [routeId, data] of routeMap) {
+      byRoute.push({
+        routeId,
+        routeName: data.name,
+        ridership: data.ridership,
+        otp: mergeOTPBreakdowns(data.otps),
+        tripCount: data.trips,
+        serviceHours: data.hours,
+      });
+    }
+    byRoute.sort((a, b) => a.routeId.localeCompare(b.routeId, undefined, { numeric: true }));
+
+    // Day-type rollup
+    const dayTypeMap = new Map<DayType, { ridership: number; otps: OTPBreakdown[]; trips: number }>();
+    for (const d of days) {
+      const existing = dayTypeMap.get(d.dayType);
+      if (existing) {
+        existing.ridership += d.system.totalRidership;
+        existing.otps.push(d.system.otp);
+        existing.trips += d.system.tripCount;
+      } else {
+        dayTypeMap.set(d.dayType, {
+          ridership: d.system.totalRidership,
+          otps: [d.system.otp],
+          trips: d.system.tripCount,
+        });
+      }
+    }
+
+    const byDayType: MonthlyDayTypeSnapshot[] = [];
+    for (const [dayType, data] of dayTypeMap) {
+      byDayType.push({
+        dayType,
+        ridership: data.ridership,
+        otp: mergeOTPBreakdowns(data.otps),
+        tripCount: data.trips,
+      });
+    }
+
+    // Data quality sums
+    let totalRecords = 0;
+    let missingAVL = 0;
+    let missingAPC = 0;
+    for (const d of days) {
+      totalRecords += d.dataQuality.totalRecords;
+      missingAVL += d.dataQuality.missingAVL;
+      missingAPC += d.dataQuality.missingAPC;
+    }
+
+    snapshots.push({
+      month,
+      snapshotVersion: SNAPSHOT_VERSION,
+      createdAt: new Date().toISOString(),
+      dayCount: days.length,
+      dayTypes: { weekday, saturday, sunday },
+      system: {
+        totalRidership,
+        totalBoardings,
+        totalAlightings,
+        otp: mergeOTPBreakdowns(systemOTPs),
+        tripCount,
+        vehicleCount: Math.round(safeDivide(vehicleSum, days.length)),
+        serviceHours,
+        wheelchairTrips,
+        avgSystemLoad: safeDivide(loadWeightedSum, loadWeightDenom),
+        peakLoad,
+      },
+      byRoute,
+      byDayType,
+      dataQuality: { totalRecords, missingAVL, missingAPC },
+    });
+  }
+
+  return snapshots;
 }

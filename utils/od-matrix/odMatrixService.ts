@@ -87,11 +87,11 @@ export async function saveODMatrixData(
 
     // Deactivate previous active imports
     const existingImports = await listODMatrixImports(teamId);
-    for (const imp of existingImports) {
-        if (imp.isActive) {
-            await setDoc(getImportRef(teamId, imp.id), { ...imp, isActive: false });
-        }
-    }
+    await Promise.all(
+        existingImports
+            .filter(imp => imp.isActive)
+            .map(imp => setDoc(getImportRef(teamId, imp.id), { ...imp, isActive: false }))
+    );
 
     await setDoc(getImportRef(teamId, importId), { id: importId, ...importRecord });
 
@@ -122,7 +122,7 @@ export async function getODMatrixMetadata(teamId: string): Promise<ODMatrixMetad
             importedAt: data.importedAt?.toDate?.()?.toISOString?.() || new Date().toISOString(),
             importedBy: data.importedBy || '',
             fileName: data.fileName || '',
-            dateRange: data.dateRange || undefined,
+            dateRange: data.dateRange ?? undefined,
             stationCount: data.stationCount || 0,
             totalJourneys: data.totalJourneys || 0,
         };
@@ -181,6 +181,11 @@ export async function deleteODMatrixData(teamId: string): Promise<void> {
                 // File may already be gone
             }
         }
+
+        // Delete import subcollection (Firestore doesn't cascade deletes)
+        const imports = await listODMatrixImports(teamId);
+        await Promise.all(imports.map(imp => deleteDoc(getImportRef(teamId, imp.id))));
+
         await deleteDoc(getDefaultRef(teamId));
     }
 }
