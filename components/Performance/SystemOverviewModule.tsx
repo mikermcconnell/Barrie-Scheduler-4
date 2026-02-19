@@ -5,7 +5,7 @@ import {
 } from 'recharts';
 import {
     Clock, Users, Bus, AlertTriangle, ArrowRight,
-    CheckCircle, Calendar, Database, ClipboardList,
+    Calendar, Database, ClipboardList,
 } from 'lucide-react';
 import { MetricCard, ChartCard } from '../Analytics/AnalyticsShared';
 import type { PerformanceDataSummary, DayType, DailySummary, DataQuality } from '../../utils/performanceDataTypes';
@@ -72,20 +72,23 @@ function countMatches(scheduled: ScheduledTrip[], observedIds: Set<string>): num
 }
 
 export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data, onNavigate }) => {
-    const [selectedDate, setSelectedDate] = useState<string>('all');
-    const [dayTypeFilter, setDayTypeFilter] = useState<DayType | 'all'>('all');
-
     const sortedDates = useMemo(() =>
         [...new Set(data.dailySummaries.map(d => d.date))].sort(),
         [data]
     );
+
+    // Default to latest date (yesterday's snapshot)
+    const [selectedDate, setSelectedDate] = useState<string>(() =>
+        sortedDates.length > 0 ? sortedDates[sortedDates.length - 1] : 'all'
+    );
+    const [dayTypeFilter, setDayTypeFilter] = useState<DayType | 'all'>('all');
 
     const availableDayTypes = useMemo(() => {
         const types = new Set(data.dailySummaries.map(d => d.dayType));
         return (['weekday', 'saturday', 'sunday'] as DayType[]).filter(t => types.has(t));
     }, [data]);
 
-    // ── Filtered data ──────────────────────────────────────────────
+    // ── Filtered data (snapshot — usually single day) ──────────────
     const filtered = useMemo(() => {
         let result = data.dailySummaries;
         if (selectedDate !== 'all') {
@@ -96,6 +99,13 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
         }
         return result;
     }, [data, selectedDate, dayTypeFilter]);
+
+    // ── Peer days (same day type for trend context in Worth Watching) ─
+    const peerDays = useMemo(() => {
+        if (filtered.length === 0) return data.dailySummaries;
+        const dayType = filtered[0].dayType;
+        return data.dailySummaries.filter(d => d.dayType === dayType);
+    }, [data, filtered]);
 
     // ── System averages (expanded) ─────────────────────────────────
     const systemAvg = useMemo(() => {
@@ -137,11 +147,11 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
         ];
     }, [filtered]);
 
-    // ── Attention items (trending, not one-offs) ──────────────────
+    // ── Attention items (uses peer days — same dayType — for trends) ─
     const attentionItems = useMemo(() => {
-        const totalDays = filtered.length;
+        const totalDays = peerDays.length;
         const routeMap = new Map<string, { routeId: string; routeName: string; otp: number[]; late: number[]; daysBelowTarget: number }>();
-        for (const day of filtered) {
+        for (const day of peerDays) {
             for (const r of day.byRoute) {
                 const existing = routeMap.get(r.routeId) || { routeId: r.routeId, routeName: r.routeName, otp: [], late: [], daysBelowTarget: 0 };
                 existing.otp.push(r.otp.onTimePercent);
@@ -165,7 +175,7 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
 
         // Late-running trips: only flag if late on 2+ days (skip one-offs)
         const tripMap = new Map<string, { tripName: string; routeId: string; deviations: number[]; daysLate: number }>();
-        for (const day of filtered) {
+        for (const day of peerDays) {
             for (const t of day.byTrip) {
                 if (t.otp.avgDeviationSeconds > 0) {
                     const existing = tripMap.get(t.tripName) || { tripName: t.tripName, routeId: t.routeId, deviations: [], daysLate: 0 };
@@ -187,8 +197,8 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
             .sort((a, b) => b.avgDelay - a.avgDelay)
             .slice(0, 2);
 
-        return { worstRoutes, lateTrips };
-    }, [filtered]);
+        return { worstRoutes, lateTrips, peerDayType: peerDays[0]?.dayType ?? 'weekday', peerCount: totalDays };
+    }, [peerDays]);
 
     // ── Missed trips (GTFS vs STREETS cross-reference) ────────────
     // 1. Only count routes that have ≥1 observed trip in STREETS (route-scoping).
@@ -255,14 +265,15 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
         return { hasCoverage, totalScheduled, totalObserved: totalMatched, totalMissed, missedPct, routesMissed, skippedDays };
     }, [filtered]);
 
-    // ── OTP trend ──────────────────────────────────────────────────
+    // ── OTP trend (always all days, independent of date selector) ──
     const otpTrend = useMemo(() =>
-        filtered.map(d => ({
+        data.dailySummaries.map(d => ({
             date: d.date.slice(5),
+            fullDate: d.date,
             otp: d.system.otp.onTimePercent,
             ridership: d.system.totalRidership,
         })).sort((a, b) => a.date.localeCompare(b.date)),
-        [filtered]
+        [data]
     );
 
     // ── Hourly boardings + BPH line (aggregated across filtered days) ─
@@ -388,12 +399,14 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                         </div>
                         <div>
                             <p className="text-sm font-bold text-gray-900">
-                                {data.metadata.dateRange
-                                    ? formatDateRange(data.metadata.dateRange.start, data.metadata.dateRange.end)
-                                    : `${filtered.length} days`}
+                                {isSingleDate
+                                    ? formatDateShort(selectedDate)
+                                    : data.metadata.dateRange
+                                        ? formatDateRange(data.metadata.dateRange.start, data.metadata.dateRange.end)
+                                        : `${filtered.length} days`}
                             </p>
                             <p className="text-xs text-gray-400">
-                                {data.metadata.importedAt ? freshness(data.metadata.importedAt) : ''} · {data.dailySummaries.length} days loaded
+                                {isSingleDate ? 'Daily snapshot' : ''} · {data.metadata.importedAt ? freshness(data.metadata.importedAt) : ''} · {data.dailySummaries.length} days loaded
                             </p>
                         </div>
                     </div>
@@ -515,17 +528,13 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                 </div>
             )}
 
-            {/* ── 3. Attention Items ───────────────────────────────── */}
-            <div className={`border rounded-xl p-4 ${hasAttention ? 'border-amber-300 bg-amber-50/50' : 'border-emerald-300 bg-emerald-50/50'}`}>
-                <h3 className={`text-sm font-bold mb-2 flex items-center gap-2 ${hasAttention ? 'text-amber-700' : 'text-emerald-700'}`}>
-                    {hasAttention ? (
-                        <><AlertTriangle size={14} /> Worth Watching</>
-                    ) : (
-                        <><CheckCircle size={14} /> All routes within OTP targets</>
-                    )}
+            {/* ── 3. Attention Items (only shown when there are issues) ── */}
+            {hasAttention && (
+            <div className="border rounded-xl p-4 border-amber-300 bg-amber-50/50">
+                <h3 className="text-sm font-bold mb-2 flex items-center gap-2 text-amber-700">
+                    <AlertTriangle size={14} /> Worth Watching
                 </h3>
-                {hasAttention && (
-                    <div className="space-y-2">
+                <div className="space-y-2">
                         {attentionItems.worstRoutes.length > 0 && (
                             <div className="space-y-1">
                                 {attentionItems.worstRoutes.map(r => (
@@ -576,9 +585,9 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                         >
                             View OTP Details <ArrowRight size={12} />
                         </button>
-                    </div>
-                )}
+                </div>
             </div>
+            )}
 
             {/* ── 4. Charts Row: OTP Donut + OTP Trend ─────────────── */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -619,7 +628,7 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                     </div>
                 </ChartCard>
 
-                <ChartCard title="OTP Trend" subtitle={`${filtered.length}-day trend`}>
+                <ChartCard title="OTP Trend" subtitle={`${data.dailySummaries.length}-day trend`}>
                     {otpTrend.length > 1 ? (
                         <ResponsiveContainer width="100%" height={250}>
                             <LineChart data={otpTrend} margin={{ top: 5, right: 10, bottom: 5, left: -10 }}>
@@ -639,7 +648,71 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                 </ChartCard>
             </div>
 
-            {/* ── 5. Charts Row: Ridership Trend + Ridership by Route ─ */}
+            {/* ── 5. Route Scorecard Table ────────────────────────── */}
+            <ChartCard title="Route Scorecard" subtitle="OTP and ridership by route" headerExtra={
+                <button onClick={() => onNavigate('otp')} className="text-xs font-bold text-cyan-600 hover:text-cyan-700 flex items-center gap-1">
+                    Detailed OTP <ArrowRight size={12} />
+                </button>
+            }>
+                <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                        <thead>
+                            <tr className="border-b border-gray-100">
+                                <th className="text-left py-2 px-2 font-bold text-gray-500 text-xs uppercase">Route</th>
+                                <th className="text-left py-2 px-2 font-bold text-gray-500 text-xs uppercase">Name</th>
+                                <th className="text-right py-2 px-2 font-bold text-gray-500 text-xs uppercase">OTP%</th>
+                                <th className="text-right py-2 px-2 font-bold text-gray-500 text-xs uppercase">Early%</th>
+                                <th className="text-right py-2 px-2 font-bold text-gray-500 text-xs uppercase">Late%</th>
+                                {filtered.length >= 2 && (
+                                    <th className="text-center py-2 px-2 font-bold text-gray-500 text-xs uppercase">Trend</th>
+                                )}
+                                <th className="text-right py-2 px-2 font-bold text-gray-500 text-xs uppercase">Boards</th>
+                                <th className="text-right py-2 px-2 font-bold text-gray-500 text-xs uppercase">Alights</th>
+                                <th className="text-right py-2 px-2 font-bold text-gray-500 text-xs uppercase">BPH</th>
+                                {missedTrips.hasCoverage && (
+                                    <th className="text-right py-2 px-2 font-bold text-gray-500 text-xs uppercase">Missed</th>
+                                )}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {routeRanking.map(r => (
+                                <tr key={r.routeId} className={`border-b border-gray-50 hover:bg-gray-50 ${r.avgOtp < 70 ? 'bg-red-50' : ''}`}>
+                                    <td className="py-2 px-2 font-bold text-gray-900">{r.routeId}</td>
+                                    <td className="py-2 px-2 text-gray-500">{r.routeName}</td>
+                                    <td className="py-2 px-2 text-right">
+                                        <span className={`font-bold ${r.avgOtp >= 80 ? 'text-emerald-600' : r.avgOtp >= 70 ? 'text-amber-600' : 'text-red-600'}`}>
+                                            {r.avgOtp}%
+                                        </span>
+                                    </td>
+                                    <td className="py-2 px-2 text-right text-amber-600 font-medium">{r.avgEarly}%</td>
+                                    <td className="py-2 px-2 text-right text-red-600 font-medium">{r.avgLate}%</td>
+                                    {filtered.length >= 2 && (
+                                        <td className="py-2 px-2 text-center">
+                                            <span className={`font-bold ${r.trend === '↑' ? 'text-emerald-600' : r.trend === '↓' ? 'text-red-600' : 'text-gray-400'}`}>
+                                                {r.trend}
+                                            </span>
+                                        </td>
+                                    )}
+                                    <td className="py-2 px-2 text-right font-medium text-gray-700">{r.ridership.toLocaleString()}</td>
+                                    <td className="py-2 px-2 text-right font-medium text-gray-700">{r.alightings.toLocaleString()}</td>
+                                    <td className="py-2 px-2 text-right font-bold text-cyan-600">{r.bph.toFixed(1)}</td>
+                                    {missedTrips.hasCoverage && (() => {
+                                        const missed = missedTrips.routesMissed.find(m => m.routeId === r.routeId);
+                                        const count = missed?.count ?? 0;
+                                        return (
+                                            <td className={`py-2 px-2 text-right font-bold ${count > 0 ? 'text-red-600' : 'text-gray-300'}`}>
+                                                {count}
+                                            </td>
+                                        );
+                                    })()}
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            </ChartCard>
+
+            {/* ── 6. Charts Row: Ridership Trend + Ridership by Route ─ */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <ChartCard title="Daily Ridership" subtitle="Boardings per day">
                     {otpTrend.length > 1 ? (
@@ -710,71 +783,7 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                 </ChartCard>
             )}
 
-            {/* ── 7. Enhanced Route Scorecard Table ─────────────────── */}
-            <ChartCard title="Route Scorecard" subtitle="OTP and ridership by route" headerExtra={
-                <button onClick={() => onNavigate('otp')} className="text-xs font-bold text-cyan-600 hover:text-cyan-700 flex items-center gap-1">
-                    Detailed OTP <ArrowRight size={12} />
-                </button>
-            }>
-                <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                        <thead>
-                            <tr className="border-b border-gray-100">
-                                <th className="text-left py-2 px-2 font-bold text-gray-500 text-xs uppercase">Route</th>
-                                <th className="text-left py-2 px-2 font-bold text-gray-500 text-xs uppercase">Name</th>
-                                <th className="text-right py-2 px-2 font-bold text-gray-500 text-xs uppercase">OTP%</th>
-                                <th className="text-right py-2 px-2 font-bold text-gray-500 text-xs uppercase">Early%</th>
-                                <th className="text-right py-2 px-2 font-bold text-gray-500 text-xs uppercase">Late%</th>
-                                {filtered.length >= 2 && (
-                                    <th className="text-center py-2 px-2 font-bold text-gray-500 text-xs uppercase">Trend</th>
-                                )}
-                                <th className="text-right py-2 px-2 font-bold text-gray-500 text-xs uppercase">Boards</th>
-                                <th className="text-right py-2 px-2 font-bold text-gray-500 text-xs uppercase">Alights</th>
-                                <th className="text-right py-2 px-2 font-bold text-gray-500 text-xs uppercase">BPH</th>
-                                {missedTrips.hasCoverage && (
-                                    <th className="text-right py-2 px-2 font-bold text-gray-500 text-xs uppercase">Missed</th>
-                                )}
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {routeRanking.map(r => (
-                                <tr key={r.routeId} className={`border-b border-gray-50 hover:bg-gray-50 ${r.avgOtp < 70 ? 'bg-red-50' : ''}`}>
-                                    <td className="py-2 px-2 font-bold text-gray-900">{r.routeId}</td>
-                                    <td className="py-2 px-2 text-gray-500">{r.routeName}</td>
-                                    <td className="py-2 px-2 text-right">
-                                        <span className={`font-bold ${r.avgOtp >= 80 ? 'text-emerald-600' : r.avgOtp >= 70 ? 'text-amber-600' : 'text-red-600'}`}>
-                                            {r.avgOtp}%
-                                        </span>
-                                    </td>
-                                    <td className="py-2 px-2 text-right text-amber-600 font-medium">{r.avgEarly}%</td>
-                                    <td className="py-2 px-2 text-right text-red-600 font-medium">{r.avgLate}%</td>
-                                    {filtered.length >= 2 && (
-                                        <td className="py-2 px-2 text-center">
-                                            <span className={`font-bold ${r.trend === '↑' ? 'text-emerald-600' : r.trend === '↓' ? 'text-red-600' : 'text-gray-400'}`}>
-                                                {r.trend}
-                                            </span>
-                                        </td>
-                                    )}
-                                    <td className="py-2 px-2 text-right font-medium text-gray-700">{r.ridership.toLocaleString()}</td>
-                                    <td className="py-2 px-2 text-right font-medium text-gray-700">{r.alightings.toLocaleString()}</td>
-                                    <td className="py-2 px-2 text-right font-bold text-cyan-600">{r.bph.toFixed(1)}</td>
-                                    {missedTrips.hasCoverage && (() => {
-                                        const missed = missedTrips.routesMissed.find(m => m.routeId === r.routeId);
-                                        const count = missed?.count ?? 0;
-                                        return (
-                                            <td className={`py-2 px-2 text-right font-bold ${count > 0 ? 'text-red-600' : 'text-gray-300'}`}>
-                                                {count}
-                                            </td>
-                                        );
-                                    })()}
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
-            </ChartCard>
-
-            {/* ── 7. Data Quality Footer ───────────────────────────── */}
+            {/* ── 8. Data Quality Footer ───────────────────────────── */}
             {dataQuality && (
                 <div className={`flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg px-4 py-2.5 text-xs ${
                     avlPct > 10 ? 'bg-red-50 text-red-700 border border-red-200'

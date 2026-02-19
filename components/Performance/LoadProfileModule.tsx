@@ -1,11 +1,12 @@
 import React, { useMemo, useState } from 'react';
 import {
     AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
-    ResponsiveContainer, Legend, ReferenceLine, ComposedChart, Line,
+    ResponsiveContainer, Legend, ReferenceLine, ComposedChart, Line, Cell,
 } from 'recharts';
 import { ChartCard } from '../Analytics/AnalyticsShared';
 import type { PerformanceDataSummary, DayType, RouteLoadProfile } from '../../utils/performanceDataTypes';
 import { DEFAULT_LOAD_CAP } from '../../utils/performanceDataTypes';
+import { getRouteColor } from '../../utils/config/routeColors';
 
 interface LoadProfileModuleProps {
     data: PerformanceDataSummary;
@@ -108,6 +109,46 @@ export const LoadProfileModule: React.FC<LoadProfileModuleProps> = ({ data }) =>
         return { loadCapped, apcExcludedFromLoad };
     }, [filtered]);
 
+    // Top 5 peak-load trips across filtered days
+    const topLoadTrips = useMemo(() => {
+        const tripMap = new Map<string, { maxLoad: number; totalMaxLoad: number; count: number; routeId: string; routeName: string; direction: string; block: string; terminalDepartureTime: string; tripName: string }>();
+
+        for (const day of filtered) {
+            for (const t of day.byTrip) {
+                const key = `${t.routeId}__${t.direction}__${t.terminalDepartureTime}`;
+                const existing = tripMap.get(key);
+                if (!existing) {
+                    tripMap.set(key, {
+                        maxLoad: t.maxLoad,
+                        totalMaxLoad: t.maxLoad,
+                        count: 1,
+                        routeId: t.routeId,
+                        routeName: t.routeName,
+                        direction: t.direction,
+                        block: t.block,
+                        terminalDepartureTime: t.terminalDepartureTime,
+                        tripName: t.tripName,
+                    });
+                } else {
+                    existing.totalMaxLoad += t.maxLoad;
+                    existing.count++;
+                    existing.maxLoad = Math.max(existing.maxLoad, t.maxLoad);
+                }
+            }
+        }
+
+        return Array.from(tripMap.values())
+            .map(t => ({
+                ...t,
+                avgMaxLoad: Math.round(t.totalMaxLoad / t.count),
+                label: `Rte ${t.routeId} ${t.direction}`,
+                time: t.terminalDepartureTime,
+                color: getRouteColor(t.routeId),
+            }))
+            .sort((a, b) => b.avgMaxLoad - a.avgMaxLoad)
+            .slice(0, 5);
+    }, [filtered]);
+
     const chartData = useMemo(() => {
         if (!activeProfile) return [];
         return activeProfile.stops.map(s => ({
@@ -170,6 +211,77 @@ export const LoadProfileModule: React.FC<LoadProfileModuleProps> = ({ data }) =>
                         </span>
                     )}
                 </div>
+            )}
+
+            {/* Top 5 Peak Load Trips — horizontal bar race */}
+            {topLoadTrips.length > 0 && (
+                <ChartCard
+                    title="Top 5 Peak Load Trips"
+                    subtitle={`Highest average peak passenger load${filtered.length > 1 ? ` across ${filtered.length} days` : ''}`}
+                >
+                    <ResponsiveContainer width="100%" height={topLoadTrips.length * 64 + 24}>
+                        <BarChart
+                            data={topLoadTrips}
+                            layout="vertical"
+                            margin={{ top: 4, right: 40, bottom: 4, left: 0 }}
+                            barCategoryGap="20%"
+                        >
+                            <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f3f4f6" />
+                            <XAxis
+                                type="number"
+                                tick={{ fontSize: 10, fill: '#9CA3AF' }}
+                                domain={[0, (max: number) => Math.max(max + 5, DEFAULT_LOAD_CAP + 5)]}
+                            />
+                            <YAxis
+                                type="category"
+                                dataKey="label"
+                                width={90}
+                                tick={({ x, y, payload }: { x: number; y: number; payload: { value: string; index: number } }) => {
+                                    const trip = topLoadTrips[payload.index];
+                                    return (
+                                        <g transform={`translate(${x},${y})`}>
+                                            <text x={-4} y={-6} textAnchor="end" fontSize={11} fontWeight={700} fill="#374151">
+                                                {payload.value}
+                                            </text>
+                                            <text x={-4} y={8} textAnchor="end" fontSize={9} fill="#9CA3AF">
+                                                {trip?.time} · {trip?.block}
+                                            </text>
+                                        </g>
+                                    );
+                                }}
+                            />
+                            <ReferenceLine
+                                x={DEFAULT_LOAD_CAP}
+                                stroke="#EF4444"
+                                strokeDasharray="4 3"
+                                strokeWidth={1.5}
+                                label={{ value: `Cap ${DEFAULT_LOAD_CAP}`, position: 'top', fontSize: 9, fill: '#EF4444' }}
+                            />
+                            <Tooltip
+                                content={({ active, payload }) => {
+                                    if (!active || !payload?.length) return null;
+                                    const d = payload[0].payload;
+                                    return (
+                                        <div className="bg-white p-3 rounded-lg shadow-lg border border-gray-100 text-sm">
+                                            <p className="font-bold text-gray-800">{d.tripName}</p>
+                                            <p className="text-gray-500 text-xs mb-1">{d.routeName} · {d.direction}</p>
+                                            <p className="text-cyan-600">Avg Peak Load: <span className="font-bold">{d.avgMaxLoad}</span></p>
+                                            {d.count > 1 && (
+                                                <p className="text-gray-400 text-xs">Highest: {d.maxLoad} (across {d.count} days)</p>
+                                            )}
+                                            <p className="text-gray-400 text-xs">Block: {d.block}</p>
+                                        </div>
+                                    );
+                                }}
+                            />
+                            <Bar dataKey="avgMaxLoad" radius={[0, 6, 6, 0]} barSize={24}>
+                                {topLoadTrips.map((trip, i) => (
+                                    <Cell key={i} fill={trip.color} fillOpacity={0.85} />
+                                ))}
+                            </Bar>
+                        </BarChart>
+                    </ResponsiveContainer>
+                </ChartCard>
             )}
 
             {activeProfile && (
