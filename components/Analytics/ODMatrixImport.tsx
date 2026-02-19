@@ -18,7 +18,7 @@ import {
     MapPin,
 } from 'lucide-react';
 import { parseODMatrixFromExcel } from '../../utils/od-matrix/odMatrixParser';
-import { geocodeStations, applyGeocodesToStations, isWithinOntario } from '../../utils/od-matrix/odMatrixGeocoder';
+import { geocodeStations, applyGeocodesToStations, isWithinCanada } from '../../utils/od-matrix/odMatrixGeocoder';
 import { saveODMatrixData, saveGeocodeCache, loadGeocodeCache } from '../../utils/od-matrix/odMatrixService';
 import type { ODMatrixParseResult, ODMatrixDataSummary, ODStation, GeocodeCache } from '../../utils/od-matrix/odMatrixTypes';
 
@@ -300,7 +300,7 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
             };
 
             let manualCount = 0;
-            const outsideOntario: string[] = [];
+            const outsideCanada: string[] = [];
             pendingGeocode.failed.forEach((stationName) => {
                 const entry = manualCoords[stationName];
                 if (!entry) return;
@@ -309,8 +309,8 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
                 const lon = parseCoordinate(entry.lon);
                 if (lat == null || lon == null) return;
                 if (!isValidLatitude(lat) || !isValidLongitude(lon)) return;
-                if (!isWithinOntario(lat, lon)) {
-                    outsideOntario.push(stationName);
+                if (!isWithinCanada(lat, lon)) {
+                    outsideCanada.push(stationName);
                     return;
                 }
 
@@ -324,9 +324,9 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
                 manualCount++;
             });
 
-            if (outsideOntario.length > 0) {
+            if (outsideCanada.length > 0) {
                 setErrorMessage(
-                    `Coordinates outside Ontario were ignored for ${outsideOntario.length} stop${outsideOntario.length === 1 ? '' : 's'}: ${outsideOntario.slice(0, 5).join(', ')}${outsideOntario.length > 5 ? ', ...' : ''}`
+                    `Coordinates outside Canada were ignored for ${outsideCanada.length} stop${outsideCanada.length === 1 ? '' : 's'}: ${outsideCanada.slice(0, 5).join(', ')}${outsideCanada.length > 5 ? ', ...' : ''}`
                 );
             }
 
@@ -573,7 +573,7 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
                         One-time setup: manual coordinates are saved and automatically reused on future imports for the same stop names.
                     </p>
                     <p className="text-xs text-amber-700 mt-1">
-                        Guardrail: coordinates outside Ontario are treated as invalid and will not be saved.
+                        Guardrail: coordinates outside Canada are treated as invalid and will not be saved.
                     </p>
                 </div>
 

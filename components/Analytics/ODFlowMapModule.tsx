@@ -5,7 +5,7 @@
  * - Curved rank-colored arcs
  * - Origin/destination zone markers
  * - Simple control bar + map/table toggle
- * - Ontario guardrails for bad coordinates
+ * - Canada guardrails for bad coordinates
  */
 
 import React, { useRef, useEffect, useState, useMemo, useCallback } from 'react';
@@ -14,11 +14,12 @@ import 'leaflet/dist/leaflet.css';
 import { AlertTriangle } from 'lucide-react';
 import { ChartCard } from './AnalyticsShared';
 import type { ODMatrixDataSummary, GeocodeCache, GeocodedLocation } from '../../utils/od-matrix/odMatrixTypes';
-import { isWithinOntario } from '../../utils/od-matrix/odMatrixGeocoder';
+import { isWithinCanada } from '../../utils/od-matrix/odMatrixGeocoder';
 
 interface ODFlowMapModuleProps {
     data: ODMatrixDataSummary;
     geocodeCache: GeocodeCache | null;
+    onFixMissingCoordinates?: () => void;
 }
 
 type ViewMode = 'map' | 'table';
@@ -68,7 +69,11 @@ function quadraticBezierArc(
     return points;
 }
 
-export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({ data, geocodeCache }) => {
+export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
+    data,
+    geocodeCache,
+    onFixMissingCoordinates,
+}) => {
     const mapContainerRef = useRef<HTMLDivElement>(null);
     const mapRef = useRef<L.Map | null>(null);
     const layersRef = useRef<L.LayerGroup | null>(null);
@@ -78,30 +83,31 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({ data, geocodeC
     const [allZones, setAllZones] = useState(false);
     const [minJourneys, setMinJourneys] = useState(1);
     const [isolatedStation, setIsolatedStation] = useState<string | null>(null);
+    const [isFullscreen, setIsFullscreen] = useState(false);
 
-    const { geoLookup, outsideOntarioStations } = useMemo((): {
+    const { geoLookup, outsideCanadaStations } = useMemo((): {
         geoLookup: Record<string, GeocodedLocation>;
-        outsideOntarioStations: string[];
+        outsideCanadaStations: string[];
     } => {
         const lookup: Record<string, GeocodedLocation> = {};
         const outside = new Set<string>();
 
         if (geocodeCache?.stations) {
             Object.entries(geocodeCache.stations).forEach(([name, loc]) => {
-                if (isWithinOntario(loc.lat, loc.lon)) lookup[name] = loc;
+                if (isWithinCanada(loc.lat, loc.lon)) lookup[name] = loc;
                 else outside.add(name);
             });
         }
 
         data.stations.forEach((station) => {
             if (!station.geocode) return;
-            if (isWithinOntario(station.geocode.lat, station.geocode.lon)) lookup[station.name] = station.geocode;
+            if (isWithinCanada(station.geocode.lat, station.geocode.lon)) lookup[station.name] = station.geocode;
             else outside.add(station.name);
         });
 
         return {
             geoLookup: lookup,
-            outsideOntarioStations: Array.from(outside).sort(),
+            outsideCanadaStations: Array.from(outside).sort(),
         };
     }, [data.stations, geocodeCache]);
 
@@ -288,7 +294,26 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({ data, geocodeC
         if (viewMode !== 'map' || !mapRef.current) return;
         const timer = setTimeout(() => mapRef.current?.invalidateSize(), 80);
         return () => clearTimeout(timer);
-    }, [viewMode]);
+    }, [viewMode, isFullscreen]);
+
+    useEffect(() => {
+        if (!isFullscreen) return;
+
+        const onKeyDown = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') {
+                setIsFullscreen(false);
+            }
+        };
+
+        document.addEventListener('keydown', onKeyDown);
+        const prevOverflow = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+
+        return () => {
+            document.removeEventListener('keydown', onKeyDown);
+            document.body.style.overflow = prevOverflow;
+        };
+    }, [isFullscreen]);
 
     if (geocodedCount === 0) {
         return (
@@ -374,80 +399,101 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({ data, geocodeC
                 </div>
             </div>
 
-            <ChartCard
-                title="Origin-Destination Map"
-                subtitle={`${displayedPairs.length.toLocaleString()} flow lines · ${geocodedCount.toLocaleString()} geocoded stations`}
-            >
-                {outsideOntarioStations.length > 0 && (
-                    <div className="mb-3 px-4 py-3 border border-red-200 bg-red-50 text-red-700 text-sm rounded-lg">
-                        Out-of-Ontario coordinates excluded: {outsideOntarioStations.slice(0, 8).join(', ')}
-                        {outsideOntarioStations.length > 8 ? ', ...' : ''}. Re-import and enter manual Ontario coordinates.
-                    </div>
-                )}
+            <div className={isFullscreen ? 'fixed inset-3 z-[80] bg-white rounded-xl border border-gray-200 shadow-2xl p-3 overflow-auto' : ''}>
+                <ChartCard
+                    title="Origin-Destination Map"
+                    subtitle={`${displayedPairs.length.toLocaleString()} flow lines · ${geocodedCount.toLocaleString()} geocoded stations`}
+                    headerExtra={(
+                        <button
+                            onClick={() => setIsFullscreen(prev => !prev)}
+                            className="px-3 py-1.5 text-xs font-medium border border-gray-200 rounded-md text-gray-600 hover:text-gray-800 hover:bg-gray-50"
+                        >
+                            {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+                        </button>
+                    )}
+                >
+                    {outsideCanadaStations.length > 0 && (
+                        <div className="mb-3 px-4 py-3 border border-red-200 bg-red-50 text-red-700 text-sm rounded-lg">
+                            Out-of-Canada coordinates excluded: {outsideCanadaStations.slice(0, 8).join(', ')}
+                            {outsideCanadaStations.length > 8 ? ', ...' : ''}. Re-import and enter manual coordinates in Canada.
+                        </div>
+                    )}
 
-                {ungeocodedCount > 0 && (
-                    <div className="mb-3 px-4 py-2.5 border border-amber-200 bg-amber-50 text-amber-700 text-sm rounded-lg">
-                        {ungeocodedCount} station{ungeocodedCount === 1 ? '' : 's'} still missing coordinates.
-                    </div>
-                )}
+                    {ungeocodedCount > 0 && (
+                        <div className="mb-3 px-4 py-2.5 border border-amber-200 bg-amber-50 text-amber-700 text-sm rounded-lg">
+                            {ungeocodedCount} station{ungeocodedCount === 1 ? '' : 's'} still missing coordinates.
+                            {onFixMissingCoordinates && (
+                                <button
+                                    onClick={onFixMissingCoordinates}
+                                    className="ml-2 underline font-medium hover:text-amber-800"
+                                >
+                                    Fix coordinates
+                                </button>
+                            )}
+                        </div>
+                    )}
 
-                {displayedPairs.length === 0 && (
-                    <div className="mb-3 px-4 py-2.5 border border-amber-200 bg-amber-50 text-amber-700 text-sm rounded-lg">
-                        No OD flows match current filters.
-                    </div>
-                )}
+                    {displayedPairs.length === 0 && (
+                        <div className="mb-3 px-4 py-2.5 border border-amber-200 bg-amber-50 text-amber-700 text-sm rounded-lg">
+                            No OD flows match current filters.
+                        </div>
+                    )}
 
-                {viewMode === 'map' ? (
-                    <div
-                        ref={mapContainerRef}
-                        className="rounded-lg overflow-hidden border border-gray-200"
-                        style={{ height: 560 }}
-                    />
-                ) : (
-                    <div className="max-h-[560px] overflow-auto border border-gray-200 rounded-lg">
-                        <table className="w-full text-xs">
-                            <thead className="sticky top-0 bg-gray-50 z-10">
-                                <tr className="text-gray-500 uppercase tracking-wider text-[10px]">
-                                    <th className="px-3 py-2 text-left w-10">#</th>
-                                    <th className="px-3 py-2 text-left">Origin</th>
-                                    <th className="px-3 py-2 text-left">Destination</th>
-                                    <th className="px-3 py-2 text-right">Trips</th>
-                                    <th className="px-3 py-2 text-right">% Total</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {displayedPairs.map((pair, index) => (
-                                    <tr key={`${pair.origin}|${pair.destination}|${index}`} className="border-t border-gray-100 hover:bg-gray-50">
-                                        <td className="px-3 py-1.5 text-gray-400">{index + 1}</td>
-                                        <td className="px-3 py-1.5 text-gray-700">{pair.origin}</td>
-                                        <td className="px-3 py-1.5 text-gray-700">{pair.destination}</td>
-                                        <td className="px-3 py-1.5 text-right font-medium text-gray-900">{pair.journeys.toLocaleString()}</td>
-                                        <td className="px-3 py-1.5 text-right text-gray-500">
-                                            {data.totalJourneys > 0 ? ((pair.journeys / data.totalJourneys) * 100).toFixed(2) : '0.00'}%
-                                        </td>
+                    {viewMode === 'map' ? (
+                        <div
+                            ref={mapContainerRef}
+                            className="rounded-lg overflow-hidden border border-gray-200"
+                            style={{ height: isFullscreen ? 'calc(100vh - 220px)' : 560 }}
+                        />
+                    ) : (
+                        <div
+                            className="overflow-auto border border-gray-200 rounded-lg"
+                            style={{ maxHeight: isFullscreen ? 'calc(100vh - 220px)' : 560 }}
+                        >
+                            <table className="w-full text-xs">
+                                <thead className="sticky top-0 bg-gray-50 z-10">
+                                    <tr className="text-gray-500 uppercase tracking-wider text-[10px]">
+                                        <th className="px-3 py-2 text-left w-10">#</th>
+                                        <th className="px-3 py-2 text-left">Origin</th>
+                                        <th className="px-3 py-2 text-left">Destination</th>
+                                        <th className="px-3 py-2 text-right">Trips</th>
+                                        <th className="px-3 py-2 text-right">% Total</th>
                                     </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                )}
+                                </thead>
+                                <tbody>
+                                    {displayedPairs.map((pair, index) => (
+                                        <tr key={`${pair.origin}|${pair.destination}|${index}`} className="border-t border-gray-100 hover:bg-gray-50">
+                                            <td className="px-3 py-1.5 text-gray-400">{index + 1}</td>
+                                            <td className="px-3 py-1.5 text-gray-700">{pair.origin}</td>
+                                            <td className="px-3 py-1.5 text-gray-700">{pair.destination}</td>
+                                            <td className="px-3 py-1.5 text-right font-medium text-gray-900">{pair.journeys.toLocaleString()}</td>
+                                            <td className="px-3 py-1.5 text-right text-gray-500">
+                                                {data.totalJourneys > 0 ? ((pair.journeys / data.totalJourneys) * 100).toFixed(2) : '0.00'}%
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
 
-                <div className="mt-3 flex flex-wrap items-center gap-5 text-xs text-gray-500 border border-gray-200 rounded-lg px-3 py-2 bg-gray-50/70">
-                    <span className="flex items-center gap-1.5">
-                        <span className="w-3 h-3 rounded-full bg-emerald-500 border border-white shadow-sm" /> Origin zone
-                    </span>
-                    <span className="flex items-center gap-1.5">
-                        <span className="w-3 h-3 rounded-full bg-red-500 border border-white shadow-sm" /> Destination zone
-                    </span>
-                    <span className="flex items-center gap-1.5">
-                        <span className="w-3 h-3 rounded-full bg-orange-500 border border-white shadow-sm" /> Mixed zone
-                    </span>
-                    <span className="flex items-center gap-1.5">
-                        <span className="w-12 h-2 rounded" style={{ background: 'linear-gradient(to right, #bfdbfe, #06b6d4, #f97316, #ef4444)' }} />
-                        Arc color: lower rank to higher rank
-                    </span>
-                </div>
-            </ChartCard>
+                    <div className="mt-3 flex flex-wrap items-center gap-5 text-xs text-gray-500 border border-gray-200 rounded-lg px-3 py-2 bg-gray-50/70">
+                        <span className="flex items-center gap-1.5">
+                            <span className="w-3 h-3 rounded-full bg-emerald-500 border border-white shadow-sm" /> Origin zone
+                        </span>
+                        <span className="flex items-center gap-1.5">
+                            <span className="w-3 h-3 rounded-full bg-red-500 border border-white shadow-sm" /> Destination zone
+                        </span>
+                        <span className="flex items-center gap-1.5">
+                            <span className="w-3 h-3 rounded-full bg-orange-500 border border-white shadow-sm" /> Mixed zone
+                        </span>
+                        <span className="flex items-center gap-1.5">
+                            <span className="w-12 h-2 rounded" style={{ background: 'linear-gradient(to right, #bfdbfe, #06b6d4, #f97316, #ef4444)' }} />
+                            Arc color: lower rank to higher rank
+                        </span>
+                    </div>
+                </ChartCard>
+            </div>
         </div>
     );
 };

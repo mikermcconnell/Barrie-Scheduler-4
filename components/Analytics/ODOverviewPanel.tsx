@@ -19,9 +19,10 @@ interface ODOverviewPanelProps {
     data: ODMatrixDataSummary;
     geocodeCache: GeocodeCache | null;
     onNavigate: (tabId: string) => void;
+    onReimport: () => void;
 }
 
-export const ODOverviewPanel: React.FC<ODOverviewPanelProps> = ({ data, geocodeCache, onNavigate }) => {
+export const ODOverviewPanel: React.FC<ODOverviewPanelProps> = ({ data, geocodeCache, onNavigate, onReimport }) => {
     const topOrigin = useMemo(() => {
         const sorted = [...data.stations].sort((a, b) => b.totalOrigin - a.totalOrigin);
         return sorted[0];
@@ -65,7 +66,11 @@ export const ODOverviewPanel: React.FC<ODOverviewPanelProps> = ({ data, geocodeC
             </div>
 
             {/* OD Map */}
-            <ODFlowMapModule data={data} geocodeCache={geocodeCache} />
+            <ODFlowMapModule
+                data={data}
+                geocodeCache={geocodeCache}
+                onFixMissingCoordinates={onReimport}
+            />
 
             {/* Import Metadata + Quick Links */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

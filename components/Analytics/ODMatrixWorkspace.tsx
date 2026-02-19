@@ -80,13 +80,26 @@ export const ODMatrixWorkspace: React.FC<ODMatrixWorkspaceProps> = ({
     const renderPanel = () => {
         switch (activeTab) {
             case 'overview':
-                return <ODOverviewPanel data={data} geocodeCache={geocodeCache} onNavigate={handleNavigate} />;
+                return (
+                    <ODOverviewPanel
+                        data={data}
+                        geocodeCache={geocodeCache}
+                        onNavigate={handleNavigate}
+                        onReimport={onReimport}
+                    />
+                );
             case 'top-pairs':
                 return <ODTopPairsModule data={data} />;
             case 'rankings':
                 return <ODStationRankingsModule data={data} />;
             case 'flow-map':
-                return <ODFlowMapModule data={data} geocodeCache={geocodeCache} />;
+                return (
+                    <ODFlowMapModule
+                        data={data}
+                        geocodeCache={geocodeCache}
+                        onFixMissingCoordinates={onReimport}
+                    />
+                );
             case 'heatmap':
                 return <ODHeatmapGridModule data={data} />;
             default:
