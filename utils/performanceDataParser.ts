@@ -7,6 +7,7 @@ import {
   parseDayType,
   DEFAULT_LOAD_CAP,
 } from './performanceDataTypes';
+import { compareDateStrings, normalizeToISODate } from './performanceDateUtils';
 
 const COLUMN_MAP: Record<string, keyof STREETSRecord> = {
   VehicleLocationTPKey: 'vehicleLocationTPKey',
@@ -102,7 +103,8 @@ export function parseRow(
   rowIndex: number
 ): STREETSRecord | null {
   try {
-    const date = toStringRequired(row['Date']);
+    const rawDate = row['Date'];
+    const date = normalizeToISODate(rawDate) ?? toStringRequired(rawDate);
     const day = toStringRequired(row['Day']);
     if (!date || !day) return null;
 
@@ -208,7 +210,7 @@ export function generatePreview(
     };
   }
 
-  const dates = records.map(r => r.date).filter(Boolean).sort();
+  const dates = records.map(r => r.date).filter(Boolean).sort(compareDateStrings);
   const start = dates[0] ?? '';
   const end = dates[dates.length - 1] ?? '';
 

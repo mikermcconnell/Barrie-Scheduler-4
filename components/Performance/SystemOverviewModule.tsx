@@ -4,16 +4,17 @@ import {
     LineChart, Line, PieChart, Pie, Cell, ReferenceLine, ComposedChart,
 } from 'recharts';
 import {
-    Clock, Users, Bus, AlertTriangle, ArrowRight,
+    Clock, Users, AlertTriangle, ArrowRight,
     Calendar, Database, ClipboardList, ChevronDown,
 } from 'lucide-react';
 import { MetricCard, ChartCard } from '../Analytics/AnalyticsShared';
-import type { PerformanceDataSummary, DayType, DailySummary, DataQuality } from '../../utils/performanceDataTypes';
+import type { PerformanceDataSummary, DayType, DataQuality } from '../../utils/performanceDataTypes';
 import {
     getScheduledTrips, hasGtfsCoverage, getTripsForDayType,
     buildObservedKeys, hasRouteTimeMatch, countRouteTimeMatches,
     type ScheduledTrip,
 } from '../../utils/gtfs/gtfsScheduleIndex';
+import { compareDateStrings, normalizeToISODate, shortDateLabel } from '../../utils/performanceDateUtils';
 
 interface SystemOverviewModuleProps {
     data: PerformanceDataSummary;
@@ -27,6 +28,22 @@ const DAY_TYPE_LABELS: Record<DayType, string> = {
 };
 
 const DONUT_COLORS = { early: '#f59e0b', onTime: '#10b981', late: '#ef4444' };
+const MIN_ACTION_QUEUE_DAYS = 3;
+
+type ActionQueueItemType = 'route' | 'trip';
+type ActionQueueBand = 'Act now' | 'Watch' | 'Monitor';
+
+interface ActionQueueItem {
+    id: string;
+    itemType: ActionQueueItemType;
+    routeId: string;
+    title: string;
+    detail: string;
+    priorityScore: number;
+    band: ActionQueueBand;
+    daysObserved: number;
+    daysBreaching: number;
+}
 
 /** BPH color: ≥30 emerald, ≤10 red, linear interpolation in between. */
 function bphColor(value: number): string {
@@ -46,13 +63,18 @@ function bphColor(value: number): string {
 }
 
 function formatDateShort(dateStr: string): string {
-    const d = new Date(dateStr + 'T12:00:00');
+    const iso = normalizeToISODate(dateStr);
+    if (!iso) return dateStr;
+    const d = new Date(iso + 'T12:00:00');
     return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
 function formatDateRange(start: string, end: string): string {
-    const s = new Date(start + 'T12:00:00');
-    const e = new Date(end + 'T12:00:00');
+    const startIso = normalizeToISODate(start);
+    const endIso = normalizeToISODate(end);
+    if (!startIso || !endIso) return `${start} – ${end}`;
+    const s = new Date(startIso + 'T12:00:00');
+    const e = new Date(endIso + 'T12:00:00');
     const opts: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric', year: 'numeric' };
     return `${s.toLocaleDateString('en-US', opts)} – ${e.toLocaleDateString('en-US', opts)}`;
 }
@@ -67,10 +89,20 @@ function freshness(importedAt: string): string {
     return `Updated ${days}d ago`;
 }
 
+function clamp01(value: number): number {
+    return Math.max(0, Math.min(1, value));
+}
+
+function actionBand(score: number): ActionQueueBand {
+    if (score >= 65) return 'Act now';
+    if (score >= 45) return 'Watch';
+    return 'Monitor';
+}
+
 
 export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data, onNavigate }) => {
     const sortedDates = useMemo(() =>
-        [...new Set(data.dailySummaries.map(d => d.date))].sort(),
+        [...new Set(data.dailySummaries.map(d => d.date))].sort(compareDateStrings),
         [data]
     );
 
@@ -98,7 +130,7 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
         return result;
     }, [data, selectedDate, dayTypeFilter]);
 
-    // ── Peer days (same day type for trend context in Worth Watching) ─
+    // ── Peer days (same day type for trend context in Action Queue) ───
     const peerDays = useMemo(() => {
         if (filtered.length === 0) return data.dailySummaries;
         const dayType = filtered[0].dayType;
@@ -145,57 +177,142 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
         ];
     }, [filtered]);
 
-    // ── Attention items (uses peer days — same dayType — for trends) ─
-    const attentionItems = useMemo(() => {
-        const totalDays = peerDays.length;
-        const routeMap = new Map<string, { routeId: string; routeName: string; otp: number[]; late: number[]; daysBelowTarget: number }>();
+    // ── Action Queue (severity x persistence x impact, min 3 days) ───
+    const actionQueue = useMemo(() => {
+        const peerCount = peerDays.length;
+        const peerDayType = peerDays[0]?.dayType ?? 'weekday';
+        if (peerCount < MIN_ACTION_QUEUE_DAYS) {
+            return { items: [] as ActionQueueItem[], peerDayType, peerCount };
+        }
+
+        const routeRollups = new Map<string, {
+            routeId: string;
+            routeName: string;
+            daysObserved: number;
+            daysBelowTarget: number;
+            otpTotal: number;
+            latePctTotal: number;
+            ridershipTotal: number;
+        }>();
+        const tripRollups = new Map<string, {
+            routeId: string;
+            tripName: string;
+            daysObserved: number;
+            daysLate: number;
+            daysWithDelay: number;
+            delayMinutesTotal: number;
+            boardingsTotal: number;
+        }>();
+
         for (const day of peerDays) {
             for (const r of day.byRoute) {
-                const existing = routeMap.get(r.routeId) || { routeId: r.routeId, routeName: r.routeName, otp: [], late: [], daysBelowTarget: 0 };
-                existing.otp.push(r.otp.onTimePercent);
-                existing.late.push(r.otp.latePercent);
+                const existing = routeRollups.get(r.routeId) || {
+                    routeId: r.routeId,
+                    routeName: r.routeName,
+                    daysObserved: 0,
+                    daysBelowTarget: 0,
+                    otpTotal: 0,
+                    latePctTotal: 0,
+                    ridershipTotal: 0,
+                };
+                existing.daysObserved++;
+                existing.otpTotal += r.otp.onTimePercent;
+                existing.latePctTotal += r.otp.latePercent;
+                existing.ridershipTotal += r.ridership;
                 if (r.otp.onTimePercent < 80) existing.daysBelowTarget++;
-                routeMap.set(r.routeId, existing);
+                routeRollups.set(r.routeId, existing);
             }
-        }
-        const worstRoutes = Array.from(routeMap.values())
-            .map(r => ({
-                routeId: r.routeId,
-                routeName: r.routeName,
-                avgOtp: Math.round(r.otp.reduce((a, b) => a + b, 0) / r.otp.length),
-                avgLate: Math.round(r.late.reduce((a, b) => a + b, 0) / r.late.length),
-                daysBelowTarget: r.daysBelowTarget,
-                totalDays: r.otp.length,
-            }))
-            .filter(r => r.avgOtp < 80 && (totalDays === 1 || r.daysBelowTarget >= 2))
-            .sort((a, b) => a.avgOtp - b.avgOtp)
-            .slice(0, 3);
 
-        // Late-running trips: only flag if late on 2+ days (skip one-offs)
-        const tripMap = new Map<string, { tripName: string; routeId: string; deviations: number[]; daysLate: number }>();
-        for (const day of peerDays) {
             for (const t of day.byTrip) {
-                if (t.otp.avgDeviationSeconds > 0) {
-                    const existing = tripMap.get(t.tripName) || { tripName: t.tripName, routeId: t.routeId, deviations: [], daysLate: 0 };
-                    existing.deviations.push(t.otp.avgDeviationSeconds);
-                    if (t.otp.avgDeviationSeconds > 300) existing.daysLate++;
-                    tripMap.set(t.tripName, existing);
+                const key = `${t.routeId}__${t.tripName}`;
+                const existing = tripRollups.get(key) || {
+                    routeId: t.routeId,
+                    tripName: t.tripName,
+                    daysObserved: 0,
+                    daysLate: 0,
+                    daysWithDelay: 0,
+                    delayMinutesTotal: 0,
+                    boardingsTotal: 0,
+                };
+                const delayMinutes = t.otp.avgDeviationSeconds / 60;
+                existing.daysObserved++;
+                existing.boardingsTotal += t.boardings;
+                if (delayMinutes > 0) {
+                    existing.delayMinutesTotal += delayMinutes;
+                    existing.daysWithDelay++;
                 }
+                if (delayMinutes > 5) existing.daysLate++;
+                tripRollups.set(key, existing);
             }
         }
-        const lateTrips = Array.from(tripMap.values())
-            .map(t => ({
-                tripName: t.tripName,
-                routeId: t.routeId,
-                avgDelay: Math.round(t.deviations.reduce((a, b) => a + b, 0) / t.deviations.length / 60),
-                daysLate: t.daysLate,
-                totalDays: t.deviations.length,
-            }))
-            .filter(t => t.avgDelay > 5 && (totalDays === 1 || t.daysLate >= 2))
-            .sort((a, b) => b.avgDelay - a.avgDelay)
-            .slice(0, 2);
 
-        return { worstRoutes, lateTrips, peerDayType: peerDays[0]?.dayType ?? 'weekday', peerCount: totalDays };
+        const routeCandidates = Array.from(routeRollups.values())
+            .map(row => {
+                const avgOtp = row.otpTotal / row.daysObserved;
+                const avgLatePct = row.latePctTotal / row.daysObserved;
+                const avgRidershipPerDay = row.ridershipTotal / row.daysObserved;
+                const persistence = row.daysBelowTarget / row.daysObserved;
+                const severity = clamp01((((80 - avgOtp) / 25) * 0.75) + ((avgLatePct / 35) * 0.25));
+                return { ...row, avgOtp, avgLatePct, avgRidershipPerDay, persistence, severity };
+            })
+            .filter(row =>
+                row.daysObserved >= MIN_ACTION_QUEUE_DAYS &&
+                row.avgOtp < 80 &&
+                row.persistence >= 0.5
+            );
+        const maxRouteImpact = Math.max(1, ...routeCandidates.map(row => row.avgRidershipPerDay));
+        const routeItems: ActionQueueItem[] = routeCandidates.map(row => {
+            const impact = clamp01(row.avgRidershipPerDay / maxRouteImpact);
+            const priorityScore = Math.round((((row.severity * row.persistence) * 70) + (impact * 30)) * 10) / 10;
+            return {
+                id: `route-${row.routeId}`,
+                itemType: 'route',
+                routeId: row.routeId,
+                title: `${row.routeId} ${row.routeName}`,
+                detail: `OTP avg ${Math.round(row.avgOtp)}% (${row.daysBelowTarget}/${row.daysObserved} days below 80%) · Avg riders/day ${Math.round(row.avgRidershipPerDay).toLocaleString()}`,
+                priorityScore,
+                band: actionBand(priorityScore),
+                daysObserved: row.daysObserved,
+                daysBreaching: row.daysBelowTarget,
+            };
+        });
+
+        const tripCandidates = Array.from(tripRollups.values())
+            .map(row => {
+                const avgDelayMinutes = row.daysWithDelay > 0 ? (row.delayMinutesTotal / row.daysWithDelay) : 0;
+                const avgBoardingsPerDay = row.boardingsTotal / row.daysObserved;
+                const persistence = row.daysLate / row.daysObserved;
+                const severity = clamp01((avgDelayMinutes - 5) / 10);
+                return { ...row, avgDelayMinutes, avgBoardingsPerDay, persistence, severity };
+            })
+            .filter(row =>
+                row.daysObserved >= MIN_ACTION_QUEUE_DAYS &&
+                row.avgDelayMinutes > 5 &&
+                row.persistence >= 0.5
+            );
+        const maxTripImpact = Math.max(1, ...tripCandidates.map(row => row.avgBoardingsPerDay));
+        const tripItems: ActionQueueItem[] = tripCandidates.map(row => {
+            const impact = clamp01(row.avgBoardingsPerDay / maxTripImpact);
+            const priorityScore = Math.round((((row.severity * row.persistence) * 70) + (impact * 30)) * 10) / 10;
+            return {
+                id: `trip-${row.routeId}-${row.tripName}`,
+                itemType: 'trip',
+                routeId: row.routeId,
+                title: row.tripName,
+                detail: `Route ${row.routeId} · Avg +${Math.round(row.avgDelayMinutes)} min (${row.daysLate}/${row.daysObserved} days > 5 min late) · Avg boardings/day ${Math.round(row.avgBoardingsPerDay)}`,
+                priorityScore,
+                band: actionBand(priorityScore),
+                daysObserved: row.daysObserved,
+                daysBreaching: row.daysLate,
+            };
+        });
+
+        const items = [...routeItems, ...tripItems]
+            .filter(item => item.priorityScore >= 35)
+            .sort((a, b) => b.priorityScore - a.priorityScore)
+            .slice(0, 5);
+
+        return { items, peerDayType, peerCount };
     }, [peerDays]);
 
     // ── Missed trips (GTFS vs STREETS cross-reference) ────────────
@@ -273,17 +390,16 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
     // ── OTP trend (always all days, independent of date selector) ──
     const otpTrend = useMemo(() =>
         data.dailySummaries.map(d => ({
-            date: d.date.slice(5),
+            date: shortDateLabel(d.date),
             fullDate: d.date,
             otp: d.system.otp.onTimePercent,
             ridership: d.system.totalRidership,
-        })).sort((a, b) => a.date.localeCompare(b.date)),
+        })).sort((a, b) => compareDateStrings(a.fullDate, b.fullDate)),
         [data]
     );
 
     // ── Hourly boardings + BPH line (aggregated across filtered days) ─
     const hourlyData = useMemo(() => {
-        const n = filtered.length || 1;
         const hours = Array.from({ length: 24 }, (_, i) => ({ hour: i, boardings: 0, otp: 0, otpCount: 0 }));
         let totalServiceHours = 0;
         for (const day of filtered) {
@@ -389,7 +505,8 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
 
     const isSingleDate = selectedDate !== 'all';
     const hasMissedTrips = missedTrips.hasCoverage && missedTrips.totalMissed > 0;
-    const hasAttention = attentionItems.worstRoutes.length > 0 || attentionItems.lateTrips.length > 0 || hasMissedTrips;
+    const canShowActionQueue = actionQueue.peerCount >= MIN_ACTION_QUEUE_DAYS;
+    const hasActionQueue = actionQueue.items.length > 0;
     const avlPct = dataQuality ? Math.round((dataQuality.missingAVL / dataQuality.totalRecords) * 100) : 0;
     const apcPct = dataQuality ? Math.round((dataQuality.missingAPC / dataQuality.totalRecords) * 100) : 0;
 
@@ -456,7 +573,7 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
             </div>
 
             {/* ── 2. KPI Cards (6) ─────────────────────────────────── */}
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <MetricCard
                     icon={<Clock size={18} />}
                     label="On-Time Performance"
@@ -470,13 +587,6 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                     value={systemAvg.ridership.toLocaleString()}
                     color="cyan"
                     subValue={`${systemAvg.ridership.toLocaleString()} on · ${systemAvg.alightings.toLocaleString()} off`}
-                />
-                <MetricCard
-                    icon={<Bus size={18} />}
-                    label="Vehicles in Service"
-                    value={`${systemAvg.vehicles}`}
-                    color="indigo"
-                    subValue={`${systemAvg.tripCount.toLocaleString()} total trips`}
                 />
                 <MetricCard
                     icon={<AlertTriangle size={18} />}
@@ -502,6 +612,7 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                         : missedTrips.totalMissed === 0
                             ? 'All scheduled trips operated'
                             : `${missedTrips.totalMissed} missed (${missedTrips.missedPct.toFixed(1)}%)`}
+                    onClick={missedTrips.totalMissed > 0 ? () => onNavigate('otp') : undefined}
                 />
             </div>
 
@@ -533,55 +644,55 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                 </div>
             )}
 
-            {/* ── 3. Attention Items (only shown when there are issues) ── */}
-            {hasAttention && (
+            {/* ── 3. Action Queue ──────────────────────────────────────── */}
+            {(
             <div className="border rounded-xl p-4 border-amber-300 bg-amber-50/50">
                 <h3 className="text-sm font-bold mb-2 flex items-center gap-2 text-amber-700">
-                    <AlertTriangle size={14} /> Worth Watching
+                    <AlertTriangle size={14} /> Action Queue
                 </h3>
+                <p className="text-xs text-amber-700 mb-3">
+                    Ranked by severity, persistence, and rider impact using {DAY_TYPE_LABELS[actionQueue.peerDayType]} peer days ({actionQueue.peerCount} loaded). Minimum {MIN_ACTION_QUEUE_DAYS} days per route/trip.
+                </p>
                 <div className="space-y-2">
-                        {attentionItems.worstRoutes.length > 0 && (
-                            <div className="space-y-1">
-                                {attentionItems.worstRoutes.map(r => (
-                                    <div key={r.routeId} className="flex items-center gap-2 text-xs text-gray-700">
-                                        <span className={`inline-block w-2 h-2 rounded-full ${r.avgOtp < 70 ? 'bg-red-500' : 'bg-amber-500'}`} />
-                                        <span className="font-bold">{r.routeId} {r.routeName}</span>
-                                        <span className="text-gray-400">—</span>
-                                        <span className={`font-bold ${r.avgOtp < 70 ? 'text-red-600' : 'text-amber-600'}`}>{r.avgOtp}% OTP</span>
-                                        <span className="text-gray-400">({r.daysBelowTarget}/{r.totalDays} days below 80%)</span>
+                        {!canShowActionQueue && (
+                            <div className="text-xs text-gray-600 bg-white/80 border border-amber-200 rounded-lg px-3 py-2">
+                                Not enough peer-day history yet. Load at least {MIN_ACTION_QUEUE_DAYS} {DAY_TYPE_LABELS[actionQueue.peerDayType].toLowerCase()} days before routes/trips enter the queue.
+                            </div>
+                        )}
+                        {canShowActionQueue && hasActionQueue && (
+                            <div className="space-y-2">
+                                {actionQueue.items.map(item => (
+                                    <div key={item.id} className="flex items-start justify-between gap-3 rounded-lg border border-amber-200 bg-white/80 px-3 py-2">
+                                        <div className="min-w-0">
+                                            <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                                                <span className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 font-bold uppercase tracking-wide">
+                                                    {item.itemType}
+                                                </span>
+                                                <span className={`px-2 py-0.5 rounded-full font-bold ${
+                                                    item.band === 'Act now'
+                                                        ? 'bg-red-100 text-red-700'
+                                                        : item.band === 'Watch'
+                                                            ? 'bg-amber-100 text-amber-700'
+                                                            : 'bg-cyan-100 text-cyan-700'
+                                                }`}>
+                                                    {item.band}
+                                                </span>
+                                                <span className="text-gray-400">{item.daysBreaching}/{item.daysObserved} breach days</span>
+                                            </div>
+                                            <p className="text-sm font-bold text-gray-900 truncate">{item.title}</p>
+                                            <p className="text-xs text-gray-600">{item.detail}</p>
+                                        </div>
+                                        <div className="text-right shrink-0">
+                                            <p className="text-[10px] uppercase tracking-wide text-gray-400">Priority</p>
+                                            <p className="text-base font-bold text-amber-700">{item.priorityScore.toFixed(1)}</p>
+                                        </div>
                                     </div>
                                 ))}
                             </div>
                         )}
-                        {attentionItems.lateTrips.length > 0 && (
-                            <div className="space-y-1 pt-1 border-t border-amber-200">
-                                <p className="text-xs font-bold text-amber-600">Late-Running Trips</p>
-                                {attentionItems.lateTrips.map(t => (
-                                    <div key={t.tripName} className="flex items-center gap-2 text-xs text-gray-700">
-                                        <span className="inline-block w-2 h-2 rounded-full bg-amber-500" />
-                                        <span className="font-bold">{t.tripName}</span>
-                                        <span className="text-gray-400">Route {t.routeId}</span>
-                                        <span className="text-gray-400">—</span>
-                                        <span className="font-bold text-amber-600">avg +{t.avgDelay} min</span>
-                                        <span className="text-gray-400">({t.daysLate}/{t.totalDays} days)</span>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                        {hasMissedTrips && (
-                            <div className="space-y-1 pt-1 border-t border-amber-200">
-                                <p className="text-xs font-bold text-amber-600">Missed Trips (GTFS vs Observed)</p>
-                                {missedTrips.routesMissed.filter(r => r.count >= 2).slice(0, 4).map(r => (
-                                    <div key={r.routeId} className="flex items-center gap-2 text-xs text-gray-700">
-                                        <span className={`inline-block w-2 h-2 rounded-full ${r.count >= 3 ? 'bg-red-500' : 'bg-amber-500'}`} />
-                                        <span className="font-bold">Route {r.routeId}</span>
-                                        <span className="text-gray-400">—</span>
-                                        <span className={`font-bold ${r.count >= 3 ? 'text-red-600' : 'text-amber-600'}`}>
-                                            {r.count} missed
-                                        </span>
-                                        <span className="text-gray-400">(earliest {r.earliestDep})</span>
-                                    </div>
-                                ))}
+                        {canShowActionQueue && !hasActionQueue && (
+                            <div className="text-xs text-gray-600 bg-white/80 border border-amber-200 rounded-lg px-3 py-2">
+                                No persistent route/trip issues met queue thresholds in the current peer-day window.
                             </div>
                         )}
                         <button
@@ -614,6 +725,11 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                     </button>
                     {missedTripsExpanded && (
                         <div className="px-4 pb-4">
+                            <p className="text-xs text-gray-500 mb-3">
+                                A missed trip is a scheduled GTFS trip that was not observed in STREETS AVL data.
+                                This may indicate a cancelled trip, a trip run with no AVL equipment, or a data extraction gap.
+                                Matching uses route + departure time (±2 min tolerance).
+                            </p>
                             <table className="w-full text-sm">
                                 <thead>
                                     <tr className="border-b border-gray-100">
@@ -646,6 +762,12 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                                     ))}
                                 </tbody>
                             </table>
+                            <button
+                                onClick={() => onNavigate('otp')}
+                                className="mt-3 text-xs font-bold text-cyan-600 hover:text-cyan-700 flex items-center gap-1"
+                            >
+                                View full missed trips table in OTP Analysis <ArrowRight size={12} />
+                            </button>
                         </div>
                     )}
                 </div>

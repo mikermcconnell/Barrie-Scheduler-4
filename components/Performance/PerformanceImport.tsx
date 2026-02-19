@@ -7,7 +7,9 @@ import {
 import { parseSTREETSFile, generatePreview } from '../../utils/performanceDataParser';
 import { aggregateDailySummaries } from '../../utils/performanceDataAggregator';
 import { savePerformanceData } from '../../utils/performanceDataService';
+import { computeMissedTripsForDay } from '../../utils/gtfs/gtfsScheduleIndex';
 import type { ImportPreview, PerformanceImportPhase, PerformanceDataSummary } from '../../utils/performanceDataTypes';
+import { compareDateStrings } from '../../utils/performanceDateUtils';
 
 interface PerformanceImportProps {
     teamId: string;
@@ -111,10 +113,16 @@ export const PerformanceImport: React.FC<PerformanceImportProps> = ({
                 setProgressText(`Aggregating: ${p.phase}`);
             });
 
+            // Enrich with GTFS missed trips
+            for (const day of dailySummaries) {
+                const result = computeMissedTripsForDay(day.date, day.dayType, day.byTrip);
+                if (result) day.missedTrips = result;
+            }
+
             setProgress(85);
             setProgressText('Saving to Firebase...');
 
-            const dates = dailySummaries.map(s => s.date).sort();
+            const dates = dailySummaries.map(s => s.date).sort(compareDateStrings);
             const summary: PerformanceDataSummary = {
                 dailySummaries,
                 metadata: {

@@ -6,6 +6,7 @@ import {
 import { ChartCard } from '../Analytics/AnalyticsShared';
 import { RidershipHeatmapSection } from './RidershipHeatmapSection';
 import type { PerformanceDataSummary, DayType } from '../../utils/performanceDataTypes';
+import { compareDateStrings, shortDateLabel } from '../../utils/performanceDateUtils';
 
 interface RidershipModuleProps {
     data: PerformanceDataSummary;
@@ -30,10 +31,11 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({ data }) => {
     // Daily ridership trend
     const dailyTrend = useMemo(() =>
         filtered.map(d => ({
-            date: d.date.slice(5),
+            date: shortDateLabel(d.date),
+            fullDate: d.date,
             ridership: d.system.totalRidership,
             boardings: d.system.totalBoardings,
-        })).sort((a, b) => a.date.localeCompare(b.date)),
+        })).sort((a, b) => compareDateStrings(a.fullDate, b.fullDate)),
         [filtered]
     );
 
@@ -86,9 +88,9 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({ data }) => {
             }
             dateMap.set(day.date, entry);
         }
-        const dates = Array.from(dateMap.keys()).sort();
+        const dates = Array.from(dateMap.keys()).sort(compareDateStrings);
         return {
-            data: dates.map(date => ({ date: date.slice(5), ...dateMap.get(date) })),
+            data: dates.map(date => ({ date: shortDateLabel(date), ...dateMap.get(date) })),
             routeIds: Array.from(routeIds).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
         };
     }, [filtered]);

@@ -288,6 +288,96 @@ export function countRouteTimeMatches(scheduled: ScheduledTrip[], keys: Set<stri
     return n;
 }
 
+export interface MissedTripRow {
+    tripId: string;
+    routeId: string;
+    departure: string;
+    headsign: string;
+    blockId: string;
+    serviceId: string;
+}
+
+export interface MissedTripsSummary {
+    totalScheduled: number;
+    totalMatched: number;
+    totalMissed: number;
+    missedPct: number;
+    byRoute: { routeId: string; count: number; earliestDep: string }[];
+    trips: MissedTripRow[];
+}
+
+/**
+ * Compute missed trips for a single day's observed data.
+ * Returns null if no GTFS coverage or match rate too low.
+ */
+export function computeMissedTripsForDay(
+    date: string,
+    dayType: DayType,
+    observedTrips: { routeId: string; terminalDepartureTime: string }[],
+): MissedTripsSummary | null {
+    if (!hasGtfsCoverage(date)) return null;
+
+    const observedRoutes = new Set(observedTrips.map(t => t.routeId));
+    const observedKeys = buildObservedKeys(observedTrips);
+
+    let scheduled = getScheduledTrips(date, dayType);
+    let relevantScheduled = scheduled.filter(s => observedRoutes.has(s.routeId));
+    let dayMatched = countRouteTimeMatches(relevantScheduled, observedKeys);
+
+    // Best-fit fallback
+    if (relevantScheduled.length > 0 && dayMatched / relevantScheduled.length < 0.25) {
+        for (const dt of ['weekday', 'saturday', 'sunday'] as const) {
+            const altTrips = getTripsForDayType(date, dt);
+            const altRelevant = altTrips.filter(s => observedRoutes.has(s.routeId));
+            const altMatched = countRouteTimeMatches(altRelevant, observedKeys);
+            if (altMatched > dayMatched) {
+                scheduled = altTrips;
+                relevantScheduled = altRelevant;
+                dayMatched = altMatched;
+            }
+        }
+    }
+
+    if (relevantScheduled.length === 0 || dayMatched / relevantScheduled.length < 0.25) return null;
+
+    const missedTrips: MissedTripRow[] = [];
+    const missedByRoute = new Map<string, { routeId: string; count: number; earliestDep: string }>();
+    for (const s of relevantScheduled) {
+        if (hasRouteTimeMatch(s.routeId, s.departure, observedKeys)) continue;
+        missedTrips.push({
+            tripId: s.tripId,
+            routeId: s.routeId,
+            departure: s.departure,
+            headsign: s.headsign,
+            blockId: s.blockId,
+            serviceId: s.serviceId,
+        });
+        const existing = missedByRoute.get(s.routeId);
+        if (existing) {
+            existing.count++;
+            if (s.departure < existing.earliestDep) existing.earliestDep = s.departure;
+        } else {
+            missedByRoute.set(s.routeId, { routeId: s.routeId, count: 1, earliestDep: s.departure });
+        }
+    }
+
+    const totalMissed = relevantScheduled.length - dayMatched;
+    return {
+        totalScheduled: relevantScheduled.length,
+        totalMatched: dayMatched,
+        totalMissed,
+        missedPct: (totalMissed / relevantScheduled.length) * 100,
+        byRoute: Array.from(missedByRoute.values()).sort((a, b) => b.count - a.count),
+        trips: missedTrips.sort((a, b) => {
+            const routeCmp = a.routeId.localeCompare(b.routeId, undefined, { numeric: true });
+            if (routeCmp !== 0) return routeCmp;
+            const depCmp = a.departure.localeCompare(b.departure);
+            if (depCmp !== 0) return depCmp;
+            return a.tripId.localeCompare(b.tripId);
+        }),
+    };
+}
+
 /** Quick summary for diagnostics */
 export function getGtfsIndexStats(): { totalTrips: number; services: number; coverageStart: string; coverageEnd: string } {
     let earliest = '99999999';

@@ -262,6 +262,11 @@ export const OTPModule: React.FC<OTPModuleProps> = ({ data }) => {
             {/* Missed Trips Table */}
             {missedTrips.length > 0 && (
                 <ChartCard title="Missed Trips" subtitle={`${missedTrips.length} scheduled trips not observed in STREETS data`}>
+                    <p className="text-xs text-gray-500 mb-3">
+                        A missed trip is a GTFS-scheduled departure with no matching AVL record in STREETS.
+                        Possible causes: cancelled service, vehicle running without AVL, or data extraction gap.
+                        Matching uses route + scheduled departure time (±2 min tolerance).
+                    </p>
                     <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
                         <table className="w-full text-sm">
                             <thead className="sticky top-0 bg-white">

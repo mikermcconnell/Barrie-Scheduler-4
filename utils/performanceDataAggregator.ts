@@ -8,6 +8,7 @@ import {
 } from './performanceDataTypes';
 import type { MonthlySnapshot, MonthlyRouteSnapshot, MonthlyDayTypeSnapshot } from './performanceSnapshotTypes';
 import { SNAPSHOT_VERSION } from './performanceSnapshotTypes';
+import { compareDateStrings } from './performanceDateUtils';
 
 // ─── Helpers ──────────────────────────────────────────────────────────
 
@@ -625,7 +626,7 @@ export function aggregateDailySummaries(
   onProgress?: (p: { phase: string; current: number; total: number }) => void
 ): DailySummary[] {
   const byDate = groupBy(records, r => r.date);
-  const dates = Array.from(byDate.keys()).sort();
+  const dates = Array.from(byDate.keys()).sort(compareDateStrings);
   const total = dates.length;
   const summaries: DailySummary[] = [];
 

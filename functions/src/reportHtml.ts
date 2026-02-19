@@ -54,14 +54,14 @@ function formatDateLong(dateStr: string): string {
 
 function bphColor(value: number): string {
   if (value >= 30) return '#16a34a'; // green
-  if (value <= 10) return '#dc2626'; // red
-  return '#374151'; // neutral
+  if (value >= 20) return '#d97706'; // amber
+  return '#dc2626'; // red
 }
 
 function bphBg(value: number): string {
   if (value >= 30) return '#f0fdf4';
-  if (value <= 10) return '#fef2f2';
-  return 'transparent';
+  if (value >= 20) return '#fffbeb';
+  return '#fef2f2';
 }
 
 function bphPill(value: number): string {
@@ -109,79 +109,72 @@ function otpBar(earlyPct: number, onTimePct: number, latePct: number): string {
     </table>`;
 }
 
-function buildWorthWatching(latestDay: DailySummary, trendDays: DailySummary[]): string {
-  const totalDays = trendDays.length;
+function buildMissedTripsTable(latestDay: DailySummary): string {
+  const mt = latestDay.missedTrips;
+  if (!mt || mt.totalScheduled <= 0) return '';
 
-  // Count how many days each route was below 85% OTP
-  const routeDaysBelow = new Map<string, number>();
-  for (const day of trendDays) {
-    for (const r of day.byRoute) {
-      if (r.otp.onTimePercent < 85) {
-        routeDaysBelow.set(r.routeId, (routeDaysBelow.get(r.routeId) || 0) + 1);
-      }
-    }
-  }
+  const trips = [...(mt.trips || [])].sort((a, b) => {
+    const routeCmp = a.routeId.localeCompare(b.routeId, undefined, { numeric: true });
+    if (routeCmp !== 0) return routeCmp;
+    const depCmp = a.departure.localeCompare(b.departure);
+    if (depCmp !== 0) return depCmp;
+    return a.tripId.localeCompare(b.tripId);
+  });
 
-  const belowTarget = latestDay.byRoute
-    .filter(r => r.otp.onTimePercent < 85 && (routeDaysBelow.get(r.routeId) || 0) >= 3)
-    .sort((a, b) => a.otp.onTimePercent - b.otp.onTimePercent)
-    .slice(0, 5);
+  if (trips.length > 0) {
+    const rows = trips.map((t, i) => {
+      const bg = i % 2 === 0 ? '#ffffff' : '#f9fafb';
+      return `
+      <tr style="background:${bg};">
+        <td style="padding:6px 10px;font-size:12px;font-weight:700;color:#374151;border-bottom:1px solid #f3f4f6;">${t.routeId}</td>
+        <td style="padding:6px 10px;font-size:12px;text-align:right;color:#374151;border-bottom:1px solid #f3f4f6;">${t.departure}</td>
+        <td style="padding:6px 10px;font-size:12px;color:#374151;border-bottom:1px solid #f3f4f6;">${t.tripId}</td>
+        <td style="padding:6px 10px;font-size:12px;text-align:right;color:#6b7280;border-bottom:1px solid #f3f4f6;">${t.blockId || '—'}</td>
+      </tr>`;
+    }).join('');
 
-  // Count how many days each trip was late (>5 min)
-  const tripDaysLate = new Map<string, number>();
-  for (const day of trendDays) {
-    for (const t of day.byTrip) {
-      if (t.otp.avgDeviationSeconds > 300) {
-        tripDaysLate.set(t.tripName, (tripDaysLate.get(t.tripName) || 0) + 1);
-      }
-    }
-  }
-
-  const lateTrips = latestDay.byTrip
-    .filter(t => t.otp.avgDeviationSeconds > 300 && (tripDaysLate.get(t.tripName) || 0) >= 3)
-    .sort((a, b) => b.otp.avgDeviationSeconds - a.otp.avgDeviationSeconds)
-    .slice(0, 5);
-
-  if (belowTarget.length === 0 && lateTrips.length === 0) {
     return `
-      <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:12px;margin-top:12px;">
-        <div style="font-size:13px;font-weight:600;color:#16a34a;">All routes within OTP targets today</div>
-      </div>`;
+    ${sectionHeader('Missed Trips', `${num(mt.totalMissed)} of ${num(mt.totalScheduled)} scheduled trips missed (${mt.missedPct.toFixed(1)}%)`)}
+    <div style="font-size:11px;color:#9ca3af;margin-bottom:8px;">Each missed scheduled trip is listed below.</div>
+    <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;">
+      <tr style="background:#f9fafb;">
+        <th style="padding:6px 10px;text-align:left;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Route</th>
+        <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Departure</th>
+        <th style="padding:6px 10px;text-align:left;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Trip ID</th>
+        <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Block</th>
+      </tr>
+      ${rows}
+    </table>`;
   }
 
-  let html = `
-    <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:14px;margin-top:12px;">
-      <div style="font-size:14px;font-weight:700;color:#92400e;margin-bottom:2px;">Worth Watching</div>
-      <div style="font-size:11px;color:#b45309;margin-bottom:10px;">Based on ${totalDays} day${totalDays > 1 ? 's' : ''} of data</div>`;
+  const fallbackRows = mt.byRoute.length > 0
+    ? mt.byRoute.map((r, i) => {
+      const bg = i % 2 === 0 ? '#ffffff' : '#f9fafb';
+      return `
+      <tr style="background:${bg};">
+        <td style="padding:6px 10px;font-size:12px;font-weight:700;color:#374151;border-bottom:1px solid #f3f4f6;">${r.routeId}</td>
+        <td style="padding:6px 10px;font-size:12px;text-align:right;color:#374151;border-bottom:1px solid #f3f4f6;">${num(r.count)}</td>
+        <td style="padding:6px 10px;font-size:12px;text-align:right;color:#6b7280;border-bottom:1px solid #f3f4f6;">${r.earliestDep}</td>
+      </tr>`;
+    }).join('')
+    : `
+      <tr style="background:#ffffff;">
+        <td colspan="3" style="padding:10px;font-size:12px;color:#6b7280;text-align:center;border-bottom:1px solid #f3f4f6;">
+          Trip-level missed-trip rows are unavailable in this dataset.
+        </td>
+      </tr>`;
 
-  if (belowTarget.length > 0) {
-    html += `<div style="font-size:11px;font-weight:600;color:#78350f;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.3px;">Routes Below 85% OTP</div>`;
-    html += belowTarget.map(r => {
-      const daysBelow = routeDaysBelow.get(r.routeId) || 1;
-      return `<div style="font-size:12px;color:#374151;margin-bottom:4px;padding:4px 0;border-bottom:1px solid #fef3c7;">
-        <strong>${r.routeId} ${r.routeName}</strong>
-        <span style="float:right;">${otpPill(r.otp.onTimePercent)} <span style="color:#9ca3af;font-size:11px;">${daysBelow}/${totalDays} days</span></span>
-      </div>`;
-    }).join('');
-  }
-
-  if (lateTrips.length > 0) {
-    if (belowTarget.length > 0) html += `<div style="margin:10px 0 6px;border-top:1px solid #fde68a;"></div>`;
-    html += `<div style="font-size:11px;font-weight:600;color:#78350f;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.3px;">Late-Running Trips</div>`;
-    html += lateTrips.map(t => {
-      const delayMin = Math.round(t.otp.avgDeviationSeconds / 60);
-      const daysLate = tripDaysLate.get(t.tripName) || 1;
-      return `<div style="font-size:12px;color:#374151;margin-bottom:4px;padding:4px 0;border-bottom:1px solid #fef3c7;">
-        <strong>${t.tripName}</strong>
-        <span style="color:#9ca3af;font-size:11px;">Route ${t.routeId} · ${t.terminalDepartureTime}</span>
-        <span style="float:right;color:#d97706;font-weight:600;">avg +${delayMin} min</span>
-        <span style="color:#9ca3af;font-size:11px;float:right;margin-right:8px;">${daysLate}/${totalDays} days ·</span>
-      </div>`;
-    }).join('');
-  }
-
-  html += `</div>`;
-  return html;
+  return `
+    ${sectionHeader('Missed Trips', `${num(mt.totalMissed)} of ${num(mt.totalScheduled)} scheduled trips missed (${mt.missedPct.toFixed(1)}%)`)}
+    <div style="font-size:11px;color:#9ca3af;margin-bottom:8px;">Trip-level rows unavailable; showing route-level summary for this dataset.</div>
+    <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;">
+      <tr style="background:#f9fafb;">
+        <th style="padding:6px 10px;text-align:left;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Route</th>
+        <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Missed Trips</th>
+        <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Earliest Departure</th>
+      </tr>
+      ${fallbackRows}
+    </table>`;
 }
 
 function buildHourlyTable(byHour: HourMetrics[], totalServiceHours: number): string {
@@ -204,7 +197,7 @@ function buildHourlyTable(byHour: HourMetrics[], totalServiceHours: number): str
         <td style="padding:5px 10px;font-size:12px;color:#374151;border-bottom:1px solid #f3f4f6;font-weight:${isPeak ? '700' : '400'};">${hourLabel}${isPeak ? ' ★' : ''}</td>
         <td style="padding:5px 10px;font-size:12px;text-align:right;color:#374151;border-bottom:1px solid #f3f4f6;">${num(h.boardings)}</td>
         <td style="padding:5px 10px;font-size:12px;border-bottom:1px solid #f3f4f6;">
-          <div style="background:#06b6d4;height:12px;width:${barWidth}%;border-radius:3px;min-width:4px;"></div>
+          <div style="background:#06b6d4;height:24px;width:${barWidth}%;border-radius:3px;min-width:4px;"></div>
         </td>
         <td style="padding:5px 10px;font-size:12px;text-align:right;font-weight:600;color:#0891b2;border-bottom:1px solid #f3f4f6;">${bph}</td>
         <td style="padding:5px 10px;font-size:12px;text-align:right;border-bottom:1px solid #f3f4f6;">${h.otp.total > 0 ? otpPill(h.otp.onTimePercent) : '<span style="color:#d1d5db;">—</span>'}</td>
@@ -239,8 +232,8 @@ function buildRouteScorecard(routes: RouteMetrics[]): string {
         <td style="padding:6px 10px;font-size:12px;font-weight:700;color:#374151;border-bottom:1px solid #f3f4f6;">${r.routeId}</td>
         <td style="padding:6px 10px;font-size:12px;color:#6b7280;border-bottom:1px solid #f3f4f6;">${r.routeName}</td>
         <td style="padding:6px 10px;font-size:12px;text-align:right;border-bottom:1px solid #f3f4f6;">${otpPill(r.otp.onTimePercent)}</td>
-        <td style="padding:6px 10px;font-size:12px;text-align:right;color:#d97706;border-bottom:1px solid #f3f4f6;">${pct(r.otp.earlyPercent)}</td>
-        <td style="padding:6px 10px;font-size:12px;text-align:right;color:#dc2626;border-bottom:1px solid #f3f4f6;">${pct(r.otp.latePercent)}</td>
+        <td style="padding:6px 10px;font-size:12px;text-align:right;color:#111827;border-bottom:1px solid #f3f4f6;">${pct(r.otp.earlyPercent)}</td>
+        <td style="padding:6px 10px;font-size:12px;text-align:right;color:#111827;border-bottom:1px solid #f3f4f6;">${pct(r.otp.latePercent)}</td>
         <td style="padding:6px 10px;font-size:12px;text-align:right;color:#374151;border-bottom:1px solid #f3f4f6;">${num(r.ridership)}</td>
         <td style="padding:6px 10px;font-size:12px;text-align:right;color:#374151;border-bottom:1px solid #f3f4f6;">${num(r.alightings)}</td>
         <td style="padding:6px 10px;font-size:12px;text-align:right;border-bottom:1px solid #f3f4f6;">${bphPill(r.bph)}</td>
@@ -341,6 +334,10 @@ export function buildReportHtml(data: ReportData): string {
     <div style="background:#1e3a5f;padding:24px;text-align:center;">
       <div style="font-size:20px;font-weight:700;color:#ffffff;">${teamName}</div>
       <div style="font-size:16px;color:#93c5fd;margin-top:2px;">Daily Performance Report</div>
+      <div style="font-size:12px;color:#bfdbfe;margin-top:6px;">
+        For more information:
+        <a href="https://transitscheduler.ca/#fixed/performance" style="color:#bfdbfe;text-decoration:underline;">https://transitscheduler.ca/#fixed/performance</a>
+      </div>
       <div style="font-size:13px;color:#bfdbfe;margin-top:4px;">${formatDateLong(latestDay.date)} · ${latestDay.dayType.charAt(0).toUpperCase() + latestDay.dayType.slice(1)} Service</div>
       <div style="margin-top:10px;display:inline-block;background:#fbbf24;color:#78350f;font-size:10px;font-weight:700;padding:3px 12px;border-radius:10px;letter-spacing:0.5px;">BETA — UNDER TESTING</div>
     </div>
@@ -356,7 +353,14 @@ export function buildReportHtml(data: ReportData): string {
       </table>
       <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:4px;">
         <tr>
-          ${kpiCard('Trips Operated', num(sys.tripCount), `${num(sys.vehicleCount)} vehicles · ${totalServiceHours.toFixed(1)} svc hrs`)}
+          ${(() => {
+            const mt = latestDay.missedTrips;
+            if (mt && mt.totalScheduled > 0) {
+              const color = mt.missedPct < 2 ? '#16a34a' : mt.missedPct < 5 ? '#d97706' : '#dc2626';
+              return kpiCard('Trips Operated', `${num(mt.totalMatched)} / ${num(mt.totalScheduled)}`, `${mt.totalMissed} missed (${mt.missedPct.toFixed(1)}%)`, color);
+            }
+            return kpiCard('Trips Operated', num(sys.tripCount), `${num(sys.vehicleCount)} vehicles · ${totalServiceHours.toFixed(1)} svc hrs`);
+          })()}
           ${kpiCard('System BPH', systemBph, `Peak load: ${num(sys.peakLoad)} · Avg: ${sys.avgSystemLoad.toFixed(1)}`)}
         </tr>
       </table>
@@ -364,11 +368,11 @@ export function buildReportHtml(data: ReportData): string {
       <!-- OTP Distribution Bar -->
       ${otpBar(sys.otp.earlyPercent, sys.otp.onTimePercent, sys.otp.latePercent)}
 
-      <!-- ═══ 2. WORTH WATCHING ═══ -->
-      ${buildWorthWatching(latestDay, trendDays)}
-
-      <!-- ═══ 3. ROUTE SCORECARD ═══ -->
+      <!-- ═══ 2. ROUTE SCORECARD ═══ -->
       ${buildRouteScorecard(latestDay.byRoute)}
+
+      <!-- ═══ 3. MISSED TRIPS ═══ -->
+      ${buildMissedTripsTable(latestDay)}
 
       <!-- ═══ 4. OTP TREND ═══ -->
       ${trendDays.length > 1 ? (() => {

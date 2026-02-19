@@ -7,6 +7,7 @@ import { Clock, Users, Bus, AlertTriangle, ArrowUpDown, Download } from 'lucide-
 import { MetricCard, ChartCard } from '../../Analytics/AnalyticsShared';
 import type { DailySummary } from '../../../utils/performanceDataTypes';
 import { exportWeeklySummary } from './reportExporter';
+import { compareDateStrings, shortDateLabel, toDateSortKey } from '../../../utils/performanceDateUtils';
 
 interface WeeklySummaryReportProps {
     filteredDays: DailySummary[];
@@ -64,7 +65,13 @@ function getPriorPeriodDays(allDays: DailySummary[], startDate: string, endDate:
     const priorStart = new Date(priorEnd.getTime() - durationMs);
     const priorStartStr = priorStart.toISOString().slice(0, 10);
     const priorEndStr = priorEnd.toISOString().slice(0, 10);
-    return allDays.filter(d => d.date >= priorStartStr && d.date <= priorEndStr);
+    const priorStartKey = toDateSortKey(priorStartStr);
+    const priorEndKey = toDateSortKey(priorEndStr);
+    return allDays.filter(d => {
+        const dayKey = toDateSortKey(d.date);
+        if (!Number.isFinite(dayKey)) return false;
+        return dayKey >= priorStartKey && dayKey <= priorEndKey;
+    });
 }
 
 function formatDelta(current: number, prior: number | null, suffix: string = '', invert: boolean = false): string {
@@ -162,12 +169,12 @@ export const WeeklySummaryReport: React.FC<WeeklySummaryReportProps> = ({
     const otpTrend = useMemo(() =>
         filteredDays
             .map(d => ({
-                date: d.date.slice(5),
+                date: shortDateLabel(d.date),
                 fullDate: d.date,
                 otp: d.system.otp.onTimePercent,
                 ridership: d.system.totalRidership,
             }))
-            .sort((a, b) => a.fullDate.localeCompare(b.fullDate)),
+            .sort((a, b) => compareDateStrings(a.fullDate, b.fullDate)),
         [filteredDays]
     );
 

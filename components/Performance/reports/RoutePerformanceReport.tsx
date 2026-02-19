@@ -7,6 +7,7 @@ import { Clock, Users, Bus, AlertTriangle, ArrowUpDown, Filter, Download } from 
 import { MetricCard, ChartCard } from '../../Analytics/AnalyticsShared';
 import type { DailySummary } from '../../../utils/performanceDataTypes';
 import { exportRoutePerformance } from './reportExporter';
+import { compareDateStrings, shortDateLabel } from '../../../utils/performanceDateUtils';
 
 interface RoutePerformanceReportProps {
     filteredDays: DailySummary[];
@@ -150,14 +151,14 @@ export const RoutePerformanceReport: React.FC<RoutePerformanceReportProps> = ({ 
                 const route = d.byRoute.find(r => r.routeId === activeRoute);
                 if (!route) return null;
                 return {
-                    date: d.date.slice(5),
+                    date: shortDateLabel(d.date),
                     fullDate: d.date,
                     otp: route.otp.onTimePercent,
                     ridership: route.ridership,
                 };
             })
             .filter((d): d is NonNullable<typeof d> => d != null)
-            .sort((a, b) => a.fullDate.localeCompare(b.fullDate));
+            .sort((a, b) => compareDateStrings(a.fullDate, b.fullDate));
     }, [filteredDays, activeRoute]);
 
     // Trip table

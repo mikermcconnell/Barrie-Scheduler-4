@@ -6,7 +6,8 @@ export const MetricCard: React.FC<{
     value: string;
     color: 'cyan' | 'indigo' | 'emerald' | 'amber' | 'red';
     subValue?: string;
-}> = ({ icon, label, value, color, subValue }) => {
+    onClick?: () => void;
+}> = ({ icon, label, value, color, subValue, onClick }) => {
     const colors = {
         cyan: 'bg-cyan-50 text-cyan-600',
         indigo: 'bg-indigo-50 text-indigo-600',
@@ -16,7 +17,11 @@ export const MetricCard: React.FC<{
     };
 
     return (
-        <div className="bg-white border border-gray-200 rounded-xl p-4">
+        <div
+            className={`bg-white border border-gray-200 rounded-xl p-4${onClick ? ' cursor-pointer hover:border-cyan-300 hover:shadow-sm transition-all' : ''}`}
+            onClick={onClick}
+            role={onClick ? 'button' : undefined}
+        >
             <div className="flex items-center gap-3 mb-2">
                 <div className={`p-2 rounded-lg ${colors[color]}`}>{icon}</div>
             </div>

@@ -188,6 +188,21 @@ export interface DailySummary {
   byStop: StopMetrics[];
   byTrip: TripMetrics[];
   loadProfiles: RouteLoadProfile[];
+  missedTrips?: {
+    totalScheduled: number;
+    totalMatched: number;
+    totalMissed: number;
+    missedPct: number;
+    byRoute: { routeId: string; count: number; earliestDep: string }[];
+    trips?: {
+      tripId: string;
+      routeId: string;
+      departure: string;
+      headsign: string;
+      blockId: string;
+      serviceId: string;
+    }[];
+  };
   dataQuality: DataQuality;
   schemaVersion: number;
 }

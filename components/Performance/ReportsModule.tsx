@@ -5,6 +5,7 @@ import { DateRangePicker, type DateRangeSelection } from './reports/DateRangePic
 import { WeeklySummaryReport } from './reports/WeeklySummaryReport';
 import { RoutePerformanceReport } from './reports/RoutePerformanceReport';
 import { AIQueryPanel } from './reports/AIQueryPanel';
+import { compareDateStrings, normalizeToISODate, toDateSortKey } from '../../utils/performanceDateUtils';
 
 interface ReportsModuleProps {
     data: PerformanceDataSummary;
@@ -22,7 +23,11 @@ export const ReportsModule: React.FC<ReportsModuleProps> = ({ data }) => {
     const [activePanel, setActivePanel] = useState<ReportPanel>('summary');
 
     const availableDates = useMemo(
-        () => [...new Set(data.dailySummaries.map(d => d.date))].sort(),
+        () => [...new Set(
+            data.dailySummaries
+                .map(d => normalizeToISODate(d.date) ?? d.date)
+                .filter(Boolean)
+        )].sort(compareDateStrings),
         [data]
     );
 
@@ -37,8 +42,15 @@ export const ReportsModule: React.FC<ReportsModuleProps> = ({ data }) => {
     }, []);
 
     const filteredDays = useMemo((): DailySummary[] => {
+        const startKey = toDateSortKey(dateRange.startDate);
+        const endKey = toDateSortKey(dateRange.endDate);
         return data.dailySummaries.filter(d => {
-            if (d.date < dateRange.startDate || d.date > dateRange.endDate) return false;
+            const dayKey = toDateSortKey(d.date);
+            if (Number.isFinite(dayKey) && Number.isFinite(startKey) && Number.isFinite(endKey)) {
+                if (dayKey < startKey || dayKey > endKey) return false;
+            } else {
+                if (d.date < dateRange.startDate || d.date > dateRange.endDate) return false;
+            }
             if (dateRange.dayTypeFilter !== 'all' && d.dayType !== dateRange.dayTypeFilter) return false;
             return true;
         });

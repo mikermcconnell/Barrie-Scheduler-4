@@ -1,6 +1,7 @@
 import React, { useMemo, useState, useCallback } from 'react';
 import { Calendar } from 'lucide-react';
 import type { DayType } from '../../../utils/performanceDataTypes';
+import { compareDateStrings } from '../../../utils/performanceDateUtils';
 
 export interface DateRangeSelection {
     startDate: string;
@@ -70,7 +71,7 @@ function detectPreset(start: string, end: string, sortedDates: string[]): Preset
 }
 
 export const DateRangePicker: React.FC<DateRangePickerProps> = ({ availableDates, value, onChange }) => {
-    const sortedDates = useMemo(() => [...availableDates].sort(), [availableDates]);
+    const sortedDates = useMemo(() => [...availableDates].sort(compareDateStrings), [availableDates]);
     const minDate = sortedDates[0] ?? '';
     const maxDate = sortedDates[sortedDates.length - 1] ?? '';
 
