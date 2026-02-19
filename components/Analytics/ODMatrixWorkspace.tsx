@@ -12,7 +12,6 @@ import {
     LayoutDashboard,
     BarChart3,
     Trophy,
-    Map,
     Grid3X3,
     Clock,
 } from 'lucide-react';
@@ -20,13 +19,13 @@ import type { ODMatrixDataSummary, GeocodeCache } from '../../utils/od-matrix/od
 import { ODOverviewPanel } from './ODOverviewPanel';
 import { ODTopPairsModule } from './ODTopPairsModule';
 import { ODStationRankingsModule } from './ODStationRankingsModule';
-import { ODFlowMapModule } from './ODFlowMapModule';
 import { ODHeatmapGridModule } from './ODHeatmapGridModule';
 
 interface ODMatrixWorkspaceProps {
     data: ODMatrixDataSummary;
     geocodeCache: GeocodeCache | null;
     onReimport: () => void;
+    onFixCoordinates: () => void;
     onBack: () => void;
 }
 
@@ -41,7 +40,6 @@ const TAB_CONFIG: TabConfig[] = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard, enabled: true },
     { id: 'top-pairs', label: 'Top Pairs', icon: BarChart3, enabled: true },
     { id: 'rankings', label: 'Station Rankings', icon: Trophy, enabled: true },
-    { id: 'flow-map', label: 'Flow Map', icon: Map, enabled: true },
     { id: 'heatmap', label: 'Heatmap Grid', icon: Grid3X3, enabled: true },
 ];
 
@@ -49,6 +47,7 @@ export const ODMatrixWorkspace: React.FC<ODMatrixWorkspaceProps> = ({
     data,
     geocodeCache,
     onReimport,
+    onFixCoordinates,
     onBack,
 }) => {
     const [activeTab, setActiveTab] = useState('overview');
@@ -85,21 +84,13 @@ export const ODMatrixWorkspace: React.FC<ODMatrixWorkspaceProps> = ({
                         data={data}
                         geocodeCache={geocodeCache}
                         onNavigate={handleNavigate}
-                        onReimport={onReimport}
+                        onFixCoordinates={onFixCoordinates}
                     />
                 );
             case 'top-pairs':
                 return <ODTopPairsModule data={data} />;
             case 'rankings':
                 return <ODStationRankingsModule data={data} />;
-            case 'flow-map':
-                return (
-                    <ODFlowMapModule
-                        data={data}
-                        geocodeCache={geocodeCache}
-                        onFixMissingCoordinates={onReimport}
-                    />
-                );
             case 'heatmap':
                 return <ODHeatmapGridModule data={data} />;
             default:
@@ -119,7 +110,7 @@ export const ODMatrixWorkspace: React.FC<ODMatrixWorkspaceProps> = ({
                         <ArrowLeft size={20} />
                     </button>
                     <div>
-                        <h2 className="text-xl font-bold text-gray-900">OD Matrix Analysis</h2>
+                        <h2 className="text-xl font-bold text-gray-900">Ontario Northland</h2>
                         <p className="text-sm text-gray-500">
                             {data.stationCount} stations &middot; {data.totalJourneys.toLocaleString()} journeys
                             {data.metadata.dateRange && ` &middot; ${data.metadata.dateRange}`}

@@ -15,6 +15,7 @@ import { TransitAppImport } from './TransitAppImport';
 import { TransitAppWorkspace } from './TransitAppWorkspace';
 import { ODMatrixImport } from './ODMatrixImport';
 import { ODMatrixWorkspace } from './ODMatrixWorkspace';
+import { ODCoordinateEditor } from './ODCoordinateEditor';
 import { TeamManagement } from '../TeamManagement';
 import type { TransitAppDataSummary } from '../../utils/transit-app/transitAppTypes';
 import type { ODMatrixDataSummary, GeocodeCache } from '../../utils/od-matrix/odMatrixTypes';
@@ -60,6 +61,7 @@ type AnalyticsView =
     | 'import'
     | 'transit-data'
     | 'od-import'
+    | 'od-fix-coords'
     | 'od-workspace';
 
 export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose }) => {
@@ -170,6 +172,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
     };
 
     const handleODImportComplete = () => loadODData({ markAsLoaded: true });
+    const handleODFixCoordinates = () => setView('od-fix-coords');
 
     // No team guard: show direct team setup instead of a dead-end message.
     if (!team) {
@@ -247,10 +250,25 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
                         data={odData}
                         geocodeCache={odGeocodeCache}
                         onReimport={() => setView('od-import')}
+                        onFixCoordinates={handleODFixCoordinates}
                         onBack={() => setView('dashboard')}
                     />
                 </div>
             </div>
+        );
+    }
+
+    // OD coordinate editor (no file re-upload)
+    if (view === 'od-fix-coords' && user && odData) {
+        return (
+            <ODCoordinateEditor
+                teamId={team.id}
+                userId={user.uid}
+                data={odData}
+                geocodeCache={odGeocodeCache}
+                onComplete={() => loadODData({ markAsLoaded: true })}
+                onCancel={() => setView('od-workspace')}
+            />
         );
     }
 
@@ -275,7 +293,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
                     <AnalyticsCard
                         color="violet"
                         icon={<Network size={20} />}
-                        title="OD Matrix"
+                        title="Ontario Northland"
                         description="Import origin-destination ridership matrices, visualize travel patterns, and analyze station connectivity."
                         hasData={hasODData}
                         onClick={handleODMatrixClick}

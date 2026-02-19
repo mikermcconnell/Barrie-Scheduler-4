@@ -113,11 +113,21 @@ function buildMissedTripsTable(latestDay: DailySummary): string {
   const mt = latestDay.missedTrips;
   if (!mt || mt.totalScheduled <= 0) return '';
 
+  const departureSortMinutes = (time: string): number => {
+    const [hRaw, mRaw] = time.split(':');
+    const h = Number.parseInt(hRaw || '0', 10);
+    const m = Number.parseInt(mRaw || '0', 10);
+    if (!Number.isFinite(h) || !Number.isFinite(m)) return Number.MAX_SAFE_INTEGER;
+    const base = (h * 60) + m;
+    // Treat post-midnight through 03:00 as late service (next-day ordering).
+    return base <= 180 ? base + (24 * 60) : base;
+  };
+
   const trips = [...(mt.trips || [])].sort((a, b) => {
+    const depCmp = departureSortMinutes(a.departure) - departureSortMinutes(b.departure);
+    if (depCmp !== 0) return depCmp;
     const routeCmp = a.routeId.localeCompare(b.routeId, undefined, { numeric: true });
     if (routeCmp !== 0) return routeCmp;
-    const depCmp = a.departure.localeCompare(b.departure);
-    if (depCmp !== 0) return depCmp;
     return a.tripId.localeCompare(b.tripId);
   });
 
@@ -128,8 +138,6 @@ function buildMissedTripsTable(latestDay: DailySummary): string {
       <tr style="background:${bg};">
         <td style="padding:6px 10px;font-size:12px;font-weight:700;color:#374151;border-bottom:1px solid #f3f4f6;">${t.routeId}</td>
         <td style="padding:6px 10px;font-size:12px;text-align:right;color:#374151;border-bottom:1px solid #f3f4f6;">${t.departure}</td>
-        <td style="padding:6px 10px;font-size:12px;color:#374151;border-bottom:1px solid #f3f4f6;">${t.tripId}</td>
-        <td style="padding:6px 10px;font-size:12px;text-align:right;color:#6b7280;border-bottom:1px solid #f3f4f6;">${t.blockId || '—'}</td>
       </tr>`;
     }).join('');
 
@@ -140,8 +148,6 @@ function buildMissedTripsTable(latestDay: DailySummary): string {
       <tr style="background:#f9fafb;">
         <th style="padding:6px 10px;text-align:left;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Route</th>
         <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Departure</th>
-        <th style="padding:6px 10px;text-align:left;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Trip ID</th>
-        <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Block</th>
       </tr>
       ${rows}
     </table>`;

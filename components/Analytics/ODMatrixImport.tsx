@@ -16,10 +16,16 @@ import {
     X,
     AlertTriangle,
     MapPin,
+    ExternalLink,
 } from 'lucide-react';
 import { parseODMatrixFromExcel } from '../../utils/od-matrix/odMatrixParser';
 import { geocodeStations, applyGeocodesToStations, isWithinCanada } from '../../utils/od-matrix/odMatrixGeocoder';
 import { saveODMatrixData, saveGeocodeCache, loadGeocodeCache } from '../../utils/od-matrix/odMatrixService';
+import {
+    parseLatLonInput,
+    parseManualCoordinateEntry,
+    buildGoogleMapsSearchUrl,
+} from '../../utils/od-matrix/coordinateParsing';
 import type { ODMatrixParseResult, ODMatrixDataSummary, ODStation, GeocodeCache } from '../../utils/od-matrix/odMatrixTypes';
 
 function formatError(prefix: string, err: unknown): string {
@@ -50,6 +56,38 @@ interface PendingGeocodeResult {
     geocoded: number;
     cached: number;
     failed: string[];
+}
+
+interface ParseFeedback {
+    state: 'empty' | 'valid' | 'invalid' | 'outside';
+    message: string;
+}
+
+function getParseFeedback(entry?: { lat: string; lon: string }): ParseFeedback {
+    if (!entry) return { state: 'empty', message: '' };
+
+    const hasInput = !!entry.lat.trim() || !!entry.lon.trim();
+    if (!hasInput) return { state: 'empty', message: '' };
+
+    const parsed = parseManualCoordinateEntry(entry);
+    if (!parsed) {
+        return {
+            state: 'invalid',
+            message: 'Could not parse coordinates yet. Use decimal, Google Maps coordinate text, or a full Google Maps URL.',
+        };
+    }
+
+    if (!isWithinCanada(parsed.lat, parsed.lon)) {
+        return {
+            state: 'outside',
+            message: `Parsed as ${parsed.lat.toFixed(6)}, ${parsed.lon.toFixed(6)} but outside Canada (will not be saved).`,
+        };
+    }
+
+    return {
+        state: 'valid',
+        message: `Parsed successfully: ${parsed.lat.toFixed(6)}, ${parsed.lon.toFixed(6)}`,
+    };
 }
 
 export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
@@ -137,32 +175,6 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
     const listMissingGeocodes = (stations: ODStation[]): string[] => stations
         .filter(station => !station.geocode)
         .map(station => station.name);
-
-    const parseCoordinate = (value: string): number | null => {
-        const parsed = Number(value.trim());
-        return Number.isFinite(parsed) ? parsed : null;
-    };
-
-    const parseLatLonPair = (value: string): { lat: number; lon: number } | null => {
-        const normalized = value.trim();
-        if (!normalized) return null;
-
-        const parts = normalized
-            .split(/[,\s]+/)
-            .map(part => part.trim())
-            .filter(Boolean);
-
-        if (parts.length !== 2) return null;
-
-        const lat = Number(parts[0]);
-        const lon = Number(parts[1]);
-        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
-
-        return { lat, lon };
-    };
-
-    const isValidLatitude = (value: number): boolean => value >= -90 && value <= 90;
-    const isValidLongitude = (value: number): boolean => value >= -180 && value <= 180;
 
     const handleStartGeocoding = async () => {
         if (!parseResult) return;
@@ -266,13 +278,13 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
         field: 'lat' | 'lon',
         value: string
     ) => {
-        const maybePair = parseLatLonPair(value);
+        const maybePair = parseLatLonInput(value);
         if (maybePair) {
             setManualCoords(prev => ({
                 ...prev,
                 [stationName]: {
-                    lat: String(maybePair.lat),
-                    lon: String(maybePair.lon),
+                    lat: maybePair.lat.toFixed(6),
+                    lon: maybePair.lon.toFixed(6),
                 },
             }));
             return;
@@ -304,19 +316,18 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
             pendingGeocode.failed.forEach((stationName) => {
                 const entry = manualCoords[stationName];
                 if (!entry) return;
+                const hasInput = !!entry.lat.trim() || !!entry.lon.trim();
+                if (!hasInput) return;
 
-                const lat = parseCoordinate(entry.lat);
-                const lon = parseCoordinate(entry.lon);
-                if (lat == null || lon == null) return;
-                if (!isValidLatitude(lat) || !isValidLongitude(lon)) return;
-                if (!isWithinCanada(lat, lon)) {
+                const parsed = parseManualCoordinateEntry(entry);
+                if (!parsed || !isWithinCanada(parsed.lat, parsed.lon)) {
                     outsideCanada.push(stationName);
                     return;
                 }
 
                 nextCache.stations[stationName] = {
-                    lat,
-                    lon,
+                    lat: parsed.lat,
+                    lon: parsed.lon,
                     displayName: `${stationName} (manual)`,
                     source: 'manual',
                     confidence: 'high',
@@ -381,7 +392,7 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
     if (phase === 'select') {
         return (
             <div className="max-w-2xl mx-auto">
-                <PhaseHeader title="Import OD Matrix" subtitle="Upload an Excel origin-destination matrix file" />
+                <PhaseHeader title="Import Ontario Northland" subtitle="Upload an Excel origin-destination matrix file" />
                 {errorBanner}
 
                 <div
@@ -579,32 +590,61 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
 
                 <div className="bg-white border border-gray-200 rounded-xl p-4 mb-4">
                     <p className="text-xs text-gray-500 mb-3">
-                        Tip: paste as <span className="font-mono">lat, lon</span> (example <span className="font-mono">44.3890, -79.6902</span>) into either field.
+                        Tip: accepts decimal coordinates, Google Maps coordinate text, or full Google Maps URL in either field.
+                    </p>
+                    <p className="text-xs text-gray-500 mb-3">
+                        Example (Pearson): <span className="font-mono">43°40&apos;56.3&quot;N 79°37&apos;48.8&quot;W</span>
                     </p>
                     <div className="max-h-96 overflow-y-auto pr-1 space-y-3">
-                        {pendingGeocode.failed.map((stationName) => (
+                        {pendingGeocode.failed.map((stationName) => {
+                            const parseFeedback = getParseFeedback(manualCoords[stationName]);
+                            return (
                             <div key={stationName} className="border border-gray-100 rounded-lg p-3">
-                                <p className="text-sm font-medium text-gray-800 mb-2">{stationName}</p>
+                                <div className="mb-2 flex items-center justify-between gap-2">
+                                    <p className="text-sm font-medium text-gray-800">{stationName}</p>
+                                    <a
+                                        href={buildGoogleMapsSearchUrl(stationName)}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="inline-flex items-center gap-1 text-xs text-violet-700 hover:text-violet-900 underline"
+                                    >
+                                        Find in Google Maps <ExternalLink size={12} />
+                                    </a>
+                                </div>
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                                     <input
                                         type="text"
-                                        inputMode="decimal"
+                                        inputMode="text"
                                         value={manualCoords[stationName]?.lat || ''}
                                         onChange={(e) => handleManualCoordChange(stationName, 'lat', e.target.value)}
-                                        placeholder="Latitude (-90 to 90) or lat, lon"
+                                        placeholder="Latitude or paste lat, lon / URL"
                                         className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
                                     />
                                     <input
                                         type="text"
-                                        inputMode="decimal"
+                                        inputMode="text"
                                         value={manualCoords[stationName]?.lon || ''}
                                         onChange={(e) => handleManualCoordChange(stationName, 'lon', e.target.value)}
-                                        placeholder="Longitude (-180 to 180)"
+                                        placeholder="Longitude or paste Google Maps format"
                                         className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
                                     />
                                 </div>
+                                {parseFeedback.state !== 'empty' && (
+                                    <p
+                                        className={`mt-2 text-xs ${
+                                            parseFeedback.state === 'valid'
+                                                ? 'text-emerald-700'
+                                                : parseFeedback.state === 'outside'
+                                                    ? 'text-amber-700'
+                                                    : 'text-red-700'
+                                        }`}
+                                    >
+                                        {parseFeedback.message}
+                                    </p>
+                                )}
                             </div>
-                        ))}
+                            );
+                        })}
                     </div>
                 </div>
 

@@ -141,6 +141,39 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
         ? (displayedTrips / data.totalJourneys) * 100
         : 0;
     const maxPairs = Math.max(1, Math.min(500, geocodedPairs.length));
+    const pairsMeetingThreshold = useMemo(
+        () => geocodedPairs.filter(pair => pair.journeys >= minJourneys).length,
+        [geocodedPairs, minJourneys]
+    );
+    const isolatedSummaryPairs = useMemo(() => {
+        if (!isolatedStation) return [] as Array<{
+            rank: number;
+            direction: 'Outbound' | 'Inbound';
+            counterpart: string;
+            journeys: number;
+            stopShare: number;
+        }>;
+
+        const pairs = geocodedPairs
+            .filter(pair => (
+                pair.journeys >= minJourneys
+                && (pair.origin === isolatedStation || pair.destination === isolatedStation)
+            ))
+            .sort((a, b) => b.journeys - a.journeys);
+
+        const stopTrips = pairs.reduce((sum, pair) => sum + pair.journeys, 0);
+
+        return pairs.map((pair, index) => {
+            const outbound = pair.origin === isolatedStation;
+            return {
+                rank: index + 1,
+                direction: outbound ? 'Outbound' : 'Inbound',
+                counterpart: outbound ? pair.destination : pair.origin,
+                journeys: pair.journeys,
+                stopShare: stopTrips > 0 ? (pair.journeys / stopTrips) * 100 : 0,
+            };
+        });
+    }, [isolatedStation, geocodedPairs, minJourneys]);
 
     useEffect(() => {
         if (topN > maxPairs) setTopN(maxPairs);
@@ -161,6 +194,14 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
             attribution: '&copy; OpenStreetMap contributors',
             maxZoom: 18,
         }).addTo(mapRef.current);
+
+        // Keep OD layer ordering stable: lines below stop markers.
+        const linesPane = mapRef.current.createPane('od-lines');
+        linesPane.style.zIndex = '420';
+        const stopsPane = mapRef.current.createPane('od-stops');
+        stopsPane.style.zIndex = '430';
+        const rankLabelsPane = mapRef.current.createPane('od-rank-labels');
+        rankLabelsPane.style.zIndex = '440';
 
         layersRef.current = L.layerGroup().addTo(mapRef.current);
 
@@ -205,6 +246,7 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
                     : '#ef4444';
 
             const marker = L.circleMarker([geo.lat, geo.lon], {
+                pane: 'od-stops',
                 radius,
                 fillColor,
                 fillOpacity: isIsolated ? 0.95 : 0.8,
@@ -240,6 +282,7 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
             );
 
             const line = L.polyline(arc, {
+                pane: 'od-lines',
                 color: rankColor(rank - 1),
                 weight: rankWeight(rank - 1),
                 opacity: 0.78,
@@ -258,6 +301,7 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
             if (rank <= labelCap) {
                 const mid = arc[Math.floor(arc.length * 0.55)] || arc[Math.floor(arc.length / 2)];
                 const label = L.marker(mid, {
+                    pane: 'od-rank-labels',
                     icon: L.divIcon({
                         className: '',
                         html: `<div style="
@@ -389,13 +433,22 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
                 <div className="mt-2 text-xs text-gray-500">
                     {displayedPairs.length.toLocaleString()} pairs · {displayedTrips.toLocaleString()} trips · {displayedPct.toFixed(1)}% of total
                     {isolatedStation && (
-                        <button
-                            onClick={() => setIsolatedStation(null)}
-                            className="ml-2 text-violet-600 hover:text-violet-800 underline"
-                        >
-                            showing: {isolatedStation} (clear)
-                        </button>
+                        <span className="ml-2 inline-flex items-center gap-2">
+                            <span className="px-2 py-0.5 rounded-md bg-violet-100 border border-violet-200 text-violet-800 font-medium">
+                                Filtered stop: {isolatedStation}
+                            </span>
+                            <button
+                                onClick={() => setIsolatedStation(null)}
+                                className="px-2.5 py-0.5 rounded-md bg-violet-700 text-white font-semibold hover:bg-violet-800"
+                            >
+                                Clear stop filter
+                            </button>
+                        </span>
                     )}
+                </div>
+                <div className="mt-1 text-xs text-gray-500">
+                    Threshold = minimum trips required for an OD pair to appear on the map/table.
+                    Current threshold ({minJourneys.toLocaleString()}) keeps {pairsMeetingThreshold.toLocaleString()} of {geocodedPairs.length.toLocaleString()} geocoded pairs.
                 </div>
             </div>
 
@@ -413,11 +466,11 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
                     )}
                 >
                     {outsideCanadaStations.length > 0 && (
-                        <div className="mb-3 px-4 py-3 border border-red-200 bg-red-50 text-red-700 text-sm rounded-lg">
-                            Out-of-Canada coordinates excluded: {outsideCanadaStations.slice(0, 8).join(', ')}
-                            {outsideCanadaStations.length > 8 ? ', ...' : ''}. Re-import and enter manual coordinates in Canada.
-                        </div>
-                    )}
+                    <div className="mb-3 px-4 py-3 border border-red-200 bg-red-50 text-red-700 text-sm rounded-lg">
+                        Out-of-Canada coordinates excluded: {outsideCanadaStations.slice(0, 8).join(', ')}
+                        {outsideCanadaStations.length > 8 ? ', ...' : ''}. Use Fix coordinates to correct them.
+                    </div>
+                )}
 
                     {ungeocodedCount > 0 && (
                         <div className="mb-3 px-4 py-2.5 border border-amber-200 bg-amber-50 text-amber-700 text-sm rounded-lg">
@@ -439,41 +492,85 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
                         </div>
                     )}
 
-                    {viewMode === 'map' ? (
+                    <div
+                        className={viewMode === 'map' ? 'block' : 'hidden'}
+                        aria-hidden={viewMode !== 'map'}
+                    >
                         <div
                             ref={mapContainerRef}
                             className="rounded-lg overflow-hidden border border-gray-200"
                             style={{ height: isFullscreen ? 'calc(100vh - 220px)' : 560 }}
                         />
-                    ) : (
-                        <div
-                            className="overflow-auto border border-gray-200 rounded-lg"
-                            style={{ maxHeight: isFullscreen ? 'calc(100vh - 220px)' : 560 }}
-                        >
-                            <table className="w-full text-xs">
-                                <thead className="sticky top-0 bg-gray-50 z-10">
-                                    <tr className="text-gray-500 uppercase tracking-wider text-[10px]">
-                                        <th className="px-3 py-2 text-left w-10">#</th>
-                                        <th className="px-3 py-2 text-left">Origin</th>
-                                        <th className="px-3 py-2 text-left">Destination</th>
-                                        <th className="px-3 py-2 text-right">Trips</th>
-                                        <th className="px-3 py-2 text-right">% Total</th>
+                    </div>
+
+                    <div
+                        className={viewMode === 'table' ? 'overflow-auto border border-gray-200 rounded-lg' : 'hidden'}
+                        aria-hidden={viewMode !== 'table'}
+                        style={viewMode === 'table' ? { maxHeight: isFullscreen ? 'calc(100vh - 220px)' : 560 } : undefined}
+                    >
+                        <table className="w-full text-xs">
+                            <thead className="sticky top-0 bg-gray-50 z-10">
+                                <tr className="text-gray-500 uppercase tracking-wider text-[10px]">
+                                    <th className="px-3 py-2 text-left w-10">#</th>
+                                    <th className="px-3 py-2 text-left">Origin</th>
+                                    <th className="px-3 py-2 text-left">Destination</th>
+                                    <th className="px-3 py-2 text-right">Trips</th>
+                                    <th className="px-3 py-2 text-right">% Total</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {displayedPairs.map((pair, index) => (
+                                    <tr key={`${pair.origin}|${pair.destination}|${index}`} className="border-t border-gray-100 hover:bg-gray-50">
+                                        <td className="px-3 py-1.5 text-gray-400">{index + 1}</td>
+                                        <td className="px-3 py-1.5 text-gray-700">{pair.origin}</td>
+                                        <td className="px-3 py-1.5 text-gray-700">{pair.destination}</td>
+                                        <td className="px-3 py-1.5 text-right font-medium text-gray-900">{pair.journeys.toLocaleString()}</td>
+                                        <td className="px-3 py-1.5 text-right text-gray-500">
+                                            {data.totalJourneys > 0 ? ((pair.journeys / data.totalJourneys) * 100).toFixed(2) : '0.00'}%
+                                        </td>
                                     </tr>
-                                </thead>
-                                <tbody>
-                                    {displayedPairs.map((pair, index) => (
-                                        <tr key={`${pair.origin}|${pair.destination}|${index}`} className="border-t border-gray-100 hover:bg-gray-50">
-                                            <td className="px-3 py-1.5 text-gray-400">{index + 1}</td>
-                                            <td className="px-3 py-1.5 text-gray-700">{pair.origin}</td>
-                                            <td className="px-3 py-1.5 text-gray-700">{pair.destination}</td>
-                                            <td className="px-3 py-1.5 text-right font-medium text-gray-900">{pair.journeys.toLocaleString()}</td>
-                                            <td className="px-3 py-1.5 text-right text-gray-500">
-                                                {data.totalJourneys > 0 ? ((pair.journeys / data.totalJourneys) * 100).toFixed(2) : '0.00'}%
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    {viewMode === 'map' && isolatedStation && (
+                        <div className="mt-3 border border-gray-200 rounded-lg overflow-hidden">
+                            <div className="px-3 py-2 bg-gray-50 border-b border-gray-200 text-xs text-gray-600">
+                                Stop OD summary for <span className="font-semibold text-gray-800">{isolatedStation}</span> · {isolatedSummaryPairs.length} pair{isolatedSummaryPairs.length === 1 ? '' : 's'} (min journeys filter applied)
+                            </div>
+                            <div className="overflow-auto" style={{ maxHeight: 260 }}>
+                                {isolatedSummaryPairs.length === 0 ? (
+                                    <div className="px-3 py-4 text-sm text-gray-500">No pairs match the current threshold for this stop.</div>
+                                ) : (
+                                    <table className="w-full text-xs">
+                                        <thead className="sticky top-0 bg-gray-50 z-10">
+                                            <tr className="text-gray-500 uppercase tracking-wider text-[10px]">
+                                                <th className="px-3 py-2 text-left w-10">#</th>
+                                                <th className="px-3 py-2 text-left">Direction</th>
+                                                <th className="px-3 py-2 text-left">Counterpart Stop</th>
+                                                <th className="px-3 py-2 text-right">Trips</th>
+                                                <th className="px-3 py-2 text-right">% of Stop Total</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {isolatedSummaryPairs.map((row) => (
+                                                <tr key={`${isolatedStation}|${row.counterpart}|${row.rank}`} className="border-t border-gray-100 hover:bg-gray-50">
+                                                    <td className="px-3 py-1.5 text-gray-400">{row.rank}</td>
+                                                    <td className="px-3 py-1.5">
+                                                        <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold ${row.direction === 'Outbound' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
+                                                            {row.direction}
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-3 py-1.5 text-gray-700">{row.counterpart}</td>
+                                                    <td className="px-3 py-1.5 text-right font-medium text-gray-900">{row.journeys.toLocaleString()}</td>
+                                                    <td className="px-3 py-1.5 text-right text-gray-600">{row.stopShare.toFixed(2)}%</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                )}
+                            </div>
                         </div>
                     )}
 
