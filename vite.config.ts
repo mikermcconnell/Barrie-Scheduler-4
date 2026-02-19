@@ -4,6 +4,13 @@ import react from '@vitejs/plugin-react';
 import { optimizeImplementation } from './api/optimize';
 import { performanceQueryHandler } from './api/performance-query';
 import AdmZip from 'adm-zip';
+import {
+  authenticateFirebaseRequest,
+  checkRateLimit,
+  getRequestIp,
+  validateDownloadUrl,
+  validateGtfsUrl,
+} from './api/security';
 
 /**
  * Vite Configuration
@@ -81,6 +88,24 @@ export default defineConfig(({ mode }) => {
 
         if (req.url === '/api/optimize' && req.method === 'POST') {
           try {
+            const authedUser = await authenticateFirebaseRequest(req as any);
+            if (!authedUser) {
+              res.statusCode = 401;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ error: 'Authentication required' }));
+              return;
+            }
+
+            const requestIp = getRequestIp(req as any);
+            const maxRequestsPerHour = Number(env.OPTIMIZE_RATE_LIMIT_PER_HOUR || 20);
+            const rateLimitKey = `optimize:${authedUser.uid}:${requestIp}`;
+            if (!checkRateLimit(rateLimitKey, maxRequestsPerHour, 60 * 60 * 1000)) {
+              res.statusCode = 429;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ error: 'Rate limit exceeded. Please try again later.' }));
+              return;
+            }
+
             const buffers = [];
             for await (const chunk of req) {
               buffers.push(chunk);
@@ -160,9 +185,28 @@ export default defineConfig(({ mode }) => {
           try {
             const urlParams = new URL(req.url, 'http://localhost').searchParams;
             const feedUrl = urlParams.get('url') || 'https://www.myridebarrie.ca/gtfs/google_transit.zip';
+            const urlValidation = validateGtfsUrl(feedUrl);
 
-            console.log('🚌 Fetching GTFS feed from:', feedUrl);
-            const gtfsResponse = await fetch(feedUrl, {
+            if (!urlValidation.ok) {
+              const errorReason = 'reason' in urlValidation ? urlValidation.reason : 'Invalid GTFS URL';
+              res.statusCode = 400;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ error: errorReason }));
+              return;
+            }
+
+            const requestIp = getRequestIp(req as any);
+            const rateLimitKey = `gtfs:${requestIp}`;
+            if (!checkRateLimit(rateLimitKey, 120, 60 * 60 * 1000)) {
+              res.statusCode = 429;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ error: 'Rate limit exceeded. Please try again later.' }));
+              return;
+            }
+
+            const validatedFeedUrl = urlValidation.parsedUrl.toString();
+            console.log('🚌 Fetching GTFS feed from:', validatedFeedUrl);
+            const gtfsResponse = await fetch(validatedFeedUrl, {
               headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Barrie Transit Scheduler',
                 'Accept': 'application/zip, application/octet-stream, */*',
@@ -272,6 +316,15 @@ export default defineConfig(({ mode }) => {
 
         if (req.url === '/api/download-file' && req.method === 'POST') {
           try {
+            const requestIp = getRequestIp(req as any);
+            const rateLimitKey = `download-proxy:${requestIp}`;
+            if (!checkRateLimit(rateLimitKey, 120, 60 * 60 * 1000)) {
+              res.statusCode = 429;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ error: 'Rate limit exceeded. Please try again later.' }));
+              return;
+            }
+
             const buffers = [];
             for await (const chunk of req) {
               buffers.push(chunk);
@@ -287,9 +340,17 @@ export default defineConfig(({ mode }) => {
             if (!downloadUrl) {
               throw new Error('Missing downloadUrl');
             }
+            const urlValidation = validateDownloadUrl(downloadUrl);
+            if (!urlValidation.ok) {
+              const errorReason = 'reason' in urlValidation ? urlValidation.reason : 'Invalid download URL';
+              res.statusCode = 400;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ error: errorReason }));
+              return;
+            }
 
-            console.log('🔄 Proxying file download:', downloadUrl, 'Format:', format);
-            const response = await fetch(downloadUrl);
+            console.log('🔄 Proxying file download:', urlValidation.parsedUrl.toString(), 'Format:', format);
+            const response = await fetch(urlValidation.parsedUrl.toString());
 
             if (!response.ok) {
               throw new Error(`Failed to fetch: ${response.status} ${response.statusText}`);

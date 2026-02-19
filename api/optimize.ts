@@ -1,5 +1,10 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai';
+import {
+    authenticateFirebaseRequest,
+    checkRateLimit,
+    getRequestIp,
+} from './security';
 
 /**
  * ==========================================
@@ -283,6 +288,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(405).json({ error: 'Method not allowed. Use POST.' });
     }
 
+    const authedUser = await authenticateFirebaseRequest(req);
+    if (!authedUser) {
+        return res.status(401).json({ error: 'Authentication required' });
+    }
+
+    const requestIp = getRequestIp(req);
+    const maxRequestsPerHour = Number(process.env.OPTIMIZE_RATE_LIMIT_PER_HOUR || 20);
+    const rateLimitKey = `optimize:${authedUser.uid}:${requestIp}`;
+    const allowed = checkRateLimit(rateLimitKey, maxRequestsPerHour, 60 * 60 * 1000);
+    if (!allowed) {
+        return res.status(429).json({ error: 'Rate limit exceeded. Please try again later.' });
+    }
+
     try {
         const apiKey = process.env.GEMINI_API_KEY;
         if (!apiKey) {
@@ -307,8 +325,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         console.error('❌ CRITICAL SERVER ERROR:', error);
         return res.status(500).json({
             error: 'Internal Server Error',
-            message: error.message,
-            stack: error.stack
+            message: error?.message || 'Unknown server error',
         });
     }
 }

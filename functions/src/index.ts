@@ -165,15 +165,6 @@ export const ingestPerformanceData = onRequest(
       await file.save(jsonStr, { contentType: 'application/json' });
       console.log(`Saved ${(jsonStr.length / 1024 / 1024).toFixed(2)} MB to ${storagePath}`);
 
-      // --- Clean up old storage file ---
-      if (oldStoragePath) {
-        try {
-          await getBucket().file(oldStoragePath).delete();
-        } catch {
-          // Old file may already be gone
-        }
-      }
-
       // --- Save metadata to Firestore ---
       await metadataRef.set({
         importedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -183,6 +174,15 @@ export const ingestPerformanceData = onRequest(
         dayCount: summary.metadata.dayCount,
         totalRecords: summary.metadata.totalRecords,
       });
+
+      // --- Clean up old storage file after metadata update succeeds ---
+      if (oldStoragePath && oldStoragePath !== storagePath) {
+        try {
+          await getBucket().file(oldStoragePath).delete();
+        } catch {
+          // Old file may already be gone
+        }
+      }
 
       console.log('Ingest complete');
 

@@ -4,6 +4,7 @@ import {
   BREAK_DURATION_SLOTS,
   BREAK_THRESHOLD_HOURS
 } from "../demandConstants";
+import { auth } from "../firebase";
 
 /**
  * Calls our secure serverless API to optimize the schedule.
@@ -26,11 +27,18 @@ export const optimizeScheduleWithGemini = async (
 ): Promise<Shift[]> => {
   try {
     console.log(`Calling Gemini Optimization API (Model: gemini-3-pro-preview)... Mode: ${mode}`);
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      throw new Error('Authentication required');
+    }
+
+    const idToken = await currentUser.getIdToken();
 
     const response = await fetch('/api/optimize', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'Authorization': `Bearer ${idToken}`,
       },
       body: JSON.stringify({
         requirements,

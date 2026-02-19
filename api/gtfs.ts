@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import AdmZip from 'adm-zip';
+import { checkRateLimit, getRequestIp, validateGtfsUrl } from './security';
 
 /**
  * GTFS Proxy API
@@ -80,18 +81,51 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(405).json({ error: 'Method not allowed' });
     }
 
-    const url = req.query.url as string || 'https://www.myridebarrie.ca/gtfs/google_transit.zip';
+    const rawUrl = req.query.url;
+    const requestedUrl = (Array.isArray(rawUrl) ? rawUrl[0] : rawUrl) || 'https://www.myridebarrie.ca/gtfs/google_transit.zip';
+    const urlValidation = validateGtfsUrl(requestedUrl);
+    if (!urlValidation.ok) {
+        const errorReason = 'reason' in urlValidation ? urlValidation.reason : 'Invalid GTFS URL';
+        return res.status(400).json({ error: errorReason });
+    }
+
+    const requestIp = getRequestIp(req);
+    const rateKey = `gtfs:${requestIp}`;
+    const allowed = checkRateLimit(rateKey, 120, 60 * 60 * 1000);
+    if (!allowed) {
+        return res.status(429).json({ error: 'Rate limit exceeded. Please try again later.' });
+    }
 
     try {
-        console.log('Fetching GTFS feed from:', url);
+        const feedUrl = urlValidation.parsedUrl.toString();
+        console.log('Fetching GTFS feed from:', feedUrl);
+
+        const abortController = new AbortController();
+        const timeout = setTimeout(() => abortController.abort(), 30_000);
 
         // Fetch the GTFS ZIP
-        const response = await fetch(url);
+        const response = await fetch(feedUrl, {
+            signal: abortController.signal,
+            headers: {
+                'User-Agent': 'OntarioNorthlandScheduler-GTFSProxy',
+                'Accept': 'application/zip, application/octet-stream, */*',
+            },
+        }).finally(() => clearTimeout(timeout));
+
         if (!response.ok) {
             throw new Error(`Failed to fetch GTFS: ${response.status} ${response.statusText}`);
         }
 
+        const declaredLength = Number(response.headers.get('content-length') || 0);
+        const maxBytes = 50 * 1024 * 1024;
+        if (declaredLength > maxBytes) {
+            return res.status(413).json({ error: 'GTFS ZIP is too large' });
+        }
+
         const arrayBuffer = await response.arrayBuffer();
+        if (arrayBuffer.byteLength > maxBytes) {
+            return res.status(413).json({ error: 'GTFS ZIP is too large' });
+        }
         console.log('Downloaded GTFS ZIP, size:', arrayBuffer.byteLength);
 
         // Parse ZIP

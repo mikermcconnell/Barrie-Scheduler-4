@@ -29,6 +29,10 @@ import type { DraftBasedOn, DraftSchedule, SystemDraft } from '../../utils/sched
 import { buildMasterContentFromTables } from '../../utils/schedule/scheduleDraftAdapter';
 import { getAllDrafts, getDraft, deleteDraft } from '../../utils/services/draftService';
 import { getSystemDraft } from '../../utils/services/systemDraftService';
+import {
+    buildOpenDraftEditorState,
+    getRemainingDraftsAfterBulkDelete,
+} from '../../utils/workspaces/fixedRouteDraftState';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 
@@ -152,8 +156,15 @@ export const FixedRouteWorkspace: React.FC = () => {
         try {
             const fullDraft = await getDraft(user.uid, draft.id);
             if (fullDraft?.content) {
-                setEditorInitialContent(fullDraft.content);
-                setEditorBasedOn(fullDraft.basedOn);
+                const nextEditorState = buildOpenDraftEditorState(
+                    fullDraft.id || draft.id,
+                    fullDraft.content,
+                    fullDraft.basedOn
+                );
+                setSiblingDrafts([]);
+                setCurrentEditorDraftId(nextEditorState.currentEditorDraftId);
+                setEditorInitialContent(nextEditorState.initialContent);
+                setEditorBasedOn(nextEditorState.basedOn);
                 setViewMode('editor');
             } else {
                 toast?.error('Error', 'Draft content not found');
@@ -181,25 +192,36 @@ export const FixedRouteWorkspace: React.FC = () => {
     const handleDeleteAllDrafts = async () => {
         if (!user || drafts.length === 0) return;
         setDeletingAll(true);
+
+        const draftsToDelete = [...drafts];
+        const deletedDraftIds = new Set<string>();
         let deleted = 0;
         let failed = 0;
-        for (const draft of drafts) {
-            if (!draft.id) continue;
-            try {
-                await deleteDraft(user.uid, draft.id);
-                deleted++;
-            } catch (error) {
-                console.error(`Failed to delete draft ${draft.id}:`, error);
-                failed++;
+
+        try {
+            for (const draft of draftsToDelete) {
+                if (!draft.id) continue;
+                try {
+                    await deleteDraft(user.uid, draft.id);
+                    deleted++;
+                    deletedDraftIds.add(draft.id);
+                } catch (error) {
+                    console.error(`Failed to delete draft ${draft.id}:`, error);
+                    failed++;
+                }
             }
-        }
-        setDrafts([]);
-        setDeletingAll(false);
-        setDeleteAllConfirm(false);
-        if (failed > 0) {
-            toast?.warning('Partial Delete', `Deleted ${deleted} drafts, ${failed} failed`);
-        } else {
-            toast?.success('All Deleted', `Deleted ${deleted} drafts`);
+
+            setDrafts(prev => getRemainingDraftsAfterBulkDelete(prev, deletedDraftIds));
+
+            if (failed > 0) {
+                await fetchDrafts();
+                toast?.warning('Partial Delete', `Deleted ${deleted} drafts, ${failed} failed`);
+            } else {
+                toast?.success('All Deleted', `Deleted ${deleted} drafts`);
+            }
+        } finally {
+            setDeletingAll(false);
+            setDeleteAllConfirm(false);
         }
     };
 
