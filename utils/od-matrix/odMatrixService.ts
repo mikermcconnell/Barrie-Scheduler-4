@@ -78,7 +78,7 @@ export async function saveODMatrixData(
         importedAt: new Date().toISOString(),
         importedBy: userId,
         fileName: summary.metadata.fileName,
-        dateRange: summary.metadata.dateRange,
+        dateRange: summary.metadata.dateRange || null,
         stationCount: summary.stationCount,
         totalJourneys: summary.totalJourneys,
         storagePath,
