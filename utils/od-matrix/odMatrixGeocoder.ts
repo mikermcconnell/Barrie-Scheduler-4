@@ -10,6 +10,12 @@ import type { GeocodedLocation, GeocodeCache, ODStation } from './odMatrixTypes'
 
 const NOMINATIM_BASE = 'https://nominatim.openstreetmap.org/search';
 const RATE_LIMIT_MS = 1100; // 1.1 seconds between requests
+const ONTARIO_BOUNDS = {
+    minLat: 41.5,
+    maxLat: 57.0,
+    minLon: -95.5,
+    maxLon: -74.0,
+};
 
 interface GeocodeProgress {
     current: number;
@@ -23,6 +29,13 @@ interface GeocodeResult {
     geocoded: number;
     cached: number;
     failed: string[];
+}
+
+export function isWithinOntario(lat: number, lon: number): boolean {
+    return lat >= ONTARIO_BOUNDS.minLat
+        && lat <= ONTARIO_BOUNDS.maxLat
+        && lon >= ONTARIO_BOUNDS.minLon
+        && lon <= ONTARIO_BOUNDS.maxLon;
 }
 
 function delay(ms: number): Promise<void> {
@@ -112,16 +125,20 @@ export async function geocodeStations(
             onProgress?.({ current: i + 1, total: stations.length, stationName: station.name, status });
 
         // Check cache first
-        if (cache.stations[station.name]) {
+        const cachedLocation = cache.stations[station.name];
+        if (cachedLocation && isWithinOntario(cachedLocation.lat, cachedLocation.lon)) {
             cached++;
             report('cached');
             continue;
+        }
+        if (cachedLocation && !isWithinOntario(cachedLocation.lat, cachedLocation.lon)) {
+            delete cache.stations[station.name];
         }
 
         report('geocoding');
         const result = await geocodeStation(station.name);
 
-        if (result) {
+        if (result && isWithinOntario(result.lat, result.lon)) {
             cache.stations[station.name] = result;
             geocoded++;
             report('success');

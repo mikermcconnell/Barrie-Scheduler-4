@@ -18,7 +18,7 @@ import {
     MapPin,
 } from 'lucide-react';
 import { parseODMatrixFromExcel } from '../../utils/od-matrix/odMatrixParser';
-import { geocodeStations, applyGeocodesToStations } from '../../utils/od-matrix/odMatrixGeocoder';
+import { geocodeStations, applyGeocodesToStations, isWithinOntario } from '../../utils/od-matrix/odMatrixGeocoder';
 import { saveODMatrixData, saveGeocodeCache, loadGeocodeCache } from '../../utils/od-matrix/odMatrixService';
 import type { ODMatrixParseResult, ODMatrixDataSummary, ODStation, GeocodeCache } from '../../utils/od-matrix/odMatrixTypes';
 
@@ -143,6 +143,24 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
         return Number.isFinite(parsed) ? parsed : null;
     };
 
+    const parseLatLonPair = (value: string): { lat: number; lon: number } | null => {
+        const normalized = value.trim();
+        if (!normalized) return null;
+
+        const parts = normalized
+            .split(/[,\s]+/)
+            .map(part => part.trim())
+            .filter(Boolean);
+
+        if (parts.length !== 2) return null;
+
+        const lat = Number(parts[0]);
+        const lon = Number(parts[1]);
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+
+        return { lat, lon };
+    };
+
     const isValidLatitude = (value: number): boolean => value >= -90 && value <= 90;
     const isValidLongitude = (value: number): boolean => value >= -180 && value <= 180;
 
@@ -248,6 +266,18 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
         field: 'lat' | 'lon',
         value: string
     ) => {
+        const maybePair = parseLatLonPair(value);
+        if (maybePair) {
+            setManualCoords(prev => ({
+                ...prev,
+                [stationName]: {
+                    lat: String(maybePair.lat),
+                    lon: String(maybePair.lon),
+                },
+            }));
+            return;
+        }
+
         setManualCoords(prev => ({
             ...prev,
             [stationName]: {
@@ -270,6 +300,7 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
             };
 
             let manualCount = 0;
+            const outsideOntario: string[] = [];
             pendingGeocode.failed.forEach((stationName) => {
                 const entry = manualCoords[stationName];
                 if (!entry) return;
@@ -278,6 +309,10 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
                 const lon = parseCoordinate(entry.lon);
                 if (lat == null || lon == null) return;
                 if (!isValidLatitude(lat) || !isValidLongitude(lon)) return;
+                if (!isWithinOntario(lat, lon)) {
+                    outsideOntario.push(stationName);
+                    return;
+                }
 
                 nextCache.stations[stationName] = {
                     lat,
@@ -288,6 +323,12 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
                 };
                 manualCount++;
             });
+
+            if (outsideOntario.length > 0) {
+                setErrorMessage(
+                    `Coordinates outside Ontario were ignored for ${outsideOntario.length} stop${outsideOntario.length === 1 ? '' : 's'}: ${outsideOntario.slice(0, 5).join(', ')}${outsideOntario.length > 5 ? ', ...' : ''}`
+                );
+            }
 
             const stations = applyGeocodesToStations(parseResult.stations, nextCache);
             const stillMissing = listMissingGeocodes(stations);
@@ -528,25 +569,34 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
                     <p className="text-xs text-amber-600 mt-1">
                         Enter coordinates where available, then finish import. Unfilled stops will be listed as missing.
                     </p>
+                    <p className="text-xs text-amber-700 mt-1 font-medium">
+                        One-time setup: manual coordinates are saved and automatically reused on future imports for the same stop names.
+                    </p>
+                    <p className="text-xs text-amber-700 mt-1">
+                        Guardrail: coordinates outside Ontario are treated as invalid and will not be saved.
+                    </p>
                 </div>
 
                 <div className="bg-white border border-gray-200 rounded-xl p-4 mb-4">
+                    <p className="text-xs text-gray-500 mb-3">
+                        Tip: paste as <span className="font-mono">lat, lon</span> (example <span className="font-mono">44.3890, -79.6902</span>) into either field.
+                    </p>
                     <div className="max-h-96 overflow-y-auto pr-1 space-y-3">
                         {pendingGeocode.failed.map((stationName) => (
                             <div key={stationName} className="border border-gray-100 rounded-lg p-3">
                                 <p className="text-sm font-medium text-gray-800 mb-2">{stationName}</p>
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                                     <input
-                                        type="number"
-                                        step="any"
+                                        type="text"
+                                        inputMode="decimal"
                                         value={manualCoords[stationName]?.lat || ''}
                                         onChange={(e) => handleManualCoordChange(stationName, 'lat', e.target.value)}
-                                        placeholder="Latitude (-90 to 90)"
+                                        placeholder="Latitude (-90 to 90) or lat, lon"
                                         className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
                                     />
                                     <input
-                                        type="number"
-                                        step="any"
+                                        type="text"
+                                        inputMode="decimal"
                                         value={manualCoords[stationName]?.lon || ''}
                                         onChange={(e) => handleManualCoordChange(stationName, 'lon', e.target.value)}
                                         placeholder="Longitude (-180 to 180)"

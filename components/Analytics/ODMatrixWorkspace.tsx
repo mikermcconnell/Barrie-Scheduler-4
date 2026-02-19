@@ -80,7 +80,7 @@ export const ODMatrixWorkspace: React.FC<ODMatrixWorkspaceProps> = ({
     const renderPanel = () => {
         switch (activeTab) {
             case 'overview':
-                return <ODOverviewPanel data={data} onNavigate={handleNavigate} />;
+                return <ODOverviewPanel data={data} geocodeCache={geocodeCache} onNavigate={handleNavigate} />;
             case 'top-pairs':
                 return <ODTopPairsModule data={data} />;
             case 'rankings':

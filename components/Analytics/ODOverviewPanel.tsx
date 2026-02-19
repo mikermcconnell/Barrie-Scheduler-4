@@ -1,8 +1,7 @@
 /**
  * OD Overview Panel
  *
- * Summary dashboard with metric cards, top stations bar chart,
- * and import metadata.
+ * Summary dashboard with metric cards, OD map, and import metadata.
  */
 
 import React, { useMemo } from 'react';
@@ -12,24 +11,17 @@ import {
     ArrowUpRight,
     ArrowDownLeft,
 } from 'lucide-react';
-import {
-    BarChart,
-    Bar,
-    XAxis,
-    YAxis,
-    CartesianGrid,
-    Tooltip,
-    ResponsiveContainer,
-} from 'recharts';
 import { MetricCard, ChartCard, fmt } from './AnalyticsShared';
-import type { ODMatrixDataSummary } from '../../utils/od-matrix/odMatrixTypes';
+import type { ODMatrixDataSummary, GeocodeCache } from '../../utils/od-matrix/odMatrixTypes';
+import { ODFlowMapModule } from './ODFlowMapModule';
 
 interface ODOverviewPanelProps {
     data: ODMatrixDataSummary;
+    geocodeCache: GeocodeCache | null;
     onNavigate: (tabId: string) => void;
 }
 
-export const ODOverviewPanel: React.FC<ODOverviewPanelProps> = ({ data, onNavigate }) => {
+export const ODOverviewPanel: React.FC<ODOverviewPanelProps> = ({ data, geocodeCache, onNavigate }) => {
     const topOrigin = useMemo(() => {
         const sorted = [...data.stations].sort((a, b) => b.totalOrigin - a.totalOrigin);
         return sorted[0];
@@ -38,19 +30,6 @@ export const ODOverviewPanel: React.FC<ODOverviewPanelProps> = ({ data, onNaviga
     const topDestination = useMemo(() => {
         const sorted = [...data.stations].sort((a, b) => b.totalDestination - a.totalDestination);
         return sorted[0];
-    }, [data.stations]);
-
-    const top10Stations = useMemo(() => {
-        return [...data.stations]
-            .sort((a, b) => b.totalVolume - a.totalVolume)
-            .slice(0, 10)
-            .map(s => ({
-                name: s.name.length > 20 ? s.name.slice(0, 18) + '...' : s.name,
-                fullName: s.name,
-                volume: s.totalVolume,
-                origin: s.totalOrigin,
-                destination: s.totalDestination,
-            }));
     }, [data.stations]);
 
     return (
@@ -85,42 +64,8 @@ export const ODOverviewPanel: React.FC<ODOverviewPanelProps> = ({ data, onNaviga
                 />
             </div>
 
-            {/* Top 10 Stations Chart */}
-            <ChartCard
-                title="Top 10 Stations by Volume"
-                subtitle="Combined origin + destination journeys"
-            >
-                <div className="h-[350px]">
-                    <ResponsiveContainer width="100%" height="100%">
-                        <BarChart
-                            data={top10Stations}
-                            layout="vertical"
-                            margin={{ top: 5, right: 30, left: 10, bottom: 5 }}
-                        >
-                            <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                            <XAxis type="number" tickFormatter={(v) => v.toLocaleString()} />
-                            <YAxis
-                                type="category"
-                                dataKey="name"
-                                width={150}
-                                tick={{ fontSize: 12 }}
-                            />
-                            <Tooltip
-                                formatter={(value: number, name: string) => [
-                                    value.toLocaleString(),
-                                    name === 'origin' ? 'Origin' : 'Destination',
-                                ]}
-                                labelFormatter={(label: string, payload) => {
-                                    const item = payload?.[0]?.payload;
-                                    return item?.fullName || label;
-                                }}
-                            />
-                            <Bar dataKey="origin" stackId="a" fill="#7c3aed" name="origin" />
-                            <Bar dataKey="destination" stackId="a" fill="#a78bfa" name="destination" />
-                        </BarChart>
-                    </ResponsiveContainer>
-                </div>
-            </ChartCard>
+            {/* OD Map */}
+            <ODFlowMapModule data={data} geocodeCache={geocodeCache} />
 
             {/* Import Metadata + Quick Links */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
