@@ -155,4 +155,32 @@ describe('odMatrixParser', () => {
         expect(result.topPairs.length).toBe(100);
         expect(result.pairs.length).toBe(210);
     });
+
+    it('detects pivot-style header rows after a title row', () => {
+        const data = [
+            ['Count of Journey Final Destination', 'Column Labels', null],
+            ['Row Labels', 'Station A', 'Station B'],
+            ['Station A', 0, 10],
+            ['Station B', 5, 0],
+        ];
+        const buffer = createTestWorkbook(data);
+        const result = parseODMatrixFromExcel(buffer);
+
+        expect(result.stationCount).toBe(2);
+        expect(result.totalJourneys).toBe(15);
+        expect(result.pairs.length).toBe(2);
+    });
+
+    it('parses numeric values stored as formatted strings', () => {
+        const data = [
+            [null, 'Station A', 'Station B'],
+            ['Station A', null, '1,250'],
+            ['Station B', '75', 0],
+        ];
+        const buffer = createTestWorkbook(data);
+        const result = parseODMatrixFromExcel(buffer);
+
+        expect(result.totalJourneys).toBe(1325);
+        expect(result.pairs).toHaveLength(2);
+    });
 });

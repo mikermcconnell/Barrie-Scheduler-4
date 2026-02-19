@@ -22,6 +22,15 @@ const SKIP_LABELS = new Set([
     '',
 ]);
 
+const ORIGIN_HEADER_HINTS = new Set([
+    'row labels',
+    'origin',
+    'origins',
+    'from',
+    'origin station',
+    'origin stations',
+]);
+
 function shouldSkip(name: string | null | undefined): boolean {
     if (name == null) return true;
     const normalized = String(name).trim().toLowerCase();
@@ -31,6 +40,61 @@ function shouldSkip(name: string | null | undefined): boolean {
 function cleanStationName(raw: string | null | undefined): string {
     if (raw == null) return '';
     return String(raw).trim();
+}
+
+function parseJourneyValue(cellValue: string | number | null): number {
+    if (typeof cellValue === 'number') {
+        return Number.isFinite(cellValue) ? cellValue : 0;
+    }
+
+    if (typeof cellValue === 'string') {
+        const cleaned = cellValue.trim().replace(/,/g, '');
+        if (!cleaned) return 0;
+        const parsed = Number(cleaned);
+        return Number.isFinite(parsed) ? parsed : 0;
+    }
+
+    return 0;
+}
+
+function detectHeaderRowIndex(rows: (string | number | null)[][]): number {
+    const maxScan = Math.min(25, rows.length);
+    let bestIndex = 0;
+    let bestScore = Number.NEGATIVE_INFINITY;
+
+    for (let r = 0; r < maxScan; r++) {
+        const row = rows[r] || [];
+        if (row.length < 2) continue;
+
+        let destinationLabelCount = 0;
+        let numericCount = 0;
+
+        for (let c = 1; c < row.length; c++) {
+            const cell = row[c];
+            if (cell == null) continue;
+
+            if (typeof cell === 'number') {
+                numericCount++;
+                continue;
+            }
+
+            const name = cleanStationName(cell);
+            if (!shouldSkip(name)) destinationLabelCount++;
+        }
+
+        if (destinationLabelCount < 2) continue;
+
+        const firstCell = cleanStationName(row[0] as string).toLowerCase();
+        const firstCellLooksHeader = shouldSkip(firstCell) || ORIGIN_HEADER_HINTS.has(firstCell);
+        const score = (destinationLabelCount * 3) + (firstCellLooksHeader ? 2 : 0) - (numericCount * 2);
+
+        if (score > bestScore) {
+            bestScore = score;
+            bestIndex = r;
+        }
+    }
+
+    return bestIndex;
 }
 
 /**
@@ -57,8 +121,8 @@ export function parseODMatrixFromExcel(buffer: ArrayBuffer): ODMatrixParseResult
 
     const warnings: string[] = [];
 
-    // Row 0 = header row: [corner, dest1, dest2, ...]
-    const headerRow = rows[0];
+    const headerRowIndex = detectHeaderRowIndex(rows);
+    const headerRow = rows[headerRowIndex] || [];
     const destNames: string[] = [];
     const destColIndices: number[] = [];
 
@@ -73,7 +137,7 @@ export function parseODMatrixFromExcel(buffer: ArrayBuffer): ODMatrixParseResult
     const originNames: string[] = [];
     const originRowIndices: number[] = [];
 
-    for (let r = 1; r < rows.length; r++) {
+    for (let r = headerRowIndex + 1; r < rows.length; r++) {
         const row = rows[r];
         if (!row || row.length === 0) continue;
         const name = cleanStationName(row[0] as string);
@@ -100,8 +164,8 @@ export function parseODMatrixFromExcel(buffer: ArrayBuffer): ODMatrixParseResult
         for (let di = 0; di < destNames.length; di++) {
             const destName = destNames[di];
             const colIdx = destColIndices[di];
-            const cellValue = row[colIdx];
-            const journeys = typeof cellValue === 'number' ? cellValue : 0;
+            const cellValue = row?.[colIdx] ?? null;
+            const journeys = parseJourneyValue(cellValue);
 
             if (journeys > 0) {
                 pairs.push({ origin: originName, destination: destName, journeys });
@@ -129,6 +193,15 @@ export function parseODMatrixFromExcel(buffer: ArrayBuffer): ODMatrixParseResult
 
     if (stations.length === 0) {
         warnings.push('No valid stations found in matrix');
+    }
+    if (destNames.length === 0) {
+        warnings.push('No destination columns found in matrix');
+    }
+    if (originNames.length === 0) {
+        warnings.push('No origin rows found in matrix');
+    }
+    if (stations.length > 0 && totalJourneys === 0) {
+        warnings.push('No non-zero journey values found in matrix');
     }
 
     return {

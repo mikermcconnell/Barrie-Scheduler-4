@@ -1,7 +1,7 @@
 /**
  * OD Matrix Import
  *
- * 4-phase import wizard: select → preview → geocoding → complete.
+ * 5-phase import wizard: select → preview → geocoding → manual geocode → complete.
  * Handles Excel cross-tab OD matrix files.
  */
 
@@ -20,7 +20,7 @@ import {
 import { parseODMatrixFromExcel } from '../../utils/od-matrix/odMatrixParser';
 import { geocodeStations, applyGeocodesToStations } from '../../utils/od-matrix/odMatrixGeocoder';
 import { saveODMatrixData, saveGeocodeCache, loadGeocodeCache } from '../../utils/od-matrix/odMatrixService';
-import type { ODMatrixParseResult, ODMatrixDataSummary, ODStation } from '../../utils/od-matrix/odMatrixTypes';
+import type { ODMatrixParseResult, ODMatrixDataSummary, ODStation, GeocodeCache } from '../../utils/od-matrix/odMatrixTypes';
 
 function formatError(prefix: string, err: unknown): string {
     return `${prefix}: ${err instanceof Error ? err.message : 'Unknown error'}`;
@@ -33,7 +33,7 @@ interface ODMatrixImportProps {
     onCancel: () => void;
 }
 
-type ImportPhase = 'select' | 'preview' | 'geocoding' | 'complete';
+type ImportPhase = 'select' | 'preview' | 'geocoding' | 'manual-geocode' | 'complete';
 
 interface GeocodingProgress {
     current: number;
@@ -43,6 +43,13 @@ interface GeocodingProgress {
     geocoded: number;
     cached: number;
     failed: number;
+}
+
+interface PendingGeocodeResult {
+    cache: GeocodeCache;
+    geocoded: number;
+    cached: number;
+    failed: string[];
 }
 
 export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
@@ -60,8 +67,11 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
         current: 0, total: 0, stationName: '', status: '', geocoded: 0, cached: 0, failed: 0,
     });
     const [completedStats, setCompletedStats] = useState<{
-        stations: number; journeys: number; geocoded: number; cached: number; failed: string[];
+        stations: number; journeys: number; geocoded: number; cached: number; manual: number; failed: string[];
     } | null>(null);
+    const [pendingGeocode, setPendingGeocode] = useState<PendingGeocodeResult | null>(null);
+    const [manualCoords, setManualCoords] = useState<Record<string, { lat: string; lon: string }>>({});
+    const [isSavingManualCoords, setIsSavingManualCoords] = useState(false);
     const abortRef = useRef<AbortController | null>(null);
 
     useEffect(() => {
@@ -124,8 +134,23 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
         },
     });
 
+    const listMissingGeocodes = (stations: ODStation[]): string[] => stations
+        .filter(station => !station.geocode)
+        .map(station => station.name);
+
+    const parseCoordinate = (value: string): number | null => {
+        const parsed = Number(value.trim());
+        return Number.isFinite(parsed) ? parsed : null;
+    };
+
+    const isValidLatitude = (value: number): boolean => value >= -90 && value <= 90;
+    const isValidLongitude = (value: number): boolean => value >= -180 && value <= 180;
+
     const handleStartGeocoding = async () => {
         if (!parseResult) return;
+        setErrorMessage('');
+        setPendingGeocode(null);
+        setManualCoords({});
         setPhase('geocoding');
 
         const abortController = new AbortController();
@@ -159,6 +184,23 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
             );
 
             const geocodedStations = applyGeocodesToStations(parseResult.stations, geocodeResult.cache);
+            const missingStations = listMissingGeocodes(geocodedStations);
+
+            if (missingStations.length > 0) {
+                const initialManualCoords: Record<string, { lat: string; lon: string }> = {};
+                missingStations.forEach((stationName) => {
+                    initialManualCoords[stationName] = { lat: '', lon: '' };
+                });
+
+                setPendingGeocode({
+                    ...geocodeResult,
+                    failed: missingStations,
+                });
+                setManualCoords(initialManualCoords);
+                setPhase('manual-geocode');
+                return;
+            }
+
             await saveODMatrixData(teamId, userId, buildSummary(geocodedStations));
             await saveGeocodeCache(teamId, geocodeResult.cache);
 
@@ -167,7 +209,8 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
                 journeys: parseResult.totalJourneys,
                 geocoded: geocodeResult.geocoded,
                 cached: geocodeResult.cached,
-                failed: geocodeResult.failed,
+                manual: 0,
+                failed: [],
             });
             setPhase('complete');
         } catch (err) {
@@ -190,12 +233,83 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
                 journeys: parseResult.totalJourneys,
                 geocoded: 0,
                 cached: 0,
-                failed: [],
+                manual: 0,
+                failed: parseResult.stations.map(station => station.name),
             });
             setPhase('complete');
         } catch (err) {
             setErrorMessage(formatError('Import failed', err));
             setPhase('preview');
+        }
+    };
+
+    const handleManualCoordChange = (
+        stationName: string,
+        field: 'lat' | 'lon',
+        value: string
+    ) => {
+        setManualCoords(prev => ({
+            ...prev,
+            [stationName]: {
+                lat: field === 'lat' ? value : (prev[stationName]?.lat || ''),
+                lon: field === 'lon' ? value : (prev[stationName]?.lon || ''),
+            },
+        }));
+    };
+
+    const handleFinishWithManualCoords = async () => {
+        if (!parseResult || !pendingGeocode) return;
+
+        setErrorMessage('');
+        setIsSavingManualCoords(true);
+
+        try {
+            const nextCache: GeocodeCache = {
+                stations: { ...pendingGeocode.cache.stations },
+                lastUpdated: new Date().toISOString(),
+            };
+
+            let manualCount = 0;
+            pendingGeocode.failed.forEach((stationName) => {
+                const entry = manualCoords[stationName];
+                if (!entry) return;
+
+                const lat = parseCoordinate(entry.lat);
+                const lon = parseCoordinate(entry.lon);
+                if (lat == null || lon == null) return;
+                if (!isValidLatitude(lat) || !isValidLongitude(lon)) return;
+
+                nextCache.stations[stationName] = {
+                    lat,
+                    lon,
+                    displayName: `${stationName} (manual)`,
+                    source: 'manual',
+                    confidence: 'high',
+                };
+                manualCount++;
+            });
+
+            const stations = applyGeocodesToStations(parseResult.stations, nextCache);
+            const stillMissing = listMissingGeocodes(stations);
+
+            await saveODMatrixData(teamId, userId, buildSummary(stations));
+            await saveGeocodeCache(teamId, nextCache);
+
+            setCompletedStats({
+                stations: parseResult.stationCount,
+                journeys: parseResult.totalJourneys,
+                geocoded: pendingGeocode.geocoded,
+                cached: pendingGeocode.cached,
+                manual: manualCount,
+                failed: stillMissing,
+            });
+            setPendingGeocode(null);
+            setManualCoords({});
+            setPhase('complete');
+        } catch (err) {
+            setErrorMessage(formatError('Import failed', err));
+        } finally {
+            setIsSavingManualCoords(false);
         }
     };
 
@@ -400,6 +514,75 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
     }
 
     // COMPLETE PHASE
+    if (phase === 'manual-geocode' && parseResult && pendingGeocode) {
+        return (
+            <div className="max-w-3xl mx-auto">
+                <PhaseHeader title="Add Missing Coordinates" subtitle="Some stops could not be geocoded automatically" />
+                {errorBanner}
+
+                <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                    <p className="text-sm text-amber-700">
+                        <span className="font-semibold">{pendingGeocode.failed.length}</span> stop
+                        {pendingGeocode.failed.length === 1 ? '' : 's'} still missing latitude/longitude.
+                    </p>
+                    <p className="text-xs text-amber-600 mt-1">
+                        Enter coordinates where available, then finish import. Unfilled stops will be listed as missing.
+                    </p>
+                </div>
+
+                <div className="bg-white border border-gray-200 rounded-xl p-4 mb-4">
+                    <div className="max-h-96 overflow-y-auto pr-1 space-y-3">
+                        {pendingGeocode.failed.map((stationName) => (
+                            <div key={stationName} className="border border-gray-100 rounded-lg p-3">
+                                <p className="text-sm font-medium text-gray-800 mb-2">{stationName}</p>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    <input
+                                        type="number"
+                                        step="any"
+                                        value={manualCoords[stationName]?.lat || ''}
+                                        onChange={(e) => handleManualCoordChange(stationName, 'lat', e.target.value)}
+                                        placeholder="Latitude (-90 to 90)"
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                                    />
+                                    <input
+                                        type="number"
+                                        step="any"
+                                        value={manualCoords[stationName]?.lon || ''}
+                                        onChange={(e) => handleManualCoordChange(stationName, 'lon', e.target.value)}
+                                        placeholder="Longitude (-180 to 180)"
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                                    />
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+
+                <div className="flex items-center justify-between">
+                    <button
+                        onClick={() => {
+                            setPendingGeocode(null);
+                            setManualCoords({});
+                            setPhase('preview');
+                        }}
+                        className="flex items-center gap-1 px-4 py-2 text-sm text-gray-600 hover:text-gray-900 transition-colors"
+                    >
+                        <ArrowLeft size={14} /> Back
+                    </button>
+                    <button
+                        onClick={handleFinishWithManualCoords}
+                        disabled={isSavingManualCoords}
+                        className="flex items-center gap-2 px-4 py-2 text-sm bg-violet-600 text-white rounded-lg hover:bg-violet-700 transition-colors disabled:bg-violet-400 disabled:cursor-not-allowed"
+                    >
+                        {isSavingManualCoords && <Loader2 size={14} className="animate-spin" />}
+                        Finish Import
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
+    // COMPLETE PHASE
     if (phase === 'complete' && completedStats) {
         return (
             <div className="max-w-2xl mx-auto">
@@ -419,16 +602,28 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
                         </div>
                     </div>
 
-                    {(completedStats.geocoded > 0 || completedStats.cached > 0) && (
+                    {(completedStats.geocoded > 0 || completedStats.cached > 0 || completedStats.manual > 0 || completedStats.failed.length > 0) && (
                         <div className="mb-6 text-sm text-gray-500">
                             <p>
                                 <span className="font-medium text-emerald-600">{completedStats.geocoded}</span> stations geocoded,{' '}
                                 <span className="font-medium text-blue-600">{completedStats.cached}</span> from cache
+                                {completedStats.manual > 0 && (
+                                    <>
+                                        , <span className="font-medium text-violet-600">{completedStats.manual}</span> entered manually
+                                    </>
+                                )}
                             </p>
                             {completedStats.failed.length > 0 && (
-                                <p className="text-amber-600 mt-1">
-                                    {completedStats.failed.length} stations could not be geocoded
-                                </p>
+                                <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-left">
+                                    <p className="text-amber-700 font-medium mb-2">
+                                        {completedStats.failed.length} stop{completedStats.failed.length === 1 ? '' : 's'} missing latitude/longitude:
+                                    </p>
+                                    <div className="max-h-40 overflow-y-auto space-y-1">
+                                        {completedStats.failed.map((stopName) => (
+                                            <p key={stopName} className="text-amber-700 text-xs">{stopName}</p>
+                                        ))}
+                                    </div>
+                                </div>
                             )}
                         </div>
                     )}
