@@ -144,7 +144,7 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data
                     })}
                     <div className="ml-auto flex items-center pr-2">
                         <button
-                            onClick={() => { window.location.hash = 'fixed/perf-reports'; }}
+                            onClick={() => { window.location.hash = 'operations/perf-reports'; }}
                             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-cyan-600 hover:text-cyan-700 hover:bg-cyan-50 rounded-md transition-colors whitespace-nowrap"
                         >
                             <ExternalLink size={13} />

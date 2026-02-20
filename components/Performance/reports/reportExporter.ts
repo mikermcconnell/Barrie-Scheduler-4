@@ -1,5 +1,6 @@
 import ExcelJS from 'exceljs';
 import type { DailySummary } from '../../../utils/performanceDataTypes';
+import { aggregateDwellAcrossDays } from '../../../utils/schedule/operatorDwellUtils';
 
 // ─── Shared Helpers ──────────────────────────────────────────────
 
@@ -254,4 +255,133 @@ export async function exportRoutePerformance(
 
     const buffer = await wb.xlsx.writeBuffer();
     downloadBuffer(buffer, `route_${routeId}_performance_${startDate}_${endDate}.xlsx`);
+}
+
+// ─── Operator Dwell Excel Export ────────────────────────────────
+
+export async function exportOperatorDwell(
+    filteredDays: DailySummary[],
+    startDate: string,
+    endDate: string,
+): Promise<void> {
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'Barrie Transit Scheduler';
+    const metrics = aggregateDwellAcrossDays(filteredDays);
+
+    // Sheet 1: Operator Summary
+    const summarySheet = wb.addWorksheet('Operator Summary');
+    const summaryHeader = summarySheet.addRow([
+        'Operator ID', 'Moderate', 'High', 'Total', 'Tracked (min)', 'Avg (min)',
+    ]);
+    styleHeader(summaryHeader);
+    for (const op of metrics.byOperator) {
+        summarySheet.addRow([
+            op.operatorId,
+            op.moderateCount,
+            op.highCount,
+            op.totalIncidents,
+            Math.round(op.totalTrackedDwellSeconds / 60 * 10) / 10,
+            Math.round(op.avgTrackedDwellSeconds / 60 * 10) / 10,
+        ]);
+    }
+    autoWidth(summarySheet);
+
+    // Sheet 2: Incident Detail
+    const detailSheet = wb.addWorksheet('Incident Detail');
+    const detailHeader = detailSheet.addRow([
+        'Operator', 'Date', 'Route', 'Stop', 'Arrival', 'Departure',
+        'Raw (min)', 'Tracked (min)', 'Severity',
+    ]);
+    styleHeader(detailHeader);
+    for (const inc of metrics.incidents) {
+        detailSheet.addRow([
+            inc.operatorId, inc.date, inc.routeId, inc.stopName,
+            inc.observedArrivalTime, inc.observedDepartureTime,
+            Math.round(inc.rawDwellSeconds / 60 * 10) / 10,
+            Math.round(inc.trackedDwellSeconds / 60 * 10) / 10,
+            inc.severity,
+        ]);
+    }
+    autoWidth(detailSheet);
+
+    // Sheet 3: Daily Trend
+    const trendSheet = wb.addWorksheet('Daily Trend');
+    const trendHeader = trendSheet.addRow([
+        'Date', 'Day Type', 'Incidents', 'Moderate', 'High', 'Tracked (min)',
+    ]);
+    styleHeader(trendHeader);
+    for (const d of [...filteredDays].sort((a, b) => a.date.localeCompare(b.date))) {
+        const dwell = d.byOperatorDwell;
+        trendSheet.addRow([
+            d.date,
+            d.dayType,
+            dwell?.totalIncidents ?? 0,
+            dwell?.byOperator.reduce((s, o) => s + o.moderateCount, 0) ?? 0,
+            dwell?.byOperator.reduce((s, o) => s + o.highCount, 0) ?? 0,
+            dwell?.totalTrackedDwellMinutes ?? 0,
+        ]);
+    }
+    autoWidth(trendSheet);
+
+    const buffer = await wb.xlsx.writeBuffer();
+    downloadBuffer(buffer, `operator_dwell_${startDate}_${endDate}.xlsx`);
+}
+
+// ─── Operator Dwell PDF Export ──────────────────────────────────
+
+export async function exportOperatorDwellPDF(
+    filteredDays: DailySummary[],
+    startDate: string,
+    endDate: string,
+): Promise<void> {
+    const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
+        import('jspdf'),
+        import('jspdf-autotable'),
+    ]);
+
+    const metrics = aggregateDwellAcrossDays(filteredDays);
+    const doc = new jsPDF({ orientation: 'landscape' });
+
+    // Title
+    doc.setFontSize(16);
+    doc.text('Operator Dwell Report', 14, 18);
+    doc.setFontSize(10);
+    doc.text(`${startDate} — ${endDate}  |  ${filteredDays.length} days  |  ${metrics.totalIncidents} incidents`, 14, 26);
+
+    // Table 1: Operator Summary
+    autoTable(doc, {
+        startY: 32,
+        head: [['Operator', 'Moderate', 'High', 'Total', 'Tracked (min)', 'Avg (min)']],
+        body: metrics.byOperator.map(op => [
+            op.operatorId,
+            op.moderateCount,
+            op.highCount,
+            op.totalIncidents,
+            (op.totalTrackedDwellSeconds / 60).toFixed(1),
+            (op.avgTrackedDwellSeconds / 60).toFixed(1),
+        ]),
+        styles: { fontSize: 9 },
+        headStyles: { fillColor: [8, 145, 178] }, // cyan-600
+    });
+
+    // Table 2: Incident Detail (new page if needed)
+    const finalY = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable?.finalY ?? 80;
+    if (finalY > 140) doc.addPage();
+
+    autoTable(doc, {
+        startY: finalY > 140 ? 14 : finalY + 10,
+        head: [['Operator', 'Date', 'Route', 'Stop', 'Arrival', 'Departure', 'Raw', 'Tracked', 'Severity']],
+        body: metrics.incidents.map(inc => [
+            inc.operatorId, inc.date, inc.routeId,
+            inc.stopName.length > 25 ? inc.stopName.slice(0, 25) + '...' : inc.stopName,
+            inc.observedArrivalTime, inc.observedDepartureTime,
+            (inc.rawDwellSeconds / 60).toFixed(1),
+            (inc.trackedDwellSeconds / 60).toFixed(1),
+            inc.severity,
+        ]),
+        styles: { fontSize: 8 },
+        headStyles: { fillColor: [8, 145, 178] },
+    });
+
+    doc.save(`operator_dwell_${startDate}_${endDate}.pdf`);
 }

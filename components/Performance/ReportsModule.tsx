@@ -6,6 +6,7 @@ import { WeeklySummaryReport } from './reports/WeeklySummaryReport';
 import { RoutePerformanceReport } from './reports/RoutePerformanceReport';
 import { AIQueryPanel } from './reports/AIQueryPanel';
 import { OperatorDwellReport } from './reports/OperatorDwellReport';
+import { exportOperatorDwell, exportOperatorDwellPDF } from './reports/reportExporter';
 import { compareDateStrings, normalizeToISODate, toDateSortKey } from '../../utils/performanceDateUtils';
 
 interface ReportsModuleProps {
@@ -23,6 +24,7 @@ const PANEL_CONFIG: { id: ReportPanel; label: string; icon: React.FC<{ size?: nu
 
 export const ReportsModule: React.FC<ReportsModuleProps> = ({ data }) => {
     const [activePanel, setActivePanel] = useState<ReportPanel>('summary');
+    const [dwellExporting, setDwellExporting] = useState<'excel' | 'pdf' | null>(null);
 
     const availableDates = useMemo(
         () => [...new Set(
@@ -78,6 +80,18 @@ export const ReportsModule: React.FC<ReportsModuleProps> = ({ data }) => {
                         allDays={data.dailySummaries}
                         startDate={dateRange.startDate}
                         endDate={dateRange.endDate}
+                        onExportExcel={async () => {
+                            setDwellExporting('excel');
+                            try { await exportOperatorDwell(filteredDays, dateRange.startDate, dateRange.endDate); }
+                            finally { setDwellExporting(null); }
+                        }}
+                        onExportPDF={async () => {
+                            setDwellExporting('pdf');
+                            try { await exportOperatorDwellPDF(filteredDays, dateRange.startDate, dateRange.endDate); }
+                            finally { setDwellExporting(null); }
+                        }}
+                        exportingExcel={dwellExporting === 'excel'}
+                        exportingPDF={dwellExporting === 'pdf'}
                     />
                 );
             case 'ai':
