@@ -1,21 +1,23 @@
 import React, { useMemo, useState, useCallback } from 'react';
-import { FileBarChart, Route, Sparkles } from 'lucide-react';
+import { FileBarChart, Route, Sparkles, Timer } from 'lucide-react';
 import type { PerformanceDataSummary, DailySummary } from '../../utils/performanceDataTypes';
 import { DateRangePicker, type DateRangeSelection } from './reports/DateRangePicker';
 import { WeeklySummaryReport } from './reports/WeeklySummaryReport';
 import { RoutePerformanceReport } from './reports/RoutePerformanceReport';
 import { AIQueryPanel } from './reports/AIQueryPanel';
+import { OperatorDwellReport } from './reports/OperatorDwellReport';
 import { compareDateStrings, normalizeToISODate, toDateSortKey } from '../../utils/performanceDateUtils';
 
 interface ReportsModuleProps {
     data: PerformanceDataSummary;
 }
 
-type ReportPanel = 'summary' | 'route' | 'ai';
+type ReportPanel = 'summary' | 'route' | 'dwell' | 'ai';
 
 const PANEL_CONFIG: { id: ReportPanel; label: string; icon: React.FC<{ size?: number }> }[] = [
     { id: 'summary', label: 'Weekly / Monthly Summary', icon: FileBarChart },
     { id: 'route', label: 'Route Performance', icon: Route },
+    { id: 'dwell', label: 'Operator Dwell', icon: Timer },
     { id: 'ai', label: 'AI Assistant', icon: Sparkles },
 ];
 
@@ -69,6 +71,15 @@ export const ReportsModule: React.FC<ReportsModuleProps> = ({ data }) => {
                 );
             case 'route':
                 return <RoutePerformanceReport filteredDays={filteredDays} startDate={dateRange.startDate} endDate={dateRange.endDate} />;
+            case 'dwell':
+                return (
+                    <OperatorDwellReport
+                        filteredDays={filteredDays}
+                        allDays={data.dailySummaries}
+                        startDate={dateRange.startDate}
+                        endDate={dateRange.endDate}
+                    />
+                );
             case 'ai':
                 return <AIQueryPanel filteredDays={filteredDays} />;
         }

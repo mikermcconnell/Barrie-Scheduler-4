@@ -1,13 +1,15 @@
 import React, { useMemo, useRef, useState } from 'react';
 import {
     ArrowLeft, RefreshCw, LayoutDashboard, Clock, TrendingUp,
-    BarChart3, ExternalLink,
+    BarChart3, ExternalLink, Timer,
 } from 'lucide-react';
-import type { PerformanceDataSummary, PerformanceTab } from '../../utils/performanceDataTypes';
+import type { PerformanceDataSummary, PerformanceTab, DayType } from '../../utils/performanceDataTypes';
 import { SystemOverviewModule } from './SystemOverviewModule';
 import { OTPModule } from './OTPModule';
 import { RidershipModule } from './RidershipModule';
 import { LoadProfileModule } from './LoadProfileModule';
+import { PerformanceFilterBar, filterDailySummaries, type TimeRange } from './PerformanceFilterBar';
+import { OperatorDwellModule } from './OperatorDwellModule';
 
 interface PerformanceWorkspaceProps {
     data: PerformanceDataSummary;
@@ -27,6 +29,7 @@ const TAB_CONFIG: TabConfig[] = [
     { id: 'otp', label: 'OTP Analysis', icon: Clock, status: 'complete' },
     { id: 'ridership', label: 'Ridership', icon: TrendingUp, status: 'complete' },
     { id: 'load-profiles', label: 'Load Profiles', icon: BarChart3, status: 'complete' },
+    { id: 'operator-dwell', label: 'Operator Dwell', icon: Timer, status: 'complete' },
 ];
 
 const LOCALHOST_HOSTNAMES = new Set(['localhost', '127.0.0.1', '::1']);
@@ -39,7 +42,19 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data
         [allowIncompleteTabs]
     );
     const [activeTab, setActiveTab] = useState<PerformanceTab>('overview');
+    const [timeRange, setTimeRange] = useState<TimeRange>('all');
+    const [dayTypeFilter, setDayTypeFilter] = useState<DayType | 'all'>('all');
     const tabBarRef = useRef<HTMLDivElement>(null);
+
+    const availableDayTypes = useMemo(() => {
+        const types = new Set(data.dailySummaries.map(d => d.dayType));
+        return (['weekday', 'saturday', 'sunday'] as DayType[]).filter(t => types.has(t));
+    }, [data]);
+
+    const filteredData = useMemo((): PerformanceDataSummary => ({
+        ...data,
+        dailySummaries: filterDailySummaries(data.dailySummaries, timeRange, dayTypeFilter),
+    }), [data, timeRange, dayTypeFilter]);
 
     const handleNavigate = (tabId: string) => {
         const tab = tabs.find(t => t.id === tabId);
@@ -50,16 +65,20 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data
         }
     };
 
+    const showFilterBar = activeTab !== 'overview';
+
     const renderPanel = () => {
         switch (activeTab) {
             case 'overview':
                 return <SystemOverviewModule data={data} onNavigate={handleNavigate} />;
             case 'otp':
-                return <OTPModule data={data} />;
+                return <OTPModule data={filteredData} />;
             case 'ridership':
-                return <RidershipModule data={data} />;
+                return <RidershipModule data={filteredData} />;
             case 'load-profiles':
-                return <LoadProfileModule data={data} />;
+                return <LoadProfileModule data={filteredData} />;
+            case 'operator-dwell':
+                return <OperatorDwellModule data={filteredData} />;
             default:
                 return null;
         }
@@ -134,6 +153,19 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data
                     </div>
                 </div>
             </div>
+
+            {/* Filter Bar */}
+            {showFilterBar && (
+                <div className="bg-white border border-t-0 border-gray-200 px-5">
+                    <PerformanceFilterBar
+                        timeRange={timeRange}
+                        onTimeRangeChange={setTimeRange}
+                        dayTypeFilter={dayTypeFilter}
+                        onDayTypeChange={setDayTypeFilter}
+                        availableDayTypes={availableDayTypes}
+                    />
+                </div>
+            )}
 
             {/* Panel */}
             <div className="bg-white border border-t-0 border-gray-200 rounded-b-lg p-5 min-h-[500px]">
