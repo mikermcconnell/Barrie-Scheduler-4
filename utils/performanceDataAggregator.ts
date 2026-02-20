@@ -326,8 +326,9 @@ function buildStopMetrics(records: STREETSRecord[]): StopMetrics[] {
     let lat = 0;
     let lon = 0;
     let isTimepoint = false;
-
     let loadCount = 0;
+    const hBoard = new Array(24).fill(0);
+    const hAlight = new Array(24).fill(0);
 
     for (const r of recs) {
       boardings += r.boardings;
@@ -339,6 +340,11 @@ function buildStopMetrics(records: STREETSRecord[]): StopMetrics[] {
       routes.add(r.routeId);
       if (!lat) { lat = r.stopLat; lon = r.stopLon; }
       if (r.timePoint) isTimepoint = true;
+      const h = parseInt(r.arrivalTime.split(':')[0], 10);
+      if (h >= 0 && h < 24) {
+        hBoard[h] += r.boardings;
+        hAlight[h] += r.alightings;
+      }
     }
 
     const [stopId, stopName] = key.split('||');
@@ -354,6 +360,9 @@ function buildStopMetrics(records: STREETSRecord[]): StopMetrics[] {
       alightings,
       avgLoad: safeDivide(loadSum, loadCount),
       routeCount: routes.size,
+      routes: Array.from(routes).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+      hourlyBoardings: hBoard,
+      hourlyAlightings: hAlight,
     });
   }
 
@@ -502,9 +511,10 @@ function buildRidershipHeatmaps(records: STREETSRecord[]): RouteRidershipHeatmap
     const [routeId, direction] = key.split('||');
     const routeName = recs[0].routeName;
 
-    // Identify unique trips by terminalDepartureTime, and unique stops by routeStopIndex
+    // Identify unique trips by terminalDepartureTime
     const tripMap = new Map<string, RidershipHeatmapTrip>();
-    const stopMap = new Map<number, RidershipHeatmapStop>();
+    // Group records by trip to find the longest trip pattern
+    const recordsByTrip = new Map<string, STREETSRecord[]>();
 
     for (const r of recs) {
       if (!tripMap.has(r.terminalDepartureTime)) {
@@ -515,13 +525,42 @@ function buildRidershipHeatmaps(records: STREETSRecord[]): RouteRidershipHeatmap
           direction: r.direction,
         });
       }
-      if (!stopMap.has(r.routeStopIndex)) {
-        stopMap.set(r.routeStopIndex, {
+      const tripRecs = recordsByTrip.get(r.terminalDepartureTime);
+      if (tripRecs) tripRecs.push(r);
+      else recordsByTrip.set(r.terminalDepartureTime, [r]);
+    }
+
+    // Find the trip with the most unique stops — its routeStopIndex values are canonical
+    let longestTripRecs: STREETSRecord[] = [];
+    let longestStopCount = 0;
+    for (const tripRecs of recordsByTrip.values()) {
+      const uniqueStops = new Set(tripRecs.map(r => r.stopId));
+      if (uniqueStops.size > longestStopCount) {
+        longestStopCount = uniqueStops.size;
+        longestTripRecs = tripRecs;
+      }
+    }
+
+    // Build canonical stop ordering from the longest trip
+    const canonicalIndex = new Map<string, number>();
+    for (const r of longestTripRecs) {
+      if (!canonicalIndex.has(r.stopId)) {
+        canonicalIndex.set(r.stopId, r.routeStopIndex);
+      }
+    }
+
+    // Build stop map: use canonical index when available, else fall back to record's own index
+    const stopMap = new Map<string, RidershipHeatmapStop>();
+    for (const r of recs) {
+      if (!stopMap.has(r.stopId)) {
+        stopMap.set(r.stopId, {
           stopName: r.stopName,
           stopId: r.stopId,
-          routeStopIndex: r.routeStopIndex,
+          routeStopIndex: canonicalIndex.get(r.stopId) ?? r.routeStopIndex,
           isTimepoint: r.timePoint,
         });
+      } else {
+        if (r.timePoint) stopMap.get(r.stopId)!.isTimepoint = true;
       }
     }
 
@@ -534,15 +573,15 @@ function buildRidershipHeatmaps(records: STREETSRecord[]): RouteRidershipHeatmap
     // Build index lookups for O(1) cell placement
     const tripIdx = new Map<string, number>();
     trips.forEach((t, i) => tripIdx.set(t.terminalDepartureTime, i));
-    const stopIdx = new Map<number, number>();
-    stops.forEach((s, i) => stopIdx.set(s.routeStopIndex, i));
+    const stopIdx = new Map<string, number>();
+    stops.forEach((s, i) => stopIdx.set(s.stopId, i));
 
     // Initialize cells as null
     const cells: ([number, number] | null)[][] = stops.map(() => trips.map((): [number, number] | null => null));
 
     // Single pass: accumulate boardings/alightings per cell
     for (const r of recs) {
-      const si = stopIdx.get(r.routeStopIndex);
+      const si = stopIdx.get(r.stopId);
       const ti = tripIdx.get(r.terminalDepartureTime);
       if (si === undefined || ti === undefined) continue;
       const existing = cells[si][ti];

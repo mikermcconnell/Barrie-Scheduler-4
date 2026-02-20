@@ -268,6 +268,8 @@ function buildStopMetrics(records: STREETSRecord[]): StopMetrics[] {
     let lat = 0;
     let lon = 0;
     let isTimepoint = false;
+    const hBoard = new Array(24).fill(0);
+    const hAlight = new Array(24).fill(0);
 
     for (const r of recs) {
       boardings += r.boardings;
@@ -276,6 +278,11 @@ function buildStopMetrics(records: STREETSRecord[]): StopMetrics[] {
       routes.add(r.routeId);
       if (!lat) { lat = r.stopLat; lon = r.stopLon; }
       if (r.timePoint) isTimepoint = true;
+      const h = parseInt(r.arrivalTime.split(':')[0], 10);
+      if (h >= 0 && h < 24) {
+        hBoard[h] += r.boardings;
+        hAlight[h] += r.alightings;
+      }
     }
 
     const [stopId, stopName] = key.split('||');
@@ -291,6 +298,9 @@ function buildStopMetrics(records: STREETSRecord[]): StopMetrics[] {
       alightings,
       avgLoad: safeDivide(loadSum, recs.length),
       routeCount: routes.size,
+      routes: Array.from(routes).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+      hourlyBoardings: hBoard,
+      hourlyAlightings: hAlight,
     });
   }
 

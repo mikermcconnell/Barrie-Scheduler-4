@@ -1,7 +1,8 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
     PerformanceDataSummary, DayType, RouteRidershipHeatmap,
 } from '../../utils/performanceDataTypes';
+import { getRouteColor, getRouteTextColor } from '../../utils/config/routeColors';
 
 // ─── Color helpers ───────────────────────────────────────────────────
 
@@ -75,8 +76,8 @@ function mergeHeatmaps(heatmaps: RouteRidershipHeatmap[]): RouteRidershipHeatmap
     sortedTrips.forEach((t, i) => newTripIdx.set(t.terminalDepartureTime, i));
 
     const stops = base.stops;
-    const stopIdx = new Map<number, number>();
-    stops.forEach((s, i) => stopIdx.set(s.routeStopIndex, i));
+    const stopIdx = new Map<string, number>();
+    stops.forEach((s, i) => stopIdx.set(s.stopId, i));
 
     const acc: ([number, number, number] | null)[][] =
         stops.map(() => sortedTrips.map((): [number, number, number] | null => null));
@@ -85,19 +86,21 @@ function mergeHeatmaps(heatmaps: RouteRidershipHeatmap[]): RouteRidershipHeatmap
         const dayTripIdx = new Map<string, number>();
         hm.trips.forEach((t, i) => dayTripIdx.set(t.terminalDepartureTime, i));
 
-        for (let si = 0; si < hm.stops.length && si < stops.length; si++) {
+        for (let si = 0; si < hm.stops.length; si++) {
+            const newSi = stopIdx.get(hm.stops[si].stopId);
+            if (newSi === undefined) continue;
             for (let ti = 0; ti < hm.trips.length; ti++) {
                 const cell = hm.cells[si]?.[ti];
                 if (!cell) continue;
                 const newTi = newTripIdx.get(hm.trips[ti].terminalDepartureTime);
                 if (newTi === undefined) continue;
-                const existing = acc[si][newTi];
+                const existing = acc[newSi][newTi];
                 if (existing) {
                     existing[0] += cell[0];
                     existing[1] += cell[1];
                     existing[2]++;
                 } else {
-                    acc[si][newTi] = [cell[0], cell[1], 1];
+                    acc[newSi][newTi] = [cell[0], cell[1], 1];
                 }
             }
         }
@@ -124,6 +127,19 @@ export const RidershipHeatmapSection: React.FC<Props> = ({ data }) => {
     const [dayTypeFilter, setDayTypeFilter] = useState<DayType | 'all'>('all');
     const [selectedKey, setSelectedKey] = useState<string>('');
     const [hoveredCell, setHoveredCell] = useState<{ row: number; col: number } | null>(null);
+    const [isFullscreen, setIsFullscreen] = useState(false);
+    const [hideEmptyStops, setHideEmptyStops] = useState(true);
+
+    const toggleFullscreen = useCallback(() => setIsFullscreen(prev => !prev), []);
+
+    useEffect(() => {
+        if (!isFullscreen) return;
+        const handleEsc = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') setIsFullscreen(false);
+        };
+        document.addEventListener('keydown', handleEsc);
+        return () => document.removeEventListener('keydown', handleEsc);
+    }, [isFullscreen]);
 
     const hasHeatmaps = useMemo(() =>
         data.dailySummaries.some(d => d.ridershipHeatmaps && d.ridershipHeatmaps.length > 0),
@@ -216,6 +232,21 @@ export const RidershipHeatmapSection: React.FC<Props> = ({ data }) => {
         return { maxBoard: maxB, maxAlight: maxA, rowTotals: rTotals, colTotals: cTotals };
     }, [merged]);
 
+    // Identify stops with any ridership data (boardings or alightings > 0)
+    const { visibleStopIndices, emptyStopCount } = useMemo(() => {
+        if (!merged) return { visibleStopIndices: [] as number[], emptyStopCount: 0 };
+        const indices: number[] = [];
+        let empty = 0;
+        for (let si = 0; si < merged.stops.length; si++) {
+            const hasData = merged.cells[si]?.some(cell => cell && (cell[0] > 0 || cell[1] > 0));
+            if (hasData || !hideEmptyStops) {
+                indices.push(si);
+            }
+            if (!hasData) empty++;
+        }
+        return { visibleStopIndices: indices, emptyStopCount: empty };
+    }, [merged, hideEmptyStops]);
+
     if (!hasHeatmaps) {
         return (
             <div className="bg-white rounded-xl border border-gray-200 p-6">
@@ -237,26 +268,40 @@ export const RidershipHeatmapSection: React.FC<Props> = ({ data }) => {
     }
 
     const tripCount = merged.trips.length;
+    const visibleStopCount = visibleStopIndices.length;
     // +1 pair of columns for row totals
     const gridCols = `160px repeat(${tripCount}, 44px 44px) 50px 50px`;
     // header rows + data rows + totals row
-    const gridRows = `auto auto repeat(${merged.stops.length}, 28px) 28px`;
+    const gridRows = `auto auto repeat(${visibleStopCount}, 28px) 28px`;
 
     return (
-        <div className="bg-white rounded-xl border border-gray-200 p-4">
+        <div className={isFullscreen
+            ? 'fixed inset-0 z-50 bg-white p-4 overflow-hidden flex flex-col'
+            : 'bg-white rounded-xl border border-gray-200 p-4'
+        }>
             {/* Header */}
-            <div className="flex flex-wrap items-center gap-3 mb-4">
+            <div className="flex flex-wrap items-center gap-3 mb-4 shrink-0">
                 <h3 className="text-sm font-bold text-gray-900">Ridership Heatmap</h3>
 
-                <select
-                    value={activeKey}
-                    onChange={e => setSelectedKey(e.target.value)}
-                    className="text-sm font-medium border border-gray-200 rounded-lg px-3 py-1.5 bg-white focus:border-cyan-400 focus:outline-none"
-                >
-                    {profileOptions.map(p => (
-                        <option key={p.key} value={p.key}>{p.label}</option>
-                    ))}
-                </select>
+                <div className="flex gap-1.5 flex-wrap justify-center">
+                    {profileOptions.map(p => {
+                        const isActive = activeKey === p.key;
+                        const bg = getRouteColor(p.routeId);
+                        const fg = getRouteTextColor(p.routeId);
+                        return (
+                            <button
+                                key={p.key}
+                                onClick={() => setSelectedKey(p.key)}
+                                className={`px-3 py-1 text-xs font-bold rounded-full transition-all ${
+                                    isActive ? 'shadow-sm ring-1 ring-black/10' : 'opacity-40 hover:opacity-70'
+                                }`}
+                                style={{ backgroundColor: bg, color: fg }}
+                            >
+                                {p.routeId} {p.direction.charAt(0)}
+                            </button>
+                        );
+                    })}
+                </div>
 
                 <div className="flex gap-1">
                     <span className="text-xs font-bold text-gray-400 uppercase tracking-wider self-center mr-1">Range:</span>
@@ -275,9 +320,26 @@ export const RidershipHeatmapSection: React.FC<Props> = ({ data }) => {
                     ))}
                 </div>
 
-                <span className="text-xs text-gray-400 ml-auto">
-                    {filtered.length} day{filtered.length !== 1 ? 's' : ''} · {tripCount} trips · {merged.stops.length} stops
-                </span>
+                <div className="flex items-center gap-2 ml-auto">
+                    <span className="text-xs text-gray-400">
+                        {filtered.length} day{filtered.length !== 1 ? 's' : ''} · {tripCount} trips · {merged.stops.length} stops
+                    </span>
+                    <button
+                        onClick={toggleFullscreen}
+                        className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
+                        title={isFullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen'}
+                    >
+                        {isFullscreen ? (
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M9 9L4 4m0 0v4m0-4h4m6 6l5 5m0 0v-4m0 4h-4M9 15l-5 5m0 0h4m-4 0v-4m11-6l5-5m0 0h-4m4 0v4" />
+                            </svg>
+                        ) : (
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
+                            </svg>
+                        )}
+                    </button>
+                </div>
             </div>
 
             {/* Legend */}
@@ -291,16 +353,31 @@ export const RidershipHeatmapSection: React.FC<Props> = ({ data }) => {
                     <span>Alightings</span>
                 </div>
                 <div className="flex items-center gap-1.5">
+                    <div className="w-3 h-3 rounded border border-gray-200 flex items-center justify-center text-[7px] text-gray-300 font-bold">—</div>
+                    <span>Served (0 riders)</span>
+                </div>
+                <div className="flex items-center gap-1.5">
                     <div className="w-3 h-3 rounded border border-gray-200" style={{ backgroundColor: '#f3f4f6', backgroundImage: 'repeating-linear-gradient(135deg, transparent, transparent 2px, #e5e7eb 2px, #e5e7eb 3px)' }} />
                     <span>Not served</span>
                 </div>
                 {filtered.length > 1 && (
                     <span className="italic">Values are daily averages</span>
                 )}
+                {emptyStopCount > 0 && (
+                    <label className="flex items-center gap-1.5 ml-auto cursor-pointer select-none">
+                        <input
+                            type="checkbox"
+                            checked={hideEmptyStops}
+                            onChange={e => setHideEmptyStops(e.target.checked)}
+                            className="rounded border-gray-300 text-cyan-600 focus:ring-cyan-500"
+                        />
+                        <span>Hide {emptyStopCount} empty stop{emptyStopCount !== 1 ? 's' : ''}</span>
+                    </label>
+                )}
             </div>
 
             {/* Heatmap grid */}
-            <div className="overflow-auto max-h-[70vh]">
+            <div className={`overflow-auto ${isFullscreen ? 'flex-1 min-h-0' : 'max-h-[70vh]'}`}>
                 <div
                     className="inline-grid"
                     style={{ gridTemplateColumns: gridCols, gridTemplateRows: gridRows }}
@@ -339,9 +416,10 @@ export const RidershipHeatmapSection: React.FC<Props> = ({ data }) => {
                     <div className="sticky top-[21px] z-20 bg-gray-50 text-[9px] font-bold text-violet-500 text-center border-b border-gray-200 flex items-center justify-center">A</div>
 
                     {/* ── Data rows ── */}
-                    {merged.stops.map((stop, si) => {
-                        const isEven = si % 2 === 0;
-                        const stripeBg = isEven ? 'bg-white' : 'bg-gray-50/50';
+                    {visibleStopIndices.map((si, visIdx) => {
+                        const stop = merged.stops[si];
+                        const isEven = visIdx % 2 === 0;
+                        const stripeBg = isEven ? 'bg-white' : 'bg-gray-50';
                         const rowTotal = rowTotals[si];
 
                         return (
@@ -353,7 +431,7 @@ export const RidershipHeatmapSection: React.FC<Props> = ({ data }) => {
                                     } ${hoveredCell?.row === si ? '!bg-cyan-50' : ''}`}
                                     title={`${stop.stopName} (${stop.stopId})`}
                                 >
-                                    {stop.stopName}
+                                    {stop.stopId ? `${stop.stopName} (${stop.stopId})` : stop.stopName}
                                 </div>
                                 {/* Data cells */}
                                 {merged.trips.map((trip, ti) => {
@@ -361,6 +439,8 @@ export const RidershipHeatmapSection: React.FC<Props> = ({ data }) => {
                                     const isNull = cell === null;
                                     const board = cell ? cell[0] : 0;
                                     const alight = cell ? cell[1] : 0;
+                                    const isZero = !isNull && board === 0;
+                                    const isZeroA = !isNull && alight === 0;
                                     const isHovered = hoveredCell?.row === si && hoveredCell?.col === ti;
                                     const isAxisHighlight = hoveredCell && (hoveredCell.row === si || hoveredCell.col === ti);
 
@@ -383,7 +463,7 @@ export const RidershipHeatmapSection: React.FC<Props> = ({ data }) => {
                                                 onMouseEnter={() => setHoveredCell({ row: si, col: ti })}
                                                 onMouseLeave={() => setHoveredCell(null)}
                                             >
-                                                {isNull ? '' : fmtVal(board)}
+                                                {isNull ? '' : isZero ? <span className="text-gray-300">—</span> : fmtVal(board)}
                                             </div>
                                             <div
                                                 className={`flex items-center justify-center border-[0.5px] border-gray-100 text-[10px] cursor-default ${
@@ -397,7 +477,7 @@ export const RidershipHeatmapSection: React.FC<Props> = ({ data }) => {
                                                 onMouseEnter={() => setHoveredCell({ row: si, col: ti })}
                                                 onMouseLeave={() => setHoveredCell(null)}
                                             >
-                                                {isNull ? '' : fmtVal(alight)}
+                                                {isNull ? '' : isZeroA ? <span className="text-gray-300">—</span> : fmtVal(alight)}
                                             </div>
                                         </React.Fragment>
                                     );

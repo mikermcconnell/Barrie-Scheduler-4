@@ -5,7 +5,8 @@ import {
 } from 'recharts';
 import { ChartCard } from '../Analytics/AnalyticsShared';
 import { RidershipHeatmapSection } from './RidershipHeatmapSection';
-import type { PerformanceDataSummary, DayType } from '../../utils/performanceDataTypes';
+import { StopActivityMap } from './StopActivityMap';
+import type { PerformanceDataSummary, DayType, StopMetrics } from '../../utils/performanceDataTypes';
 import { compareDateStrings, shortDateLabel } from '../../utils/performanceDateUtils';
 
 interface RidershipModuleProps {
@@ -76,6 +77,38 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({ data }) => {
             .sort((a, b) => a.hour.localeCompare(b.hour));
     }, [filtered]);
 
+    // Aggregate stop activity across filtered days (merges routes + hourly arrays)
+    const stopActivity = useMemo(() => {
+        const map = new Map<string, StopMetrics & { _routes: Set<string> }>();
+        for (const day of filtered) {
+            for (const s of day.byStop) {
+                const ex = map.get(s.stopId);
+                if (ex) {
+                    ex.boardings += s.boardings;
+                    ex.alightings += s.alightings;
+                    if (s.routes) s.routes.forEach(r => ex._routes.add(r));
+                    if (s.hourlyBoardings && ex.hourlyBoardings) {
+                        for (let h = 0; h < 24; h++) {
+                            ex.hourlyBoardings[h] += s.hourlyBoardings[h] || 0;
+                            ex.hourlyAlightings![h] += s.hourlyAlightings?.[h] || 0;
+                        }
+                    }
+                } else {
+                    map.set(s.stopId, {
+                        ...s,
+                        _routes: new Set(s.routes || []),
+                        hourlyBoardings: s.hourlyBoardings ? [...s.hourlyBoardings] : undefined,
+                        hourlyAlightings: s.hourlyAlightings ? [...s.hourlyAlightings] : undefined,
+                    });
+                }
+            }
+        }
+        return Array.from(map.values()).map(({ _routes, ...rest }) => ({
+            ...rest,
+            routes: Array.from(_routes).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+        }));
+    }, [filtered]);
+
     // Route daily trend (multi-line)
     const routeDailyTrend = useMemo(() => {
         const dateMap = new Map<string, Record<string, number>>();
@@ -109,6 +142,11 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({ data }) => {
                     ))}
                 </div>
             </div>
+
+            {/* Stop Activity Map */}
+            <ChartCard title="Stop Activity Map" subtitle="Circle size and color reflect total boardings + alightings">
+                <StopActivityMap stops={stopActivity} />
+            </ChartCard>
 
             {/* Daily Ridership Trend */}
             <ChartCard title="Daily Ridership" subtitle="Total boardings per day">

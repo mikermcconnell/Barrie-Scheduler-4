@@ -66,6 +66,11 @@
       animation: cascade-flash 1s ease-out;
     }
 
+    /* Contain Leaflet map z-indexes so they don't overlap modals */
+    .leaflet-container {
+      isolation: isolate;
+    }
+
     /* Custom scrollbar for schedule tables */
     .custom-scrollbar::-webkit-scrollbar {
       width: 8px;

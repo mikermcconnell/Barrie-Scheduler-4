@@ -122,6 +122,9 @@ export interface StopMetrics {
   alightings: number;
   avgLoad: number;
   routeCount: number;
+  routes: string[];
+  hourlyBoardings?: number[];
+  hourlyAlightings?: number[];
 }
 
 export interface TripMetrics {
@@ -193,6 +196,8 @@ export interface DailySummary {
     totalMatched: number;
     totalMissed: number;
     missedPct: number;
+    notPerformedCount: number;
+    lateOver15Count: number;
     byRoute: { routeId: string; count: number; earliestDep: string }[];
     trips?: {
       tripId: string;
@@ -201,6 +206,8 @@ export interface DailySummary {
       headsign: string;
       blockId: string;
       serviceId: string;
+      missType: 'not_performed' | 'late_over_15';
+      lateByMinutes?: number;
     }[];
   };
   dataQuality: DataQuality;

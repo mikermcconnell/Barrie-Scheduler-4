@@ -5,14 +5,12 @@ import {
 } from 'recharts';
 import {
     Clock, Users, AlertTriangle, ArrowRight,
-    Calendar, Database, ClipboardList, ChevronDown,
+    Calendar, Database, ClipboardList,
 } from 'lucide-react';
 import { MetricCard, ChartCard } from '../Analytics/AnalyticsShared';
 import type { PerformanceDataSummary, DayType, DataQuality } from '../../utils/performanceDataTypes';
 import {
-    getScheduledTrips, hasGtfsCoverage, getTripsForDayType,
-    buildObservedKeys, hasRouteTimeMatch, countRouteTimeMatches,
-    type ScheduledTrip,
+    computeMissedTripsForDay, hasGtfsCoverage,
 } from '../../utils/gtfs/gtfsScheduleIndex';
 import { compareDateStrings, normalizeToISODate, shortDateLabel } from '../../utils/performanceDateUtils';
 
@@ -111,7 +109,6 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
         sortedDates.length > 0 ? sortedDates[sortedDates.length - 1] : 'all'
     );
     const [dayTypeFilter, setDayTypeFilter] = useState<DayType | 'all'>('all');
-    const [missedTripsExpanded, setMissedTripsExpanded] = useState(false);
 
     const availableDayTypes = useMemo(() => {
         const types = new Set(data.dailySummaries.map(d => d.dayType));
@@ -318,14 +315,25 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
     // ── Missed trips (GTFS vs STREETS cross-reference) ────────────
     // 1. Only count routes that have ≥1 observed trip in STREETS (route-scoping).
     //    Routes absent from STREETS weren't extracted — not "missed."
-    // Holiday handling (Option D):
-    //  1. ONTARIO_HOLIDAYS in gtfsScheduleIndex overrides dayType for known holidays
-    //  2. If primary match rate < 25%, best-fit tries all 3 service types
-    //  3. Only routes present in STREETS extract are counted (route-scoping)
+    // Core logic is centralized in computeMissedTripsForDay.
     const missedTrips = useMemo(() => {
         let totalScheduled = 0;
         let totalMatched = 0;
-        const missedByRoute = new Map<string, { routeId: string; count: number; earliestDep: string; trips: ScheduledTrip[] }>();
+        const missedByRoute = new Map<string, {
+            routeId: string;
+            count: number;
+            earliestDep: string;
+            trips: {
+                tripId: string;
+                routeId: string;
+                departure: string;
+                headsign: string;
+                blockId: string;
+                serviceId: string;
+                missType: 'not_performed' | 'late_over_15';
+                lateByMinutes?: number;
+            }[];
+        }>();
         let hasCoverage = false;
         let skippedDays = 0;
 
@@ -333,47 +341,23 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
             if (!hasGtfsCoverage(day.date)) continue;
             hasCoverage = true;
 
-            const observedRoutes = new Set(day.byTrip.map(t => t.routeId));
-            const observedKeys = buildObservedKeys(day.byTrip);
-
-            // Primary attempt: uses holiday calendar + STREETS dayType
-            let scheduled = getScheduledTrips(day.date, day.dayType);
-            let relevantScheduled = scheduled.filter(s => observedRoutes.has(s.routeId));
-            let dayMatched = countRouteTimeMatches(relevantScheduled, observedKeys);
-
-            // Best-fit fallback: if < 25% matched, try all service types
-            if (relevantScheduled.length > 0 && dayMatched / relevantScheduled.length < 0.25) {
-                for (const dt of ['weekday', 'saturday', 'sunday'] as const) {
-                    const altTrips = getTripsForDayType(day.date, dt);
-                    const altRelevant = altTrips.filter(s => observedRoutes.has(s.routeId));
-                    const altMatched = countRouteTimeMatches(altRelevant, observedKeys);
-                    if (altMatched > dayMatched) {
-                        scheduled = altTrips;
-                        relevantScheduled = altRelevant;
-                        dayMatched = altMatched;
-                    }
-                }
-            }
-
-            // If still < 25% after best-fit, skip (no reliable GTFS match at all)
-            if (relevantScheduled.length === 0 ||
-                dayMatched / relevantScheduled.length < 0.25) {
+            const dayMissed = computeMissedTripsForDay(day.date, day.dayType, day.byTrip);
+            if (!dayMissed) {
                 skippedDays++;
                 continue;
             }
 
-            totalScheduled += relevantScheduled.length;
-            totalMatched += dayMatched;
+            totalScheduled += dayMissed.totalScheduled;
+            totalMatched += dayMissed.totalMatched;
 
-            for (const s of relevantScheduled) {
-                if (hasRouteTimeMatch(s.routeId, s.departure, observedKeys)) continue;
-                const existing = missedByRoute.get(s.routeId);
+            for (const t of dayMissed.trips) {
+                const existing = missedByRoute.get(t.routeId);
                 if (existing) {
                     existing.count++;
-                    existing.trips.push(s);
-                    if (s.departure < existing.earliestDep) existing.earliestDep = s.departure;
+                    existing.trips.push(t);
+                    if (t.departure < existing.earliestDep) existing.earliestDep = t.departure;
                 } else {
-                    missedByRoute.set(s.routeId, { routeId: s.routeId, count: 1, earliestDep: s.departure, trips: [s] });
+                    missedByRoute.set(t.routeId, { routeId: t.routeId, count: 1, earliestDep: t.departure, trips: [t] });
                 }
             }
         }
@@ -400,7 +384,7 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
 
     // ── Hourly boardings + BPH line (aggregated across filtered days) ─
     const hourlyData = useMemo(() => {
-        const hours = Array.from({ length: 24 }, (_, i) => ({ hour: i, boardings: 0, otp: 0, otpCount: 0 }));
+        const hours = Array.from({ length: 24 }, (_, i) => ({ hour: i, boardings: 0, otp: 0, otpCount: 0, otpObservations: 0 }));
         let totalServiceHours = 0;
         for (const day of filtered) {
             for (const h of day.byHour) {
@@ -410,6 +394,7 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                 if (h.otp.total > 0) {
                     hours[idx].otp += h.otp.onTimePercent;
                     hours[idx].otpCount++;
+                    hours[idx].otpObservations += h.otp.total;
                 }
             }
             for (const r of day.byRoute) {
@@ -424,13 +409,15 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
             boardings: h.boardings,
             bph: serviceHoursPerHour > 0 ? Math.round(h.boardings / serviceHoursPerHour * 10) / 10 : 0,
             avgOtp: h.otpCount > 0 ? Math.round(h.otp / h.otpCount) : null,
+            otpObservations: h.otpObservations,
         }));
     }, [filtered]);
 
     const peakHourSummary = useMemo(() => {
         if (hourlyData.length === 0) return null;
         const busiest = hourlyData.reduce((a, b) => b.boardings > a.boardings ? b : a);
-        const withOtp = hourlyData.filter(h => h.avgOtp !== null);
+        const MIN_OTP_OBSERVATIONS = 10;
+        const withOtp = hourlyData.filter(h => h.avgOtp !== null && h.otpObservations >= MIN_OTP_OBSERVATIONS);
         const worstOtp = withOtp.length > 0 ? withOtp.reduce((a, b) => (b.avgOtp ?? 100) < (a.avgOtp ?? 100) ? b : a) : null;
         return { busiest, worstOtp };
     }, [hourlyData]);
@@ -504,7 +491,6 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
     }
 
     const isSingleDate = selectedDate !== 'all';
-    const hasMissedTrips = missedTrips.hasCoverage && missedTrips.totalMissed > 0;
     const canShowActionQueue = actionQueue.peerCount >= MIN_ACTION_QUEUE_DAYS;
     const hasActionQueue = actionQueue.items.length > 0;
     const avlPct = dataQuality ? Math.round((dataQuality.missingAVL / dataQuality.totalRecords) * 100) : 0;
@@ -611,10 +597,15 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                             : 'GTFS data not available')
                         : missedTrips.totalMissed === 0
                             ? 'All scheduled trips operated'
-                            : `${missedTrips.totalMissed} missed (${missedTrips.missedPct.toFixed(1)}%)`}
+                            : `${missedTrips.totalMissed} suspected missed trips (${missedTrips.missedPct.toFixed(1)}%)`}
                     onClick={missedTrips.totalMissed > 0 ? () => onNavigate('otp') : undefined}
                 />
             </div>
+            {missedTrips.totalMissed > 0 && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    {missedTrips.totalMissed} suspected missed trips identified for further investigation.
+                </div>
+            )}
 
             {/* ── 2b. Peak Hour Callout ─────────────────────────────── */}
             {peakHourSummary && (
@@ -644,8 +635,8 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                 </div>
             )}
 
-            {/* ── 3. Action Queue ──────────────────────────────────────── */}
-            {(
+            {/* ── 3. Action Queue (only shown when there are items) ── */}
+            {canShowActionQueue && hasActionQueue && (
             <div className="border rounded-xl p-4 border-amber-300 bg-amber-50/50">
                 <h3 className="text-sm font-bold mb-2 flex items-center gap-2 text-amber-700">
                     <AlertTriangle size={14} /> Action Queue
@@ -654,123 +645,41 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                     Ranked by severity, persistence, and rider impact using {DAY_TYPE_LABELS[actionQueue.peerDayType]} peer days ({actionQueue.peerCount} loaded). Minimum {MIN_ACTION_QUEUE_DAYS} days per route/trip.
                 </p>
                 <div className="space-y-2">
-                        {!canShowActionQueue && (
-                            <div className="text-xs text-gray-600 bg-white/80 border border-amber-200 rounded-lg px-3 py-2">
-                                Not enough peer-day history yet. Load at least {MIN_ACTION_QUEUE_DAYS} {DAY_TYPE_LABELS[actionQueue.peerDayType].toLowerCase()} days before routes/trips enter the queue.
+                    {actionQueue.items.map(item => (
+                        <div key={item.id} className="flex items-start justify-between gap-3 rounded-lg border border-amber-200 bg-white/80 px-3 py-2">
+                            <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                                    <span className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 font-bold uppercase tracking-wide">
+                                        {item.itemType}
+                                    </span>
+                                    <span className={`px-2 py-0.5 rounded-full font-bold ${
+                                        item.band === 'Act now'
+                                            ? 'bg-red-100 text-red-700'
+                                            : item.band === 'Watch'
+                                                ? 'bg-amber-100 text-amber-700'
+                                                : 'bg-cyan-100 text-cyan-700'
+                                    }`}>
+                                        {item.band}
+                                    </span>
+                                    <span className="text-gray-400">{item.daysBreaching}/{item.daysObserved} breach days</span>
+                                </div>
+                                <p className="text-sm font-bold text-gray-900 truncate">{item.title}</p>
+                                <p className="text-xs text-gray-600">{item.detail}</p>
                             </div>
-                        )}
-                        {canShowActionQueue && hasActionQueue && (
-                            <div className="space-y-2">
-                                {actionQueue.items.map(item => (
-                                    <div key={item.id} className="flex items-start justify-between gap-3 rounded-lg border border-amber-200 bg-white/80 px-3 py-2">
-                                        <div className="min-w-0">
-                                            <div className="flex flex-wrap items-center gap-2 text-[11px]">
-                                                <span className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 font-bold uppercase tracking-wide">
-                                                    {item.itemType}
-                                                </span>
-                                                <span className={`px-2 py-0.5 rounded-full font-bold ${
-                                                    item.band === 'Act now'
-                                                        ? 'bg-red-100 text-red-700'
-                                                        : item.band === 'Watch'
-                                                            ? 'bg-amber-100 text-amber-700'
-                                                            : 'bg-cyan-100 text-cyan-700'
-                                                }`}>
-                                                    {item.band}
-                                                </span>
-                                                <span className="text-gray-400">{item.daysBreaching}/{item.daysObserved} breach days</span>
-                                            </div>
-                                            <p className="text-sm font-bold text-gray-900 truncate">{item.title}</p>
-                                            <p className="text-xs text-gray-600">{item.detail}</p>
-                                        </div>
-                                        <div className="text-right shrink-0">
-                                            <p className="text-[10px] uppercase tracking-wide text-gray-400">Priority</p>
-                                            <p className="text-base font-bold text-amber-700">{item.priorityScore.toFixed(1)}</p>
-                                        </div>
-                                    </div>
-                                ))}
+                            <div className="text-right shrink-0">
+                                <p className="text-[10px] uppercase tracking-wide text-gray-400">Priority</p>
+                                <p className="text-base font-bold text-amber-700">{item.priorityScore.toFixed(1)}</p>
                             </div>
-                        )}
-                        {canShowActionQueue && !hasActionQueue && (
-                            <div className="text-xs text-gray-600 bg-white/80 border border-amber-200 rounded-lg px-3 py-2">
-                                No persistent route/trip issues met queue thresholds in the current peer-day window.
-                            </div>
-                        )}
-                        <button
-                            onClick={() => onNavigate('otp')}
-                            className="text-xs font-bold text-amber-700 hover:text-amber-800 flex items-center gap-1 mt-1"
-                        >
-                            View OTP Details <ArrowRight size={12} />
-                        </button>
+                        </div>
+                    ))}
+                    <button
+                        onClick={() => onNavigate('otp')}
+                        className="text-xs font-bold text-amber-700 hover:text-amber-800 flex items-center gap-1 mt-1"
+                    >
+                        View OTP Details <ArrowRight size={12} />
+                    </button>
                 </div>
             </div>
-            )}
-
-            {/* ── 3b. Missed Trips Detail ──────────────────────────── */}
-            {hasMissedTrips && (
-                <div className="bg-white border border-gray-200 rounded-xl">
-                    <button
-                        onClick={() => setMissedTripsExpanded(v => !v)}
-                        className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-gray-50 rounded-xl transition-colors"
-                    >
-                        <div className="flex items-center gap-2">
-                            <ClipboardList size={14} className="text-red-500" />
-                            <span className="text-sm font-bold text-gray-900">
-                                Missed Trips Detail
-                            </span>
-                            <span className="text-xs text-gray-400">
-                                {missedTrips.totalMissed} trip{missedTrips.totalMissed !== 1 ? 's' : ''} across {missedTrips.routesMissed.length} route{missedTrips.routesMissed.length !== 1 ? 's' : ''}
-                            </span>
-                        </div>
-                        <ChevronDown size={16} className={`text-gray-400 transition-transform ${missedTripsExpanded ? 'rotate-180' : ''}`} />
-                    </button>
-                    {missedTripsExpanded && (
-                        <div className="px-4 pb-4">
-                            <p className="text-xs text-gray-500 mb-3">
-                                A missed trip is a scheduled GTFS trip that was not observed in STREETS AVL data.
-                                This may indicate a cancelled trip, a trip run with no AVL equipment, or a data extraction gap.
-                                Matching uses route + departure time (±2 min tolerance).
-                            </p>
-                            <table className="w-full text-sm">
-                                <thead>
-                                    <tr className="border-b border-gray-100">
-                                        <th className="text-left py-1.5 px-2 font-bold text-gray-500 text-xs uppercase">Departure</th>
-                                        <th className="text-left py-1.5 px-2 font-bold text-gray-500 text-xs uppercase">Headsign</th>
-                                        <th className="text-left py-1.5 px-2 font-bold text-gray-500 text-xs uppercase">Block</th>
-                                        <th className="text-left py-1.5 px-2 font-bold text-gray-500 text-xs uppercase">Trip ID</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {missedTrips.routesMissed.map(route => (
-                                        <React.Fragment key={route.routeId}>
-                                            <tr className="bg-gray-50">
-                                                <td colSpan={4} className="py-1.5 px-2 font-bold text-gray-700 text-xs">
-                                                    Route {route.routeId}
-                                                    <span className="ml-2 font-normal text-gray-400">
-                                                        {route.count} missed
-                                                    </span>
-                                                </td>
-                                            </tr>
-                                            {route.trips.map(trip => (
-                                                <tr key={trip.tripId} className="border-b border-gray-50 hover:bg-gray-50">
-                                                    <td className="py-1 px-2 text-gray-900 font-medium">{trip.departure}</td>
-                                                    <td className="py-1 px-2 text-gray-600">{trip.headsign || '—'}</td>
-                                                    <td className="py-1 px-2 text-gray-500 font-mono text-xs">{trip.blockId || '—'}</td>
-                                                    <td className="py-1 px-2 text-gray-400 font-mono text-xs">{trip.tripId}</td>
-                                                </tr>
-                                            ))}
-                                        </React.Fragment>
-                                    ))}
-                                </tbody>
-                            </table>
-                            <button
-                                onClick={() => onNavigate('otp')}
-                                className="mt-3 text-xs font-bold text-cyan-600 hover:text-cyan-700 flex items-center gap-1"
-                            >
-                                View full missed trips table in OTP Analysis <ArrowRight size={12} />
-                            </button>
-                        </div>
-                    )}
-                </div>
             )}
 
             {/* ── 4. Charts Row: OTP Donut + OTP Trend ─────────────── */}
@@ -916,15 +825,15 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                     )}
                 </ChartCard>
 
-                <ChartCard title="Boardings per Hour" subtitle="All routes ranked by BPH efficiency">
+                <ChartCard title="Boardings per Hour" subtitle="All routes ranked by BPH efficiency (dashed lines = 10 and 30 BPH thresholds)">
                     <ResponsiveContainer width="100%" height={Math.max(250, routeRanking.length * 28)}>
-                        <BarChart data={[...routeRanking].sort((a, b) => b.bph - a.bph)} layout="vertical" margin={{ top: 5, right: 10, bottom: 5, left: 10 }}>
+                        <BarChart data={[...routeRanking].sort((a, b) => b.bph - a.bph)} layout="vertical" margin={{ top: 20, right: 10, bottom: 5, left: 10 }}>
                             <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f3f4f6" />
                             <XAxis type="number" domain={[0, (max: number) => Math.max(max, 30)]} tick={{ fontSize: 10, fill: '#9CA3AF' }} />
                             <YAxis type="category" dataKey="routeId" width={40} tick={{ fontSize: 11, fontWeight: 600, fill: '#6B7280' }} interval={0} />
                             <Tooltip formatter={(v: number) => [v.toFixed(1), 'BPH']} />
-                            <ReferenceLine x={10} stroke="#ef4444" strokeDasharray="6 4" label={{ value: 'Service review', position: 'top', fontSize: 10, fill: '#ef4444' }} />
-                            <ReferenceLine x={30} stroke="#10b981" strokeDasharray="6 4" label={{ value: 'Frequency review', position: 'top', fontSize: 10, fill: '#10b981' }} />
+                            <ReferenceLine x={10} stroke="#ef4444" strokeDasharray="6 4" label={{ value: '10 BPH: Service review', position: 'top', fontSize: 10, fill: '#ef4444' }} />
+                            <ReferenceLine x={30} stroke="#10b981" strokeDasharray="6 4" label={{ value: '30 BPH: Frequency review', position: 'top', fontSize: 10, fill: '#10b981' }} />
                             <Bar dataKey="bph" radius={[0, 4, 4, 0]}>
                                 {[...routeRanking].sort((a, b) => b.bph - a.bph).map((r) => (
                                     <Cell key={r.routeId} fill={bphColor(r.bph)} />
@@ -932,6 +841,16 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                             </Bar>
                         </BarChart>
                     </ResponsiveContainer>
+                    <div className="flex justify-center gap-4 mt-1">
+                        <div className="flex items-center gap-1.5 text-xs text-gray-500">
+                            <span className="inline-block w-3 border-t border-dashed border-red-500" />
+                            10 BPH: Service review threshold
+                        </div>
+                        <div className="flex items-center gap-1.5 text-xs text-gray-500">
+                            <span className="inline-block w-3 border-t border-dashed border-emerald-500" />
+                            30 BPH: Frequency review threshold
+                        </div>
+                    </div>
                 </ChartCard>
             </div>
 

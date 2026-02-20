@@ -6,7 +6,7 @@ import {
 import { ChartCard } from '../Analytics/AnalyticsShared';
 import type { PerformanceDataSummary, DayType, RouteLoadProfile } from '../../utils/performanceDataTypes';
 import { DEFAULT_LOAD_CAP } from '../../utils/performanceDataTypes';
-import { getRouteColor } from '../../utils/config/routeColors';
+import { getRouteColor, getRouteTextColor } from '../../utils/config/routeColors';
 
 interface LoadProfileModuleProps {
     data: PerformanceDataSummary;
@@ -79,6 +79,8 @@ export const LoadProfileModule: React.FC<LoadProfileModuleProps> = ({ data }) =>
         mergedProfiles.map(p => ({
             key: `${p.routeId}__${p.direction}`,
             label: `Route ${p.routeId} — ${p.direction}`,
+            routeId: p.routeId,
+            direction: p.direction,
             routeName: p.routeName,
             tripCount: p.tripCount,
         })),
@@ -183,17 +185,25 @@ export const LoadProfileModule: React.FC<LoadProfileModuleProps> = ({ data }) =>
                 </div>
                 <div className="flex items-center gap-2">
                     <span className="text-xs font-bold text-gray-400 uppercase">Route:</span>
-                    <select
-                        value={selectedProfile}
-                        onChange={e => setSelectedProfile(e.target.value)}
-                        className="text-sm font-medium border border-gray-200 rounded-lg px-3 py-1.5 bg-white focus:border-cyan-400 focus:outline-none"
-                    >
-                        {profileOptions.map(p => (
-                            <option key={p.key} value={p.key}>
-                                {p.label} ({p.tripCount} trips)
-                            </option>
-                        ))}
-                    </select>
+                    <div className="flex gap-1.5 flex-wrap justify-center">
+                        {profileOptions.map(p => {
+                            const isActive = selectedProfile === p.key;
+                            const bg = getRouteColor(p.routeId);
+                            const fg = getRouteTextColor(p.routeId);
+                            return (
+                                <button
+                                    key={p.key}
+                                    onClick={() => setSelectedProfile(p.key)}
+                                    className={`px-3 py-1 text-xs font-bold rounded-full transition-all ${
+                                        isActive ? 'shadow-sm ring-1 ring-black/10' : 'opacity-40 hover:opacity-70'
+                                    }`}
+                                    style={{ backgroundColor: bg, color: fg }}
+                                >
+                                    {p.routeId} {p.direction.charAt(0)}
+                                </button>
+                            );
+                        })}
+                    </div>
                 </div>
             </div>
 

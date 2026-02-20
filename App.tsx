@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { OnDemandWorkspace } from './components/workspaces/OnDemandWorkspace';
 import { FixedRouteWorkspace } from './components/workspaces/FixedRouteWorkspace';
+import { OperationsWorkspace } from './components/workspaces/OperationsWorkspace';
 import { AuthProvider, useAuth } from './components/contexts/AuthContext';
 import { TeamProvider } from './components/contexts/TeamContext';
 import { ToastProvider } from './components/contexts/ToastContext';
@@ -16,6 +17,7 @@ function parseHashView(): View {
   const hash = window.location.hash.slice(1);
   if (hash.startsWith('fixed')) return 'fixed';
   if (hash.startsWith('ondemand')) return 'ondemand';
+  if (hash.startsWith('operations')) return 'operations';
   return 'home';
 }
 
@@ -115,7 +117,7 @@ const AppContent: React.FC = () => {
               <h2 className="text-4xl font-extrabold text-gray-800 mb-4">Select Workspace</h2>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-4xl mx-auto pb-12">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto pb-12">
               {/* On Demand Card */}
               <button
                 onClick={() => setCurrentView('ondemand')}
@@ -156,6 +158,26 @@ const AppContent: React.FC = () => {
                 </div>
               </button>
 
+              {/* Dashboard & Reporting Card */}
+              <button
+                onClick={() => setCurrentView('operations')}
+                className="group relative bg-white rounded-3xl border-b-8 border-gray-200 p-8 hover:border-amber-500 hover:-translate-y-1 transition-all duration-200 text-left overflow-hidden"
+              >
+                <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:opacity-20 transition-opacity">
+                  <BarChart2 size={120} />
+                </div>
+                <div className="bg-amber-100 w-16 h-16 rounded-2xl flex items-center justify-center text-amber-600 mb-6 group-hover:scale-110 transition-transform">
+                  <BarChart2 size={32} />
+                </div>
+                <h3 className="text-2xl font-extrabold text-gray-800 mb-2 group-hover:text-amber-600 transition-colors">Dashboard & Reporting</h3>
+                <p className="text-gray-500 font-bold mb-6">
+                  OTP analysis, ridership dashboards, and STREETS reporting for scheduled transit operations.
+                </p>
+                <div className="flex items-center gap-2 text-amber-600 font-extrabold uppercase tracking-wide text-sm">
+                  Enter Workspace <ArrowRight size={16} />
+                </div>
+              </button>
+
             </div>
 
           </div>
@@ -170,6 +192,11 @@ const AppContent: React.FC = () => {
         {currentView === 'fixed' && (
           <ErrorBoundary fallbackTitle="Workspace Error">
             <FixedRouteWorkspace />
+          </ErrorBoundary>
+        )}
+        {currentView === 'operations' && (
+          <ErrorBoundary fallbackTitle="Workspace Error">
+            <OperationsWorkspace />
           </ErrorBoundary>
         )}
 

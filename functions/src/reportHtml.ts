@@ -112,6 +112,9 @@ function otpBar(earlyPct: number, onTimePct: number, latePct: number): string {
 function buildMissedTripsTable(latestDay: DailySummary): string {
   const mt = latestDay.missedTrips;
   if (!mt || mt.totalScheduled <= 0) return '';
+  const suspectedNote = mt.totalMissed > 0
+    ? `<div style="font-size:11px;color:#92400e;background:#fffbeb;border:1px solid #fcd34d;border-radius:6px;padding:8px 10px;margin-bottom:8px;">Suspected missed trips were identified for further investigation.</div>`
+    : '';
 
   const departureSortMinutes = (time: string): number => {
     const [hRaw, mRaw] = time.split(':');
@@ -143,6 +146,7 @@ function buildMissedTripsTable(latestDay: DailySummary): string {
 
     return `
     ${sectionHeader('Missed Trips', `${num(mt.totalMissed)} of ${num(mt.totalScheduled)} scheduled trips missed (${mt.missedPct.toFixed(1)}%)`)}
+    ${suspectedNote}
     <div style="font-size:11px;color:#9ca3af;margin-bottom:8px;">Each missed scheduled trip is listed below.</div>
     <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;">
       <tr style="background:#f9fafb;">
@@ -172,6 +176,7 @@ function buildMissedTripsTable(latestDay: DailySummary): string {
 
   return `
     ${sectionHeader('Missed Trips', `${num(mt.totalMissed)} of ${num(mt.totalScheduled)} scheduled trips missed (${mt.missedPct.toFixed(1)}%)`)}
+    ${suspectedNote}
     <div style="font-size:11px;color:#9ca3af;margin-bottom:8px;">Trip-level rows unavailable; showing route-level summary for this dataset.</div>
     <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;">
       <tr style="background:#f9fafb;">

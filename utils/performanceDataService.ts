@@ -43,36 +43,56 @@ export async function savePerformanceData(
 ): Promise<void> {
     const timestamp = Date.now().toString();
     const storagePath = getStoragePath(teamId, timestamp);
-
-    // Upload full summary JSON to Storage
-    const storageRef = ref(storage, storagePath);
-    const jsonStr = JSON.stringify(summary);
-    await uploadString(storageRef, jsonStr, 'raw', {
-        contentType: 'application/json',
-    });
-
-    // Check if there's an existing storage file to clean up
     const metadataRef = getMetadataRef(teamId);
+
+    // Merge with existing data — new days replace old, existing days are kept
+    let merged = summary;
     const existing = await getDoc(metadataRef);
     if (existing.exists()) {
         const oldPath = existing.data().storagePath;
         if (oldPath) {
-            // Snapshot old data before deleting — best-effort, never blocks import
             try {
                 const oldRef = ref(storage, oldPath);
                 const oldUrl = await getDownloadURL(oldRef);
                 const oldResponse = await fetch(oldUrl);
                 if (oldResponse.ok) {
                     const oldSummary: PerformanceDataSummary = await oldResponse.json();
-                    const snapshots = aggregateMonthlySnapshots(oldSummary.dailySummaries);
-                    if (snapshots.length > 0) {
-                        await saveMonthlySnapshots(teamId, snapshots);
+
+                    // Snapshot old data before overwriting — best-effort
+                    try {
+                        const snapshots = aggregateMonthlySnapshots(oldSummary.dailySummaries);
+                        if (snapshots.length > 0) {
+                            await saveMonthlySnapshots(teamId, snapshots);
+                        }
+                    } catch (snapshotErr) {
+                        console.error('Snapshot archive failed (non-blocking):', snapshotErr);
                     }
+
+                    // Merge: new days replace old, keep days not in the new import
+                    const newDates = new Set(summary.dailySummaries.map(d => d.date));
+                    const kept = oldSummary.dailySummaries.filter(d => !newDates.has(d.date));
+                    const allDays = [...kept, ...summary.dailySummaries]
+                        .sort((a, b) => a.date.localeCompare(b.date));
+
+                    const dates = allDays.map(d => d.date);
+                    merged = {
+                        dailySummaries: allDays,
+                        metadata: {
+                            importedAt: new Date().toISOString(),
+                            importedBy: userId,
+                            dateRange: { start: dates[0], end: dates[dates.length - 1] },
+                            dayCount: allDays.length,
+                            totalRecords: summary.metadata.totalRecords,
+                        },
+                        schemaVersion: summary.schemaVersion,
+                    };
                 }
-            } catch (snapshotErr) {
-                console.error('Snapshot archive failed (non-blocking):', snapshotErr);
+            } catch (fetchErr) {
+                console.error('Could not fetch existing data for merge:', fetchErr);
+                // Fall through — save new data only
             }
 
+            // Clean up old storage file
             try {
                 await deleteObject(ref(storage, oldPath));
             } catch {
@@ -81,14 +101,20 @@ export async function savePerformanceData(
         }
     }
 
+    // Upload merged summary JSON to Storage
+    const storageRef = ref(storage, storagePath);
+    await uploadString(storageRef, JSON.stringify(merged), 'raw', {
+        contentType: 'application/json',
+    });
+
     // Save metadata to Firestore
     await setDoc(metadataRef, {
         importedAt: serverTimestamp(),
         importedBy: userId,
         storagePath,
-        dateRange: summary.metadata.dateRange,
-        dayCount: summary.metadata.dayCount,
-        totalRecords: summary.metadata.totalRecords,
+        dateRange: merged.metadata.dateRange,
+        dayCount: merged.metadata.dayCount,
+        totalRecords: merged.metadata.totalRecords,
     });
 }
 

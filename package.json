@@ -11,7 +11,9 @@
     "lint": "eslint . --max-warnings 20",
     "preview": "vite preview",
     "prepare": "husky",
-    "gtfs:index": "npx tsx scripts/buildGtfsTripIndex.ts"
+    "gtfs:index": "npx tsx scripts/buildGtfsTripIndex.ts",
+    "backfill:missed-trips": "node functions/scripts/backfill-missed-trips.mjs",
+    "backfill-missed-trips": "node functions/scripts/backfill-missed-trips.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.1.0",

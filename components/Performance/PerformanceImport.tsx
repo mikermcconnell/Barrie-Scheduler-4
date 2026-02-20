@@ -1,8 +1,8 @@
 import React, { useState, useCallback, useRef } from 'react';
 import { useDropzone } from 'react-dropzone';
 import {
-    Upload, FileSpreadsheet, FileText, AlertTriangle, CheckCircle2,
-    Loader2, ArrowRight, X, BarChart3,
+    Upload, FileSpreadsheet, FileText, AlertTriangle,
+    Loader2, ArrowRight, X,
 } from 'lucide-react';
 import { parseSTREETSFile, generatePreview } from '../../utils/performanceDataParser';
 import { aggregateDailySummaries } from '../../utils/performanceDataAggregator';
@@ -30,7 +30,6 @@ export const PerformanceImport: React.FC<PerformanceImportProps> = ({
     const [progress, setProgress] = useState(0);
     const [progressText, setProgressText] = useState('');
     const [errorMessage, setErrorMessage] = useState('');
-    const [completedStats, setCompletedStats] = useState<{ days: number; records: number } | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const handleFile = useCallback(async (file: File) => {
@@ -138,8 +137,7 @@ export const PerformanceImport: React.FC<PerformanceImportProps> = ({
             await savePerformanceData(teamId, userId, summary);
 
             setProgress(100);
-            setCompletedStats({ days: dailySummaries.length, records: records.length });
-            setPhase('complete');
+            onImportComplete();
         } catch (err) {
             console.error('Import failed:', err);
             setErrorMessage(err instanceof Error ? err.message : 'Import failed');
@@ -288,28 +286,6 @@ export const PerformanceImport: React.FC<PerformanceImportProps> = ({
                     />
                 </div>
                 <p className="text-sm font-medium text-gray-400">{progress}%</p>
-            </div>
-        );
-    }
-
-    // ─── COMPLETE ───────────────────────────────────────────────
-    if (phase === 'complete') {
-        return (
-            <div className="max-w-lg mx-auto space-y-6 text-center py-12">
-                <CheckCircle2 className="mx-auto text-emerald-500" size={48} />
-                <div>
-                    <h2 className="text-xl font-bold text-gray-900 mb-1">Import Complete</h2>
-                    <p className="text-sm text-gray-500">
-                        Aggregated {completedStats?.records.toLocaleString()} records across {completedStats?.days} day{completedStats?.days !== 1 ? 's' : ''}.
-                    </p>
-                </div>
-                <button
-                    onClick={onImportComplete}
-                    className="px-6 py-2.5 bg-cyan-600 text-white font-bold rounded-lg hover:bg-cyan-700 transition-colors flex items-center gap-2 mx-auto"
-                >
-                    <BarChart3 size={18} />
-                    View Dashboard
-                </button>
             </div>
         );
     }

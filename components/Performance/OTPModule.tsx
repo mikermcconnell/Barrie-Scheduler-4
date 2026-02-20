@@ -1,14 +1,12 @@
 import React, { useMemo, useState } from 'react';
 import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-    ScatterChart, Scatter, Cell, ReferenceLine,
+    ScatterChart, Scatter, Cell, ReferenceLine, LabelList,
 } from 'recharts';
 import { ChartCard } from '../Analytics/AnalyticsShared';
 import type { PerformanceDataSummary, DayType } from '../../utils/performanceDataTypes';
 import {
-    getScheduledTrips, hasGtfsCoverage, getTripsForDayType,
-    buildObservedKeys, hasRouteTimeMatch, countRouteTimeMatches,
-    type ScheduledTrip,
+    computeMissedTripsForDay, hasGtfsCoverage,
 } from '../../utils/gtfs/gtfsScheduleIndex';
 
 interface OTPModuleProps {
@@ -87,12 +85,13 @@ export const OTPModule: React.FC<OTPModuleProps> = ({ data }) => {
 
     // Late trips table
     const lateTrips = useMemo(() => {
-        const trips: { date: string; tripName: string; routeId: string; block: string; deviation: number }[] = [];
+        const trips: { date: string; dayType: DayType; tripName: string; routeId: string; block: string; deviation: number }[] = [];
         for (const day of filtered) {
             for (const t of day.byTrip) {
                 if (t.otp.late > 0 && t.otp.avgDeviationSeconds > 300) {
                     trips.push({
                         date: day.date,
+                        dayType: day.dayType,
                         tripName: t.tripName,
                         routeId: t.routeId,
                         block: t.block,
@@ -129,55 +128,34 @@ export const OTPModule: React.FC<OTPModuleProps> = ({ data }) => {
     }, [filtered]);
 
     // ── Missed trips (GTFS vs STREETS route+time cross-reference) ────
-    const missedTrips = useMemo(() => {
-        const allMissed: { date: string; routeId: string; departure: string; headsign: string; blockId: string }[] = [];
-
-        for (const day of filtered) {
-            if (!hasGtfsCoverage(day.date)) continue;
-
-            const observedRoutes = new Set(day.byTrip.map(t => t.routeId));
-            const observedKeys = buildObservedKeys(day.byTrip);
-
-            let scheduled = getScheduledTrips(day.date, day.dayType);
-            let relevantScheduled = scheduled.filter(s => observedRoutes.has(s.routeId));
-            let dayMatched = countRouteTimeMatches(relevantScheduled, observedKeys);
-
-            // Best-fit fallback
-            if (relevantScheduled.length > 0 && dayMatched / relevantScheduled.length < 0.25) {
-                for (const dt of ['weekday', 'saturday', 'sunday'] as const) {
-                    const altTrips = getTripsForDayType(day.date, dt);
-                    const altRelevant = altTrips.filter(s => observedRoutes.has(s.routeId));
-                    const altMatched = countRouteTimeMatches(altRelevant, observedKeys);
-                    if (altMatched > dayMatched) {
-                        scheduled = altTrips;
-                        relevantScheduled = altRelevant;
-                        dayMatched = altMatched;
-                    }
-                }
-            }
-
-            if (relevantScheduled.length === 0 || dayMatched / relevantScheduled.length < 0.25) continue;
-
-            for (const s of relevantScheduled) {
-                if (hasRouteTimeMatch(s.routeId, s.departure, observedKeys)) continue;
-                allMissed.push({
-                    date: day.date,
-                    routeId: s.routeId,
-                    departure: s.departure,
-                    headsign: s.headsign,
-                    blockId: s.blockId,
-                });
-            }
-        }
-
-        return allMissed.sort((a, b) => {
-            const d = a.date.localeCompare(b.date);
-            if (d !== 0) return d;
-            const r = a.routeId.localeCompare(b.routeId, undefined, { numeric: true });
-            if (r !== 0) return r;
-            return a.departure.localeCompare(b.departure);
-        });
+    // Only show missed trips for the most recent day in the dataset (operations = current day focus)
+    const missedTripsDay = useMemo(() => {
+        if (filtered.length === 0) return null;
+        return filtered.reduce((latest, d) => d.date > latest.date ? d : latest, filtered[0]);
     }, [filtered]);
+
+    const missedTrips = useMemo(() => {
+        if (!missedTripsDay || !hasGtfsCoverage(missedTripsDay.date)) return [];
+
+        const dayMissed = computeMissedTripsForDay(missedTripsDay.date, missedTripsDay.dayType, missedTripsDay.byTrip);
+        if (!dayMissed) return [];
+
+        return dayMissed.trips
+            .map(s => ({
+                date: missedTripsDay.date,
+                routeId: s.routeId,
+                departure: s.departure,
+                headsign: s.headsign,
+                blockId: s.blockId,
+                missType: s.missType as 'not_performed' | 'late_over_15',
+                lateByMinutes: s.lateByMinutes,
+            }))
+            .sort((a, b) => {
+                const r = a.routeId.localeCompare(b.routeId, undefined, { numeric: true });
+                if (r !== 0) return r;
+                return a.departure.localeCompare(b.departure);
+            });
+    }, [missedTripsDay]);
 
     return (
         <div className="space-y-6">
@@ -197,16 +175,77 @@ export const OTPModule: React.FC<OTPModuleProps> = ({ data }) => {
                 <span className="text-xs font-medium text-gray-500">OTP is calculated from timepoints only (STREETS standard).</span>
             </div>
 
+            {/* Missed Trips Table */}
+            {missedTrips.length > 0 && (
+                <ChartCard title="Missed Trips" subtitle={`${missedTripsDay?.date} — ${missedTrips.length} trips either not performed or over 15 min late`}>
+                    <p className="text-xs text-gray-500 mb-3">
+                        <span className="font-medium text-amber-700">These are suspected missed trips for further investigation.</span>
+                        <br />
+                        Missed-trip categories:
+                        {' '}not performed at all (no observed route departure match),
+                        {' '}or performed over 15 minutes late.
+                        Matching uses route + scheduled departure time (±15 min tolerance).
+                    </p>
+                    <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
+                        <table className="w-full text-sm">
+                            <thead className="sticky top-0 bg-white">
+                                <tr className="border-b border-gray-100">
+                                    <th className="text-left py-2 px-2 font-bold text-gray-500 text-xs uppercase">Route</th>
+                                    <th className="text-left py-2 px-2 font-bold text-gray-500 text-xs uppercase">Departure</th>
+                                    <th className="text-left py-2 px-2 font-bold text-gray-500 text-xs uppercase">Headsign</th>
+                                    <th className="text-left py-2 px-2 font-bold text-gray-500 text-xs uppercase">Block</th>
+                                    <th className="text-right py-2 px-2 font-bold text-gray-500 text-xs uppercase">Late By</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr className="bg-gray-50">
+                                    <td colSpan={5} className="py-1.5 px-2 text-xs font-bold text-gray-700 uppercase tracking-wide">
+                                        Not performed at all ({missedTrips.filter(t => t.missType === 'not_performed').length})
+                                    </td>
+                                </tr>
+                                {missedTrips.filter(t => t.missType === 'not_performed').map((t, i) => (
+                                    <tr key={`np-${i}`} className="border-b border-gray-50 hover:bg-gray-50">
+                                        <td className="py-1.5 px-2 font-bold text-gray-900">{t.routeId}</td>
+                                        <td className="py-1.5 px-2 font-medium text-gray-900">{t.departure}</td>
+                                        <td className="py-1.5 px-2 text-gray-600">{t.headsign || '—'}</td>
+                                        <td className="py-1.5 px-2 text-gray-500 font-mono text-xs">{t.blockId || '—'}</td>
+                                        <td className="py-1.5 px-2 text-right text-gray-400">—</td>
+                                    </tr>
+                                ))}
+                                <tr className="bg-amber-50">
+                                    <td colSpan={5} className="py-1.5 px-2 text-xs font-bold text-amber-700 uppercase tracking-wide">
+                                        Over 15 min late ({missedTrips.filter(t => t.missType === 'late_over_15').length})
+                                    </td>
+                                </tr>
+                                {missedTrips.filter(t => t.missType === 'late_over_15').map((t, i) => (
+                                    <tr key={`late-${i}`} className="border-b border-gray-50 hover:bg-gray-50">
+                                        <td className="py-1.5 px-2 font-bold text-gray-900">{t.routeId}</td>
+                                        <td className="py-1.5 px-2 font-medium text-gray-900">{t.departure}</td>
+                                        <td className="py-1.5 px-2 text-gray-600">{t.headsign || '—'}</td>
+                                        <td className="py-1.5 px-2 text-gray-500 font-mono text-xs">{t.blockId || '—'}</td>
+                                        <td className="py-1.5 px-2 text-right font-bold text-amber-700">
+                                            {typeof t.lateByMinutes === 'number' ? `+${t.lateByMinutes}m` : '—'}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </ChartCard>
+            )}
+
             {/* Hourly OTP Pattern */}
-            <ChartCard title="OTP by Hour of Day" subtitle="On-time percentage at each hour">
+            <ChartCard title="OTP by Hour of Day" subtitle="On-time percentage at each hour (dashed line = 85% target)">
                 <ResponsiveContainer width="100%" height={280}>
-                    <BarChart data={hourlyOTP} margin={{ top: 5, right: 10, bottom: 5, left: -10 }}>
+                    <BarChart data={hourlyOTP} margin={{ top: 16, right: 10, bottom: 5, left: -10 }}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
                         <XAxis dataKey="hour" tick={{ fontSize: 10, fill: '#9CA3AF' }} interval={1} />
                         <YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: '#9CA3AF' }} tickFormatter={v => `${v}%`} />
                         <Tooltip formatter={(v: number, name: string) => [`${v}%`, name === 'otp' ? 'On-Time' : name]} />
-                        <ReferenceLine y={80} stroke="#9CA3AF" strokeDasharray="3 3" label={{ value: '80% target', position: 'insideTopRight', fontSize: 10, fill: '#9CA3AF' }} />
-                        <Bar dataKey="otp" fill="#06b6d4" radius={[4, 4, 0, 0]} />
+                        <ReferenceLine y={85} stroke="#9CA3AF" strokeDasharray="3 3" label={{ value: '85% target', position: 'insideTopRight', fontSize: 10, fill: '#9CA3AF' }} />
+                        <Bar dataKey="otp" fill="#06b6d4" radius={[4, 4, 0, 0]}>
+                            <LabelList dataKey="otp" position="top" formatter={(v: number) => `${v}%`} style={{ fontSize: 9, fill: '#6B7280', fontWeight: 600 }} />
+                        </Bar>
                     </BarChart>
                 </ResponsiveContainer>
             </ChartCard>
@@ -231,12 +270,13 @@ export const OTPModule: React.FC<OTPModuleProps> = ({ data }) => {
 
             {/* Late Trips Table */}
             {lateTrips.length > 0 && (
-                <ChartCard title="Chronically Late Trips" subtitle={`Top ${lateTrips.length} trips by average delay`}>
+                <ChartCard title="Late Trips" subtitle={`Top ${lateTrips.length} trips by average delay — ${filtered.length} day${filtered.length !== 1 ? 's' : ''} tracked`}>
                     <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
                         <table className="w-full text-sm">
                             <thead className="sticky top-0 bg-white">
                                 <tr className="border-b border-gray-100">
                                     <th className="text-left py-2 px-2 font-bold text-gray-500 text-xs uppercase">Date</th>
+                                    <th className="text-left py-2 px-2 font-bold text-gray-500 text-xs uppercase">Day</th>
                                     <th className="text-left py-2 px-2 font-bold text-gray-500 text-xs uppercase">Route</th>
                                     <th className="text-left py-2 px-2 font-bold text-gray-500 text-xs uppercase">Trip</th>
                                     <th className="text-left py-2 px-2 font-bold text-gray-500 text-xs uppercase">Block</th>
@@ -247,49 +287,11 @@ export const OTPModule: React.FC<OTPModuleProps> = ({ data }) => {
                                 {lateTrips.map((t, i) => (
                                     <tr key={i} className="border-b border-gray-50 hover:bg-gray-50">
                                         <td className="py-1.5 px-2 text-gray-500">{t.date}</td>
+                                        <td className="py-1.5 px-2 text-gray-500">{DAY_TYPE_LABELS[t.dayType]}</td>
                                         <td className="py-1.5 px-2 font-bold text-gray-900">{t.routeId}</td>
                                         <td className="py-1.5 px-2 text-gray-700">{t.tripName}</td>
                                         <td className="py-1.5 px-2 text-gray-500">{t.block}</td>
                                         <td className="py-1.5 px-2 text-right font-bold text-red-600">+{t.deviation} min</td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                </ChartCard>
-            )}
-
-            {/* Missed Trips Table */}
-            {missedTrips.length > 0 && (
-                <ChartCard title="Missed Trips" subtitle={`${missedTrips.length} scheduled trips not observed in STREETS data`}>
-                    <p className="text-xs text-gray-500 mb-3">
-                        A missed trip is a GTFS-scheduled departure with no matching AVL record in STREETS.
-                        Possible causes: cancelled service, vehicle running without AVL, or data extraction gap.
-                        Matching uses route + scheduled departure time (±2 min tolerance).
-                    </p>
-                    <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
-                        <table className="w-full text-sm">
-                            <thead className="sticky top-0 bg-white">
-                                <tr className="border-b border-gray-100">
-                                    {filtered.length > 1 && (
-                                        <th className="text-left py-2 px-2 font-bold text-gray-500 text-xs uppercase">Date</th>
-                                    )}
-                                    <th className="text-left py-2 px-2 font-bold text-gray-500 text-xs uppercase">Route</th>
-                                    <th className="text-left py-2 px-2 font-bold text-gray-500 text-xs uppercase">Departure</th>
-                                    <th className="text-left py-2 px-2 font-bold text-gray-500 text-xs uppercase">Headsign</th>
-                                    <th className="text-left py-2 px-2 font-bold text-gray-500 text-xs uppercase">Block</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {missedTrips.map((t, i) => (
-                                    <tr key={i} className="border-b border-gray-50 hover:bg-gray-50">
-                                        {filtered.length > 1 && (
-                                            <td className="py-1.5 px-2 text-gray-500">{t.date}</td>
-                                        )}
-                                        <td className="py-1.5 px-2 font-bold text-gray-900">{t.routeId}</td>
-                                        <td className="py-1.5 px-2 font-medium text-gray-900">{t.departure}</td>
-                                        <td className="py-1.5 px-2 text-gray-600">{t.headsign || '—'}</td>
-                                        <td className="py-1.5 px-2 text-gray-500 font-mono text-xs">{t.blockId || '—'}</td>
                                     </tr>
                                 ))}
                             </tbody>

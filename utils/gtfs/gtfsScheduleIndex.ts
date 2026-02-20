@@ -8,7 +8,7 @@
  * Holiday handling (Option D):
  *  - Known Ontario statutory holidays map to their actual service type
  *  - Unknown mismatches use best-fit matching (try all 3 service types,
- *    pick the one with the highest trip ID match rate)
+ *    pick the one with the strongest route+time match quality)
  */
 import tripsRaw from '../../gtfs/trips.txt?raw';
 import calendarRaw from '../../gtfs/calendar.txt?raw';
@@ -128,6 +128,18 @@ for (const t of trips) {
 }
 
 const departureIndex = tripIndex as Record<string, string>;
+
+export interface RouteMatchStats {
+    scheduled: number;
+    matched: number;
+}
+
+export interface ServiceCandidate {
+    relevantScheduled: ScheduledTrip[];
+    matched: number;
+    matchRatio: number;
+    routeStats: Map<string, RouteMatchStats>;
+}
 
 // ─── Day-type matching ──────────────────────────────────────────────
 
@@ -249,33 +261,93 @@ export function bestFitScheduledTrips(
 
 // ─── Route + departure-time matching (resilient to GTFS feed ID changes) ────
 
-const MATCH_TOLERANCE_MINS = 2;
+const MATCH_TOLERANCE_MINS = 15;
+const MIN_DAY_MATCH_RATIO = 0.25;
+const MIN_ROUTE_MATCH_RATIO = 0.1;
+const LATE_CLASSIFICATION_WINDOW_MINS = 60;
 
-function timeToMinutes(hhmm: string): number {
-    const [h, m] = hhmm.split(':').map(Number);
-    return h * 60 + m;
+function parseTimeToMinutes(raw: string): number | null {
+    const value = raw.trim();
+    const m = value.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+    if (!m) return null;
+    const hours = Number.parseInt(m[1], 10);
+    const mins = Number.parseInt(m[2], 10);
+    if (!Number.isFinite(hours) || !Number.isFinite(mins) || mins < 0 || mins > 59) return null;
+    if (hours < 0) return null;
+    return (hours * 60) + mins;
+}
+
+function minuteOfDay(totalMinutes: number): number {
+    return ((totalMinutes % 1440) + 1440) % 1440;
+}
+
+function minuteKey(routeId: string, minute: number): string {
+    return `${routeId}|${minute}`;
+}
+
+function circularSignedDelta(fromMinute: number, toMinute: number): number {
+    let diff = toMinute - fromMinute;
+    while (diff > 720) diff -= 1440;
+    while (diff <= -720) diff += 1440;
+    return diff;
+}
+
+interface ObservedDepartureEntry {
+    minute: number;
+    used: boolean;
+}
+
+function buildObservedByRoute(trips: { routeId: string; terminalDepartureTime: string }[]): Map<string, ObservedDepartureEntry[]> {
+    const byRoute = new Map<string, ObservedDepartureEntry[]>();
+    for (const t of trips) {
+        const mins = parseTimeToMinutes(t.terminalDepartureTime);
+        if (mins === null) continue;
+        const route = t.routeId;
+        const arr = byRoute.get(route) || [];
+        arr.push({ minute: minuteOfDay(mins), used: false });
+        byRoute.set(route, arr);
+    }
+    for (const arr of byRoute.values()) {
+        arr.sort((a, b) => a.minute - b.minute);
+    }
+    return byRoute;
+}
+
+function findBestObserved(
+    entries: ObservedDepartureEntry[],
+    scheduledMinute: number,
+    predicate: (delta: number) => boolean,
+    score: (delta: number) => number,
+): { index: number; delta: number } | null {
+    let best: { index: number; delta: number; score: number } | null = null;
+    for (let i = 0; i < entries.length; i++) {
+        if (entries[i].used) continue;
+        const delta = circularSignedDelta(scheduledMinute, entries[i].minute);
+        if (!predicate(delta)) continue;
+        const s = score(delta);
+        if (!best || s < best.score) best = { index: i, delta, score: s };
+    }
+    return best ? { index: best.index, delta: best.delta } : null;
 }
 
 /** Build route|time keys from observed trips for O(1) matching */
 export function buildObservedKeys(trips: { routeId: string; terminalDepartureTime: string }[]): Set<string> {
     const keys = new Set<string>();
     for (const t of trips) {
-        keys.add(`${t.routeId}|${t.terminalDepartureTime}`);
+        const mins = parseTimeToMinutes(t.terminalDepartureTime);
+        if (mins === null) continue;
+        keys.add(minuteKey(t.routeId, minuteOfDay(mins)));
     }
     return keys;
 }
 
-/** Check if a scheduled trip matches any observed trip within ±2 min tolerance */
+/** Check if a scheduled trip matches any observed trip within ±15 min tolerance */
 export function hasRouteTimeMatch(routeId: string, departure: string, keys: Set<string>): boolean {
-    if (keys.has(`${routeId}|${departure}`)) return true;
-    const mins = timeToMinutes(departure);
+    const mins = parseTimeToMinutes(departure);
+    if (mins === null) return false;
     for (let offset = -MATCH_TOLERANCE_MINS; offset <= MATCH_TOLERANCE_MINS; offset++) {
-        if (offset === 0) continue;
-        const adj = mins + offset;
-        if (adj < 0) continue;
-        const hh = String(Math.floor(adj / 60)).padStart(2, '0');
-        const mm = String(adj % 60).padStart(2, '0');
-        if (keys.has(`${routeId}|${hh}:${mm}`)) return true;
+        const adj = minuteOfDay(mins + offset);
+        if (keys.has(minuteKey(routeId, adj))) return true;
     }
     return false;
 }
@@ -288,6 +360,46 @@ export function countRouteTimeMatches(scheduled: ScheduledTrip[], keys: Set<stri
     return n;
 }
 
+export function isBetterServiceCandidate(next: ServiceCandidate, current: ServiceCandidate): boolean {
+    if (next.matchRatio !== current.matchRatio) return next.matchRatio > current.matchRatio;
+    if (next.matched !== current.matched) return next.matched > current.matched;
+    return next.relevantScheduled.length < current.relevantScheduled.length;
+}
+
+function evaluateCandidate(
+    scheduled: ScheduledTrip[],
+    observedRoutes: Set<string>,
+    observedKeys: Set<string>,
+): ServiceCandidate {
+    const relevantScheduled = scheduled.filter(s => observedRoutes.has(s.routeId));
+    const routeStats = new Map<string, RouteMatchStats>();
+    let matched = 0;
+
+    for (const s of relevantScheduled) {
+        const existing = routeStats.get(s.routeId) || { scheduled: 0, matched: 0 };
+        existing.scheduled++;
+        const isMatch = hasRouteTimeMatch(s.routeId, s.departure, observedKeys);
+        if (isMatch) {
+            matched++;
+            existing.matched++;
+        }
+        routeStats.set(s.routeId, existing);
+    }
+
+    return {
+        relevantScheduled,
+        matched,
+        matchRatio: relevantScheduled.length > 0 ? (matched / relevantScheduled.length) : 0,
+        routeStats,
+    };
+}
+
+function isRouteReliable(stats: RouteMatchStats): boolean {
+    if (stats.scheduled <= 0) return false;
+    if (stats.matched <= 0) return false;
+    return (stats.matched / stats.scheduled) >= MIN_ROUTE_MATCH_RATIO;
+}
+
 export interface MissedTripRow {
     tripId: string;
     routeId: string;
@@ -295,6 +407,8 @@ export interface MissedTripRow {
     headsign: string;
     blockId: string;
     serviceId: string;
+    missType: 'not_performed' | 'late_over_15';
+    lateByMinutes?: number;
 }
 
 export interface MissedTripsSummary {
@@ -302,6 +416,8 @@ export interface MissedTripsSummary {
     totalMatched: number;
     totalMissed: number;
     missedPct: number;
+    notPerformedCount: number;
+    lateOver15Count: number;
     byRoute: { routeId: string; count: number; earliestDep: string }[];
     trips: MissedTripRow[];
 }
@@ -318,40 +434,108 @@ export function computeMissedTripsForDay(
     if (!hasGtfsCoverage(date)) return null;
 
     const observedRoutes = new Set(observedTrips.map(t => t.routeId));
+    if (observedRoutes.size === 0) return null;
     const observedKeys = buildObservedKeys(observedTrips);
 
-    let scheduled = getScheduledTrips(date, dayType);
-    let relevantScheduled = scheduled.filter(s => observedRoutes.has(s.routeId));
-    let dayMatched = countRouteTimeMatches(relevantScheduled, observedKeys);
+    let best = evaluateCandidate(getScheduledTrips(date, dayType), observedRoutes, observedKeys);
 
     // Best-fit fallback
-    if (relevantScheduled.length > 0 && dayMatched / relevantScheduled.length < 0.25) {
+    if (best.relevantScheduled.length > 0 && best.matchRatio < MIN_DAY_MATCH_RATIO) {
         for (const dt of ['weekday', 'saturday', 'sunday'] as const) {
-            const altTrips = getTripsForDayType(date, dt);
-            const altRelevant = altTrips.filter(s => observedRoutes.has(s.routeId));
-            const altMatched = countRouteTimeMatches(altRelevant, observedKeys);
-            if (altMatched > dayMatched) {
-                scheduled = altTrips;
-                relevantScheduled = altRelevant;
-                dayMatched = altMatched;
-            }
+            const next = evaluateCandidate(getTripsForDayType(date, dt), observedRoutes, observedKeys);
+            if (isBetterServiceCandidate(next, best)) best = next;
         }
     }
 
-    if (relevantScheduled.length === 0 || dayMatched / relevantScheduled.length < 0.25) return null;
+    if (best.relevantScheduled.length === 0 || best.matchRatio < MIN_DAY_MATCH_RATIO) return null;
+
+    const reliableRoutes = new Set<string>();
+    for (const [routeId, stats] of best.routeStats) {
+        if (isRouteReliable(stats)) reliableRoutes.add(routeId);
+    }
+    if (reliableRoutes.size === 0) return null;
+
+    const reliableScheduled = best.relevantScheduled.filter(s => reliableRoutes.has(s.routeId));
+    const dayMatched = countRouteTimeMatches(reliableScheduled, observedKeys);
+    if (reliableScheduled.length === 0 || (dayMatched / reliableScheduled.length) < MIN_DAY_MATCH_RATIO) return null;
+
+    const observedByRoute = buildObservedByRoute(observedTrips.filter(t => reliableRoutes.has(t.routeId)));
+    const scheduledOrdered = [...reliableScheduled].sort((a, b) => {
+        const routeCmp = a.routeId.localeCompare(b.routeId, undefined, { numeric: true });
+        if (routeCmp !== 0) return routeCmp;
+        const aMin = parseTimeToMinutes(a.departure);
+        const bMin = parseTimeToMinutes(b.departure);
+        if (aMin === null && bMin === null) return 0;
+        if (aMin === null) return 1;
+        if (bMin === null) return -1;
+        return minuteOfDay(aMin) - minuteOfDay(bMin);
+    });
+
+    let matchedCount = 0;
+    const unmatched: { s: ScheduledTrip; depMin: number | null }[] = [];
+    for (const s of scheduledOrdered) {
+        const depRaw = parseTimeToMinutes(s.departure);
+        const depMin = depRaw === null ? null : minuteOfDay(depRaw);
+        if (depMin === null) {
+            unmatched.push({ s, depMin });
+            continue;
+        }
+        const entries = observedByRoute.get(s.routeId) || [];
+        const exact = findBestObserved(
+            entries,
+            depMin,
+            (delta) => Math.abs(delta) <= MATCH_TOLERANCE_MINS,
+            (delta) => Math.abs(delta),
+        );
+        if (exact) {
+            entries[exact.index].used = true;
+            matchedCount++;
+            continue;
+        }
+        unmatched.push({ s, depMin });
+    }
 
     const missedTrips: MissedTripRow[] = [];
+    let notPerformedCount = 0;
+    let lateOver15Count = 0;
     const missedByRoute = new Map<string, { routeId: string; count: number; earliestDep: string }>();
-    for (const s of relevantScheduled) {
-        if (hasRouteTimeMatch(s.routeId, s.departure, observedKeys)) continue;
-        missedTrips.push({
-            tripId: s.tripId,
-            routeId: s.routeId,
-            departure: s.departure,
-            headsign: s.headsign,
-            blockId: s.blockId,
-            serviceId: s.serviceId,
-        });
+    for (const { s, depMin } of unmatched) {
+        const entries = observedByRoute.get(s.routeId) || [];
+        const late = depMin === null
+            ? null
+            : findBestObserved(
+                entries,
+                depMin,
+                (delta) => delta > MATCH_TOLERANCE_MINS && delta <= LATE_CLASSIFICATION_WINDOW_MINS,
+                (delta) => delta,
+            );
+
+        if (late) {
+            entries[late.index].used = true;
+            lateOver15Count++;
+            missedTrips.push({
+                tripId: s.tripId,
+                routeId: s.routeId,
+                departure: s.departure,
+                headsign: s.headsign,
+                blockId: s.blockId,
+                serviceId: s.serviceId,
+                missType: 'late_over_15',
+                lateByMinutes: Math.round(late.delta),
+            });
+        } else {
+            notPerformedCount++;
+            missedTrips.push({
+                tripId: s.tripId,
+                routeId: s.routeId,
+                departure: s.departure,
+                headsign: s.headsign,
+                blockId: s.blockId,
+                serviceId: s.serviceId,
+                missType: 'not_performed',
+            });
+        }
+
         const existing = missedByRoute.get(s.routeId);
         if (existing) {
             existing.count++;
@@ -361,14 +545,18 @@ export function computeMissedTripsForDay(
         }
     }
 
-    const totalMissed = relevantScheduled.length - dayMatched;
+    const totalMissed = missedTrips.length;
     return {
-        totalScheduled: relevantScheduled.length,
-        totalMatched: dayMatched,
+        totalScheduled: scheduledOrdered.length,
+        totalMatched: matchedCount,
         totalMissed,
-        missedPct: (totalMissed / relevantScheduled.length) * 100,
+        missedPct: (totalMissed / scheduledOrdered.length) * 100,
+        notPerformedCount,
+        lateOver15Count,
         byRoute: Array.from(missedByRoute.values()).sort((a, b) => b.count - a.count),
         trips: missedTrips.sort((a, b) => {
+            const typeCmp = a.missType.localeCompare(b.missType);
+            if (typeCmp !== 0) return typeCmp;
             const routeCmp = a.routeId.localeCompare(b.routeId, undefined, { numeric: true });
             if (routeCmp !== 0) return routeCmp;
             const depCmp = a.departure.localeCompare(b.departure);

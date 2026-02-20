@@ -124,7 +124,7 @@ export function parseRow(
       departureLoad: toNumber(row['DepartureLoad']),
       boardings: toNumber(row['Boardings']),
       alightings: toNumber(row['Alightings']),
-      apcSource: toNumber(row['APCSource']),
+      apcSource: row['APCSource'] != null ? toNumber(row['APCSource']) : -1,
       block: toStringRequired(row['Block']),
       operatorId: toStringRequired(row['OperatorID']),
       tripName: toStringRequired(row['TripName']),

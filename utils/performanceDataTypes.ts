@@ -131,6 +131,9 @@ export interface StopMetrics {
   alightings: number;
   avgLoad: number;
   routeCount: number;     // how many routes serve this stop
+  routes: string[];       // which route IDs serve this stop
+  hourlyBoardings?: number[];  // 24 entries (index=hour), boardings per hour
+  hourlyAlightings?: number[]; // 24 entries (index=hour), alightings per hour
 }
 
 export interface TripMetrics {
@@ -230,6 +233,8 @@ export interface DailySummary {
     totalMatched: number;
     totalMissed: number;
     missedPct: number;
+    notPerformedCount: number;
+    lateOver15Count: number;
     byRoute: { routeId: string; count: number; earliestDep: string }[];
     trips?: {
       tripId: string;
@@ -238,6 +243,8 @@ export interface DailySummary {
       headsign: string;
       blockId: string;
       serviceId: string;
+      missType: 'not_performed' | 'late_over_15';
+      lateByMinutes?: number;
     }[];
   };
   dataQuality: DataQuality;
@@ -267,7 +274,7 @@ export interface PerformanceMetadata {
 
 // ─── Import State (ephemeral, not stored) ───────────────────────────
 
-export type PerformanceImportPhase = 'select' | 'preview' | 'processing' | 'complete' | 'error';
+export type PerformanceImportPhase = 'select' | 'preview' | 'processing' | 'error';
 
 export interface ImportProgress {
   phase: string;
