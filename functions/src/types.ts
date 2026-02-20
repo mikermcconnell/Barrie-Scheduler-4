@@ -67,6 +67,52 @@ export const STREETS_REQUIRED_COLUMNS = [
 
 export type OTPStatus = 'early' | 'on-time' | 'late';
 
+// ─── Dwell Classification ───────────────────────────────────────────
+export type DwellSeverity = 'moderate' | 'high';
+
+export const DWELL_THRESHOLDS = {
+  boardingAllowanceSeconds: 120,
+  highRawSeconds: 300,
+} as const;
+
+export function classifyDwell(rawDwellSeconds: number): DwellSeverity | null {
+  if (rawDwellSeconds < DWELL_THRESHOLDS.boardingAllowanceSeconds) return null;
+  if (rawDwellSeconds > DWELL_THRESHOLDS.highRawSeconds) return 'high';
+  return 'moderate';
+}
+
+export interface DwellIncident {
+  operatorId: string;
+  date: string;
+  routeId: string;
+  routeName: string;
+  stopName: string;
+  stopId: string;
+  tripName: string;
+  block: string;
+  observedArrivalTime: string;
+  observedDepartureTime: string;
+  rawDwellSeconds: number;
+  trackedDwellSeconds: number;
+  severity: DwellSeverity;
+}
+
+export interface OperatorDwellSummary {
+  operatorId: string;
+  moderateCount: number;
+  highCount: number;
+  totalIncidents: number;
+  totalTrackedDwellSeconds: number;
+  avgTrackedDwellSeconds: number;
+}
+
+export interface OperatorDwellMetrics {
+  incidents: DwellIncident[];
+  byOperator: OperatorDwellSummary[];
+  totalIncidents: number;
+  totalTrackedDwellMinutes: number;
+}
+
 export const OTP_THRESHOLDS = {
   earlySeconds: -180,
   lateSeconds: 300,
@@ -210,6 +256,7 @@ export interface DailySummary {
       lateByMinutes?: number;
     }[];
   };
+  byOperatorDwell?: OperatorDwellMetrics;
   dataQuality: DataQuality;
   schemaVersion: number;
 }

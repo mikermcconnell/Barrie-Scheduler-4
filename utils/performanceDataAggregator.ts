@@ -5,6 +5,8 @@ import {
   RouteLoadProfile, LoadProfileStop, DataQuality, OTPBreakdown, OTPStatus,
   RouteRidershipHeatmap, RidershipHeatmapTrip, RidershipHeatmapStop,
   classifyOTP, OTP_THRESHOLDS, PERFORMANCE_SCHEMA_VERSION, DEFAULT_LOAD_CAP,
+  OperatorDwellMetrics, DwellIncident, OperatorDwellSummary,
+  classifyDwell, DWELL_THRESHOLDS,
 } from './performanceDataTypes';
 import type { MonthlySnapshot, MonthlyRouteSnapshot, MonthlyDayTypeSnapshot } from './performanceSnapshotTypes';
 import { SNAPSHOT_VERSION } from './performanceSnapshotTypes';
@@ -603,6 +605,87 @@ function buildRidershipHeatmaps(records: STREETSRecord[]): RouteRidershipHeatmap
   });
 }
 
+function buildOperatorDwellMetrics(records: STREETSRecord[], date: string): OperatorDwellMetrics {
+  const incidents: DwellIncident[] = [];
+
+  for (const r of records) {
+    if (!r.timePoint) continue;
+    if (!r.observedArrivalTime || !r.observedDepartureTime) continue;
+
+    let arrSec = timeToSeconds(r.observedArrivalTime);
+    let depSec = timeToSeconds(r.observedDepartureTime);
+
+    // Post-midnight guard: departure before arrival means midnight rollover
+    if (depSec < arrSec) depSec += 86400;
+
+    const rawDwell = depSec - arrSec;
+    if (rawDwell < 0) continue;
+
+    const severity = classifyDwell(rawDwell);
+    if (!severity) continue;
+
+    const trackedDwell = rawDwell - DWELL_THRESHOLDS.boardingAllowanceSeconds;
+
+    incidents.push({
+      operatorId: r.operatorId,
+      date,
+      routeId: r.routeId,
+      routeName: r.routeName,
+      stopName: r.stopName,
+      stopId: r.stopId,
+      tripName: r.tripName,
+      block: r.block,
+      observedArrivalTime: r.observedArrivalTime,
+      observedDepartureTime: r.observedDepartureTime,
+      rawDwellSeconds: rawDwell,
+      trackedDwellSeconds: trackedDwell,
+      severity,
+    });
+  }
+
+  // Group by operator and build summaries
+  const opMap = new Map<string, DwellIncident[]>();
+  for (const inc of incidents) {
+    const arr = opMap.get(inc.operatorId);
+    if (arr) arr.push(inc);
+    else opMap.set(inc.operatorId, [inc]);
+  }
+
+  const byOperator: OperatorDwellSummary[] = [];
+  for (const [operatorId, opIncidents] of opMap) {
+    let moderateCount = 0;
+    let highCount = 0;
+    let totalTrackedDwellSeconds = 0;
+
+    for (const inc of opIncidents) {
+      if (inc.severity === 'moderate') moderateCount++;
+      else highCount++;
+      totalTrackedDwellSeconds += inc.trackedDwellSeconds;
+    }
+
+    byOperator.push({
+      operatorId,
+      moderateCount,
+      highCount,
+      totalIncidents: opIncidents.length,
+      totalTrackedDwellSeconds,
+      avgTrackedDwellSeconds: safeDivide(totalTrackedDwellSeconds, opIncidents.length),
+    });
+  }
+
+  // Sort by worst first (most incidents, then highest total dwell)
+  byOperator.sort((a, b) => b.totalIncidents - a.totalIncidents || b.totalTrackedDwellSeconds - a.totalTrackedDwellSeconds);
+
+  const totalTrackedSeconds = incidents.reduce((s, i) => s + i.trackedDwellSeconds, 0);
+
+  return {
+    incidents,
+    byOperator,
+    totalIncidents: incidents.length,
+    totalTrackedDwellMinutes: Math.round(totalTrackedSeconds / 60 * 10) / 10,
+  };
+}
+
 function buildDataQuality(
   records: STREETSRecord[],
   sanitization: { loadCapped: number; apcExcludedFromLoad: number }
@@ -653,6 +736,7 @@ function aggregateSingleDay(date: string, records: STREETSRecord[]): DailySummar
     byTrip: buildTripMetrics(records),
     loadProfiles: buildLoadProfiles(records),
     ridershipHeatmaps: buildRidershipHeatmaps(records),
+    byOperatorDwell: buildOperatorDwellMetrics(records, date),
     dataQuality: buildDataQuality(records, sanitization),
     schemaVersion: PERFORMANCE_SCHEMA_VERSION,
   };

@@ -71,6 +71,53 @@ export const STREETS_REQUIRED_COLUMNS = [
 // ─── OTP Classification ─────────────────────────────────────────────
 export type OTPStatus = 'early' | 'on-time' | 'late';
 
+// ─── Dwell Classification ───────────────────────────────────────────
+export type DwellSeverity = 'moderate' | 'high';
+
+export const DWELL_THRESHOLDS = {
+  boardingAllowanceSeconds: 120, // 2 min normal boarding time
+  highRawSeconds: 300,           // > 5 min raw = high severity
+} as const;
+
+/** Classify raw dwell seconds. Returns null if below threshold (normal boarding). */
+export function classifyDwell(rawDwellSeconds: number): DwellSeverity | null {
+  if (rawDwellSeconds < DWELL_THRESHOLDS.boardingAllowanceSeconds) return null;
+  if (rawDwellSeconds > DWELL_THRESHOLDS.highRawSeconds) return 'high';
+  return 'moderate';
+}
+
+export interface DwellIncident {
+  operatorId: string;
+  date: string;
+  routeId: string;
+  routeName: string;
+  stopName: string;
+  stopId: string;
+  tripName: string;
+  block: string;
+  observedArrivalTime: string;
+  observedDepartureTime: string;
+  rawDwellSeconds: number;
+  trackedDwellSeconds: number;
+  severity: DwellSeverity;
+}
+
+export interface OperatorDwellSummary {
+  operatorId: string;
+  moderateCount: number;
+  highCount: number;
+  totalIncidents: number;
+  totalTrackedDwellSeconds: number;
+  avgTrackedDwellSeconds: number;
+}
+
+export interface OperatorDwellMetrics {
+  incidents: DwellIncident[];
+  byOperator: OperatorDwellSummary[];
+  totalIncidents: number;
+  totalTrackedDwellMinutes: number;
+}
+
 // APC load sanitization — cap absurd departureLoad values from hardware malfunctions
 export const DEFAULT_LOAD_CAP = 65; // just above crush load of 60
 
@@ -247,6 +294,7 @@ export interface DailySummary {
       lateByMinutes?: number;
     }[];
   };
+  byOperatorDwell?: OperatorDwellMetrics;
   dataQuality: DataQuality;
   schemaVersion: number;
 }
@@ -300,4 +348,5 @@ export type PerformanceTab =
   | 'otp'
   | 'ridership'
   | 'load-profiles'
+  | 'operator-dwell'
   | 'reports';
