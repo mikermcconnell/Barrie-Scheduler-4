@@ -19,6 +19,15 @@ const CANADA_BOUNDS = {
     minLon: -141.5,
     maxLon: -52.0,
 };
+const ONTARIO_BOUNDS = {
+    minLat: 41.7,
+    maxLat: 56.9,
+    minLon: -95.2,
+    maxLon: -74.3,
+};
+const KNOWN_OUT_OF_PROVINCE: Record<string, { lat: number; lon: number }> = {
+    'winnipeg': { lat: 49.8951, lon: -97.1384 },
+};
 const STOPWORDS = new Set([
     'the', 'and', 'of', 'at', 'in', 'on', 'to', 'for',
 ]);
@@ -98,6 +107,40 @@ const STATION_QUERY_ALIASES: Record<string, string[]> = {
     'king city go station': [
         'King City GO Station, King City, Ontario, Canada',
     ],
+    // Ontario Northland stops — disambiguate names that exist in other provinces
+    'renfrew': ['Renfrew, Ontario, Canada'],
+    'north bay': ['North Bay, Ontario, Canada'],
+    'cochrane': ['Cochrane, Ontario, Canada'],
+    'huntsville': ['Huntsville, Ontario, Canada'],
+    'marathon': ['Marathon, Ontario, Canada'],
+    'deep river': ['Deep River, Ontario, Canada'],
+    'pembroke': ['Pembroke, Ontario, Canada'],
+    'dryden': ['Dryden, Ontario, Canada'],
+    'blind river': ['Blind River, Ontario, Canada'],
+    'parry sound': ['Parry Sound, Ontario, Canada'],
+    'orillia': ['Orillia, Ontario, Canada'],
+    'gravenhurst': ['Gravenhurst, Ontario, Canada'],
+    'bracebridge': ['Bracebridge, Ontario, Canada'],
+    'sudbury': ['Sudbury, Ontario, Canada'],
+    'timmins': ['Timmins, Ontario, Canada'],
+    'kirkland lake': ['Kirkland Lake, Ontario, Canada'],
+    'kenora': ['Kenora, Ontario, Canada'],
+    'thunder bay': ['Thunder Bay, Ontario, Canada'],
+    'sault ste marie': ['Sault Ste. Marie, Ontario, Canada'],
+    'mattawa': ['Mattawa, Ontario, Canada'],
+    'sturgeon falls': ['Sturgeon Falls, Ontario, Canada'],
+    'espanola': ['Espanola, Ontario, Canada'],
+    'petawawa': ['Petawawa, Ontario, Canada'],
+    'arnprior': ['Arnprior, Ontario, Canada'],
+    'cobalt': ['Cobalt, Ontario, Canada'],
+    'haileybury': ['Haileybury, Ontario, Canada'],
+    'englehart': ['Englehart, Ontario, Canada'],
+    'temagami': ['Temagami, Ontario, Canada'],
+    'kapuskasing': ['Kapuskasing, Ontario, Canada'],
+    'hearst': ['Hearst, Ontario, Canada'],
+    'elliot lake': ['Elliot Lake, Ontario, Canada'],
+    'wawa': ['Wawa, Ontario, Canada'],
+    'thessalon': ['Thessalon, Ontario, Canada'],
 };
 
 interface NominatimCandidate {
@@ -216,6 +259,8 @@ async function fetchCandidates(query: string): Promise<NominatimCandidate[]> {
         limit: String(NOMINATIM_RESULT_LIMIT),
         countrycodes: 'ca',
         addressdetails: '1',
+        viewbox: '-95.2,56.9,-74.3,41.7',
+        bounded: '0',
     });
 
     const response = await fetch(`${NOMINATIM_BASE}?${params}`, {
@@ -258,7 +303,7 @@ function scoreCandidate(
     const keywordHits = TRANSIT_KEYWORDS.filter(k => display.includes(k) || metadata.includes(k)).length;
     score += Math.min(6, keywordHits * 2);
 
-    if (display.includes('ontario')) score += 2;
+    if (display.includes('ontario')) score += 5;
     REGION_PENALTIES.forEach((needle) => {
         if (display.includes(needle)) score -= 8;
     });
@@ -345,6 +390,33 @@ function buildSearchQueries(name: string): string[] {
     return dedupeQueries(queries);
 }
 
+function isWithinOntarioBounds(lat: number, lon: number): boolean {
+    return lat >= ONTARIO_BOUNDS.minLat
+        && lat <= ONTARIO_BOUNDS.maxLat
+        && lon >= ONTARIO_BOUNDS.minLon
+        && lon <= ONTARIO_BOUNDS.maxLon;
+}
+
+function validateGeocodeResults(cache: GeocodeCache, failed: string[]): string[] {
+    const flagged: string[] = [];
+    for (const [name, location] of Object.entries(cache.stations)) {
+        const normalized = name.toLowerCase().trim();
+        if (KNOWN_OUT_OF_PROVINCE[normalized]) continue;
+        if (!isWithinOntarioBounds(location.lat, location.lon)) {
+            delete cache.stations[name];
+            flagged.push(name);
+        }
+    }
+    // Add flagged stations to failed list (avoid duplicates)
+    const failedSet = new Set(failed);
+    for (const name of flagged) {
+        if (!failedSet.has(name)) {
+            failed.push(name);
+        }
+    }
+    return flagged;
+}
+
 export async function geocodeStations(
     stations: ODStation[],
     existingCache: GeocodeCache | null,
@@ -397,6 +469,9 @@ export async function geocodeStations(
     }
 
     cache.lastUpdated = new Date().toISOString();
+
+    // Move out-of-Ontario results (except known exceptions) to manual review
+    validateGeocodeResults(cache, failed);
 
     return { cache, geocoded, cached, failed };
 }
