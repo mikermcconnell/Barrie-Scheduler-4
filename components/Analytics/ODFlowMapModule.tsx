@@ -11,7 +11,7 @@
 import React, { useRef, useEffect, useState, useMemo, useCallback } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, Search } from 'lucide-react';
 import { ChartCard } from './AnalyticsShared';
 import type { ODMatrixDataSummary, GeocodeCache, GeocodedLocation } from '../../utils/od-matrix/odMatrixTypes';
 import { isWithinCanada } from '../../utils/od-matrix/odMatrixGeocoder';
@@ -84,6 +84,10 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
     const [minJourneys, setMinJourneys] = useState(1);
     const [isolatedStation, setIsolatedStation] = useState<string | null>(null);
     const [isFullscreen, setIsFullscreen] = useState(false);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [showDropdown, setShowDropdown] = useState(false);
+    const dropdownRef = useRef<HTMLDivElement>(null);
+    const searchInputRef = useRef<HTMLInputElement>(null);
 
     const { geoLookup, outsideCanadaStations } = useMemo((): {
         geoLookup: Record<string, GeocodedLocation>;
@@ -174,6 +178,25 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
             };
         });
     }, [isolatedStation, geocodedPairs, minJourneys]);
+
+    const searchResults = useMemo(() => {
+        if (!searchQuery.trim()) return [];
+        const q = searchQuery.toLowerCase();
+        return Object.keys(geoLookup)
+            .filter(name => name.toLowerCase().includes(q))
+            .sort((a, b) => a.localeCompare(b))
+            .slice(0, 15);
+    }, [searchQuery, geoLookup]);
+
+    useEffect(() => {
+        const onClickOutside = (e: MouseEvent) => {
+            if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+                setShowDropdown(false);
+            }
+        };
+        document.addEventListener('mousedown', onClickOutside);
+        return () => document.removeEventListener('mousedown', onClickOutside);
+    }, []);
 
     useEffect(() => {
         if (topN > maxPairs) setTopN(maxPairs);
@@ -413,6 +436,41 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
                         />
                         All zones
                     </label>
+
+                    <div className="relative" ref={dropdownRef}>
+                        <div className="flex items-center gap-1.5 border border-gray-200 rounded-md bg-white px-2 py-1">
+                            <Search size={13} className="text-gray-400 shrink-0" />
+                            <input
+                                ref={searchInputRef}
+                                type="text"
+                                value={searchQuery}
+                                placeholder="Search stops..."
+                                onChange={(e) => {
+                                    setSearchQuery(e.target.value);
+                                    setShowDropdown(true);
+                                }}
+                                onFocus={() => { if (searchQuery.trim()) setShowDropdown(true); }}
+                                className="w-36 text-xs bg-transparent outline-none placeholder:text-gray-400"
+                            />
+                        </div>
+                        {showDropdown && searchResults.length > 0 && (
+                            <div className="absolute top-full left-0 mt-1 w-64 max-h-60 overflow-auto bg-white border border-gray-200 rounded-lg shadow-lg z-50">
+                                {searchResults.map(name => (
+                                    <button
+                                        key={name}
+                                        onClick={() => {
+                                            setIsolatedStation(name);
+                                            setSearchQuery('');
+                                            setShowDropdown(false);
+                                        }}
+                                        className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-100 truncate"
+                                    >
+                                        {name}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                    </div>
 
                     <div className="ml-auto flex items-center gap-1 border border-gray-200 rounded-md overflow-hidden bg-white">
                         <button
