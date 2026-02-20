@@ -402,6 +402,7 @@ function validateGeocodeResults(cache: GeocodeCache, failed: string[]): string[]
     for (const [name, location] of Object.entries(cache.stations)) {
         const normalized = name.toLowerCase().trim();
         if (KNOWN_OUT_OF_PROVINCE[normalized]) continue;
+        if (location.source === 'manual') continue;
         if (!isWithinOntarioBounds(location.lat, location.lon)) {
             delete cache.stations[name];
             flagged.push(name);
@@ -448,6 +449,20 @@ export async function geocodeStations(
         }
         if (cachedLocation && !isWithinCanada(cachedLocation.lat, cachedLocation.lon)) {
             delete cache.stations[station.name];
+        }
+
+        // Exact match failed — try case-insensitive fallback
+        if (!cachedLocation) {
+            const nameLower = station.name.toLowerCase();
+            const match = Object.entries(cache.stations).find(
+                ([key]) => key.toLowerCase() === nameLower
+            );
+            if (match) {
+                cache.stations[station.name] = match[1];
+                cached++;
+                report('cached');
+                continue;
+            }
         }
 
         report('geocoding');

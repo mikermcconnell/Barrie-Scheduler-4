@@ -45,6 +45,17 @@ function buildValidLookup(stations: ODStation[], cache: GeocodeCache | null): Re
         }
     });
 
+    // Case-insensitive fallback for stations not yet in lookup
+    stations.forEach((station) => {
+        if (!lookup[station.name]) {
+            const nameLower = station.name.toLowerCase();
+            const match = Object.entries(cache?.stations || {}).find(
+                ([key]) => key.toLowerCase() === nameLower && isWithinCanada(cache!.stations[key].lat, cache!.stations[key].lon)
+            );
+            if (match) lookup[station.name] = match[1];
+        }
+    });
+
     return lookup;
 }
 
