@@ -49,6 +49,7 @@ export interface ODMatrixDataSummary {
 }
 
 export interface ODMatrixMetadata {
+    importId?: string;
     importedAt: string;
     importedBy: string;
     fileName: string;

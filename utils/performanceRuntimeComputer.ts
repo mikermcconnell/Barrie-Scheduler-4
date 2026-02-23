@@ -3,6 +3,7 @@
 
 import type { DailySummary, DayType, DailySegmentRuntimeEntry } from './performanceDataTypes';
 import type { RuntimeData, SegmentRawData, RouteDirection } from '../components/NewSchedule/utils/csvParser';
+import { isDirectionVariant, parseRouteInfo } from './config/routeDirectionConfig';
 
 // ─── Percentile (PERCENTILE.INC linear interpolation) ───────────────
 
@@ -33,6 +34,25 @@ function mapDirection(dir: string): RouteDirection {
   return 'North'; // fallback
 }
 
+function normalizeRouteId(routeId: string): string {
+  return routeId.trim().toUpperCase();
+}
+
+function getCanonicalRouteId(routeId: string): string {
+  const normalized = normalizeRouteId(routeId);
+  if (isDirectionVariant(normalized)) {
+    return parseRouteInfo(normalized).baseRoute.toUpperCase();
+  }
+  return normalized;
+}
+
+function routeMatchesSelection(entryRouteId: string, selectedRouteId: string): boolean {
+  const entryNormalized = normalizeRouteId(entryRouteId);
+  const selectedNormalized = normalizeRouteId(selectedRouteId);
+  if (entryNormalized === selectedNormalized) return true;
+  return getCanonicalRouteId(entryNormalized) === getCanonicalRouteId(selectedNormalized);
+}
+
 // ─── Main: Convert Performance Data → RuntimeData[] ─────────────────
 
 export interface PerformanceRuntimeOptions {
@@ -46,6 +66,7 @@ export function computeRuntimesFromPerformance(
   options: PerformanceRuntimeOptions
 ): RuntimeData[] {
   const { routeId, dayType, dateRange } = options;
+  const canonicalRouteId = getCanonicalRouteId(routeId);
 
   // 1. Filter summaries by dayType and optional date range
   const filtered = dailySummaries.filter(d => {
@@ -61,7 +82,7 @@ export function computeRuntimesFromPerformance(
   const allEntries: DailySegmentRuntimeEntry[] = [];
   for (const day of filtered) {
     for (const entry of day.segmentRuntimes!.entries) {
-      if (entry.routeId === routeId) {
+      if (routeMatchesSelection(entry.routeId, routeId)) {
         allEntries.push(entry);
       }
     }
@@ -114,7 +135,7 @@ export function computeRuntimesFromPerformance(
     results.push({
       segments,
       allTimeBuckets: sortedBuckets,
-      detectedRouteNumber: routeId,
+      detectedRouteNumber: canonicalRouteId,
       detectedDirection: direction as RouteDirection,
     });
   }
@@ -130,6 +151,7 @@ export interface AvailableRuntimeRoute {
   directions: string[];
   dayCount: number;
   totalObs: number;
+  memberRouteIds: string[];
 }
 
 export function getAvailableRuntimeRoutes(
@@ -142,6 +164,7 @@ export function getAvailableRuntimeRoutes(
     directions: Set<string>;
     dates: Set<string>;
     totalObs: number;
+    memberRouteIds: Set<string>;
   }>();
 
   for (const day of dailySummaries) {
@@ -149,19 +172,23 @@ export function getAvailableRuntimeRoutes(
     if (!day.segmentRuntimes) continue;
 
     for (const entry of day.segmentRuntimes.entries) {
-      const existing = routeMap.get(entry.routeId);
+      const canonicalRouteId = getCanonicalRouteId(entry.routeId);
+      const normalizedEntryRouteId = normalizeRouteId(entry.routeId);
+      const existing = routeMap.get(canonicalRouteId);
       if (existing) {
         existing.directions.add(entry.direction);
         existing.dates.add(day.date);
         existing.totalObs += entry.observations.length;
+        existing.memberRouteIds.add(normalizedEntryRouteId);
       } else {
         // Look up routeName from the day's byRoute
-        const routeMetric = day.byRoute.find(r => r.routeId === entry.routeId);
-        routeMap.set(entry.routeId, {
+        const routeMetric = day.byRoute.find(r => normalizeRouteId(r.routeId) === normalizedEntryRouteId);
+        routeMap.set(canonicalRouteId, {
           routeName: routeMetric?.routeName || entry.routeId,
           directions: new Set([entry.direction]),
           dates: new Set([day.date]),
           totalObs: entry.observations.length,
+          memberRouteIds: new Set([normalizedEntryRouteId]),
         });
       }
     }
@@ -169,12 +196,16 @@ export function getAvailableRuntimeRoutes(
 
   const results: AvailableRuntimeRoute[] = [];
   for (const [routeId, data] of routeMap) {
+    const memberRouteIds = Array.from(data.memberRouteIds).sort((a, b) =>
+      a.localeCompare(b, undefined, { numeric: true })
+    );
     results.push({
       routeId,
-      routeName: data.routeName,
+      routeName: data.routeName || memberRouteIds.join(' / '),
       directions: Array.from(data.directions).sort(),
       dayCount: data.dates.size,
       totalObs: data.totalObs,
+      memberRouteIds,
     });
   }
 

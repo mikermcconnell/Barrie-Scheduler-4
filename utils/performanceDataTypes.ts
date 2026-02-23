@@ -118,6 +118,80 @@ export interface OperatorDwellMetrics {
   totalTrackedDwellMinutes: number;
 }
 
+// ─── Dwell Cascade Types ──────────────────────────────────────────────
+
+/** A downstream trip affected by a dwell incident earlier on the same block. */
+export interface CascadeAffectedTrip {
+  tripName: string;
+  routeId: string;
+  terminalDepartureTime: string;              // scheduled HH:MM
+  observedDepartureSeconds: number | null;    // actual first-timepoint departure (seconds since midnight)
+  scheduledDepartureSeconds: number;
+  lateSeconds: number;                        // positive = late
+  otpStatus: OTPStatus;
+  recoveredHere: boolean;                     // block got back on-time at this trip
+}
+
+/** A dwell incident annotated with its downstream cascade through the block. */
+export interface DwellCascade {
+  // Origin incident fields
+  date: string;
+  block: string;
+  routeId: string;
+  routeName: string;
+  stopName: string;
+  stopId: string;
+  tripName: string;
+  operatorId: string;
+  observedDepartureTime: string;
+  trackedDwellSeconds: number;
+  severity: DwellSeverity;
+  // Cascade analysis
+  excessLateSeconds: number;                  // lateness exiting the trip at last timepoint
+  recoveryTimeAvailableSeconds: number;       // scheduled layover before next trip
+  cascadedTrips: CascadeAffectedTrip[];       // ordered downstream trips affected
+  blastRadius: number;                        // count of trips made late before recovery
+  absorbed: boolean;                          // true = recovery contained the dwell (no cascade)
+}
+
+/** A stop ranked by total downstream OTP damage it causes via dwell cascades. */
+export interface CascadeStopImpact {
+  stopName: string;
+  stopId: string;
+  routeId: string;
+  incidentCount: number;
+  totalTrackedDwellSeconds: number;
+  totalBlastRadius: number;                   // sum of blastRadius across all incidents at this stop
+  avgBlastRadius: number;
+  absorbedCount: number;                      // incidents absorbed by recovery
+  cascadedCount: number;                      // incidents that escaped recovery
+  avgExcessLateSeconds: number;
+}
+
+/** Per-terminal recovery sufficiency analysis. */
+export interface TerminalRecoveryStats {
+  stopName: string;
+  stopId: string;
+  routeId: string;
+  incidentCount: number;
+  absorbedCount: number;
+  cascadedCount: number;
+  avgScheduledRecoverySeconds: number;
+  avgExcessLateSeconds: number;
+  sufficientRecovery: boolean;                // true if ≥75% of incidents absorbed
+}
+
+/** Daily cascade summary — stored in DailySummary.byCascade. */
+export interface DailyCascadeMetrics {
+  cascades: DwellCascade[];
+  byStop: CascadeStopImpact[];
+  byTerminal: TerminalRecoveryStats[];
+  totalCascades: number;                      // incidents that actually cascaded
+  totalAbsorbed: number;
+  avgBlastRadius: number;                     // across cascaded-only incidents
+  totalCascadeOTPDamage: number;              // sum of blastRadius — total trip-lateness events caused by dwell
+}
+
 // APC load sanitization — cap absurd departureLoad values from hardware malfunctions
 export const DEFAULT_LOAD_CAP = 65; // just above crush load of 60
 
@@ -324,12 +398,13 @@ export interface DailySummary {
     }[];
   };
   byOperatorDwell?: OperatorDwellMetrics;
+  byCascade?: DailyCascadeMetrics;
   segmentRuntimes?: DailySegmentRuntimes;
   dataQuality: DataQuality;
   schemaVersion: number;
 }
 
-export const PERFORMANCE_SCHEMA_VERSION = 2;
+export const PERFORMANCE_SCHEMA_VERSION = 3;
 
 // ─── Multi-Day Summary (for trend views) ────────────────────────────
 

@@ -19,10 +19,11 @@ interface PerformanceFilterBarProps {
     dayTypeFilter: DayType | 'all';
     onDayTypeChange: (dt: DayType | 'all') => void;
     availableDayTypes: DayType[];
+    filteredDayCount?: number;
 }
 
 export const PerformanceFilterBar: React.FC<PerformanceFilterBarProps> = ({
-    timeRange, onTimeRangeChange, dayTypeFilter, onDayTypeChange, availableDayTypes,
+    timeRange, onTimeRangeChange, dayTypeFilter, onDayTypeChange, availableDayTypes, filteredDayCount,
 }) => (
     <div className="flex items-center gap-6 flex-wrap px-1 py-3">
         <div className="flex items-center gap-2">
@@ -45,6 +46,11 @@ export const PerformanceFilterBar: React.FC<PerformanceFilterBarProps> = ({
                     </FilterPill>
                 ))}
             </div>
+            {dayTypeFilter !== 'all' && filteredDayCount !== undefined && (
+                <span className="text-xs text-gray-500">
+                    {filteredDayCount} {DAY_TYPE_LABELS[dayTypeFilter as DayType].toLowerCase()}{filteredDayCount !== 1 ? 's' : ''}
+                </span>
+            )}
         </div>
     </div>
 );

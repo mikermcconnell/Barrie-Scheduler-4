@@ -183,6 +183,7 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data
                         dayTypeFilter={dayTypeFilter}
                         onDayTypeChange={setDayTypeFilter}
                         availableDayTypes={availableDayTypes}
+                        filteredDayCount={filteredData.dailySummaries.length}
                     />
                 </div>
             )}

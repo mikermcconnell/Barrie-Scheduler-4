@@ -118,6 +118,39 @@ describe('performanceRuntimeComputer.computeRuntimesFromPerformance', () => {
 
         expect(result).toEqual([]);
     });
+
+    it('treats directional A/B variants as a single base route during computation', () => {
+        const summaries: DailySummary[] = [
+            makeSummary({
+                date: '2026-01-06',
+                dayType: 'weekday',
+                routeNames: { '7A': 'Grove A', '7B': 'Grove B' },
+                entries: [
+                    {
+                        routeId: '7A',
+                        direction: 'N',
+                        segmentName: 'A to B',
+                        observations: [{ timeBucket: '06:00', runtimeMinutes: 10 }],
+                    },
+                    {
+                        routeId: '7B',
+                        direction: 'S',
+                        segmentName: 'B to A',
+                        observations: [{ timeBucket: '06:00', runtimeMinutes: 12 }],
+                    },
+                ],
+            }),
+        ];
+
+        const result = computeRuntimesFromPerformance(summaries, {
+            routeId: '7',
+            dayType: 'weekday',
+        });
+
+        expect(result).toHaveLength(2);
+        expect(new Set(result.map(r => r.detectedDirection))).toEqual(new Set(['North', 'South']));
+        expect(new Set(result.map(r => r.detectedRouteNumber))).toEqual(new Set(['7']));
+    });
 });
 
 describe('performanceRuntimeComputer.getAvailableRuntimeRoutes', () => {
@@ -168,5 +201,60 @@ describe('performanceRuntimeComputer.getAvailableRuntimeRoutes', () => {
         expect(routes[0].directions).toEqual(['N', 'S']);
         expect(routes[0].dayCount).toBe(2);
         expect(routes[0].totalObs).toBe(3);
+        expect(routes[0].memberRouteIds).toEqual(['10']);
+    });
+
+    it('merges directional variants and keeps non-direction variants separate', () => {
+        const summaries: DailySummary[] = [
+            makeSummary({
+                date: '2026-01-06',
+                dayType: 'weekday',
+                routeNames: {
+                    '2A': '2A Downtown',
+                    '2B': '2B Park Place',
+                    '8A': '8A Georgian',
+                    '8B': '8B Park Place',
+                },
+                entries: [
+                    {
+                        routeId: '2A',
+                        direction: 'N',
+                        segmentName: 'A to B',
+                        observations: [{ timeBucket: '06:00', runtimeMinutes: 10 }],
+                    },
+                    {
+                        routeId: '2B',
+                        direction: 'S',
+                        segmentName: 'B to A',
+                        observations: [{ timeBucket: '06:00', runtimeMinutes: 11 }],
+                    },
+                    {
+                        routeId: '8A',
+                        direction: 'N',
+                        segmentName: 'X to Y',
+                        observations: [{ timeBucket: '06:00', runtimeMinutes: 20 }],
+                    },
+                    {
+                        routeId: '8B',
+                        direction: 'S',
+                        segmentName: 'Y to X',
+                        observations: [{ timeBucket: '06:00', runtimeMinutes: 21 }],
+                    },
+                ],
+            }),
+        ];
+
+        const routes = getAvailableRuntimeRoutes(summaries, 'weekday');
+        expect(routes.map(r => r.routeId)).toEqual(['2', '8A', '8B']);
+
+        const route2 = routes.find(r => r.routeId === '2');
+        expect(route2).toBeDefined();
+        expect(route2!.memberRouteIds).toEqual(['2A', '2B']);
+        expect(route2!.directions).toEqual(['N', 'S']);
+
+        const route8A = routes.find(r => r.routeId === '8A');
+        const route8B = routes.find(r => r.routeId === '8B');
+        expect(route8A?.memberRouteIds).toEqual(['8A']);
+        expect(route8B?.memberRouteIds).toEqual(['8B']);
     });
 });

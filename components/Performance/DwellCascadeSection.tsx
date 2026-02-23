@@ -1,0 +1,383 @@
+import React, { useMemo, useState } from 'react';
+import { Zap, Target, Activity, AlertTriangle, ChevronDown, ChevronRight, Shield } from 'lucide-react';
+import type {
+    PerformanceDataSummary,
+    DwellCascade,
+    CascadeStopImpact,
+    TerminalRecoveryStats,
+    DailyCascadeMetrics,
+} from '../../utils/performanceDataTypes';
+import { MetricCard, ChartCard, fmt } from '../Analytics/AnalyticsShared';
+import { aggregateCascadeAcrossDays } from '../../utils/schedule/operatorDwellUtils';
+
+interface DwellCascadeSectionProps {
+    data: PerformanceDataSummary;
+}
+
+const AbsorbedBadge: React.FC<{ absorbed: boolean }> = ({ absorbed }) => (
+    <span className={`inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full ${
+        absorbed
+            ? 'bg-emerald-100 text-emerald-700'
+            : 'bg-red-100 text-red-700'
+    }`}>
+        {absorbed ? 'Absorbed' : 'Cascaded'}
+    </span>
+);
+
+const RecoveryBadge: React.FC<{ sufficient: boolean }> = ({ sufficient }) => (
+    <span className={`inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full ${
+        sufficient
+            ? 'bg-emerald-100 text-emerald-700'
+            : 'bg-amber-100 text-amber-700'
+    }`}>
+        {sufficient ? 'Sufficient' : 'Needs More Recovery'}
+    </span>
+);
+
+/** Format seconds to min string with 1 decimal. */
+const fmtMin = (sec: number): string => (sec / 60).toFixed(1);
+
+/** Format percentage. */
+const fmtPct = (n: number, d: number): string => d === 0 ? '—' : `${Math.round((n / d) * 100)}%`;
+
+const CASCADES_PER_PAGE = 50;
+
+export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }) => {
+    const [expandedCascade, setExpandedCascade] = useState<number | null>(null);
+    const [stopFilter, setStopFilter] = useState<string | null>(null);
+    const [cascadePage, setCascadePage] = useState(1);
+
+    const hasCascadeData = data.dailySummaries.some(d => d.byCascade);
+
+    const metrics: DailyCascadeMetrics = useMemo(
+        () => aggregateCascadeAcrossDays(data.dailySummaries),
+        [data.dailySummaries],
+    );
+
+    if (!hasCascadeData) {
+        return (
+            <div className="flex items-start gap-2.5 px-4 py-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+                <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-500" />
+                <span>
+                    <strong>Cascade data not available.</strong>
+                    {' '}Re-import STREETS data to compute cascade analysis.
+                </span>
+            </div>
+        );
+    }
+
+    if (metrics.cascades.length === 0) {
+        return (
+            <div className="text-sm text-gray-400 py-12 text-center">
+                No dwell incidents in selected period — no cascades to analyze.
+            </div>
+        );
+    }
+
+    const cascadedOnly = metrics.cascades.filter(c => !c.absorbed);
+    const worstTerminal = metrics.byTerminal.length > 0 ? metrics.byTerminal[0] : null;
+
+    // Filter cascades by selected stop
+    const filteredCascades = stopFilter
+        ? metrics.cascades.filter(c => `${c.stopId}||${c.stopName}` === stopFilter)
+        : metrics.cascades;
+
+    const totalPages = Math.max(1, Math.ceil(filteredCascades.length / CASCADES_PER_PAGE));
+    const currentPage = Math.min(cascadePage, totalPages);
+    const pagedCascades = filteredCascades.slice(
+        (currentPage - 1) * CASCADES_PER_PAGE,
+        currentPage * CASCADES_PER_PAGE,
+    );
+
+    return (
+        <div className="space-y-5">
+            {/* KPI Cards */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <MetricCard
+                    icon={<Zap size={18} />}
+                    label="Cascaded Incidents"
+                    value={`${fmt(metrics.totalCascades)} / ${fmt(metrics.cascades.length)}`}
+                    color="red"
+                    subValue={`${fmtPct(metrics.totalCascades, metrics.cascades.length)} escaped recovery`}
+                />
+                <MetricCard
+                    icon={<Target size={18} />}
+                    label="Avg Blast Radius"
+                    value={metrics.avgBlastRadius.toFixed(1)}
+                    color="amber"
+                    subValue="trips affected per cascade"
+                />
+                <MetricCard
+                    icon={<Activity size={18} />}
+                    label="Total OTP Damage"
+                    value={fmt(metrics.totalCascadeOTPDamage)}
+                    color="cyan"
+                    subValue="trip-observations made late by dwell"
+                />
+                <MetricCard
+                    icon={<Shield size={18} />}
+                    label="Worst Terminal"
+                    value={worstTerminal ? worstTerminal.stopName.split(' ').slice(0, 3).join(' ') : '—'}
+                    color="indigo"
+                    subValue={worstTerminal
+                        ? `${worstTerminal.cascadedCount} cascades · ${fmtPct(worstTerminal.absorbedCount, worstTerminal.incidentCount)} absorbed`
+                        : 'No terminal data'}
+                />
+            </div>
+
+            {/* Stop Impact Ranking + Cascade Detail */}
+            <div className="grid grid-cols-1 lg:grid-cols-[35%_1fr] gap-4 items-start">
+                {/* Stop Impact Ranking */}
+                <ChartCard
+                    title="Stop Impact Ranking"
+                    subtitle="Stops ranked by downstream OTP damage"
+                    headerExtra={stopFilter ? (
+                        <button
+                            onClick={() => { setStopFilter(null); setCascadePage(1); }}
+                            className="text-xs text-cyan-600 hover:text-cyan-700 font-medium"
+                        >
+                            Clear filter
+                        </button>
+                    ) : undefined}
+                >
+                    {metrics.byStop.length === 0 ? (
+                        <p className="text-sm text-gray-400 py-8 text-center">No stop data</p>
+                    ) : (
+                        <div className="overflow-x-auto max-h-[460px] overflow-y-auto">
+                            <table className="w-full text-sm">
+                                <thead className="sticky top-0 bg-white">
+                                    <tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wider">
+                                        <th className="pb-2 pr-3 font-medium">Stop</th>
+                                        <th className="pb-2 pr-3 font-medium">Route</th>
+                                        <th className="pb-2 pr-2 font-medium text-right">Inc</th>
+                                        <th className="pb-2 pr-2 font-medium text-right">Casc</th>
+                                        <th className="pb-2 pr-2 font-medium text-right">Avg BR</th>
+                                        <th className="pb-2 font-medium text-right">Damage</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {metrics.byStop.map((stop: CascadeStopImpact) => {
+                                        const key = `${stop.stopId}||${stop.stopName}`;
+                                        const isSelected = stopFilter === key;
+                                        return (
+                                            <tr
+                                                key={`${stop.stopId}-${stop.routeId}`}
+                                                onClick={() => {
+                                                    setStopFilter(isSelected ? null : key);
+                                                    setCascadePage(1);
+                                                    setExpandedCascade(null);
+                                                }}
+                                                className={`border-b border-gray-100 cursor-pointer transition-colors ${
+                                                    isSelected ? 'bg-cyan-50' : 'hover:bg-gray-50'
+                                                }`}
+                                            >
+                                                <td className="py-2 pr-3 text-gray-700 max-w-[140px] truncate" title={stop.stopName}>
+                                                    {stop.stopName}
+                                                </td>
+                                                <td className="py-2 pr-3 text-gray-500">{stop.routeId}</td>
+                                                <td className="py-2 pr-2 text-right">{stop.incidentCount}</td>
+                                                <td className="py-2 pr-2 text-right text-red-600 font-medium">{stop.cascadedCount}</td>
+                                                <td className="py-2 pr-2 text-right">{stop.avgBlastRadius.toFixed(1)}</td>
+                                                <td className="py-2 text-right font-medium text-amber-600">{stop.totalBlastRadius}</td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+                </ChartCard>
+
+                {/* Cascade Detail */}
+                <ChartCard
+                    title="Cascade Detail"
+                    subtitle={stopFilter ? 'Filtered by stop — click row to expand' : 'All cascades — click row to expand'}
+                >
+                    {filteredCascades.length === 0 ? (
+                        <p className="text-sm text-gray-400 py-8 text-center">No cascades to display</p>
+                    ) : (
+                        <div className="overflow-x-auto max-h-[460px] overflow-y-auto">
+                            <table className="w-full text-sm">
+                                <thead className="sticky top-0 bg-white">
+                                    <tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wider">
+                                        <th className="pb-2 pr-1 font-medium w-5"></th>
+                                        <th className="pb-2 pr-3 font-medium">Date</th>
+                                        <th className="pb-2 pr-3 font-medium">Block</th>
+                                        <th className="pb-2 pr-3 font-medium">Trip</th>
+                                        <th className="pb-2 pr-3 font-medium">Stop</th>
+                                        <th className="pb-2 pr-2 font-medium text-right">Dwell</th>
+                                        <th className="pb-2 pr-2 font-medium text-right">Recovery</th>
+                                        <th className="pb-2 pr-2 font-medium text-right">BR</th>
+                                        <th className="pb-2 font-medium">Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {pagedCascades.map((cascade: DwellCascade, idx: number) => {
+                                        const globalIdx = (currentPage - 1) * CASCADES_PER_PAGE + idx;
+                                        const isExpanded = expandedCascade === globalIdx;
+                                        return (
+                                            <React.Fragment key={`${cascade.block}-${cascade.tripName}-${cascade.date}-${idx}`}>
+                                                <tr
+                                                    onClick={() => setExpandedCascade(isExpanded ? null : globalIdx)}
+                                                    className={`border-b border-gray-100 cursor-pointer transition-colors ${
+                                                        isExpanded ? 'bg-gray-50' : 'hover:bg-gray-50'
+                                                    }`}
+                                                >
+                                                    <td className="py-2 pr-1 text-gray-400">
+                                                        {cascade.cascadedTrips.length > 0 ? (
+                                                            isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />
+                                                        ) : null}
+                                                    </td>
+                                                    <td className="py-2 pr-3 text-gray-600">{cascade.date}</td>
+                                                    <td className="py-2 pr-3 text-gray-600 font-mono text-xs">{cascade.block}</td>
+                                                    <td className="py-2 pr-3 text-gray-700 max-w-[120px] truncate" title={cascade.tripName}>
+                                                        {cascade.tripName}
+                                                    </td>
+                                                    <td className="py-2 pr-3 text-gray-600 max-w-[120px] truncate" title={cascade.stopName}>
+                                                        {cascade.stopName}
+                                                    </td>
+                                                    <td className="py-2 pr-2 text-right tabular-nums">{fmtMin(cascade.trackedDwellSeconds)}</td>
+                                                    <td className="py-2 pr-2 text-right tabular-nums">{fmtMin(cascade.recoveryTimeAvailableSeconds)}</td>
+                                                    <td className="py-2 pr-2 text-right font-medium tabular-nums">
+                                                        {cascade.blastRadius > 0 ? (
+                                                            <span className="text-red-600">{cascade.blastRadius}</span>
+                                                        ) : (
+                                                            <span className="text-gray-400">0</span>
+                                                        )}
+                                                    </td>
+                                                    <td className="py-2"><AbsorbedBadge absorbed={cascade.absorbed} /></td>
+                                                </tr>
+                                                {/* Expanded: show cascaded trips */}
+                                                {isExpanded && cascade.cascadedTrips.length > 0 && (
+                                                    <tr>
+                                                        <td colSpan={9} className="p-0">
+                                                            <div className="bg-gray-50 border-l-2 border-cyan-300 ml-5 px-4 py-2">
+                                                                <p className="text-xs text-gray-500 font-medium mb-1.5">
+                                                                    Downstream affected trips ({cascade.cascadedTrips.length})
+                                                                </p>
+                                                                <table className="w-full text-xs">
+                                                                    <thead>
+                                                                        <tr className="text-gray-400 uppercase tracking-wider">
+                                                                            <th className="pb-1 pr-3 text-left font-medium">Trip</th>
+                                                                            <th className="pb-1 pr-3 text-left font-medium">Route</th>
+                                                                            <th className="pb-1 pr-3 text-left font-medium">Sched. Dep</th>
+                                                                            <th className="pb-1 pr-2 text-right font-medium">Late (min)</th>
+                                                                            <th className="pb-1 pr-2 text-left font-medium">OTP</th>
+                                                                            <th className="pb-1 font-medium">Recovery</th>
+                                                                        </tr>
+                                                                    </thead>
+                                                                    <tbody>
+                                                                        {cascade.cascadedTrips.map((ct, ctIdx) => (
+                                                                            <tr key={ctIdx} className="border-t border-gray-200">
+                                                                                <td className="py-1.5 pr-3 text-gray-700 max-w-[120px] truncate">{ct.tripName}</td>
+                                                                                <td className="py-1.5 pr-3 text-gray-500">{ct.routeId}</td>
+                                                                                <td className="py-1.5 pr-3 text-gray-500 tabular-nums">{ct.terminalDepartureTime}</td>
+                                                                                <td className={`py-1.5 pr-2 text-right tabular-nums font-medium ${
+                                                                                    ct.lateSeconds > 300 ? 'text-red-600' : 'text-amber-600'
+                                                                                }`}>
+                                                                                    {fmtMin(ct.lateSeconds)}
+                                                                                </td>
+                                                                                <td className="py-1.5 pr-2">
+                                                                                    <span className={`text-xs ${
+                                                                                        ct.otpStatus === 'late' ? 'text-red-600'
+                                                                                            : ct.otpStatus === 'early' ? 'text-amber-600'
+                                                                                                : 'text-emerald-600'
+                                                                                    }`}>
+                                                                                        {ct.otpStatus}
+                                                                                    </span>
+                                                                                </td>
+                                                                                <td className="py-1.5">
+                                                                                    {ct.recoveredHere ? (
+                                                                                        <span className="text-emerald-600 font-medium">Recovered here</span>
+                                                                                    ) : (
+                                                                                        <span className="text-red-500">Still late</span>
+                                                                                    )}
+                                                                                </td>
+                                                                            </tr>
+                                                                        ))}
+                                                                    </tbody>
+                                                                </table>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                )}
+                                            </React.Fragment>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+                    {filteredCascades.length > CASCADES_PER_PAGE && (
+                        <div className="mt-3 flex items-center justify-between text-xs text-gray-500">
+                            <span>
+                                Showing {(currentPage - 1) * CASCADES_PER_PAGE + 1}
+                                {'-'}
+                                {Math.min(currentPage * CASCADES_PER_PAGE, filteredCascades.length)}
+                                {' '}of {filteredCascades.length}
+                            </span>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    onClick={() => setCascadePage(p => Math.max(1, p - 1))}
+                                    disabled={currentPage === 1}
+                                    className="px-2 py-1 rounded border border-gray-200 disabled:opacity-40"
+                                >
+                                    Prev
+                                </button>
+                                <span>Page {currentPage} / {totalPages}</span>
+                                <button
+                                    onClick={() => setCascadePage(p => Math.min(totalPages, p + 1))}
+                                    disabled={currentPage === totalPages}
+                                    className="px-2 py-1 rounded border border-gray-200 disabled:opacity-40"
+                                >
+                                    Next
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </ChartCard>
+            </div>
+
+            {/* Terminal Recovery Analysis */}
+            {metrics.byTerminal.length > 0 && (
+                <ChartCard
+                    title="Terminal Recovery Analysis"
+                    subtitle="Is scheduled recovery time sufficient to absorb dwell at each turnpoint?"
+                >
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                            <thead>
+                                <tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wider">
+                                    <th className="pb-2 pr-3 font-medium">Terminal Stop</th>
+                                    <th className="pb-2 pr-3 font-medium">Route</th>
+                                    <th className="pb-2 pr-2 font-medium text-right">Incidents</th>
+                                    <th className="pb-2 pr-2 font-medium text-right">Absorbed</th>
+                                    <th className="pb-2 pr-2 font-medium text-right">Avg Recovery</th>
+                                    <th className="pb-2 pr-2 font-medium text-right">Avg Late Exit</th>
+                                    <th className="pb-2 font-medium">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {metrics.byTerminal.map((t: TerminalRecoveryStats) => (
+                                    <tr key={`${t.stopId}-${t.routeId}`} className="border-b border-gray-100">
+                                        <td className="py-2 pr-3 text-gray-700 max-w-[200px] truncate" title={t.stopName}>
+                                            {t.stopName}
+                                        </td>
+                                        <td className="py-2 pr-3 text-gray-500">{t.routeId}</td>
+                                        <td className="py-2 pr-2 text-right">{t.incidentCount}</td>
+                                        <td className="py-2 pr-2 text-right">
+                                            <span className="text-emerald-600 font-medium">{fmtPct(t.absorbedCount, t.incidentCount)}</span>
+                                        </td>
+                                        <td className="py-2 pr-2 text-right tabular-nums">{fmtMin(t.avgScheduledRecoverySeconds)} min</td>
+                                        <td className="py-2 pr-2 text-right tabular-nums">{fmtMin(t.avgExcessLateSeconds)} min</td>
+                                        <td className="py-2"><RecoveryBadge sufficient={t.sufficientRecovery} /></td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </ChartCard>
+            )}
+        </div>
+    );
+};

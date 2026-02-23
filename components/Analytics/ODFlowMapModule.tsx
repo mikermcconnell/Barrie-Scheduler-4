@@ -11,16 +11,18 @@
 import React, { useRef, useEffect, useState, useMemo, useCallback } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { AlertTriangle, Search } from 'lucide-react';
+import { AlertTriangle, Download, Search } from 'lucide-react';
 import { ChartCard } from './AnalyticsShared';
 import type { ODMatrixDataSummary, GeocodeCache, GeocodedLocation } from '../../utils/od-matrix/odMatrixTypes';
 import { isWithinCanada } from '../../utils/od-matrix/odMatrixGeocoder';
+import { exportStopReportExcel } from '../../utils/od-matrix/odReportExporter';
 
 interface ODFlowMapModuleProps {
     data: ODMatrixDataSummary;
     geocodeCache: GeocodeCache | null;
     onFixMissingCoordinates?: () => void;
     onMapReady?: (el: HTMLDivElement) => void;
+    onIsolatedStationChange?: (station: string | null) => void;
 }
 
 type ViewMode = 'map' | 'table';
@@ -262,6 +264,7 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
     geocodeCache,
     onFixMissingCoordinates,
     onMapReady,
+    onIsolatedStationChange,
 }) => {
     const mapContainerRef = useRef<HTMLDivElement>(null);
     const mapRef = useRef<L.Map | null>(null);
@@ -288,6 +291,10 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
     // Suppress unused state warning — showLabels is a UI toggle kept for future use
     void showLabels;
     void lastFitBoundsKeyRef;
+
+    useEffect(() => {
+        onIsolatedStationChange?.(isolatedStation);
+    }, [isolatedStation, onIsolatedStationChange]);
 
     const { geoLookup, outsideCanadaStations } = useMemo((): {
         geoLookup: Record<string, GeocodedLocation>;
@@ -459,7 +466,8 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
         style.textContent = `
           @keyframes od-pulse { 0%{transform:scale(1);opacity:.8} 70%{transform:scale(2.8);opacity:0} 100%{transform:scale(2.8);opacity:0} }
           .od-pulse-ring { animation: od-pulse 1.6s ease-out infinite; border-radius:50%; }
-        `;
+          .od-label-icon { background: transparent !important; border: none !important; }
+`;
         document.head.appendChild(style);
         styleRef.current = style;
 
@@ -481,9 +489,16 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
     useEffect(() => {
         const map = mapRef.current;
         if (!map) return;
-        const onZoomEnd = () => setCurrentZoom(map.getZoom());
+        let timer: ReturnType<typeof setTimeout>;
+        const onZoomEnd = () => {
+            clearTimeout(timer);
+            timer = setTimeout(() => setCurrentZoom(map.getZoom()), 300);
+        };
         map.on('zoomend', onZoomEnd);
-        return () => { map.off('zoomend', onZoomEnd); };
+        return () => {
+            map.off('zoomend', onZoomEnd);
+            clearTimeout(timer);
+        };
     }, []);
 
     const renderLayers = useCallback(() => {
@@ -613,7 +628,7 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
             const nameLabel = L.marker([station.geo.lat, station.geo.lon], {
                 pane: 'od-stop-labels',
                 icon: L.divIcon({
-                    className: '',
+                    className: 'od-label-icon',
                     html: `<div style="font-size:10px;font-weight:600;color:#1e293b;white-space:nowrap;pointer-events:none;background:rgba(255,255,255,0.84);border-radius:4px;padding:1px 5px;box-shadow:0 1px 3px rgba(0,0,0,0.12);transform:translate(10px,-50%)">${truncateLabel(station.name)}</div>`,
                     iconSize: [0, 0],
                     iconAnchor: [0, 0],
@@ -1034,8 +1049,19 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
 
                     {viewMode === 'map' && isolatedStation && (
                         <div className="mt-3 border border-gray-200 rounded-lg overflow-hidden">
-                            <div className="px-3 py-2 bg-gray-50 border-b border-gray-200 text-xs text-gray-600">
-                                Stop OD summary for <span className="font-semibold text-gray-800">{isolatedStation}</span> · {isolatedSummaryPairs.length} pair{isolatedSummaryPairs.length === 1 ? '' : 's'} (min journeys filter applied)
+                            <div className="px-3 py-2 bg-gray-50 border-b border-gray-200 text-xs text-gray-600 flex items-center justify-between">
+                                <span>
+                                    Stop OD summary for <span className="font-semibold text-gray-800">{isolatedStation}</span> · {isolatedSummaryPairs.length} pair{isolatedSummaryPairs.length === 1 ? '' : 's'} (min journeys filter applied)
+                                </span>
+                                {isolatedSummaryPairs.length > 0 && (
+                                    <button
+                                        onClick={() => exportStopReportExcel(data, isolatedStation)}
+                                        className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-white hover:text-gray-800 transition-colors"
+                                    >
+                                        <Download size={11} />
+                                        Export Stop
+                                    </button>
+                                )}
                             </div>
                             <div className="overflow-auto" style={{ maxHeight: 260 }}>
                                 {isolatedSummaryPairs.length === 0 ? (

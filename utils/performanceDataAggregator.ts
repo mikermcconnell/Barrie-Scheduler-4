@@ -12,6 +12,7 @@ import {
 import type { MonthlySnapshot, MonthlyRouteSnapshot, MonthlyDayTypeSnapshot } from './performanceSnapshotTypes';
 import { SNAPSHOT_VERSION } from './performanceSnapshotTypes';
 import { compareDateStrings } from './performanceDateUtils';
+import { buildDailyCascadeMetrics } from './schedule/dwellCascadeComputer';
 
 // ─── Helpers ──────────────────────────────────────────────────────────
 
@@ -869,6 +870,8 @@ function aggregateSingleDay(date: string, records: STREETSRecord[]): DailySummar
     : deriveDayTypeFromDate(date);
   const sanitization = sanitizeRecords(records);
 
+  const dwellMetrics = buildOperatorDwellMetrics(records, date);
+
   return {
     date,
     dayType,
@@ -879,7 +882,8 @@ function aggregateSingleDay(date: string, records: STREETSRecord[]): DailySummar
     byTrip: buildTripMetrics(records),
     loadProfiles: buildLoadProfiles(records),
     ridershipHeatmaps: buildRidershipHeatmaps(records),
-    byOperatorDwell: buildOperatorDwellMetrics(records, date),
+    byOperatorDwell: dwellMetrics,
+    byCascade: buildDailyCascadeMetrics(records, dwellMetrics.incidents),
     segmentRuntimes: buildSegmentRuntimes(records),
     dataQuality: buildDataQuality(records, sanitization),
     schemaVersion: PERFORMANCE_SCHEMA_VERSION,

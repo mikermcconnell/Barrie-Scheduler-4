@@ -64,10 +64,17 @@ export async function saveODMatrixData(
 ): Promise<string> {
     const importId = Date.now().toString();
     const storagePath = getStoragePath(teamId, importId);
+    const summaryForStorage: ODMatrixDataSummary = {
+        ...summary,
+        metadata: {
+            ...summary.metadata,
+            importId,
+        },
+    };
 
     // Upload full summary JSON to Storage
     const storageRef = ref(storage, storagePath);
-    const jsonStr = JSON.stringify(summary);
+    const jsonStr = JSON.stringify(summaryForStorage);
     await uploadString(storageRef, jsonStr, 'raw', {
         contentType: 'application/json',
     });
@@ -118,6 +125,7 @@ export async function getODMatrixMetadata(teamId: string): Promise<ODMatrixMetad
 
         const data = docSnap.data();
         return {
+            importId: data.activeImportId ?? undefined,
             importedAt: data.importedAt?.toDate?.()?.toISOString?.() || new Date().toISOString(),
             importedBy: data.importedBy || '',
             fileName: data.fileName || '',

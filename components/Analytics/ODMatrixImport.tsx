@@ -5,7 +5,7 @@
  * Handles Excel cross-tab OD matrix files.
  */
 
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { useDropzone } from 'react-dropzone';
 import {
     Upload,
@@ -27,6 +27,8 @@ import {
     buildGoogleMapsSearchUrl,
 } from '../../utils/od-matrix/coordinateParsing';
 import type { ODMatrixParseResult, ODMatrixDataSummary, ODStation, GeocodeCache } from '../../utils/od-matrix/odMatrixTypes';
+import { computeODConfidenceReport } from '../../utils/od-matrix/odDataConfidence';
+import { ODDataConfidencePanel } from './ODDataConfidencePanel';
 
 function formatError(prefix: string, err: unknown): string {
     return `${prefix}: ${err instanceof Error ? err.message : 'Unknown error'}`;
@@ -111,6 +113,26 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
     const [manualCoords, setManualCoords] = useState<Record<string, { lat: string; lon: string }>>({});
     const [isSavingManualCoords, setIsSavingManualCoords] = useState(false);
     const abortRef = useRef<AbortController | null>(null);
+    const previewConfidenceReport = useMemo(() => {
+        if (!parseResult) return null;
+        const previewSummary: ODMatrixDataSummary = {
+            schemaVersion: 1,
+            stations: parseResult.stations,
+            pairs: parseResult.pairs,
+            totalJourneys: parseResult.totalJourneys,
+            stationCount: parseResult.stationCount,
+            topPairs: parseResult.topPairs,
+            metadata: {
+                importedAt: new Date().toISOString(),
+                importedBy: userId,
+                fileName,
+                dateRange: dateRange || undefined,
+                stationCount: parseResult.stationCount,
+                totalJourneys: parseResult.totalJourneys,
+            },
+        };
+        return computeODConfidenceReport(previewSummary);
+    }, [dateRange, fileName, parseResult, userId]);
 
     useEffect(() => {
         return () => {
@@ -422,6 +444,19 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
             <div className="max-w-2xl mx-auto">
                 <PhaseHeader title="Preview Import" subtitle={fileName} />
                 {errorBanner}
+
+                {previewConfidenceReport && (
+                    <ODDataConfidencePanel
+                        report={previewConfidenceReport}
+                        title="Import Reconciliation"
+                        subtitle="Detected counts from the uploaded workbook are checked against the parsed model before saving."
+                        metadata={{
+                            fileName,
+                            importedBy: userId,
+                            dateRange: dateRange || undefined,
+                        }}
+                    />
+                )}
 
                 {/* Stats */}
                 <div className="grid grid-cols-3 gap-4 mb-6">

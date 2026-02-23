@@ -22,7 +22,9 @@ import { ODOverviewPanel } from './ODOverviewPanel';
 import { ODTopPairsModule } from './ODTopPairsModule';
 import { ODStationRankingsModule } from './ODStationRankingsModule';
 import { ODHeatmapGridModule } from './ODHeatmapGridModule';
-import { exportODExcel, exportODPdf } from '../../utils/od-matrix/odReportExporter';
+import { ODDataConfidencePanel } from './ODDataConfidencePanel';
+import { exportODExcel, exportODPdf, exportStopReportExcel, exportStopReportPdf } from '../../utils/od-matrix/odReportExporter';
+import { computeODConfidenceReport } from '../../utils/od-matrix/odDataConfidence';
 
 interface ODMatrixWorkspaceProps {
     data: ODMatrixDataSummary;
@@ -60,12 +62,34 @@ export const ODMatrixWorkspace: React.FC<ODMatrixWorkspaceProps> = ({
     const heatmapElRef = useRef<HTMLDivElement>(null);
     const [exportingExcel, setExportingExcel] = useState(false);
     const [exportingPDF, setExportingPDF] = useState(false);
+    const [exportingStop, setExportingStop] = useState(false);
+    const [exportingStopPdf, setExportingStopPdf] = useState(false);
+    const [isolatedStation, setIsolatedStation] = useState<string | null>(null);
+    const confidenceReport = useMemo(() => computeODConfidenceReport(data), [data]);
+
+    const handleIsolatedStationChange = useCallback((station: string | null) => {
+        setIsolatedStation(station);
+    }, []);
 
     const handleExportExcel = useCallback(async () => {
         setExportingExcel(true);
         try { await exportODExcel(data); }
         finally { setExportingExcel(false); }
     }, [data]);
+
+    const handleExportStopReport = useCallback(async () => {
+        if (!isolatedStation) return;
+        setExportingStop(true);
+        try { await exportStopReportExcel(data, isolatedStation); }
+        finally { setExportingStop(false); }
+    }, [data, isolatedStation]);
+
+    const handleExportStopPdf = useCallback(async () => {
+        if (!isolatedStation) return;
+        setExportingStopPdf(true);
+        try { await exportStopReportPdf(data, isolatedStation, mapElRef.current); }
+        finally { setExportingStopPdf(false); }
+    }, [data, isolatedStation]);
 
     const handleExportPDF = useCallback(async () => {
         setExportingPDF(true);
@@ -113,6 +137,7 @@ export const ODMatrixWorkspace: React.FC<ODMatrixWorkspaceProps> = ({
                         onNavigate={handleNavigate}
                         onFixCoordinates={onFixCoordinates}
                         onMapElReady={(el) => { mapElRef.current = el; }}
+                        onIsolatedStationChange={handleIsolatedStationChange}
                     />
                 );
             case 'top-pairs':
@@ -149,11 +174,38 @@ export const ODMatrixWorkspace: React.FC<ODMatrixWorkspaceProps> = ({
                     <button
                         onClick={handleExportExcel}
                         disabled={exportingExcel}
+                        title="Export full network report"
                         className="px-3 py-1.5 text-xs font-bold text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-50 flex items-center gap-1.5 transition-colors"
                     >
                         <Download size={16} />
-                        {exportingExcel ? 'Exporting...' : 'Export Excel'}
+                        {exportingExcel ? 'Exporting...' : 'Export Network'}
                     </button>
+                    {/* Stop Focus export group — only styled active when a stop is isolated */}
+                    <div className={`flex items-center rounded-lg overflow-hidden border transition-colors ${isolatedStation ? 'border-violet-300' : 'border-transparent'}`}>
+                        <button
+                            onClick={handleExportStopReport}
+                            disabled={!isolatedStation || exportingStop}
+                            title={isolatedStation ? `Export stop Excel: ${isolatedStation}` : 'Select a stop on the map first'}
+                            className="px-3 py-1.5 text-xs font-bold rounded-none flex items-center gap-1.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-violet-50 text-violet-700 hover:bg-violet-100 disabled:bg-gray-100 disabled:text-gray-400"
+                        >
+                            <Download size={16} />
+                            {exportingStop
+                                ? 'Exporting...'
+                                : isolatedStation
+                                    ? `Stop: ${isolatedStation}`
+                                    : 'Stop Focus'}
+                        </button>
+                        <div className={`w-px h-5 ${isolatedStation ? 'bg-violet-200' : 'bg-gray-200'}`} />
+                        <button
+                            onClick={handleExportStopPdf}
+                            disabled={!isolatedStation || exportingStopPdf}
+                            title={isolatedStation ? `Export stop PDF: ${isolatedStation}` : 'Select a stop on the map first'}
+                            className="px-3 py-1.5 text-xs font-bold rounded-none flex items-center gap-1.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-violet-50 text-violet-700 hover:bg-violet-100 disabled:bg-gray-100 disabled:text-gray-400"
+                        >
+                            <FileText size={16} />
+                            {exportingStopPdf ? 'Exporting...' : 'PDF'}
+                        </button>
+                    </div>
                     <button
                         onClick={handleExportPDF}
                         disabled={exportingPDF}
@@ -171,6 +223,20 @@ export const ODMatrixWorkspace: React.FC<ODMatrixWorkspaceProps> = ({
                     </button>
                 </div>
             </div>
+
+            {/* Tab Bar */}
+            <ODDataConfidencePanel
+                report={confidenceReport}
+                title="Active Dataset Verification"
+                subtitle="Uploaded baseline is reconciled against the currently displayed dataset before planning decisions."
+                metadata={{
+                    importId: data.metadata.importId,
+                    fileName: data.metadata.fileName,
+                    importedAt: data.metadata.importedAt,
+                    importedBy: data.metadata.importedBy,
+                    dateRange: data.metadata.dateRange,
+                }}
+            />
 
             {/* Tab Bar */}
             <div className="border-b border-gray-200 bg-gray-50/50 rounded-t-lg -mx-1 px-1">

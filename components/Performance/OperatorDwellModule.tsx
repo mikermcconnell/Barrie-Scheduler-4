@@ -7,6 +7,7 @@ import type { PerformanceDataSummary, DwellIncident, OperatorDwellSummary } from
 import { MetricCard, ChartCard, fmt } from '../Analytics/AnalyticsShared';
 import { aggregateDwellAcrossDays } from '../../utils/schedule/operatorDwellUtils';
 import { exportOperatorDwell, exportOperatorDwellPDF } from './reports/reportExporter';
+import { DwellCascadeSection } from './DwellCascadeSection';
 import {
     addDaysToISODate,
     compareDateStrings,
@@ -31,6 +32,7 @@ const SeverityBadge: React.FC<{ severity: 'moderate' | 'high' }> = ({ severity }
 );
 
 export const OperatorDwellModule: React.FC<OperatorDwellModuleProps> = ({ data }) => {
+    const [subView, setSubView] = useState<'incidents' | 'cascade'>('incidents');
     const [selectedOperator, setSelectedOperator] = useState<string | null>(null);
     const [incidentPage, setIncidentPage] = useState(1);
     const [exportingExcel, setExportingExcel] = useState(false);
@@ -83,7 +85,11 @@ export const OperatorDwellModule: React.FC<OperatorDwellModuleProps> = ({ data }
         return filteredIncidents.slice(start, start + INCIDENTS_PER_PAGE);
     }, [currentIncidentPage, filteredIncidents]);
 
-    const numDays = data.dailySummaries.length || 1;
+    const missingDwellDates = useMemo(
+        () => data.dailySummaries.filter(d => !d.byOperatorDwell).map(d => d.date),
+        [data.dailySummaries]
+    );
+    const numDays = data.dailySummaries.filter(d => d.byOperatorDwell).length || 1;
     const totalTrips = data.dailySummaries.reduce((s, d) => s + (d.system?.tripCount ?? 0), 0);
     const highCount = metrics.byOperator.reduce((s, o) => s + o.highCount, 0);
     const incPerDay = metrics.totalIncidents / numDays;
@@ -93,6 +99,16 @@ export const OperatorDwellModule: React.FC<OperatorDwellModuleProps> = ({ data }
         ? Math.round((highCount / metrics.totalIncidents) * 100) : 0;
     const avgPerOperator = metrics.byOperator.length > 0
         ? (metrics.totalIncidents / metrics.byOperator.length).toFixed(1) : '0';
+
+    // Daily dwell hours trend
+    const dailyDwellTrend = useMemo(() => {
+        return data.dailySummaries
+            .map(d => {
+                const totalSec = d.byOperatorDwell?.incidents.reduce((s, i) => s + i.trackedDwellSeconds, 0) ?? 0;
+                return { date: d.date, hours: +(totalSec / 3600).toFixed(2) };
+            })
+            .sort((a, b) => a.date.localeCompare(b.date));
+    }, [data.dailySummaries]);
 
     // Weekly trend data
     const weeklyTrend = useMemo(() => {
@@ -125,6 +141,44 @@ export const OperatorDwellModule: React.FC<OperatorDwellModuleProps> = ({ data }
 
     return (
         <div className="space-y-5">
+            {/* Sub-view toggle */}
+            <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-0.5 w-fit">
+                <button
+                    onClick={() => setSubView('incidents')}
+                    className={`px-3.5 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                        subView === 'incidents'
+                            ? 'bg-white text-gray-900 shadow-sm'
+                            : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                >
+                    Incidents
+                </button>
+                <button
+                    onClick={() => setSubView('cascade')}
+                    className={`px-3.5 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                        subView === 'cascade'
+                            ? 'bg-white text-gray-900 shadow-sm'
+                            : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                >
+                    Cascade Analysis
+                </button>
+            </div>
+
+            {subView === 'cascade' ? (
+                <DwellCascadeSection data={data} />
+            ) : (<>
+            {/* Missing dwell data warning */}
+            {missingDwellDates.length > 0 && (
+                <div className="flex items-start gap-2.5 px-4 py-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+                    <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-500" />
+                    <span>
+                        <strong>{missingDwellDates.length} day{missingDwellDates.length !== 1 ? 's' : ''} missing dwell data</strong>
+                        {' '}— re-import to fix:{' '}
+                        <span className="font-mono">{missingDwellDates.join(', ')}</span>
+                    </span>
+                </div>
+            )}
             {/* Normalized Metric Cards */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <MetricCard
@@ -136,10 +190,10 @@ export const OperatorDwellModule: React.FC<OperatorDwellModuleProps> = ({ data }
                 />
                 <MetricCard
                     icon={<Clock size={18} />}
-                    label="Avg Dwell / Incident"
-                    value={`${avgDwellPerIncident.toFixed(1)} min`}
+                    label="Total Dwell Hours"
+                    value={`${(metrics.totalTrackedDwellMinutes / 60).toFixed(1)} hr`}
                     color="cyan"
-                    subValue={`${fmt(metrics.totalTrackedDwellMinutes)} min total`}
+                    subValue={`${fmt(metrics.totalTrackedDwellMinutes)} min · ${avgDwellPerIncident.toFixed(1)} avg/inc`}
                 />
                 <MetricCard
                     icon={<Timer size={18} />}
@@ -201,6 +255,7 @@ export const OperatorDwellModule: React.FC<OperatorDwellModuleProps> = ({ data }
                                         <th className="pb-2 pr-3 font-medium text-right">Mod</th>
                                         <th className="pb-2 pr-3 font-medium text-right">High</th>
                                         <th className="pb-2 pr-3 font-medium text-right">Total</th>
+                                        <th className="pb-2 pr-3 font-medium text-right">Total (hr)</th>
                                         <th className="pb-2 font-medium text-right">Avg (min)</th>
                                     </tr>
                                 </thead>
@@ -219,6 +274,7 @@ export const OperatorDwellModule: React.FC<OperatorDwellModuleProps> = ({ data }
                                                 <td className="py-2 pr-3 text-right text-amber-600">{op.moderateCount}</td>
                                                 <td className="py-2 pr-3 text-right text-red-600">{op.highCount}</td>
                                                 <td className="py-2 pr-3 text-right font-medium">{op.totalIncidents}</td>
+                                                <td className="py-2 pr-3 text-right font-medium text-cyan-700">{(op.totalTrackedDwellSeconds / 3600).toFixed(2)}</td>
                                                 <td className="py-2 text-right">{(op.avgTrackedDwellSeconds / 60).toFixed(1)}</td>
                                             </tr>
                                         );
@@ -298,6 +354,24 @@ export const OperatorDwellModule: React.FC<OperatorDwellModuleProps> = ({ data }
                 </ChartCard>
             </div>
 
+            {/* Daily Dwell Hours Chart */}
+            {dailyDwellTrend.length > 1 && (
+                <ChartCard title="Total Dwell Hours / Day" subtitle="How is cumulative operator dwell trending day to day?">
+                    <ResponsiveContainer width="100%" height={260}>
+                        <LineChart data={dailyDwellTrend}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                            <XAxis dataKey="date" tick={{ fontSize: 10 }} />
+                            <YAxis tick={{ fontSize: 11 }} unit="h" />
+                            <Tooltip
+                                contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e5e7eb' }}
+                                formatter={(v: number) => [`${v} hr`, 'Total Dwell']}
+                            />
+                            <Line type="monotone" dataKey="hours" name="Dwell Hours" stroke="#0891b2" strokeWidth={2} dot={{ r: 3 }} />
+                        </LineChart>
+                    </ResponsiveContainer>
+                </ChartCard>
+            )}
+
             {/* Weekly Trend Chart */}
             {weeklyTrend.length > 1 && (
                 <ChartCard title="Weekly Trend" subtitle="Incidents per day by week — are things improving?">
@@ -324,6 +398,7 @@ export const OperatorDwellModule: React.FC<OperatorDwellModuleProps> = ({ data }
                     </ResponsiveContainer>
                 </ChartCard>
             )}
+            </>)}
         </div>
     );
 };
