@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useCallback } from 'react';
+import React, { useMemo, useState, useCallback, useEffect } from 'react';
 import { Calendar } from 'lucide-react';
 import type { DayType } from '../../../utils/performanceDataTypes';
 import { compareDateStrings } from '../../../utils/performanceDateUtils';
@@ -78,6 +78,10 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({ availableDates
     const [activePreset, setActivePreset] = useState<Preset>(() =>
         detectPreset(value.startDate, value.endDate, sortedDates)
     );
+
+    useEffect(() => {
+        setActivePreset(detectPreset(value.startDate, value.endDate, sortedDates));
+    }, [value.startDate, value.endDate, sortedDates]);
 
     const availableDayTypes = useMemo(() => {
         const types = new Set<DayType>();

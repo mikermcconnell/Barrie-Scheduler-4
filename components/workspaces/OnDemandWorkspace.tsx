@@ -19,13 +19,14 @@ import {
     SavedSchedule,
     downloadFileContent,
     saveSchedule,
-    updateSchedule
+    updateSchedule,
+    getSchedule
 } from '../../utils/services/dataService';
 import { generateRideCoCSV, downloadCSV } from '../../utils/services/exportService';
 import { SummaryMetrics, Shift, Requirement, Zone, ZoneFilterType } from '../../utils/demandTypes';
 import {
     Wand2, Users, BarChart3, Sparkles, AlertTriangle, Loader2,
-    FolderOpen, Save, CloudDownload, Check, Edit3, RotateCcw
+    FolderOpen, Save, CloudDownload, Check, Edit3, RotateCcw, ArrowLeft, Star
 } from 'lucide-react';
 import { SHIFT_DURATION_SLOTS, BREAK_DURATION_SLOTS } from '../../utils/demandConstants';
 
@@ -67,6 +68,11 @@ export const OnDemandWorkspace: React.FC = () => {
     const [isSaving, setIsSaving] = useState(false);
     const [saveSuccess, setSaveSuccess] = useState(false);
     const [isLoadingFromCloud, setIsLoadingFromCloud] = useState(false);
+
+    // Default Schedule (auto-load on mount)
+    const [defaultScheduleId, setDefaultScheduleId] = useState<string | null>(
+        () => localStorage.getItem('od-default-schedule-id')
+    );
 
     // Draft Name State (Supporting "Save As" via Rename)
     const [draftName, setDraftName] = useState<string>(`On-Demand Schedule - ${new Date().toLocaleDateString()}`);
@@ -407,6 +413,39 @@ export const OnDemandWorkspace: React.FC = () => {
         }
     }, [editingShiftId, shiftToEdit]);
 
+    // Auto-load default schedule on mount
+    React.useEffect(() => {
+        if (!user || !defaultScheduleId) return;
+        let cancelled = false;
+        (async () => {
+            try {
+                const schedule = await getSchedule(user.uid, defaultScheduleId);
+                if (cancelled) return;
+                if (schedule) {
+                    handleScheduleSelect(schedule);
+                } else {
+                    // Schedule was deleted — clear preference
+                    localStorage.removeItem('od-default-schedule-id');
+                    setDefaultScheduleId(null);
+                }
+            } catch (err) {
+                console.warn('Failed to auto-load default schedule:', err);
+                // Don't clear preference on network error — retry next visit
+            }
+        })();
+        return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []); // Run once on mount only
+
+    const handleSetDefaultSchedule = (id: string | null) => {
+        if (id) {
+            localStorage.setItem('od-default-schedule-id', id);
+        } else {
+            localStorage.removeItem('od-default-schedule-id');
+        }
+        setDefaultScheduleId(id);
+    };
+
     // Handle loading a file from cloud storage
     const handleCloudFileSelect = async (file: SavedFile) => {
         console.log('Loading file from cloud:', file.name, 'Type:', file.type);
@@ -571,6 +610,8 @@ export const OnDemandWorkspace: React.FC = () => {
                     onClose={() => setShowFileManager(false)}
                     onSelectFile={handleCloudFileSelect}
                     onSelectSchedule={handleScheduleSelect}
+                    defaultScheduleId={defaultScheduleId}
+                    onSetDefaultSchedule={handleSetDefaultSchedule}
                 />
             )}
 
@@ -597,6 +638,12 @@ export const OnDemandWorkspace: React.FC = () => {
             {/* Title & Actions */}
             <div className="flex flex-col md:flex-row flex-wrap justify-between items-end mb-8 gap-4">
                 <div className="flex-1">
+                    <button
+                        onClick={() => { window.location.hash = ''; }}
+                        className="flex items-center gap-1.5 text-gray-400 hover:text-gray-600 text-sm font-medium transition-colors mb-3"
+                    >
+                        <ArrowLeft size={14} /> Back to Main
+                    </button>
                     <div className="group flex items-center gap-3">
                         <div className="relative">
                             <input
@@ -607,6 +654,11 @@ export const OnDemandWorkspace: React.FC = () => {
                             />
                             <Edit3 size={16} className="absolute -right-6 top-1/2 -translate-y-1/2 text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
                         </div>
+                        {currentDraftId && currentDraftId === defaultScheduleId && (
+                            <span className="flex items-center gap-1 text-xs font-bold text-amber-600 bg-amber-50 px-2 py-1 rounded-lg border border-amber-200">
+                                <Star size={12} className="fill-amber-500 text-amber-500" /> Default
+                            </span>
+                        )}
                     </div>
 
                     <p className="text-gray-500 font-bold mt-1">Manage Master Schedules vs. MVT Driver Shifts</p>

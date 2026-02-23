@@ -62,6 +62,11 @@ export interface NewScheduleProject {
     name: string;
     // Wizard state
     dayType: 'Weekday' | 'Saturday' | 'Sunday';
+    importMode?: 'csv' | 'gtfs' | 'performance';
+    performanceConfig?: {
+        routeId: string;
+        dateRange: { start: string; end: string } | null;
+    };
     routeNumber?: string;
     analysis?: TripBucketAnalysis[];
     bands?: TimeBand[];
@@ -126,6 +131,8 @@ export const saveProject = async (
     const docData: Record<string, unknown> = {
         name: project.name || 'Untitled Project',
         dayType: project.dayType,
+        importMode: project.importMode || 'csv',
+        performanceConfig: project.performanceConfig || null,
         routeNumber: project.routeNumber || null,
         isGenerated: project.isGenerated || false,
         // Don't store large data in Firestore
@@ -178,6 +185,8 @@ export const getProject = async (
         id: docSnap.id,
         name: data.name,
         dayType: data.dayType,
+        importMode: data.importMode || 'csv',
+        performanceConfig: data.performanceConfig || undefined,
         routeNumber: data.routeNumber,
         isGenerated: data.isGenerated,
         config: data.config,
@@ -236,6 +245,8 @@ export const getAllProjects = async (userId: string): Promise<NewScheduleProject
             id: docSnap.id,
             name: data.name,
             dayType: data.dayType,
+            importMode: data.importMode || 'csv',
+            performanceConfig: data.performanceConfig || undefined,
             routeNumber: data.routeNumber,
             isGenerated: data.isGenerated,
             config: data.config,
@@ -296,6 +307,8 @@ export const duplicateProject = async (
     const duplicatedProject: Omit<NewScheduleProject, 'id' | 'createdAt' | 'updatedAt'> = {
         name: newName || `${project.name} (Copy)`,
         dayType: project.dayType,
+        importMode: project.importMode,
+        performanceConfig: project.performanceConfig,
         routeNumber: project.routeNumber,
         analysis: project.analysis,
         bands: project.bands,

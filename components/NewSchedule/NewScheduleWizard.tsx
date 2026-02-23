@@ -1,11 +1,14 @@
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { ArrowRight, Save, Loader2, Check, Upload, Cloud, HardDrive } from 'lucide-react';
-import { Step1Upload } from './steps/Step1Upload';
+import { Step1Upload, type ImportMode, type PerformanceConfig } from './steps/Step1Upload';
 import { Step2Analysis } from './steps/Step2Analysis';
 import { Step3Build, ScheduleConfig } from './steps/Step3Build';
 import { Step4Schedule } from './steps/Step4Schedule';
 import { parseRuntimeCSV, RuntimeData, SegmentRawData } from './utils/csvParser';
+import { usePerformanceDataQuery } from '../../hooks/usePerformanceData';
+import { computeRuntimesFromPerformance, getAvailableRuntimeRoutes } from '../../utils/performanceRuntimeComputer';
+import type { DayType as PerfDayType } from '../../utils/performanceDataTypes';
 import { calculateTotalTripTimes, detectOutliers, calculateBands, TripBucketAnalysis, TimeBand, DirectionBandSummary, computeDirectionBandSummary } from '../../utils/ai/runtimeAnalysis';
 import { generateSchedule } from '../../utils/schedule/scheduleGenerator';
 import { MasterRouteTable } from '../../utils/parsers/masterScheduleParser';
@@ -145,11 +148,28 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
 
     const [dayType, setDayType] = useState<'Weekday' | 'Saturday' | 'Sunday'>('Weekday');
     const [files, setFiles] = useState<File[]>([]);
+    const [importMode, setImportMode] = useState<ImportMode>('csv');
+    const [performanceConfig, setPerformanceConfig] = useState<PerformanceConfig>({ routeId: '', dateRange: null });
     const [projectName, setProjectName] = useState(DEFAULT_PROJECT_NAME);
     const [isAutoProjectName, setIsAutoProjectName] = useState(true);
     const [projectId, setProjectId] = useState<string | undefined>();
     const projectIdRef = useRef<string | undefined>(undefined);
     const [showProjectManager, setShowProjectManager] = useState(false);
+
+    // Performance data (lazy-loaded only when performance mode is selected)
+    const perfQuery = usePerformanceDataQuery(team?.id, importMode === 'performance');
+    const perfData = perfQuery.data;
+
+    const availableRoutes = useMemo(() => {
+        if (!perfData?.dailySummaries) return [];
+        const normalizedDayType = dayType.toLowerCase() as PerfDayType;
+        return getAvailableRuntimeRoutes(perfData.dailySummaries, normalizedDayType);
+    }, [perfData?.dailySummaries, dayType]);
+
+    const performanceDateRange = useMemo(() => {
+        if (!perfData?.metadata?.dateRange) return undefined;
+        return perfData.metadata.dateRange;
+    }, [perfData?.metadata?.dateRange]);
 
     // State for Step 2 Analysis
     const [parsedData, setParsedData] = useState<RuntimeData[]>([]);
@@ -359,6 +379,8 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
     }) => ({
         step: step as 1 | 2 | 3 | 4,
         dayType,
+        importMode,
+        performanceConfig,
         projectName,
         fileNames: files.map(f => f.name),
         analysis: step >= 2 ? analysis : undefined,
@@ -367,7 +389,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         generatedSchedules: step >= 4 ? (overrides?.generatedSchedules || generatedSchedules) : undefined,
         parsedData: step >= 1 ? parsedData : undefined,
         updatedAt: new Date().toISOString()
-    }), [step, dayType, projectName, files, analysis, bands, config, generatedSchedules, parsedData]);
+    }), [step, dayType, importMode, performanceConfig, projectName, files, analysis, bands, config, generatedSchedules, parsedData]);
 
     // Helper: Build Firebase save data structure
     const buildFirebaseSaveData = useCallback((overrides?: {
@@ -380,6 +402,8 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         return ({
         name: overrides?.name || projectName,
         dayType,
+        importMode,
+        performanceConfig,
         routeNumber: config.routeNumber,
         analysis: step >= 2 ? analysis : undefined,
         bands: step >= 2 ? bands : undefined,
@@ -389,7 +413,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         isGenerated: overrides?.isGenerated ?? (step >= 4),
         ...(effectiveProjectId ? { id: effectiveProjectId } : {})
         });
-    }, [projectName, dayType, config, step, analysis, bands, generatedSchedules, parsedData, projectId]);
+    }, [projectName, dayType, importMode, performanceConfig, config, step, analysis, bands, generatedSchedules, parsedData, projectId]);
 
     // Track state version for dirty detection - increment on meaningful changes
     useEffect(() => {
@@ -405,7 +429,8 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         bands.length > 0 ||
         config.blocks.length > 0 ||
         generatedSchedules.length > 0 ||
-        !!projectId
+        !!projectId ||
+        !!performanceConfig.routeId
     ), [
         files.length,
         parsedData.length,
@@ -413,7 +438,8 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         bands.length,
         config.blocks.length,
         generatedSchedules.length,
-        projectId
+        projectId,
+        performanceConfig.routeId
     ]);
 
     // isDirty: true when state has changed since last cloud save
@@ -547,6 +573,8 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
             setStep(savedProgress.step);
             setMaxStepReached(Math.max(savedProgress.step, maxStepReached));
             setDayType(savedProgress.dayType);
+            setImportMode(savedProgress.importMode || 'csv');
+            setPerformanceConfig(savedProgress.performanceConfig || { routeId: '', dateRange: null });
             if (savedProgress.projectName) {
                 setProjectName(savedProgress.projectName);
                 setIsAutoProjectName(false);
@@ -571,6 +599,8 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
 
     const handleStartFresh = () => {
         clear();
+        setImportMode('csv');
+        setPerformanceConfig({ routeId: '', dateRange: null });
         setProjectName(DEFAULT_PROJECT_NAME);
         setIsAutoProjectName(true);
         setIsMasterCompareActive(false);
@@ -623,53 +653,99 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         }
     };
 
+    // Shared helper: take RuntimeData[] through analysis pipeline and advance to Step 2
+    const processRuntimeResults = (results: RuntimeData[]) => {
+        setParsedData(results);
+
+        const rawAnalysis = calculateTotalTripTimes(results);
+        const withOutliers = detectOutliers(rawAnalysis);
+        const { buckets, bands: generatedBands } = calculateBands(withOutliers);
+
+        setAnalysis(buckets);
+        setBands(generatedBands);
+        setSegmentNames(extractSegmentNames(buckets));
+
+        const groupedSegments: Record<string, SegmentRawData[]> = {};
+        results.forEach(pd => {
+            const dir = pd.detectedDirection || 'North';
+            if (!groupedSegments[dir]) groupedSegments[dir] = [];
+            groupedSegments[dir].push(...pd.segments);
+        });
+        setSegmentsMap(groupedSegments);
+
+        const autoRouteNumber = resolveAutoRouteNumber(
+            results.map(r => r.detectedRouteNumber)
+        );
+        if (autoRouteNumber) {
+            setConfig(prev => ({ ...prev, routeNumber: autoRouteNumber! }));
+        }
+
+        setStep(2);
+    };
+
     const handleNext = async () => {
         if (step === 1) {
-            if (files.length === 0) {
-                toast.warning('No Files', 'Please upload at least one CSV file');
-                return;
-            }
-            try {
-                // Parse files
-                const results = await Promise.all(files.map(f => parseRuntimeCSV(f)));
-                setParsedData(results);
-
-                // Run initial analysis
-                const rawAnalysis = calculateTotalTripTimes(results);
-                const withOutliers = detectOutliers(rawAnalysis);
-                const { buckets, bands: generatedBands } = calculateBands(withOutliers);
-
-                setAnalysis(buckets);
-                setBands(generatedBands);
-                setSegmentNames(extractSegmentNames(buckets));
-
-                // Build segmentsMap for direction-keyed lookups
-                const groupedSegments: Record<string, SegmentRawData[]> = {};
-                results.forEach(pd => {
-                    const dir = pd.detectedDirection || 'North';
-                    if (!groupedSegments[dir]) groupedSegments[dir] = [];
-                    groupedSegments[dir].push(...pd.segments);
-                });
-                setSegmentsMap(groupedSegments);
-
-                // Auto-detect route number from parsed files
-                // When 2 files have the same numeric base but different letter suffixes
-                // (e.g., "12A" North + "12B" South), use the common base ("12") as the route.
-                const autoRouteNumber = resolveAutoRouteNumber(
-                    results.map(r => r.detectedRouteNumber)
-                );
-                if (autoRouteNumber) {
-                    setConfig(prev => ({
-                        ...prev,
-                        routeNumber: autoRouteNumber!
-                    }));
+            if (importMode === 'performance') {
+                // Performance data mode
+                if (!performanceConfig.routeId) {
+                    toast.warning('No Route', 'Please select a route');
+                    return;
                 }
+                if (performanceConfig.dateRange) {
+                    const { start, end } = performanceConfig.dateRange;
+                    if (!start || !end) {
+                        toast.warning('Invalid Date Range', 'Select both start and end dates, or use all data.');
+                        return;
+                    }
+                    if (start > end) {
+                        toast.warning('Invalid Date Range', 'Start date must be on or before end date.');
+                        return;
+                    }
+                    if (performanceDateRange && (start < performanceDateRange.start || end > performanceDateRange.end)) {
+                        toast.warning(
+                            'Date Range Out of Bounds',
+                            `Available data is ${performanceDateRange.start} to ${performanceDateRange.end}.`
+                        );
+                        return;
+                    }
+                }
+                if (!perfData?.dailySummaries) {
+                    toast.warning('No Data', 'Performance data is not loaded yet');
+                    return;
+                }
+                try {
+                    const normalizedDayType = dayType.toLowerCase() as PerfDayType;
+                    const results = computeRuntimesFromPerformance(perfData.dailySummaries, {
+                        routeId: performanceConfig.routeId,
+                        dayType: normalizedDayType,
+                        dateRange: performanceConfig.dateRange || undefined,
+                    });
 
-                setStep(2);
-                toast.success('Files Parsed', 'Runtime data analyzed successfully');
-            } catch (error) {
-                console.error(error);
-                toast.error('Parse Error', 'Failed to parse CSV files. Please check the format.');
+                    if (results.length === 0) {
+                        toast.error('No Data', `No segment runtime data found for Route ${performanceConfig.routeId} on ${dayType}s`);
+                        return;
+                    }
+
+                    processRuntimeResults(results);
+                    toast.success('Data Computed', 'Performance runtimes analyzed successfully');
+                } catch (error) {
+                    console.error(error);
+                    toast.error('Compute Error', 'Failed to compute runtimes from performance data.');
+                }
+            } else {
+                // CSV mode
+                if (files.length === 0) {
+                    toast.warning('No Files', 'Please upload at least one CSV file');
+                    return;
+                }
+                try {
+                    const results = await Promise.all(files.map(f => parseRuntimeCSV(f)));
+                    processRuntimeResults(results);
+                    toast.success('Files Parsed', 'Runtime data analyzed successfully');
+                } catch (error) {
+                    console.error(error);
+                    toast.error('Parse Error', 'Failed to parse CSV files. Please check the format.');
+                }
             }
         } else if (step === 2) {
             // Initialize one block for convenience if empty
@@ -832,6 +908,8 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         setIsAutoProjectName(true);
         setProjectId(undefined);
         projectIdRef.current = undefined;
+        setImportMode('csv');
+        setPerformanceConfig({ routeId: '', dateRange: null });
         setIsMasterCompareActive(false);
         setMasterBaseline(null);
         setIsCompareLoading(false);
@@ -850,6 +928,8 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         id: string;
         name: string;
         dayType: 'Weekday' | 'Saturday' | 'Sunday';
+        importMode?: ImportMode;
+        performanceConfig?: PerformanceConfig;
         analysis?: TripBucketAnalysis[];
         bands?: TimeBand[];
         config?: ScheduleConfig;
@@ -865,6 +945,8 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         setProjectName(fullProject.name);
         setIsAutoProjectName(false);
         setDayType(fullProject.dayType);
+        setImportMode(fullProject.importMode || 'csv');
+        setPerformanceConfig(fullProject.performanceConfig || { routeId: '', dateRange: null });
 
         if (fullProject.analysis && fullProject.analysis.length > 0) {
             setAnalysis(fullProject.analysis);
@@ -1039,10 +1121,16 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                                 onGTFSImport={(result) => {
                                     if (result.success && result.draftId) {
                                         toast.success('GTFS Import Complete', `Created draft for ${result.routeIdentity}`);
-                                        // Optionally navigate to the draft editor
-                                        onBack(); // Return to dashboard where user can open the draft
+                                        onBack();
                                     }
                                 }}
+                                importMode={importMode}
+                                setImportMode={setImportMode}
+                                availableRoutes={availableRoutes}
+                                performanceConfig={performanceConfig}
+                                onPerformanceConfigChange={setPerformanceConfig}
+                                performanceDataLoading={perfQuery.isLoading}
+                                performanceDateRange={performanceDateRange}
                             />
                         )}
                         {step === 2 && (

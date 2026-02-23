@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useCallback } from 'react';
+import React, { useMemo, useState, useCallback, useEffect } from 'react';
 import { FileBarChart, Route, Sparkles, Timer } from 'lucide-react';
 import type { PerformanceDataSummary, DailySummary } from '../../utils/performanceDataTypes';
 import { DateRangePicker, type DateRangeSelection } from './reports/DateRangePicker';
@@ -6,7 +6,6 @@ import { WeeklySummaryReport } from './reports/WeeklySummaryReport';
 import { RoutePerformanceReport } from './reports/RoutePerformanceReport';
 import { AIQueryPanel } from './reports/AIQueryPanel';
 import { OperatorDwellReport } from './reports/OperatorDwellReport';
-import { exportOperatorDwell, exportOperatorDwellPDF } from './reports/reportExporter';
 import { compareDateStrings, normalizeToISODate, toDateSortKey } from '../../utils/performanceDateUtils';
 
 interface ReportsModuleProps {
@@ -24,7 +23,6 @@ const PANEL_CONFIG: { id: ReportPanel; label: string; icon: React.FC<{ size?: nu
 
 export const ReportsModule: React.FC<ReportsModuleProps> = ({ data }) => {
     const [activePanel, setActivePanel] = useState<ReportPanel>('summary');
-    const [dwellExporting, setDwellExporting] = useState<'excel' | 'pdf' | null>(null);
 
     const availableDates = useMemo(
         () => [...new Set(
@@ -40,6 +38,38 @@ export const ReportsModule: React.FC<ReportsModuleProps> = ({ data }) => {
         endDate: availableDates[availableDates.length - 1] ?? '',
         dayTypeFilter: 'all',
     }));
+
+    useEffect(() => {
+        const minDate = availableDates[0] ?? '';
+        const maxDate = availableDates[availableDates.length - 1] ?? '';
+        setDateRange(previous => {
+            if (!minDate || !maxDate) {
+                if (!previous.startDate && !previous.endDate && previous.dayTypeFilter === 'all') return previous;
+                return { startDate: '', endDate: '', dayTypeFilter: 'all' };
+            }
+
+            const prevStartKey = toDateSortKey(previous.startDate);
+            const prevEndKey = toDateSortKey(previous.endDate);
+            const minKey = toDateSortKey(minDate);
+            const maxKey = toDateSortKey(maxDate);
+
+            const isPrevRangeWithinBounds =
+                Number.isFinite(prevStartKey)
+                && Number.isFinite(prevEndKey)
+                && Number.isFinite(minKey)
+                && Number.isFinite(maxKey)
+                && prevStartKey >= minKey
+                && prevEndKey <= maxKey
+                && prevStartKey <= prevEndKey;
+
+            if (isPrevRangeWithinBounds) return previous;
+            return {
+                startDate: minDate,
+                endDate: maxDate,
+                dayTypeFilter: 'all',
+            };
+        });
+    }, [availableDates]);
 
     const handleDateChange = useCallback((selection: DateRangeSelection) => {
         setDateRange(selection);
@@ -80,18 +110,7 @@ export const ReportsModule: React.FC<ReportsModuleProps> = ({ data }) => {
                         allDays={data.dailySummaries}
                         startDate={dateRange.startDate}
                         endDate={dateRange.endDate}
-                        onExportExcel={async () => {
-                            setDwellExporting('excel');
-                            try { await exportOperatorDwell(filteredDays, dateRange.startDate, dateRange.endDate); }
-                            finally { setDwellExporting(null); }
-                        }}
-                        onExportPDF={async () => {
-                            setDwellExporting('pdf');
-                            try { await exportOperatorDwellPDF(filteredDays, dateRange.startDate, dateRange.endDate); }
-                            finally { setDwellExporting(null); }
-                        }}
-                        exportingExcel={dwellExporting === 'excel'}
-                        exportingPDF={dwellExporting === 'pdf'}
+                        dayTypeFilter={dateRange.dayTypeFilter}
                     />
                 );
             case 'ai':

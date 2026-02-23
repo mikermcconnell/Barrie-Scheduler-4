@@ -7,6 +7,7 @@ import {
   classifyOTP, OTP_THRESHOLDS, PERFORMANCE_SCHEMA_VERSION, DEFAULT_LOAD_CAP,
   OperatorDwellMetrics, DwellIncident, OperatorDwellSummary,
   classifyDwell, DWELL_THRESHOLDS,
+  DailySegmentRuntimes, DailySegmentRuntimeEntry, SegmentRuntimeObservation,
 } from './performanceDataTypes';
 import type { MonthlySnapshot, MonthlyRouteSnapshot, MonthlyDayTypeSnapshot } from './performanceSnapshotTypes';
 import { SNAPSHOT_VERSION } from './performanceSnapshotTypes';
@@ -31,6 +32,26 @@ function timeToSeconds(time: string): number {
   const wholeDays = Math.floor(dec);
   const dayFraction = dec - wholeDays;
   return wholeDays * 86400 + Math.round(dayFraction * 86400);
+}
+
+/** Parse hour-of-day from HH:MM(/:SS) or Excel decimal time; returns 0-23 or null. */
+function parseHourFromTime(raw: string): number | null {
+  const normalized = raw.trim();
+  if (!normalized) return null;
+
+  if (normalized.includes(':')) {
+    const m = normalized.match(/^(\d{1,3}):(\d{2})(?::(\d{2}))?$/);
+    if (!m) return null;
+    const hour = Number.parseInt(m[1], 10);
+    if (!Number.isFinite(hour) || hour < 0) return null;
+    return hour % 24;
+  }
+
+  const dec = Number.parseFloat(normalized);
+  if (!Number.isFinite(dec) || dec < 0) return null;
+  const totalSeconds = Math.round(dec * 86400);
+  const hour = Math.floor(((totalSeconds % 86400) + 86400) % 86400 / 3600);
+  return hour;
 }
 
 function safeDivide(numerator: number, denominator: number): number {
@@ -279,15 +300,18 @@ function buildRouteMetrics(records: STREETSRecord[]): RouteMetrics[] {
 }
 
 function buildHourMetrics(records: STREETSRecord[]): HourMetrics[] {
-  const byHour = groupBy(records, r => {
-    const h = parseInt(r.arrivalTime.split(':')[0], 10);
-    return String(h);
-  });
+  const byHour = new Map<number, STREETSRecord[]>();
+  for (const r of records) {
+    const hour = parseHourFromTime(r.arrivalTime);
+    if (hour === null) continue;
+    const arr = byHour.get(hour);
+    if (arr) arr.push(r);
+    else byHour.set(hour, [r]);
+  }
 
   const results: HourMetrics[] = [];
 
-  for (const [hourStr, recs] of byHour) {
-    const hour = parseInt(hourStr, 10);
+  for (const [hour, recs] of byHour) {
     const otp = computeOTP(recs);
     let boardings = 0;
     let alightings = 0;
@@ -331,6 +355,12 @@ function buildStopMetrics(records: STREETSRecord[]): StopMetrics[] {
     let loadCount = 0;
     const hBoard = new Array(24).fill(0);
     const hAlight = new Array(24).fill(0);
+    const byRoute = new Map<string, {
+      boardings: number;
+      alightings: number;
+      hourlyBoardings: number[];
+      hourlyAlightings: number[];
+    }>();
 
     for (const r of recs) {
       boardings += r.boardings;
@@ -342,14 +372,50 @@ function buildStopMetrics(records: STREETSRecord[]): StopMetrics[] {
       routes.add(r.routeId);
       if (!lat) { lat = r.stopLat; lon = r.stopLon; }
       if (r.timePoint) isTimepoint = true;
-      const h = parseInt(r.arrivalTime.split(':')[0], 10);
-      if (h >= 0 && h < 24) {
+      const h = parseHourFromTime(r.arrivalTime);
+      if (h !== null) {
         hBoard[h] += r.boardings;
         hAlight[h] += r.alightings;
+      }
+
+      const routeExisting = byRoute.get(r.routeId);
+      if (routeExisting) {
+        routeExisting.boardings += r.boardings;
+        routeExisting.alightings += r.alightings;
+        if (h !== null) {
+          routeExisting.hourlyBoardings[h] += r.boardings;
+          routeExisting.hourlyAlightings[h] += r.alightings;
+        }
+      } else {
+        const hourlyBoardings = new Array(24).fill(0);
+        const hourlyAlightings = new Array(24).fill(0);
+        if (h !== null) {
+          hourlyBoardings[h] = r.boardings;
+          hourlyAlightings[h] = r.alightings;
+        }
+        byRoute.set(r.routeId, {
+          boardings: r.boardings,
+          alightings: r.alightings,
+          hourlyBoardings,
+          hourlyAlightings,
+        });
       }
     }
 
     const [stopId, stopName] = key.split('||');
+    const routeBreakdown = Array.from(byRoute.entries())
+      .map(([routeId, m]) => ({
+        routeId,
+        boardings: m.boardings,
+        alightings: m.alightings,
+        hourlyBoardings: m.hourlyBoardings,
+        hourlyAlightings: m.hourlyAlightings,
+      }))
+      .sort((a, b) => {
+        const totalCmp = (b.boardings + b.alightings) - (a.boardings + a.alightings);
+        if (totalCmp !== 0) return totalCmp;
+        return a.routeId.localeCompare(b.routeId, undefined, { numeric: true });
+      });
 
     results.push({
       stopName,
@@ -365,6 +431,7 @@ function buildStopMetrics(records: STREETSRecord[]): StopMetrics[] {
       routes: Array.from(routes).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
       hourlyBoardings: hBoard,
       hourlyAlightings: hAlight,
+      routeBreakdown,
     });
   }
 
@@ -686,6 +753,82 @@ function buildOperatorDwellMetrics(records: STREETSRecord[], date: string): Oper
   };
 }
 
+function buildSegmentRuntimes(records: STREETSRecord[]): DailySegmentRuntimes {
+  const byTrip = groupBy(records, r => r.tripId);
+  const tripsWithData = new Set<string>();
+
+  // Accumulate observations keyed by "routeId||direction||segmentName"
+  const segMap = new Map<string, SegmentRuntimeObservation[]>();
+
+  for (const [tripId, tripRecs] of byTrip) {
+    // Sort by routeStopIndex within the trip
+    const sorted = [...tripRecs].sort((a, b) => a.routeStopIndex - b.routeStopIndex);
+
+    // Filter to timepoint stops only (skip tripper, detour, inBetween)
+    const timepoints = sorted.filter(r => r.timePoint && !r.isTripper && !r.isDetour && !r.inBetween);
+    if (timepoints.length < 2) continue;
+
+    let tripHasData = false;
+
+    // Walk consecutive timepoint pairs
+    for (let i = 0; i < timepoints.length - 1; i++) {
+      const from = timepoints[i];
+      const to = timepoints[i + 1];
+
+      // Both must have observed times
+      if (!from.observedDepartureTime || !to.observedArrivalTime) continue;
+
+      const depSec = timeToSeconds(from.observedDepartureTime);
+      let arrSec = timeToSeconds(to.observedArrivalTime);
+
+      // Post-midnight guard: arrival < departure means midnight rollover
+      if (arrSec < depSec) arrSec += 86400;
+
+      const runtimeSec = arrSec - depSec;
+
+      // Sanity: skip <= 0 or > 120 minutes
+      if (runtimeSec <= 0 || runtimeSec > 7200) continue;
+
+      const runtimeMinutes = Math.round(runtimeSec / 60 * 100) / 100;
+
+      // Time bucket from scheduled departure: floor(minutes / 30) * 30 → "HH:MM"
+      const schedSec = timeToSeconds(from.stopTime);
+      const totalMin = Math.floor(schedSec / 60);
+      const bucketMin = Math.floor(totalMin / 30) * 30;
+      const bucketH = Math.floor(bucketMin / 60);
+      const bucketM = bucketMin % 60;
+      const timeBucket = `${String(bucketH).padStart(2, '0')}:${String(bucketM).padStart(2, '0')}`;
+
+      const segmentName = `${from.stopName} to ${to.stopName}`;
+      const key = `${from.routeId}||${from.direction}||${segmentName}`;
+
+      const arr = segMap.get(key);
+      const obs: SegmentRuntimeObservation = { runtimeMinutes, timeBucket };
+      if (arr) arr.push(obs);
+      else segMap.set(key, [obs]);
+
+      tripHasData = true;
+    }
+
+    if (tripHasData) tripsWithData.add(tripId);
+  }
+
+  const entries: DailySegmentRuntimeEntry[] = [];
+  let totalObservations = 0;
+
+  for (const [key, observations] of segMap) {
+    const [routeId, direction, segmentName] = key.split('||');
+    entries.push({ routeId, direction, segmentName, observations });
+    totalObservations += observations.length;
+  }
+
+  return {
+    entries,
+    totalObservations,
+    tripsWithData: tripsWithData.size,
+  };
+}
+
 function buildDataQuality(
   records: STREETSRecord[],
   sanitization: { loadCapped: number; apcExcludedFromLoad: number }
@@ -737,6 +880,7 @@ function aggregateSingleDay(date: string, records: STREETSRecord[]): DailySummar
     loadProfiles: buildLoadProfiles(records),
     ridershipHeatmaps: buildRidershipHeatmaps(records),
     byOperatorDwell: buildOperatorDwellMetrics(records, date),
+    segmentRuntimes: buildSegmentRuntimes(records),
     dataQuality: buildDataQuality(records, sanitization),
     schemaVersion: PERFORMANCE_SCHEMA_VERSION,
   };

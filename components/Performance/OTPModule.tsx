@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
     ScatterChart, Scatter, Cell, ReferenceLine, LabelList,
@@ -16,18 +16,22 @@ interface OTPModuleProps {
 const DAY_TYPE_LABELS: Record<DayType, string> = { weekday: 'Weekday', saturday: 'Saturday', sunday: 'Sunday' };
 const OTP_COLORS = { early: '#f59e0b', 'on-time': '#22c55e', late: '#ef4444' };
 
+function parseHourOfDay(raw: string): number | null {
+    const value = raw.trim();
+    if (!value) return null;
+    if (value.includes(':')) {
+        const m = value.match(/^(\d{1,3}):(\d{2})(?::(\d{2}))?$/);
+        if (!m) return null;
+        const hour = Number.parseInt(m[1], 10);
+        return Number.isFinite(hour) && hour >= 0 ? (hour % 24) : null;
+    }
+    const dec = Number.parseFloat(value);
+    if (!Number.isFinite(dec) || dec < 0) return null;
+    return Math.floor((((Math.round(dec * 86400) % 86400) + 86400) % 86400) / 3600);
+}
+
 export const OTPModule: React.FC<OTPModuleProps> = ({ data }) => {
-    const availableDayTypes = useMemo(() => {
-        const types = new Set(data.dailySummaries.map(d => d.dayType));
-        return (['weekday', 'saturday', 'sunday'] as DayType[]).filter(t => types.has(t));
-    }, [data]);
-
-    const [dayTypeFilter, setDayTypeFilter] = useState<DayType | 'all'>('all');
-
-    const filtered = useMemo(() => {
-        if (dayTypeFilter === 'all') return data.dailySummaries;
-        return data.dailySummaries.filter(d => d.dayType === dayTypeFilter);
-    }, [data, dayTypeFilter]);
+    const filtered = data.dailySummaries;
 
     // Route × Hour heatmap data
     const heatmapData = useMemo(() => {
@@ -37,8 +41,8 @@ export const OTPModule: React.FC<OTPModuleProps> = ({ data }) => {
                 if (!routeHours.has(r.routeId)) routeHours.set(r.routeId, new Map());
             }
             for (const trip of day.byTrip) {
-                const hour = parseInt(trip.terminalDepartureTime.split(':')[0]);
-                if (isNaN(hour)) continue;
+                const hour = parseHourOfDay(trip.terminalDepartureTime);
+                if (hour === null) continue;
                 const rMap = routeHours.get(trip.routeId);
                 if (!rMap) continue;
                 const existing = rMap.get(hour) || { total: 0, onTime: 0 };
@@ -159,22 +163,6 @@ export const OTPModule: React.FC<OTPModuleProps> = ({ data }) => {
 
     return (
         <div className="space-y-6">
-            {/* Filters */}
-            <div className="flex items-center gap-4 flex-wrap">
-                <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold text-gray-400 uppercase">Day Type:</span>
-                    <div className="flex gap-1">
-                        <FilterPill active={dayTypeFilter === 'all'} onClick={() => setDayTypeFilter('all')}>All</FilterPill>
-                        {availableDayTypes.map(dt => (
-                            <FilterPill key={dt} active={dayTypeFilter === dt} onClick={() => setDayTypeFilter(dt)}>
-                                {DAY_TYPE_LABELS[dt]}
-                            </FilterPill>
-                        ))}
-                    </div>
-                </div>
-                <span className="text-xs font-medium text-gray-500">OTP is calculated from timepoints only (STREETS standard).</span>
-            </div>
-
             {/* Missed Trips Table */}
             {missedTrips.length > 0 && (
                 <ChartCard title="Missed Trips" subtitle={`${missedTripsDay?.date} — ${missedTrips.length} trips either not performed or over 15 min late`}>
@@ -317,14 +305,3 @@ export const OTPModule: React.FC<OTPModuleProps> = ({ data }) => {
         </div>
     );
 };
-
-const FilterPill: React.FC<{ active: boolean; onClick: () => void; children: React.ReactNode }> = ({ active, onClick, children }) => (
-    <button
-        onClick={onClick}
-        className={`px-3 py-1 text-xs font-bold rounded-full transition-colors ${
-            active ? 'bg-cyan-100 text-cyan-700' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-        }`}
-    >
-        {children}
-    </button>
-);

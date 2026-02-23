@@ -18,6 +18,17 @@ function buildIsoDate(year: number, month: number, day: number): string {
   return `${year}-${pad2(month)}-${pad2(day)}`;
 }
 
+function parseIsoDateParts(dateStr: string): { year: number; month: number; day: number } | null {
+  const iso = normalizeToISODate(dateStr);
+  if (!iso) return null;
+  const [yearStr, monthStr, dayStr] = iso.split('-');
+  const year = Number(yearStr);
+  const month = Number(monthStr);
+  const day = Number(dayStr);
+  if (!isValidDateParts(year, month, day)) return null;
+  return { year, month, day };
+}
+
 function excelSerialToIso(serial: number): string | null {
   if (!Number.isFinite(serial)) return null;
   const wholeDays = Math.floor(serial);
@@ -104,4 +115,21 @@ export function compareDateStrings(a: string, b: string): number {
 export function shortDateLabel(dateStr: string): string {
   const iso = normalizeToISODate(dateStr);
   return iso ? iso.slice(5) : dateStr;
+}
+
+export function addDaysToISODate(dateStr: string, days: number): string | null {
+  if (!Number.isFinite(days)) return null;
+  const parsed = parseIsoDateParts(dateStr);
+  if (!parsed) return null;
+  const shifted = new Date(Date.UTC(parsed.year, parsed.month - 1, parsed.day + Math.trunc(days)));
+  return buildIsoDate(shifted.getUTCFullYear(), shifted.getUTCMonth() + 1, shifted.getUTCDate());
+}
+
+export function getISOWeekStartMonday(dateStr: string): string | null {
+  const parsed = parseIsoDateParts(dateStr);
+  if (!parsed) return null;
+  const date = new Date(Date.UTC(parsed.year, parsed.month - 1, parsed.day));
+  const dayOfWeek = (date.getUTCDay() + 6) % 7; // Mon=0 ... Sun=6
+  date.setUTCDate(date.getUTCDate() - dayOfWeek);
+  return buildIsoDate(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate());
 }

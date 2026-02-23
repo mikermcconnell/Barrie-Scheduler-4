@@ -53,7 +53,7 @@ export const sendDailyReport = onSchedule(
       b.date.localeCompare(a.date)
     );
     const latestDay = sorted[0];
-    const trendDays = sorted.slice(0, 7).reverse(); // oldest→newest for table
+    const trendDays = sorted.slice(0, 56).reverse(); // oldest→newest; OTP trend self-limits to 7
 
     // Build HTML email
     const html = buildReportHtml({ latestDay, trendDays, teamName: TEAM_NAME });
@@ -105,7 +105,7 @@ export const testDailyReport = onRequest(
 
     const sorted = [...summary.dailySummaries].sort((a, b) => b.date.localeCompare(a.date));
     const latestDay = sorted[0];
-    const trendDays = sorted.slice(0, 7).reverse();
+    const trendDays = sorted.slice(0, 56).reverse();
 
     const html = buildReportHtml({ latestDay, trendDays, teamName: TEAM_NAME });
     const subject = `[TEST] ${TEAM_NAME} Performance — ${latestDay.date} — OTP ${latestDay.system.otp.onTimePercent.toFixed(1)}%`;

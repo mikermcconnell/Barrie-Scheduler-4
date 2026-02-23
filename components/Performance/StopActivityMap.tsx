@@ -24,6 +24,13 @@ import 'leaflet/dist/leaflet.css';
 import type { StopMetrics } from '../../utils/performanceDataTypes';
 import { getAllStopsWithCoords } from '../../utils/gtfs/gtfsStopLookup';
 import { loadGtfsRouteShapes } from '../../utils/gtfs/gtfsShapesLoader';
+import {
+    getStopActivityBreakdown,
+    getStopRouteActivityBreakdown,
+    getStopActivityValue,
+    hasHourlyDataForStops,
+    matchesStopSearch,
+} from '../../utils/performanceStopActivity';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -35,6 +42,8 @@ type ViewMode = 'total' | 'boardings' | 'alightings';
 
 interface EnrichedStop extends StopMetrics {
     activity: number; // computed per viewMode + hour
+    filteredBoardings: number; // reflects active hour filter
+    filteredAlightings: number; // reflects active hour filter
 }
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -98,20 +107,25 @@ function buildGtfsCoordsMap(): Map<string, { lat: number; lon: number; name: str
     return map;
 }
 
-function getActivity(stop: StopMetrics, mode: ViewMode, hours: number[] | null): number {
-    if (hours !== null && stop.hourlyBoardings && stop.hourlyAlightings) {
-        let b = 0, a = 0;
-        for (const h of hours) {
-            b += stop.hourlyBoardings[h] || 0;
-            a += stop.hourlyAlightings[h] || 0;
+function escapeHtml(raw: string): string {
+    return raw
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+/** Ray-casting point-in-polygon test (geographic coords). */
+function pointInPolygon(lat: number, lon: number, poly: [number, number][]): boolean {
+    let inside = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+        const [yi, xi] = poly[i], [yj, xj] = poly[j];
+        if (((yi > lat) !== (yj > lat)) && (lon < (xj - xi) * (lat - yi) / (yj - yi) + xi)) {
+            inside = !inside;
         }
-        if (mode === 'boardings') return b;
-        if (mode === 'alightings') return a;
-        return b + a;
     }
-    if (mode === 'boardings') return stop.boardings;
-    if (mode === 'alightings') return stop.alightings;
-    return stop.boardings + stop.alightings;
+    return inside;
 }
 
 // ─── Sub-Components ─────────────────────────────────────────────────────────
@@ -140,19 +154,23 @@ const DetailPanel: React.FC<{
     stop: EnrichedStop;
     rank: number;
     total: number;
-    viewMode: ViewMode;
+    activeHours: number[] | null;
     onClose: () => void;
-}> = ({ stop, rank, total, viewMode, onClose }) => {
-    const hasHourly = !!stop.hourlyBoardings;
+}> = ({ stop, rank, total, activeHours, onClose }) => {
+    const hasHourly = !!(stop.hourlyBoardings || stop.hourlyAlightings);
     const hourlyData = hasHourly
         ? Array.from({ length: 24 }, (_, h) => ({
-            b: stop.hourlyBoardings![h] || 0,
-            a: stop.hourlyAlightings![h] || 0,
+            b: stop.hourlyBoardings?.[h] || 0,
+            a: stop.hourlyAlightings?.[h] || 0,
         }))
         : null;
     const maxHourly = hourlyData
         ? Math.max(...hourlyData.map(d => d.b + d.a), 1)
         : 1;
+    const routeRows = getStopRouteActivityBreakdown(stop, activeHours);
+    const totalActivity = stop.filteredBoardings + stop.filteredAlightings;
+    const attributedActivity = routeRows.reduce((sum, row) => sum + row.total, 0);
+    const unattributedActivity = Math.max(0, totalActivity - attributedActivity);
 
     return (
         <div className="absolute top-2 left-2 z-[1000] bg-white/95 backdrop-blur-sm rounded-lg shadow-lg border border-gray-200 w-72 pointer-events-auto">
@@ -167,18 +185,58 @@ const DetailPanel: React.FC<{
             </div>
             <div className="grid grid-cols-3 gap-2 px-3 py-2 border-t border-gray-100">
                 <div className="text-center">
-                    <div className="text-xs font-bold text-cyan-600">{stop.boardings.toLocaleString()}</div>
+                    <div className="text-xs font-bold text-cyan-600">{stop.filteredBoardings.toLocaleString()}</div>
                     <div className="text-[9px] text-gray-400 uppercase">Boardings</div>
                 </div>
                 <div className="text-center">
-                    <div className="text-xs font-bold text-purple-600">{stop.alightings.toLocaleString()}</div>
+                    <div className="text-xs font-bold text-purple-600">{stop.filteredAlightings.toLocaleString()}</div>
                     <div className="text-[9px] text-gray-400 uppercase">Alightings</div>
                 </div>
                 <div className="text-center">
-                    <div className="text-xs font-bold text-gray-800">{(stop.boardings + stop.alightings).toLocaleString()}</div>
+                    <div className="text-xs font-bold text-gray-800">{(stop.filteredBoardings + stop.filteredAlightings).toLocaleString()}</div>
                     <div className="text-[9px] text-gray-400 uppercase">Total</div>
                 </div>
             </div>
+            {(routeRows.length > 0 || unattributedActivity > 0) && (
+                <div className="px-3 py-2 border-t border-gray-100">
+                    <div className="flex items-center justify-between mb-1">
+                        <div className="text-[9px] text-gray-400 uppercase">Ridership by Route</div>
+                        {activeHours !== null && (
+                            <div className="text-[8px] text-gray-300 uppercase">Selected Hours</div>
+                        )}
+                    </div>
+                    <table className="w-full text-[10px]">
+                        <thead>
+                            <tr className="text-gray-400 uppercase">
+                                <th className="text-left font-normal py-0.5">Route</th>
+                                <th className="text-right font-normal py-0.5">Total</th>
+                                <th className="text-right font-normal py-0.5">Share</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {routeRows.map(row => {
+                                const pct = totalActivity > 0 ? (row.total / totalActivity) * 100 : 0;
+                                return (
+                                    <tr key={row.routeId} className="border-t border-gray-50">
+                                        <td className="py-0.5 text-gray-700 font-semibold">Route {row.routeId}</td>
+                                        <td className="py-0.5 text-right text-gray-700 tabular-nums">{row.total.toLocaleString()}</td>
+                                        <td className="py-0.5 text-right text-gray-500 tabular-nums">{pct.toFixed(1)}%</td>
+                                    </tr>
+                                );
+                            })}
+                            {unattributedActivity > 0 && (
+                                <tr className="border-t border-gray-50">
+                                    <td className="py-0.5 text-gray-500 font-semibold">Unattributed</td>
+                                    <td className="py-0.5 text-right text-gray-500 tabular-nums">{unattributedActivity.toLocaleString()}</td>
+                                    <td className="py-0.5 text-right text-gray-400 tabular-nums">
+                                        {totalActivity > 0 ? ((unattributedActivity / totalActivity) * 100).toFixed(1) : '0.0'}%
+                                    </td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            )}
             {stop.routes && stop.routes.length > 0 && (
                 <div className="px-3 py-1.5 border-t border-gray-100">
                     <div className="text-[9px] text-gray-400 uppercase mb-0.5">Routes</div>
@@ -210,6 +268,70 @@ const DetailPanel: React.FC<{
     );
 };
 
+const LassoSummaryPanel: React.FC<{
+    selected: EnrichedStop[];
+    onClose: () => void;
+}> = ({ selected, onClose }) => {
+    const totalB = selected.reduce((s, x) => s + x.filteredBoardings, 0);
+    const totalA = selected.reduce((s, x) => s + x.filteredAlightings, 0);
+    const routeSet = new Set<string>();
+    for (const s of selected) s.routes?.forEach(r => routeSet.add(r));
+    const routes = Array.from(routeSet).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    const ranked = [...selected].sort((a, b) => b.activity - a.activity).slice(0, 20);
+
+    return (
+        <div className="absolute top-2 left-2 z-[1000] bg-white/95 backdrop-blur-sm rounded-lg shadow-lg border border-gray-200 w-80 pointer-events-auto max-h-[calc(100%-5rem)] overflow-y-auto">
+            <div className="flex items-start justify-between px-3 pt-2.5 pb-1">
+                <div>
+                    <div className="font-bold text-gray-900 text-sm leading-tight">Lasso Selection</div>
+                    <div className="text-[10px] text-gray-400 mt-0.5">{selected.length} stops selected</div>
+                </div>
+                <button onClick={onClose} className="text-gray-400 hover:text-gray-600 -mt-0.5 -mr-1 p-1">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <div className="grid grid-cols-3 gap-2 px-3 py-2 border-t border-gray-100">
+                <div className="text-center">
+                    <div className="text-xs font-bold text-cyan-600">{totalB.toLocaleString()}</div>
+                    <div className="text-[9px] text-gray-400 uppercase">Boardings</div>
+                </div>
+                <div className="text-center">
+                    <div className="text-xs font-bold text-purple-600">{totalA.toLocaleString()}</div>
+                    <div className="text-[9px] text-gray-400 uppercase">Alightings</div>
+                </div>
+                <div className="text-center">
+                    <div className="text-xs font-bold text-gray-800">{(totalB + totalA).toLocaleString()}</div>
+                    <div className="text-[9px] text-gray-400 uppercase">Total</div>
+                </div>
+            </div>
+            {routes.length > 0 && (
+                <div className="px-3 py-1.5 border-t border-gray-100">
+                    <div className="text-[9px] text-gray-400 uppercase mb-0.5">Routes Served</div>
+                    <div className="flex flex-wrap gap-1">
+                        {routes.map(r => (
+                            <span key={r} className="bg-gray-100 text-gray-700 text-[10px] font-bold px-1.5 py-0.5 rounded">{r}</span>
+                        ))}
+                    </div>
+                </div>
+            )}
+            <div className="px-3 py-2 border-t border-gray-100">
+                <div className="text-[9px] text-gray-400 uppercase mb-1">Top Stops by Activity</div>
+                <table className="w-full text-[10px]">
+                    <tbody>
+                        {ranked.map((s, i) => (
+                            <tr key={s.stopId} className="border-b border-gray-50 last:border-b-0">
+                                <td className="py-0.5 pr-1 text-gray-300 w-5 text-right">{i + 1}</td>
+                                <td className="py-0.5 text-gray-700 font-medium truncate max-w-[140px]">{s.stopName}</td>
+                                <td className="py-0.5 pl-1 text-right text-gray-500 tabular-nums">{s.activity.toLocaleString()}</td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    );
+};
+
 // ─── Main Component ─────────────────────────────────────────────────────────
 
 export const StopActivityMap: React.FC<StopActivityMapProps> = ({ stops }) => {
@@ -233,6 +355,12 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({ stops }) => {
     const [searchQuery, setSearchQuery] = useState('');
     const [searchFocused, setSearchFocused] = useState(false);
     const [showRouteLines, setShowRouteLines] = useState(true);
+    const [lassoMode, setLassoMode] = useState(false);
+    const [lassoSelection, setLassoSelection] = useState<EnrichedStop[] | null>(null);
+    const lassoModeRef = useRef(false);
+    const lassoLayerRef = useRef<L.LayerGroup | null>(null);
+    const lassoHighlightsRef = useRef<L.CircleMarker[]>([]);
+    const lassoDrawingRef = useRef<{ points: L.LatLng[]; polygon: L.Polygon } | null>(null);
 
     // ─── Memos ──────────────────────────────────────────────────────────
 
@@ -245,10 +373,7 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({ stops }) => {
         });
     }, [stops, gtfsCoords]);
 
-    const hasHourlyData = useMemo(
-        () => enrichedStops.some(s => s.hourlyBoardings && s.hourlyBoardings.some(v => v > 0)),
-        [enrichedStops]
-    );
+    const hasHourlyData = useMemo(() => hasHourlyDataForStops(enrichedStops), [enrichedStops]);
 
     const availableRoutes = useMemo(() => {
         const set = new Set<string>();
@@ -269,10 +394,15 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({ stops }) => {
         if (selectedRoute !== 'all' && hasRoutes) {
             result = result.filter(s => s.routes?.includes(selectedRoute));
         }
-        return result.map(s => ({
-            ...s,
-            activity: getActivity(s, viewMode, activeHours),
-        })) as EnrichedStop[];
+        return result.map(s => {
+            const filteredBreakdown = getStopActivityBreakdown(s, activeHours);
+            return {
+                ...s,
+                filteredBoardings: filteredBreakdown.boardings,
+                filteredAlightings: filteredBreakdown.alightings,
+                activity: getStopActivityValue(s, viewMode, activeHours),
+            };
+        }) as EnrichedStop[];
     }, [enrichedStops, selectedRoute, hasRoutes, viewMode, activeHours]);
 
     // Sorted by activity for rank lookup
@@ -283,9 +413,8 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({ stops }) => {
     // Search results
     const searchResults = useMemo(() => {
         if (!searchQuery.trim()) return [];
-        const q = searchQuery.toLowerCase();
         return filteredStops
-            .filter(s => s.stopName.toLowerCase().includes(q) || s.stopId.includes(q))
+            .filter(s => matchesStopSearch(s, searchQuery))
             .sort((a, b) => b.activity - a.activity)
             .slice(0, 8);
     }, [filteredStops, searchQuery]);
@@ -315,7 +444,7 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({ stops }) => {
             L.marker([stop.lat, stop.lon], {
                 icon: L.divIcon({
                     className: 'stop-label-icon',
-                    html: `<span style="font-size:9px;font-weight:600;color:#374151;white-space:nowrap;text-shadow:0 0 3px white,0 0 3px white,0 0 3px white">${stop.stopName}</span>`,
+                    html: `<span style="font-size:9px;font-weight:600;color:#374151;white-space:nowrap;text-shadow:0 0 3px white,0 0 3px white,0 0 3px white">${escapeHtml(stop.stopName)}</span>`,
                     iconAnchor: [-offset, 5],
                 }),
                 interactive: false,
@@ -360,15 +489,46 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({ stops }) => {
         highlightStop(stop);
     }, [highlightStop]);
 
+    const clearLassoSelection = useCallback(() => {
+        for (const c of lassoHighlightsRef.current) c.remove();
+        lassoHighlightsRef.current = [];
+        lassoLayerRef.current?.clearLayers();
+        setLassoSelection(null);
+    }, []);
+
+    const toggleLassoMode = useCallback(() => {
+        const next = !lassoModeRef.current;
+        lassoModeRef.current = next;
+        setLassoMode(next);
+        const map = mapRef.current;
+        if (!map) return;
+        if (next) {
+            map.dragging.disable();
+            (map.getContainer() as HTMLElement).style.cursor = 'crosshair';
+            // Clear any single-stop selection
+            setSelectedStop(null);
+            clearHighlight();
+            clearLassoSelection();
+        } else {
+            map.dragging.enable();
+            (map.getContainer() as HTMLElement).style.cursor = '';
+            clearLassoSelection();
+        }
+    }, [clearHighlight, clearLassoSelection]);
+
     // ─── Effects ────────────────────────────────────────────────────────
 
-    // Escape key
+    // Escape key — priority: clear lasso selection → exit lasso mode → exit fullscreen
     useEffect(() => {
-        if (!isFullscreen) return;
-        const h = (e: KeyboardEvent) => { if (e.key === 'Escape') setIsFullscreen(false); };
+        const h = (e: KeyboardEvent) => {
+            if (e.key !== 'Escape') return;
+            if (lassoSelection) { clearLassoSelection(); return; }
+            if (lassoModeRef.current) { toggleLassoMode(); return; }
+            if (isFullscreen) setIsFullscreen(false);
+        };
         window.addEventListener('keydown', h);
         return () => window.removeEventListener('keydown', h);
-    }, [isFullscreen]);
+    }, [isFullscreen, lassoSelection, clearLassoSelection, toggleLassoMode]);
 
     // Invalidate on fullscreen toggle — multiple calls to ensure tiles render
     useEffect(() => {
@@ -424,6 +584,7 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({ stops }) => {
         routeLayerRef.current = L.layerGroup().addTo(map);
         markerLayerRef.current = L.layerGroup().addTo(map);
         labelLayerRef.current = L.layerGroup().addTo(map);
+        lassoLayerRef.current = L.layerGroup().addTo(map);
         mapRef.current = map;
 
         map.on('zoomend', () => {
@@ -442,6 +603,7 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({ stops }) => {
             markerLayerRef.current = null;
             labelLayerRef.current = null;
             routeLayerRef.current = null;
+            lassoLayerRef.current = null;
             markersRef.current = [];
         };
     }, [applyZoomScale, updateLabels]);
@@ -468,6 +630,98 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({ stops }) => {
         }
     }, [routeShapes, selectedRoute, showRouteLines]);
 
+    // Lasso drawing handlers
+    useEffect(() => {
+        const container = containerRef.current;
+        const map = mapRef.current;
+        if (!container || !map) return;
+
+        const onMouseDown = (e: MouseEvent) => {
+            if (!lassoModeRef.current) return;
+            e.preventDefault();
+            e.stopPropagation();
+            // Clear previous selection
+            for (const c of lassoHighlightsRef.current) c.remove();
+            lassoHighlightsRef.current = [];
+            lassoLayerRef.current?.clearLayers();
+            setLassoSelection(null);
+
+            const rect = container.getBoundingClientRect();
+            const pt = L.point(e.clientX - rect.left, e.clientY - rect.top);
+            const latlng = map.containerPointToLatLng(pt);
+            const polygon = L.polygon([latlng], {
+                color: '#f59e0b',
+                weight: 2,
+                dashArray: '6 4',
+                fillColor: '#f59e0b',
+                fillOpacity: 0.1,
+                interactive: false,
+            });
+            polygon.addTo(lassoLayerRef.current!);
+            lassoDrawingRef.current = { points: [latlng], polygon };
+        };
+
+        const onMouseMove = (e: MouseEvent) => {
+            const drawing = lassoDrawingRef.current;
+            if (!drawing) return;
+            const rect = container.getBoundingClientRect();
+            const pt = L.point(e.clientX - rect.left, e.clientY - rect.top);
+            const latlng = map.containerPointToLatLng(pt);
+            drawing.points.push(latlng);
+            drawing.polygon.setLatLngs(drawing.points);
+        };
+
+        const onMouseUp = () => {
+            const drawing = lassoDrawingRef.current;
+            if (!drawing) return;
+            lassoDrawingRef.current = null;
+
+            if (drawing.points.length < 3) {
+                lassoLayerRef.current?.clearLayers();
+                return;
+            }
+
+            const polyCoords: [number, number][] = drawing.points.map(p => [p.lat, p.lng]);
+            const hits: EnrichedStop[] = [];
+            for (const { stop } of markersRef.current) {
+                if (pointInPolygon(stop.lat, stop.lon, polyCoords)) {
+                    hits.push(stop);
+                }
+            }
+
+            if (hits.length === 0) {
+                lassoLayerRef.current?.clearLayers();
+                return;
+            }
+
+            // Highlight selected stops with amber circles
+            const scale = zoomScale(map.getZoom());
+            for (const stop of hits) {
+                const entry = markersRef.current.find(m => m.stop.stopId === stop.stopId);
+                const r = entry ? BINS[entry.bin].radius * scale + 4 : 14;
+                const hl = L.circleMarker([stop.lat, stop.lon], {
+                    radius: r,
+                    color: '#f59e0b',
+                    weight: 2.5,
+                    fillColor: '#f59e0b',
+                    fillOpacity: 0.2,
+                    interactive: false,
+                }).addTo(map);
+                lassoHighlightsRef.current.push(hl);
+            }
+            setLassoSelection(hits);
+        };
+
+        container.addEventListener('mousedown', onMouseDown);
+        window.addEventListener('mousemove', onMouseMove);
+        window.addEventListener('mouseup', onMouseUp);
+        return () => {
+            container.removeEventListener('mousedown', onMouseDown);
+            window.removeEventListener('mousemove', onMouseMove);
+            window.removeEventListener('mouseup', onMouseUp);
+        };
+    }, []);
+
     // Sync markers
     useEffect(() => {
         const layer = markerLayerRef.current;
@@ -476,6 +730,11 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({ stops }) => {
         layer.clearLayers();
         markersRef.current = [];
         clearHighlight();
+        // Clear lasso selection when markers rebuild (route/view/hour change)
+        for (const c of lassoHighlightsRef.current) c.remove();
+        lassoHighlightsRef.current = [];
+        lassoLayerRef.current?.clearLayers();
+        setLassoSelection(null);
 
         if (filteredStops.length === 0) return;
 
@@ -492,6 +751,8 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({ stops }) => {
             const cfg = BINS[bin];
             const isHollow = bin === 0;
             const scaledR = cfg.radius * scale;
+            const safeStopName = escapeHtml(stop.stopName);
+            const safeStopId = escapeHtml(stop.stopId);
 
             const marker = L.circleMarker([stop.lat, stop.lon], {
                 radius: scaledR,
@@ -504,10 +765,10 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({ stops }) => {
 
             marker.bindTooltip(
                 `<div style="font-size:12px;line-height:1.4">
-                    <strong>${stop.stopName}</strong> <span style="color:#9ca3af">(${stop.stopId})</span><br/>
-                    Boardings: ${stop.boardings.toLocaleString()}<br/>
-                    Alightings: ${stop.alightings.toLocaleString()}<br/>
-                    Activity: ${(stop.boardings + stop.alightings).toLocaleString()}
+                    <strong>${safeStopName}</strong> <span style="color:#9ca3af">(${safeStopId})</span><br/>
+                    Boardings: ${stop.filteredBoardings.toLocaleString()}<br/>
+                    Alightings: ${stop.filteredAlightings.toLocaleString()}<br/>
+                    Activity: ${(stop.filteredBoardings + stop.filteredAlightings).toLocaleString()}
                 </div>`,
                 { direction: 'top', offset: [0, -scaledR] }
             );
@@ -524,6 +785,7 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({ stops }) => {
             }
 
             marker.on('click', () => {
+                if (lassoModeRef.current) return;
                 setSelectedStop(stop);
                 highlightStop(stop);
             });
@@ -547,6 +809,20 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({ stops }) => {
     useEffect(() => {
         if (selectedStop) highlightStop(selectedStop);
     }, [selectedStop, highlightStop]);
+
+    // Keep selected stop synchronized with active route/time filters
+    useEffect(() => {
+        if (!selectedStop) return;
+        const nextSelected = filteredStops.find(s => s.stopId === selectedStop.stopId);
+        if (!nextSelected) {
+            setSelectedStop(null);
+            clearHighlight();
+            return;
+        }
+        if (nextSelected !== selectedStop) {
+            setSelectedStop(nextSelected);
+        }
+    }, [filteredStops, selectedStop, clearHighlight]);
 
     // ─── Computed for detail panel ──────────────────────────────────────
 
@@ -637,6 +913,22 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({ stops }) => {
                     }`}
                 >
                     Routes
+                </button>
+
+                {/* Lasso Select */}
+                <button
+                    onClick={toggleLassoMode}
+                    className={`px-2.5 py-1.5 text-[10px] font-bold rounded-md border shadow-sm transition-colors pointer-events-auto flex items-center gap-1 ${
+                        lassoMode
+                            ? 'bg-amber-50 text-amber-700 border-amber-300'
+                            : 'bg-white text-gray-400 border-gray-300 hover:bg-gray-50'
+                    }`}
+                    title={lassoMode ? 'Exit lasso mode (Esc)' : 'Draw to select stops'}
+                >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="3 2">
+                        <circle cx="12" cy="12" r="9" />
+                    </svg>
+                    Lasso
                 </button>
 
                 {/* Spacer */}
@@ -739,16 +1031,21 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({ stops }) => {
             {/* ─── Legend ─── */}
             <Legend />
 
-            {/* ─── Detail Panel ─── */}
-            {selectedStop && (
+            {/* ─── Detail / Lasso Panel ─── */}
+            {lassoSelection ? (
+                <LassoSummaryPanel
+                    selected={lassoSelection}
+                    onClose={clearLassoSelection}
+                />
+            ) : selectedStop ? (
                 <DetailPanel
                     stop={selectedStop}
                     rank={selectedRank}
                     total={filteredStops.length}
-                    viewMode={viewMode}
+                    activeHours={activeHours}
                     onClose={() => { setSelectedStop(null); clearHighlight(); }}
                 />
-            )}
+            ) : null}
 
             {/* ─── Map Container ─── */}
             <div

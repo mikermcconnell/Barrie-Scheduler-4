@@ -19,6 +19,7 @@
     "@capacitor/android": "^8.1.0",
     "@capacitor/core": "^8.1.0",
     "@google/generative-ai": "^0.24.1",
+    "@tanstack/react-query": "^5.90.21",
     "adm-zip": "^0.5.16",
     "dotenv": "^17.2.3",
     "exceljs": "^4.4.0",

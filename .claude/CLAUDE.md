@@ -35,6 +35,7 @@ npx vitest run tests/timeUtils.test.ts  # Time parsing tests (run before any tim
 ### Known Issues
 - **Connections C7**: Edits in ConnectionsPanel don't refresh ScheduleEditor indicators without reopen
 - **Connections C4**: Stop code not validated against known stops
+- **Connections C8**: Route-based target resync only in panel lifecycle
 
 ### Removed / Pending Reimplementation
 - **Interlining (8A↔8B)**: All interline code removed Feb 2026. No `interlineNext`/`interlinePrev` fields on MasterTrip. Reimplementation pending.
@@ -154,10 +155,10 @@ These files are high-risk for bugs. Apply extra caution and always run the liste
 
 | File | Risk | Verify With |
 |------|------|-------------|
-| `utils/schedule/scheduleGenerator.ts` | Locked logic, complex trip generation | `npx vitest run tests/scheduleGenerator` |
+| `utils/schedule/scheduleGenerator.ts` | Locked logic, complex trip generation | `npx vitest run tests/scheduleGenerator.goldenPath.test.ts tests/scheduleGenerator.directionStart.test.ts tests/scheduleGenerator.floating.test.ts` |
 | `utils/blocks/blockAssignmentCore.ts` | Subtle gap-based matching | `npx vitest run tests/blockAssignmentCore` |
 | `utils/parsers/masterScheduleParser*.ts` | Two parsers + adapter routing | `npx vitest run tests/parser.test.ts` |
-| `vite.config.ts` | 11K lines, API middleware | `npm run build` |
+| `vite.config.ts` | ~400 lines, API middleware for GTFS proxy | `npm run build` |
 | Any time parsing (`timeUtils.ts`, `excelTimeToString`, etc.) | Post-midnight >= 1.0 boundary | `npx vitest run tests/timeUtils.test.ts` |
 | `ScheduleEditor.tsx` | Largest component, intricate rendering | `npm run build` + manual verify |
 | `RoundTripTableView.tsx` | 8A/8B sort logic, stop-name matching | `npm run build` + check sort order |

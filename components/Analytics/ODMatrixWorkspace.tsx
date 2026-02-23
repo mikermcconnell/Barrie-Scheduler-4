@@ -5,7 +5,7 @@
  * Follows TransitAppWorkspace tab pattern.
  */
 
-import React, { useMemo, useRef, useState, useEffect } from 'react';
+import React, { useMemo, useRef, useState, useEffect, useCallback } from 'react';
 import {
     ArrowLeft,
     RefreshCw,
@@ -14,12 +14,15 @@ import {
     Trophy,
     Grid3X3,
     Clock,
+    Download,
+    FileText,
 } from 'lucide-react';
 import type { ODMatrixDataSummary, GeocodeCache } from '../../utils/od-matrix/odMatrixTypes';
 import { ODOverviewPanel } from './ODOverviewPanel';
 import { ODTopPairsModule } from './ODTopPairsModule';
 import { ODStationRankingsModule } from './ODStationRankingsModule';
 import { ODHeatmapGridModule } from './ODHeatmapGridModule';
+import { exportODExcel, exportODPdf } from '../../utils/od-matrix/odReportExporter';
 
 interface ODMatrixWorkspaceProps {
     data: ODMatrixDataSummary;
@@ -52,6 +55,30 @@ export const ODMatrixWorkspace: React.FC<ODMatrixWorkspaceProps> = ({
 }) => {
     const [activeTab, setActiveTab] = useState('overview');
     const tabBarRef = useRef<HTMLDivElement>(null);
+    const mapElRef = useRef<HTMLDivElement | null>(null);
+    const rankingsElRef = useRef<HTMLDivElement>(null);
+    const heatmapElRef = useRef<HTMLDivElement>(null);
+    const [exportingExcel, setExportingExcel] = useState(false);
+    const [exportingPDF, setExportingPDF] = useState(false);
+
+    const handleExportExcel = useCallback(async () => {
+        setExportingExcel(true);
+        try { await exportODExcel(data); }
+        finally { setExportingExcel(false); }
+    }, [data]);
+
+    const handleExportPDF = useCallback(async () => {
+        setExportingPDF(true);
+        try {
+            await exportODPdf(
+                data,
+                mapElRef.current,
+                rankingsElRef.current,
+                heatmapElRef.current,
+            );
+        }
+        finally { setExportingPDF(false); }
+    }, [data]);
 
     const tabs = useMemo(() => TAB_CONFIG, []);
 
@@ -85,14 +112,15 @@ export const ODMatrixWorkspace: React.FC<ODMatrixWorkspaceProps> = ({
                         geocodeCache={geocodeCache}
                         onNavigate={handleNavigate}
                         onFixCoordinates={onFixCoordinates}
+                        onMapElReady={(el) => { mapElRef.current = el; }}
                     />
                 );
             case 'top-pairs':
                 return <ODTopPairsModule data={data} />;
             case 'rankings':
-                return <ODStationRankingsModule data={data} />;
+                return <ODStationRankingsModule data={data} chartContainerRef={rankingsElRef} />;
             case 'heatmap':
-                return <ODHeatmapGridModule data={data} />;
+                return <ODHeatmapGridModule data={data} containerRef={heatmapElRef} />;
             default:
                 return <ComingSoonPlaceholder />;
         }
@@ -117,13 +145,31 @@ export const ODMatrixWorkspace: React.FC<ODMatrixWorkspaceProps> = ({
                         </p>
                     </div>
                 </div>
-                <button
-                    onClick={onReimport}
-                    className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors flex items-center gap-2"
-                >
-                    <RefreshCw size={16} />
-                    Re-import Data
-                </button>
+                <div className="flex items-center gap-2">
+                    <button
+                        onClick={handleExportExcel}
+                        disabled={exportingExcel}
+                        className="px-3 py-1.5 text-xs font-bold text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-50 flex items-center gap-1.5 transition-colors"
+                    >
+                        <Download size={16} />
+                        {exportingExcel ? 'Exporting...' : 'Export Excel'}
+                    </button>
+                    <button
+                        onClick={handleExportPDF}
+                        disabled={exportingPDF}
+                        className="px-3 py-1.5 text-xs font-bold text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-50 flex items-center gap-1.5 transition-colors"
+                    >
+                        <FileText size={16} />
+                        {exportingPDF ? 'Exporting...' : 'Export PDF'}
+                    </button>
+                    <button
+                        onClick={onReimport}
+                        className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors flex items-center gap-2"
+                    >
+                        <RefreshCw size={16} />
+                        Re-import Data
+                    </button>
+                </div>
             </div>
 
             {/* Tab Bar */}

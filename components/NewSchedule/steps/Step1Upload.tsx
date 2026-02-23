@@ -1,11 +1,17 @@
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { Upload, FileUp, X, Calendar, Database, FileSpreadsheet, ArrowRight } from 'lucide-react';
+import { Upload, FileUp, X, Calendar, Database, FileSpreadsheet, BarChart3, AlertTriangle } from 'lucide-react';
 import { GTFSImport } from '../../GTFSImport';
 import type { GTFSImportResult } from '../../../utils/gtfs/gtfsTypes';
+import type { AvailableRuntimeRoute } from '../../../utils/performanceRuntimeComputer';
 
-type ImportMode = 'csv' | 'gtfs';
+export type ImportMode = 'csv' | 'gtfs' | 'performance';
+
+export interface PerformanceConfig {
+    routeId: string;
+    dateRange: { start: string; end: string } | null; // null = use all data
+}
 
 interface Step1Props {
     files: File[];
@@ -14,7 +20,52 @@ interface Step1Props {
     setDayType: (type: 'Weekday' | 'Saturday' | 'Sunday') => void;
     userId?: string;
     onGTFSImport?: (result: GTFSImportResult) => void;
+    importMode: ImportMode;
+    setImportMode: (mode: ImportMode) => void;
+    availableRoutes?: AvailableRuntimeRoute[];
+    performanceConfig?: PerformanceConfig;
+    onPerformanceConfigChange?: (config: PerformanceConfig) => void;
+    performanceDataLoading?: boolean;
+    performanceDateRange?: { start: string; end: string };
 }
+
+type DurationPreset = 'day' | 'week' | 'month' | 'three-months';
+
+const DURATION_PRESETS: { id: DurationPreset; label: string; days: number }[] = [
+    { id: 'day', label: 'Past day', days: 1 },
+    { id: 'week', label: 'Past week', days: 7 },
+    { id: 'month', label: 'Past month', days: 30 },
+    { id: 'three-months', label: 'Past 3 months', days: 90 },
+];
+
+const toLocalIsoDate = (date: Date): string => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+};
+
+const parseIsoDateAtNoon = (isoDate: string): Date => new Date(`${isoDate}T12:00:00`);
+
+const clampDate = (value: string, min: string, max: string): string => {
+    if (value < min) return min;
+    if (value > max) return max;
+    return value;
+};
+
+const buildPresetRange = (
+    availableRange: { start: string; end: string },
+    days: number
+): { start: string; end: string } => {
+    const endDate = parseIsoDateAtNoon(availableRange.end);
+    const startDate = new Date(endDate);
+    startDate.setDate(startDate.getDate() - (days - 1));
+
+    return {
+        start: clampDate(toLocalIsoDate(startDate), availableRange.start, availableRange.end),
+        end: availableRange.end,
+    };
+};
 
 export const Step1Upload: React.FC<Step1Props> = ({
     files,
@@ -22,10 +73,15 @@ export const Step1Upload: React.FC<Step1Props> = ({
     dayType,
     setDayType,
     userId,
-    onGTFSImport
+    onGTFSImport,
+    importMode,
+    setImportMode,
+    availableRoutes,
+    performanceConfig,
+    onPerformanceConfigChange,
+    performanceDataLoading,
+    performanceDateRange,
 }) => {
-    const [importMode, setImportMode] = useState<ImportMode>('csv');
-
     const onDrop = useCallback((acceptedFiles: File[]) => {
         // Limit to 2 files max (North/South or Single Loop)
         const newFiles = [...files, ...acceptedFiles].slice(0, 2);
@@ -50,6 +106,32 @@ export const Step1Upload: React.FC<Step1Props> = ({
         }
     };
 
+    const activeDurationPreset = useMemo<DurationPreset | null>(() => {
+        const currentRange = performanceConfig?.dateRange;
+        if (!performanceDateRange || !currentRange) return null;
+        const matchedPreset = DURATION_PRESETS.find((preset) => {
+            const range = buildPresetRange(performanceDateRange, preset.days);
+            return range.start === currentRange.start && range.end === currentRange.end;
+        });
+        return matchedPreset?.id || null;
+    }, [performanceDateRange, performanceConfig?.dateRange]);
+
+    const applyDurationPreset = (preset: { id: DurationPreset; days: number }) => {
+        if (!performanceDateRange) return;
+        const nextRange = buildPresetRange(performanceDateRange, preset.days);
+        onPerformanceConfigChange?.({
+            routeId: performanceConfig?.routeId || '',
+            dateRange: nextRange,
+        });
+    };
+
+    const setPerformanceDateRange = (dateRange: { start: string; end: string } | null) => {
+        onPerformanceConfigChange?.({
+            routeId: performanceConfig?.routeId || '',
+            dateRange,
+        });
+    };
+
     return (
         <div className="space-y-8 animate-in fade-in duration-500">
             <div className="text-center space-y-2">
@@ -58,7 +140,7 @@ export const Step1Upload: React.FC<Step1Props> = ({
             </div>
 
             {/* Import Mode Selector */}
-            <div className="grid grid-cols-2 gap-4 max-w-2xl mx-auto">
+            <div className="grid grid-cols-3 gap-4 max-w-3xl mx-auto">
                 <button
                     onClick={() => setImportMode('csv')}
                     className={`flex flex-col items-center p-6 rounded-xl border-2 transition-all duration-200 ${
@@ -70,6 +152,18 @@ export const Step1Upload: React.FC<Step1Props> = ({
                     <FileSpreadsheet className={`mb-3 ${importMode === 'csv' ? 'text-brand-blue' : 'text-gray-400'}`} size={32} />
                     <span className="font-bold text-lg">Create from Runtime CSV</span>
                     <span className="text-sm text-gray-500 mt-1">Build a new optimized schedule</span>
+                </button>
+                <button
+                    onClick={() => setImportMode('performance')}
+                    className={`flex flex-col items-center p-6 rounded-xl border-2 transition-all duration-200 ${
+                        importMode === 'performance'
+                            ? 'border-teal-500 bg-teal-50 text-teal-600 shadow-md scale-[1.02]'
+                            : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:bg-gray-50'
+                    }`}
+                >
+                    <BarChart3 className={`mb-3 ${importMode === 'performance' ? 'text-teal-600' : 'text-gray-400'}`} size={32} />
+                    <span className="font-bold text-lg">Create from Performance Data</span>
+                    <span className="text-sm text-gray-500 mt-1">Use imported STREETS runtimes</span>
                 </button>
                 <button
                     onClick={() => setImportMode('gtfs')}
@@ -150,6 +244,160 @@ export const Step1Upload: React.FC<Step1Props> = ({
                         )}
                     </div>
                 </>
+            )}
+
+            {/* Performance Data Mode */}
+            {importMode === 'performance' && (
+                <div className="max-w-2xl mx-auto space-y-6">
+                    {/* Day Type Selector */}
+                    <div className="grid grid-cols-3 gap-4">
+                        {(['Weekday', 'Saturday', 'Sunday'] as const).map((type) => (
+                            <button
+                                key={type}
+                                onClick={() => setDayType(type)}
+                                className={`flex flex-col items-center p-4 rounded-xl border-2 transition-all duration-200 ${dayType === type
+                                        ? 'border-teal-500 bg-teal-50 text-teal-600 shadow-md scale-[1.02]'
+                                        : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:bg-gray-50'
+                                    }`}
+                            >
+                                <Calendar className={`mb-2 ${dayType === type ? 'text-teal-600' : 'text-gray-400'}`} size={24} />
+                                <span className="font-bold text-lg">{type}</span>
+                            </button>
+                        ))}
+                    </div>
+
+                    {performanceDataLoading ? (
+                        <div className="text-center p-8 bg-gray-50 rounded-xl border border-gray-200">
+                            <div className="animate-spin w-8 h-8 border-2 border-teal-500 border-t-transparent rounded-full mx-auto mb-3" />
+                            <p className="text-gray-600 font-medium">Loading performance data...</p>
+                        </div>
+                    ) : !availableRoutes || availableRoutes.length === 0 ? (
+                        <div className="text-center p-8 bg-amber-50 rounded-xl border border-amber-200">
+                            <AlertTriangle className="mx-auto text-amber-400 mb-3" size={40} />
+                            <p className="text-amber-800 font-medium">No segment runtime data available</p>
+                            <p className="text-amber-600 text-sm mt-1">
+                                Import STREETS data from the Performance Dashboard first. Older imports may need to be re-imported to include segment runtimes.
+                            </p>
+                        </div>
+                    ) : (
+                        <>
+                            {/* Route Selector */}
+                            <div>
+                                <label className="block text-sm font-bold text-gray-700 mb-2">Route</label>
+                                <select
+                                    value={performanceConfig?.routeId || ''}
+                                    onChange={(e) => onPerformanceConfigChange?.({
+                                        routeId: e.target.value,
+                                        dateRange: performanceConfig?.dateRange ?? null,
+                                    })}
+                                    className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl text-gray-800 font-medium focus:border-teal-500 focus:ring-0 focus:outline-none"
+                                >
+                                    <option value="">Select a route...</option>
+                                    {availableRoutes.map((route) => (
+                                        <option key={route.routeId} value={route.routeId}>
+                                            Route {route.routeId} — {route.routeName} ({route.dayCount} days, {route.totalObs.toLocaleString()} obs)
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+
+                            {/* Date Range */}
+                            <div>
+                                <div className="flex items-center justify-between mb-2">
+                                    <label className="block text-sm font-bold text-gray-700">Date Range</label>
+                                    <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={performanceConfig?.dateRange === null}
+                                            onChange={(e) => {
+                                                if (e.target.checked) {
+                                                    setPerformanceDateRange(null);
+                                                } else {
+                                                    setPerformanceDateRange(performanceDateRange || { start: '', end: '' });
+                                                }
+                                            }}
+                                            className="rounded border-gray-300 text-teal-600 focus:ring-teal-500"
+                                        />
+                                        Use All Data
+                                    </label>
+                                </div>
+                                {performanceConfig?.dateRange !== null && (
+                                    <div className="space-y-3">
+                                        {performanceDateRange && (
+                                            <div className="flex flex-wrap gap-2">
+                                                {DURATION_PRESETS.map((preset) => (
+                                                    <button
+                                                        key={preset.id}
+                                                        type="button"
+                                                        onClick={() => applyDurationPreset(preset)}
+                                                        className={`px-3 py-1.5 text-xs font-bold rounded-full border transition-colors ${
+                                                            activeDurationPreset === preset.id
+                                                                ? 'bg-teal-100 text-teal-700 border-teal-200'
+                                                                : 'bg-white text-gray-600 border-gray-200 hover:border-teal-200 hover:text-teal-700'
+                                                        }`}
+                                                    >
+                                                        {preset.label}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        )}
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <input
+                                                type="date"
+                                                value={performanceConfig?.dateRange?.start || ''}
+                                                onChange={(e) => setPerformanceDateRange({
+                                                    start: e.target.value,
+                                                    end: performanceConfig?.dateRange?.end || '',
+                                                })}
+                                                min={performanceDateRange?.start}
+                                                max={performanceDateRange?.end}
+                                                className="px-4 py-2.5 border-2 border-gray-200 rounded-xl text-gray-800 focus:border-teal-500 focus:ring-0 focus:outline-none"
+                                            />
+                                            <input
+                                                type="date"
+                                                value={performanceConfig?.dateRange?.end || ''}
+                                                onChange={(e) => setPerformanceDateRange({
+                                                    start: performanceConfig?.dateRange?.start || '',
+                                                    end: e.target.value,
+                                                })}
+                                                min={performanceDateRange?.start}
+                                                max={performanceDateRange?.end}
+                                                className="px-4 py-2.5 border-2 border-gray-200 rounded-xl text-gray-800 focus:border-teal-500 focus:ring-0 focus:outline-none"
+                                            />
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Data Preview */}
+                            {performanceConfig?.routeId && (
+                                <div className="bg-teal-50 border border-teal-200 rounded-xl p-4">
+                                    <h4 className="text-sm font-bold text-teal-800 mb-2">Data Preview</h4>
+                                    {(() => {
+                                        const route = availableRoutes.find(r => r.routeId === performanceConfig.routeId);
+                                        if (!route) return null;
+                                        return (
+                                            <div className="grid grid-cols-3 gap-4 text-sm">
+                                                <div>
+                                                    <span className="text-teal-600">Directions</span>
+                                                    <p className="font-bold text-teal-900">{route.directions.join(', ')}</p>
+                                                </div>
+                                                <div>
+                                                    <span className="text-teal-600">Days of Data</span>
+                                                    <p className="font-bold text-teal-900">{route.dayCount}</p>
+                                                </div>
+                                                <div>
+                                                    <span className="text-teal-600">Observations</span>
+                                                    <p className="font-bold text-teal-900">{route.totalObs.toLocaleString()}</p>
+                                                </div>
+                                            </div>
+                                        );
+                                    })()}
+                                </div>
+                            )}
+                        </>
+                    )}
+                </div>
             )}
 
             {/* GTFS Import Mode */}

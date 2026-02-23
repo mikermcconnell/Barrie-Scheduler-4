@@ -1,6 +1,6 @@
 ---
 name: block-assignment
-description: Use when working on blockAssignment.ts, block IDs, trip linking, or interline logic. Block bugs have been a recurring issue.
+description: Use when working on blockAssignment.ts, block IDs, or trip linking. Block bugs have been a recurring issue.
 ---
 
 ## Block Assignment Logic
@@ -35,11 +35,12 @@ Block 400-2: S1 → N1 → S2 → N2 → ...  (starts opposite direction)
 
 ### Key Functions
 
-In `blockAssignment.ts`:
+In `utils/blocks/blockAssignment.ts`:
 
-- `assignBlocks()`: Main entry point
-- `linkTripsToBlocks()`: Time proximity linking
-- `resolveInterlines()`: Cross-route connections
+- `assignBlocksToSection()`: Single-direction block assignment
+- `assignBlocksBidirectional()`: Merged route block chaining
+- `assignBlocksToRoute()`: Route-level orchestrator
+- `debugBlockAssignment()`: Debug output helper
 
 ### Recovery Time at Terminals
 
@@ -54,8 +55,6 @@ In `blockAssignment.ts`:
 | Wrong direction sequence | Initialization error | Verify first trip direction |
 | Recovery not propagating | Block boundary issue | Check block membership |
 
-### Debug Scripts
+### Test File
 
-- `reproduce_block_link.ts`
-- `reproduce_block_numbering.ts`
-- `verify_bidirectional_link.ts`
+- `tests/blockAssignmentCore.test.ts` — gap-based matching, merged route chaining

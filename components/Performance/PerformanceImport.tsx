@@ -1,14 +1,19 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
 import {
-    Upload, FileSpreadsheet, FileText, AlertTriangle,
+    Upload, FileSpreadsheet, AlertTriangle,
     Loader2, ArrowRight, X,
 } from 'lucide-react';
 import { parseSTREETSFile, generatePreview } from '../../utils/performanceDataParser';
 import { aggregateDailySummaries } from '../../utils/performanceDataAggregator';
 import { savePerformanceData } from '../../utils/performanceDataService';
 import { computeMissedTripsForDay } from '../../utils/gtfs/gtfsScheduleIndex';
-import type { ImportPreview, PerformanceImportPhase, PerformanceDataSummary } from '../../utils/performanceDataTypes';
+import type {
+    ImportPreview,
+    PerformanceImportPhase,
+    PerformanceDataSummary,
+    STREETSRecord,
+} from '../../utils/performanceDataTypes';
 import { compareDateStrings } from '../../utils/performanceDateUtils';
 
 interface PerformanceImportProps {
@@ -27,20 +32,22 @@ export const PerformanceImport: React.FC<PerformanceImportProps> = ({
     const [phase, setPhase] = useState<PerformanceImportPhase>('select');
     const [selectedFile, setSelectedFile] = useState<File | null>(null);
     const [preview, setPreview] = useState<ImportPreview | null>(null);
+    const [previewRecords, setPreviewRecords] = useState<STREETSRecord[] | null>(null);
     const [progress, setProgress] = useState(0);
     const [progressText, setProgressText] = useState('');
     const [errorMessage, setErrorMessage] = useState('');
-    const fileInputRef = useRef<HTMLInputElement>(null);
 
     const handleFile = useCallback(async (file: File) => {
         const ext = file.name.split('.').pop()?.toLowerCase();
         if (ext !== 'xlsx' && ext !== 'xls' && ext !== 'csv') {
             setErrorMessage('Please upload an Excel (.xlsx/.xls) or CSV file.');
+            setPreviewRecords(null);
             setPhase('error');
             return;
         }
 
         setSelectedFile(file);
+        setPreviewRecords(null);
         setProgressText('Reading file...');
         setPhase('processing');
 
@@ -52,6 +59,7 @@ export const PerformanceImport: React.FC<PerformanceImportProps> = ({
 
             if (records.length === 0) {
                 setErrorMessage('No valid records found. Check that this is a STREETS Datawarehouse export.');
+                setPreviewRecords(null);
                 setPhase('error');
                 return;
             }
@@ -59,10 +67,12 @@ export const PerformanceImport: React.FC<PerformanceImportProps> = ({
             const prev = generatePreview(records, file.name, file.size);
             prev.warnings.push(...warnings);
             setPreview(prev);
+            setPreviewRecords(records);
             setPhase('preview');
         } catch (err) {
             console.error('Parse failed:', err);
             setErrorMessage(err instanceof Error ? err.message : 'Failed to parse file');
+            setPreviewRecords(null);
             setPhase('error');
         }
     }, []);
@@ -97,13 +107,21 @@ export const PerformanceImport: React.FC<PerformanceImportProps> = ({
         if (!selectedFile || !preview) return;
         setPhase('processing');
         setProgress(30);
-        setProgressText('Parsing full dataset...');
+        setProgressText('Preparing full dataset...');
 
         try {
-            const { records } = await parseSTREETSFile(selectedFile, (p) => {
-                setProgress(30 + Math.round((p.current / p.total) * 30));
-                setProgressText(`Parsing: ${p.current.toLocaleString()} / ${p.total.toLocaleString()} rows`);
-            });
+            let records: STREETSRecord[];
+            if (!previewRecords) {
+                const parsed = await parseSTREETSFile(selectedFile, (p) => {
+                    setProgress(30 + Math.round((p.current / p.total) * 30));
+                    setProgressText(`Parsing: ${p.current.toLocaleString()} / ${p.total.toLocaleString()} rows`);
+                });
+                records = parsed.records;
+            } else {
+                records = previewRecords;
+                setProgress(60);
+                setProgressText(`Using preview parse: ${records.length.toLocaleString()} rows`);
+            }
 
             setProgress(65);
             setProgressText('Aggregating daily summaries...');
@@ -260,6 +278,7 @@ export const PerformanceImport: React.FC<PerformanceImportProps> = ({
                             setPhase('select');
                             setSelectedFile(null);
                             setPreview(null);
+                            setPreviewRecords(null);
                         }}
                         className="px-6 py-2.5 bg-white border border-gray-300 text-gray-700 font-bold rounded-lg hover:bg-gray-50 transition-colors"
                     >
@@ -306,6 +325,7 @@ export const PerformanceImport: React.FC<PerformanceImportProps> = ({
                         setPhase('select');
                         setSelectedFile(null);
                         setPreview(null);
+                        setPreviewRecords(null);
                         setErrorMessage('');
                     }}
                     className="px-6 py-2.5 bg-cyan-600 text-white font-bold rounded-lg hover:bg-cyan-700 transition-colors"

@@ -63,8 +63,23 @@ export const calculateTotalTripTimes = (data: RuntimeData[]): TripBucketAnalysis
 
     if (data.length === 0) return [];
 
-    // Master list of buckets from first file (assuming matching buckets)
-    const masterBuckets = data[0].allTimeBuckets;
+    // Use the UNION of buckets across all directions/files.
+    // This avoids dropping valid buckets when one direction has coverage gaps.
+    const parseBucketStartMinutes = (bucket: string): number => {
+        const start = bucket.split(' - ')[0].trim();
+        const match = start.match(/^(\d{1,2}):(\d{2})$/);
+        if (!match) return Number.POSITIVE_INFINITY;
+        return Number(match[1]) * 60 + Number(match[2]);
+    };
+
+    const masterBuckets = Array.from(
+        new Set(data.flatMap(fileData => fileData.allTimeBuckets || []))
+    ).sort((a, b) => {
+        const am = parseBucketStartMinutes(a);
+        const bm = parseBucketStartMinutes(b);
+        if (am !== bm) return am - bm;
+        return a.localeCompare(b);
+    });
     const analysis: TripBucketAnalysis[] = [];
 
     masterBuckets.forEach(bucket => {

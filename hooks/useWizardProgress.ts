@@ -13,9 +13,18 @@ import type { MasterRouteTable } from '../utils/parsers/masterScheduleParser';
 
 const WIZARD_PROGRESS_KEY = 'newScheduleWizard_progress';
 
+export type WizardImportMode = 'csv' | 'gtfs' | 'performance';
+
+export interface WizardPerformanceConfig {
+    routeId: string;
+    dateRange: { start: string; end: string } | null;
+}
+
 export interface WizardProgress {
     step: 1 | 2 | 3 | 4;
     dayType: 'Weekday' | 'Saturday' | 'Sunday';
+    importMode?: WizardImportMode;
+    performanceConfig?: WizardPerformanceConfig;
     projectName?: string; // Draft/project name
     fileNames: string[]; // Store names only (files can't be serialized)
     analysis?: TripBucketAnalysis[];
@@ -61,8 +70,12 @@ export function useWizardProgress() {
 
     const hasProgress = useCallback((): boolean => {
         const progress = load();
-        // Consider progress valid if we're past step 1 OR step 1 with files
-        return progress !== null && (progress.step > 1 || progress.fileNames.length > 0);
+        // Consider progress valid if we're past step 1 OR step 1 with any import context
+        return progress !== null && (
+            progress.step > 1 ||
+            progress.fileNames.length > 0 ||
+            !!progress.performanceConfig?.routeId
+        );
     }, [load]);
 
     return {

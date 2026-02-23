@@ -11,7 +11,7 @@ description: Use when working on dataService.ts, firebase.ts, auth, storage, or 
 |---------|---------|-----------|
 | Firestore | Metadata storage | `dataService.ts`, `firestore.rules` |
 | Storage | Large JSON/images | `dataService.ts`, `storage.rules` |
-| Auth | User authentication | `AuthContext.tsx`, `AuthModal.tsx` |
+| Auth | User authentication | `components/contexts/AuthContext.tsx`, `components/modals/AuthModal.tsx` |
 
 ### Storage Strategy
 

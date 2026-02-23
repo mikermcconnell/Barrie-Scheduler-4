@@ -5,11 +5,12 @@ import {
 } from 'recharts';
 import { Clock, Users, Bus, AlertTriangle, ArrowUpDown, Download } from 'lucide-react';
 import { MetricCard, ChartCard } from '../../Analytics/AnalyticsShared';
-import type { DailySummary, StopMetrics } from '../../../utils/performanceDataTypes';
+import type { DailySummary } from '../../../utils/performanceDataTypes';
 import { exportWeeklySummary } from './reportExporter';
 import { compareDateStrings, shortDateLabel, toDateSortKey } from '../../../utils/performanceDateUtils';
 import { StopActivityMap } from '../StopActivityMap';
 import { RidershipHeatmapSection } from '../RidershipHeatmapSection';
+import { aggregateStopActivity } from '../../../utils/performanceStopActivity';
 
 interface WeeklySummaryReportProps {
     filteredDays: DailySummary[];
@@ -203,36 +204,7 @@ export const WeeklySummaryReport: React.FC<WeeklySummaryReportProps> = ({
     }, [filteredDays]);
 
     // Stop activity aggregation for map (same pattern as RidershipModule)
-    const stopActivity = useMemo(() => {
-        const map = new Map<string, StopMetrics & { _routes: Set<string> }>();
-        for (const day of filteredDays) {
-            for (const s of day.byStop) {
-                const ex = map.get(s.stopId);
-                if (ex) {
-                    ex.boardings += s.boardings;
-                    ex.alightings += s.alightings;
-                    if (s.routes) s.routes.forEach(r => ex._routes.add(r));
-                    if (s.hourlyBoardings && ex.hourlyBoardings) {
-                        for (let h = 0; h < 24; h++) {
-                            ex.hourlyBoardings[h] += s.hourlyBoardings[h] || 0;
-                            ex.hourlyAlightings![h] += s.hourlyAlightings?.[h] || 0;
-                        }
-                    }
-                } else {
-                    map.set(s.stopId, {
-                        ...s,
-                        _routes: new Set(s.routes || []),
-                        hourlyBoardings: s.hourlyBoardings ? [...s.hourlyBoardings] : undefined,
-                        hourlyAlightings: s.hourlyAlightings ? [...s.hourlyAlightings] : undefined,
-                    });
-                }
-            }
-        }
-        return Array.from(map.values()).map(({ _routes, ...rest }) => ({
-            ...rest,
-            routes: Array.from(_routes).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
-        }));
-    }, [filteredDays]);
+    const stopActivity = useMemo(() => aggregateStopActivity(filteredDays), [filteredDays]);
 
     // Wrap filteredDays as PerformanceDataSummary for RidershipHeatmapSection
     const heatmapData = useMemo(() => ({

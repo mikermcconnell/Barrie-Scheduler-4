@@ -13,7 +13,7 @@ export interface RouteServiceLevel {
     sunday: number;
 }
 
-interface ServiceFlags {
+export interface ServiceFlags {
     weekday: boolean;
     saturday: boolean;
     sunday: boolean;
@@ -29,7 +29,7 @@ interface RouteServiceAccumulator {
 let cachedServiceLevels: Map<string, RouteServiceLevel> | null = null;
 let cachedSupplyProfiles: Map<string, RouteSupplyProfile> | null = null;
 
-function parseCsvRow(line: string): string[] {
+export function parseCsvRow(line: string): string[] {
     const values: string[] = [];
     let current = '';
     let inQuotes = false;
@@ -57,7 +57,7 @@ function parseCsvRow(line: string): string[] {
     return values;
 }
 
-function buildHeaderIndex(headerLine: string): Map<string, number> {
+export function buildHeaderIndex(headerLine: string): Map<string, number> {
     const headers = parseCsvRow(headerLine).map(h => h.replace(/^\uFEFF/, '').trim());
     const index = new Map<string, number>();
     headers.forEach((h, i) => index.set(h, i));
@@ -73,7 +73,7 @@ function normalizeRoute(route: string): string {
     return route.trim().toUpperCase();
 }
 
-function parseGtfsTimeToMinutes(value: string | undefined): number | null {
+export function parseGtfsTimeToMinutes(value: string | undefined): number | null {
     if (!value) return null;
     const match = value.trim().match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
     if (!match) return null;
@@ -85,7 +85,7 @@ function parseGtfsTimeToMinutes(value: string | undefined): number | null {
     return (hour * 60) + minute;
 }
 
-function getRouteIdToShortName(): Map<string, string> {
+export function getRouteIdToShortName(): Map<string, string> {
     const routeMap = new Map<string, string>();
     const routeLines = routesRaw.trim().split(/\r?\n/);
     if (routeLines.length <= 1) return routeMap;
@@ -107,7 +107,7 @@ function getRouteIdToShortName(): Map<string, string> {
     return routeMap;
 }
 
-function getServiceFlagsById(): Map<string, ServiceFlags> {
+export function getServiceFlagsById(): Map<string, ServiceFlags> {
     const serviceMap = new Map<string, ServiceFlags>();
     const calendarLines = calendarRaw.trim().split(/\r?\n/);
     if (calendarLines.length <= 1) return serviceMap;
@@ -140,7 +140,7 @@ function getServiceFlagsById(): Map<string, ServiceFlags> {
     return serviceMap;
 }
 
-function getTripToRouteAndService(routeMap: Map<string, string>): Map<string, { route: string; serviceId: string }> {
+export function getTripToRouteAndService(routeMap: Map<string, string>): Map<string, { route: string; serviceId: string }> {
     const tripMap = new Map<string, { route: string; serviceId: string }>();
     const tripLines = tripsRaw.trim().split(/\r?\n/);
     if (tripLines.length <= 1) return tripMap;

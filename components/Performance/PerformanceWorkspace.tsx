@@ -10,6 +10,8 @@ import { RidershipModule } from './RidershipModule';
 import { LoadProfileModule } from './LoadProfileModule';
 import { PerformanceFilterBar, filterDailySummaries, type TimeRange } from './PerformanceFilterBar';
 import { OperatorDwellModule } from './OperatorDwellModule';
+import { PerformanceScopeProvider } from './performanceScope';
+import { getPerformanceScopeLabel, resolveFilteredScope } from '../../utils/performanceDataScope';
 
 interface PerformanceWorkspaceProps {
     data: PerformanceDataSummary;
@@ -66,19 +68,37 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data
     };
 
     const showFilterBar = activeTab !== 'overview';
+    const filteredScope = useMemo(() => resolveFilteredScope(timeRange), [timeRange]);
+    const filteredScopeLabel = useMemo(() => getPerformanceScopeLabel(filteredScope), [filteredScope]);
 
     const renderPanel = () => {
         switch (activeTab) {
             case 'overview':
                 return <SystemOverviewModule data={data} onNavigate={handleNavigate} />;
             case 'otp':
-                return <OTPModule data={filteredData} />;
+                return (
+                    <PerformanceScopeProvider scope={filteredScope}>
+                        <OTPModule data={filteredData} />
+                    </PerformanceScopeProvider>
+                );
             case 'ridership':
-                return <RidershipModule data={filteredData} />;
+                return (
+                    <PerformanceScopeProvider scope={filteredScope}>
+                        <RidershipModule data={filteredData} />
+                    </PerformanceScopeProvider>
+                );
             case 'load-profiles':
-                return <LoadProfileModule data={filteredData} />;
+                return (
+                    <PerformanceScopeProvider scope={filteredScope}>
+                        <LoadProfileModule data={filteredData} />
+                    </PerformanceScopeProvider>
+                );
             case 'operator-dwell':
-                return <OperatorDwellModule data={filteredData} />;
+                return (
+                    <PerformanceScopeProvider scope={filteredScope}>
+                        <OperatorDwellModule data={filteredData} />
+                    </PerformanceScopeProvider>
+                );
             default:
                 return null;
         }
@@ -169,6 +189,17 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data
 
             {/* Panel */}
             <div className="bg-white border border-t-0 border-gray-200 rounded-b-lg p-5 min-h-[500px]">
+                {activeTab !== 'overview' && (
+                    <div className="mb-4">
+                        <span className={`inline-flex items-center px-2.5 py-1 text-xs font-semibold rounded-full ${
+                            filteredScope === 'yesterday'
+                                ? 'bg-cyan-50 text-cyan-700 border border-cyan-100'
+                                : 'bg-gray-100 text-gray-600 border border-gray-200'
+                        }`}>
+                            {filteredScopeLabel}
+                        </span>
+                    </div>
+                )}
                 {renderPanel()}
             </div>
         </div>

@@ -1,5 +1,7 @@
 # Architecture
 
+> Last verified: February 20, 2026
+
 ## Overview
 
 The Barrie Transit Schedule Builder uses a **Draft → Publish** workflow with a single data type (`MasterScheduleContent`) across all views.
@@ -24,164 +26,300 @@ The Barrie Transit Schedule Builder uses a **Draft → Publish** workflow with a
 
 ## Source File Map
 
+### components/
+
 ```
-├── index.tsx                          # Entry point
-├── App.tsx                            # React root, routing
-├── types.ts                           # Global type definitions (2,140 lines)
-├── constants.ts                       # Global constants (907 lines)
+components/
+├── ScheduleEditor.tsx              # ★ Core editor (1,634 lines) — DANGER ZONE
+├── MasterScheduleBrowser.tsx       # Browse published schedules (1,689 lines)
+├── GTFSImport.tsx                  # GTFS feed import UI (849 lines)
+├── PlatformTimeline.tsx            # Platform occupancy timeline (1,319 lines)
+├── PlatformConfigEditor.tsx        # Edit terminal platform config (402 lines)
+├── FileManager.tsx                 # File upload/management (568 lines)
+├── TeamManagement.tsx              # Team member/role management (478 lines)
+├── TravelTimeGrid.tsx              # Segment travel time editor (460 lines)
+├── GapChart.tsx                    # Headway gap visualization (369 lines)
+├── ShiftEditor.tsx                 # Driver shift editing (263 lines)
+├── RouteSummary.tsx                # Per-route trip/block summary cards
+├── OTPAnalysis.tsx                 # Legacy OTP analysis view
+├── AuditLogPanel.tsx               # Audit log viewer
+├── VersionHistoryPanel.tsx         # Draft version history
+├── SummaryCards.tsx                # High-level KPI cards
+├── ErrorBoundary.tsx               # React error boundary
+├── FileUpload.tsx                  # Drag-and-drop upload widget
 │
-├── components/
-│   ├── ScheduleEditor.tsx             # ★ Core editor (1,634 lines) - editing, connections, publishing
-│   ├── ScheduleEditorWorkspace.tsx    # Editor wrapper with sidebar
-│   ├── MasterScheduleBrowser.tsx      # Browse published schedules, copy to draft
-│   ├── FixedRouteWorkspace.tsx        # Main workspace routing
-│   ├── GTFSImport.tsx                 # GTFS feed import UI
-│   │
-│   ├── NewSchedule/                   # ═══ 5-Step Wizard ═══
-│   │   ├── NewScheduleWizard.tsx      # Wizard orchestrator
-│   │   ├── NewScheduleHeader.tsx      # Step progress bar
-│   │   ├── ResumeWizardModal.tsx      # Resume interrupted projects
-│   │   ├── ProjectManagerModal.tsx    # Manage saved projects
-│   │   ├── SegmentTimeEditor.tsx      # Edit segment travel times
-│   │   ├── TimelineView.tsx           # Visual trip timeline
-│   │   ├── TripContextMenu.tsx        # Right-click trip actions
-│   │   ├── QuickActionsBar.tsx        # Toolbar shortcuts
-│   │   │
-│   │   ├── steps/
-│   │   │   ├── Step1Upload.tsx        # Upload CSV runtime data
-│   │   │   ├── Step2Analysis.tsx      # Analyze runtimes, assign bands
-│   │   │   ├── Step3Build.tsx         # Configure cycle/headway
-│   │   │   ├── Step4Schedule.tsx      # Generate and preview trips
-│   │   │   └── Step5Connections.tsx   # Connection optimization
-│   │   │
-│   │   ├── connections/               # Connection optimization UI
-│   │   │   ├── AddTargetModal.tsx     # Create connection target
-│   │   │   ├── ConnectionAddChooser.tsx
-│   │   │   ├── ConnectionLibraryPanel.tsx
-│   │   │   ├── ImportRouteModal.tsx   # Import route as target
-│   │   │   ├── OptimizationPanel.tsx
-│   │   │   └── RouteConnectionPanel.tsx
-│   │   │
-│   │   └── utils/
-│   │       ├── csvParser.ts           # CSV runtime file parsing
-│   │       └── timeCascade.ts         # Time adjustment propagation
-│   │
-│   ├── schedule/                      # ═══ Schedule Display ═══
-│   │   ├── RoundTripTableView.tsx     # ★ Paired N+S table (8A/8B custom sort)
-│   │   ├── SingleRouteView.tsx        # Single direction table
-│   │   ├── ConnectionIndicator.tsx    # Connection status dots
-│   │   └── ConnectionBadge.tsx        # Connection labels
-│   │
-│   ├── connections/                   # ═══ Editor Connection Panel ═══
-│   │   ├── ConnectionsPanel.tsx       # Library management in editor
-│   │   └── ConnectionStatusPanel.tsx  # Connection status overview
-│   │
-│   ├── Reports/                       # ═══ Reports & Export ═══
-│   │   ├── PublicTimetable.tsx        # PDF brochure generator (~800 lines)
-│   │   └── ReportsDashboard.tsx       # Reports landing page
-│   │
-│   ├── ui/                            # ═══ Shared UI ═══
-│   │   ├── Modal.tsx
-│   │   ├── CascadeModeSelector.tsx
-│   │   └── StackedTimeInput.tsx
-│   │
-│   ├── Analytics/
-│   │   └── AnalyticsDashboard.tsx
-│   │
-│   │  # ═══ Supporting Components ═══
-│   ├── AddTripModal.tsx               # Add trip to schedule
-│   ├── AuthContext.tsx / AuthModal.tsx # Authentication
-│   ├── TeamContext.tsx / TeamManagement.tsx  # Team multi-tenancy
-│   ├── DraftManagerModal.tsx          # Manage draft schedules
-│   ├── BulkUploadToMasterModal.tsx    # Batch publish
-│   ├── UploadToMasterModal.tsx        # Single publish
-│   ├── VersionHistoryPanel.tsx        # Schedule version history
-│   ├── PlatformSummary.tsx            # Platform conflict analysis
-│   ├── RouteSummary.tsx               # Route overview cards
-│   ├── ShiftEditor.tsx / ShiftEditorModal.tsx  # Operator shifts
-│   ├── ScenarioComparisonModal.tsx    # Compare schedule versions
-│   ├── SystemDraftEditorWorkspace.tsx # System-wide draft editing
-│   ├── SystemDraftList.tsx            # List system drafts
-│   ├── TravelTimeGrid.tsx            # Travel time matrix
-│   ├── GapChart.tsx                   # Headway gap visualization
-│   ├── OptimizationReviewModal.tsx    # AI optimization results
-│   ├── FocusPromptModal.tsx           # Gemini prompt editor
-│   ├── OTPAnalysis.tsx                # On-time performance
-│   └── WorkspaceHeader.tsx            # Workspace title bar
+├── workspaces/                     # ═══ Top-Level Workspaces ═══
+│   ├── FixedRouteWorkspace.tsx     # Fixed-route scheduling root (719 lines)
+│   ├── OnDemandWorkspace.tsx       # On-demand service analysis (946 lines)
+│   ├── OperationsWorkspace.tsx     # Operations dashboard routing
+│   ├── ReportsWorkspace.tsx        # Reports workspace root
+│   ├── ScheduleEditorWorkspace.tsx # Schedule editor wrapper with sidebar
+│   └── SystemDraftEditorWorkspace.tsx # System-wide draft editor
 │
-├── utils/                             # ═══ Core Logic ═══
-│   ├── scheduleGenerator.ts           # ★ Trip generation (394 lines) - LOCKED LOGIC
-│   ├── blockAssignment.ts             # Block chaining
-│   ├── blockAssignmentCore.ts         # Block core algorithm - LOCKED LOGIC
+├── NewSchedule/                    # ═══ 5-Step Wizard ═══
+│   ├── NewScheduleWizard.tsx       # Wizard orchestrator (1,260 lines)
+│   ├── NewScheduleHeader.tsx       # Step progress bar (394 lines)
+│   ├── ProjectManagerModal.tsx     # Manage saved projects
+│   ├── ResumeWizardModal.tsx       # Resume interrupted projects
+│   ├── SegmentTimeEditor.tsx       # Edit segment travel times
+│   ├── TimelineView.tsx            # Visual trip timeline (413 lines)
+│   ├── TripContextMenu.tsx         # Right-click trip actions
+│   ├── QuickActionsBar.tsx         # Toolbar shortcuts
+│   ├── steps/
+│   │   ├── Step1Upload.tsx         # Upload CSV runtime data
+│   │   ├── Step2Analysis.tsx       # Analyze runtimes, assign bands (548 lines)
+│   │   ├── Step3Build.tsx          # Configure cycle/headway (868 lines)
+│   │   ├── Step4Schedule.tsx       # Generate and preview trips
+│   │   └── Step5Connections.tsx    # Connection optimization (792 lines)
+│   └── connections/
+│       ├── AddTargetModal.tsx      # Create connection target (744 lines)
+│       ├── ConnectionAddChooser.tsx
+│       ├── ConnectionLibraryPanel.tsx # Browse connection library (716 lines)
+│       ├── ImportRouteModal.tsx
+│       ├── OptimizationPanel.tsx
+│       └── RouteConnectionPanel.tsx
+│
+├── schedule/                       # ═══ Schedule Display ═══
+│   ├── RoundTripTableView.tsx      # ★ Paired N+S table (1,966 lines) — DANGER ZONE
+│   ├── SingleRouteView.tsx         # Single direction table (427 lines)
+│   ├── ConnectionIndicator.tsx     # Connection status dots
+│   └── ConnectionBadge.tsx         # Connection labels
+│
+├── connections/                    # ═══ Editor Connection Panel ═══
+│   ├── ConnectionsPanel.tsx        # Library management in editor (524 lines)
+│   └── ConnectionStatusPanel.tsx   # Connection status overview
+│
+├── Performance/                    # ═══ Operations Performance ═══
+│   ├── PerformanceWorkspace.tsx    # Workspace root
+│   ├── PerformanceDashboard.tsx    # Tab router (Overview, OTP, Ridership, Load, Reports)
+│   ├── PerformanceFilterBar.tsx    # Date/route/direction filters
+│   ├── PerformanceImport.tsx       # STREETS CSV import (324 lines)
+│   ├── SystemOverviewModule.tsx    # Fleet-wide KPIs (909 lines)
+│   ├── OTPModule.tsx               # On-time performance heatmap/scatter
+│   ├── RidershipModule.tsx         # Ridership trends and charts
+│   ├── RidershipHeatmapSection.tsx # Ridership heatmap by hour/day (532 lines)
+│   ├── LoadProfileModule.tsx       # Passenger load curves by stop (383 lines)
+│   ├── StopActivityMap.tsx         # Geographic stop activity map (760 lines)
+│   ├── ReportsModule.tsx           # Reports tab container
+│   └── reports/
+│       ├── RoutePerformanceReport.tsx  # Detailed route report (480 lines)
+│       ├── WeeklySummaryReport.tsx     # Weekly summary report (461 lines)
+│       ├── DateRangePicker.tsx         # Date range selection
+│       └── AIQueryPanel.tsx            # Gemini natural-language queries
+│
+├── Analytics/                      # ═══ Transit App & OD Analysis ═══
+│   ├── TransitAppWorkspace.tsx     # Transit app workspace container
+│   ├── TransitAppDashboard.tsx     # Transit app data dashboard
+│   ├── TransitAppImport.tsx        # Transit app data import wizard (413 lines)
+│   ├── TransitAppMap.tsx           # ★ Leaflet analytics map (1,876 lines)
+│   ├── AnalyticsDashboard.tsx      # Top-level analytics tab router
+│   ├── ODMatrixWorkspace.tsx       # OD matrix workspace
+│   ├── ODMatrixImport.tsx          # OD matrix CSV import (733 lines)
+│   ├── ODFlowMapModule.tsx         # Origin-destination flow map (654 lines)
+│   ├── ODCoordinateEditor.tsx      # Edit geocoded stop coords (501 lines)
+│   ├── DemandModule.tsx            # Ridership demand analysis (413 lines)
+│   ├── ServiceGapsModule.tsx       # Service gap detection (380 lines)
+│   ├── CoverageGapMap.tsx          # Route coverage gaps map (371 lines)
+│   ├── HeatmapModule.tsx           # Ridership heatmap (315 lines)
+│   ├── RoutePerformanceModule.tsx  # Route-level analytics
+│   ├── TransfersModule.tsx         # Transfer pattern analysis (929 lines)
+│   ├── ODHeatmapGridModule.tsx     # OD matrix heatmap grid
+│   ├── StopAnalysisModule.tsx      # Per-stop boarding/alighting
+│   ├── ODTopPairsModule.tsx        # Top OD pairs table
+│   ├── ODStationRankingsModule.tsx # Station-level rankings
+│   ├── ODOverviewPanel.tsx         # OD data overview
+│   ├── OverviewPanel.tsx           # Transit app overview
+│   ├── AppUsageModule.tsx          # Transit app usage stats
+│   └── AnalyticsShared.tsx         # Shared analytics types/helpers
+│
+├── Reports/                        # ═══ Reports & Export ═══
+│   ├── PublicTimetable.tsx         # jsPDF brochure generator (1,302 lines)
+│   └── ReportsDashboard.tsx        # Reports landing page
+│
+├── contexts/                       # ═══ React Contexts ═══
+│   ├── AuthContext.tsx             # Firebase auth provider
+│   ├── TeamContext.tsx             # Active team provider
+│   └── ToastContext.tsx            # Toast notifications
+│
+├── modals/                         # ═══ Modal Dialogs ═══
+│   ├── AddTripModal.tsx            # Add trip to schedule (314 lines)
+│   ├── AuthModal.tsx               # Login/register (234 lines)
+│   ├── BulkUploadToMasterModal.tsx # Batch publish (286 lines)
+│   ├── UploadToMasterModal.tsx     # Single publish
+│   ├── OptimizationReviewModal.tsx # AI optimization results (366 lines)
+│   ├── ShiftEditorModal.tsx        # Full-screen shift editor (441 lines)
+│   └── FocusPromptModal.tsx        # Gemini prompt editor
+│
+├── layout/                         # ═══ App Layout ═══
+│   ├── Header.tsx                  # Top navigation
+│   ├── ScheduleSidebar.tsx         # Left sidebar with schedule list
+│   ├── SystemDraftList.tsx         # System-wide draft list
+│   └── WorkspaceHeader.tsx         # Workspace title bar
+│
+└── ui/                             # ═══ Shared UI ═══
+    ├── Modal.tsx                   # Reusable modal wrapper
+    ├── CascadeModeSelector.tsx     # Cascade edit mode selector
+    └── StackedTimeInput.tsx        # Stacked ARR/DEP time input
+```
+
+### utils/
+
+```
+utils/
+├── # ROOT — Shared types, Firebase, performance data
+├── firebase.ts                         # Firebase app init (26 lines)
+├── timeUtils.ts                        # ★ Time parsing/formatting — DANGER ZONE (99 lines)
+├── masterScheduleTypes.ts              # MasterSchedule/MasterTrip types (145 lines)
+├── demandTypes.ts                      # On-demand service types
+├── demandConstants.ts                  # On-demand service constants
+├── dataGenerator.ts                    # Synthetic schedule data generator (308 lines)
+├── performanceDataAggregator.ts        # Aggregate perf data into metrics (863 lines)
+├── performanceDataParser.ts            # Parse STREETS CSV uploads (335 lines)
+├── performanceDataService.ts           # Firestore CRUD for perf data
+├── performanceDataTypes.ts             # Performance data types (303 lines)
+├── performanceDateUtils.ts             # Date helpers for perf queries
+├── performanceSnapshotService.ts       # Snapshot persistence
+├── performanceSnapshotTypes.ts         # Snapshot types
+│
+├── schedule/                           # ═══ Schedule Generation & Editing ═══
+│   ├── scheduleGenerator.ts            # ★ Trip generation — LOCKED/DANGER ZONE (590 lines)
+│   ├── scheduleEditorUtils.ts          # Editor mutation helpers (410 lines)
+│   ├── scheduleDraftAdapter.ts         # Draft ↔ editor format conversion
+│   ├── scheduleInsights.ts             # Schedule summary calculations
+│   └── scheduleTypes.ts               # Schedule domain types
+│
+├── blocks/                             # ═══ Block Assignment ═══
+│   ├── blockAssignment.ts              # Block assignment orchestrator (536 lines)
+│   └── blockAssignmentCore.ts          # ★ Gap-based matching — LOCKED/DANGER ZONE (517 lines)
+│
+├── parsers/                            # ═══ File Parsing ═══
+│   ├── masterScheduleParser.ts         # ★ V1 parser — DANGER ZONE (900 lines)
+│   ├── masterScheduleParserV2.ts       # ★ V2 parser — DANGER ZONE (875 lines)
+│   ├── parserAdapter.ts               # Routes between V1/V2 parsers (327 lines)
+│   ├── csvParsers.ts                   # Generic CSV/Excel utilities (337 lines)
+│   ├── scheduleParser.ts              # Runtime schedule CSV parser
+│   └── otpParser.ts                   # OTP data CSV parser
+│
+├── gtfs/                               # ═══ GTFS Import & Lookup ═══
+│   ├── gtfsImportService.ts            # ★ Full GTFS pipeline — DANGER ZONE (1,573 lines)
+│   ├── goTransitService.ts             # GO Transit live GTFS feed (716 lines)
+│   ├── gtfsScheduleIndex.ts            # GTFS schedule lookup index (583 lines)
+│   ├── gtfsShapesLoader.ts            # GTFS shapes.txt loader
+│   ├── gtfsStopLookup.ts             # Stop name/ID fuzzy lookup
+│   └── gtfsTypes.ts                   # GTFS type definitions (336 lines)
+│
+├── connections/                        # ═══ Connection Library ═══
+│   ├── connectionLibraryService.ts     # Firestore CRUD for targets (432 lines)
+│   ├── connectionOptimizer.ts          # Connection window optimization (793 lines)
+│   ├── connectionUtils.ts             # Matching/scoring helpers (238 lines)
+│   ├── connectionTypes.ts             # Connection type definitions (330 lines)
+│   └── connectionLibraryUtils.ts      # Library helper utilities
+│
+├── platform/                           # ═══ Platform Conflict Detection ═══
+│   ├── platformConfig.ts              # Hub/platform configurations (317 lines)
+│   ├── platformAnalysis.ts            # Platform occupancy analysis
+│   ├── conflictEngine.ts             # Conflict detection engine
+│   ├── dwellEventBuilder.ts          # Build dwell events from trips
+│   ├── platformConfigService.ts       # Firestore-backed config
+│   ├── platformMatcher.ts            # Match trips to platform slots
+│   ├── time.ts                        # Platform-domain time utilities
+│   └── types.ts                       # Platform type definitions
+│
+├── config/                             # ═══ Route Configuration ═══
+│   ├── routeDirectionConfig.ts         # Per-route direction/suffix config (524 lines)
+│   ├── routeNameParser.ts             # Route name/suffix parsing
+│   └── routeColors.ts                 # Route color palette
+│
+├── services/                           # ═══ Firebase Services ═══
+│   ├── masterScheduleService.ts        # Master schedule Firestore access (706 lines)
+│   ├── dataService.ts                 # Core Firestore data operations (570 lines)
+│   ├── teamService.ts                 # Team/member management (382 lines)
+│   ├── newScheduleProjectService.ts   # Wizard project persistence (310 lines)
+│   ├── systemDraftService.ts          # System-wide draft management (283 lines)
+│   ├── draftService.ts               # Draft lifecycle CRUD
+│   ├── publishService.ts             # Draft → published workflow
+│   └── exportService.ts              # Schedule export (CSV/Excel)
+│
+├── ai/                                 # ═══ AI Integration ═══
 │   ├── runtimeAnalysis.ts             # Time band analysis (274 lines)
-│   ├── timeUtils.ts                   # ★ Time parsing (99 lines) - post-midnight handling
-│   │
-│   ├── masterScheduleParser.ts        # Master schedule parsing (897 lines)
-│   ├── masterScheduleParserV2.ts      # V2 parser (875 lines)
-│   ├── parserAdapter.ts               # Parser version adapter (327 lines)
-│   ├── scheduleParser.ts              # Legacy parser (86 lines)
-│   │
-│   ├── gtfsImportService.ts           # ★ GTFS import pipeline (1,573 lines)
-│   ├── gtfsTypes.ts                   # GTFS type definitions (336 lines)
-│   ├── gtfsStopLookup.ts             # Stop name resolution (91 lines)
-│   │
-│   ├── routeDirectionConfig.ts        # Route config inc. 8A/8B (524 lines)
-│   ├── routeNameParser.ts             # Route name parsing (172 lines)
-│   ├── routeColors.ts                 # Route color palette (85 lines)
-│   │
-│   ├── connectionLibraryService.ts    # Connection CRUD (433 lines)
-│   ├── connectionTypes.ts             # Connection type defs
-│   ├── connectionUtils.ts             # Connection matching logic
-│   ├── connectionLibraryUtils.ts      # Connection helpers
-│   ├── connectionOptimizer.ts         # AI connection optimization
-│   │
-│   ├── draftService.ts                # Draft CRUD (181 lines)
-│   ├── publishService.ts              # Publish to master (175 lines)
-│   ├── masterScheduleService.ts       # Master schedule access (706 lines)
-│   ├── masterScheduleTypes.ts         # Master types (145 lines)
-│   ├── scheduleTypes.ts               # Core schedule types (113 lines)
-│   ├── scheduleEditorUtils.ts         # Editor utilities (410 lines)
-│   ├── scheduleDraftAdapter.ts        # Draft adapter (79 lines)
-│   ├── newScheduleProjectService.ts   # Wizard project persistence (281 lines)
-│   ├── systemDraftService.ts          # System draft management (283 lines)
-│   │
-│   ├── platformAnalysis.ts            # Platform conflict detection (407 lines)
-│   ├── platformConfig.ts              # Hub configurations (188 lines)
-│   │
-│   ├── dataService.ts                 # Firebase data operations
-│   ├── firebase.ts                    # Firebase init (26 lines)
-│   ├── teamService.ts                 # Team management (338 lines)
-│   ├── exportService.ts               # CSV export (86 lines)
-│   ├── goTransitService.ts            # GO Transit API (635 lines)
-│   └── geminiOptimizer.ts             # Gemini AI integration (123 lines)
+│   ├── performanceQueryService.ts     # AI performance queries
+│   └── geminiOptimizer.ts             # Gemini Generator→Critic optimizer
 │
-├── hooks/                             # ═══ React Hooks ═══
-│   ├── useScheduleWizard.ts           # ★ Wizard state management (434 lines)
-│   ├── useScheduleEditing.ts          # Editor state
-│   ├── useAutoSave.ts                 # Auto-save logic
-│   ├── useAddTrip.ts                  # Add trip workflow
-│   ├── useTimeValidation.ts           # Time input validation (92 lines)
-│   ├── useTravelTimeGrid.ts           # Travel time grid data (230 lines)
-│   ├── useUndoRedo.ts                 # Undo/redo stack (101 lines)
-│   ├── useUploadToMaster.ts           # Upload workflow (264 lines)
-│   └── useWizardProgress.ts           # Wizard step tracking (78 lines)
+├── transit-app/                        # ═══ Transit App Data ═══
+│   ├── transitAppAggregator.ts         # Data aggregation engine (1,669 lines)
+│   ├── transitAppTransferAnalysis.ts   # Transfer pattern analysis (881 lines)
+│   ├── transitAppTypes.ts             # Transit app types (634 lines)
+│   ├── transitAppParsers.ts           # Export format parsing (465 lines)
+│   ├── transitAppGtfsNormalization.ts # GTFS data normalization (381 lines)
+│   ├── transitAppService.ts           # Firestore CRUD
+│   ├── transitAppPlannerRules.ts      # Planner rule evaluations
+│   └── transitAppScoring.ts           # Route/stop scoring
 │
-├── api/                               # ═══ Serverless Functions ═══
-│   ├── optimize.ts                    # Gemini two-pass optimization (314 lines)
-│   ├── gtfs.ts                        # GTFS proxy endpoint (206 lines)
-│   ├── parse-schedule.ts              # Schedule parsing (130 lines)
-│   └── download-file.ts              # File download proxy (51 lines)
+├── od-matrix/                          # ═══ Origin-Destination Analysis ═══
+│   ├── odMatrixGeocoder.ts            # Nominatim geocoding for OD stops (502 lines)
+│   ├── odMatrixParser.ts             # OD matrix CSV/Excel parser
+│   ├── odMatrixService.ts            # Firestore CRUD for OD data
+│   ├── coordinateParsing.ts          # Geocoordinate normalization
+│   └── odMatrixTypes.ts              # OD matrix types
 │
-└── tests/                             # ═══ Tests ═══
-    ├── timeUtils.test.ts              # ★ Post-midnight handling (216 lines)
-    ├── connectionUtils.test.ts        # Connection matching (73 lines)
-    ├── goTransitService.test.ts       # GO Transit API (66 lines)
-    ├── gtfsDirection.test.ts          # Route config (64 lines, 5 tests)
-    ├── parser.test.ts                 # Parser tests (44 lines)
-    ├── scheduleDraftAdapter.test.ts   # Draft adapter (95 lines)
-    └── fixtures/
-        └── master_schedule.xlsx       # Test data
+└── workspaces/
+    └── fixedRouteDraftState.ts         # Fixed-route draft state helpers
 ```
+
+### hooks/
+
+```
+hooks/
+├── useScheduleWizard.ts           # ★ Wizard state management (434 lines)
+├── useScheduleEditing.ts          # Editor state management (392 lines)
+├── useGridNavigation.ts           # Keyboard grid navigation (373 lines)
+├── useAutoSave.ts                 # Debounced auto-save to Firestore (358 lines)
+├── useUploadToMaster.ts           # Upload draft to master workflow (264 lines)
+├── useAddTrip.ts                  # Add trip mutation with undo (235 lines)
+├── useTravelTimeGrid.ts           # Travel time grid data (230 lines)
+├── useUndoRedo.ts                 # Generic undo/redo stack
+├── useTimeValidation.ts           # Time input validation
+├── useWizardProgress.ts           # Wizard step tracking
+└── usePlatformConfig.ts           # Load/subscribe platform config
+```
+
+### API & Cloud Functions
+
+```
+api/                                # Vite dev-server API middleware
+├── optimize.ts                    # Gemini two-pass optimization (331 lines)
+├── gtfs.ts                        # GTFS proxy endpoint (247 lines)
+├── security.ts                    # API auth/security middleware (196 lines)
+├── parse-schedule.ts              # Schedule parsing endpoint
+├── download-file.ts               # File download proxy
+└── performance-query.ts           # Performance AI query endpoint
+
+functions/src/                      # Firebase Cloud Functions
+├── index.ts                       # Cloud Functions entry point (205 lines)
+├── aggregator.ts                  # Scheduled performance aggregation (487 lines)
+├── reportHtml.ts                  # HTML report template renderer (444 lines)
+├── types.ts                       # Shared Cloud Functions types (232 lines)
+├── parser.ts                      # Schedule parse Cloud Function
+└── dailyReport.ts                 # Daily email report generator
+```
+
+### Tests
+
+27 test files in `tests/`:
+
+| Category | Files |
+|----------|-------|
+| **Schedule generation** | `scheduleGenerator.goldenPath.test.ts`, `.directionStart.test.ts`, `.floating.test.ts` |
+| **Block assignment** | `blockAssignmentCore.test.ts`, `blockStartDirection.test.ts` |
+| **Parsing** | `parser.test.ts`, `routeInference.test.ts` |
+| **Time** | `timeUtils.test.ts` |
+| **Connections** | `connectionUtils.test.ts` |
+| **GTFS** | `gtfsDirection.test.ts`, `gtfsScheduleIndex.test.ts`, `goTransitService.test.ts` |
+| **Platform** | `platformAnalysis.test.ts`, `platformConfig.test.ts` |
+| **Performance** | `performanceDataAggregator.test.ts` |
+| **Transit App** | `transitAppAggregator.*.test.ts` (5), `transitAppScoring.test.ts`, `transitAppParsers.test.ts`, `transitAppPipeline.e2e.test.ts` |
+| **Draft/Adapter** | `scheduleDraftAdapter.test.ts`, `fixedRouteDraftState.test.ts` |
+| **Other** | `odMatrixParser.test.ts`, `apiSecurity.test.ts` |
 
 ★ = Critical files with locked logic or high complexity
 
@@ -316,20 +454,23 @@ Day types determined by section order, not merged cells:
 
 | Purpose | File | Notes |
 |---------|------|-------|
-| Trip generation | `utils/scheduleGenerator.ts` | LOCKED: segment rounding |
-| Block assignment | `utils/blockAssignment.ts` + `blockAssignmentCore.ts` | LOCKED: gap-based chaining |
+| Trip generation | `utils/schedule/scheduleGenerator.ts` | LOCKED: segment rounding |
+| Block assignment | `utils/blocks/blockAssignment.ts` + `blockAssignmentCore.ts` | LOCKED: gap-based chaining |
 | Time parsing | `utils/timeUtils.ts` | Post-midnight: Excel >= 1.0 |
-| CSV parsing | `components/NewSchedule/utils/csvParser.ts` | Runtime data import |
-| Runtime analysis | `utils/runtimeAnalysis.ts` | Time band detection |
-| Excel parsing | `utils/masterScheduleParserV2.ts` | Master schedule import |
-| GTFS import | `utils/gtfsImportService.ts` | Full pipeline (1,573 lines) |
+| CSV parsing | `utils/parsers/csvParsers.ts` | Runtime data import |
+| Runtime analysis | `utils/ai/runtimeAnalysis.ts` | Time band detection |
+| Excel parsing | `utils/parsers/masterScheduleParserV2.ts` | Master schedule import |
+| GTFS import | `utils/gtfs/gtfsImportService.ts` | Full pipeline (1,573 lines) |
 | Schedule display | `components/ScheduleEditor.tsx` | Core editor (1,634 lines) |
 | Round-trip table | `components/schedule/RoundTripTableView.tsx` | 8A/8B custom sort |
 | AI optimization | `api/optimize.ts` | Gemini Generator → Critic |
-| Connection library | `utils/connectionLibraryService.ts` | Team-shared targets |
-| Draft management | `utils/draftService.ts` | Draft CRUD |
-| Publishing | `utils/publishService.ts` | Draft → Master |
-| Route config | `utils/routeDirectionConfig.ts` | A/B suffix rules |
+| Connection library | `utils/connections/connectionLibraryService.ts` | Team-shared targets |
+| Draft management | `utils/services/draftService.ts` | Draft CRUD |
+| Publishing | `utils/services/publishService.ts` | Draft → Master |
+| Route config | `utils/config/routeDirectionConfig.ts` | A/B suffix rules |
+| Performance data | `utils/performanceDataAggregator.ts` | STREETS data aggregation |
+| Transit App data | `utils/transit-app/transitAppAggregator.ts` | Transit App analytics |
+| OD analysis | `utils/od-matrix/odMatrixGeocoder.ts` | OD demand geocoding |
 
 ---
 
@@ -346,7 +487,10 @@ teams/{teamId}/
 ├── masterSchedules/{routeIdentity}/   # Published schedules
 │   ├── versions/{versionId}/          # Version history
 │   └── connectionConfig/default       # Route connection settings
-└── connectionLibrary/default          # Shared connection targets
+├── connectionLibrary/default          # Shared connection targets
+└── performanceData/                   # Performance data collections
+    ├── dailySummaries/{date}          # Daily aggregated metrics
+    └── snapshots/{snapshotId}         # Data snapshots
 ```
 
 ---
@@ -355,7 +499,7 @@ teams/{teamId}/
 
 ```
 CREATE (from CSV):
-  Runtime CSV → csvParser → runtimeAnalysis → scheduleGenerator → Draft
+  Runtime CSV → csvParsers → runtimeAnalysis → scheduleGenerator → Draft
 
 IMPORT (from GTFS):
   GTFS Feed → api/gtfs → gtfsImportService → Draft
@@ -368,4 +512,26 @@ EDIT:
 
 EXPORT:
   Published Master → PublicTimetable (PDF) or exportService (CSV)
+
+PERFORMANCE:
+  STREETS CSV → performanceDataParser → performanceDataAggregator → Firestore
+  → PerformanceDashboard (OTP, Ridership, Load Profiles, Reports)
+  → AI queries via Gemini (performanceQueryService)
+
+TRANSIT APP:
+  Transit App CSV → transitAppParsers → transitAppAggregator → Analytics views
+  → OD matrix, route scoring, transfer analysis, service gap detection
 ```
+
+---
+
+## File Counts
+
+| Directory | Files | Notes |
+|-----------|-------|-------|
+| `components/` | 97 .tsx | 11 subfolders |
+| `utils/` | 77 .ts | 12 subfolders + root |
+| `hooks/` | 11 .ts | |
+| `api/` | 6 .ts | Vite dev middleware |
+| `functions/src/` | 6 .ts | Firebase Cloud Functions |
+| `tests/` | 27 test files | |

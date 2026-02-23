@@ -12,6 +12,9 @@ import { Modal } from './components/ui/Modal';
 import { TeamManagement } from './components/TeamManagement';
 import { LayoutDashboard, Bus, Settings, Bell, ArrowRight, ArrowLeft, Map, User, LogOut, FolderOpen, ChevronDown, ChevronRight, Loader2, FileSpreadsheet, Plus, Download, CalendarPlus, Timer, BarChart2, Settings2, Sparkles } from 'lucide-react';
 import { Header, View } from './components/layout/Header';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+
+const queryClient = new QueryClient();
 
 function parseHashView(): View {
   const hash = window.location.hash.slice(1);
@@ -151,7 +154,7 @@ const AppContent: React.FC = () => {
                 </div>
                 <h3 className="text-2xl font-extrabold text-gray-800 mb-2 group-hover:text-brand-green transition-colors">Scheduled Transit</h3>
                 <p className="text-gray-500 font-bold mb-6">
-                  Manage fixed routes (2, 7, 8A/B, 100), set timetables, and monitor headway compliance.
+                  Plan and manage route schedules — from CSV import and runtime analysis to published timetables and public brochures.
                 </p>
                 <div className="flex items-center gap-2 text-brand-green font-extrabold uppercase tracking-wide text-sm">
                   Enter Workspace <ArrowRight size={16} />
@@ -209,13 +212,15 @@ const AppContent: React.FC = () => {
 // Main App component with providers
 const App: React.FC = () => {
   return (
-    <AuthProvider>
-      <TeamProvider>
-        <ToastProvider>
-          <AppContent />
-        </ToastProvider>
-      </TeamProvider>
-    </AuthProvider>
+    <QueryClientProvider client={queryClient}>
+      <AuthProvider>
+        <TeamProvider>
+          <ToastProvider>
+            <AppContent />
+          </ToastProvider>
+        </TeamProvider>
+      </AuthProvider>
+    </QueryClientProvider>
   );
 };
 

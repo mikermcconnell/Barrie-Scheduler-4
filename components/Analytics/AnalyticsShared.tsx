@@ -1,4 +1,5 @@
 import React from 'react';
+import { usePerformanceScope } from '../Performance/performanceScope';
 
 export const MetricCard: React.FC<{
     icon: React.ReactNode;
@@ -8,6 +9,7 @@ export const MetricCard: React.FC<{
     subValue?: string;
     onClick?: () => void;
 }> = ({ icon, label, value, color, subValue, onClick }) => {
+    const scope = usePerformanceScope();
     const colors = {
         cyan: 'bg-cyan-50 text-cyan-600',
         indigo: 'bg-indigo-50 text-indigo-600',
@@ -22,8 +24,19 @@ export const MetricCard: React.FC<{
             onClick={onClick}
             role={onClick ? 'button' : undefined}
         >
-            <div className="flex items-center gap-3 mb-2">
-                <div className={`p-2 rounded-lg ${colors[color]}`}>{icon}</div>
+            <div className="flex items-start justify-between gap-2 mb-2">
+                <div className="flex items-center gap-3">
+                    <div className={`p-2 rounded-lg ${colors[color]}`}>{icon}</div>
+                </div>
+                {scope && (
+                    <span className={`inline-flex items-center px-2 py-0.5 text-[10px] font-semibold rounded-full ${
+                        scope.scope === 'yesterday'
+                            ? 'bg-cyan-50 text-cyan-700 border border-cyan-100'
+                            : 'bg-gray-100 text-gray-600 border border-gray-200'
+                    }`}>
+                        {scope.label}
+                    </span>
+                )}
             </div>
             <p className="text-2xl font-bold text-gray-900">{value}</p>
             <p className="text-sm text-gray-500">{label}</p>
@@ -37,18 +50,33 @@ export const ChartCard: React.FC<{
     subtitle: string;
     headerExtra?: React.ReactNode;
     children: React.ReactNode;
-}> = ({ title, subtitle, headerExtra, children }) => (
-    <div className="bg-white border border-gray-200 rounded-xl p-5">
-        <div className="flex items-center justify-between mb-4">
-            <div>
-                <h3 className="font-bold text-gray-900">{title}</h3>
-                <p className="text-xs text-gray-400">{subtitle}</p>
+}> = ({ title, subtitle, headerExtra, children }) => {
+    const scope = usePerformanceScope();
+
+    return (
+        <div className="bg-white border border-gray-200 rounded-xl p-5">
+            <div className="flex items-center justify-between mb-4">
+                <div>
+                    <h3 className="font-bold text-gray-900">{title}</h3>
+                    <div className="flex items-center gap-2">
+                        <p className="text-xs text-gray-400">{subtitle}</p>
+                        {scope && (
+                            <span className={`inline-flex items-center px-2 py-0.5 text-[10px] font-semibold rounded-full ${
+                                scope.scope === 'yesterday'
+                                    ? 'bg-cyan-50 text-cyan-700 border border-cyan-100'
+                                    : 'bg-gray-100 text-gray-600 border border-gray-200'
+                            }`}>
+                                {scope.label}
+                            </span>
+                        )}
+                    </div>
+                </div>
+                {headerExtra}
             </div>
-            {headerExtra}
+            {children}
         </div>
-        {children}
-    </div>
-);
+    );
+};
 
 export const NoData: React.FC<{ message?: string }> = ({ message }) => (
     <div className="flex items-center justify-center h-[200px] text-gray-400 text-sm">

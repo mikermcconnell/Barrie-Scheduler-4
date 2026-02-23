@@ -74,6 +74,76 @@ function stopLabel(name: string, id: string): string {
   return `${name} <span style="color:#9ca3af;font-weight:400;">(${id})</span>`;
 }
 
+/** Returns 'YYYY-MM-DD' of the Monday starting the ISO week for a given date string. */
+function getWeekStartMonday(dateStr: string): string | null {
+  const m = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  if (isNaN(d.getTime())) return null;
+  const dayOfWeek = (d.getUTCDay() + 6) % 7; // Mon=0 ... Sun=6
+  d.setUTCDate(d.getUTCDate() - dayOfWeek);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+}
+
+function buildDwellKpiCard(latestDay: DailySummary): string {
+  const dwell = latestDay.byOperatorDwell;
+  if (!dwell || !dwell.totalTrackedDwellMinutes) {
+    return kpiCard('Operator Dwell', '—', 'No dwell data', '#0891b2');
+  }
+  const hours = (dwell.totalTrackedDwellMinutes / 60).toFixed(1);
+  const high = dwell.byOperator.reduce((s, o) => s + o.highCount, 0);
+  const moderate = dwell.byOperator.reduce((s, o) => s + o.moderateCount, 0);
+  return kpiCard('Operator Dwell', `${hours} hrs`, `${high} high · ${moderate} moderate`, '#0891b2');
+}
+
+function buildDwellTrendChart(trendDays: DailySummary[]): string {
+  // Group days into ISO weeks (Mon–Sun), keyed by week-start Monday date
+  const weekMap = new Map<string, number>();
+  for (const day of trendDays) {
+    const weekStart = getWeekStartMonday(day.date);
+    if (!weekStart) continue;
+    const minutes = day.byOperatorDwell?.totalTrackedDwellMinutes ?? 0;
+    weekMap.set(weekStart, (weekMap.get(weekStart) ?? 0) + minutes);
+  }
+
+  if (weekMap.size === 0) return '';
+
+  // Sort by week start, keep last 8 weeks
+  const weeks = [...weekMap.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .slice(-8);
+
+  const maxMinutes = Math.max(...weeks.map(([, m]) => m), 1);
+
+  // Build bar data with week-ending Sunday label
+  const bars = weeks.map(([weekStart, minutes]) => {
+    const [y, mo, da] = weekStart.split('-').map(Number);
+    const sunday = new Date(Date.UTC(y, mo - 1, da + 6));
+    const weekEnd = `${String(sunday.getUTCMonth() + 1).padStart(2, '0')}/${String(sunday.getUTCDate()).padStart(2, '0')}`;
+    const hours = (minutes / 60).toFixed(1);
+    const heightPx = Math.max(4, Math.round((minutes / maxMinutes) * 80));
+    const hasData = minutes > 0;
+    return { weekEnd, hours, heightPx, hasData };
+  });
+
+  const barCells = bars.map(b => `
+        <td style="text-align:center;vertical-align:bottom;padding:0 4px;width:${Math.floor(100 / bars.length)}%;">
+          <div style="font-size:10px;color:#0891b2;font-weight:600;margin-bottom:2px;">${b.hasData ? b.hours : ''}</div>
+          <div style="background:${b.hasData ? '#0891b2' : '#e5e7eb'};height:${b.heightPx}px;border-radius:3px 3px 0 0;min-height:4px;"></div>
+          <div style="font-size:9px;color:#9ca3af;margin-top:4px;white-space:nowrap;">${b.weekEnd}</div>
+        </td>`).join('');
+
+  return `
+      ${sectionHeader('Operator Dwell — Weekly Trend', 'Total tracked dwell hours per week (Mon–Sun)')}
+      <div style="border:1px solid #e5e7eb;border-radius:6px;padding:16px 12px 12px;background:#f9fafb;">
+        <table width="100%" cellpadding="0" cellspacing="0">
+          <tr style="vertical-align:bottom;">${barCells}</tr>
+        </table>
+        <div style="border-top:1px solid #e5e7eb;margin-top:4px;"></div>
+        <div style="font-size:10px;color:#9ca3af;margin-top:6px;text-align:right;">week ending (MM/DD)</div>
+      </div>`;
+}
+
 function sectionHeader(title: string, subtitle?: string): string {
   return `
     <div style="margin:24px 0 10px;">
@@ -112,9 +182,14 @@ function otpBar(earlyPct: number, onTimePct: number, latePct: number): string {
 function buildMissedTripsTable(latestDay: DailySummary): string {
   const mt = latestDay.missedTrips;
   if (!mt || mt.totalScheduled <= 0) return '';
-  const suspectedNote = mt.totalMissed > 0
-    ? `<div style="font-size:11px;color:#92400e;background:#fffbeb;border:1px solid #fcd34d;border-radius:6px;padding:8px 10px;margin-bottom:8px;">Suspected missed trips were identified for further investigation.</div>`
-    : '';
+  if (mt.totalMissed === 0) {
+    return `
+      ${sectionHeader('Missed Trips', `0 of ${num(mt.totalScheduled)} scheduled trips missed (0.0%)`)}
+      <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:6px;padding:10px 12px;">
+        <div style="font-size:12px;font-weight:700;color:#166534;">All scheduled trips operated.</div>
+        <div style="font-size:11px;color:#15803d;margin-top:2px;">No missed trips were detected for this service day.</div>
+      </div>`;
+  }
 
   const departureSortMinutes = (time: string): number => {
     const [hRaw, mRaw] = time.split(':');
@@ -122,41 +197,80 @@ function buildMissedTripsTable(latestDay: DailySummary): string {
     const m = Number.parseInt(mRaw || '0', 10);
     if (!Number.isFinite(h) || !Number.isFinite(m)) return Number.MAX_SAFE_INTEGER;
     const base = (h * 60) + m;
-    // Treat post-midnight through 03:00 as late service (next-day ordering).
     return base <= 180 ? base + (24 * 60) : base;
   };
 
-  const trips = [...(mt.trips || [])].sort((a, b) => {
-    const depCmp = departureSortMinutes(a.departure) - departureSortMinutes(b.departure);
-    if (depCmp !== 0) return depCmp;
-    const routeCmp = a.routeId.localeCompare(b.routeId, undefined, { numeric: true });
-    if (routeCmp !== 0) return routeCmp;
-    return a.tripId.localeCompare(b.tripId);
-  });
+  const sortTrips = (trips: typeof mt.trips) =>
+    [...(trips || [])].sort((a, b) => {
+      const depCmp = departureSortMinutes(a.departure) - departureSortMinutes(b.departure);
+      if (depCmp !== 0) return depCmp;
+      const routeCmp = a.routeId.localeCompare(b.routeId, undefined, { numeric: true });
+      if (routeCmp !== 0) return routeCmp;
+      return a.tripId.localeCompare(b.tripId);
+    });
 
-  if (trips.length > 0) {
-    const rows = trips.map((t, i) => {
-      const bg = i % 2 === 0 ? '#ffffff' : '#f9fafb';
-      return `
-      <tr style="background:${bg};">
-        <td style="padding:6px 10px;font-size:12px;font-weight:700;color:#374151;border-bottom:1px solid #f3f4f6;">${t.routeId}</td>
-        <td style="padding:6px 10px;font-size:12px;text-align:right;color:#374151;border-bottom:1px solid #f3f4f6;">${t.departure}</td>
-      </tr>`;
-    }).join('');
+  const allTrips = mt.trips || [];
 
-    return `
-    ${sectionHeader('Missed Trips', `${num(mt.totalMissed)} of ${num(mt.totalScheduled)} scheduled trips missed (${mt.missedPct.toFixed(1)}%)`)}
-    ${suspectedNote}
-    <div style="font-size:11px;color:#9ca3af;margin-bottom:8px;">Each missed scheduled trip is listed below.</div>
-    <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;">
-      <tr style="background:#f9fafb;">
-        <th style="padding:6px 10px;text-align:left;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Route</th>
-        <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Departure</th>
-      </tr>
-      ${rows}
-    </table>`;
+  // Split into two categories
+  const lateTrips = sortTrips(allTrips.filter(t => t.missType === 'late_over_15'));
+  const noDataTrips = sortTrips(allTrips.filter(t => t.missType === 'not_performed'));
+
+  // If we have trip-level data, render the two-section layout
+  if (allTrips.length > 0) {
+    let html = sectionHeader('Missed Trips', `${num(mt.totalMissed)} of ${num(mt.totalScheduled)} scheduled trips missed (${mt.missedPct.toFixed(1)}%)`);
+
+    // --- Late departures (15+ min) ---
+    if (lateTrips.length > 0) {
+      const lateRows = lateTrips.map((t, i) => {
+        const bg = i % 2 === 0 ? '#ffffff' : '#f9fafb';
+        const lateLabel = t.lateByMinutes ? `${Math.round(t.lateByMinutes)} min late` : '15+ min late';
+        return `
+        <tr style="background:${bg};">
+          <td style="padding:6px 10px;font-size:12px;font-weight:700;color:#374151;border-bottom:1px solid #f3f4f6;">${t.routeId}</td>
+          <td style="padding:6px 10px;font-size:12px;text-align:right;color:#374151;border-bottom:1px solid #f3f4f6;">${t.departure}</td>
+          <td style="padding:6px 10px;font-size:12px;text-align:right;color:#d97706;border-bottom:1px solid #f3f4f6;">${lateLabel}</td>
+        </tr>`;
+      }).join('');
+
+      html += `
+      <div style="font-size:12px;font-weight:600;color:#92400e;background:#fffbeb;border:1px solid #fcd34d;border-radius:6px;padding:8px 10px;margin:8px 0 6px;">Late Departures (15+ min) — ${num(lateTrips.length)} trip${lateTrips.length !== 1 ? 's' : ''}</div>
+      <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;margin-bottom:12px;">
+        <tr style="background:#f9fafb;">
+          <th style="padding:6px 10px;text-align:left;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Route</th>
+          <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Sched. Departure</th>
+          <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Delay</th>
+        </tr>
+        ${lateRows}
+      </table>`;
+    }
+
+    // --- No data trips ---
+    if (noDataTrips.length > 0) {
+      const noDataRows = noDataTrips.map((t, i) => {
+        const bg = i % 2 === 0 ? '#ffffff' : '#f9fafb';
+        return `
+        <tr style="background:${bg};">
+          <td style="padding:6px 10px;font-size:12px;font-weight:700;color:#374151;border-bottom:1px solid #f3f4f6;">${t.routeId}</td>
+          <td style="padding:6px 10px;font-size:12px;text-align:right;color:#374151;border-bottom:1px solid #f3f4f6;">${t.departure}</td>
+        </tr>`;
+      }).join('');
+
+      html += `
+      <div style="font-size:12px;font-weight:600;color:#991b1b;background:#fef2f2;border:1px solid #fca5a5;border-radius:6px;padding:8px 10px;margin:8px 0 6px;">No Data Recorded — ${num(noDataTrips.length)} trip${noDataTrips.length !== 1 ? 's' : ''}</div>
+      <div style="font-size:11px;color:#9ca3af;margin-bottom:6px;">No AVL/APC records found for these scheduled trips.</div>
+      <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;">
+        <tr style="background:#f9fafb;">
+          <th style="padding:6px 10px;text-align:left;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Route</th>
+          <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Sched. Departure</th>
+        </tr>
+        ${noDataRows}
+      </table>`;
+    }
+
+    return html;
   }
 
+  // Fallback: no trip-level data, show route-level summary
   const fallbackRows = mt.byRoute.length > 0
     ? mt.byRoute.map((r, i) => {
       const bg = i % 2 === 0 ? '#ffffff' : '#f9fafb';
@@ -176,7 +290,6 @@ function buildMissedTripsTable(latestDay: DailySummary): string {
 
   return `
     ${sectionHeader('Missed Trips', `${num(mt.totalMissed)} of ${num(mt.totalScheduled)} scheduled trips missed (${mt.missedPct.toFixed(1)}%)`)}
-    ${suspectedNote}
     <div style="font-size:11px;color:#9ca3af;margin-bottom:8px;">Trip-level rows unavailable; showing route-level summary for this dataset.</div>
     <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;">
       <tr style="background:#f9fafb;">
@@ -325,7 +438,6 @@ export function buildReportHtml(data: ReportData): string {
 
   // System totals
   const totalServiceHours = latestDay.byRoute.reduce((s, r) => s + r.serviceHours, 0);
-  const systemBph = totalServiceHours > 0 ? (sys.totalRidership / totalServiceHours).toFixed(1) : '—';
 
   // Data quality notes
   const qualityNotes: string[] = [];
@@ -347,7 +459,7 @@ export function buildReportHtml(data: ReportData): string {
       <div style="font-size:16px;color:#93c5fd;margin-top:2px;">Daily Performance Report</div>
       <div style="font-size:12px;color:#bfdbfe;margin-top:6px;">
         For more information:
-        <a href="https://transitscheduler.ca/#fixed/performance" style="color:#bfdbfe;text-decoration:underline;">https://transitscheduler.ca/#fixed/performance</a>
+        <a href="https://transitscheduler.ca/#operations/performance" style="color:#bfdbfe;text-decoration:underline;">https://transitscheduler.ca/#operations/performance</a>
       </div>
       <div style="font-size:13px;color:#bfdbfe;margin-top:4px;">${formatDateLong(latestDay.date)} · ${latestDay.dayType.charAt(0).toUpperCase() + latestDay.dayType.slice(1)} Service</div>
       <div style="margin-top:10px;display:inline-block;background:#fbbf24;color:#78350f;font-size:10px;font-weight:700;padding:3px 12px;border-radius:10px;letter-spacing:0.5px;">BETA — UNDER TESTING</div>
@@ -368,11 +480,14 @@ export function buildReportHtml(data: ReportData): string {
             const mt = latestDay.missedTrips;
             if (mt && mt.totalScheduled > 0) {
               const color = mt.missedPct < 2 ? '#16a34a' : mt.missedPct < 5 ? '#d97706' : '#dc2626';
-              return kpiCard('Trips Operated', `${num(mt.totalMatched)} / ${num(mt.totalScheduled)}`, `${mt.totalMissed} missed (${mt.missedPct.toFixed(1)}%)`, color);
+              const subtitle = mt.totalMissed === 0
+                ? 'All scheduled trips operated'
+                : `${mt.totalMissed} missed (${mt.missedPct.toFixed(1)}%)`;
+              return kpiCard('Trips Operated', `${num(mt.totalMatched)} / ${num(mt.totalScheduled)}`, subtitle, color);
             }
             return kpiCard('Trips Operated', num(sys.tripCount), `${num(sys.vehicleCount)} vehicles · ${totalServiceHours.toFixed(1)} svc hrs`);
           })()}
-          ${kpiCard('System BPH', systemBph, `Peak load: ${num(sys.peakLoad)} · Avg: ${sys.avgSystemLoad.toFixed(1)}`)}
+          ${buildDwellKpiCard(latestDay)}
         </tr>
       </table>
 
@@ -421,6 +536,9 @@ export function buildReportHtml(data: ReportData): string {
 
       <!-- ═══ 6. STOP HIGHLIGHTS ═══ -->
       ${buildTopStops(latestDay.byStop)}
+
+      <!-- ═══ 7. DWELL TREND CHART ═══ -->
+      ${buildDwellTrendChart(trendDays)}
 
       <!-- ═══ 8. DATA QUALITY ═══ -->
       <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:12px;margin-top:20px;">

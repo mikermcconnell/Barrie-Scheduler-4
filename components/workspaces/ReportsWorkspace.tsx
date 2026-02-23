@@ -6,7 +6,7 @@ import { getPerformanceData, getPerformanceMetadata } from '../../utils/performa
 import { PerformanceImport } from '../Performance/PerformanceImport';
 import { ReportsModule } from '../Performance/ReportsModule';
 import { TeamManagement } from '../TeamManagement';
-import type { PerformanceDataSummary } from '../../utils/performanceDataTypes';
+import { usePerformanceMetadataQuery, usePerformanceDataQuery } from '../../hooks/usePerformanceData';
 
 interface ReportsWorkspaceProps {
     onClose: () => void;
@@ -18,56 +18,35 @@ export const ReportsWorkspace: React.FC<ReportsWorkspaceProps> = ({ onClose }) =
     const { team } = useTeam();
     const { user } = useAuth();
     const [view, setView] = useState<ReportsView>('landing');
-    const [data, setData] = useState<PerformanceDataSummary | null>(null);
-    const [loading, setLoading] = useState(true);
+    const [initialLoadDone, setInitialLoadDone] = useState(false);
+
+    const metadataQuery = usePerformanceMetadataQuery(team?.id);
+    const hasExistingData = !!metadataQuery.data;
+
+    const dataQuery = usePerformanceDataQuery(team?.id, hasExistingData);
 
     useEffect(() => {
-        let cancelled = false;
         setView('landing');
-        setData(null);
-
-        if (!team?.id) {
-            setLoading(false);
-            return () => { cancelled = true; };
-        }
-
-        setLoading(true);
-        (async () => {
-            try {
-                const metadata = await getPerformanceMetadata(team.id);
-                if (cancelled) return;
-                if (metadata) {
-                    const loaded = await getPerformanceData(team.id);
-                    if (cancelled) return;
-                    if (loaded) {
-                        setData(loaded);
-                        setView('workspace');
-                    }
-                }
-            } catch (error) {
-                console.error('Error checking performance data:', error);
-            } finally {
-                if (!cancelled) setLoading(false);
-            }
-        })();
-
-        return () => { cancelled = true; };
+        setInitialLoadDone(false);
     }, [team?.id]);
 
-    const handleImportComplete = async () => {
-        if (!team?.id) return;
-        setLoading(true);
-        try {
-            const loaded = await getPerformanceData(team.id);
-            if (loaded) {
-                setData(loaded);
-                setView('workspace');
+    useEffect(() => {
+        if (!team?.id || initialLoadDone) return;
+
+        if (!metadataQuery.isLoading) {
+            if (metadataQuery.data) {
+                if (!dataQuery.isLoading && dataQuery.data) {
+                    setView('workspace');
+                    setInitialLoadDone(true);
+                }
+            } else {
+                setInitialLoadDone(true);
             }
-        } catch (error) {
-            console.error('Error loading imported data:', error);
-        } finally {
-            setLoading(false);
         }
+    }, [team?.id, initialLoadDone, metadataQuery.isLoading, metadataQuery.data, dataQuery.isLoading, dataQuery.data]);
+
+    const handleImportComplete = () => {
+        setView('workspace');
     };
 
     if (!team) {
@@ -84,7 +63,9 @@ export const ReportsWorkspace: React.FC<ReportsWorkspaceProps> = ({ onClose }) =
         );
     }
 
-    if (loading) {
+    const isLoading = !initialLoadDone || metadataQuery.isLoading || (hasExistingData && dataQuery.isLoading);
+
+    if (isLoading) {
         return (
             <div className="h-full flex items-center justify-center">
                 <Loader2 className="text-cyan-500 animate-spin" size={32} />
@@ -105,11 +86,11 @@ export const ReportsWorkspace: React.FC<ReportsWorkspaceProps> = ({ onClose }) =
         );
     }
 
-    if (view === 'workspace' && data) {
+    if (view === 'workspace' && dataQuery.data) {
         return (
             <div className="h-full overflow-auto custom-scrollbar p-6">
                 <div className="max-w-7xl mx-auto">
-                    <ReportsModule data={data} />
+                    <ReportsModule data={dataQuery.data} />
                 </div>
             </div>
         );

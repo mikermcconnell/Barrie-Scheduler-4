@@ -5,37 +5,31 @@ description: Use when debugging issues or writing tests. Leverages existing debu
 
 ## Debug & Test Infrastructure
 
-### Existing Debug Scripts
-
-Located in project root:
-
-| Script | Purpose |
-|--------|---------|
-| `debug_parser_fixture.ts` | Test parser with fixture data |
-| `debug_route12.ts` / `debug_route12_deep.ts` | Route 12 specific debugging |
-| `debug_interlines.ts` | Interline connection debugging |
-| `debug_8a_8b_times.ts` | Time band debugging |
-| `reproduce_block_link.ts` | Reproduce block linking issues |
-| `reproduce_block_numbering.ts` | Reproduce block numbering issues |
-| `verify_*.ts` | Various verification scripts |
-
-### Running Debug Scripts
-
-```bash
-npx ts-node debug_parser_fixture.ts
-npx ts-node verify_bidirectional_link.ts
-```
-
 ### Test Files
 
 Located in `tests/`:
 
 | File | Coverage |
 |------|----------|
+| `timeUtils.test.ts` | Time parsing, post-midnight handling |
 | `parser.test.ts` | CSV/Excel parsing |
-| `interline_recovery.test.ts` | Interline recovery logic |
-| `verifyBlockFix.ts` | Block assignment verification |
-| `verifyRoute12Fix.ts` | Route 12 specific fixes |
+| `scheduleGenerator.goldenPath.test.ts` | Golden path generation |
+| `scheduleGenerator.directionStart.test.ts` | Direction start logic |
+| `scheduleGenerator.floating.test.ts` | Floating trip generation |
+| `blockAssignmentCore.test.ts` | Gap-based block chaining |
+| `connectionUtils.test.ts` | Connection matching |
+| `scheduleDraftAdapter.test.ts` | Draft adapter |
+| `platformAnalysis.test.ts` | Platform conflict detection |
+| `performanceDataAggregator.test.ts` | Performance data aggregation |
+| `transitApp*.test.ts` | Transit App aggregation, scoring, parsing |
+
+### Running Tests
+
+```bash
+npx vitest run                              # All tests
+npx vitest run tests/timeUtils.test.ts      # Specific test file
+npx vitest run tests/scheduleGenerator      # Glob pattern for multiple
+```
 
 ### Test Fixtures
 

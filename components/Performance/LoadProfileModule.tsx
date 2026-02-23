@@ -4,7 +4,7 @@ import {
     ResponsiveContainer, Legend, ReferenceLine, ComposedChart, Line, Cell,
 } from 'recharts';
 import { ChartCard } from '../Analytics/AnalyticsShared';
-import type { PerformanceDataSummary, DayType, RouteLoadProfile } from '../../utils/performanceDataTypes';
+import type { PerformanceDataSummary, RouteLoadProfile } from '../../utils/performanceDataTypes';
 import { DEFAULT_LOAD_CAP } from '../../utils/performanceDataTypes';
 import { getRouteColor, getRouteTextColor } from '../../utils/config/routeColors';
 
@@ -12,65 +12,96 @@ interface LoadProfileModuleProps {
     data: PerformanceDataSummary;
 }
 
-const DAY_TYPE_LABELS: Record<DayType, string> = { weekday: 'Weekday', saturday: 'Saturday', sunday: 'Sunday' };
-
 export const LoadProfileModule: React.FC<LoadProfileModuleProps> = ({ data }) => {
-    const availableDayTypes = useMemo(() => {
-        const types = new Set(data.dailySummaries.map(d => d.dayType));
-        return (['weekday', 'saturday', 'sunday'] as DayType[]).filter(t => types.has(t));
-    }, [data]);
-
-    const [dayTypeFilter, setDayTypeFilter] = useState<DayType | 'all'>('all');
-
-    const filtered = useMemo(() => {
-        if (dayTypeFilter === 'all') return data.dailySummaries;
-        return data.dailySummaries.filter(d => d.dayType === dayTypeFilter);
-    }, [data, dayTypeFilter]);
+    const filtered = data.dailySummaries;
 
     // Merge load profiles across filtered days
     const mergedProfiles = useMemo(() => {
-        const profileMap = new Map<string, { profile: RouteLoadProfile; dayCount: number }>();
+        type StopAccumulator = {
+            stopName: string;
+            stopId: string;
+            routeStopIndex: number;
+            isTimepoint: boolean;
+            sumBoardings: number;
+            sumAlightings: number;
+            sumLoad: number;
+            maxLoad: number;
+            sampleCount: number;
+        };
+        type ProfileAccumulator = {
+            routeId: string;
+            routeName: string;
+            direction: string;
+            tripCount: number;
+            stops: Map<string, StopAccumulator>;
+        };
+        const profileMap = new Map<string, ProfileAccumulator>();
 
         for (const day of filtered) {
             for (const lp of day.loadProfiles) {
                 const key = `${lp.routeId}__${lp.direction}`;
-                const existing = profileMap.get(key);
-                if (!existing) {
-                    profileMap.set(key, {
-                        profile: {
-                            ...lp,
-                            stops: lp.stops.map(s => ({ ...s })),
-                        },
-                        dayCount: 1,
-                    });
-                } else {
-                    existing.dayCount++;
-                    for (let i = 0; i < lp.stops.length && i < existing.profile.stops.length; i++) {
-                        const es = existing.profile.stops[i];
-                        const ns = lp.stops[i];
-                        es.avgBoardings += ns.avgBoardings;
-                        es.avgAlightings += ns.avgAlightings;
-                        es.avgLoad += ns.avgLoad;
-                        es.maxLoad = Math.max(es.maxLoad, ns.maxLoad);
-                    }
-                    existing.profile.tripCount += lp.tripCount;
+                let acc = profileMap.get(key);
+                if (!acc) {
+                    acc = {
+                        routeId: lp.routeId,
+                        routeName: lp.routeName,
+                        direction: lp.direction,
+                        tripCount: 0,
+                        stops: new Map<string, StopAccumulator>(),
+                    };
+                    profileMap.set(key, acc);
                 }
-            }
-        }
 
-        // Average across days
-        for (const { profile, dayCount } of profileMap.values()) {
-            if (dayCount > 1) {
-                for (const s of profile.stops) {
-                    s.avgBoardings = Math.round(s.avgBoardings / dayCount);
-                    s.avgAlightings = Math.round(s.avgAlightings / dayCount);
-                    s.avgLoad = Math.round(s.avgLoad / dayCount);
+                acc.tripCount += lp.tripCount;
+                for (const stop of lp.stops) {
+                    const stopKey = stop.stopId || `${stop.routeStopIndex}__${stop.stopName}`;
+                    const existingStop = acc.stops.get(stopKey);
+                    if (!existingStop) {
+                        acc.stops.set(stopKey, {
+                            stopName: stop.stopName,
+                            stopId: stop.stopId,
+                            routeStopIndex: stop.routeStopIndex,
+                            isTimepoint: stop.isTimepoint,
+                            sumBoardings: stop.avgBoardings,
+                            sumAlightings: stop.avgAlightings,
+                            sumLoad: stop.avgLoad,
+                            maxLoad: stop.maxLoad,
+                            sampleCount: 1,
+                        });
+                    } else {
+                        existingStop.sumBoardings += stop.avgBoardings;
+                        existingStop.sumAlightings += stop.avgAlightings;
+                        existingStop.sumLoad += stop.avgLoad;
+                        existingStop.maxLoad = Math.max(existingStop.maxLoad, stop.maxLoad);
+                        existingStop.isTimepoint = existingStop.isTimepoint || stop.isTimepoint;
+                        existingStop.sampleCount++;
+                        if (stop.routeStopIndex < existingStop.routeStopIndex) {
+                            existingStop.routeStopIndex = stop.routeStopIndex;
+                        }
+                    }
                 }
             }
         }
 
         return Array.from(profileMap.values())
-            .map(p => p.profile)
+            .map((p): RouteLoadProfile => ({
+                routeId: p.routeId,
+                routeName: p.routeName,
+                direction: p.direction,
+                tripCount: p.tripCount,
+                stops: Array.from(p.stops.values())
+                    .map(s => ({
+                        stopName: s.stopName,
+                        stopId: s.stopId,
+                        routeStopIndex: s.routeStopIndex,
+                        avgBoardings: Math.round(s.sumBoardings / s.sampleCount),
+                        avgAlightings: Math.round(s.sumAlightings / s.sampleCount),
+                        avgLoad: Math.round(s.sumLoad / s.sampleCount),
+                        maxLoad: s.maxLoad,
+                        isTimepoint: s.isTimepoint,
+                    }))
+                    .sort((a, b) => a.routeStopIndex - b.routeStopIndex || a.stopName.localeCompare(b.stopName)),
+            }))
             .sort((a, b) => a.routeId.localeCompare(b.routeId, undefined, { numeric: true }) || a.direction.localeCompare(b.direction));
     }, [filtered]);
 
@@ -170,19 +201,8 @@ export const LoadProfileModule: React.FC<LoadProfileModuleProps> = ({ data }) =>
 
     return (
         <div className="space-y-6">
-            {/* Filters */}
+            {/* Route selector */}
             <div className="flex items-center gap-4 flex-wrap">
-                <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold text-gray-400 uppercase">Day Type:</span>
-                    <div className="flex gap-1">
-                        <FilterPill active={dayTypeFilter === 'all'} onClick={() => setDayTypeFilter('all')}>All</FilterPill>
-                        {availableDayTypes.map(dt => (
-                            <FilterPill key={dt} active={dayTypeFilter === dt} onClick={() => setDayTypeFilter(dt)}>
-                                {DAY_TYPE_LABELS[dt]}
-                            </FilterPill>
-                        ))}
-                    </div>
-                </div>
                 <div className="flex items-center gap-2">
                     <span className="text-xs font-bold text-gray-400 uppercase">Route:</span>
                     <div className="flex gap-1.5 flex-wrap justify-center">
@@ -404,14 +424,3 @@ export const LoadProfileModule: React.FC<LoadProfileModuleProps> = ({ data }) =>
         </div>
     );
 };
-
-const FilterPill: React.FC<{ active: boolean; onClick: () => void; children: React.ReactNode }> = ({ active, onClick, children }) => (
-    <button
-        onClick={onClick}
-        className={`px-3 py-1 text-xs font-bold rounded-full transition-colors ${
-            active ? 'bg-cyan-100 text-cyan-700' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-        }`}
-    >
-        {children}
-    </button>
-);

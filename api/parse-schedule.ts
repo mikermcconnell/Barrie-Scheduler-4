@@ -76,7 +76,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     `;
 
         const model = genAI.getGenerativeModel({
-            model: "gemini-3-pro-preview",
+            model: "gemini-3.1-pro-preview",
             systemInstruction: "You are a Transit Schedule Parser.",
             generationConfig: {
                 responseMimeType: "application/json",

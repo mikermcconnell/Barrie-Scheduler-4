@@ -12,6 +12,7 @@ import type { ODMatrixDataSummary } from '../../utils/od-matrix/odMatrixTypes';
 
 interface ODHeatmapGridModuleProps {
     data: ODMatrixDataSummary;
+    containerRef?: React.RefObject<HTMLDivElement | null>;
 }
 
 type SortMode = 'volume' | 'origin' | 'destination' | 'alpha';
@@ -38,7 +39,7 @@ function textColorForBg(value: number, max: number): string {
     return ratio > 0.45 ? '#ffffff' : '#374151';
 }
 
-export const ODHeatmapGridModule: React.FC<ODHeatmapGridModuleProps> = ({ data }) => {
+export const ODHeatmapGridModule: React.FC<ODHeatmapGridModuleProps> = ({ data, containerRef }) => {
     const [topN, setTopN] = useState(30);
     const [sortMode, setSortMode] = useState<SortMode>('volume');
     const [compact, setCompact] = useState(false);
@@ -101,7 +102,7 @@ export const ODHeatmapGridModule: React.FC<ODHeatmapGridModuleProps> = ({ data }
     const n = stationNames.length;
 
     return (
-        <div className="space-y-4">
+        <div className="space-y-4" ref={containerRef}>
             {/* Controls */}
             <div className="flex items-center gap-4 flex-wrap">
                 <div className="flex items-center gap-2">

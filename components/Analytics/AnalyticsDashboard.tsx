@@ -6,7 +6,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { MapPin, ArrowRight, Loader2, Smartphone, Network } from 'lucide-react';
+import { Map, ArrowRight, Loader2, Smartphone, Network } from 'lucide-react';
 import { useTeam } from '../contexts/TeamContext';
 import { useAuth } from '../contexts/AuthContext';
 import { getTransitAppData, getTransitAppMetadata } from '../../utils/transit-app/transitAppService';
@@ -17,11 +17,12 @@ import { ODMatrixImport } from './ODMatrixImport';
 import { ODMatrixWorkspace } from './ODMatrixWorkspace';
 import { ODCoordinateEditor } from './ODCoordinateEditor';
 import { TeamManagement } from '../TeamManagement';
+import { HeadwayMap } from '../Mapping/HeadwayMap';
 import type { TransitAppDataSummary } from '../../utils/transit-app/transitAppTypes';
 import type { ODMatrixDataSummary, GeocodeCache } from '../../utils/od-matrix/odMatrixTypes';
 
 interface AnalyticsCardProps {
-    color: 'cyan' | 'violet';
+    color: 'cyan' | 'violet' | 'teal';
     icon: React.ReactNode;
     title: string;
     description: string;
@@ -62,7 +63,8 @@ type AnalyticsView =
     | 'transit-data'
     | 'od-import'
     | 'od-fix-coords'
-    | 'od-workspace';
+    | 'od-workspace'
+    | 'headway-map';
 
 export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose }) => {
     const { team } = useTeam();
@@ -272,6 +274,15 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
         );
     }
 
+    // Corridor Headway Map
+    if (view === 'headway-map') {
+        return (
+            <div className="h-full overflow-hidden">
+                <HeadwayMap onBack={() => setView('dashboard')} />
+            </div>
+        );
+    }
+
     // Main dashboard with cards
     return (
         <div className="h-full overflow-auto custom-scrollbar p-6">
@@ -298,22 +309,14 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
                         hasData={hasODData}
                         onClick={handleODMatrixClick}
                     />
-
-                    {/* Coverage Gaps Card - Phase 2 */}
-                    <div className="relative bg-gray-50 p-6 rounded-xl border border-gray-200 shadow-sm text-left flex flex-col h-full opacity-60 cursor-not-allowed">
-                        <div className="absolute top-3 right-3 px-2 py-0.5 bg-gray-200 text-gray-500 text-[10px] font-bold rounded-full uppercase tracking-wide">
-                            Phase 2
-                        </div>
-                        <div className="flex items-center justify-between mb-4">
-                            <div className="bg-gray-100 p-2.5 rounded-lg text-gray-400">
-                                <MapPin size={20} />
-                            </div>
-                        </div>
-                        <h3 className="text-lg font-bold text-gray-500 mb-1">Coverage Gaps</h3>
-                        <p className="text-sm text-gray-400 leading-relaxed">
-                            Identify service gaps by time and route to justify schedule changes.
-                        </p>
-                    </div>
+                    <AnalyticsCard
+                        color="teal"
+                        icon={<Map size={20} />}
+                        title="Corridor Headway"
+                        description="Visualize combined service headway where multiple routes share corridors. Identify high-frequency spines and coverage gaps."
+                        hasData={false}
+                        onClick={() => setView('headway-map')}
+                    />
                 </div>
             </div>
         </div>

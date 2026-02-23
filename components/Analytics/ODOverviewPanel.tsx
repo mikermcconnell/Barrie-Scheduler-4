@@ -20,9 +20,10 @@ interface ODOverviewPanelProps {
     geocodeCache: GeocodeCache | null;
     onNavigate: (tabId: string) => void;
     onFixCoordinates: () => void;
+    onMapElReady?: (el: HTMLDivElement) => void;
 }
 
-export const ODOverviewPanel: React.FC<ODOverviewPanelProps> = ({ data, geocodeCache, onNavigate, onFixCoordinates }) => {
+export const ODOverviewPanel: React.FC<ODOverviewPanelProps> = ({ data, geocodeCache, onNavigate, onFixCoordinates, onMapElReady }) => {
     const topOrigin = useMemo(() => {
         const sorted = [...data.stations].sort((a, b) => b.totalOrigin - a.totalOrigin);
         return sorted[0];
@@ -70,6 +71,7 @@ export const ODOverviewPanel: React.FC<ODOverviewPanelProps> = ({ data, geocodeC
                 data={data}
                 geocodeCache={geocodeCache}
                 onFixMissingCoordinates={onFixCoordinates}
+                onMapReady={onMapElReady}
             />
 
             {/* Import Metadata + Quick Links */}

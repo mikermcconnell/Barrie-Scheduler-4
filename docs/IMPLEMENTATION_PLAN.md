@@ -70,8 +70,11 @@ Platform analysis with hub configuration.
 
 - [x] `utils/platformAnalysis.ts` - Dwell events, conflict windows, peak detection
 - [x] `utils/platformConfig.ts` - Hub configs (Park Place, GO Station, Allandale, Downtown, Georgian)
-- [x] `components/PlatformSummary.tsx` - Visual platform analysis
-- [ ] Firestore-backed config editor (currently static config)
+- [x] `components/PlatformTimeline.tsx` - Visual platform timeline (replaced PlatformSummary)
+- [x] `components/PlatformConfigEditor.tsx` - Platform configuration UI
+- [x] `utils/platform/conflictEngine.ts` - Conflict detection core
+- [x] `utils/platform/platformConfigService.ts` - Firestore-backed config
+- [ ] Publish-time conflict checks
 - [ ] Publish-time conflict checks
 
 ---
@@ -109,6 +112,32 @@ Platform analysis with hub configuration.
 | Connection utils tests | Medium | Day filtering, stop-code matching |
 | Draft/publish service tests | Low | CRUD operations |
 | GTFS import mapping tests | Low | Stop name generation, block chaining |
+
+### Phase 7: Performance Dashboard ✅ (Feb 2026)
+
+Operations performance analytics replacing $30K+/year Transify vendor tool.
+
+- [x] `components/Performance/PerformanceWorkspace.tsx` - Tab container
+- [x] `components/Performance/PerformanceDashboard.tsx` - Dashboard container
+- [x] `components/Performance/SystemOverviewModule.tsx` - System-wide KPIs
+- [x] `components/Performance/OTPModule.tsx` - On-time performance heatmap/scatter
+- [x] `components/Performance/RidershipModule.tsx` - Ridership trends
+- [x] `components/Performance/LoadProfileModule.tsx` - Passenger load curves
+- [x] `components/Performance/StopActivityMap.tsx` - Geographic stop activity
+- [x] `components/Performance/reports/` - Route performance, weekly summary, AI query
+- [x] `utils/performanceDataAggregator.ts` - Daily summary aggregation
+- [x] `utils/performanceDataParser.ts` - STREETS data parsing
+- [x] `utils/performanceDataService.ts` - Firestore CRUD
+- [x] `functions/src/performance-query.ts` - Gemini-powered query API
+
+### Phase 8: On-Demand / Transit App Analysis ✅ (Feb 2026)
+
+On-demand routing and Transit App data analysis.
+
+- [x] `components/workspaces/OnDemandWorkspace.tsx` - OD demand analysis
+- [x] `components/workspaces/OperationsWorkspace.tsx` - Operations dashboard routing
+- [x] `utils/transit-app/transitAppAggregator.ts` - Transit App data aggregation
+- [x] `utils/transit-app/transitAppTransferAnalysis.ts` - Transfer time analysis
 
 ### Future Features
 

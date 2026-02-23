@@ -65,6 +65,12 @@ export const OperationsWorkspace: React.FC = () => {
         return (
             <div className="animate-in fade-in slide-in-from-bottom-2 duration-500 max-w-6xl mx-auto pt-8">
                 <div className="mb-8 px-4">
+                    <button
+                        onClick={() => { window.location.hash = ''; }}
+                        className="flex items-center gap-1.5 text-gray-400 hover:text-gray-600 text-sm font-medium transition-colors mb-3"
+                    >
+                        <ArrowLeft size={14} /> Back to Main
+                    </button>
                     <h2 className="text-2xl font-bold text-gray-900 tracking-tight mb-2">Dashboard & Reporting</h2>
                     <p className="text-gray-500">Performance dashboards and operational reports.</p>
                     <p className="text-xs text-amber-600 font-medium mt-1">Scheduled transit (fixed-route) data only.</p>

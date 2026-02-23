@@ -159,7 +159,7 @@ Example: 60-min cycle time
 |--------|---------|--------|
 | **Platform hours ratio** | Revenue hrs ÷ Total block hrs | >85% |
 | **Deadhead ratio** | Deadhead mi ÷ Revenue mi | <10% |
-| **Interlining efficiency** | Interlined trips ÷ Total trips | Maximize where practical |
+| **Vehicle utilization** | Revenue hrs ÷ Total block hrs | >85% target |
 
 ---
 
@@ -176,7 +176,7 @@ When reviewing schedules, verify:
 ### Block Assignment
 - [ ] All trips assigned to blocks
 - [ ] Block IDs follow convention: `{route}-{number}`
-- [ ] Trips within block are time-continuous (gap ≤ 1 min or explicit interline)
+- [ ] Trips within block are time-continuous (gap ≤ recovery window)
 - [ ] First/last trips of block marked (`isBlockStart`, `isBlockEnd`)
 
 ### Service Consistency
@@ -265,7 +265,7 @@ Always verify: recovery ≥ 10% of round-trip cycle time.
 
 Depends on route type:
 - **Merged (2, 7, 12)**: Single schedule with N+S paired; one block operates both
-- **Variants (8A, 8B)**: Separate schedules; may or may not interline
+- **Variants (8A, 8B)**: Separate schedules with distinct stops
 
 ### "What if GTFS has no block_id?"
 
@@ -307,7 +307,7 @@ Schedule generation: utils/schedule/scheduleGenerator.ts
 Block assignment: utils/blocks/blockAssignment.ts (+ gtfsImportService.ts)
 Runtime analysis: utils/ai/runtimeAnalysis.ts
 Time parsing: utils/timeUtils.ts
-GTFS handling: utils/gtfsImportService.ts
+GTFS handling: utils/gtfs/gtfsImportService.ts
 ```
 
 ### Key Types

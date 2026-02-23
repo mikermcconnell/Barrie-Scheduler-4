@@ -132,6 +132,26 @@ export function classifyOTP(deviationSeconds: number): OTPStatus {
   return 'on-time';
 }
 
+// ─── Segment Runtime (per-day AVL-derived runtimes) ─────────────────
+
+export interface SegmentRuntimeObservation {
+  runtimeMinutes: number;
+  timeBucket: string;  // "06:30" — 30-min bucket start
+}
+
+export interface DailySegmentRuntimeEntry {
+  routeId: string;
+  direction: string;
+  segmentName: string;  // "Park Place to Veteran's at Essa"
+  observations: SegmentRuntimeObservation[];
+}
+
+export interface DailySegmentRuntimes {
+  entries: DailySegmentRuntimeEntry[];
+  totalObservations: number;
+  tripsWithData: number;
+}
+
 // ─── Aggregated Metrics ─────────────────────────────────────────────
 
 export interface OTPBreakdown {
@@ -167,6 +187,14 @@ export interface HourMetrics {
   avgLoad: number;
 }
 
+export interface StopRouteBreakdown {
+  routeId: string;
+  boardings: number;
+  alightings: number;
+  hourlyBoardings?: number[];  // 24 entries (index=hour), boardings per hour on this route
+  hourlyAlightings?: number[]; // 24 entries (index=hour), alightings per hour on this route
+}
+
 export interface StopMetrics {
   stopName: string;
   stopId: string;
@@ -181,6 +209,7 @@ export interface StopMetrics {
   routes: string[];       // which route IDs serve this stop
   hourlyBoardings?: number[];  // 24 entries (index=hour), boardings per hour
   hourlyAlightings?: number[]; // 24 entries (index=hour), alightings per hour
+  routeBreakdown?: StopRouteBreakdown[];
 }
 
 export interface TripMetrics {
@@ -295,11 +324,12 @@ export interface DailySummary {
     }[];
   };
   byOperatorDwell?: OperatorDwellMetrics;
+  segmentRuntimes?: DailySegmentRuntimes;
   dataQuality: DataQuality;
   schemaVersion: number;
 }
 
-export const PERFORMANCE_SCHEMA_VERSION = 1;
+export const PERFORMANCE_SCHEMA_VERSION = 2;
 
 // ─── Multi-Day Summary (for trend views) ────────────────────────────
 

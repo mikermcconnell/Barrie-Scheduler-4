@@ -432,6 +432,7 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             attribution: '&copy; OpenStreetMap contributors',
             maxZoom: 18,
+            opacity: 0.8,
             crossOrigin: 'anonymous',
         } as L.TileLayerOptions).addTo(mapRef.current);
 
@@ -712,18 +713,34 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
             label.addTo(layersRef.current!);
         });
 
-        if (coords.length > 1) {
-            mapRef.current.fitBounds(L.latLngBounds(coords), { padding: [32, 32], maxZoom: 13.75 });
-        } else if (coords.length === 1) {
-            mapRef.current.setView(coords[0], 11.5);
-        } else {
-            mapRef.current.setView(ONTARIO_CENTER, 6);
-        }
     }, [displayedPairs, geoLookup, isolatedStation, topNOption, currentZoom]);
 
     useEffect(() => {
         renderLayers();
     }, [renderLayers]);
+
+    // Auto-fit to data extent only when the dataset changes, not on every zoom.
+    useEffect(() => {
+        if (!mapRef.current || displayedPairs.length === 0) return;
+        const coords: L.LatLngTuple[] = [];
+        displayedPairs.forEach((pair) => {
+            const og = geoLookup[pair.origin];
+            const dg = geoLookup[pair.destination];
+            if (og) coords.push([og.lat, og.lon]);
+            if (dg) coords.push([dg.lat, dg.lon]);
+        });
+        const unique = coords.filter(
+            (c, i, arr) => arr.findIndex((o) => o[0] === c[0] && o[1] === c[1]) === i
+        );
+        if (unique.length > 1) {
+            mapRef.current.fitBounds(L.latLngBounds(unique), { padding: [32, 32], maxZoom: 13.75 });
+        } else if (unique.length === 1) {
+            mapRef.current.setView(unique[0], 11.5);
+        } else {
+            mapRef.current.setView(ONTARIO_CENTER, 6);
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [displayedPairs, geoLookup]);
 
     useEffect(() => {
         if (viewMode !== 'map' || !mapRef.current) return;

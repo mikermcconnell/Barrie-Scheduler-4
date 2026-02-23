@@ -65,9 +65,23 @@ function mergeHeatmaps(heatmaps: RouteRidershipHeatmap[]): RouteRidershipHeatmap
         }
     }
 
-    const timeToSec = (t: string) => {
-        const [h, m] = t.split(':').map(Number);
-        return h * 3600 + (m || 0) * 60;
+    const timeToSec = (raw: string) => {
+        const t = raw.trim();
+        if (t.includes(':')) {
+            const m = t.match(/^(\d{1,3}):(\d{2})(?::(\d{2}))?$/);
+            if (!m) return Number.MAX_SAFE_INTEGER;
+            const h = Number.parseInt(m[1], 10);
+            const mins = Number.parseInt(m[2], 10);
+            const sec = m[3] ? Number.parseInt(m[3], 10) : 0;
+            if (!Number.isFinite(h) || !Number.isFinite(mins) || !Number.isFinite(sec)) return Number.MAX_SAFE_INTEGER;
+            return (h * 3600) + (mins * 60) + sec;
+        }
+
+        const dec = Number.parseFloat(t);
+        if (!Number.isFinite(dec) || dec < 0) return Number.MAX_SAFE_INTEGER;
+        const wholeDays = Math.floor(dec);
+        const dayFraction = dec - wholeDays;
+        return wholeDays * 86400 + Math.round(dayFraction * 86400);
     };
     const sortedTrips = [...allTrips].sort((a, b) =>
         timeToSec(a.terminalDepartureTime) - timeToSec(b.terminalDepartureTime)
@@ -75,7 +89,23 @@ function mergeHeatmaps(heatmaps: RouteRidershipHeatmap[]): RouteRidershipHeatmap
     const newTripIdx = new Map<string, number>();
     sortedTrips.forEach((t, i) => newTripIdx.set(t.terminalDepartureTime, i));
 
-    const stops = base.stops;
+    const stopMap = new Map<string, typeof base.stops[0]>();
+    for (const hm of heatmaps) {
+        for (const s of hm.stops) {
+            const existing = stopMap.get(s.stopId);
+            if (!existing) {
+                stopMap.set(s.stopId, { ...s });
+            } else {
+                existing.isTimepoint = existing.isTimepoint || s.isTimepoint;
+                if (s.routeStopIndex < existing.routeStopIndex) {
+                    existing.routeStopIndex = s.routeStopIndex;
+                }
+            }
+        }
+    }
+    const stops = Array.from(stopMap.values()).sort((a, b) =>
+        a.routeStopIndex - b.routeStopIndex || a.stopName.localeCompare(b.stopName)
+    );
     const stopIdx = new Map<string, number>();
     stops.forEach((s, i) => stopIdx.set(s.stopId, i));
 
@@ -83,9 +113,6 @@ function mergeHeatmaps(heatmaps: RouteRidershipHeatmap[]): RouteRidershipHeatmap
         stops.map(() => sortedTrips.map((): [number, number, number] | null => null));
 
     for (const hm of heatmaps) {
-        const dayTripIdx = new Map<string, number>();
-        hm.trips.forEach((t, i) => dayTripIdx.set(t.terminalDepartureTime, i));
-
         for (let si = 0; si < hm.stops.length; si++) {
             const newSi = stopIdx.get(hm.stops[si].stopId);
             if (newSi === undefined) continue;

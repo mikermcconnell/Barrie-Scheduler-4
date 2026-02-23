@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
     LineChart, Line, Legend,
@@ -6,28 +6,29 @@ import {
 import { ChartCard } from '../Analytics/AnalyticsShared';
 import { RidershipHeatmapSection } from './RidershipHeatmapSection';
 import { StopActivityMap } from './StopActivityMap';
-import type { PerformanceDataSummary, DayType, StopMetrics } from '../../utils/performanceDataTypes';
+import type { PerformanceDataSummary } from '../../utils/performanceDataTypes';
 import { compareDateStrings, shortDateLabel } from '../../utils/performanceDateUtils';
+import { aggregateStopActivity } from '../../utils/performanceStopActivity';
 
 interface RidershipModuleProps {
     data: PerformanceDataSummary;
 }
 
-const DAY_TYPE_LABELS: Record<DayType, string> = { weekday: 'Weekday', saturday: 'Saturday', sunday: 'Sunday' };
 const ROUTE_COLORS = ['#06b6d4', '#8b5cf6', '#f59e0b', '#ef4444', '#22c55e', '#ec4899', '#3b82f6', '#14b8a6', '#f97316', '#6366f1', '#a855f7', '#84cc16'];
+const RIDERSHIP_ROUTE_GROUPS: Record<string, string> = {
+    '2A': '2A/2B',
+    '2B': '2A/2B',
+    '7A': '7A/7B',
+    '7B': '7A/7B',
+};
+
+function getRidershipRouteKey(routeId: string): string {
+    const normalized = routeId.trim().toUpperCase();
+    return RIDERSHIP_ROUTE_GROUPS[normalized] || routeId;
+}
 
 export const RidershipModule: React.FC<RidershipModuleProps> = ({ data }) => {
-    const availableDayTypes = useMemo(() => {
-        const types = new Set(data.dailySummaries.map(d => d.dayType));
-        return (['weekday', 'saturday', 'sunday'] as DayType[]).filter(t => types.has(t));
-    }, [data]);
-
-    const [dayTypeFilter, setDayTypeFilter] = useState<DayType | 'all'>('all');
-
-    const filtered = useMemo(() => {
-        if (dayTypeFilter === 'all') return data.dailySummaries;
-        return data.dailySummaries.filter(d => d.dayType === dayTypeFilter);
-    }, [data, dayTypeFilter]);
+    const filtered = data.dailySummaries;
 
     // Daily ridership trend
     const dailyTrend = useMemo(() =>
@@ -42,17 +43,37 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({ data }) => {
 
     // Route ridership ranking
     const routeRanking = useMemo(() => {
-        const routeMap = new Map<string, { routeId: string; routeName: string; ridership: number; days: number }>();
+        const routeMap = new Map<string, {
+            routeId: string;
+            routeName: string;
+            ridership: number;
+            days: number;
+            sourceRouteIds: Set<string>;
+        }>();
         for (const day of filtered) {
             for (const r of day.byRoute) {
-                const ex = routeMap.get(r.routeId) || { routeId: r.routeId, routeName: r.routeName, ridership: 0, days: 0 };
+                const routeKey = getRidershipRouteKey(r.routeId);
+                const ex = routeMap.get(routeKey) || {
+                    routeId: routeKey,
+                    routeName: r.routeName,
+                    ridership: 0,
+                    days: 0,
+                    sourceRouteIds: new Set<string>(),
+                };
                 ex.ridership += r.ridership;
                 ex.days++;
-                routeMap.set(r.routeId, ex);
+                ex.sourceRouteIds.add(r.routeId);
+                routeMap.set(routeKey, ex);
             }
         }
         return Array.from(routeMap.values())
-            .map(r => ({ ...r, avgPerDay: Math.round(r.ridership / r.days) }))
+            .map(r => ({
+                ...r,
+                routeName: r.sourceRouteIds.size > 1
+                    ? `Combined ${Array.from(r.sourceRouteIds).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).join(' + ')}`
+                    : r.routeName,
+                avgPerDay: Math.round(r.ridership / r.days),
+            }))
             .sort((a, b) => b.ridership - a.ridership);
     }, [filtered]);
 
@@ -78,71 +99,30 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({ data }) => {
     }, [filtered]);
 
     // Aggregate stop activity across filtered days (merges routes + hourly arrays)
-    const stopActivity = useMemo(() => {
-        const map = new Map<string, StopMetrics & { _routes: Set<string> }>();
-        for (const day of filtered) {
-            for (const s of day.byStop) {
-                const ex = map.get(s.stopId);
-                if (ex) {
-                    ex.boardings += s.boardings;
-                    ex.alightings += s.alightings;
-                    if (s.routes) s.routes.forEach(r => ex._routes.add(r));
-                    if (s.hourlyBoardings && ex.hourlyBoardings) {
-                        for (let h = 0; h < 24; h++) {
-                            ex.hourlyBoardings[h] += s.hourlyBoardings[h] || 0;
-                            ex.hourlyAlightings![h] += s.hourlyAlightings?.[h] || 0;
-                        }
-                    }
-                } else {
-                    map.set(s.stopId, {
-                        ...s,
-                        _routes: new Set(s.routes || []),
-                        hourlyBoardings: s.hourlyBoardings ? [...s.hourlyBoardings] : undefined,
-                        hourlyAlightings: s.hourlyAlightings ? [...s.hourlyAlightings] : undefined,
-                    });
-                }
-            }
-        }
-        return Array.from(map.values()).map(({ _routes, ...rest }) => ({
-            ...rest,
-            routes: Array.from(_routes).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
-        }));
-    }, [filtered]);
+    const stopActivity = useMemo(() => aggregateStopActivity(filtered), [filtered]);
 
     // Route daily trend (multi-line)
     const routeDailyTrend = useMemo(() => {
         const dateMap = new Map<string, Record<string, number>>();
         const routeIds = new Set<string>();
         for (const day of filtered) {
-            const entry: Record<string, number> = { date: 0 };
+            const entry: Record<string, number> = {};
             for (const r of day.byRoute) {
-                entry[r.routeId] = r.ridership;
-                routeIds.add(r.routeId);
+                const routeKey = getRidershipRouteKey(r.routeId);
+                entry[routeKey] = (entry[routeKey] || 0) + r.ridership;
+                routeIds.add(routeKey);
             }
             dateMap.set(day.date, entry);
         }
         const dates = Array.from(dateMap.keys()).sort(compareDateStrings);
         return {
-            data: dates.map(date => ({ date: shortDateLabel(date), ...dateMap.get(date) })),
+            data: dates.map(date => ({ ...dateMap.get(date), date: shortDateLabel(date), fullDate: date })),
             routeIds: Array.from(routeIds).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
         };
     }, [filtered]);
 
     return (
         <div className="space-y-6">
-            {/* Day Type Filter */}
-            <div className="flex items-center gap-2">
-                <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Day Type:</span>
-                <div className="flex gap-1">
-                    <FilterPill active={dayTypeFilter === 'all'} onClick={() => setDayTypeFilter('all')}>All</FilterPill>
-                    {availableDayTypes.map(dt => (
-                        <FilterPill key={dt} active={dayTypeFilter === dt} onClick={() => setDayTypeFilter(dt)}>
-                            {DAY_TYPE_LABELS[dt]}
-                        </FilterPill>
-                    ))}
-                </div>
-            </div>
-
             {/* Stop Activity Map */}
             <ChartCard title="Stop Activity Map" subtitle="Circle size and color reflect total boardings + alightings">
                 <StopActivityMap stops={stopActivity} />
@@ -223,7 +203,13 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({ data }) => {
                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
                             <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#9CA3AF' }} interval="preserveStartEnd" />
                             <YAxis tick={{ fontSize: 10, fill: '#9CA3AF' }} />
-                            <Tooltip />
+                            <Tooltip
+                                labelFormatter={(_, payload) => {
+                                    const row = payload?.[0]?.payload as { fullDate?: string; date?: string } | undefined;
+                                    return row?.fullDate || row?.date || '';
+                                }}
+                                formatter={(v: number, name: string) => [v.toLocaleString(), `Route ${name}`]}
+                            />
                             <Legend wrapperStyle={{ fontSize: 11 }} />
                             {routeDailyTrend.routeIds.map((id, i) => (
                                 <Line key={id} type="monotone" dataKey={id} stroke={ROUTE_COLORS[i % ROUTE_COLORS.length]} strokeWidth={1.5} dot={false} />
@@ -238,14 +224,3 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({ data }) => {
         </div>
     );
 };
-
-const FilterPill: React.FC<{ active: boolean; onClick: () => void; children: React.ReactNode }> = ({ active, onClick, children }) => (
-    <button
-        onClick={onClick}
-        className={`px-3 py-1 text-xs font-bold rounded-full transition-colors ${
-            active ? 'bg-cyan-100 text-cyan-700' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-        }`}
-    >
-        {children}
-    </button>
-);

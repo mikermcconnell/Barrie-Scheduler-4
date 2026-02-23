@@ -13,6 +13,8 @@ import {
     computeMissedTripsForDay, hasGtfsCoverage,
 } from '../../utils/gtfs/gtfsScheduleIndex';
 import { compareDateStrings, normalizeToISODate, shortDateLabel } from '../../utils/performanceDateUtils';
+import { PerformanceScopeProvider } from './performanceScope';
+import { getPerformanceScopeLabel, resolveOverviewScope } from '../../utils/performanceDataScope';
 
 interface SystemOverviewModuleProps {
     data: PerformanceDataSummary;
@@ -36,7 +38,7 @@ interface ActionQueueItem {
     itemType: ActionQueueItemType;
     routeId: string;
     title: string;
-    detail: string;
+    detail: React.ReactNode;
     priorityScore: number;
     band: ActionQueueBand;
     daysObserved: number;
@@ -103,6 +105,7 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
         [...new Set(data.dailySummaries.map(d => d.date))].sort(compareDateStrings),
         [data]
     );
+    const latestDate = sortedDates.length > 0 ? sortedDates[sortedDates.length - 1] : null;
 
     // Default to latest date (yesterday's snapshot)
     const [selectedDate, setSelectedDate] = useState<string>(() =>
@@ -266,7 +269,7 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                 itemType: 'route',
                 routeId: row.routeId,
                 title: `${row.routeId} ${row.routeName}`,
-                detail: `OTP avg ${Math.round(row.avgOtp)}% (${row.daysBelowTarget}/${row.daysObserved} days below 80%) · Avg riders/day ${Math.round(row.avgRidershipPerDay).toLocaleString()}`,
+                detail: <><span className="font-semibold text-gray-900">OTP avg {Math.round(row.avgOtp)}%</span> ({row.daysBelowTarget}/{row.daysObserved} days below 80%) · Avg riders/day {Math.round(row.avgRidershipPerDay).toLocaleString()}</>,
                 priorityScore,
                 band: actionBand(priorityScore),
                 daysObserved: row.daysObserved,
@@ -296,7 +299,7 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                 itemType: 'trip',
                 routeId: row.routeId,
                 title: row.tripName,
-                detail: `Route ${row.routeId} · Avg +${Math.round(row.avgDelayMinutes)} min (${row.daysLate}/${row.daysObserved} days > 5 min late) · Avg boardings/day ${Math.round(row.avgBoardingsPerDay)}`,
+                detail: <>Route {row.routeId} · <span className="font-semibold text-gray-900">Avg +{Math.round(row.avgDelayMinutes)} min</span> ({row.daysLate}/{row.daysObserved} days &gt; 5 min late) · Avg boardings/day {Math.round(row.avgBoardingsPerDay)}</>,
                 priorityScore,
                 band: actionBand(priorityScore),
                 daysObserved: row.daysObserved,
@@ -486,6 +489,14 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
         });
     }, [filtered]);
 
+    const overviewScope = useMemo(
+        () => resolveOverviewScope(selectedDate, latestDate),
+        [selectedDate, latestDate]
+    );
+    const overviewScopeLabel = useMemo(
+        () => getPerformanceScopeLabel(overviewScope),
+        [overviewScope]
+    );
     if (!systemAvg) {
         return <div className="text-center text-gray-400 py-16">No data for selected filters.</div>;
     }
@@ -497,7 +508,8 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
     const apcPct = dataQuality ? Math.round((dataQuality.missingAPC / dataQuality.totalRecords) * 100) : 0;
 
     return (
-        <div className="space-y-6">
+        <PerformanceScopeProvider scope={overviewScope}>
+            <div className="space-y-6">
             {/* ── 1. Date Context Banner + Controls ────────────────── */}
             <div className="bg-white border border-gray-200 rounded-xl p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -514,7 +526,7 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                                         : `${filtered.length} days`}
                             </p>
                             <p className="text-xs text-gray-400">
-                                {isSingleDate ? 'Daily snapshot' : ''} · {data.metadata.importedAt ? freshness(data.metadata.importedAt) : ''} · {data.dailySummaries.length} days loaded
+                                {overviewScopeLabel} · {isSingleDate ? 'Daily snapshot' : 'Multi-day aggregate'} · {data.metadata.importedAt ? freshness(data.metadata.importedAt) : ''} · {data.dailySummaries.length} days loaded
                             </p>
                         </div>
                     </div>
@@ -601,11 +613,6 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                     onClick={missedTrips.totalMissed > 0 ? () => onNavigate('otp') : undefined}
                 />
             </div>
-            {missedTrips.totalMissed > 0 && (
-                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                    {missedTrips.totalMissed} suspected missed trips identified for further investigation.
-                </div>
-            )}
 
             {/* ── 2b. Peak Hour Callout ─────────────────────────────── */}
             {peakHourSummary && (
@@ -904,6 +911,7 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                     {dataQuality.inBetweenFiltered > 0 && <span>In-between filtered: {dataQuality.inBetweenFiltered.toLocaleString()}</span>}
                 </div>
             )}
-        </div>
+            </div>
+        </PerformanceScopeProvider>
     );
 };

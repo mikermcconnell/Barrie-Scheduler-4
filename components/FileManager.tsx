@@ -29,13 +29,16 @@ import {
     Loader2,
     AlertCircle,
     X,
-    Plus
+    Plus,
+    Star
 } from 'lucide-react';
 
 interface FileManagerProps {
     onSelectFile?: (file: SavedFile) => void;
     onSelectSchedule?: (schedule: SavedSchedule) => void;
     onClose: () => void;
+    defaultScheduleId?: string | null;
+    onSetDefaultSchedule?: (id: string | null) => void;
 }
 
 type ViewMode = 'grid' | 'list';

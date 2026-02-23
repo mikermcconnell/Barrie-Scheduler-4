@@ -20,9 +20,10 @@ import type { ODMatrixDataSummary } from '../../utils/od-matrix/odMatrixTypes';
 
 interface ODStationRankingsModuleProps {
     data: ODMatrixDataSummary;
+    chartContainerRef?: React.RefObject<HTMLDivElement | null>;
 }
 
-export const ODStationRankingsModule: React.FC<ODStationRankingsModuleProps> = ({ data }) => {
+export const ODStationRankingsModule: React.FC<ODStationRankingsModuleProps> = ({ data, chartContainerRef }) => {
     const topOrigins = useMemo(() => {
         return [...data.stations]
             .sort((a, b) => b.totalOrigin - a.totalOrigin)
@@ -52,7 +53,7 @@ export const ODStationRankingsModule: React.FC<ODStationRankingsModuleProps> = (
     }, [data.stations]);
 
     return (
-        <div className="space-y-6">
+        <div className="space-y-6" ref={chartContainerRef}>
             {/* Side-by-side charts */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <ChartCard title="Busiest Origins" subtitle="Top 20 stations by departing journeys">
