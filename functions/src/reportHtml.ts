@@ -141,6 +141,11 @@ function buildDwellTrendChart(trendDays: DailySummary[]): string {
         </table>
         <div style="border-top:1px solid #e5e7eb;margin-top:4px;"></div>
         <div style="font-size:10px;color:#9ca3af;margin-top:6px;text-align:right;">week ending (MM/DD)</div>
+        <div style="font-size:10px;color:#6b7280;margin-top:8px;line-height:1.45;">
+          Operator dwell measures stop time at timepoints (observed departure minus observed arrival), grouped by operator.
+          The first 2 minutes are treated as normal boarding time; only extra time is tracked.
+          Incidents are moderate at 2-5 minutes total stop time and high above 5 minutes.
+        </div>
       </div>`;
 }
 

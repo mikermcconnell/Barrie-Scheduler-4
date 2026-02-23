@@ -34,20 +34,75 @@ function autoWidth(sheet: ExcelJS.Worksheet): void {
     });
 }
 
+function setHeaderFilterAndFreeze(
+    sheet: ExcelJS.Worksheet,
+    headerRowNumber: number,
+    columnCount: number,
+    freezeFirstColumn = false,
+): void {
+    sheet.autoFilter = {
+        from: { row: headerRowNumber, column: 1 },
+        to: { row: headerRowNumber, column: columnCount },
+    };
+    sheet.views = [{
+        state: 'frozen',
+        ySplit: headerRowNumber,
+        xSplit: freezeFirstColumn ? 1 : 0,
+    }];
+}
+
+function stationKey(name: string): string {
+    return name
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '');
+}
+
 // ─── Excel Export ────────────────────────────────────────────────
 
 export async function exportODExcel(data: ODMatrixDataSummary): Promise<void> {
     const wb = new ExcelJS.Workbook();
     wb.creator = 'Barrie Transit Scheduler';
+    wb.created = new Date();
 
     const sortedStations = [...data.stations].sort((a, b) => b.totalVolume - a.totalVolume);
     const stationNames = sortedStations.map(s => s.name);
+    const allPairsSorted = [...data.pairs].sort((a, b) => b.journeys - a.journeys);
 
     // Build journey lookup
     const journeyMap = new Map<string, number>();
     data.pairs.forEach(p => journeyMap.set(`${p.origin}|${p.destination}`, p.journeys));
 
-    // Sheet 1: OD Matrix cross-tab
+    // Sheet 1: Metadata + assumptions for technical handoff
+    const metadataSheet = wb.addWorksheet('Metadata');
+    metadataSheet.addRow(['OD Export Metadata']);
+    metadataSheet.getRow(1).font = { bold: true, size: 14 };
+    metadataSheet.addRow([]);
+    const metadataHeader = metadataSheet.addRow(['Field', 'Value']);
+    styleHeader(metadataHeader);
+
+    const metadataRows: Array<[string, string | number]> = [
+        ['schema_version', String(data.schemaVersion)],
+        ['export_generated_at_iso', new Date().toISOString()],
+        ['source_file_name', data.metadata.fileName || ''],
+        ['imported_at_iso', data.metadata.importedAt || ''],
+        ['imported_by', data.metadata.importedBy || ''],
+        ['date_range', data.metadata.dateRange || ''],
+        ['station_count', data.stationCount],
+        ['total_journeys', data.totalJourneys],
+        ['non_zero_pairs', data.pairs.length],
+        ['top_pairs_count', Math.min(100, allPairsSorted.length)],
+        ['all_pairs_included', 'true'],
+        ['assumption_matrix_cells', 'Rows=Origins, Columns=Destinations, values=journey counts'],
+        ['assumption_station_total_volume', 'Origin Trips + Destination Trips'],
+        ['assumption_station_share', 'Total Volume / (2 * Total Journeys)'],
+    ];
+    metadataRows.forEach(([field, value]) => metadataSheet.addRow([field, value]));
+    autoWidth(metadataSheet);
+    setHeaderFilterAndFreeze(metadataSheet, 3, 2);
+
+    // Sheet 2: OD Matrix cross-tab
     const matrixSheet = wb.addWorksheet('OD Matrix');
     matrixSheet.addRow(['Origin-Destination Matrix']);
     matrixSheet.getRow(1).font = { bold: true, size: 14 };
@@ -68,39 +123,100 @@ export async function exportODExcel(data: ODMatrixDataSummary): Promise<void> {
     matrixSheet.columns.forEach((col, i) => {
         col.width = i === 0 ? 22 : 12;
     });
+    setHeaderFilterAndFreeze(matrixSheet, 4, stationNames.length + 1, true);
 
-    // Sheet 2: Top Pairs
+    // Sheet 3: Top Pairs
     const pairsSheet = wb.addWorksheet('Top Pairs');
     pairsSheet.addRow(['Top OD Pairs']);
     pairsSheet.getRow(1).font = { bold: true, size: 14 };
     pairsSheet.addRow([]);
 
-    const pairsHeader = pairsSheet.addRow(['Rank', 'Origin', 'Destination', 'Journeys', '% Total']);
+    const pairsHeader = pairsSheet.addRow(['Rank', 'Origin', 'Destination', 'Origin Key', 'Destination Key', 'Journeys', '% Total']);
     styleHeader(pairsHeader);
 
-    const topPairs = data.topPairs.length > 0 ? data.topPairs : [...data.pairs].sort((a, b) => b.journeys - a.journeys).slice(0, 100);
+    const topPairs = allPairsSorted.slice(0, 100);
     topPairs.forEach((pair, i) => {
-        const pct = data.totalJourneys > 0 ? ((pair.journeys / data.totalJourneys) * 100).toFixed(2) : '0.00';
-        pairsSheet.addRow([i + 1, pair.origin, pair.destination, pair.journeys, `${pct}%`]);
+        const pct = data.totalJourneys > 0 ? (pair.journeys / data.totalJourneys) : 0;
+        const row = pairsSheet.addRow([
+            i + 1,
+            pair.origin,
+            pair.destination,
+            stationKey(pair.origin),
+            stationKey(pair.destination),
+            pair.journeys,
+            pct,
+        ]);
+        row.getCell(7).numFmt = '0.00%';
     });
     autoWidth(pairsSheet);
+    setHeaderFilterAndFreeze(pairsSheet, 3, 7);
 
-    // Sheet 3: Station Summary
+    // Sheet 4: All Pairs for full technical analysis coverage
+    const allPairsSheet = wb.addWorksheet('All Pairs');
+    allPairsSheet.addRow(['All OD Pairs (Non-Zero)']);
+    allPairsSheet.getRow(1).font = { bold: true, size: 14 };
+    allPairsSheet.addRow([]);
+
+    const allPairsHeader = allPairsSheet.addRow(['Rank', 'Origin', 'Destination', 'Origin Key', 'Destination Key', 'Journeys', '% Total']);
+    styleHeader(allPairsHeader);
+    allPairsSorted.forEach((pair, i) => {
+        const pct = data.totalJourneys > 0 ? (pair.journeys / data.totalJourneys) : 0;
+        const row = allPairsSheet.addRow([
+            i + 1,
+            pair.origin,
+            pair.destination,
+            stationKey(pair.origin),
+            stationKey(pair.destination),
+            pair.journeys,
+            pct,
+        ]);
+        row.getCell(7).numFmt = '0.00%';
+    });
+    autoWidth(allPairsSheet);
+    setHeaderFilterAndFreeze(allPairsSheet, 3, 7);
+
+    // Sheet 5: Station Summary
     const stationSheet = wb.addWorksheet('Station Summary');
     stationSheet.addRow(['Station Volume Summary']);
     stationSheet.getRow(1).font = { bold: true, size: 14 };
     stationSheet.addRow([]);
 
-    const stationHeader = stationSheet.addRow(['Rank', 'Station', 'Origin Trips', 'Destination Trips', 'Total Volume', '% Total']);
+    const stationHeader = stationSheet.addRow([
+        'Rank',
+        'Station',
+        'Station Key',
+        'Latitude',
+        'Longitude',
+        'Geocode Source',
+        'Geocode Confidence',
+        'Origin Trips',
+        'Destination Trips',
+        'Total Volume',
+        '% Total',
+    ]);
     styleHeader(stationHeader);
 
     sortedStations.forEach((station, i) => {
         const pct = data.totalJourneys > 0
-            ? ((station.totalVolume / (data.totalJourneys * 2)) * 100).toFixed(2)
-            : '0.00';
-        stationSheet.addRow([i + 1, station.name, station.totalOrigin, station.totalDestination, station.totalVolume, `${pct}%`]);
+            ? (station.totalVolume / (data.totalJourneys * 2))
+            : 0;
+        const row = stationSheet.addRow([
+            i + 1,
+            station.name,
+            stationKey(station.name),
+            station.geocode?.lat ?? null,
+            station.geocode?.lon ?? null,
+            station.geocode?.source ?? '',
+            station.geocode?.confidence ?? '',
+            station.totalOrigin,
+            station.totalDestination,
+            station.totalVolume,
+            pct,
+        ]);
+        row.getCell(11).numFmt = '0.00%';
     });
     autoWidth(stationSheet);
+    setHeaderFilterAndFreeze(stationSheet, 3, 11);
 
     const dateSlug = data.metadata.dateRange?.replace(/\s+/g, '_') || 'export';
     const buffer = await wb.xlsx.writeBuffer();
@@ -240,7 +356,7 @@ function computeKeyFindings(
         const top = corridors[0];
         const pct = ((top.journeys / data.totalJourneys) * 100).toFixed(1);
         findings.push(
-            `The ${top.origin} \u2013 ${top.destination} corridor is the busiest with `
+            `The ${top.origin} to ${top.destination} corridor is the busiest with `
             + `${top.journeys.toLocaleString()} journeys (${pct}% of total).`,
         );
     }
@@ -258,8 +374,8 @@ function computeKeyFindings(
             const p = maxImb.pair;
             const towardStation = p.aToB > p.bToA ? p.stationB : p.stationA;
             findings.push(
-                `Largest directional imbalance in the top 10: ${p.stationA} \u2013 ${p.stationB} `
-                + `shows ${maxImb.pct.toFixed(0)}% more traffic toward ${towardStation}.`,
+                `Most uneven route in the top 10: ${p.stationA} to ${p.stationB} `
+                + `has ${maxImb.pct.toFixed(0)}% more riders traveling toward ${towardStation}.`,
             );
         }
     }
@@ -268,8 +384,8 @@ function computeKeyFindings(
     const active = data.stations.filter(s => s.totalVolume >= 1000).length;
     const activePct = data.stationCount > 0 ? ((active / data.stationCount) * 100).toFixed(0) : '0';
     findings.push(
-        `${active} of ${data.stationCount} stations (${activePct}%) carry meaningful traffic `
-        + `(>1,000 journeys); ${data.stationCount - active} stations are in the long tail.`,
+        `${active} of ${data.stationCount} stations (${activePct}%) have more than 1,000 journeys. `
+        + `The remaining ${data.stationCount - active} stations have very low ridership.`,
     );
 
     return findings;
@@ -461,119 +577,12 @@ export async function exportODPdf(
     fy += 7;
 
     const chartItems = biPairs.slice(0, 10).map(b => ({
-        label: `${b.stationA} \u2013 ${b.stationB}`,
+        label: `${b.stationA} - ${b.stationB}`,
         value: b.total,
     }));
     drawHorizontalBarChart(doc, chartItems, margin, fy, pageW - 2 * margin, VIOLET);
 
-    // ─── Page 4: Executive Summary ──────────────────────────────
-
-    doc.addPage();
-    tocEntries.push({ title: 'Executive Summary', page: doc.getNumberOfPages() });
-    drawSectionHeader('Executive Summary', 25, 90);
-
-    let sy = 40; // summary Y cursor
-
-    // 1. Top Consolidated Corridors
-    doc.setFontSize(11);
-    doc.setTextColor(...DARK_TEXT);
-    doc.text('Top Consolidated Corridors', margin, sy);
-    sy += 3;
-
-    const topCorridors = corridors.slice(0, 5);
-    if (topCorridors.length > 0) {
-        autoTable(doc, {
-            startY: sy,
-            margin: { left: margin, right: margin },
-            head: [['Rank', 'Origin', 'Destination', 'Journeys', '% Total']],
-            body: topCorridors.map((c, i) => [
-                i + 1,
-                c.origin,
-                c.destination,
-                c.journeys.toLocaleString(),
-                `${((c.journeys / data.totalJourneys) * 100).toFixed(1)}%`,
-            ]),
-            styles: { fontSize: 8, cellPadding: 2 },
-            headStyles: { fillColor: [...ON_NAVY] },
-            alternateRowStyles: { fillColor: [...ALT_ROW] },
-        });
-        sy = ((doc as any).lastAutoTable?.finalY ?? sy + 40) + 4;
-    }
-
-    doc.setFontSize(7);
-    doc.setTextColor(...MID_GRAY);
-    doc.text('* Toronto terminals (Yorkdale, Union Station, Vaughan HWY 407) consolidated as "Toronto Area"', margin, sy);
-    sy += 8;
-
-    // 2. Traffic Concentration
-    doc.setFontSize(11);
-    doc.setTextColor(...DARK_TEXT);
-    doc.text('Traffic Concentration', margin, sy);
-    sy += 5;
-    doc.setFontSize(9);
-    doc.setTextColor(...MID_GRAY);
-    doc.text(`Top 10 OD pairs account for ${concentration.top10Pct.toFixed(1)}% of all journeys`, margin + 4, sy);
-    sy += 4.5;
-    doc.text(`Top 20 OD pairs account for ${concentration.top20Pct.toFixed(1)}% of all journeys`, margin + 4, sy);
-    sy += 8;
-
-    // 3. Top Bidirectional Corridors
-    doc.setFontSize(11);
-    doc.setTextColor(...DARK_TEXT);
-    doc.text('Top Bidirectional Corridors', margin, sy);
-    sy += 3;
-
-    const topBi = biPairs.slice(0, 5);
-    if (topBi.length > 0) {
-        autoTable(doc, {
-            startY: sy,
-            margin: { left: margin, right: margin },
-            head: [['Corridor', 'A to B', 'B to A', 'Combined', '% Total']],
-            body: topBi.map(b => [
-                `${b.stationA}  -  ${b.stationB}`,
-                b.aToB.toLocaleString(),
-                b.bToA.toLocaleString(),
-                b.total.toLocaleString(),
-                `${((b.total / data.totalJourneys) * 100).toFixed(1)}%`,
-            ]),
-            styles: { fontSize: 8, cellPadding: 2 },
-            headStyles: { fillColor: [...ON_NAVY] },
-            alternateRowStyles: { fillColor: [...ALT_ROW] },
-            columnStyles: { 0: { cellWidth: 100 } },
-        });
-        sy = ((doc as any).lastAutoTable?.finalY ?? sy + 40) + 6;
-    }
-
-    // 4. Hub Dominance
-    if (hubStats) {
-        doc.setFontSize(11);
-        doc.setTextColor(...DARK_TEXT);
-        doc.text('Hub Dominance', margin, sy);
-        sy += 5;
-        doc.setFontSize(9);
-        doc.setTextColor(...MID_GRAY);
-        doc.text(
-            `${hubStats.name} handles ${hubStats.pct.toFixed(1)}% of all station activity `
-            + `(${hubStats.originPct.toFixed(1)}% origins, ${hubStats.destPct.toFixed(1)}% destinations)`,
-            margin + 4, sy,
-        );
-        sy += 8;
-    }
-
-    // 5. Geographic Spread
-    doc.setFontSize(11);
-    doc.setTextColor(...DARK_TEXT);
-    doc.text('Geographic Spread', margin, sy);
-    sy += 5;
-    doc.setFontSize(9);
-    doc.setTextColor(...MID_GRAY);
-    doc.text(
-        `${activeStationCount} of ${data.stationCount} stations have >1,000 journeys; `
-        + `${data.stationCount - activeStationCount} stations in the long tail`,
-        margin + 4, sy,
-    );
-
-    // ─── Page 4: Flow Map ───────────────────────────────────────
+    // ─── Flow Map ───────────────────────────────────────────────
 
     if (mapEl) {
         try {
@@ -583,15 +592,23 @@ export async function exportODPdf(
             tocEntries.push({ title: 'Flow Map', page: doc.getNumberOfPages() });
             drawSectionHeader('Flow Map', 25, 50);
 
+            // Filter context line
+            const filterParts: string[] = [];
+            if (data.metadata.dateRange) filterParts.push(`Date range: ${data.metadata.dateRange}`);
+            filterParts.push(`${data.totalJourneys.toLocaleString()} total journeys across ${data.stationCount} stations`);
+            doc.setFontSize(8);
+            doc.setTextColor(...MID_GRAY);
+            doc.text(filterParts.join('  |  '), margin, 33);
+
             const imgW = pageW - 2 * margin;
             const imgH = (canvas.height / canvas.width) * imgW;
-            const maxImgH = pageH - 65;
-            doc.addImage(imgData, 'PNG', margin, 35, imgW, Math.min(imgH, maxImgH));
+            const maxImgH = pageH - 70;
+            doc.addImage(imgData, 'PNG', margin, 38, imgW, Math.min(imgH, maxImgH));
 
             doc.setFontSize(8);
             doc.setTextColor(...MID_GRAY);
-            const captionY = Math.min(35 + imgH + 4, pageH - 18);
-            doc.text('Line thickness represents relative journey volume between station pairs.', margin, captionY);
+            const captionY = Math.min(38 + imgH + 4, pageH - 18);
+            doc.text('Line thickness represents trip volume. Green = mostly origin, Red = mostly destination.', margin, captionY);
         } catch {
             // Skip map on capture failure
         }
@@ -613,13 +630,13 @@ export async function exportODPdf(
     autoTable(doc, {
         startY: 36,
         margin: { left: margin, right: margin, bottom: 20 },
-        head: [['Rank', 'Station A', 'Station B', 'A \u2192 B', 'B \u2192 A', 'Combined', '% Total', 'Imbalance']],
+        head: [['Rank', 'Station A', 'Station B', 'A to B', 'B to A', 'Combined', '% Total', 'Direction Bias']],
         body: biTop20.map((b, i) => {
             const hi = Math.max(b.aToB, b.bToA);
             const lo = Math.min(b.aToB, b.bToA);
             const imbPct = hi > 0 ? ((hi - lo) / hi) * 100 : 0;
-            const arrow = b.aToB >= b.bToA ? '\u2192' : '\u2190';
-            const imbLabel = imbPct < 2 ? 'Balanced' : `${arrow} ${imbPct.toFixed(0)}%`;
+            const toward = b.aToB >= b.bToA ? `Toward ${b.stationB}` : `Toward ${b.stationA}`;
+            const imbLabel = imbPct < 2 ? 'Even' : `${toward} (+${imbPct.toFixed(0)}%)`;
             return [
                 i + 1,
                 b.stationA,

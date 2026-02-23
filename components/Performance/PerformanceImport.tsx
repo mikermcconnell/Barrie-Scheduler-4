@@ -1,5 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
+import { useQueryClient } from '@tanstack/react-query';
 import {
     Upload, FileSpreadsheet, AlertTriangle,
     Loader2, ArrowRight, X,
@@ -29,6 +30,7 @@ export const PerformanceImport: React.FC<PerformanceImportProps> = ({
     onImportComplete,
     onCancel,
 }) => {
+    const queryClient = useQueryClient();
     const [phase, setPhase] = useState<PerformanceImportPhase>('select');
     const [selectedFile, setSelectedFile] = useState<File | null>(null);
     const [preview, setPreview] = useState<ImportPreview | null>(null);
@@ -153,6 +155,10 @@ export const PerformanceImport: React.FC<PerformanceImportProps> = ({
             };
 
             await savePerformanceData(teamId, userId, summary);
+            await Promise.all([
+                queryClient.invalidateQueries({ queryKey: ['performanceMetadata', teamId] }),
+                queryClient.invalidateQueries({ queryKey: ['performanceData', teamId] }),
+            ]);
 
             setProgress(100);
             onImportComplete();

@@ -35,7 +35,7 @@ function makeStop(overrides: Partial<StopMetrics> = {}): StopMetrics {
     };
 }
 
-function makeDay(byStop: StopMetrics[]): DailySummary {
+function makeDay(byStop: StopMetrics[], overrides: Partial<DailySummary> = {}): DailySummary {
     return {
         date: '2026-01-07',
         dayType: 'weekday',
@@ -75,6 +75,7 @@ function makeDay(byStop: StopMetrics[]): DailySummary {
             apcExcludedFromLoad: 0,
         },
         schemaVersion: 1,
+        ...overrides,
     };
 }
 
@@ -255,5 +256,68 @@ describe('performanceStopActivity', () => {
             { routeId: '10', boardings: 4, alightings: 2, total: 6 },
             { routeId: '8A', boardings: 2, alightings: 1, total: 3 },
         ]);
+    });
+
+    it('backfills route breakdown from load profiles when legacy stop rows do not include routeBreakdown', () => {
+        const day = makeDay(
+            [
+                makeStop({
+                    stopId: 'S4',
+                    stopName: 'Legacy Hub',
+                    boardings: 9,
+                    alightings: 3,
+                    routes: ['10', '8A'],
+                }),
+            ],
+            {
+                loadProfiles: [
+                    {
+                        routeId: '10',
+                        routeName: 'Route 10',
+                        direction: 'CW',
+                        tripCount: 3,
+                        stops: [
+                            {
+                                stopName: 'Legacy Hub',
+                                stopId: 'S4',
+                                routeStopIndex: 1,
+                                avgBoardings: 2,
+                                avgAlightings: 1,
+                                avgLoad: 0,
+                                maxLoad: 0,
+                                isTimepoint: true,
+                            },
+                        ],
+                    },
+                    {
+                        routeId: '8A',
+                        routeName: 'Route 8A',
+                        direction: 'CW',
+                        tripCount: 3,
+                        stops: [
+                            {
+                                stopName: 'Legacy Hub',
+                                stopId: 'S4',
+                                routeStopIndex: 1,
+                                avgBoardings: 1,
+                                avgAlightings: 0,
+                                avgLoad: 0,
+                                maxLoad: 0,
+                                isTimepoint: true,
+                            },
+                        ],
+                    },
+                ],
+            }
+        );
+
+        const [aggregated] = aggregateStopActivity([day]);
+        const routeRows = getStopRouteActivityBreakdown(aggregated, null);
+
+        expect(routeRows).toEqual([
+            { routeId: '10', boardings: 6, alightings: 3, total: 9 },
+            { routeId: '8A', boardings: 3, alightings: 0, total: 3 },
+        ]);
+        expect(routeRows.reduce((sum, row) => sum + row.total, 0)).toBe(aggregated.boardings + aggregated.alightings);
     });
 });

@@ -52,7 +52,8 @@ function toBoolean(val: unknown): boolean {
   if (typeof val === 'number') return val !== 0;
   if (typeof val === 'string') {
     const lower = val.toLowerCase().trim();
-    return lower === 'true' || lower === '1' || lower === 'yes';
+    if (lower === 'true' || lower === '1' || lower === 'yes' || lower === 'y' || lower === 't') return true;
+    if (lower === 'false' || lower === '0' || lower === 'no' || lower === 'n' || lower === 'f' || lower === '') return false;
   }
   return false;
 }
@@ -100,7 +101,7 @@ export function validateSchema(headers: string[]): {
 
 export function parseRow(
   row: Record<string, unknown>,
-  rowIndex: number
+  _rowIndex: number
 ): STREETSRecord | null {
   try {
     const rawDate = row['Date'];

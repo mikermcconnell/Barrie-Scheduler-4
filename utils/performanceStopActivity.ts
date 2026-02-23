@@ -42,6 +42,56 @@ function normalizeRouteBreakdown(routeBreakdown: StopRouteBreakdown[] | undefine
     });
 }
 
+function buildRouteBreakdownFallbackByStop(day: DailySummary): Map<string, StopRouteBreakdown[]> {
+    const byStop = new Map<string, Map<string, { boardings: number; alightings: number }>>();
+
+    for (const profile of day.loadProfiles || []) {
+        const tripCount = Number.isFinite(profile.tripCount) ? profile.tripCount : 0;
+        if (tripCount <= 0) continue;
+
+        for (const stop of profile.stops || []) {
+            if (!stop.stopId) continue;
+
+            const boardings = Math.max(0, Math.round(stop.avgBoardings * tripCount));
+            const alightings = Math.max(0, Math.round(stop.avgAlightings * tripCount));
+            if (boardings === 0 && alightings === 0) continue;
+
+            let byRoute = byStop.get(stop.stopId);
+            if (!byRoute) {
+                byRoute = new Map<string, { boardings: number; alightings: number }>();
+                byStop.set(stop.stopId, byRoute);
+            }
+
+            const existing = byRoute.get(profile.routeId);
+            if (existing) {
+                existing.boardings += boardings;
+                existing.alightings += alightings;
+            } else {
+                byRoute.set(profile.routeId, { boardings, alightings });
+            }
+        }
+    }
+
+    const result = new Map<string, StopRouteBreakdown[]>();
+    for (const [stopId, byRoute] of byStop) {
+        const rows = Array.from(byRoute.entries())
+            .map(([routeId, values]) => ({
+                routeId,
+                boardings: values.boardings,
+                alightings: values.alightings,
+            }))
+            .filter(row => (row.boardings + row.alightings) > 0)
+            .sort((a, b) => {
+                const totalCmp = (b.boardings + b.alightings) - (a.boardings + a.alightings);
+                if (totalCmp !== 0) return totalCmp;
+                return a.routeId.localeCompare(b.routeId, undefined, { numeric: true });
+            });
+        if (rows.length > 0) result.set(stopId, rows);
+    }
+
+    return result;
+}
+
 export function getStopActivityBreakdown(
     stop: Pick<StopMetrics, 'boardings' | 'alightings' | 'hourlyBoardings' | 'hourlyAlightings'>,
     hours: number[] | null
@@ -135,15 +185,20 @@ export function aggregateStopActivity(days: DailySummary[]): StopMetrics[] {
     const map = new Map<string, AggregatedStop>();
 
     for (const day of days) {
+        const fallbackRouteBreakdownByStop = buildRouteBreakdownFallbackByStop(day);
         for (const stop of day.byStop) {
+            const normalizedRouteBreakdown = normalizeRouteBreakdown(stop.routeBreakdown);
+            const effectiveRouteBreakdown = normalizedRouteBreakdown.length > 0
+                ? normalizedRouteBreakdown
+                : (fallbackRouteBreakdownByStop.get(stop.stopId) || []);
             const existing = map.get(stop.stopId);
             if (existing) {
                 existing.boardings += stop.boardings;
                 existing.alightings += stop.alightings;
                 if (stop.routes) stop.routes.forEach(route => existing._routes.add(route));
 
-                if (stop.routeBreakdown) {
-                    for (const route of stop.routeBreakdown) {
+                if (effectiveRouteBreakdown.length > 0) {
+                    for (const route of effectiveRouteBreakdown) {
                         existing._routes.add(route.routeId);
                         const routeExisting = existing._routeBreakdown.get(route.routeId);
                         if (routeExisting) {
@@ -188,12 +243,12 @@ export function aggregateStopActivity(days: DailySummary[]): StopMetrics[] {
 
             const hasHourly = hasAnyHourlySeries(stop);
             const routeBreakdownMap = new Map<string, StopRouteBreakdown>();
-            for (const route of normalizeRouteBreakdown(stop.routeBreakdown)) {
+            for (const route of effectiveRouteBreakdown) {
                 routeBreakdownMap.set(route.routeId, route);
             }
             map.set(stop.stopId, {
                 ...stop,
-                _routes: new Set(stop.routes || []),
+                _routes: new Set([...(stop.routes || []), ...effectiveRouteBreakdown.map(route => route.routeId)]),
                 _routeBreakdown: routeBreakdownMap,
                 hourlyBoardings: hasHourly ? normalizeHourlySeries(stop.hourlyBoardings) : undefined,
                 hourlyAlightings: hasHourly ? normalizeHourlySeries(stop.hourlyAlightings) : undefined,

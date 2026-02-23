@@ -683,10 +683,10 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
                 const labelLatLng = mapRef.current!.containerPointToLatLng(L.point(labelPx.x, labelPx.y));
                 L.polyline([arcLatLng, labelLatLng], {
                     pane: 'od-rank-labels',
-                    color: '#94a3b8',
-                    weight: 1,
-                    opacity: 0.7,
-                    dashArray: '3 4',
+                    color: '#1e3a8a',
+                    weight: 2,
+                    opacity: 0.6,
+                    dashArray: '5 4',
                 }).addTo(layersRef.current!);
             }
 
@@ -696,13 +696,18 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
                 pane: 'od-rank-labels',
                 icon: L.divIcon({
                     className: '',
-                    html: `<div style="
-                        width:${sz}px;height:${sz}px;border-radius:9999px;
-                        background:${labelBackground(rank)};color:#fff;font-size:${rank <= 3 ? 11 : 10}px;font-weight:700;
-                        display:flex;align-items:center;justify-content:center;
-                        border:${labelBorder(rank)};box-shadow:0 1px 2px rgba(0,0,0,0.25);
-                        opacity:${labelOpacity(rank)};
-                    ">${rank}</div>`,
+                    html: `<svg width="${sz}" height="${sz}" xmlns="http://www.w3.org/2000/svg">
+                        <circle cx="${sz/2}" cy="${sz/2}" r="${sz/2 - 1}"
+                            fill="${labelBackground(rank)}"
+                            stroke="rgba(255,255,255,${rank <= 3 ? 0.95 : 0.8})"
+                            stroke-width="${rank <= 3 ? 2 : 1}"
+                            opacity="${labelOpacity(rank)}"/>
+                        <text x="${sz/2}" y="${sz/2}"
+                            text-anchor="middle" dominant-baseline="central"
+                            fill="white" font-size="${rank <= 3 ? 11 : 10}"
+                            font-weight="700" font-family="sans-serif"
+                            opacity="${labelOpacity(rank)}">${rank}</text>
+                    </svg>`,
                     iconSize: [sz, sz],
                     iconAnchor: [sz / 2, sz / 2],
                 }),
