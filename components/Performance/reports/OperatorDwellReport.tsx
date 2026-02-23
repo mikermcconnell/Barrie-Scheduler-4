@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useCallback } from 'react';
 import {
     LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
@@ -7,16 +7,13 @@ import { MetricCard, ChartCard, fmt } from '../../Analytics/AnalyticsShared';
 import type { DailySummary, DwellIncident, OperatorDwellSummary } from '../../../utils/performanceDataTypes';
 import { aggregateDwellAcrossDays } from '../../../utils/schedule/operatorDwellUtils';
 import { shortDateLabel, toDateSortKey } from '../../../utils/performanceDateUtils';
+import { exportOperatorDwell, exportOperatorDwellPDF } from './reportExporter';
 
 interface OperatorDwellReportProps {
     filteredDays: DailySummary[];
     allDays: DailySummary[];
     startDate: string;
     endDate: string;
-    onExportExcel?: () => void;
-    onExportPDF?: () => void;
-    exportingExcel?: boolean;
-    exportingPDF?: boolean;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────
@@ -59,9 +56,22 @@ function formatDelta(current: number, prior: number): string {
 
 export const OperatorDwellReport: React.FC<OperatorDwellReportProps> = ({
     filteredDays, allDays, startDate, endDate,
-    onExportExcel, onExportPDF, exportingExcel, exportingPDF,
 }) => {
     const [selectedOperator, setSelectedOperator] = useState<string | null>(null);
+    const [exportingExcel, setExportingExcel] = useState(false);
+    const [exportingPDF, setExportingPDF] = useState(false);
+
+    const handleExportExcel = useCallback(async () => {
+        setExportingExcel(true);
+        try { await exportOperatorDwell(filteredDays, startDate, endDate); }
+        finally { setExportingExcel(false); }
+    }, [filteredDays, startDate, endDate]);
+
+    const handleExportPDF = useCallback(async () => {
+        setExportingPDF(true);
+        try { await exportOperatorDwellPDF(filteredDays, startDate, endDate); }
+        finally { setExportingPDF(false); }
+    }, [filteredDays, startDate, endDate]);
 
     const metrics = useMemo(
         () => aggregateDwellAcrossDays(filteredDays),
@@ -107,24 +117,20 @@ export const OperatorDwellReport: React.FC<OperatorDwellReportProps> = ({
                     <p className="text-xs text-gray-400">{startDate} — {endDate}</p>
                 </div>
                 <div className="flex items-center gap-2">
-                    {onExportExcel && (
-                        <button
-                            onClick={onExportExcel}
-                            disabled={exportingExcel}
-                            className="px-3 py-1.5 text-xs font-medium text-gray-600 hover:text-gray-800 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors disabled:opacity-50"
-                        >
-                            {exportingExcel ? 'Exporting...' : 'Export Excel'}
-                        </button>
-                    )}
-                    {onExportPDF && (
-                        <button
-                            onClick={onExportPDF}
-                            disabled={exportingPDF}
-                            className="px-3 py-1.5 text-xs font-medium text-gray-600 hover:text-gray-800 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors disabled:opacity-50"
-                        >
-                            {exportingPDF ? 'Exporting...' : 'Export PDF'}
-                        </button>
-                    )}
+                    <button
+                        onClick={handleExportExcel}
+                        disabled={exportingExcel}
+                        className="px-3 py-1.5 text-xs font-medium text-gray-600 hover:text-gray-800 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors disabled:opacity-50"
+                    >
+                        {exportingExcel ? 'Exporting...' : 'Export Excel'}
+                    </button>
+                    <button
+                        onClick={handleExportPDF}
+                        disabled={exportingPDF}
+                        className="px-3 py-1.5 text-xs font-medium text-gray-600 hover:text-gray-800 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors disabled:opacity-50"
+                    >
+                        {exportingPDF ? 'Exporting...' : 'Export PDF'}
+                    </button>
                 </div>
             </div>
 

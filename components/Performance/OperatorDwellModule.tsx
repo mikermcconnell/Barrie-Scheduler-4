@@ -1,15 +1,12 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useCallback } from 'react';
 import { AlertTriangle, Clock, Users, Timer } from 'lucide-react';
 import type { PerformanceDataSummary, DwellIncident, OperatorDwellSummary } from '../../utils/performanceDataTypes';
 import { MetricCard, ChartCard, fmt } from '../Analytics/AnalyticsShared';
 import { aggregateDwellAcrossDays } from '../../utils/schedule/operatorDwellUtils';
+import { exportOperatorDwell, exportOperatorDwellPDF } from './reports/reportExporter';
 
 interface OperatorDwellModuleProps {
     data: PerformanceDataSummary;
-    onExportExcel?: () => void;
-    onExportPDF?: () => void;
-    exportingExcel?: boolean;
-    exportingPDF?: boolean;
 }
 
 const SeverityBadge: React.FC<{ severity: 'moderate' | 'high' }> = ({ severity }) => (
@@ -22,10 +19,25 @@ const SeverityBadge: React.FC<{ severity: 'moderate' | 'high' }> = ({ severity }
     </span>
 );
 
-export const OperatorDwellModule: React.FC<OperatorDwellModuleProps> = ({
-    data, onExportExcel, onExportPDF, exportingExcel, exportingPDF,
-}) => {
+export const OperatorDwellModule: React.FC<OperatorDwellModuleProps> = ({ data }) => {
     const [selectedOperator, setSelectedOperator] = useState<string | null>(null);
+    const [exportingExcel, setExportingExcel] = useState(false);
+    const [exportingPDF, setExportingPDF] = useState(false);
+
+    const startDate = data.metadata.dateRange.start;
+    const endDate = data.metadata.dateRange.end;
+
+    const handleExportExcel = useCallback(async () => {
+        setExportingExcel(true);
+        try { await exportOperatorDwell(data.dailySummaries, startDate, endDate); }
+        finally { setExportingExcel(false); }
+    }, [data.dailySummaries, startDate, endDate]);
+
+    const handleExportPDF = useCallback(async () => {
+        setExportingPDF(true);
+        try { await exportOperatorDwellPDF(data.dailySummaries, startDate, endDate); }
+        finally { setExportingPDF(false); }
+    }, [data.dailySummaries, startDate, endDate]);
 
     const metrics = useMemo(
         () => aggregateDwellAcrossDays(data.dailySummaries),
@@ -84,24 +96,20 @@ export const OperatorDwellModule: React.FC<OperatorDwellModuleProps> = ({
                                 Clear filter
                             </button>
                         )}
-                        {onExportExcel && (
-                            <button
-                                onClick={onExportExcel}
-                                disabled={exportingExcel}
-                                className="px-3 py-1.5 text-xs font-medium text-gray-600 hover:text-gray-800 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors disabled:opacity-50"
-                            >
-                                {exportingExcel ? 'Exporting...' : 'Excel'}
-                            </button>
-                        )}
-                        {onExportPDF && (
-                            <button
-                                onClick={onExportPDF}
-                                disabled={exportingPDF}
-                                className="px-3 py-1.5 text-xs font-medium text-gray-600 hover:text-gray-800 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors disabled:opacity-50"
-                            >
-                                {exportingPDF ? 'Exporting...' : 'PDF'}
-                            </button>
-                        )}
+                        <button
+                            onClick={handleExportExcel}
+                            disabled={exportingExcel}
+                            className="px-3 py-1.5 text-xs font-medium text-gray-600 hover:text-gray-800 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors disabled:opacity-50"
+                        >
+                            {exportingExcel ? 'Exporting...' : 'Excel'}
+                        </button>
+                        <button
+                            onClick={handleExportPDF}
+                            disabled={exportingPDF}
+                            className="px-3 py-1.5 text-xs font-medium text-gray-600 hover:text-gray-800 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors disabled:opacity-50"
+                        >
+                            {exportingPDF ? 'Exporting...' : 'PDF'}
+                        </button>
                     </div>
                 }
             >
