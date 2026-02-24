@@ -469,6 +469,7 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
         stopLabelsPane.style.pointerEvents = 'none';
         const rankLabelsPane = mapRef.current.createPane('od-rank-labels');
         rankLabelsPane.style.zIndex = '440';
+        rankLabelsPane.style.pointerEvents = 'none';
 
         // Inject pulse animation CSS once
         const style = document.createElement('style');
@@ -603,9 +604,6 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
                     `${stationName}<br/>Origin: ${cluster.originTrips.toLocaleString()} | Destination: ${cluster.destinationTrips.toLocaleString()}`,
                     { sticky: true, direction: 'top', opacity: 0.95 }
                 );
-                marker.on('click', () => {
-                    setIsolatedStation((prev) => (prev === stationName ? null : stationName));
-                });
                 marker.on('contextmenu', (e) => {
                     const mouseEvent = e as L.LeafletMouseEvent;
                     setContextMenu({ x: mouseEvent.containerPoint.x, y: mouseEvent.containerPoint.y, station: stationName });
@@ -615,32 +613,44 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
                     `${cluster.names.length} stations<br/>${cluster.names.slice(0, 4).join(', ')}${cluster.names.length > 4 ? '...' : ''}`,
                     { sticky: true, direction: 'top', opacity: 0.95 }
                 );
-                marker.on('click', () => {
-                    const zoom = mapRef.current?.getZoom() ?? 8;
-                    mapRef.current?.flyTo([cluster.lat, cluster.lon], zoom + 2);
-                });
             }
 
             marker.addTo(layersRef.current!);
+
+            // Attach click directly on the DOM element — Leaflet's map-level event
+            // delegation can miss clicks on L.divIcon SVG markers.
+            const iconEl = marker.getElement();
+            if (iconEl) {
+                iconEl.style.cursor = 'pointer';
+                iconEl.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    if (isSingleStation) {
+                        setIsolatedStation((prev) => (prev === stationName ? null : stationName));
+                    } else {
+                        const zoom = mapRef.current?.getZoom() ?? 8;
+                        mapRef.current?.flyTo([cluster.lat, cluster.lon], zoom + 2);
+                    }
+                });
+            }
             coords.push([cluster.lat, cluster.lon]);
         });
 
         // Station name labels — label every visible station, but skip if another labeled
-        // stop is within 35px on screen (the busiest stop wins since stationList is
+        // stop is within 50px on screen (the busiest stop wins since stationList is
         // sorted by totalTrips descending).
         const labeledStopPx: { x: number; y: number }[] = [];
         stationList.forEach((station) => {
             const stationPx = mapRef.current!.latLngToContainerPoint(
                 L.latLng(station.geo.lat, station.geo.lon)
             );
-            if (hasCollision(stationPx, labeledStopPx, 35)) return;
+            if (hasCollision(stationPx, labeledStopPx, 50)) return;
             labeledStopPx.push(stationPx);
 
             const nameLabel = L.marker([station.geo.lat, station.geo.lon], {
                 pane: 'od-stop-labels',
                 icon: L.divIcon({
                     className: 'od-label-icon',
-                    html: `<div style="font-size:10px;font-weight:600;color:#1e293b;white-space:nowrap;pointer-events:none;background:rgba(255,255,255,0.84);border-radius:4px;padding:1px 5px;box-shadow:0 1px 3px rgba(0,0,0,0.12);transform:translate(10px,-50%)">${truncateLabel(station.name)}</div>`,
+                    html: `<div style="font-size:11px;font-weight:700;color:#0f172a;letter-spacing:0.01em;white-space:nowrap;pointer-events:none;text-shadow:0 0 3px #fff,0 0 3px #fff,0 0 6px #fff;transform:translate(-50%,-100%);padding-bottom:6px">${truncateLabel(station.name)}</div>`,
                     iconSize: [0, 0],
                     iconAnchor: [0, 0],
                 }),
