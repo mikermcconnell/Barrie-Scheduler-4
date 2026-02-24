@@ -45,8 +45,13 @@ function makeDay(date: string, dayType: DayType): DailySummary {
     };
 }
 
-function runRange(summaries: DailySummary[], timeRange: TimeRange, dayType: DayType | 'all' = 'all') {
-    return filterDailySummaries(summaries, timeRange, dayType).map(d => d.date);
+function runRange(
+    summaries: DailySummary[],
+    timeRange: TimeRange,
+    dayType: DayType | 'all' = 'all',
+    selectedDate?: string | null,
+) {
+    return filterDailySummaries(summaries, timeRange, dayType, selectedDate).map(d => d.date);
 }
 
 describe('filterDailySummaries', () => {
@@ -87,5 +92,13 @@ describe('filterDailySummaries', () => {
             '2025-01-09',
             '2025-01-10',
         ]);
+    });
+
+    it('uses latest imported day when single-day has no explicit selectedDate', () => {
+        expect(runRange(days, 'single-day')).toEqual(['2025-01-10']);
+    });
+
+    it('filters to explicit selectedDate for single-day', () => {
+        expect(runRange(days, 'single-day', 'all', '2025-01-06')).toEqual(['2025-01-06']);
     });
 });

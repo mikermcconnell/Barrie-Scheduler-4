@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     ArrowLeft, RefreshCw, LayoutDashboard, Clock, TrendingUp,
     BarChart3, ExternalLink, Timer,
@@ -51,10 +51,6 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data
     const [dayTypeFilter, setDayTypeFilter] = useState<DayType | 'all'>('all');
 
     const timeRange = timeRanges[activeTab] ?? 'all';
-    const setTimeRange = useCallback((tr: TimeRange) => {
-        setTimeRanges(prev => ({ ...prev, [activeTab]: tr }));
-        if (tr !== 'single-day') setSelectedDate(null);
-    }, [activeTab]);
     const tabBarRef = useRef<HTMLDivElement>(null);
 
     const availableDayTypes = useMemo(() => {
@@ -66,11 +62,27 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data
         () => [...new Set(data.dailySummaries.map(d => d.date))].sort(),
         [data.dailySummaries]
     );
+    const latestAvailableDate = availableDates.at(-1) ?? null;
+
+    const setTimeRange = useCallback((tr: TimeRange) => {
+        setTimeRanges(prev => ({ ...prev, [activeTab]: tr }));
+        if (tr === 'single-day') {
+            setSelectedDate(prev => prev ?? latestAvailableDate);
+            return;
+        }
+        setSelectedDate(null);
+    }, [activeTab, latestAvailableDate]);
 
     const filteredData = useMemo((): PerformanceDataSummary => ({
         ...data,
         dailySummaries: filterDailySummaries(data.dailySummaries, timeRange, dayTypeFilter, selectedDate),
     }), [data, timeRange, dayTypeFilter, selectedDate]);
+
+    useEffect(() => {
+        if (timeRange !== 'single-day') return;
+        if (selectedDate && availableDates.includes(selectedDate)) return;
+        setSelectedDate(latestAvailableDate);
+    }, [timeRange, selectedDate, availableDates, latestAvailableDate]);
 
     const handleNavigate = (tabId: string) => {
         const tab = tabs.find(t => t.id === tabId);

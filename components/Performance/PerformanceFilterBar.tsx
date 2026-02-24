@@ -97,17 +97,16 @@ export function filterDailySummaries(
     selectedDate?: string | null,
 ): DailySummary[] {
     let result = summaries;
+    const latestDate = summaries
+        .map(s => s.date)
+        .sort(compareDateStrings)
+        .at(-1) ?? null;
 
     if (timeRange === 'single-day') {
-        if (selectedDate) {
-            result = result.filter(d => d.date === selectedDate);
-        }
+        const targetDate = selectedDate ?? latestDate;
+        result = targetDate ? result.filter(d => d.date === targetDate) : [];
     } else if (timeRange !== 'all') {
-        const latestDateStr = summaries
-            .map(s => s.date)
-            .sort(compareDateStrings)
-            .at(-1);
-        const latestStart = latestDateStr ? new Date(`${latestDateStr}T00:00:00`) : new Date();
+        const latestStart = latestDate ? new Date(`${latestDate}T00:00:00`) : new Date();
         latestStart.setHours(0, 0, 0, 0);
         const latestEnd = new Date(latestStart);
         latestEnd.setHours(23, 59, 59, 999);

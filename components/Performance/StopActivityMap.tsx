@@ -414,10 +414,9 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({ stops }) => {
         return sorted.slice(0, bottomNFilter);
     }, [filteredStops, bottomNFilter]);
 
-    // Sorted by activity for rank lookup
-    const rankedStops = useMemo(() => {
-        return [...filteredStops].sort((a, b) => b.activity - a.activity);
-    }, [filteredStops]);
+    const rankedDisplayedStops = useMemo(() => {
+        return [...displayedStops].sort((a, b) => b.activity - a.activity);
+    }, [displayedStops]);
 
     // Search results
     const searchResults = useMemo(() => {
@@ -836,7 +835,7 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({ stops }) => {
     // ─── Computed for detail panel ──────────────────────────────────────
 
     const selectedRank = selectedStop
-        ? rankedStops.findIndex(s => s.stopId === selectedStop.stopId) + 1
+        ? rankedDisplayedStops.findIndex(s => s.stopId === selectedStop.stopId) + 1
         : 0;
 
     // ─── Render ─────────────────────────────────────────────────────────
@@ -1078,7 +1077,7 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({ stops }) => {
                 <DetailPanel
                     stop={selectedStop}
                     rank={selectedRank}
-                    total={displayedStops.length}
+                    total={rankedDisplayedStops.length}
                     activeHours={activeHours}
                     onClose={() => { setSelectedStop(null); clearHighlight(); }}
                 />

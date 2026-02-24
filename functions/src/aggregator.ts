@@ -17,6 +17,20 @@ function timeToSeconds(time: string): number {
   return h * 3600 + m * 60 + s;
 }
 
+function parseStrictTimeToSeconds(raw: string): number | null {
+  const normalized = raw.trim();
+  if (!normalized) return null;
+  const m = normalized.match(/^(\d{1,3}):([0-5]\d)(?::([0-5]\d))?$/);
+  if (!m) return null;
+  const h = Number.parseInt(m[1], 10);
+  const min = Number.parseInt(m[2], 10);
+  const sec = m[3] ? Number.parseInt(m[3], 10) : 0;
+  if (!Number.isFinite(h) || h < 0) return null;
+  return h * 3600 + min * 60 + sec;
+}
+
+const MIDNIGHT_ROLLOVER_MIN_GAP_SECONDS = 12 * 3600;
+
 function safeDivide(numerator: number, denominator: number): number {
   return denominator === 0 ? 0 : numerator / denominator;
 }
@@ -433,12 +447,13 @@ function buildOperatorDwellMetrics(records: STREETSRecord[], date: string): Oper
   const incidents: DwellIncident[] = [];
 
   // STREETS can emit multiple observations for the same trip+stop (terminal arrival/departure passes).
-  // Keep the closest-to-schedule observation to avoid double-counting dwell incidents.
+  // Keep the closest-to-schedule observation per trip+stop+routeStopIndex.
+  // routeStopIndex is required so loop routes do not collapse repeated visits to the same stop.
   const groups = new Map<string, STREETSRecord[]>();
   for (const r of records) {
     if (!r.timePoint) continue;
     if (!r.observedArrivalTime || !r.observedDepartureTime) continue;
-    const key = `${r.tripId}|${r.stopId}`;
+    const key = `${r.tripId}|${r.stopId}|${r.routeStopIndex}`;
     const arr = groups.get(key);
     if (arr) arr.push(r);
     else groups.set(key, [r]);
@@ -459,9 +474,13 @@ function buildOperatorDwellMetrics(records: STREETSRecord[], date: string): Oper
     const observedDeparture = chosen.observedDepartureTime;
     if (!observedArrival || !observedDeparture) continue;
 
-    const arrSec = timeToSeconds(observedArrival);
-    let depSec = timeToSeconds(observedDeparture);
-    if (depSec < arrSec) depSec += 86400;
+    const arrSec = parseStrictTimeToSeconds(observedArrival);
+    let depSec = parseStrictTimeToSeconds(observedDeparture);
+    if (arrSec === null || depSec === null) continue;
+    if (depSec < arrSec) {
+      if (arrSec - depSec >= MIDNIGHT_ROLLOVER_MIN_GAP_SECONDS) depSec += 86400;
+      else continue;
+    }
 
     const rawDwell = depSec - arrSec;
     if (rawDwell < 0) continue;
