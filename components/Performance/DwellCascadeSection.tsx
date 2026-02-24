@@ -142,7 +142,10 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
 
     // Top 5 incidents by blast radius
     const topIncidents = useMemo(
-        () => [...cascadedOnly].sort((a, b) => b.blastRadius - a.blastRadius).slice(0, 5),
+        () => cascadedOnly
+            .filter(c => c.trackedDwellSeconds >= 300) // 5+ min dwell only — smaller values likely not the causal dwell
+            .sort((a, b) => b.blastRadius - a.blastRadius)
+            .slice(0, 5),
         [cascadedOnly],
     );
 

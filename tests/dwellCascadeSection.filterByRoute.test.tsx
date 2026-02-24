@@ -78,6 +78,13 @@ describe('DwellCascadeSection stop filter', () => {
       root.render(<DwellCascadeSection data={data} />);
     });
 
+    const showDetailsButton = Array.from(container.querySelectorAll('button'))
+      .find(btn => (btn.textContent || '').includes('Show details'));
+    expect(showDetailsButton).toBeTruthy();
+    flushSync(() => {
+      showDetailsButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
     expect(container.textContent).toContain('Trip-R10');
     expect(container.textContent).toContain('Trip-R20');
 
