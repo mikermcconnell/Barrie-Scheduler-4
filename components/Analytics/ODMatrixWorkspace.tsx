@@ -172,49 +172,6 @@ export const ODMatrixWorkspace: React.FC<ODMatrixWorkspaceProps> = ({
                 </div>
                 <div className="flex items-center gap-2">
                     <button
-                        onClick={handleExportExcel}
-                        disabled={exportingExcel}
-                        title="Export full network report"
-                        className="px-3 py-1.5 text-xs font-bold text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-50 flex items-center gap-1.5 transition-colors"
-                    >
-                        <Download size={16} />
-                        {exportingExcel ? 'Exporting...' : 'Export Network'}
-                    </button>
-                    {/* Stop Focus export group — only styled active when a stop is isolated */}
-                    <div className={`flex items-center rounded-lg overflow-hidden border transition-colors ${isolatedStation ? 'border-violet-300' : 'border-transparent'}`}>
-                        <button
-                            onClick={handleExportStopReport}
-                            disabled={!isolatedStation || exportingStop}
-                            title={isolatedStation ? `Export stop Excel: ${isolatedStation}` : 'Select a stop on the map first'}
-                            className="px-3 py-1.5 text-xs font-bold rounded-none flex items-center gap-1.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-violet-50 text-violet-700 hover:bg-violet-100 disabled:bg-gray-100 disabled:text-gray-400"
-                        >
-                            <Download size={16} />
-                            {exportingStop
-                                ? 'Exporting...'
-                                : isolatedStation
-                                    ? `Stop: ${isolatedStation}`
-                                    : 'Stop Focus'}
-                        </button>
-                        <div className={`w-px h-5 ${isolatedStation ? 'bg-violet-200' : 'bg-gray-200'}`} />
-                        <button
-                            onClick={handleExportStopPdf}
-                            disabled={!isolatedStation || exportingStopPdf}
-                            title={isolatedStation ? `Export stop PDF: ${isolatedStation}` : 'Select a stop on the map first'}
-                            className="px-3 py-1.5 text-xs font-bold rounded-none flex items-center gap-1.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-violet-50 text-violet-700 hover:bg-violet-100 disabled:bg-gray-100 disabled:text-gray-400"
-                        >
-                            <FileText size={16} />
-                            {exportingStopPdf ? 'Exporting...' : 'PDF'}
-                        </button>
-                    </div>
-                    <button
-                        onClick={handleExportPDF}
-                        disabled={exportingPDF}
-                        className="px-3 py-1.5 text-xs font-bold text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-50 flex items-center gap-1.5 transition-colors"
-                    >
-                        <FileText size={16} />
-                        {exportingPDF ? 'Exporting...' : 'Export PDF'}
-                    </button>
-                    <button
                         onClick={onReimport}
                         className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors flex items-center gap-2"
                     >
@@ -237,6 +194,57 @@ export const ODMatrixWorkspace: React.FC<ODMatrixWorkspaceProps> = ({
                     dateRange: data.metadata.dateRange,
                 }}
             />
+
+            {/* Export Toolbar */}
+            <div className="flex items-center justify-between px-1 py-2.5 border-b border-gray-100 mt-3">
+                {/* Network exports */}
+                <div className="flex items-center gap-2">
+                    <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mr-1">Network</span>
+                    <button
+                        onClick={handleExportExcel}
+                        disabled={exportingExcel}
+                        title="Export full network Excel report"
+                        className="px-3 py-1.5 text-xs font-bold text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-50 flex items-center gap-1.5 transition-colors"
+                    >
+                        <Download size={14} />
+                        {exportingExcel ? 'Exporting...' : 'Excel'}
+                    </button>
+                    <button
+                        onClick={handleExportPDF}
+                        disabled={exportingPDF}
+                        title="Export full network PDF report"
+                        className="px-3 py-1.5 text-xs font-bold text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-50 flex items-center gap-1.5 transition-colors"
+                    >
+                        <FileText size={14} />
+                        {exportingPDF ? 'Exporting...' : 'PDF'}
+                    </button>
+                </div>
+
+                {/* Stop Focus exports */}
+                <div className={`flex items-center gap-2 rounded-xl px-3 py-1.5 transition-colors ${isolatedStation ? 'bg-violet-50 ring-1 ring-violet-200' : 'opacity-50'}`}>
+                    <span className={`text-[11px] font-semibold uppercase tracking-wide mr-1 ${isolatedStation ? 'text-violet-500' : 'text-gray-400'}`}>
+                        {isolatedStation ? isolatedStation : 'Stop Focus'}
+                    </span>
+                    <button
+                        onClick={handleExportStopReport}
+                        disabled={!isolatedStation || exportingStop}
+                        title={isolatedStation ? `Export stop Excel: ${isolatedStation}` : 'Select a stop on the map first'}
+                        className={`px-3 py-1.5 text-xs font-bold rounded-lg flex items-center gap-1.5 transition-colors disabled:cursor-not-allowed ${isolatedStation ? 'bg-violet-100 text-violet-700 hover:bg-violet-200' : 'bg-gray-100 text-gray-400'}`}
+                    >
+                        <Download size={14} />
+                        {exportingStop ? 'Exporting...' : 'Excel'}
+                    </button>
+                    <button
+                        onClick={handleExportStopPdf}
+                        disabled={!isolatedStation || exportingStopPdf}
+                        title={isolatedStation ? `Export stop PDF: ${isolatedStation}` : 'Select a stop on the map first'}
+                        className={`px-3 py-1.5 text-xs font-bold rounded-lg flex items-center gap-1.5 transition-colors disabled:cursor-not-allowed ${isolatedStation ? 'bg-violet-100 text-violet-700 hover:bg-violet-200' : 'bg-gray-100 text-gray-400'}`}
+                    >
+                        <FileText size={14} />
+                        {exportingStopPdf ? 'Exporting...' : 'PDF'}
+                    </button>
+                </div>
+            </div>
 
             {/* Tab Bar */}
             <div className="border-b border-gray-200 bg-gray-50/50 rounded-t-lg -mx-1 px-1">
