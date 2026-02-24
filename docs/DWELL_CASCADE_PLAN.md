@@ -22,8 +22,8 @@
 | **4 — UI** | `tsc --noEmit` passes (rollup has pre-existing OD exporter error) | ✅ |
 | **5 — Verify** | Import real STREETS CSV and verify cascades compute | ✅ |
 | **5 — Verify** | Verify absorbed case (366 of 403 absorbed) | ✅ |
-| **5 — Verify** | Verify multi-day aggregation with filter bar | ⬜ |
-| **5 — Verify** | Verify graceful fallback when `byCascade` is undefined | ⬜ |
+| **5 — Verify** | Verify multi-day aggregation with filter bar | ✅ |
+| **5 — Verify** | Verify graceful fallback when `byCascade` is undefined | ✅ |
 
 ---
 
