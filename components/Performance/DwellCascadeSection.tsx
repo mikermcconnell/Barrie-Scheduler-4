@@ -71,7 +71,7 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
 
     // Banner: total trips operated
     const totalTripsOperated = useMemo(
-        () => data.dailySummaries.reduce((sum, d) => sum + d.system.tripCount, 0),
+        () => data.dailySummaries.reduce((sum, d) => sum + (d.system?.tripCount ?? 0), 0),
         [data.dailySummaries],
     );
 
@@ -82,8 +82,8 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
 
     // OTP impact: actual vs estimated without cascades
     const otpImpact = useMemo(() => {
-        const totalAssessed = data.dailySummaries.reduce((sum, d) => sum + d.system.otp.total, 0);
-        const totalOnTime = data.dailySummaries.reduce((sum, d) => sum + d.system.otp.onTime, 0);
+        const totalAssessed = data.dailySummaries.reduce((sum, d) => sum + (d.system?.otp?.total ?? 0), 0);
+        const totalOnTime = data.dailySummaries.reduce((sum, d) => sum + (d.system?.otp?.onTime ?? 0), 0);
         if (totalAssessed === 0) return null;
         const actualPct = (totalOnTime / totalAssessed) * 100;
         const penaltyPp = (metrics.totalCascadeOTPDamage / totalAssessed) * 100;
@@ -104,7 +104,7 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
         // Build routeId → { routeId, routeName, totalTrips } from dailySummaries
         const routeMap = new Map<string, { routeId: string; routeName: string; totalTrips: number }>();
         for (const day of data.dailySummaries) {
-            for (const r of day.byRoute) {
+            for (const r of (day.byRoute ?? [])) {
                 const existing = routeMap.get(r.routeId);
                 if (existing) {
                     existing.totalTrips += r.tripCount;
