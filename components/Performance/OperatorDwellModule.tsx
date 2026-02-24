@@ -2,7 +2,7 @@ import React, { useMemo, useState, useCallback, useEffect } from 'react';
 import {
     LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts';
-import { AlertTriangle, Clock, Users, Timer } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronUp, Clock, Users, Timer, TrendingUp } from 'lucide-react';
 import type { PerformanceDataSummary, DwellIncident, OperatorDwellSummary } from '../../utils/performanceDataTypes';
 import { MetricCard, ChartCard, fmt } from '../Analytics/AnalyticsShared';
 import { aggregateDwellAcrossDays } from '../../utils/schedule/operatorDwellUtils';
@@ -21,6 +21,10 @@ interface OperatorDwellModuleProps {
 
 const INCIDENTS_PER_PAGE = 100;
 
+type SortCol = 'date' | 'routeId' | 'stopName' | 'observedArrivalTime' | 'observedDepartureTime' | 'trackedDwellSeconds' | 'severity';
+type SortDir = 'asc' | 'desc';
+const SEVERITY_ORDER: Record<string, number> = { moderate: 1, high: 2 };
+
 const SeverityBadge: React.FC<{ severity: 'moderate' | 'high' }> = ({ severity }) => (
     <span className={`inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full ${
         severity === 'high'
@@ -35,6 +39,8 @@ export const OperatorDwellModule: React.FC<OperatorDwellModuleProps> = ({ data }
     const [subView, setSubView] = useState<'incidents' | 'cascade'>('incidents');
     const [selectedOperator, setSelectedOperator] = useState<string | null>(null);
     const [incidentPage, setIncidentPage] = useState(1);
+    const [sortCol, setSortCol] = useState<SortCol>('trackedDwellSeconds');
+    const [sortDir, setSortDir] = useState<SortDir>('desc');
     const [exportingExcel, setExportingExcel] = useState(false);
     const [exportingPDF, setExportingPDF] = useState(false);
 
@@ -74,21 +80,51 @@ export const OperatorDwellModule: React.FC<OperatorDwellModuleProps> = ({ data }
         return metrics.incidents.filter(i => i.operatorId === selectedOperator);
     }, [metrics, selectedOperator]);
 
+    const handleSort = useCallback((col: SortCol) => {
+        if (col === sortCol) {
+            setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+        } else {
+            setSortCol(col);
+            setSortDir('desc');
+        }
+        setIncidentPage(1);
+    }, [sortCol]);
+
+    const sortedIncidents = useMemo(() => {
+        const sorted = [...filteredIncidents];
+        sorted.sort((a, b) => {
+            let cmp = 0;
+            if (sortCol === 'trackedDwellSeconds') {
+                cmp = a.trackedDwellSeconds - b.trackedDwellSeconds;
+            } else if (sortCol === 'severity') {
+                cmp = (SEVERITY_ORDER[a.severity] ?? 0) - (SEVERITY_ORDER[b.severity] ?? 0);
+            } else {
+                cmp = a[sortCol].localeCompare(b[sortCol]);
+            }
+            return sortDir === 'desc' ? -cmp : cmp;
+        });
+        return sorted;
+    }, [filteredIncidents, sortCol, sortDir]);
+
     useEffect(() => {
         setIncidentPage(1);
     }, [selectedOperator, filteredIncidents.length]);
 
-    const totalIncidentPages = Math.max(1, Math.ceil(filteredIncidents.length / INCIDENTS_PER_PAGE));
+    const totalIncidentPages = Math.max(1, Math.ceil(sortedIncidents.length / INCIDENTS_PER_PAGE));
     const currentIncidentPage = Math.min(incidentPage, totalIncidentPages);
     const pagedIncidents = useMemo(() => {
         const start = (currentIncidentPage - 1) * INCIDENTS_PER_PAGE;
-        return filteredIncidents.slice(start, start + INCIDENTS_PER_PAGE);
-    }, [currentIncidentPage, filteredIncidents]);
+        return sortedIncidents.slice(start, start + INCIDENTS_PER_PAGE);
+    }, [currentIncidentPage, sortedIncidents]);
 
-    const missingDwellDates = useMemo(
-        () => data.dailySummaries.filter(d => !d.byOperatorDwell).map(d => d.date),
-        [data.dailySummaries]
-    );
+    const missingDwellDates = useMemo(() => {
+        const cutoff = new Date();
+        cutoff.setDate(cutoff.getDate() - 7);
+        return data.dailySummaries
+            .filter(d => !d.byOperatorDwell)
+            .map(d => d.date)
+            .filter(date => new Date(`${date}T12:00:00`) >= cutoff);
+    }, [data.dailySummaries]);
     const numDays = data.dailySummaries.filter(d => d.byOperatorDwell).length || 1;
     const totalTrips = data.dailySummaries.reduce((s, d) => s + (d.system?.tripCount ?? 0), 0);
     const highCount = metrics.byOperator.reduce((s, o) => s + o.highCount, 0);
@@ -138,6 +174,62 @@ export const OperatorDwellModule: React.FC<OperatorDwellModuleProps> = ({ data }
                 };
             });
     }, [data.dailySummaries]);
+
+    // Trending dwell locations: high-severity incidents at same stop + same trip on 3+ distinct days
+    const trendingLocations = useMemo(() => {
+        const highIncidents = metrics.incidents.filter(i => i.severity === 'high');
+        if (highIncidents.length === 0) return [];
+
+        const groups = new Map<string, DwellIncident[]>();
+        for (const inc of highIncidents) {
+            if (!inc.tripName) continue;
+            const key = `${inc.stopId}||${inc.tripName}`;
+            const arr = groups.get(key);
+            if (arr) arr.push(inc);
+            else groups.set(key, [inc]);
+        }
+
+        const trends: {
+            stopName: string;
+            stopId: string;
+            routeId: string;
+            tripName: string;
+            blocks: string[];
+            approxTime: string;
+            distinctDays: number;
+            dates: string[];
+            totalIncidents: number;
+            avgDwellMin: number;
+            operators: string[];
+        }[] = [];
+
+        for (const [, incidents] of groups) {
+            const dates = [...new Set(incidents.map(i => i.date))].sort();
+            if (dates.length < 3) continue;
+
+            const operators = [...new Set(incidents.map(i => i.operatorId))].sort();
+            const blocks = [...new Set(incidents.map(i => i.block))].sort();
+            const totalDwell = incidents.reduce((s, i) => s + i.trackedDwellSeconds, 0);
+            // Use earliest incident by date for a stable representative time
+            const earliest = incidents.reduce((best, i) => i.date < best.date ? i : best);
+
+            trends.push({
+                stopName: earliest.stopName,
+                stopId: earliest.stopId,
+                routeId: earliest.routeId,
+                tripName: earliest.tripName,
+                blocks,
+                approxTime: earliest.observedArrivalTime.slice(0, 5),
+                distinctDays: dates.length,
+                dates,
+                totalIncidents: incidents.length,
+                avgDwellMin: +(totalDwell / incidents.length / 60).toFixed(1),
+                operators,
+            });
+        }
+
+        return trends.sort((a, b) => b.distinctDays - a.distinctDays || b.totalIncidents - a.totalIncidents);
+    }, [metrics.incidents]);
 
     return (
         <div className="space-y-5">
@@ -297,13 +389,29 @@ export const OperatorDwellModule: React.FC<OperatorDwellModuleProps> = ({ data }
                             <table className="w-full text-sm">
                                 <thead className="sticky top-0 bg-white">
                                     <tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wider">
-                                        <th className="pb-2 pr-3 font-medium">Date</th>
-                                        <th className="pb-2 pr-3 font-medium">Route</th>
-                                        <th className="pb-2 pr-3 font-medium">Stop</th>
-                                        <th className="pb-2 pr-3 font-medium">Arrival</th>
-                                        <th className="pb-2 pr-3 font-medium">Departure</th>
-                                        <th className="pb-2 pr-3 font-medium text-right">Tracked (min)</th>
-                                        <th className="pb-2 font-medium">Severity</th>
+                                        {([
+                                            { col: 'date', label: 'Date' },
+                                            { col: 'routeId', label: 'Route' },
+                                            { col: 'stopName', label: 'Stop' },
+                                            { col: 'observedArrivalTime', label: 'Arrival' },
+                                            { col: 'observedDepartureTime', label: 'Departure' },
+                                            { col: 'trackedDwellSeconds', label: 'Tracked (min)', right: true },
+                                            { col: 'severity', label: 'Severity' },
+                                        ] as { col: SortCol; label: string; right?: boolean }[]).map(({ col, label, right }) => (
+                                            <th
+                                                key={col}
+                                                onClick={() => handleSort(col)}
+                                                className={`pb-2 pr-3 font-medium cursor-pointer select-none hover:text-gray-700 transition-colors ${right ? 'text-right' : ''}`}
+                                            >
+                                                <span className="inline-flex items-center gap-0.5">
+                                                    {label}
+                                                    {sortCol === col
+                                                        ? (sortDir === 'desc' ? <ChevronDown size={11} /> : <ChevronUp size={11} />)
+                                                        : <ChevronDown size={11} className="opacity-20" />
+                                                    }
+                                                </span>
+                                            </th>
+                                        ))}
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -322,13 +430,13 @@ export const OperatorDwellModule: React.FC<OperatorDwellModuleProps> = ({ data }
                             </table>
                         </div>
                     )}
-                    {filteredIncidents.length > INCIDENTS_PER_PAGE && (
+                    {sortedIncidents.length > INCIDENTS_PER_PAGE && (
                         <div className="mt-3 flex items-center justify-between text-xs text-gray-500">
                             <span>
                                 Showing {(currentIncidentPage - 1) * INCIDENTS_PER_PAGE + 1}
                                 {'-'}
-                                {Math.min(currentIncidentPage * INCIDENTS_PER_PAGE, filteredIncidents.length)}
-                                {' '}of {filteredIncidents.length}
+                                {Math.min(currentIncidentPage * INCIDENTS_PER_PAGE, sortedIncidents.length)}
+                                {' '}of {sortedIncidents.length}
                             </span>
                             <div className="flex items-center gap-2">
                                 <button
@@ -396,6 +504,55 @@ export const OperatorDwellModule: React.FC<OperatorDwellModuleProps> = ({ data }
                             )}
                         </LineChart>
                     </ResponsiveContainer>
+                </ChartCard>
+            )}
+
+            {/* Trending Dwell Locations */}
+            {trendingLocations.length > 0 && (
+                <ChartCard
+                    title="Trending Dwell Locations"
+                    subtitle="High-severity incidents recurring on the same trip at the same stop on 3+ days"
+                    headerExtra={
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-red-100 text-red-700 text-xs font-bold rounded-full">
+                            <TrendingUp size={12} />
+                            {trendingLocations.length} trend{trendingLocations.length !== 1 ? 's' : ''}
+                        </span>
+                    }
+                >
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                            <thead>
+                                <tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wider">
+                                    <th className="pb-2 pr-3 font-medium">Route</th>
+                                    <th className="pb-2 pr-3 font-medium">Trip</th>
+                                    <th className="pb-2 pr-3 font-medium">Block</th>
+                                    <th className="pb-2 pr-3 font-medium">Stop</th>
+                                    <th className="pb-2 pr-3 font-medium">~Time</th>
+                                    <th className="pb-2 pr-3 font-medium text-right">Days</th>
+                                    <th className="pb-2 pr-3 font-medium text-right">Incidents</th>
+                                    <th className="pb-2 pr-3 font-medium text-right">Avg (min)</th>
+                                    <th className="pb-2 pr-3 font-medium">Operators</th>
+                                    <th className="pb-2 font-medium">Dates</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {trendingLocations.map((t, idx) => (
+                                    <tr key={`${t.stopId}-${t.tripName}-${idx}`} className="border-b border-gray-100">
+                                        <td className="py-2 pr-3 text-gray-600">{t.routeId}</td>
+                                        <td className="py-2 pr-3 text-gray-900 font-medium">{t.tripName}</td>
+                                        <td className="py-2 pr-3 text-gray-600 text-xs">{t.blocks.join(', ')}</td>
+                                        <td className="py-2 pr-3 text-gray-900 max-w-[200px] truncate" title={t.stopName}>{t.stopName}</td>
+                                        <td className="py-2 pr-3 text-gray-600 tabular-nums">{t.approxTime}</td>
+                                        <td className="py-2 pr-3 text-right font-bold text-red-700">{t.distinctDays}</td>
+                                        <td className="py-2 pr-3 text-right">{t.totalIncidents}</td>
+                                        <td className="py-2 pr-3 text-right tabular-nums">{t.avgDwellMin}</td>
+                                        <td className="py-2 pr-3 text-gray-600 text-xs">{t.operators.join(', ')}</td>
+                                        <td className="py-2 text-gray-500 text-xs">{t.dates.join(', ')}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
                 </ChartCard>
             )}
             </>)}

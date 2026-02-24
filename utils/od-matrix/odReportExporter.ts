@@ -1265,7 +1265,30 @@ export async function exportStopReportPdf(
     drawHorizontalBarChart(doc, chartItems, margin, fy, pageW - 2 * margin, VIOLET);
     drawFooterTag(pageH - 7);
 
-    // ─── Page 4: Outbound Flows ──────────────────────────────────
+    // ─── Flow Map (filtered view) ───────────────────────────────
+
+    if (mapEl) {
+        try {
+            const canvas = await html2canvas(mapEl, { useCORS: true, scale: 1.5 });
+            const imgData = canvas.toDataURL('image/png');
+            doc.addPage();
+            tocEntries.push({ title: 'Flow Map', page: doc.getNumberOfPages() });
+            drawSectionHeader(`Flow Map — ${stopName}`, 25, 110);
+
+            doc.setFontSize(8);
+            doc.setTextColor(...MID_GRAY);
+            doc.text(`Connections visible at time of export. Line thickness = journey volume.`, margin, 33);
+
+            const imgW = pageW - 2 * margin;
+            const imgH = (canvas.height / canvas.width) * imgW;
+            doc.addImage(imgData, 'PNG', margin, 38, imgW, Math.min(imgH, pageH - 70));
+            drawFooterTag(pageH - 7);
+        } catch {
+            // Skip on capture failure
+        }
+    }
+
+    // ─── Outbound Flows ──────────────────────────────────────────
 
     doc.addPage();
     tocEntries.push({ title: 'Outbound Flows', page: doc.getNumberOfPages() });
@@ -1414,29 +1437,6 @@ export async function exportStopReportPdf(
             columnStyles: { 4: { fontStyle: 'italic', textColor: [...MID_GRAY] as [number, number, number] } },
         });
         drawFooterTag(pageH - 7);
-    }
-
-    // ─── Optional: Flow Map (filtered view) ─────────────────────
-
-    if (mapEl) {
-        try {
-            const canvas = await html2canvas(mapEl, { useCORS: true, scale: 1.5 });
-            const imgData = canvas.toDataURL('image/png');
-            doc.addPage();
-            tocEntries.push({ title: 'Flow Map', page: doc.getNumberOfPages() });
-            drawSectionHeader(`Flow Map — ${stopName}`, 25, 110);
-
-            doc.setFontSize(8);
-            doc.setTextColor(...MID_GRAY);
-            doc.text(`Connections visible at time of export. Line thickness = journey volume.`, margin, 33);
-
-            const imgW = pageW - 2 * margin;
-            const imgH = (canvas.height / canvas.width) * imgW;
-            doc.addImage(imgData, 'PNG', margin, 38, imgW, Math.min(imgH, pageH - 70));
-            drawFooterTag(pageH - 7);
-        } catch {
-            // Skip on capture failure
-        }
     }
 
     // ─── Fill Table of Contents ──────────────────────────────────

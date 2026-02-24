@@ -153,6 +153,113 @@ describe('buildOperatorDwellMetrics (via aggregateDailySummaries)', () => {
     expect(day.byOperatorDwell!.totalIncidents).toBe(0);
   });
 
+  it('deduplicates duplicate trip+stop observations using closest-to-schedule row', () => {
+    const records = [
+      // Same trip+stop appears twice (terminal duplicate pattern)
+      makeRecord({
+        tripId: 'trip-dup',
+        stopId: 'S100',
+        stopTime: '10:00',
+        observedArrivalTime: '10:00:00',
+        observedDepartureTime: '10:06:00', // farther from schedule
+        vehicleLocationTPKey: 1001,
+      }),
+      makeRecord({
+        tripId: 'trip-dup',
+        stopId: 'S100',
+        stopTime: '10:00',
+        observedArrivalTime: '10:00:00',
+        observedDepartureTime: '10:03:00', // closer to schedule
+        vehicleLocationTPKey: 1002,
+      }),
+    ];
+
+    const [day] = aggregateDailySummaries(records);
+    const dwell = day.byOperatorDwell!;
+
+    expect(dwell.totalIncidents).toBe(1);
+    expect(dwell.incidents[0].rawDwellSeconds).toBe(180);
+    expect(dwell.incidents[0].trackedDwellSeconds).toBe(60);
+    expect(dwell.incidents[0].severity).toBe('moderate');
+  });
+
+  it('treats repeated same-stop visits in one trip as distinct incidents when routeStopIndex differs', () => {
+    const records = [
+      makeRecord({
+        tripId: 'trip-loop',
+        stopId: 'S500',
+        routeStopIndex: 4,
+        stopTime: '10:00',
+        observedArrivalTime: '10:00:00',
+        observedDepartureTime: '10:03:00', // moderate (tracked 60)
+        vehicleLocationTPKey: 5001,
+      }),
+      makeRecord({
+        tripId: 'trip-loop',
+        stopId: 'S500',
+        routeStopIndex: 17,
+        stopTime: '10:30',
+        observedArrivalTime: '10:30:00',
+        observedDepartureTime: '10:36:00', // high (tracked 240)
+        vehicleLocationTPKey: 5002,
+      }),
+    ];
+
+    const [day] = aggregateDailySummaries(records);
+    const dwell = day.byOperatorDwell!;
+
+    expect(dwell.totalIncidents).toBe(2);
+    expect(dwell.byOperator).toHaveLength(1);
+    expect(dwell.byOperator[0].totalIncidents).toBe(2);
+    expect(dwell.byOperator[0].moderateCount).toBe(1);
+    expect(dwell.byOperator[0].highCount).toBe(1);
+    expect(dwell.byOperator[0].totalTrackedDwellSeconds).toBe(300);
+  });
+
+  it('skips malformed observed time values instead of producing NaN dwell metrics', () => {
+    const records = [
+      makeRecord({
+        tripId: 'trip-bad-time',
+        tripName: 'bad-time-trip',
+        observedArrivalTime: 'TBD',
+        observedDepartureTime: '10:10:00',
+      }),
+      makeRecord({
+        tripId: 'trip-good-time',
+        tripName: 'good-time-trip',
+        stopId: 'S220',
+        observedArrivalTime: '10:20:00',
+        observedDepartureTime: '10:23:00', // moderate (tracked 60)
+      }),
+    ];
+
+    const [day] = aggregateDailySummaries(records);
+    const dwell = day.byOperatorDwell!;
+
+    expect(dwell.totalIncidents).toBe(1);
+    expect(dwell.incidents).toHaveLength(1);
+    expect(dwell.incidents[0].tripName).toBe('good-time-trip');
+    expect(dwell.incidents[0].rawDwellSeconds).toBe(180);
+    expect(dwell.incidents[0].trackedDwellSeconds).toBe(60);
+    expect(dwell.totalTrackedDwellMinutes).toBe(1);
+  });
+
+  it('does not treat small same-day dep<arr ordering noise as a midnight rollover', () => {
+    const records = [
+      makeRecord({
+        tripId: 'trip-order-noise',
+        observedArrivalTime: '10:00:02',
+        observedDepartureTime: '10:00:00',
+      }),
+    ];
+
+    const [day] = aggregateDailySummaries(records);
+    const dwell = day.byOperatorDwell!;
+
+    expect(dwell.totalIncidents).toBe(0);
+    expect(dwell.incidents).toHaveLength(0);
+  });
+
   it('aggregates correctly across multiple operators', () => {
     const records = [
       // OP001: 3 min dwell (moderate)

@@ -292,6 +292,74 @@ describe('dwellCascadeComputer.buildDailyCascadeMetrics', () => {
     expect(result.cascades).toHaveLength(0);
   });
 
+  it('deduplicates duplicate observations at the same exit timepoint', () => {
+    const records = buildBlockRecords({
+      block: '10-01',
+      tripCount: 2,
+      baseHour: 8,
+      intervalMin: 30,
+      observedMidDepartures: {
+        0: '08:10:00', // on-time exit at Trip-1 last eligible TP
+      },
+    });
+
+    // Duplicate terminal-style observation for Trip-1 @ routeStopIndex 2.
+    // This row is farther from schedule and should be ignored by dedup.
+    records.push(makeRecord({
+      block: '10-01',
+      tripName: 'Trip-1',
+      tripId: 'trip-guid-1',
+      terminalDepartureTime: '08:00',
+      routeStopIndex: 2,
+      stopName: 'Stop B',
+      stopId: 'SB',
+      timePoint: true,
+      arrivalTime: '08:10',
+      stopTime: '08:10',
+      observedArrivalTime: '08:18:00',
+      observedDepartureTime: '08:18:00',
+    }));
+
+    const incident = makeIncident({ tripName: 'Trip-1', block: '10-01' });
+    const result = buildDailyCascadeMetrics(records, [incident]);
+    const cascade = result.cascades[0];
+
+    // Canonical (closest-to-schedule) row is on-time, so no cascade.
+    expect(cascade.excessLateSeconds).toBe(0);
+    expect(cascade.absorbed).toBe(true);
+    expect(cascade.blastRadius).toBe(0);
+    expect(cascade.cascadedTrips).toHaveLength(0);
+  });
+
+  it('uses late-entering fallback when downstream trip has no observed first departure', () => {
+    const records = buildBlockRecords({
+      block: '10-01',
+      tripCount: 3,
+      baseHour: 8,
+      intervalMin: 25, // 5 min recovery between trips
+      observedMidDepartures: {
+        0: '08:18:00', // Trip-1 exit late by 8 min
+        1: null,       // Trip-2 has no observed mid departure either
+      },
+      observedFirstDepartures: {
+        1: null, // Trip-2 has no observed first departure
+      },
+    });
+
+    const incident = makeIncident({ tripName: 'Trip-1', block: '10-01' });
+    const result = buildDailyCascadeMetrics(records, [incident]);
+    const cascade = result.cascades[0];
+
+    expect(cascade.recoveryTimeAvailableSeconds).toBe(300); // 5 min
+    expect(cascade.excessLateSeconds).toBe(480); // 8 min
+    expect(cascade.cascadedTrips).toHaveLength(1);
+    expect(cascade.cascadedTrips[0].tripName).toBe('Trip-2');
+    expect(cascade.cascadedTrips[0].observedDepartureSeconds).toBeNull();
+    // fallback = lateEntering = 8 - 5 = 3 min
+    expect(cascade.cascadedTrips[0].lateSeconds).toBe(180);
+    expect(cascade.cascadedTrips[0].recoveredHere).toBe(true);
+  });
+
   it('builds byStop summary ranked by total blast radius', () => {
     // Two incidents at different stops — one cascades, one absorbed
     const records = buildBlockRecords({

@@ -676,12 +676,35 @@ function buildRidershipHeatmaps(records: STREETSRecord[]): RouteRidershipHeatmap
 function buildOperatorDwellMetrics(records: STREETSRecord[], date: string): OperatorDwellMetrics {
   const incidents: DwellIncident[] = [];
 
+  // STREETS can emit multiple observations for the same trip+stop (terminal arrival/departure passes).
+  // Keep the closest-to-schedule observation to avoid double-counting dwell incidents.
+  const groups = new Map<string, STREETSRecord[]>();
   for (const r of records) {
     if (!r.timePoint) continue;
     if (!r.observedArrivalTime || !r.observedDepartureTime) continue;
+    const key = `${r.tripId}|${r.stopId}`;
+    const arr = groups.get(key);
+    if (arr) arr.push(r);
+    else groups.set(key, [r]);
+  }
 
-    let arrSec = timeToSeconds(r.observedArrivalTime);
-    let depSec = timeToSeconds(r.observedDepartureTime);
+  for (const recs of groups.values()) {
+    let chosen = recs[0];
+    let bestDev = Math.abs(timeToSeconds(chosen.observedDepartureTime!) - timeToSeconds(chosen.stopTime));
+    for (let i = 1; i < recs.length; i++) {
+      const dev = Math.abs(timeToSeconds(recs[i].observedDepartureTime!) - timeToSeconds(recs[i].stopTime));
+      if (dev < bestDev) {
+        chosen = recs[i];
+        bestDev = dev;
+      }
+    }
+
+    const observedArrival = chosen.observedArrivalTime;
+    const observedDeparture = chosen.observedDepartureTime;
+    if (!observedArrival || !observedDeparture) continue;
+
+    let arrSec = timeToSeconds(observedArrival);
+    let depSec = timeToSeconds(observedDeparture);
 
     // Post-midnight guard: departure before arrival means midnight rollover
     if (depSec < arrSec) depSec += 86400;
@@ -695,16 +718,16 @@ function buildOperatorDwellMetrics(records: STREETSRecord[], date: string): Oper
     const trackedDwell = rawDwell - DWELL_THRESHOLDS.boardingAllowanceSeconds;
 
     incidents.push({
-      operatorId: r.operatorId,
+      operatorId: chosen.operatorId,
       date,
-      routeId: r.routeId,
-      routeName: r.routeName,
-      stopName: r.stopName,
-      stopId: r.stopId,
-      tripName: r.tripName,
-      block: r.block,
-      observedArrivalTime: r.observedArrivalTime,
-      observedDepartureTime: r.observedDepartureTime,
+      routeId: chosen.routeId,
+      routeName: chosen.routeName,
+      stopName: chosen.stopName,
+      stopId: chosen.stopId,
+      tripName: chosen.tripName,
+      block: chosen.block,
+      observedArrivalTime: observedArrival,
+      observedDepartureTime: observedDeparture,
       rawDwellSeconds: rawDwell,
       trackedDwellSeconds: trackedDwell,
       severity,

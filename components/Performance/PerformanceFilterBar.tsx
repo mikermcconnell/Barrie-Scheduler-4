@@ -2,13 +2,14 @@ import React from 'react';
 import type { DailySummary, DayType } from '../../utils/performanceDataTypes';
 import { compareDateStrings } from '../../utils/performanceDateUtils';
 
-export type TimeRange = 'all' | 'yesterday' | 'past-week' | 'past-month';
+export type TimeRange = 'all' | 'yesterday' | 'past-week' | 'past-month' | 'single-day';
 
 const TIME_RANGE_LABELS: Record<TimeRange, string> = {
     all: 'All Data',
     'past-month': 'Past Month',
     'past-week': 'Past Week',
     yesterday: 'Yesterday',
+    'single-day': 'Single Day',
 };
 
 const DAY_TYPE_LABELS: Record<DayType, string> = { weekday: 'Weekday', saturday: 'Saturday', sunday: 'Sunday' };
@@ -16,6 +17,9 @@ const DAY_TYPE_LABELS: Record<DayType, string> = { weekday: 'Weekday', saturday:
 interface PerformanceFilterBarProps {
     timeRange: TimeRange;
     onTimeRangeChange: (tr: TimeRange) => void;
+    selectedDate: string | null;
+    onSelectedDateChange: (d: string | null) => void;
+    availableDates: string[];
     dayTypeFilter: DayType | 'all';
     onDayTypeChange: (dt: DayType | 'all') => void;
     availableDayTypes: DayType[];
@@ -23,7 +27,8 @@ interface PerformanceFilterBarProps {
 }
 
 export const PerformanceFilterBar: React.FC<PerformanceFilterBarProps> = ({
-    timeRange, onTimeRangeChange, dayTypeFilter, onDayTypeChange, availableDayTypes, filteredDayCount,
+    timeRange, onTimeRangeChange, selectedDate, onSelectedDateChange, availableDates,
+    dayTypeFilter, onDayTypeChange, availableDayTypes, filteredDayCount,
 }) => (
     <div className="flex items-center gap-6 flex-wrap px-1 py-3">
         <div className="flex items-center gap-2">
@@ -35,6 +40,18 @@ export const PerformanceFilterBar: React.FC<PerformanceFilterBarProps> = ({
                     </FilterPill>
                 ))}
             </div>
+            {timeRange === 'single-day' && availableDates.length > 0 && (
+                <select
+                    value={selectedDate ?? ''}
+                    onChange={e => onSelectedDateChange(e.target.value || null)}
+                    className="ml-1 text-xs border border-gray-200 rounded-md px-2 py-1 text-gray-700 bg-white focus:outline-none focus:ring-1 focus:ring-cyan-400"
+                >
+                    <option value="">Select date…</option>
+                    {[...availableDates].sort((a, b) => b.localeCompare(a)).map(d => (
+                        <option key={d} value={d}>{d}</option>
+                    ))}
+                </select>
+            )}
         </div>
         <div className="flex items-center gap-2">
             <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Day Type:</span>
@@ -77,10 +94,15 @@ export function filterDailySummaries(
     summaries: DailySummary[],
     timeRange: TimeRange,
     dayType: DayType | 'all',
+    selectedDate?: string | null,
 ): DailySummary[] {
     let result = summaries;
 
-    if (timeRange !== 'all') {
+    if (timeRange === 'single-day') {
+        if (selectedDate) {
+            result = result.filter(d => d.date === selectedDate);
+        }
+    } else if (timeRange !== 'all') {
         const latestDateStr = summaries
             .map(s => s.date)
             .sort(compareDateStrings)

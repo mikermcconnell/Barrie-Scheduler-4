@@ -113,6 +113,73 @@ export interface OperatorDwellMetrics {
   totalTrackedDwellMinutes: number;
 }
 
+// ─── Dwell Cascade Types ──────────────────────────────────────────────
+
+export interface CascadeAffectedTrip {
+  tripName: string;
+  routeId: string;
+  terminalDepartureTime: string;
+  observedDepartureSeconds: number | null;
+  scheduledDepartureSeconds: number;
+  lateSeconds: number;
+  otpStatus: OTPStatus;
+  recoveredHere: boolean;
+}
+
+export interface DwellCascade {
+  date: string;
+  block: string;
+  routeId: string;
+  routeName: string;
+  stopName: string;
+  stopId: string;
+  tripName: string;
+  operatorId: string;
+  observedDepartureTime: string;
+  trackedDwellSeconds: number;
+  severity: DwellSeverity;
+  excessLateSeconds: number;
+  recoveryTimeAvailableSeconds: number;
+  cascadedTrips: CascadeAffectedTrip[];
+  blastRadius: number;
+  absorbed: boolean;
+}
+
+export interface CascadeStopImpact {
+  stopName: string;
+  stopId: string;
+  routeId: string;
+  incidentCount: number;
+  totalTrackedDwellSeconds: number;
+  totalBlastRadius: number;
+  avgBlastRadius: number;
+  absorbedCount: number;
+  cascadedCount: number;
+  avgExcessLateSeconds: number;
+}
+
+export interface TerminalRecoveryStats {
+  stopName: string;
+  stopId: string;
+  routeId: string;
+  incidentCount: number;
+  absorbedCount: number;
+  cascadedCount: number;
+  avgScheduledRecoverySeconds: number;
+  avgExcessLateSeconds: number;
+  sufficientRecovery: boolean;
+}
+
+export interface DailyCascadeMetrics {
+  cascades: DwellCascade[];
+  byStop: CascadeStopImpact[];
+  byTerminal: TerminalRecoveryStats[];
+  totalCascades: number;
+  totalAbsorbed: number;
+  avgBlastRadius: number;
+  totalCascadeOTPDamage: number;
+}
+
 export const OTP_THRESHOLDS = {
   earlySeconds: -180,
   lateSeconds: 300,
@@ -257,11 +324,12 @@ export interface DailySummary {
     }[];
   };
   byOperatorDwell?: OperatorDwellMetrics;
+  byCascade?: DailyCascadeMetrics;
   dataQuality: DataQuality;
   schemaVersion: number;
 }
 
-export const PERFORMANCE_SCHEMA_VERSION = 1;
+export const PERFORMANCE_SCHEMA_VERSION = 3;
 
 export interface PerformanceDataSummary {
   dailySummaries: DailySummary[];

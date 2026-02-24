@@ -357,6 +357,7 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({ stops }) => {
     const [showRouteLines, setShowRouteLines] = useState(true);
     const [lassoMode, setLassoMode] = useState(false);
     const [lassoSelection, setLassoSelection] = useState<EnrichedStop[] | null>(null);
+    const [bottomNFilter, setBottomNFilter] = useState<number | null>(null);
     const lassoModeRef = useRef(false);
     const lassoLayerRef = useRef<L.LayerGroup | null>(null);
     const lassoHighlightsRef = useRef<L.CircleMarker[]>([]);
@@ -404,6 +405,14 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({ stops }) => {
             };
         }) as EnrichedStop[];
     }, [enrichedStops, selectedRoute, hasRoutes, viewMode, activeHours]);
+
+    // Bottom N filter: show only the N lowest-activity stops (excludes zeros)
+    const displayedStops = useMemo(() => {
+        if (bottomNFilter === null) return filteredStops;
+        const nonZero = filteredStops.filter(s => s.activity > 0);
+        const sorted = [...nonZero].sort((a, b) => a.activity - b.activity);
+        return sorted.slice(0, bottomNFilter);
+    }, [filteredStops, bottomNFilter]);
 
     // Sorted by activity for rank lookup
     const rankedStops = useMemo(() => {
@@ -736,13 +745,13 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({ stops }) => {
         lassoLayerRef.current?.clearLayers();
         setLassoSelection(null);
 
-        if (filteredStops.length === 0) return;
+        if (displayedStops.length === 0) return;
 
-        const activities = filteredStops.map(s => s.activity);
+        const activities = displayedStops.map(s => s.activity);
         const bins = assignBins(activities);
 
         // Sort low→high so high-activity renders on top
-        const indexed = filteredStops.map((s, i) => ({ stop: s, bin: bins[i] }));
+        const indexed = displayedStops.map((s, i) => ({ stop: s, bin: bins[i] }));
         indexed.sort((a, b) => a.bin - b.bin);
 
         const scale = map ? zoomScale(map.getZoom()) : 1;
@@ -795,25 +804,25 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({ stops }) => {
         }
 
         // Auto-fit on first load
-        if (!hasFittedRef.current && filteredStops.length > 0 && map) {
-            const bounds = L.latLngBounds(filteredStops.map(s => [s.lat, s.lon] as [number, number]));
+        if (!hasFittedRef.current && displayedStops.length > 0 && map) {
+            const bounds = L.latLngBounds(displayedStops.map(s => [s.lat, s.lon] as [number, number]));
             map.fitBounds(bounds, { padding: [20, 20] });
             hasFittedRef.current = true;
         }
 
         // Update labels for current zoom
         if (map) updateLabels(map.getZoom());
-    }, [filteredStops, clearHighlight, highlightStop, updateLabels]);
+    }, [displayedStops, clearHighlight, highlightStop, updateLabels]);
 
     // Re-highlight selected stop when markers rebuild
     useEffect(() => {
         if (selectedStop) highlightStop(selectedStop);
     }, [selectedStop, highlightStop]);
 
-    // Keep selected stop synchronized with active route/time filters
+    // Keep selected stop synchronized with active route/time/bottomN filters
     useEffect(() => {
         if (!selectedStop) return;
-        const nextSelected = filteredStops.find(s => s.stopId === selectedStop.stopId);
+        const nextSelected = displayedStops.find(s => s.stopId === selectedStop.stopId);
         if (!nextSelected) {
             setSelectedStop(null);
             clearHighlight();
@@ -822,7 +831,7 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({ stops }) => {
         if (nextSelected !== selectedStop) {
             setSelectedStop(nextSelected);
         }
-    }, [filteredStops, selectedStop, clearHighlight]);
+    }, [displayedStops, selectedStop, clearHighlight]);
 
     // ─── Computed for detail panel ──────────────────────────────────────
 
@@ -930,6 +939,34 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({ stops }) => {
                     </svg>
                     Lasso
                 </button>
+
+                {/* Bottom N Filter */}
+                <div className="flex bg-white rounded-md border border-gray-300 shadow-sm overflow-hidden pointer-events-auto">
+                    <button
+                        onClick={() => setBottomNFilter(null)}
+                        className={`px-2 py-1.5 text-[10px] font-bold transition-colors ${
+                            bottomNFilter === null
+                                ? 'bg-cyan-50 text-cyan-700'
+                                : 'text-gray-500 hover:bg-gray-50'
+                        }`}
+                    >
+                        All
+                    </button>
+                    {[10, 25].map(n => (
+                        <button
+                            key={n}
+                            onClick={() => setBottomNFilter(bottomNFilter === n ? null : n)}
+                            className={`px-2 py-1.5 text-[10px] font-bold transition-colors ${
+                                bottomNFilter === n
+                                    ? 'bg-red-50 text-red-700'
+                                    : 'text-gray-500 hover:bg-gray-50'
+                            }`}
+                            title={`Show ${n} lowest-activity stops`}
+                        >
+                            Low {n}
+                        </button>
+                    ))}
+                </div>
 
                 {/* Spacer */}
                 <div className="flex-1" />
@@ -1041,7 +1078,7 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({ stops }) => {
                 <DetailPanel
                     stop={selectedStop}
                     rank={selectedRank}
-                    total={filteredStops.length}
+                    total={displayedStops.length}
                     activeHours={activeHours}
                     onClose={() => { setSelectedStop(null); clearHighlight(); }}
                 />

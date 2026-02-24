@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
     ArrowLeft, RefreshCw, LayoutDashboard, Clock, TrendingUp,
     BarChart3, ExternalLink, Timer,
@@ -44,8 +44,17 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data
         [allowIncompleteTabs]
     );
     const [activeTab, setActiveTab] = useState<PerformanceTab>('overview');
-    const [timeRange, setTimeRange] = useState<TimeRange>('all');
+    const [timeRanges, setTimeRanges] = useState<Partial<Record<PerformanceTab, TimeRange>>>({
+        'operator-dwell': 'past-week',
+    });
+    const [selectedDate, setSelectedDate] = useState<string | null>(null);
     const [dayTypeFilter, setDayTypeFilter] = useState<DayType | 'all'>('all');
+
+    const timeRange = timeRanges[activeTab] ?? 'all';
+    const setTimeRange = useCallback((tr: TimeRange) => {
+        setTimeRanges(prev => ({ ...prev, [activeTab]: tr }));
+        if (tr !== 'single-day') setSelectedDate(null);
+    }, [activeTab]);
     const tabBarRef = useRef<HTMLDivElement>(null);
 
     const availableDayTypes = useMemo(() => {
@@ -53,10 +62,15 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data
         return (['weekday', 'saturday', 'sunday'] as DayType[]).filter(t => types.has(t));
     }, [data]);
 
+    const availableDates = useMemo(
+        () => [...new Set(data.dailySummaries.map(d => d.date))].sort(),
+        [data.dailySummaries]
+    );
+
     const filteredData = useMemo((): PerformanceDataSummary => ({
         ...data,
-        dailySummaries: filterDailySummaries(data.dailySummaries, timeRange, dayTypeFilter),
-    }), [data, timeRange, dayTypeFilter]);
+        dailySummaries: filterDailySummaries(data.dailySummaries, timeRange, dayTypeFilter, selectedDate),
+    }), [data, timeRange, dayTypeFilter, selectedDate]);
 
     const handleNavigate = (tabId: string) => {
         const tab = tabs.find(t => t.id === tabId);
@@ -180,6 +194,9 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data
                     <PerformanceFilterBar
                         timeRange={timeRange}
                         onTimeRangeChange={setTimeRange}
+                        selectedDate={selectedDate}
+                        onSelectedDateChange={setSelectedDate}
+                        availableDates={availableDates}
                         dayTypeFilter={dayTypeFilter}
                         onDayTypeChange={setDayTypeFilter}
                         availableDayTypes={availableDayTypes}

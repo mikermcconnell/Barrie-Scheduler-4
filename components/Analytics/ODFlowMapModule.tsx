@@ -26,7 +26,7 @@ interface ODFlowMapModuleProps {
 }
 
 type ViewMode = 'map' | 'table';
-type TopNOption = 10 | 25 | 50 | 100 | 'all';
+type TopNOption = 10 | 25 | 50 | 100 | 'all' | 'low10' | 'low25';
 type DirectionFilter = 'all' | 'inbound' | 'outbound';
 
 const TOP_N_OPTIONS: { value: TopNOption; label: string }[] = [
@@ -35,6 +35,8 @@ const TOP_N_OPTIONS: { value: TopNOption; label: string }[] = [
     { value: 50, label: 'Top 50' },
     { value: 100, label: 'Top 100' },
     { value: 'all', label: 'All' },
+    { value: 'low25', label: 'Low 25' },
+    { value: 'low10', label: 'Low 10' },
 ];
 
 const ONTARIO_CENTER: [number, number] = [46.5, -80.5];
@@ -269,6 +271,7 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
     const mapContainerRef = useRef<HTMLDivElement>(null);
     const mapRef = useRef<L.Map | null>(null);
     const layersRef = useRef<L.LayerGroup | null>(null);
+    const bgStopsLayerRef = useRef<L.LayerGroup | null>(null);
     const styleRef = useRef<HTMLStyleElement | null>(null);
 
     const [viewMode, setViewMode] = useState<ViewMode>('map');
@@ -346,6 +349,10 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
 
     const displayedPairs = useMemo(() => {
         if (topNOption === 'all') return filteredPairs;
+        if (topNOption === 'low10' || topNOption === 'low25') {
+            const n = topNOption === 'low10' ? 10 : 25;
+            return [...filteredPairs].reverse().slice(0, n);
+        }
         return filteredPairs.slice(0, topNOption);
     }, [filteredPairs, topNOption]);
 
@@ -447,7 +454,9 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
             onMapReady(mapContainerRef.current);
         }
 
-        // Pane z-index stack: lines → pulse ring → stops → stop labels → rank labels
+        // Pane z-index stack: bg-stops → lines → pulse ring → stops → stop labels → rank labels
+        const bgStopsPane = mapRef.current.createPane('od-bg-stops');
+        bgStopsPane.style.zIndex = '415';
         const linesPane = mapRef.current.createPane('od-lines');
         linesPane.style.zIndex = '420';
         const pulsePane = mapRef.current.createPane('od-pulse');
@@ -466,11 +475,12 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
         style.textContent = `
           @keyframes od-pulse { 0%{transform:scale(1);opacity:.8} 70%{transform:scale(2.8);opacity:0} 100%{transform:scale(2.8);opacity:0} }
           .od-pulse-ring { animation: od-pulse 1.6s ease-out infinite; border-radius:50%; }
-          .od-label-icon { background: transparent !important; border: none !important; }
+          .od-label-icon { background: transparent !important; border: none !important; overflow: visible !important; }
 `;
         document.head.appendChild(style);
         styleRef.current = style;
 
+        bgStopsLayerRef.current = L.layerGroup().addTo(mapRef.current);
         layersRef.current = L.layerGroup().addTo(mapRef.current);
         labelLayerRef.current = L.layerGroup().addTo(mapRef.current);
 
@@ -481,6 +491,7 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
             }
             mapRef.current?.remove();
             mapRef.current = null;
+            bgStopsLayerRef.current = null;
             layersRef.current = null;
             labelLayerRef.current = null;
         };
@@ -739,6 +750,40 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
         renderLayers();
     }, [renderLayers]);
 
+    // Background station markers — all geocoded stations are clickable, same as search
+    useEffect(() => {
+        const layer = bgStopsLayerRef.current;
+        const map = mapRef.current;
+        if (!layer || !map) return;
+        layer.clearLayers();
+
+        // Determine which stations are already rendered in the main layer
+        const activeStations = new Set<string>();
+        displayedPairs.forEach(pair => {
+            if (geoLookup[pair.origin]) activeStations.add(pair.origin);
+            if (geoLookup[pair.destination]) activeStations.add(pair.destination);
+        });
+
+        Object.entries(geoLookup).forEach(([name, geo]) => {
+            if (activeStations.has(name)) return; // already has a clickable marker
+            const isIsolated = isolatedStation === name;
+            const marker = L.circleMarker([geo.lat, geo.lon], {
+                pane: 'od-bg-stops',
+                radius: isIsolated ? 6 : 4,
+                fillColor: isIsolated ? '#8b5cf6' : '#94a3b8',
+                fillOpacity: isIsolated ? 0.9 : 0.5,
+                color: isIsolated ? '#6d28d9' : '#64748b',
+                weight: isIsolated ? 2 : 1,
+                opacity: isIsolated ? 1 : 0.6,
+            });
+            marker.bindTooltip(name, { sticky: true, direction: 'top', opacity: 0.95 });
+            marker.on('click', () => {
+                setIsolatedStation(prev => prev === name ? null : name);
+            });
+            marker.addTo(layer);
+        });
+    }, [geoLookup, displayedPairs, isolatedStation]);
+
     // Auto-fit to data extent only when the dataset changes, not on every zoom.
     useEffect(() => {
         if (!mapRef.current || displayedPairs.length === 0) return;
@@ -809,7 +854,11 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
                             value={topNOption}
                             onChange={(e) => {
                                 const v = e.target.value;
-                                setTopNOption(v === 'all' ? 'all' : Number(v) as TopNOption);
+                                setTopNOption(
+                                    v === 'all' || v === 'low10' || v === 'low25'
+                                        ? v
+                                        : Number(v) as TopNOption
+                                );
                             }}
                             className="px-2 py-1.5 text-xs font-medium border border-gray-200 rounded-md bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-violet-500"
                         >

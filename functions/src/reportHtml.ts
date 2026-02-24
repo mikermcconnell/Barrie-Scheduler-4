@@ -99,11 +99,13 @@ function buildDwellKpiCard(latestDay: DailySummary): string {
 function buildDwellTrendChart(trendDays: DailySummary[]): string {
   // Group days into ISO weeks (Mon–Sun), keyed by week-start Monday date
   const weekMap = new Map<string, number>();
+  const weekDayCount = new Map<string, number>();
   for (const day of trendDays) {
     const weekStart = getWeekStartMonday(day.date);
     if (!weekStart) continue;
     const minutes = day.byOperatorDwell?.totalTrackedDwellMinutes ?? 0;
     weekMap.set(weekStart, (weekMap.get(weekStart) ?? 0) + minutes);
+    weekDayCount.set(weekStart, (weekDayCount.get(weekStart) ?? 0) + 1);
   }
 
   if (weekMap.size === 0) return '';
@@ -114,6 +116,7 @@ function buildDwellTrendChart(trendDays: DailySummary[]): string {
     .slice(-8);
 
   const maxMinutes = Math.max(...weeks.map(([, m]) => m), 1);
+  const lastWeekStart = weeks[weeks.length - 1][0];
 
   // Build bar data with week-ending Sunday label
   const bars = weeks.map(([weekStart, minutes]) => {
@@ -123,14 +126,17 @@ function buildDwellTrendChart(trendDays: DailySummary[]): string {
     const hours = (minutes / 60).toFixed(1);
     const heightPx = Math.max(4, Math.round((minutes / maxMinutes) * 80));
     const hasData = minutes > 0;
-    return { weekEnd, hours, heightPx, hasData };
+    const dayCount = weekDayCount.get(weekStart) ?? 0;
+    const isPartial = weekStart === lastWeekStart && dayCount < 7;
+    return { weekEnd, hours, heightPx, hasData, isPartial, dayCount };
   });
 
   const barCells = bars.map(b => `
         <td style="text-align:center;vertical-align:bottom;padding:0 4px;width:${Math.floor(100 / bars.length)}%;">
-          <div style="font-size:10px;color:#0891b2;font-weight:600;margin-bottom:2px;">${b.hasData ? b.hours : ''}</div>
-          <div style="background:${b.hasData ? '#0891b2' : '#e5e7eb'};height:${b.heightPx}px;border-radius:3px 3px 0 0;min-height:4px;"></div>
+          <div style="font-size:10px;color:${b.isPartial ? '#9ca3af' : '#0891b2'};font-weight:600;margin-bottom:2px;">${b.hasData ? b.hours : ''}</div>
+          <div style="background:${b.hasData ? (b.isPartial ? '#b0e0e6' : '#0891b2') : '#e5e7eb'};height:${b.heightPx}px;border-radius:3px 3px 0 0;min-height:4px;${b.isPartial ? 'opacity:0.6;' : ''}"></div>
           <div style="font-size:9px;color:#9ca3af;margin-top:4px;white-space:nowrap;">${b.weekEnd}</div>
+          ${b.isPartial ? `<div style="font-size:8px;color:#d97706;margin-top:1px;">${b.dayCount}/7 days</div>` : ''}
         </td>`).join('');
 
   return `
@@ -439,19 +445,33 @@ function buildTopStops(stops: StopMetrics[]): string {
 export function buildReportHtml(data: ReportData): string {
   const { latestDay, trendDays, teamName } = data;
   const sys = latestDay.system;
-  const dq = latestDay.dataQuality;
-
   // System totals
   const totalServiceHours = latestDay.byRoute.reduce((s, r) => s + r.serviceHours, 0);
 
-  // Data quality notes
-  const qualityNotes: string[] = [];
-  if (dq.loadCapped > 0) qualityNotes.push(`${num(dq.loadCapped)} load values capped`);
-  if (dq.apcExcludedFromLoad > 0) qualityNotes.push(`${num(dq.apcExcludedFromLoad)} excluded from load (no APC)`);
-  if (dq.missingAVL > 0) qualityNotes.push(`${num(dq.missingAVL)} missing AVL`);
-  if (dq.missingAPC > 0) qualityNotes.push(`${num(dq.missingAPC)} missing APC`);
-  if (dq.detourRecords > 0) qualityNotes.push(`${num(dq.detourRecords)} detour records`);
-  if (dq.tripperRecords > 0) qualityNotes.push(`${num(dq.tripperRecords)} tripper records`);
+  // Derive date range label from trend data
+  const dateRangeLabel = (() => {
+    const days = trendDays.length;
+    if (days <= 1) {
+      // Single day — check if it's yesterday
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const dayDate = new Date(latestDay.date + 'T12:00:00');
+      const diffMs = today.getTime() - dayDate.getTime();
+      const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
+      if (diffDays === 1) return 'Yesterday';
+      if (diffDays === 0) return 'Today';
+      return formatDateLong(latestDay.date);
+    }
+    // Multi-day ranges
+    if (days <= 7) return `Past Week (${days} days)`;
+    if (days <= 31) return `Past Month (${days} days)`;
+    return `All Data (${days} days)`;
+  })();
+
+  // Day type summary for multi-day
+  const dayTypeLabel = trendDays.length <= 1
+    ? `${latestDay.dayType.charAt(0).toUpperCase() + latestDay.dayType.slice(1)} Service`
+    : '';
 
   return `<!DOCTYPE html>
 <html>
@@ -466,7 +486,7 @@ export function buildReportHtml(data: ReportData): string {
         For more information:
         <a href="https://transitscheduler.ca/#operations/performance" style="color:#bfdbfe;text-decoration:underline;">https://transitscheduler.ca/#operations/performance</a>
       </div>
-      <div style="font-size:13px;color:#bfdbfe;margin-top:4px;">${formatDateLong(latestDay.date)} · ${latestDay.dayType.charAt(0).toUpperCase() + latestDay.dayType.slice(1)} Service</div>
+      <div style="font-size:13px;color:#bfdbfe;margin-top:4px;">${dateRangeLabel}${dayTypeLabel ? ` · ${dayTypeLabel}` : ''}</div>
       <div style="margin-top:10px;display:inline-block;background:#fbbf24;color:#78350f;font-size:10px;font-weight:700;padding:3px 12px;border-radius:10px;letter-spacing:0.5px;">BETA — UNDER TESTING</div>
     </div>
 
@@ -486,9 +506,9 @@ export function buildReportHtml(data: ReportData): string {
             if (mt && mt.totalScheduled > 0) {
               const color = mt.missedPct < 2 ? '#16a34a' : mt.missedPct < 5 ? '#d97706' : '#dc2626';
               const subtitle = mt.totalMissed === 0
-                ? 'All scheduled trips operated'
+                ? '✓ All trips operated'
                 : `${mt.totalMissed} missed (${mt.missedPct.toFixed(1)}%)`;
-              return kpiCard('Trips Operated', `${num(mt.totalMatched)} / ${num(mt.totalScheduled)}`, subtitle, color);
+              return kpiCard('Trips Operated', mt.totalMissed === 0 ? `${num(mt.totalScheduled)} / ${num(mt.totalScheduled)}` : `${num(mt.totalMatched)} / ${num(mt.totalScheduled)}`, subtitle, color);
             }
             return kpiCard('Trips Operated', num(sys.tripCount), `${num(sys.vehicleCount)} vehicles · ${totalServiceHours.toFixed(1)} svc hrs`);
           })()}
@@ -509,7 +529,7 @@ export function buildReportHtml(data: ReportData): string {
       ${trendDays.length > 1 ? (() => {
         const recentTrend = trendDays.slice(-7);
         return `
-      ${sectionHeader(`OTP Trend — Last ${recentTrend.length} Days`)}
+      ${sectionHeader(`Last ${recentTrend.length} Days Trend`)}
       <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;">
         <tr style="background:#f9fafb;">
           <th style="padding:6px 10px;text-align:left;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Date</th>
@@ -545,15 +565,6 @@ export function buildReportHtml(data: ReportData): string {
       <!-- ═══ 7. DWELL TREND CHART ═══ -->
       ${buildDwellTrendChart(trendDays)}
 
-      <!-- ═══ 8. DATA QUALITY ═══ -->
-      <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:12px;margin-top:20px;">
-        <div style="font-size:11px;font-weight:700;color:#6b7280;margin-bottom:4px;">Data Quality Summary</div>
-        <div style="font-size:11px;color:#9ca3af;">
-          ${num(dq.totalRecords)} total records
-          ${dq.inBetweenFiltered > 0 ? ` · ${num(dq.inBetweenFiltered)} in-between filtered` : ''}
-          ${qualityNotes.length > 0 ? ` · ${qualityNotes.join(' · ')}` : ''}
-        </div>
-      </div>
     </div>
 
     <!-- Footer -->

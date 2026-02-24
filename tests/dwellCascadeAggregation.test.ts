@@ -186,6 +186,24 @@ describe('aggregateCascadeAcrossDays — multi-day', () => {
     expect(terminal.sufficientRecovery).toBe(true);
   });
 
+  it('marks terminal recovery as insufficient when absorbed share is below 75%', () => {
+    const day = makeDaySummary({
+      date: '2026-02-22',
+      byCascade: makeDailyCascadeMetrics({
+        cascades: [makeCascade({ absorbed: false, blastRadius: 2 })],
+        byTerminal: [makeTerminal({
+          stopName: 'Terminal North', stopId: 'TN', routeId: '10',
+          incidentCount: 4, absorbedCount: 2, cascadedCount: 2,
+          avgScheduledRecoverySeconds: 600, avgExcessLateSeconds: 180,
+        })],
+      }),
+    });
+
+    const result = aggregateCascadeAcrossDays([day]);
+    expect(result.byTerminal).toHaveLength(1);
+    expect(result.byTerminal[0].sufficientRecovery).toBe(false); // 2/4 = 50%
+  });
+
   it('computes avgBlastRadius only from cascaded (non-absorbed) incidents', () => {
     const day1 = makeDaySummary({
       date: '2026-02-20',
