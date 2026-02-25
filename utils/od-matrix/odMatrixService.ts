@@ -12,6 +12,7 @@ import {
     doc,
     getDoc,
     setDoc,
+    updateDoc,
     deleteDoc,
     collection,
     getDocs,
@@ -173,7 +174,103 @@ export async function listODMatrixImports(teamId: string): Promise<ODMatrixImpor
     }
 }
 
-// ============ DELETE ============
+// ============ LOAD SPECIFIC IMPORT ============
+
+export async function loadODMatrixImportById(
+    teamId: string,
+    importId: string
+): Promise<ODMatrixDataSummary | null> {
+    try {
+        const importSnap = await getDoc(getImportRef(teamId, importId));
+        if (!importSnap.exists()) return null;
+
+        const record = importSnap.data() as ODMatrixImportRecord;
+        const storageRef = ref(storage, record.storagePath);
+        const url = await getDownloadURL(storageRef);
+        const response = await fetch(url);
+        if (!response.ok) return null;
+
+        return await response.json() as ODMatrixDataSummary;
+    } catch (error) {
+        console.error('Error loading OD import by id:', error);
+        return null;
+    }
+}
+
+// ============ RENAME IMPORT ============
+
+export async function renameODMatrixImport(
+    teamId: string,
+    importId: string,
+    newName: string
+): Promise<void> {
+    const importSnap = await getDoc(getImportRef(teamId, importId));
+    if (!importSnap.exists()) return;
+
+    const record = importSnap.data() as ODMatrixImportRecord;
+    await updateDoc(getImportRef(teamId, importId), { fileName: newName });
+
+    // Keep the default pointer consistent if this is the active import
+    if (record.isActive) {
+        await updateDoc(getDefaultRef(teamId), { fileName: newName });
+    }
+}
+
+// ============ DELETE SINGLE IMPORT ============
+
+/**
+ * Deletes one import record + its Storage file.
+ * If the deleted import was active, promotes the most-recent remaining import.
+ * Returns:
+ *   - 'unchanged' if deleted import was not active (no data reload needed)
+ *   - importId string if a new import was promoted to active
+ *   - null if no imports remain
+ */
+export async function deleteODMatrixImport(
+    teamId: string,
+    importId: string
+): Promise<string | null | 'unchanged'> {
+    const importSnap = await getDoc(getImportRef(teamId, importId));
+    if (!importSnap.exists()) return 'unchanged';
+
+    const record = importSnap.data() as ODMatrixImportRecord;
+
+    // Delete Storage file
+    try {
+        await deleteObject(ref(storage, record.storagePath));
+    } catch {
+        // File may already be gone
+    }
+
+    // Delete Firestore import record
+    await deleteDoc(getImportRef(teamId, importId));
+
+    if (!record.isActive) return 'unchanged';
+
+    // Was active — find a replacement
+    const remaining = await listODMatrixImports(teamId);
+    if (remaining.length === 0) {
+        await deleteDoc(getDefaultRef(teamId));
+        return null;
+    }
+
+    const next = remaining[0]; // already sorted desc by importedAt
+    await setDoc(getImportRef(teamId, next.id), { ...next, isActive: true });
+    await setDoc(getDefaultRef(teamId), {
+        activeImportId: next.id,
+        importedAt: serverTimestamp(),
+        importedBy: next.importedBy,
+        storagePath: next.storagePath,
+        fileName: next.fileName,
+        dateRange: next.dateRange || null,
+        stationCount: next.stationCount,
+        totalJourneys: next.totalJourneys,
+    });
+
+    return next.id;
+}
+
+// ============ DELETE ALL ============
 
 export async function deleteODMatrixData(teamId: string): Promise<void> {
     const docSnap = await getDoc(getDefaultRef(teamId));

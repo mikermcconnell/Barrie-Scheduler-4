@@ -23,15 +23,19 @@ import { ODTopPairsModule } from './ODTopPairsModule';
 import { ODStationRankingsModule } from './ODStationRankingsModule';
 import { ODHeatmapGridModule } from './ODHeatmapGridModule';
 import { ODDataConfidencePanel } from './ODDataConfidencePanel';
+import { ODImportFileManager } from './ODImportFileManager';
 import { exportODExcel, exportODPdf, exportStopReportExcel, exportStopReportPdf } from '../../utils/od-matrix/odReportExporter';
 import { computeODConfidenceReport } from '../../utils/od-matrix/odDataConfidence';
 
 interface ODMatrixWorkspaceProps {
     data: ODMatrixDataSummary;
     geocodeCache: GeocodeCache | null;
+    teamId: string;
     onReimport: () => void;
     onFixCoordinates: () => void;
     onBack: () => void;
+    onSwitchImport: (importId: string) => void;
+    onDeletedImport: (deletedId: string, result: string | null | 'unchanged') => void;
 }
 
 interface TabConfig {
@@ -51,9 +55,12 @@ const TAB_CONFIG: TabConfig[] = [
 export const ODMatrixWorkspace: React.FC<ODMatrixWorkspaceProps> = ({
     data,
     geocodeCache,
+    teamId,
     onReimport,
     onFixCoordinates,
     onBack,
+    onSwitchImport,
+    onDeletedImport,
 }) => {
     const [activeTab, setActiveTab] = useState('overview');
     const tabBarRef = useRef<HTMLDivElement>(null);
@@ -138,6 +145,7 @@ export const ODMatrixWorkspace: React.FC<ODMatrixWorkspaceProps> = ({
                         onFixCoordinates={onFixCoordinates}
                         onMapElReady={(el) => { mapElRef.current = el; }}
                         onIsolatedStationChange={handleIsolatedStationChange}
+                        isolatedStation={isolatedStation}
                     />
                 );
             case 'top-pairs':
@@ -171,6 +179,13 @@ export const ODMatrixWorkspace: React.FC<ODMatrixWorkspaceProps> = ({
                     </div>
                 </div>
                 <div className="flex items-center gap-2">
+                    <ODImportFileManager
+                        teamId={teamId}
+                        activeImportId={data.metadata.importId}
+                        onSwitch={onSwitchImport}
+                        onDeleted={onDeletedImport}
+                        onReimport={onReimport}
+                    />
                     <button
                         onClick={onReimport}
                         className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors flex items-center gap-2"

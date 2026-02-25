@@ -13,6 +13,7 @@ import {
     compareDateStrings,
     getISOWeekStartMonday,
     normalizeToISODate,
+    shortDateLabel,
 } from '../../utils/performanceDateUtils';
 
 interface OperatorDwellModuleProps {
@@ -20,6 +21,8 @@ interface OperatorDwellModuleProps {
 }
 
 const INCIDENTS_PER_PAGE = 100;
+type TrendDatesStyle = 'monthDay' | 'numeric' | 'iso';
+const TREND_DATES_STYLE: TrendDatesStyle = 'monthDay';
 
 type SortCol = 'date' | 'routeId' | 'stopName' | 'observedArrivalTime' | 'observedDepartureTime' | 'trackedDwellSeconds' | 'severity';
 type SortDir = 'asc' | 'desc';
@@ -34,6 +37,29 @@ const SeverityBadge: React.FC<{ severity: 'moderate' | 'high' }> = ({ severity }
         {severity === 'high' ? 'High' : 'Moderate'}
     </span>
 );
+
+function formatTrendDate(dateStr: string, style: TrendDatesStyle): string {
+    const iso = normalizeToISODate(dateStr);
+    if (!iso) return dateStr;
+
+    if (style === 'iso') return shortDateLabel(iso);
+
+    const [yearStr, monthStr, dayStr] = iso.split('-');
+    const year = Number(yearStr);
+    const month = Number(monthStr);
+    const day = Number(dayStr);
+    const parsed = new Date(Date.UTC(year, month - 1, day, 12));
+    if (Number.isNaN(parsed.getTime())) return iso;
+
+    const formatOpts: Intl.DateTimeFormatOptions = style === 'numeric'
+        ? { month: 'numeric', day: 'numeric' }
+        : { month: 'short', day: 'numeric' };
+    return parsed.toLocaleDateString('en-US', formatOpts);
+}
+
+function formatTrendDates(dates: string[], style: TrendDatesStyle): string {
+    return dates.map(d => formatTrendDate(d, style)).join(', ');
+}
 
 export const OperatorDwellModule: React.FC<OperatorDwellModuleProps> = ({ data }) => {
     const [subView, setSubView] = useState<'incidents' | 'cascade'>('incidents');
@@ -543,11 +569,11 @@ export const OperatorDwellModule: React.FC<OperatorDwellModuleProps> = ({ data }
                                         <td className="py-2 pr-3 text-gray-600 text-xs">{t.blocks.join(', ')}</td>
                                         <td className="py-2 pr-3 text-gray-900 max-w-[200px] truncate" title={t.stopName}>{t.stopName}</td>
                                         <td className="py-2 pr-3 text-gray-600 tabular-nums">{t.approxTime}</td>
-                                        <td className="py-2 pr-3 text-right font-bold text-red-700">{t.distinctDays}</td>
+                                        <td className="py-2 pr-3 text-right font-bold text-red-700 tabular-nums">{`${t.distinctDays}/${numDays}`}</td>
                                         <td className="py-2 pr-3 text-right">{t.totalIncidents}</td>
                                         <td className="py-2 pr-3 text-right tabular-nums">{t.avgDwellMin}</td>
                                         <td className="py-2 pr-3 text-gray-600 text-xs">{t.operators.join(', ')}</td>
-                                        <td className="py-2 text-gray-500 text-xs">{t.dates.join(', ')}</td>
+                                        <td className="py-2 text-gray-500 text-xs">{formatTrendDates(t.dates, TREND_DATES_STYLE)}</td>
                                     </tr>
                                 ))}
                             </tbody>

@@ -30,14 +30,16 @@ function otpPill(value: number): string {
   return `<span style="background:${otpBg(value)};color:${otpColor(value)};padding:2px 8px;border-radius:4px;font-weight:600;font-size:12px;">${pct(value)}</span>`;
 }
 
-function kpiCard(label: string, value: string, subtitle?: string, accentColor?: string): string {
+function kpiCard(label: string, value: string, subtitle?: string, accentColor?: string, subtitleColor?: string): string {
   const border = accentColor ? `border-left:3px solid ${accentColor};` : '';
+  const subColor = subtitleColor || '#9ca3af';
+  const subWeight = subtitleColor ? 'font-weight:600;' : '';
   return `
     <td style="width:50%;padding:6px;">
       <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px;text-align:center;${border}">
         <div style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;">${label}</div>
         <div style="font-size:24px;font-weight:700;color:#111827;margin:4px 0;">${value}</div>
-        ${subtitle ? `<div style="font-size:11px;color:#9ca3af;">${subtitle}</div>` : ''}
+        ${subtitle ? `<div style="font-size:11px;color:${subColor};${subWeight}">${subtitle}</div>` : ''}
       </div>
     </td>`;
 }
@@ -85,15 +87,50 @@ function getWeekStartMonday(dateStr: string): string | null {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
 }
 
-function buildDwellKpiCard(latestDay: DailySummary): string {
+function buildDwellKpiCard(latestDay: DailySummary, trendDays: DailySummary[]): string {
   const dwell = latestDay.byOperatorDwell;
   if (!dwell || !dwell.totalTrackedDwellMinutes) {
-    return kpiCard('Operator Dwell', '—', 'No dwell data', '#0891b2');
+    return kpiCard("Yesterday's Dwell", '—', 'No dwell data', '#0891b2');
   }
   const hours = (dwell.totalTrackedDwellMinutes / 60).toFixed(1);
   const high = dwell.byOperator.reduce((s, o) => s + o.highCount, 0);
   const moderate = dwell.byOperator.reduce((s, o) => s + o.moderateCount, 0);
-  return kpiCard('Operator Dwell', `${hours} hrs`, `${high} high · ${moderate} moderate`, '#0891b2');
+
+  // Compute day-type average from trend data (excluding the latest day itself)
+  const dayType = latestDay.dayType;
+  const sameTypeDays = trendDays.filter(
+    d => d.dayType === dayType && d.date !== latestDay.date && d.byOperatorDwell?.totalTrackedDwellMinutes
+  );
+
+  let avgLine = '';
+  let accentColor = '#0891b2'; // default teal
+
+  if (sameTypeDays.length > 0) {
+    const avgMinutes = sameTypeDays.reduce((s, d) => s + (d.byOperatorDwell?.totalTrackedDwellMinutes ?? 0), 0) / sameTypeDays.length;
+    const avgHours = (avgMinutes / 60).toFixed(1);
+    const dayTypeLabel = dayType === 'weekday' ? 'Weekday' : dayType === 'saturday' ? 'Saturday' : 'Sunday';
+
+    const isHigh = dwell.totalTrackedDwellMinutes > avgMinutes * 1.5;
+    if (isHigh) {
+      accentColor = '#d97706'; // amber
+      avgLine = `<div style="font-size:10px;color:#d97706;margin-top:3px;">&#9650; ${dayTypeLabel} avg: ${avgHours} hrs</div>`;
+    } else {
+      avgLine = `<div style="font-size:10px;color:#b0b8c4;margin-top:3px;">${dayTypeLabel} avg: ${avgHours} hrs</div>`;
+    }
+  }
+
+  // Custom HTML for two subtitle lines
+  const border = `border-left:3px solid ${accentColor};`;
+  const valueColor = accentColor === '#d97706' ? 'color:#d97706;' : '';
+  return `
+    <td style="width:50%;padding:6px;">
+      <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px;text-align:center;${border}">
+        <div style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;">Yesterday's Dwell</div>
+        <div style="font-size:24px;font-weight:700;${valueColor}color:#111827;margin:4px 0;">${hours} hrs</div>
+        <div style="font-size:11px;color:#9ca3af;">${high} high · ${moderate} moderate</div>
+        ${avgLine}
+      </div>
+    </td>`;
 }
 
 function buildDwellTrendChart(trendDays: DailySummary[]): string {
@@ -508,11 +545,11 @@ export function buildReportHtml(data: ReportData): string {
               const subtitle = mt.totalMissed === 0
                 ? '✓ All trips operated'
                 : `${mt.totalMissed} missed (${mt.missedPct.toFixed(1)}%)`;
-              return kpiCard('Trips Operated', mt.totalMissed === 0 ? `${num(mt.totalScheduled)} / ${num(mt.totalScheduled)}` : `${num(mt.totalMatched)} / ${num(mt.totalScheduled)}`, subtitle, color);
+              return kpiCard('Trips Operated', mt.totalMissed === 0 ? `${num(mt.totalScheduled)} / ${num(mt.totalScheduled)}` : `${num(mt.totalMatched)} / ${num(mt.totalScheduled)}`, subtitle, color, color);
             }
             return kpiCard('Trips Operated', num(sys.tripCount), `${num(sys.vehicleCount)} vehicles · ${totalServiceHours.toFixed(1)} svc hrs`);
           })()}
-          ${buildDwellKpiCard(latestDay)}
+          ${buildDwellKpiCard(latestDay, trendDays)}
         </tr>
       </table>
 

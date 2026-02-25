@@ -10,7 +10,7 @@ import { Map, ArrowRight, Loader2, Smartphone, Network } from 'lucide-react';
 import { useTeam } from '../contexts/TeamContext';
 import { useAuth } from '../contexts/AuthContext';
 import { getTransitAppData, getTransitAppMetadata } from '../../utils/transit-app/transitAppService';
-import { getODMatrixData, getODMatrixMetadata, loadGeocodeCache } from '../../utils/od-matrix/odMatrixService';
+import { getODMatrixData, getODMatrixMetadata, loadGeocodeCache, loadODMatrixImportById } from '../../utils/od-matrix/odMatrixService';
 import { TransitAppImport } from './TransitAppImport';
 import { TransitAppWorkspace } from './TransitAppWorkspace';
 import { ODMatrixImport } from './ODMatrixImport';
@@ -144,12 +144,14 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
         }
     };
 
-    const loadODData = async (opts: { fallbackToImport?: boolean; markAsLoaded?: boolean }) => {
+    const loadODData = async (opts: { fallbackToImport?: boolean; markAsLoaded?: boolean; importId?: string }) => {
         if (!team?.id) return;
         setLoading(true);
         try {
             const [loadedData, cache] = await Promise.all([
-                getODMatrixData(team.id),
+                opts.importId
+                    ? loadODMatrixImportById(team.id, opts.importId)
+                    : getODMatrixData(team.id),
                 loadGeocodeCache(team.id),
             ]);
             if (loadedData) {
@@ -175,6 +177,20 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
 
     const handleODImportComplete = () => loadODData({ markAsLoaded: true });
     const handleODFixCoordinates = () => setView('od-fix-coords');
+
+    const handleSwitchImport = (importId: string) =>
+        loadODData({ importId, fallbackToImport: true });
+
+    const handleDeletedImport = (_deletedId: string, result: string | null | 'unchanged') => {
+        if (result === 'unchanged') return;
+        if (result !== null) {
+            loadODData({ importId: result });
+        } else {
+            setOdData(null);
+            setHasODData(false);
+            setView('od-import');
+        }
+    };
 
     // No team guard: show direct team setup instead of a dead-end message.
     if (!team) {
@@ -249,11 +265,15 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
             <div className="h-full overflow-auto custom-scrollbar p-6">
                 <div className="max-w-7xl mx-auto">
                     <ODMatrixWorkspace
+                        key={odData.metadata.importId ?? 'default'}
                         data={odData}
                         geocodeCache={odGeocodeCache}
+                        teamId={team.id}
                         onReimport={() => setView('od-import')}
                         onFixCoordinates={handleODFixCoordinates}
                         onBack={() => setView('dashboard')}
+                        onSwitchImport={handleSwitchImport}
+                        onDeletedImport={handleDeletedImport}
                     />
                 </div>
             </div>
