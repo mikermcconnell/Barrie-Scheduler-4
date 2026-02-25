@@ -14,7 +14,7 @@ import {
 } from '../../utils/gtfs/gtfsScheduleIndex';
 import { compareDateStrings, normalizeToISODate, shortDateLabel } from '../../utils/performanceDateUtils';
 import { PerformanceScopeProvider } from './performanceScope';
-import { getPerformanceScopeLabel, resolveOverviewScope } from '../../utils/performanceDataScope';
+import { resolveOverviewScope } from '../../utils/performanceDataScope';
 
 interface SystemOverviewModuleProps {
     data: PerformanceDataSummary;
@@ -116,6 +116,13 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
     const availableDayTypes = useMemo(() => {
         const types = new Set(data.dailySummaries.map(d => d.dayType));
         return (['weekday', 'saturday', 'sunday'] as DayType[]).filter(t => types.has(t));
+    }, [data]);
+
+    // ── Day-type counts for segmented bar ────────────────────────
+    const dayTypeCounts = useMemo(() => {
+        const counts: Record<DayType, number> = { weekday: 0, saturday: 0, sunday: 0 };
+        for (const d of data.dailySummaries) counts[d.dayType]++;
+        return counts;
     }, [data]);
 
     // ── Filtered data (snapshot — usually single day) ──────────────
@@ -493,10 +500,24 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
         () => resolveOverviewScope(selectedDate, latestDate),
         [selectedDate, latestDate]
     );
-    const overviewScopeLabel = useMemo(
-        () => getPerformanceScopeLabel(overviewScope),
-        [overviewScope]
-    );
+
+    const overviewScopeLabel = useMemo(() => {
+        const n = filtered.length;
+        if (n === 0) return 'No data';
+        if (selectedDate !== 'all') {
+            const d = filtered[0];
+            if (d) {
+                const dt = new Date(d.date + 'T12:00:00');
+                return dt.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+            }
+            return 'Single day';
+        }
+        if (dayTypeFilter !== 'all') {
+            return `${n} ${DAY_TYPE_LABELS[dayTypeFilter]}${n !== 1 ? 's' : ''} avg`;
+        }
+        return `${n}-day avg`;
+    }, [filtered, selectedDate, dayTypeFilter]);
+
     if (!systemAvg) {
         return <div className="text-center text-gray-400 py-16">No data for selected filters.</div>;
     }
@@ -508,10 +529,11 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
     const apcPct = dataQuality ? Math.round((dataQuality.missingAPC / dataQuality.totalRecords) * 100) : 0;
 
     return (
-        <PerformanceScopeProvider scope={overviewScope}>
+        <PerformanceScopeProvider scope={overviewScope} label={overviewScopeLabel}>
             <div className="space-y-6">
-            {/* ── 1. Date Context Banner + Controls ────────────────── */}
-            <div className="bg-white border border-gray-200 rounded-xl p-4">
+            {/* ── 1. Dataset Context Banner ────────────────────────── */}
+            <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
+                {/* Top row: date range + date picker */}
                 <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="flex items-center gap-3">
                         <div className="p-2 rounded-lg bg-cyan-50 text-cyan-600">
@@ -526,48 +548,82 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                                         : `${filtered.length} days`}
                             </p>
                             <p className="text-xs text-gray-400">
-                                {overviewScopeLabel} · {isSingleDate ? 'Daily snapshot' : 'Multi-day aggregate'} · {data.metadata.importedAt ? freshness(data.metadata.importedAt) : ''} · {data.dailySummaries.length} days loaded
+                                {isSingleDate
+                                    ? `${DAY_TYPE_LABELS[filtered[0]?.dayType ?? 'weekday']} snapshot · 1 of ${data.dailySummaries.length} days`
+                                    : `${filtered.length} day${filtered.length !== 1 ? 's' : ''} averaged${dayTypeFilter !== 'all' ? ` · ${DAY_TYPE_LABELS[dayTypeFilter]}s only` : ''}`}
+                                {data.metadata.importedAt ? ` · ${freshness(data.metadata.importedAt)}` : ''}
                             </p>
                         </div>
                     </div>
-                    <div className="flex items-center gap-3">
-                        {/* Date selector */}
-                        <select
-                            value={selectedDate}
-                            onChange={e => { setSelectedDate(e.target.value); if (e.target.value !== 'all') setDayTypeFilter('all'); }}
-                            className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-gray-700 focus:outline-none focus:ring-1 focus:ring-cyan-300"
-                        >
-                            <option value="all">All dates ({data.dailySummaries.length})</option>
-                            {sortedDates.map(d => (
-                                <option key={d} value={d}>{formatDateShort(d)}</option>
-                            ))}
-                        </select>
-                        {/* Day type pills */}
-                        <div className="flex gap-1">
-                            <button
-                                onClick={() => setDayTypeFilter('all')}
-                                disabled={isSingleDate}
-                                className={`px-3 py-1 text-xs font-bold rounded-full transition-colors ${
-                                    dayTypeFilter === 'all' ? 'bg-cyan-100 text-cyan-700' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                                } ${isSingleDate ? 'opacity-50 cursor-not-allowed' : ''}`}
-                            >
-                                All
-                            </button>
-                            {availableDayTypes.map(dt => (
-                                <button
-                                    key={dt}
-                                    onClick={() => setDayTypeFilter(dt)}
-                                    disabled={isSingleDate}
-                                    className={`px-3 py-1 text-xs font-bold rounded-full transition-colors ${
-                                        dayTypeFilter === dt ? 'bg-cyan-100 text-cyan-700' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                                    } ${isSingleDate ? 'opacity-50 cursor-not-allowed' : ''}`}
-                                >
-                                    {DAY_TYPE_LABELS[dt]}
-                                </button>
-                            ))}
-                        </div>
-                    </div>
+                    <select
+                        value={selectedDate}
+                        onChange={e => { setSelectedDate(e.target.value); if (e.target.value !== 'all') setDayTypeFilter('all'); }}
+                        className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-gray-700 focus:outline-none focus:ring-1 focus:ring-cyan-300"
+                    >
+                        <option value="all">All dates ({data.dailySummaries.length})</option>
+                        {sortedDates.map(d => (
+                            <option key={d} value={d}>{formatDateShort(d)}</option>
+                        ))}
+                    </select>
                 </div>
+
+                {/* Segmented day-type bar */}
+                {!isSingleDate && data.dailySummaries.length > 0 && (() => {
+                    const total = data.dailySummaries.length;
+                    const segments = ([
+                        { type: 'weekday' as DayType, count: dayTypeCounts.weekday, label: 'Weekdays', bg: 'bg-cyan-600', bgDim: 'bg-cyan-100', text: 'text-white', textDim: 'text-cyan-400', border: 'border-cyan-700' },
+                        { type: 'saturday' as DayType, count: dayTypeCounts.saturday, label: 'Saturdays', bg: 'bg-teal-500', bgDim: 'bg-teal-100', text: 'text-white', textDim: 'text-teal-400', border: 'border-teal-600' },
+                        { type: 'sunday' as DayType, count: dayTypeCounts.sunday, label: 'Sundays', bg: 'bg-gray-500', bgDim: 'bg-gray-200', text: 'text-white', textDim: 'text-gray-400', border: 'border-gray-600' },
+                    ] as const).filter(s => s.count > 0);
+                    const isAllActive = dayTypeFilter === 'all';
+
+                    return (
+                        <div className="space-y-2">
+                            <div className="flex rounded-lg overflow-hidden h-9 border border-gray-200">
+                                {segments.map((seg, i) => {
+                                    const active = isAllActive || dayTypeFilter === seg.type;
+                                    const widthPct = Math.max((seg.count / total) * 100, 12);
+                                    return (
+                                        <button
+                                            key={seg.type}
+                                            onClick={() => {
+                                                if (dayTypeFilter === seg.type) {
+                                                    setDayTypeFilter('all');
+                                                } else {
+                                                    setSelectedDate('all');
+                                                    setDayTypeFilter(seg.type);
+                                                }
+                                            }}
+                                            className={`relative flex items-center justify-center transition-all duration-200 ${
+                                                active ? `${seg.bg} ${seg.text}` : `${seg.bgDim} ${seg.textDim}`
+                                            } ${i > 0 ? 'border-l border-white/30' : ''} hover:brightness-110`}
+                                            style={{ width: `${widthPct}%` }}
+                                            title={`${seg.count} ${seg.label}${!isAllActive && dayTypeFilter !== seg.type ? ' (click to filter)' : isAllActive ? ' (click to filter)' : ' (click to show all)'}`}
+                                        >
+                                            <span className="text-xs font-bold whitespace-nowrap px-2">
+                                                {seg.count} {seg.label}
+                                            </span>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                            {/* Active filter indicator */}
+                            {!isAllActive && (
+                                <div className="flex items-center gap-2">
+                                    <span className="text-xs text-gray-400">
+                                        Filtered to {DAY_TYPE_LABELS[dayTypeFilter]}s
+                                    </span>
+                                    <button
+                                        onClick={() => setDayTypeFilter('all')}
+                                        className="text-xs text-cyan-600 hover:text-cyan-700 font-medium"
+                                    >
+                                        Show all
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    );
+                })()}
             </div>
 
             {/* ── 2. KPI Cards (6) ─────────────────────────────────── */}
