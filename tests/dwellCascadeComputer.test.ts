@@ -59,93 +59,73 @@ function makeIncident(overrides: Partial<DwellIncident>): DwellIncident {
     observedArrivalTime: '08:10:00',
     observedDepartureTime: '08:15:00',
     rawDwellSeconds: 300,
-    trackedDwellSeconds: 180, // 300 - 120 boarding allowance
+    trackedDwellSeconds: 180,
     severity: 'high' as DwellSeverity,
     ...overrides,
   };
 }
 
 /**
- * Build a simple block with N trips, each having 3 stops (start, mid-timepoint, end).
+ * Build a simple block with N trips, each having 3 stops.
  * Trip i departs at baseHour + i*intervalMin.
  * Each trip takes ~20 min with stops at +0, +10, +20 relative to terminal departure.
+ *
+ * Stops:
+ *  - Stop 1: Terminal North (idx 1, timepoint=true)
+ *  - Stop 2: Stop B (idx 2, timepoint=true)
+ *  - Stop 3: Terminal South (idx 3, timepoint=false)
+ *
+ * maxStopIdx = 3, so both stops 1 and 2 are eligible timepoints (< maxStopIdx).
  */
 function buildBlockRecords(opts: {
   block: string;
   tripCount: number;
   baseHour: number;
   intervalMin: number;
-  /** Override observed departure at the mid-timepoint (last eligible) per trip index */
-  observedMidDepartures?: Record<number, string | null>;
-  /** Override observed departure at the first timepoint per trip index */
-  observedFirstDepartures?: Record<number, string | null>;
+  /** Override routeId for specific trip indices */
+  routeIdOverrides?: Record<number, string>;
+  /** Override observed departure per trip index per routeStopIndex */
+  observedDepartures?: Record<number, Record<number, string | null>>;
 }): STREETSRecord[] {
   const records: STREETSRecord[] = [];
   for (let i = 0; i < opts.tripCount; i++) {
     const baseMin = opts.baseHour * 60 + i * opts.intervalMin;
-    const hh = (n: number) => `${Math.floor(n / 60).toString().padStart(2, '0')}:${(n % 60).toString().padStart(2, '0')}`;
-
+    const hh = (n: number) =>
+      `${Math.floor(n / 60).toString().padStart(2, '0')}:${(n % 60).toString().padStart(2, '0')}`;
     const termDep = hh(baseMin);
     const tripName = `Trip-${i + 1}`;
     const tripId = `trip-guid-${i + 1}`;
+    const routeId = opts.routeIdOverrides?.[i] ?? '10';
 
-    // Stop 1: first timepoint (terminal departure)
-    const firstObsDep = opts.observedFirstDepartures?.[i] !== undefined
-      ? opts.observedFirstDepartures[i]
-      : `${hh(baseMin)}:00`;
+    const stops = [
+      { stopName: 'Terminal North', stopId: 'TN', idx: 1, tp: true, minOffset: 0 },
+      { stopName: 'Stop B', stopId: 'SB', idx: 2, tp: true, minOffset: 10 },
+      { stopName: 'Terminal South', stopId: 'TS', idx: 3, tp: false, minOffset: 20 },
+    ];
 
-    records.push(makeRecord({
-      block: opts.block,
-      tripName,
-      tripId,
-      terminalDepartureTime: termDep,
-      stopName: 'Terminal North',
-      stopId: 'TN',
-      routeStopIndex: 1,
-      timePoint: true,
-      arrivalTime: hh(baseMin),
-      stopTime: hh(baseMin),
-      observedArrivalTime: firstObsDep,
-      observedDepartureTime: firstObsDep,
-    }));
+    for (const stop of stops) {
+      const stopMin = baseMin + stop.minOffset;
+      const overrideObs = opts.observedDepartures?.[i]?.[stop.idx];
+      const defaultObs = `${hh(stopMin)}:00`;
+      const obs = overrideObs === undefined ? defaultObs : overrideObs;
 
-    // Stop 2: mid-timepoint (last eligible timepoint — exit lateness measured here)
-    const midMin = baseMin + 10;
-    const midObsDep = opts.observedMidDepartures?.[i] !== undefined
-      ? opts.observedMidDepartures[i]
-      : `${hh(midMin)}:00`;
-
-    records.push(makeRecord({
-      block: opts.block,
-      tripName,
-      tripId,
-      terminalDepartureTime: termDep,
-      stopName: 'Stop B',
-      stopId: 'SB',
-      routeStopIndex: 2,
-      timePoint: true,
-      arrivalTime: hh(midMin),
-      stopTime: hh(midMin),
-      observedArrivalTime: midObsDep,
-      observedDepartureTime: midObsDep,
-    }));
-
-    // Stop 3: final stop (excluded from OTP eligibility)
-    const endMin = baseMin + 20;
-    records.push(makeRecord({
-      block: opts.block,
-      tripName,
-      tripId,
-      terminalDepartureTime: termDep,
-      stopName: 'Terminal South',
-      stopId: 'TS',
-      routeStopIndex: 3,
-      timePoint: false,
-      arrivalTime: hh(endMin),
-      stopTime: hh(endMin),
-      observedArrivalTime: `${hh(endMin)}:00`,
-      observedDepartureTime: `${hh(endMin)}:00`,
-    }));
+      records.push(makeRecord({
+        block: opts.block,
+        tripName,
+        tripId,
+        terminalDepartureTime: termDep,
+        stopName: stop.stopName,
+        stopId: stop.stopId,
+        routeStopIndex: stop.idx,
+        timePoint: stop.tp,
+        routeId,
+        routeName: routeId === '10' ? 'Route 10' : `Route ${routeId}`,
+        arrivalTime: hh(stopMin),
+        stopTime: hh(stopMin),
+        observedArrivalTime: obs,
+        observedDepartureTime: obs,
+      }));
+    }
   }
   return records;
 }
@@ -155,53 +135,61 @@ function buildBlockRecords(opts: {
 describe('dwellCascadeComputer.buildDailyCascadeMetrics', () => {
 
   it('returns empty metrics when no dwell incidents', () => {
-    const records = buildBlockRecords({ block: '10-01', tripCount: 3, baseHour: 8, intervalMin: 30 });
+    const records = buildBlockRecords({
+      block: '10-01', tripCount: 3, baseHour: 8, intervalMin: 30,
+    });
     const result = buildDailyCascadeMetrics(records, []);
 
     expect(result.cascades).toHaveLength(0);
-    expect(result.totalCascades).toBe(0);
-    expect(result.totalAbsorbed).toBe(0);
+    expect(result.totalCascaded).toBe(0);
+    expect(result.totalNonCascaded).toBe(0);
     expect(result.avgBlastRadius).toBe(0);
-    expect(result.totalCascadeOTPDamage).toBe(0);
+    expect(result.totalBlastRadius).toBe(0);
   });
 
-  it('marks dwell as absorbed when trip exits on-time', () => {
-    // Block with 3 trips, 30 min apart. All depart on time.
-    const records = buildBlockRecords({ block: '10-01', tripCount: 3, baseHour: 8, intervalMin: 30 });
+  it('returns blastRadius 0 when all downstream trips are on-time', () => {
+    // All trips depart on-time. Downstream trips have no late timepoints.
+    // Trailing trim removes Trip-2 (0 late TPs) → cascadedTrips empty.
+    const records = buildBlockRecords({
+      block: '10-01', tripCount: 3, baseHour: 8, intervalMin: 30,
+    });
     const incident = makeIncident({ tripName: 'Trip-1', block: '10-01' });
 
     const result = buildDailyCascadeMetrics(records, [incident]);
 
     expect(result.cascades).toHaveLength(1);
-    expect(result.cascades[0].absorbed).toBe(true);
-    expect(result.cascades[0].blastRadius).toBe(0);
-    expect(result.cascades[0].cascadedTrips).toHaveLength(0);
-    expect(result.totalAbsorbed).toBe(1);
-    expect(result.totalCascades).toBe(0);
+    const cascade = result.cascades[0];
+    expect(cascade.blastRadius).toBe(0);
+    expect(cascade.cascadedTrips).toHaveLength(0);
+    expect(cascade.totalLateSeconds).toBe(0);
+    expect(result.totalNonCascaded).toBe(1);
+    expect(result.totalCascaded).toBe(0);
   });
 
-  it('detects cascade when dwell makes trip exit late and recovery is insufficient', () => {
-    // Trip 1: mid-timepoint scheduled 08:10, observed 08:18 → 8 min late at exit
-    // Trip 2 starts at 08:30, Trip 1 ends at 08:20 → 10 min recovery
-    // 8 min late - 10 min recovery = absorbed? Yes (recovery > lateness)
+  it('traces cascade through multiple trips with recovery', () => {
+    // 3 trips, 25 min apart (5 min recovery between 20 min trips).
     //
-    // Now make recovery tight: trips 10 min apart, trip takes 20 min → negative recovery
-    // Trip 1: departs 08:00, ends 08:20. Trip 2: departs 08:25 → 5 min recovery.
-    // Trip 1 exits 8 min late → 8 - 5 = 3 min late entering Trip 2.
-    // Trip 2 departs 3 min late → within 5 min OTP threshold → recovered.
-
+    // Trip-2 (i=0, base 08:25):
+    //   Stop 1 (Terminal North): sched 08:25, obs 08:33 → dev=480s (8min) → LATE
+    //   Stop 2 (Stop B):         sched 08:35, obs 08:41 → dev=360s (6min) → LATE
+    //   lateTimepointCount = 2
+    //
+    // Trip-3 (i=1, base 08:50):
+    //   Stop 1 (Terminal North): sched 08:50, obs 08:56 → dev=360s (6min) → LATE
+    //   Stop 2 (Stop B):         sched 09:00, obs 09:04 → dev=240s (4min) → ON-TIME
+    //     → chain breaks here (lateCount=1 > 0), recoveredAtStop = 'Stop B'
+    //   lateTimepointCount = 1
+    //
+    // blastRadius = 2 + 1 = 3
+    // totalLateSeconds = 480 + 360 + 360 = 1200
     const records = buildBlockRecords({
       block: '10-01',
       tripCount: 3,
       baseHour: 8,
-      intervalMin: 25, // tight: 25 min cycle, 20 min trip = 5 min recovery
-      observedMidDepartures: {
-        0: '08:18:00', // Trip 1 mid-tp: 8 min late (scheduled 08:10)
-        1: '08:38:00', // Trip 2 mid-tp: 3 min late (scheduled 08:35)
-        2: null,       // Trip 3: no AVL
-      },
-      observedFirstDepartures: {
-        1: '08:28:00', // Trip 2 starts 3 min late (scheduled 08:25)
+      intervalMin: 25,
+      observedDepartures: {
+        1: { 1: '08:33:00', 2: '08:41:00' }, // Trip-2: +8min, +6min
+        2: { 1: '08:56:00', 2: '09:04:00' }, // Trip-3: +6min, +4min (recovery)
       },
     });
 
@@ -211,168 +199,209 @@ describe('dwellCascadeComputer.buildDailyCascadeMetrics', () => {
     expect(result.cascades).toHaveLength(1);
     const cascade = result.cascades[0];
 
-    expect(cascade.absorbed).toBe(false);
-    expect(cascade.excessLateSeconds).toBe(480); // 8 min = 480 sec
-    expect(cascade.recoveryTimeAvailableSeconds).toBe(300); // 5 min = 300 sec
-    expect(cascade.cascadedTrips.length).toBeGreaterThanOrEqual(1);
+    expect(cascade.cascadedTrips).toHaveLength(2);
+    expect(cascade.blastRadius).toBe(3);
+    expect(cascade.totalLateSeconds).toBe(1200);
 
-    // Trip 2 should be in the cascade — it started late but recovered (3 min < 5 min threshold)
+    // Trip-2: both timepoints late
     const trip2 = cascade.cascadedTrips[0];
     expect(trip2.tripName).toBe('Trip-2');
-    expect(trip2.recoveredHere).toBe(true);
-    expect(trip2.lateSeconds).toBe(180); // 3 min
+    expect(trip2.lateTimepointCount).toBe(2);
+    expect(trip2.recoveredAtStop).toBeNull();
+    expect(trip2.timepoints).toHaveLength(2);
+    expect(trip2.timepoints[0].isLate).toBe(true);
+    expect(trip2.timepoints[0].deviationSeconds).toBe(480);
+    expect(trip2.timepoints[1].isLate).toBe(true);
+    expect(trip2.timepoints[1].deviationSeconds).toBe(360);
+
+    // Trip-3: first TP late, second TP on-time → recovery
+    const trip3 = cascade.cascadedTrips[1];
+    expect(trip3.tripName).toBe('Trip-3');
+    expect(trip3.lateTimepointCount).toBe(1);
+    expect(trip3.recoveredAtStop).toBe('Stop B');
+    // Trip-3 has 2 timepoints in output (late one + the on-time recovery point)
+    expect(trip3.timepoints).toHaveLength(2);
+    expect(trip3.timepoints[0].isLate).toBe(true);
+    expect(trip3.timepoints[0].deviationSeconds).toBe(360);
+    expect(trip3.timepoints[1].isLate).toBe(false);
+    expect(trip3.timepoints[1].deviationSeconds).toBe(240);
+
+    // Top-level recovery fields
+    expect(cascade.recoveredAtTrip).toBe('Trip-3');
+    expect(cascade.recoveredAtStop).toBe('Stop B');
+    expect(cascade.affectedTripCount).toBe(2);
+
+    expect(result.totalCascaded).toBe(1);
   });
 
-  it('cascades through multiple trips when recovery never absorbs', () => {
-    // 4 trips, 22 min apart (2 min recovery each).
-    // Trip 1 exits 7 min late. Trip 2 must exceed 5 min OTP threshold to not recover.
-    // Trip 2: 6 min late start (> 300s threshold) → doesn't recover → cascade continues.
-    // Trip 3: 4 min late start (< 300s) → recovers.
-
+  it('returns blastRadius 0 when first downstream TP is immediately on-time', () => {
+    // First subsequent trip (i=0): first timepoint on-time, lateCount=0, i=0
+    // → condition (lateCount > 0 || i > 0) = false → not chain-breaking
+    // After walking all TPs with 0 late, lateCount=0 && !chainBroken → chainBroken=true
+    // Trailing trim removes it → cascadedTrips empty
     const records = buildBlockRecords({
-      block: '10-01',
-      tripCount: 4,
-      baseHour: 8,
-      intervalMin: 22,
-      observedMidDepartures: {
-        0: '08:17:00', // Trip 1: 7 min late at exit (scheduled 08:10)
-        1: '08:38:00', // Trip 2: 6 min late at mid (scheduled 08:32) → exit late
-        2: '08:58:00', // Trip 3: 4 min late at mid (scheduled 08:54)
-      },
-      observedFirstDepartures: {
-        1: '08:28:00', // Trip 2: 6 min late start (scheduled 08:22) → > 300s threshold
-        2: '08:48:00', // Trip 3: 4 min late start (scheduled 08:44) → within threshold
-      },
+      block: '10-01', tripCount: 2, baseHour: 8, intervalMin: 30,
     });
-
     const incident = makeIncident({ tripName: 'Trip-1', block: '10-01' });
+
     const result = buildDailyCascadeMetrics(records, [incident]);
 
-    const cascade = result.cascades[0];
-    expect(cascade.absorbed).toBe(false);
-
-    // Trip 2: 6 min late (360s > 300s) → does NOT recover
-    // Trip 3: 4 min late (240s <= 300s) → recovers here
-    expect(cascade.cascadedTrips).toHaveLength(2);
-    expect(cascade.cascadedTrips[0].tripName).toBe('Trip-2');
-    expect(cascade.cascadedTrips[0].recoveredHere).toBe(false);
-    expect(cascade.cascadedTrips[1].tripName).toBe('Trip-3');
-    expect(cascade.cascadedTrips[1].recoveredHere).toBe(true);
-
-    // Blast radius = 1 (Trip 2 didn't recover; Trip 3 did)
-    expect(cascade.blastRadius).toBe(1);
-    expect(result.totalCascades).toBe(1);
-  });
-
-  it('handles dwell incident on last trip in block (no subsequent trips)', () => {
-    const records = buildBlockRecords({ block: '10-01', tripCount: 2, baseHour: 8, intervalMin: 30 });
-
-    const incident = makeIncident({ tripName: 'Trip-2', block: '10-01' });
-    const result = buildDailyCascadeMetrics(records, [incident]);
-
-    // Last trip — no cascade possible but still tracked
     expect(result.cascades).toHaveLength(1);
-    // Could be absorbed (if trip exits on-time) or have 0 blast radius
+    expect(result.cascades[0].blastRadius).toBe(0);
     expect(result.cascades[0].cascadedTrips).toHaveLength(0);
   });
 
-  it('handles incident with non-matching block gracefully', () => {
-    const records = buildBlockRecords({ block: '10-01', tripCount: 2, baseHour: 8, intervalMin: 30 });
+  it('handles dwell on last trip in block (no subsequent trips)', () => {
+    const records = buildBlockRecords({
+      block: '10-01', tripCount: 2, baseHour: 8, intervalMin: 30,
+    });
+    const incident = makeIncident({ tripName: 'Trip-2', block: '10-01' });
+
+    const result = buildDailyCascadeMetrics(records, [incident]);
+
+    expect(result.cascades).toHaveLength(1);
+    expect(result.cascades[0].cascadedTrips).toHaveLength(0);
+    expect(result.cascades[0].blastRadius).toBe(0);
+  });
+
+  it('produces empty cascades array for non-matching block', () => {
+    const records = buildBlockRecords({
+      block: '10-01', tripCount: 2, baseHour: 8, intervalMin: 30,
+    });
     const incident = makeIncident({ block: 'UNKNOWN-BLOCK' });
 
     const result = buildDailyCascadeMetrics(records, [incident]);
     expect(result.cascades).toHaveLength(0);
   });
 
-  it('handles incident with non-matching trip name gracefully', () => {
-    const records = buildBlockRecords({ block: '10-01', tripCount: 2, baseHour: 8, intervalMin: 30 });
+  it('produces empty cascades array for non-matching trip', () => {
+    const records = buildBlockRecords({
+      block: '10-01', tripCount: 2, baseHour: 8, intervalMin: 30,
+    });
     const incident = makeIncident({ tripName: 'NonExistent-Trip', block: '10-01' });
 
     const result = buildDailyCascadeMetrics(records, [incident]);
     expect(result.cascades).toHaveLength(0);
   });
 
-  it('deduplicates duplicate observations at the same exit timepoint', () => {
-    const records = buildBlockRecords({
-      block: '10-01',
-      tripCount: 2,
-      baseHour: 8,
-      intervalMin: 30,
-      observedMidDepartures: {
-        0: '08:10:00', // on-time exit at Trip-1 last eligible TP
-      },
-    });
-
-    // Duplicate terminal-style observation for Trip-1 @ routeStopIndex 2.
-    // This row is farther from schedule and should be ignored by dedup.
-    records.push(makeRecord({
-      block: '10-01',
-      tripName: 'Trip-1',
-      tripId: 'trip-guid-1',
-      terminalDepartureTime: '08:00',
-      routeStopIndex: 2,
-      stopName: 'Stop B',
-      stopId: 'SB',
-      timePoint: true,
-      arrivalTime: '08:10',
-      stopTime: '08:10',
-      observedArrivalTime: '08:18:00',
-      observedDepartureTime: '08:18:00',
-    }));
-
-    const incident = makeIncident({ tripName: 'Trip-1', block: '10-01' });
-    const result = buildDailyCascadeMetrics(records, [incident]);
-    const cascade = result.cascades[0];
-
-    // Canonical (closest-to-schedule) row is on-time, so no cascade.
-    expect(cascade.excessLateSeconds).toBe(0);
-    expect(cascade.absorbed).toBe(true);
-    expect(cascade.blastRadius).toBe(0);
-    expect(cascade.cascadedTrips).toHaveLength(0);
-  });
-
-  it('uses late-entering fallback when downstream trip has no observed first departure', () => {
+  it('computes scheduledRecoverySeconds correctly', () => {
+    // 25 min interval, 20 min trip → 5 min recovery = 300s
     const records = buildBlockRecords({
       block: '10-01',
       tripCount: 3,
       baseHour: 8,
-      intervalMin: 25, // 5 min recovery between trips
-      observedMidDepartures: {
-        0: '08:18:00', // Trip-1 exit late by 8 min
-        1: null,       // Trip-2 has no observed mid departure either
-      },
-      observedFirstDepartures: {
-        1: null, // Trip-2 has no observed first departure
+      intervalMin: 25,
+      observedDepartures: {
+        1: { 1: '08:33:00', 2: '08:41:00' }, // Trip-2 late to create cascade
       },
     });
-
     const incident = makeIncident({ tripName: 'Trip-1', block: '10-01' });
+
     const result = buildDailyCascadeMetrics(records, [incident]);
     const cascade = result.cascades[0];
 
-    expect(cascade.recoveryTimeAvailableSeconds).toBe(300); // 5 min
-    expect(cascade.excessLateSeconds).toBe(480); // 8 min
-    expect(cascade.cascadedTrips).toHaveLength(1);
-    expect(cascade.cascadedTrips[0].tripName).toBe('Trip-2');
-    expect(cascade.cascadedTrips[0].observedDepartureSeconds).toBeNull();
-    // fallback = lateEntering = 8 - 5 = 3 min
-    expect(cascade.cascadedTrips[0].lateSeconds).toBe(180);
-    expect(cascade.cascadedTrips[0].recoveredHere).toBe(true);
+    // Trip-2's scheduledRecoverySeconds = Trip-2 sched start (08:25) - Trip-1 last stop arrival (08:20) = 300s
+    expect(cascade.cascadedTrips.length).toBeGreaterThanOrEqual(1);
+    expect(cascade.cascadedTrips[0].scheduledRecoverySeconds).toBe(300);
   });
 
-  it('builds byStop summary ranked by total blast radius', () => {
-    // Two incidents at different stops — one cascades, one absorbed
+  it('cascades across different routeIds within the same block', () => {
+    // Trip-2 has a different routeId but same block → still cascades
+    const records = buildBlockRecords({
+      block: '10-01',
+      tripCount: 3,
+      baseHour: 8,
+      intervalMin: 25,
+      routeIdOverrides: { 1: '20' }, // Trip-2 is on Route 20
+      observedDepartures: {
+        1: { 1: '08:33:00', 2: '08:41:00' }, // Trip-2: both TPs late
+      },
+    });
+    const incident = makeIncident({ tripName: 'Trip-1', block: '10-01' });
+
+    const result = buildDailyCascadeMetrics(records, [incident]);
+    const cascade = result.cascades[0];
+
+    expect(cascade.cascadedTrips).toHaveLength(1);
+    expect(cascade.cascadedTrips[0].tripName).toBe('Trip-2');
+    expect(cascade.cascadedTrips[0].routeId).toBe('20');
+    expect(cascade.cascadedTrips[0].lateTimepointCount).toBe(2);
+    expect(cascade.blastRadius).toBe(2);
+  });
+
+  it('skips timepoints with null observed departures without breaking chain', () => {
+    // Trip-2 (i=0): Stop 1 null obs → skip, Stop 2 late → lateCount=1
+    // Trip-3 (i=1): Stop 1 on-time → chain breaks (lateCount=0 but i>0)
+    //   Actually: Trip-3 first TP is on-time, i=1 > 0, so condition is true → chain breaks
+    //   Trip-3 lateTimepointCount = 0. Trailing trim removes Trip-3.
+    //   Trip-2 has lateTimepointCount=1 → stays.
+    // blastRadius = 1
+    const records = buildBlockRecords({
+      block: '10-01',
+      tripCount: 3,
+      baseHour: 8,
+      intervalMin: 25,
+      observedDepartures: {
+        1: { 1: null, 2: '08:41:00' }, // Trip-2: null at Stop 1, 6min late at Stop 2
+      },
+    });
+    const incident = makeIncident({ tripName: 'Trip-1', block: '10-01' });
+
+    const result = buildDailyCascadeMetrics(records, [incident]);
+    const cascade = result.cascades[0];
+
+    // Trip-2 should have 2 timepoints observed (null skip + late)
+    const trip2 = cascade.cascadedTrips[0];
+    expect(trip2.tripName).toBe('Trip-2');
+
+    // The null timepoint should appear with null deviation and isLate=false
+    const nullTp = trip2.timepoints.find(tp => tp.stopName === 'Terminal North');
+    expect(nullTp).toBeDefined();
+    expect(nullTp!.observedDeparture).toBeNull();
+    expect(nullTp!.deviationSeconds).toBeNull();
+    expect(nullTp!.isLate).toBe(false);
+
+    // The late timepoint at Stop B
+    const lateTp = trip2.timepoints.find(tp => tp.stopName === 'Stop B');
+    expect(lateTp).toBeDefined();
+    expect(lateTp!.isLate).toBe(true);
+    expect(lateTp!.deviationSeconds).toBe(360); // 6 min
+
+    expect(trip2.lateTimepointCount).toBe(1);
+    expect(cascade.blastRadius).toBe(1);
+  });
+
+  it('sums totalLateSeconds across all late timepoints', () => {
+    // Trip-2: Stop 1 dev=480s (late), Stop 2 dev=360s (late)
+    // Trip-3: Stop 1 dev=360s (late), Stop 2 dev=240s (on-time, recovery)
+    // totalLateSeconds = 480 + 360 + 360 = 1200
+    const records = buildBlockRecords({
+      block: '10-01',
+      tripCount: 3,
+      baseHour: 8,
+      intervalMin: 25,
+      observedDepartures: {
+        1: { 1: '08:33:00', 2: '08:41:00' },
+        2: { 1: '08:56:00', 2: '09:04:00' },
+      },
+    });
+    const incident = makeIncident({ tripName: 'Trip-1', block: '10-01' });
+
+    const result = buildDailyCascadeMetrics(records, [incident]);
+    const cascade = result.cascades[0];
+
+    expect(cascade.totalLateSeconds).toBe(1200);
+  });
+
+  it('ranks byStop by totalBlastRadius descending', () => {
+    // Two incidents at different stops, one cascading, one not
     const records = buildBlockRecords({
       block: '10-01',
       tripCount: 4,
       baseHour: 8,
-      intervalMin: 22,
-      observedMidDepartures: {
-        0: '08:17:00', // Trip 1: 7 min late
-        1: '08:37:00', // Trip 2: 5 min late
-      },
-      observedFirstDepartures: {
-        1: '08:27:00', // Trip 2: 5 min late
+      intervalMin: 25,
+      observedDepartures: {
+        1: { 1: '08:33:00', 2: '08:41:00' }, // Trip-2 late (from Trip-1 incident)
       },
     });
 
@@ -392,77 +421,68 @@ describe('dwellCascadeComputer.buildDailyCascadeMetrics', () => {
     const result = buildDailyCascadeMetrics(records, [cascadingIncident, absorbedIncident]);
 
     expect(result.byStop.length).toBeGreaterThanOrEqual(1);
-    // "Bad Stop" should rank higher than "Fine Stop"
     const badStop = result.byStop.find(s => s.stopName === 'Bad Stop');
     const fineStop = result.byStop.find(s => s.stopName === 'Fine Stop');
     expect(badStop).toBeDefined();
 
     if (badStop && fineStop) {
-      expect(badStop.totalBlastRadius).toBeGreaterThanOrEqual(fineStop.totalBlastRadius);
+      // Bad Stop should rank higher (first in sorted order)
+      const badIdx = result.byStop.indexOf(badStop);
+      const fineIdx = result.byStop.indexOf(fineStop);
+      expect(badIdx).toBeLessThan(fineIdx);
+      expect(badStop.totalBlastRadius).toBeGreaterThan(fineStop.totalBlastRadius);
     }
   });
 
-  it('builds byTerminal recovery stats', () => {
+  it('picks canonical (closest-to-schedule) observation when duplicates exist', () => {
     const records = buildBlockRecords({
       block: '10-01',
-      tripCount: 3,
+      tripCount: 2,
       baseHour: 8,
-      intervalMin: 25,
-      observedMidDepartures: {
-        0: '08:18:00', // 8 min late
-      },
-      observedFirstDepartures: {
-        1: '08:28:00', // 3 min late
-      },
+      intervalMin: 30,
     });
+
+    // Add a duplicate observation for Trip-1 @ routeStopIndex 2 (Stop B).
+    // The original is on-time (08:10:00), this duplicate is 8 min late (08:18:00).
+    // Canonical = closest to schedule = 08:10:00 (on-time).
+    records.push(makeRecord({
+      block: '10-01',
+      tripName: 'Trip-1',
+      tripId: 'trip-guid-1',
+      terminalDepartureTime: '08:00',
+      routeStopIndex: 2,
+      stopName: 'Stop B',
+      stopId: 'SB',
+      timePoint: true,
+      arrivalTime: '08:10',
+      stopTime: '08:10',
+      observedArrivalTime: '08:18:00',
+      observedDepartureTime: '08:18:00',
+    }));
+
+    // Also add a duplicate for Trip-2 @ routeStopIndex 1 with a late reading.
+    // On-time default (08:30:00) should be chosen over this late one.
+    records.push(makeRecord({
+      block: '10-01',
+      tripName: 'Trip-2',
+      tripId: 'trip-guid-2',
+      terminalDepartureTime: '08:30',
+      routeStopIndex: 1,
+      stopName: 'Terminal North',
+      stopId: 'TN',
+      timePoint: true,
+      arrivalTime: '08:30',
+      stopTime: '08:30',
+      observedArrivalTime: '08:40:00',
+      observedDepartureTime: '08:40:00',
+    }));
 
     const incident = makeIncident({ tripName: 'Trip-1', block: '10-01' });
     const result = buildDailyCascadeMetrics(records, [incident]);
+    const cascade = result.cascades[0];
 
-    // byTerminal should have an entry for the terminal where Trip 1 ends
-    expect(result.byTerminal.length).toBeGreaterThanOrEqual(0);
-
-    if (result.byTerminal.length > 0) {
-      const terminal = result.byTerminal[0];
-      expect(terminal.incidentCount).toBe(1);
-      expect(terminal.avgScheduledRecoverySeconds).toBeGreaterThan(0);
-    }
-  });
-
-  it('counts totalCascadeOTPDamage as sum of all blast radii', () => {
-    // Two separate blocks with incidents
-    const block1Records = buildBlockRecords({
-      block: '10-01',
-      tripCount: 3,
-      baseHour: 8,
-      intervalMin: 22,
-      observedMidDepartures: { 0: '08:17:00' },
-      observedFirstDepartures: { 1: '08:27:00' },
-    });
-
-    const block2Records = buildBlockRecords({
-      block: '10-02',
-      tripCount: 3,
-      baseHour: 9,
-      intervalMin: 22,
-      observedMidDepartures: { 0: '09:17:00' },
-      observedFirstDepartures: { 1: '09:27:00' },
-    });
-
-    // Update block2 records with correct block/trip IDs
-    for (const r of block2Records) {
-      r.tripId = r.tripId.replace('trip-guid-', 'trip-guid-b2-');
-    }
-
-    const allRecords = [...block1Records, ...block2Records];
-
-    const inc1 = makeIncident({ tripName: 'Trip-1', block: '10-01' });
-    const inc2 = makeIncident({ tripName: 'Trip-1', block: '10-02' });
-
-    const result = buildDailyCascadeMetrics(allRecords, [inc1, inc2]);
-
-    // totalCascadeOTPDamage = sum of all blast radii
-    const manualSum = result.cascades.reduce((s, c) => s + c.blastRadius, 0);
-    expect(result.totalCascadeOTPDamage).toBe(manualSum);
+    // Canonical row for Trip-2 Stop 1 is on-time → no cascade
+    expect(cascade.blastRadius).toBe(0);
+    expect(cascade.cascadedTrips).toHaveLength(0);
   });
 });

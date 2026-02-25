@@ -72,10 +72,10 @@ export function aggregateCascadeAcrossDays(days: DailySummary[]): DailyCascadeMe
       cascades: [],
       byStop: [],
       byTerminal: [],
-      totalCascades: 0,
-      totalAbsorbed: 0,
+      totalCascaded: 0,
+      totalNonCascaded: 0,
       avgBlastRadius: 0,
-      totalCascadeOTPDamage: 0,
+      totalBlastRadius: 0,
     };
   }
 
@@ -91,11 +91,11 @@ export function aggregateCascadeAcrossDays(days: DailySummary[]): DailyCascadeMe
   const byStop: CascadeStopImpact[] = [];
   for (const [, group] of stopMap) {
     const first = group[0];
-    const absorbedCount = group.filter(c => c.absorbed).length;
-    const cascadedCount = group.length - absorbedCount;
+    const cascaded = group.filter(c => c.blastRadius > 0);
+    const nonCascaded = group.length - cascaded.length;
     const totalBlast = group.reduce((s, c) => s + c.blastRadius, 0);
     const totalDwell = group.reduce((s, c) => s + c.trackedDwellSeconds, 0);
-    const totalExcess = group.reduce((s, c) => s + c.excessLateSeconds, 0);
+    const totalLate = cascaded.reduce((s, c) => s + c.totalLateSeconds, 0);
 
     byStop.push({
       stopName: first.stopName,
@@ -104,10 +104,10 @@ export function aggregateCascadeAcrossDays(days: DailySummary[]): DailyCascadeMe
       incidentCount: group.length,
       totalTrackedDwellSeconds: totalDwell,
       totalBlastRadius: totalBlast,
-      avgBlastRadius: cascadedCount > 0 ? totalBlast / cascadedCount : 0,
-      absorbedCount,
-      cascadedCount,
-      avgExcessLateSeconds: group.length > 0 ? totalExcess / group.length : 0,
+      avgBlastRadius: cascaded.length > 0 ? totalBlast / cascaded.length : 0,
+      cascadedCount: cascaded.length,
+      nonCascadedCount: nonCascaded,
+      avgTotalLateSeconds: cascaded.length > 0 ? totalLate / cascaded.length : 0,
     });
   }
   byStop.sort((a, b) => b.totalBlastRadius - a.totalBlastRadius || b.cascadedCount - a.cascadedCount);
@@ -146,20 +146,18 @@ export function aggregateCascadeAcrossDays(days: DailySummary[]): DailyCascadeMe
   }
   byTerminal.sort((a, b) => b.cascadedCount - a.cascadedCount || a.absorbedCount - b.absorbedCount);
 
-  const totalCascadesCount = cascades.filter(c => !c.absorbed).length;
-  const totalAbsorbedCount = cascades.length - totalCascadesCount;
-  const cascadedOnly = cascades.filter(c => !c.absorbed);
-  const totalDamage = cascades.reduce((s, c) => s + c.blastRadius, 0);
+  const cascadedOnly = cascades.filter(c => c.blastRadius > 0);
+  const totalBlast = cascades.reduce((s, c) => s + c.blastRadius, 0);
 
   return {
     cascades,
     byStop,
     byTerminal,
-    totalCascades: totalCascadesCount,
-    totalAbsorbed: totalAbsorbedCount,
+    totalCascaded: cascadedOnly.length,
+    totalNonCascaded: cascades.length - cascadedOnly.length,
     avgBlastRadius: cascadedOnly.length > 0
-      ? cascadedOnly.reduce((s, c) => s + c.blastRadius, 0) / cascadedOnly.length
+      ? totalBlast / cascadedOnly.length
       : 0,
-    totalCascadeOTPDamage: totalDamage,
+    totalBlastRadius: totalBlast,
   };
 }

@@ -23,7 +23,7 @@ function makeDaySummary(overrides: Partial<DailySummary> = {}): DailySummary {
     byTrip: [],
     loadProfiles: [],
     dataQuality: { totalRecords: 1000, nullArrivalPct: 0, nullDeparturePct: 0, inBetweenPct: 0, timepointCoverage: 0.95 },
-    schemaVersion: 3,
+    schemaVersion: 4,
     ...overrides,
   } as DailySummary;
 }
@@ -41,11 +41,12 @@ function makeCascade(overrides: Partial<DwellCascade> = {}): DwellCascade {
     observedDepartureTime: '08:15:00',
     trackedDwellSeconds: 180,
     severity: 'high' as DwellSeverity,
-    excessLateSeconds: 480,
-    recoveryTimeAvailableSeconds: 300,
     cascadedTrips: [],
     blastRadius: 0,
-    absorbed: true,
+    affectedTripCount: 0,
+    recoveredAtTrip: null,
+    recoveredAtStop: null,
+    totalLateSeconds: 0,
     ...overrides,
   };
 }
@@ -70,10 +71,10 @@ function makeDailyCascadeMetrics(overrides: Partial<DailyCascadeMetrics> = {}): 
     cascades: [],
     byStop: [],
     byTerminal: [],
-    totalCascades: 0,
-    totalAbsorbed: 0,
+    totalCascaded: 0,
+    totalNonCascaded: 0,
     avgBlastRadius: 0,
-    totalCascadeOTPDamage: 0,
+    totalBlastRadius: 0,
     ...overrides,
   };
 }
@@ -87,8 +88,8 @@ describe('aggregateCascadeAcrossDays — multi-day', () => {
       date: '2026-02-20',
       byCascade: makeDailyCascadeMetrics({
         cascades: [
-          makeCascade({ date: '2026-02-20', stopName: 'Stop A', stopId: 'SA', absorbed: true, blastRadius: 0 }),
-          makeCascade({ date: '2026-02-20', stopName: 'Stop B', stopId: 'SB', absorbed: false, blastRadius: 2 }),
+          makeCascade({ date: '2026-02-20', stopName: 'Stop A', stopId: 'SA', blastRadius: 0 }),
+          makeCascade({ date: '2026-02-20', stopName: 'Stop B', stopId: 'SB', blastRadius: 2, totalLateSeconds: 600 }),
         ],
         byTerminal: [makeTerminal({ incidentCount: 2, absorbedCount: 1, cascadedCount: 1 })],
       }),
@@ -97,7 +98,7 @@ describe('aggregateCascadeAcrossDays — multi-day', () => {
       date: '2026-02-21',
       byCascade: makeDailyCascadeMetrics({
         cascades: [
-          makeCascade({ date: '2026-02-21', stopName: 'Stop A', stopId: 'SA', absorbed: false, blastRadius: 3 }),
+          makeCascade({ date: '2026-02-21', stopName: 'Stop A', stopId: 'SA', blastRadius: 3, totalLateSeconds: 900 }),
         ],
         byTerminal: [makeTerminal({ incidentCount: 1, absorbedCount: 0, cascadedCount: 1 })],
       }),
@@ -107,12 +108,12 @@ describe('aggregateCascadeAcrossDays — multi-day', () => {
 
     // 3 total cascades from both days
     expect(result.cascades).toHaveLength(3);
-    // 2 cascaded (not absorbed)
-    expect(result.totalCascades).toBe(2);
-    // 1 absorbed
-    expect(result.totalAbsorbed).toBe(1);
-    // Total OTP damage = 0 + 2 + 3 = 5
-    expect(result.totalCascadeOTPDamage).toBe(5);
+    // 2 cascaded (blastRadius > 0)
+    expect(result.totalCascaded).toBe(2);
+    // 1 non-cascaded (blastRadius === 0)
+    expect(result.totalNonCascaded).toBe(1);
+    // Total blast radius = 0 + 2 + 3 = 5
+    expect(result.totalBlastRadius).toBe(5);
   });
 
   it('re-aggregates byStop across days (same stop merges)', () => {
@@ -120,7 +121,7 @@ describe('aggregateCascadeAcrossDays — multi-day', () => {
       date: '2026-02-20',
       byCascade: makeDailyCascadeMetrics({
         cascades: [
-          makeCascade({ date: '2026-02-20', stopName: 'Stop A', stopId: 'SA', routeId: '10', absorbed: false, blastRadius: 2, trackedDwellSeconds: 200, excessLateSeconds: 300 }),
+          makeCascade({ date: '2026-02-20', stopName: 'Stop A', stopId: 'SA', routeId: '10', blastRadius: 2, trackedDwellSeconds: 200, totalLateSeconds: 600 }),
         ],
       }),
     });
@@ -128,7 +129,7 @@ describe('aggregateCascadeAcrossDays — multi-day', () => {
       date: '2026-02-21',
       byCascade: makeDailyCascadeMetrics({
         cascades: [
-          makeCascade({ date: '2026-02-21', stopName: 'Stop A', stopId: 'SA', routeId: '10', absorbed: true, blastRadius: 0, trackedDwellSeconds: 150, excessLateSeconds: 100 }),
+          makeCascade({ date: '2026-02-21', stopName: 'Stop A', stopId: 'SA', routeId: '10', blastRadius: 0, trackedDwellSeconds: 150, totalLateSeconds: 0 }),
         ],
       }),
     });
@@ -141,7 +142,7 @@ describe('aggregateCascadeAcrossDays — multi-day', () => {
     expect(stop.stopName).toBe('Stop A');
     expect(stop.incidentCount).toBe(2);
     expect(stop.cascadedCount).toBe(1);
-    expect(stop.absorbedCount).toBe(1);
+    expect(stop.nonCascadedCount).toBe(1);
     expect(stop.totalBlastRadius).toBe(2);
     expect(stop.totalTrackedDwellSeconds).toBe(350);
   });
@@ -190,7 +191,7 @@ describe('aggregateCascadeAcrossDays — multi-day', () => {
     const day = makeDaySummary({
       date: '2026-02-22',
       byCascade: makeDailyCascadeMetrics({
-        cascades: [makeCascade({ absorbed: false, blastRadius: 2 })],
+        cascades: [makeCascade({ blastRadius: 2, totalLateSeconds: 600 })],
         byTerminal: [makeTerminal({
           stopName: 'Terminal North', stopId: 'TN', routeId: '10',
           incidentCount: 4, absorbedCount: 2, cascadedCount: 2,
@@ -204,14 +205,14 @@ describe('aggregateCascadeAcrossDays — multi-day', () => {
     expect(result.byTerminal[0].sufficientRecovery).toBe(false); // 2/4 = 50%
   });
 
-  it('computes avgBlastRadius only from cascaded (non-absorbed) incidents', () => {
+  it('computes avgBlastRadius only from cascaded (blastRadius > 0) incidents', () => {
     const day1 = makeDaySummary({
       date: '2026-02-20',
       byCascade: makeDailyCascadeMetrics({
         cascades: [
-          makeCascade({ absorbed: true, blastRadius: 0 }),
-          makeCascade({ absorbed: false, blastRadius: 4 }),
-          makeCascade({ absorbed: false, blastRadius: 6 }),
+          makeCascade({ blastRadius: 0 }),
+          makeCascade({ blastRadius: 4, totalLateSeconds: 1200 }),
+          makeCascade({ blastRadius: 6, totalLateSeconds: 1800 }),
         ],
       }),
     });
@@ -220,12 +221,12 @@ describe('aggregateCascadeAcrossDays — multi-day', () => {
 
     // avg blast = (4 + 6) / 2 cascaded = 5.0
     expect(result.avgBlastRadius).toBe(5);
-    expect(result.totalCascades).toBe(2);
-    expect(result.totalAbsorbed).toBe(1);
+    expect(result.totalCascaded).toBe(2);
+    expect(result.totalNonCascaded).toBe(1);
   });
 
   it('handles single-day data identically to multi-day', () => {
-    const cascade = makeCascade({ absorbed: false, blastRadius: 3 });
+    const cascade = makeCascade({ blastRadius: 3, totalLateSeconds: 900 });
     const singleDay = makeDaySummary({
       byCascade: makeDailyCascadeMetrics({
         cascades: [cascade],
@@ -236,8 +237,8 @@ describe('aggregateCascadeAcrossDays — multi-day', () => {
     const result = aggregateCascadeAcrossDays([singleDay]);
 
     expect(result.cascades).toHaveLength(1);
-    expect(result.totalCascades).toBe(1);
-    expect(result.totalCascadeOTPDamage).toBe(3);
+    expect(result.totalCascaded).toBe(1);
+    expect(result.totalBlastRadius).toBe(3);
     expect(result.byTerminal).toHaveLength(1);
   });
 
@@ -245,9 +246,9 @@ describe('aggregateCascadeAcrossDays — multi-day', () => {
     const day = makeDaySummary({
       byCascade: makeDailyCascadeMetrics({
         cascades: [
-          makeCascade({ stopName: 'Low Stop', stopId: 'LS', routeId: '10', absorbed: false, blastRadius: 1 }),
-          makeCascade({ stopName: 'High Stop', stopId: 'HS', routeId: '10', absorbed: false, blastRadius: 5 }),
-          makeCascade({ stopName: 'Mid Stop', stopId: 'MS', routeId: '10', absorbed: false, blastRadius: 3 }),
+          makeCascade({ stopName: 'Low Stop', stopId: 'LS', routeId: '10', blastRadius: 1, totalLateSeconds: 300 }),
+          makeCascade({ stopName: 'High Stop', stopId: 'HS', routeId: '10', blastRadius: 5, totalLateSeconds: 1500 }),
+          makeCascade({ stopName: 'Mid Stop', stopId: 'MS', routeId: '10', blastRadius: 3, totalLateSeconds: 900 }),
         ],
       }),
     });
@@ -266,7 +267,6 @@ describe('aggregateCascadeAcrossDays — undefined byCascade fallback', () => {
 
   it('returns empty metrics when ALL days have no byCascade (old schema)', () => {
     const oldDay1 = makeDaySummary({ date: '2026-01-10', schemaVersion: 2 });
-    // Explicitly no byCascade field
     delete (oldDay1 as any).byCascade;
 
     const oldDay2 = makeDaySummary({ date: '2026-01-11', schemaVersion: 2 });
@@ -277,10 +277,10 @@ describe('aggregateCascadeAcrossDays — undefined byCascade fallback', () => {
     expect(result.cascades).toHaveLength(0);
     expect(result.byStop).toHaveLength(0);
     expect(result.byTerminal).toHaveLength(0);
-    expect(result.totalCascades).toBe(0);
-    expect(result.totalAbsorbed).toBe(0);
+    expect(result.totalCascaded).toBe(0);
+    expect(result.totalNonCascaded).toBe(0);
     expect(result.avgBlastRadius).toBe(0);
-    expect(result.totalCascadeOTPDamage).toBe(0);
+    expect(result.totalBlastRadius).toBe(0);
   });
 
   it('handles mix of days WITH and WITHOUT byCascade', () => {
@@ -289,11 +289,11 @@ describe('aggregateCascadeAcrossDays — undefined byCascade fallback', () => {
 
     const newDay = makeDaySummary({
       date: '2026-02-20',
-      schemaVersion: 3,
+      schemaVersion: 4,
       byCascade: makeDailyCascadeMetrics({
         cascades: [
-          makeCascade({ absorbed: false, blastRadius: 3 }),
-          makeCascade({ absorbed: true, blastRadius: 0 }),
+          makeCascade({ blastRadius: 3, totalLateSeconds: 900 }),
+          makeCascade({ blastRadius: 0 }),
         ],
         byTerminal: [makeTerminal({ incidentCount: 2, absorbedCount: 1, cascadedCount: 1 })],
       }),
@@ -303,9 +303,9 @@ describe('aggregateCascadeAcrossDays — undefined byCascade fallback', () => {
 
     // Only the new day's cascades should be included
     expect(result.cascades).toHaveLength(2);
-    expect(result.totalCascades).toBe(1);
-    expect(result.totalAbsorbed).toBe(1);
-    expect(result.totalCascadeOTPDamage).toBe(3);
+    expect(result.totalCascaded).toBe(1);
+    expect(result.totalNonCascaded).toBe(1);
+    expect(result.totalBlastRadius).toBe(3);
     expect(result.byTerminal).toHaveLength(1);
   });
 
@@ -315,7 +315,7 @@ describe('aggregateCascadeAcrossDays — undefined byCascade fallback', () => {
     const result = aggregateCascadeAcrossDays([day]);
 
     expect(result.cascades).toHaveLength(0);
-    expect(result.totalCascades).toBe(0);
+    expect(result.totalCascaded).toBe(0);
   });
 
   it('handles empty daily summaries array', () => {
@@ -324,7 +324,7 @@ describe('aggregateCascadeAcrossDays — undefined byCascade fallback', () => {
     expect(result.cascades).toHaveLength(0);
     expect(result.byStop).toHaveLength(0);
     expect(result.byTerminal).toHaveLength(0);
-    expect(result.totalCascades).toBe(0);
+    expect(result.totalCascaded).toBe(0);
   });
 
   it('handles byCascade with empty cascades array', () => {
@@ -335,8 +335,8 @@ describe('aggregateCascadeAcrossDays — undefined byCascade fallback', () => {
     const result = aggregateCascadeAcrossDays([day]);
 
     expect(result.cascades).toHaveLength(0);
-    expect(result.totalCascades).toBe(0);
-    expect(result.totalAbsorbed).toBe(0);
+    expect(result.totalCascaded).toBe(0);
+    expect(result.totalNonCascaded).toBe(0);
   });
 
   it('hasCascadeData check: .some(d => d.byCascade) is false when all undefined', () => {
@@ -344,11 +344,9 @@ describe('aggregateCascadeAcrossDays — undefined byCascade fallback', () => {
       makeDaySummary({ date: '2026-01-10' }),
       makeDaySummary({ date: '2026-01-11' }),
     ];
-    // Remove byCascade from both
     delete (days[0] as any).byCascade;
     delete (days[1] as any).byCascade;
 
-    // This is the exact check DwellCascadeSection uses (line 50)
     const hasCascadeData = days.some(d => d.byCascade);
     expect(hasCascadeData).toBe(false);
   });
