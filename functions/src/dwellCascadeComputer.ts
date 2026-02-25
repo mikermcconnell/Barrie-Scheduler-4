@@ -1,14 +1,17 @@
 // Server-side Dwell Cascade Computer — mirrors utils/schedule/dwellCascadeComputer.ts
+// Pure AVL forward-walk: traces how dwell incidents propagate through a block's trip chain.
+
 import type {
   STREETSRecord,
   DwellIncident,
   DwellCascade,
   CascadeAffectedTrip,
+  CascadeTimepointObs,
   CascadeStopImpact,
   TerminalRecoveryStats,
   DailyCascadeMetrics,
 } from './types';
-import { OTP_THRESHOLDS, classifyOTP } from './types';
+import { OTP_THRESHOLDS } from './types';
 
 // ─── Internal Types ───────────────────────────────────────────────────
 
@@ -19,7 +22,7 @@ interface BlockTrip {
   routeName: string;
   block: string;
   scheduledTerminalDepartureSec: number;
-  records: STREETSRecord[];
+  records: STREETSRecord[]; // sorted by routeStopIndex
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────
@@ -44,8 +47,47 @@ function safeDivide(n: number, d: number): number {
   return d === 0 ? 0 : n / d;
 }
 
+/** Pick a canonical row when STREETS emits duplicates for the same stop pass. */
+function chooseCanonicalStopRecord(records: STREETSRecord[]): STREETSRecord {
+  let chosen = records[0];
+  let bestDev = chosen.observedDepartureTime
+    ? Math.abs(timeToSeconds(chosen.observedDepartureTime) - timeToSeconds(chosen.stopTime))
+    : Number.POSITIVE_INFINITY;
+
+  for (let i = 1; i < records.length; i++) {
+    const rec = records[i];
+    const dev = rec.observedDepartureTime
+      ? Math.abs(timeToSeconds(rec.observedDepartureTime) - timeToSeconds(rec.stopTime))
+      : Number.POSITIVE_INFINITY;
+    if (dev < bestDev) {
+      chosen = rec;
+      bestDev = dev;
+    }
+  }
+
+  return chosen;
+}
+
+/** Deduplicate repeated observations for the same stop pass within a trip. */
+function dedupeTripRecords(tripRecs: STREETSRecord[]): STREETSRecord[] {
+  const byStopPass = new Map<string, STREETSRecord[]>();
+  for (const r of tripRecs) {
+    const key = `${r.routeStopIndex}|${r.stopId}`;
+    const arr = byStopPass.get(key);
+    if (arr) arr.push(r);
+    else byStopPass.set(key, [r]);
+  }
+
+  const deduped: STREETSRecord[] = [];
+  for (const group of byStopPass.values()) {
+    deduped.push(group.length === 1 ? group[0] : chooseCanonicalStopRecord(group));
+  }
+  return deduped;
+}
+
 // ─── Block Trip Sequencing ────────────────────────────────────────────
 
+/** Group records by block, then by trip within each block, sorted by scheduled departure. */
 function buildBlockTripSequences(records: STREETSRecord[]): Map<string, BlockTrip[]> {
   const byBlock = new Map<string, STREETSRecord[]>();
   for (const r of records) {
@@ -66,7 +108,8 @@ function buildBlockTripSequences(records: STREETSRecord[]): Map<string, BlockTri
 
     const trips: BlockTrip[] = [];
     for (const [tripId, tripRecs] of byTrip) {
-      const sorted = [...tripRecs].sort((a, b) => a.routeStopIndex - b.routeStopIndex);
+      const sorted = dedupeTripRecords(tripRecs)
+        .sort((a, b) => a.routeStopIndex - b.routeStopIndex);
       const first = sorted[0];
       trips.push({
         tripId,
@@ -86,104 +129,137 @@ function buildBlockTripSequences(records: STREETSRecord[]): Map<string, BlockTri
   return result;
 }
 
-// ─── Per-Trip Exit Lateness ───────────────────────────────────────────
-
-function computeTripExitLateness(trip: BlockTrip): number | null {
-  const maxStopIdx = Math.max(...trip.records.map(r => r.routeStopIndex));
-
-  const eligibleTimepoints = trip.records.filter(r =>
-    r.timePoint &&
-    r.routeStopIndex < maxStopIdx &&
-    r.observedDepartureTime
-  );
-
-  if (eligibleTimepoints.length === 0) return null;
-
-  const lastTP = eligibleTimepoints[eligibleTimepoints.length - 1];
-  const actualSec = timeToSeconds(lastTP.observedDepartureTime!);
-  const scheduledSec = timeToSeconds(lastTP.stopTime);
-
-  let deviation = actualSec - scheduledSec;
-  if (deviation < -43200) deviation += 86400;
-  if (deviation > 43200) deviation -= 86400;
-
-  return deviation;
-}
-
-function getActualFirstTimepointDeparture(trip: BlockTrip): number | null {
-  for (const r of trip.records) {
-    if (r.timePoint && r.observedDepartureTime) {
-      return timeToSeconds(r.observedDepartureTime);
-    }
-  }
-  return null;
-}
-
+/**
+ * Compute scheduled recovery time between two consecutive trips in a block.
+ * Recovery = next trip's scheduled terminal departure - current trip's scheduled last stop arrival.
+ */
 function computeRecoveryTime(currentTrip: BlockTrip, nextTrip: BlockTrip): number {
   const lastRec = currentTrip.records[currentTrip.records.length - 1];
   const currentEndSec = timeToSeconds(lastRec.arrivalTime);
   const nextStartSec = nextTrip.scheduledTerminalDepartureSec;
 
   let gap = nextStartSec - currentEndSec;
-  if (gap < 0) gap += 86400;
+  if (gap < 0) gap += 86400; // overnight wrap
   return gap;
 }
 
-// ─── Cascade Tracing ──────────────────────────────────────────────────
+// ─── Cascade Tracing (Pure AVL Forward Walk) ─────────────────────────
 
 function traceCascade(
   incident: DwellIncident,
   incidentTrip: BlockTrip,
   subsequentTrips: BlockTrip[],
-  exitLateness: number,
 ): DwellCascade {
   const cascadedTrips: CascadeAffectedTrip[] = [];
-  let carryoverLate = exitLateness;
-  const recoveryAvailable = subsequentTrips.length > 0
-    ? computeRecoveryTime(incidentTrip, subsequentTrips[0])
-    : 0;
+  let chainBroken = false;
+  let recoveredAtTrip: string | null = null;
+  let recoveredAtStop: string | null = null;
 
   for (let i = 0; i < subsequentTrips.length; i++) {
+    if (chainBroken) break;
+
     const nextTrip = subsequentTrips[i];
     const prevTrip = i === 0 ? incidentTrip : subsequentTrips[i - 1];
-    const recovery = i === 0 ? recoveryAvailable : computeRecoveryTime(prevTrip, nextTrip);
+    const recovery = computeRecoveryTime(prevTrip, nextTrip);
 
-    const lateEntering = Math.max(0, carryoverLate - recovery);
-    if (lateEntering <= 0) break;
+    // Walk every timepoint in this trip
+    const maxStopIdx = Math.max(...nextTrip.records.map(r => r.routeStopIndex));
+    const timepointRecords = nextTrip.records.filter(
+      r => r.timePoint && r.routeStopIndex < maxStopIdx,
+    );
 
-    const actualDepSec = getActualFirstTimepointDeparture(nextTrip);
-    const schedDepSec = nextTrip.scheduledTerminalDepartureSec;
+    const timepoints: CascadeTimepointObs[] = [];
+    let lateCount = 0;
+    let tripRecoveredAtStop: string | null = null;
 
-    let observedLate: number;
-    if (actualDepSec !== null) {
-      observedLate = actualDepSec - schedDepSec;
-      if (observedLate < -43200) observedLate += 86400;
-      if (observedLate > 43200) observedLate -= 86400;
-    } else {
-      observedLate = lateEntering;
+    for (const rec of timepointRecords) {
+      const scheduledSec = timeToSeconds(rec.stopTime);
+      let deviationSeconds: number | null = null;
+      let isLate = false;
+
+      if (rec.observedDepartureTime) {
+        const observedSec = timeToSeconds(rec.observedDepartureTime);
+        let dev = observedSec - scheduledSec;
+        // Post-midnight guard
+        if (dev < -43200) dev += 86400;
+        if (dev > 43200) dev -= 86400;
+        deviationSeconds = dev;
+
+        if (dev > OTP_THRESHOLDS.lateSeconds) {
+          isLate = true;
+          lateCount++;
+        } else {
+          // First on-time departure → chain stops here
+          if (lateCount > 0 || i > 0) {
+            tripRecoveredAtStop = rec.stopName;
+            timepoints.push({
+              stopName: rec.stopName,
+              stopId: rec.stopId,
+              routeStopIndex: rec.routeStopIndex,
+              scheduledDeparture: rec.stopTime,
+              observedDeparture: rec.observedDepartureTime,
+              deviationSeconds,
+              isLate,
+            });
+            chainBroken = true;
+            recoveredAtTrip = nextTrip.tripName;
+            recoveredAtStop = rec.stopName;
+            break;
+          }
+        }
+      }
+      // null observedDeparture → skip (don't count, don't break chain)
+
+      timepoints.push({
+        stopName: rec.stopName,
+        stopId: rec.stopId,
+        routeStopIndex: rec.routeStopIndex,
+        scheduledDeparture: rec.stopTime,
+        observedDeparture: rec.observedDepartureTime ?? null,
+        deviationSeconds,
+        isLate,
+      });
     }
-
-    const otpStatus = classifyOTP(observedLate);
-    const recoveredHere = observedLate <= OTP_THRESHOLDS.lateSeconds;
 
     cascadedTrips.push({
       tripName: nextTrip.tripName,
+      tripId: nextTrip.tripId,
       routeId: nextTrip.routeId,
+      routeName: nextTrip.routeName,
       terminalDepartureTime: nextTrip.records[0].terminalDepartureTime,
-      observedDepartureSeconds: actualDepSec,
-      scheduledDepartureSeconds: schedDepSec,
-      lateSeconds: observedLate,
-      otpStatus,
-      recoveredHere,
+      scheduledRecoverySeconds: recovery,
+      timepoints,
+      lateTimepointCount: lateCount,
+      recoveredAtStop: tripRecoveredAtStop,
     });
 
-    if (recoveredHere) break;
-
-    const nextExitLateness = computeTripExitLateness(nextTrip);
-    carryoverLate = nextExitLateness !== null ? Math.max(0, nextExitLateness) : observedLate;
+    if (lateCount === 0 && !chainBroken) {
+      chainBroken = true;
+      recoveredAtTrip = nextTrip.tripName;
+    }
   }
 
-  const blastRadius = cascadedTrips.filter(t => !t.recoveredHere).length;
+  // Remove trailing trips with 0 late timepoints (they weren't affected)
+  while (cascadedTrips.length > 0) {
+    const last = cascadedTrips[cascadedTrips.length - 1];
+    if (last.lateTimepointCount === 0) {
+      cascadedTrips.pop();
+    } else {
+      break;
+    }
+  }
+
+  // Compute aggregate metrics
+  let blastRadius = 0;
+  let totalLateSeconds = 0;
+  for (const trip of cascadedTrips) {
+    blastRadius += trip.lateTimepointCount;
+    for (const tp of trip.timepoints) {
+      if (tp.isLate && tp.deviationSeconds !== null) {
+        totalLateSeconds += tp.deviationSeconds;
+      }
+    }
+  }
 
   return {
     date: incident.date,
@@ -197,11 +273,12 @@ function traceCascade(
     observedDepartureTime: incident.observedDepartureTime,
     trackedDwellSeconds: incident.trackedDwellSeconds,
     severity: incident.severity,
-    excessLateSeconds: exitLateness,
-    recoveryTimeAvailableSeconds: recoveryAvailable,
     cascadedTrips,
     blastRadius,
-    absorbed: cascadedTrips.length === 0,
+    affectedTripCount: cascadedTrips.length,
+    recoveredAtTrip,
+    recoveredAtStop,
+    totalLateSeconds,
   };
 }
 
@@ -219,11 +296,11 @@ function buildByStop(cascades: DwellCascade[]): CascadeStopImpact[] {
   const results: CascadeStopImpact[] = [];
   for (const [, group] of map) {
     const first = group[0];
-    const absorbedCount = group.filter(c => c.absorbed).length;
-    const cascadedCount = group.length - absorbedCount;
+    const cascaded = group.filter(c => c.blastRadius > 0);
+    const nonCascaded = group.length - cascaded.length;
     const totalBlast = group.reduce((s, c) => s + c.blastRadius, 0);
     const totalDwell = group.reduce((s, c) => s + c.trackedDwellSeconds, 0);
-    const totalExcess = group.reduce((s, c) => s + c.excessLateSeconds, 0);
+    const totalLate = cascaded.reduce((s, c) => s + c.totalLateSeconds, 0);
 
     results.push({
       stopName: first.stopName,
@@ -232,10 +309,10 @@ function buildByStop(cascades: DwellCascade[]): CascadeStopImpact[] {
       incidentCount: group.length,
       totalTrackedDwellSeconds: totalDwell,
       totalBlastRadius: totalBlast,
-      avgBlastRadius: safeDivide(totalBlast, cascadedCount),
-      absorbedCount,
-      cascadedCount,
-      avgExcessLateSeconds: safeDivide(totalExcess, group.length),
+      avgBlastRadius: safeDivide(totalBlast, cascaded.length),
+      cascadedCount: cascaded.length,
+      nonCascadedCount: nonCascaded,
+      avgTotalLateSeconds: safeDivide(totalLate, cascaded.length),
     });
   }
 
@@ -256,14 +333,17 @@ function buildByTerminal(cascades: DwellCascade[], blockTrips: Map<string, Block
     const lastRec = trip.records[trip.records.length - 1];
     const terminalKey = `${lastRec.stopId}||${lastRec.stopName}||${c.routeId}`;
 
+    const nextTrip = tripIdx < trips.length - 1 ? trips[tripIdx + 1] : null;
+    const recovery = nextTrip ? computeRecoveryTime(trip, nextTrip) : 0;
+
     const entry = terminalMap.get(terminalKey);
     if (entry) {
       entry.cascades.push(c);
-      entry.recoveryTimes.push(c.recoveryTimeAvailableSeconds);
+      entry.recoveryTimes.push(recovery);
     } else {
       terminalMap.set(terminalKey, {
         cascades: [c],
-        recoveryTimes: [c.recoveryTimeAvailableSeconds],
+        recoveryTimes: [recovery],
       });
     }
   }
@@ -277,21 +357,24 @@ function buildByTerminal(cascades: DwellCascade[], blockTrips: Map<string, Block
     const tripIdx = trips.findIndex(t => t.tripName === first.tripName);
     if (tripIdx < 0) continue;
 
-    const absorbedCount = entry.cascades.filter(c => c.absorbed).length;
-    const cascadedCount = entry.cascades.length - absorbedCount;
-    const totalExcess = entry.cascades.reduce((s, c) => s + c.excessLateSeconds, 0);
+    const trip = trips[tripIdx];
+    const lastRec = trip.records[trip.records.length - 1];
+
+    const cascadedCount = entry.cascades.filter(c => c.blastRadius > 0).length;
+    const nonCascadedCount = entry.cascades.length - cascadedCount;
     const totalRecovery = entry.recoveryTimes.reduce((s, r) => s + r, 0);
+    const totalLate = entry.cascades.reduce((s, c) => s + c.totalLateSeconds, 0);
 
     results.push({
-      stopName: entry.cascades[0].stopName,
-      stopId: entry.cascades[0].stopId,
+      stopName: lastRec.stopName,
+      stopId: lastRec.stopId,
       routeId: first.routeId,
       incidentCount: entry.cascades.length,
-      absorbedCount,
+      absorbedCount: nonCascadedCount,
       cascadedCount,
       avgScheduledRecoverySeconds: safeDivide(totalRecovery, entry.cascades.length),
-      avgExcessLateSeconds: safeDivide(totalExcess, entry.cascades.length),
-      sufficientRecovery: absorbedCount >= entry.cascades.length * 0.75,
+      avgExcessLateSeconds: safeDivide(totalLate, entry.cascades.length),
+      sufficientRecovery: nonCascadedCount >= entry.cascades.length * 0.75,
     });
   }
 
@@ -309,10 +392,10 @@ export function buildDailyCascadeMetrics(
       cascades: [],
       byStop: [],
       byTerminal: [],
-      totalCascades: 0,
-      totalAbsorbed: 0,
+      totalCascaded: 0,
+      totalNonCascaded: 0,
       avgBlastRadius: 0,
-      totalCascadeOTPDamage: 0,
+      totalBlastRadius: 0,
     };
   }
 
@@ -327,51 +410,20 @@ export function buildDailyCascadeMetrics(
     if (tripIdx < 0) continue;
 
     const incidentTrip = trips[tripIdx];
-
-    const exitLateness = computeTripExitLateness(incidentTrip);
-    if (exitLateness === null || exitLateness <= 0) {
-      cascades.push({
-        date: incident.date,
-        block: incident.block,
-        routeId: incident.routeId,
-        routeName: incident.routeName,
-        stopName: incident.stopName,
-        stopId: incident.stopId,
-        tripName: incident.tripName,
-        operatorId: incident.operatorId,
-        observedDepartureTime: incident.observedDepartureTime,
-        trackedDwellSeconds: incident.trackedDwellSeconds,
-        severity: incident.severity,
-        excessLateSeconds: exitLateness ?? 0,
-        recoveryTimeAvailableSeconds: tripIdx < trips.length - 1
-          ? computeRecoveryTime(incidentTrip, trips[tripIdx + 1])
-          : 0,
-        cascadedTrips: [],
-        blastRadius: 0,
-        absorbed: true,
-      });
-      continue;
-    }
-
     const subsequentTrips = trips.slice(tripIdx + 1);
-    cascades.push(traceCascade(incident, incidentTrip, subsequentTrips, exitLateness));
+    cascades.push(traceCascade(incident, incidentTrip, subsequentTrips));
   }
 
-  const totalCascades = cascades.filter(c => !c.absorbed).length;
-  const totalAbsorbed = cascades.length - totalCascades;
-  const cascadedOnly = cascades.filter(c => !c.absorbed);
-  const totalDamage = cascades.reduce((s, c) => s + c.blastRadius, 0);
+  const cascadedOnly = cascades.filter(c => c.blastRadius > 0);
+  const totalBlast = cascades.reduce((s, c) => s + c.blastRadius, 0);
 
   return {
     cascades,
     byStop: buildByStop(cascades),
     byTerminal: buildByTerminal(cascades, blockTrips),
-    totalCascades,
-    totalAbsorbed,
-    avgBlastRadius: safeDivide(
-      cascadedOnly.reduce((s, c) => s + c.blastRadius, 0),
-      cascadedOnly.length,
-    ),
-    totalCascadeOTPDamage: totalDamage,
+    totalCascaded: cascadedOnly.length,
+    totalNonCascaded: cascades.length - cascadedOnly.length,
+    avgBlastRadius: safeDivide(totalBlast, cascadedOnly.length),
+    totalBlastRadius: totalBlast,
   };
 }

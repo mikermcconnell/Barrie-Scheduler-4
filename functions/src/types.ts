@@ -115,18 +115,33 @@ export interface OperatorDwellMetrics {
 
 // ─── Dwell Cascade Types ──────────────────────────────────────────────
 
-export interface CascadeAffectedTrip {
-  tripName: string;
-  routeId: string;
-  terminalDepartureTime: string;
-  observedDepartureSeconds: number | null;
-  scheduledDepartureSeconds: number;
-  lateSeconds: number;
-  otpStatus: OTPStatus;
-  recoveredHere: boolean;
+/** Each timepoint observation in a downstream trip. */
+export interface CascadeTimepointObs {
+  stopName: string;
+  stopId: string;
+  routeStopIndex: number;
+  scheduledDeparture: string;       // HH:MM
+  observedDeparture: string | null; // HH:MM:SS from AVL
+  deviationSeconds: number | null;  // positive = late, null = no AVL
+  isLate: boolean;                  // deviation > OTP late threshold (300s)
 }
 
+/** A downstream trip affected by a dwell incident earlier on the same block. */
+export interface CascadeAffectedTrip {
+  tripName: string;
+  tripId: string;
+  routeId: string;
+  routeName: string;
+  terminalDepartureTime: string;
+  scheduledRecoverySeconds: number;   // recovery before this trip (context only)
+  timepoints: CascadeTimepointObs[];  // every timepoint in the trip
+  lateTimepointCount: number;         // count of late timepoint departures
+  recoveredAtStop: string | null;     // stop where first on-time observed (chain-ender)
+}
+
+/** A dwell incident annotated with its downstream cascade through the block. */
 export interface DwellCascade {
+  // Origin incident fields
   date: string;
   block: string;
   routeId: string;
@@ -138,11 +153,14 @@ export interface DwellCascade {
   observedDepartureTime: string;
   trackedDwellSeconds: number;
   severity: DwellSeverity;
-  excessLateSeconds: number;
-  recoveryTimeAvailableSeconds: number;
+
+  // Cascade results
   cascadedTrips: CascadeAffectedTrip[];
-  blastRadius: number;
-  absorbed: boolean;
+  blastRadius: number;            // total late timepoint departures across all trips
+  affectedTripCount: number;      // number of trips touched before recovery
+  recoveredAtTrip: string | null; // trip name where chain ended
+  recoveredAtStop: string | null; // specific stop where on-time observed
+  totalLateSeconds: number;       // sum of deviation across all late timepoints
 }
 
 export interface CascadeStopImpact {
@@ -153,9 +171,9 @@ export interface CascadeStopImpact {
   totalTrackedDwellSeconds: number;
   totalBlastRadius: number;
   avgBlastRadius: number;
-  absorbedCount: number;
-  cascadedCount: number;
-  avgExcessLateSeconds: number;
+  cascadedCount: number;        // incidents that produced any cascade
+  nonCascadedCount: number;     // incidents with no downstream late timepoints
+  avgTotalLateSeconds: number;  // avg totalLateSeconds per cascading incident
 }
 
 export interface TerminalRecoveryStats {
@@ -174,10 +192,10 @@ export interface DailyCascadeMetrics {
   cascades: DwellCascade[];
   byStop: CascadeStopImpact[];
   byTerminal: TerminalRecoveryStats[];
-  totalCascades: number;
-  totalAbsorbed: number;
-  avgBlastRadius: number;
-  totalCascadeOTPDamage: number;
+  totalCascaded: number;          // incidents that produced cascade
+  totalNonCascaded: number;       // incidents with no downstream impact
+  avgBlastRadius: number;         // avg late-timepoint-departures per cascading incident
+  totalBlastRadius: number;       // sum of all blast radii
 }
 
 export const OTP_THRESHOLDS = {
