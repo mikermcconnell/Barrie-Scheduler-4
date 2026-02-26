@@ -137,6 +137,9 @@ export interface CascadeAffectedTrip {
   timepoints: CascadeTimepointObs[];  // every timepoint in the trip
   lateTimepointCount: number;         // count of late timepoint departures
   recoveredAtStop: string | null;     // stop where first on-time observed (chain-ender)
+  otpStatus: OTPStatus;               // derived: 'late' if any late timepoints, else 'on-time'
+  recoveredHere: boolean;             // derived: true if chain recovered during this trip
+  lateSeconds: number;                // sum of positive deviation across late timepoints
 }
 
 /** A dwell incident annotated with its downstream cascade through the block. */
@@ -161,6 +164,7 @@ export interface DwellCascade {
   recoveredAtTrip: string | null; // trip name where chain ended
   recoveredAtStop: string | null; // specific stop where on-time observed
   totalLateSeconds: number;       // sum of deviation across all late timepoints
+  recoveryTimeAvailableSeconds: number; // scheduled recovery between incident trip and next trip
 }
 
 export interface CascadeStopImpact {

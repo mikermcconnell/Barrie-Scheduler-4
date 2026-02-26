@@ -160,6 +160,11 @@ function traceCascade(
   let recoveredAtTrip: string | null = null;
   let recoveredAtStop: string | null = null;
 
+  // Recovery time available = gap between incident trip end and next trip start
+  const recoveryTimeAvailableSeconds = subsequentTrips.length > 0
+    ? computeRecoveryTime(incidentTrip, subsequentTrips[0])
+    : 0;
+
   for (let i = 0; i < subsequentTrips.length; i++) {
     if (chainBroken) break;
 
@@ -227,6 +232,14 @@ function traceCascade(
       });
     }
 
+    // Compute per-trip lateSeconds: sum of positive deviations at late timepoints
+    let tripLateSeconds = 0;
+    for (const tp of timepoints) {
+      if (tp.isLate && tp.deviationSeconds !== null) {
+        tripLateSeconds += tp.deviationSeconds;
+      }
+    }
+
     cascadedTrips.push({
       tripName: nextTrip.tripName,
       tripId: nextTrip.tripId,
@@ -237,6 +250,9 @@ function traceCascade(
       timepoints,
       lateTimepointCount: lateCount,
       recoveredAtStop: tripRecoveredAtStop,
+      otpStatus: lateCount > 0 ? 'late' : 'on-time',
+      recoveredHere: tripRecoveredAtStop !== null,
+      lateSeconds: tripLateSeconds,
     });
 
     // If first timepoint was on-time with no prior lateness, chain never started
@@ -288,6 +304,7 @@ function traceCascade(
     recoveredAtTrip,
     recoveredAtStop,
     totalLateSeconds,
+    recoveryTimeAvailableSeconds,
   };
 }
 

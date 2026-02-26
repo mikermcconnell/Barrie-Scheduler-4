@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { generateRequirements, generateShifts, calculateSchedule, calculateMetrics } from '../../utils/dataGenerator';
 import { optimizeScheduleWithGemini } from '../../utils/ai/geminiOptimizer';
 import { SummaryCards } from '../SummaryCards';
@@ -18,6 +18,7 @@ import {
     SavedFile,
     SavedSchedule,
     downloadFileContent,
+    downloadFileArrayBuffer,
     saveSchedule,
     updateSchedule,
     getSchedule
@@ -68,6 +69,7 @@ export const OnDemandWorkspace: React.FC = () => {
     const [isSaving, setIsSaving] = useState(false);
     const [saveSuccess, setSaveSuccess] = useState(false);
     const [isLoadingFromCloud, setIsLoadingFromCloud] = useState(false);
+    const handleScheduleSelectRef = React.useRef<(schedule: SavedSchedule) => void>(() => {});
 
     // Default Schedule (auto-load on mount)
     const [defaultScheduleId, setDefaultScheduleId] = useState<string | null>(
@@ -83,6 +85,20 @@ export const OnDemandWorkspace: React.FC = () => {
     const [isAnimating, setIsAnimating] = useState(false);
     const [optimizationMode, setOptimizationMode] = useState<'full' | 'refine' | null>(null);
     const [reviewModalData, setReviewModalData] = useState<{ current: Shift[], optimized: Shift[] } | null>(null);
+    const [elapsedSeconds, setElapsedSeconds] = useState(0);
+    const elapsedRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+    // Elapsed timer for optimization progress
+    useEffect(() => {
+        if (isAnimating) {
+            setElapsedSeconds(0);
+            elapsedRef.current = setInterval(() => setElapsedSeconds(s => s + 1), 1000);
+        } else {
+            if (elapsedRef.current) clearInterval(elapsedRef.current);
+            elapsedRef.current = null;
+        }
+        return () => { if (elapsedRef.current) clearInterval(elapsedRef.current); };
+    }, [isAnimating]);
 
     // Derived State
     // Now guaranteed to have valid inputs on first render
@@ -135,7 +151,7 @@ export const OnDemandWorkspace: React.FC = () => {
 
                 setAllShifts(prev => {
                     // Remove old shifts for this day, keep others (e.g. Saturday)
-                    const others = prev.filter(s => s.dayType !== selectedDayType);
+                    const others = prev.filter(s => (s.dayType || 'Weekday') !== selectedDayType);
                     return [...others, ...taggedShifts];
                 });
 
@@ -197,7 +213,7 @@ export const OnDemandWorkspace: React.FC = () => {
         setShifts(taggedShifts);
 
         setAllShifts(prev => {
-            const others = prev.filter(s => s.dayType !== selectedDayType);
+            const others = prev.filter(s => (s.dayType || 'Weekday') !== selectedDayType);
             return [...others, ...taggedShifts];
         });
 
@@ -309,6 +325,7 @@ export const OnDemandWorkspace: React.FC = () => {
 
             const masterContent = await readFile(filesToProcess.master);
             const ridecoContent = await readFile(filesToProcess.rideco);
+            let dayForShiftFiltering = selectedDayType;
 
             setCachedFiles({ master: masterContent, rideco: ridecoContent });
 
@@ -318,7 +335,9 @@ export const OnDemandWorkspace: React.FC = () => {
 
                 const defaultDayKey = newSchedules['Weekday'] ? 'Weekday' : Object.keys(newSchedules)[0];
                 if (defaultDayKey) {
-                    setSelectedDayType(toValidDayType(defaultDayKey));
+                    const validDay = toValidDayType(defaultDayKey);
+                    dayForShiftFiltering = validDay;
+                    setSelectedDayType(validDay);
                     setRequirements(newSchedules[defaultDayKey]);
                 }
             }
@@ -328,8 +347,7 @@ export const OnDemandWorkspace: React.FC = () => {
 
                 if (newShifts.length > 0) {
                     setAllShifts(newShifts);
-                    const currentDay = selectedDayType || 'Weekday';
-                    const filtered = newShifts.filter(s => (s.dayType || 'Weekday') === currentDay);
+                    const filtered = newShifts.filter(s => (s.dayType || 'Weekday') === dayForShiftFiltering);
                     setShifts(filtered);
                 }
             }
@@ -347,12 +365,15 @@ export const OnDemandWorkspace: React.FC = () => {
 
         setIsAnimating(true);
         try {
+            let dayForShiftFiltering = selectedDayType;
             if (cachedFiles.master) {
                 const newSchedules = parseMasterContent(cachedFiles.master);
                 setSchedules(newSchedules);
                 const defaultDayKey = newSchedules['Weekday'] ? 'Weekday' : Object.keys(newSchedules)[0];
                 if (defaultDayKey) {
-                    setSelectedDayType(toValidDayType(defaultDayKey));
+                    const validDay = toValidDayType(defaultDayKey);
+                    dayForShiftFiltering = validDay;
+                    setSelectedDayType(validDay);
                     setRequirements(newSchedules[defaultDayKey]);
                 }
             }
@@ -361,8 +382,7 @@ export const OnDemandWorkspace: React.FC = () => {
 
                 if (newShifts.length > 0) {
                     setAllShifts(newShifts);
-                    const currentDay = selectedDayType || 'Weekday';
-                    const filtered = newShifts.filter(s => (s.dayType || 'Weekday') === currentDay);
+                    const filtered = newShifts.filter(s => (s.dayType || 'Weekday') === dayForShiftFiltering);
                     setShifts(filtered);
                 }
             }
@@ -413,7 +433,7 @@ export const OnDemandWorkspace: React.FC = () => {
         }
     }, [editingShiftId, shiftToEdit]);
 
-    // Auto-load default schedule on mount
+    // Auto-load default schedule once auth/default id is available
     React.useEffect(() => {
         if (!user || !defaultScheduleId) return;
         let cancelled = false;
@@ -422,7 +442,7 @@ export const OnDemandWorkspace: React.FC = () => {
                 const schedule = await getSchedule(user.uid, defaultScheduleId);
                 if (cancelled) return;
                 if (schedule) {
-                    handleScheduleSelect(schedule);
+                    handleScheduleSelectRef.current(schedule);
                 } else {
                     // Schedule was deleted — clear preference
                     localStorage.removeItem('od-default-schedule-id');
@@ -434,8 +454,7 @@ export const OnDemandWorkspace: React.FC = () => {
             }
         })();
         return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []); // Run once on mount only
+    }, [user, defaultScheduleId]);
 
     const handleSetDefaultSchedule = (id: string | null) => {
         if (id) {
@@ -451,13 +470,16 @@ export const OnDemandWorkspace: React.FC = () => {
         console.log('Loading file from cloud:', file.name, 'Type:', file.type);
         setIsLoadingFromCloud(true);
         try {
-            const content = await downloadFileContent(file.downloadUrl);
-            console.log('Downloaded content length:', content.length);
+            const lowerName = file.name.toLowerCase();
+            const isExcelFile = lowerName.endsWith('.xlsx') || lowerName.endsWith('.xls');
+            const content = isExcelFile
+                ? await downloadFileArrayBuffer(file.downloadUrl)
+                : await downloadFileContent(file.downloadUrl);
+            console.log('Downloaded content length:', typeof content === 'string' ? content.length : content.byteLength);
 
             // Determine file type - if 'other', try to detect from filename
             let fileType = file.type;
             if (fileType === 'other' || fileType === 'barrie_tod') {
-                const lowerName = file.name.toLowerCase();
                 if (lowerName.includes('rideco') || lowerName.includes('shift') || lowerName.includes('template')) {
                     fileType = 'rideco';
                 } else if (lowerName.includes('master') || lowerName.includes('schedule')) {
@@ -469,7 +491,7 @@ export const OnDemandWorkspace: React.FC = () => {
                 // Parse as master schedule
                 console.log('Parsing as Master Schedule...');
                 setCachedFiles(prev => ({ ...prev, master: content }));
-                const newSchedules = parseScheduleMaster(content);
+                const newSchedules = parseMasterContent(content);
                 console.log('Parsed schedules:', Object.keys(newSchedules));
                 setSchedules(newSchedules);
                 setLoadedCloudFiles(prev => ({ ...prev, master: file }));
@@ -483,7 +505,7 @@ export const OnDemandWorkspace: React.FC = () => {
                 // Parse as RideCo shifts
                 console.log('Parsing as RideCo shifts...');
                 setCachedFiles(prev => ({ ...prev, rideco: content }));
-                const newShifts = parseRideCo(content);
+                const newShifts = parseRideCoContent(content);
                 console.log('Parsed shifts count:', newShifts.length);
                 if (newShifts.length > 0) {
                     setAllShifts(newShifts);
@@ -558,6 +580,7 @@ export const OnDemandWorkspace: React.FC = () => {
         setCurrentDraftId(schedule.id);
         setShowFileManager(false);
     };
+    handleScheduleSelectRef.current = handleScheduleSelect;
 
     // Save current work as a draft
     const handleSaveDraft = async () => {
@@ -603,6 +626,12 @@ export const OnDemandWorkspace: React.FC = () => {
 
     return (
         <div className="animate-in fade-in zoom-in-95 duration-500 h-full overflow-y-auto custom-scrollbar pb-24 pr-2">
+            <style>{`
+                @keyframes progressSlide {
+                    0% { left: -33%; }
+                    100% { left: 100%; }
+                }
+            `}</style>
 
             {/* File Manager Modal */}
             {showFileManager && user && (
@@ -818,11 +847,29 @@ export const OnDemandWorkspace: React.FC = () => {
                         </div>
 
 
-                        {/* Notification when optimizing */}
+                        {/* Progress bar when optimizing */}
                         {isAnimating && (
-                            <div className="flex items-center gap-2 text-xs font-bold text-gray-500 animate-pulse bg-yellow-50 px-3 py-1 rounded-lg border border-yellow-200">
-                                <Loader2 size={12} className="animate-spin" />
-                                {optimizationMode === 'full' ? 'Generating fresh schedule...' : 'Refining existing shifts...'}
+                            <div className="w-full max-w-md space-y-1.5">
+                                <div className="flex items-center justify-between text-xs font-semibold text-gray-600">
+                                    <div className="flex items-center gap-1.5">
+                                        <Loader2 size={12} className="animate-spin" />
+                                        <span>{optimizationMode === 'full' ? 'Generating schedule...' : 'Refining schedule...'}</span>
+                                    </div>
+                                    <span className="tabular-nums text-gray-400">
+                                        {Math.floor(elapsedSeconds / 60)}:{String(elapsedSeconds % 60).padStart(2, '0')}
+                                    </span>
+                                </div>
+                                <div className="h-2 w-full rounded-full bg-gray-200 overflow-hidden relative">
+                                    <div
+                                        className="absolute h-full w-1/3 rounded-full"
+                                        style={{
+                                            background: optimizationMode === 'full'
+                                                ? 'linear-gradient(90deg, #22c55e, #4ade80, #22c55e)'
+                                                : 'linear-gradient(90deg, #6366f1, #818cf8, #6366f1)',
+                                            animation: 'progressSlide 1.5s ease-in-out infinite',
+                                        }}
+                                    />
+                                </div>
                             </div>
                         )}
                     </div>

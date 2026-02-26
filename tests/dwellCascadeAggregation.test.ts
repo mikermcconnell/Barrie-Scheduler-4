@@ -47,6 +47,7 @@ function makeCascade(overrides: Partial<DwellCascade> = {}): DwellCascade {
     recoveredAtTrip: null,
     recoveredAtStop: null,
     totalLateSeconds: 0,
+    recoveryTimeAvailableSeconds: 0,
     ...overrides,
   };
 }

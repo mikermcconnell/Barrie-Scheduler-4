@@ -3,7 +3,7 @@ import {
     checkRateLimit,
     validateDownloadUrl,
     validateGtfsUrl,
-} from '../api/security';
+} from '../lib/apiSecurity';
 
 describe('api/security URL validation', () => {
     it('allows Firebase Storage download URLs on approved hosts', () => {

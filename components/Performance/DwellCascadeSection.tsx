@@ -3,6 +3,7 @@ import { Zap, Target, Activity, AlertTriangle, ChevronDown, ChevronRight, Shield
 import type {
     PerformanceDataSummary,
     DwellCascade,
+    CascadeAffectedTrip,
     CascadeStopImpact,
     TerminalRecoveryStats,
     DailyCascadeMetrics,
@@ -15,13 +16,13 @@ interface DwellCascadeSectionProps {
     data: PerformanceDataSummary;
 }
 
-const AbsorbedBadge: React.FC<{ absorbed: boolean }> = ({ absorbed }) => (
+const CascadeBadge: React.FC<{ cascaded: boolean }> = ({ cascaded }) => (
     <span className={`inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full ${
-        absorbed
-            ? 'bg-emerald-100 text-emerald-700'
-            : 'bg-red-100 text-red-700'
+        cascaded
+            ? 'bg-red-100 text-red-700'
+            : 'bg-emerald-100 text-emerald-700'
     }`}>
-        {absorbed ? 'Absorbed' : 'Cascaded'}
+        {cascaded ? 'Cascaded' : 'Absorbed'}
     </span>
 );
 
@@ -76,7 +77,7 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
     );
 
     const cascadedOnly = useMemo(
-        () => metrics.cascades.filter(c => !c.absorbed),
+        () => metrics.cascades.filter(c => c.blastRadius > 0),
         [metrics.cascades],
     );
 
@@ -86,10 +87,10 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
         const totalOnTime = data.dailySummaries.reduce((sum, d) => sum + (d.system?.otp?.onTime ?? 0), 0);
         if (totalAssessed === 0) return null;
         const actualPct = (totalOnTime / totalAssessed) * 100;
-        const penaltyPp = (metrics.totalCascadeOTPDamage / totalAssessed) * 100;
+        const penaltyPp = (metrics.totalBlastRadius / totalAssessed) * 100;
         const whatIfPct = Math.min(100, actualPct + penaltyPp);
         return { actualPct, penaltyPp, whatIfPct };
-    }, [data.dailySummaries, metrics.totalCascadeOTPDamage]);
+    }, [data.dailySummaries, metrics.totalBlastRadius]);
 
     // Worst incident by blast radius
     const worstIncident = useMemo(
@@ -188,15 +189,15 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
 
             {/* ── A: Impact Attribution Banner ── */}
             <div className={`flex items-start gap-3 px-4 py-4 rounded-lg border ${
-                metrics.totalCascadeOTPDamage > 0
+                metrics.totalBlastRadius > 0
                     ? 'bg-red-50 border-red-200'
                     : 'bg-emerald-50 border-emerald-200'
             }`}>
                 <Zap size={18} className={`mt-0.5 shrink-0 ${
-                    metrics.totalCascadeOTPDamage > 0 ? 'text-red-500' : 'text-emerald-500'
+                    metrics.totalBlastRadius > 0 ? 'text-red-500' : 'text-emerald-500'
                 }`} />
                 <div className="min-w-0">
-                    {metrics.totalCascadeOTPDamage === 0 ? (
+                    {metrics.totalBlastRadius === 0 ? (
                         <p className="text-sm font-medium text-emerald-800">
                             All dwell incidents absorbed by recovery — no OTP impact detected.
                         </p>
@@ -204,10 +205,10 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                         <>
                             <p className="text-sm font-semibold text-red-800">
                                 Dwell cascades impacted an estimated{' '}
-                                <span className="font-bold">{fmt(metrics.totalCascadeOTPDamage)}</span>
+                                <span className="font-bold">{fmt(metrics.totalBlastRadius)}</span>
                                 {' '}of{' '}
                                 <span className="font-bold">{fmt(totalTripsOperated)}</span>
-                                {' '}operated trips ({fmtPct(metrics.totalCascadeOTPDamage, totalTripsOperated)})
+                                {' '}operated trips ({fmtPct(metrics.totalBlastRadius, totalTripsOperated)})
                                 {isMultiDay ? ' across the selected period' : ' today'}.
                             </p>
                             {otpImpact && (
@@ -389,9 +390,9 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                             <MetricCard
                                 icon={<Zap size={18} />}
                                 label="Cascaded Incidents"
-                                value={`${fmt(metrics.totalCascades)} / ${fmt(metrics.cascades.length)}`}
+                                value={`${fmt(metrics.totalCascaded)} / ${fmt(metrics.cascades.length)}`}
                                 color="red"
-                                subValue={`${fmtPct(metrics.totalCascades, metrics.cascades.length)} escaped recovery`}
+                                subValue={`${fmtPct(metrics.totalCascaded, metrics.cascades.length)} escaped recovery`}
                             />
                             <MetricCard
                                 icon={<Target size={18} />}
@@ -403,7 +404,7 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                             <MetricCard
                                 icon={<Activity size={18} />}
                                 label="Total OTP Damage"
-                                value={fmt(metrics.totalCascadeOTPDamage)}
+                                value={fmt(metrics.totalBlastRadius)}
                                 color="cyan"
                                 subValue="trip-observations made late by dwell"
                             />
@@ -538,7 +539,7 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                                                                         <span className="text-gray-400">0</span>
                                                                     )}
                                                                 </td>
-                                                                <td className="py-2"><AbsorbedBadge absorbed={cascade.absorbed} /></td>
+                                                                <td className="py-2"><CascadeBadge cascaded={cascade.blastRadius > 0} /></td>
                                                             </tr>
                                                             {isExpanded && cascade.cascadedTrips.length > 0 && (
                                                                 <tr>
