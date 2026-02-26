@@ -76,6 +76,11 @@ console.log('✅ vite.config.ts is loading...');
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
+  // Expose env vars to process.env so api/security.ts can read them
+  // (loadEnv only returns an object; it does NOT populate process.env)
+  if (!process.env.FIREBASE_WEB_API_KEY && env.FIREBASE_WEB_API_KEY) {
+    process.env.FIREBASE_WEB_API_KEY = env.FIREBASE_WEB_API_KEY;
+  }
   console.log('✅ defineConfig called');
 
   // Define API Middleware Plugin
