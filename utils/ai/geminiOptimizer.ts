@@ -26,7 +26,7 @@ export const optimizeScheduleWithGemini = async (
   focusInstruction?: string
 ): Promise<Shift[]> => {
   try {
-    console.log(`Calling Gemini Optimization API (Model: gemini-3-pro-preview)... Mode: ${mode}`);
+    console.log(`Calling Gemini Optimization API (Model: gemini-3.1-pro-preview)... Mode: ${mode}`);
     const currentUser = auth.currentUser;
     if (!currentUser) {
       throw new Error('Authentication required');
