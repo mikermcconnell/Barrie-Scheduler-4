@@ -34,7 +34,11 @@ export const optimizeScheduleWithGemini = async (
 
     const idToken = await currentUser.getIdToken();
 
-    const response = await fetch('/api/optimize', {
+    const optimizeUrl = import.meta.env.DEV
+      ? '/api/optimize'
+      : 'https://us-central1-barrie-scheduler-7844a.cloudfunctions.net/optimizeSchedule';
+
+    const response = await fetch(optimizeUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
