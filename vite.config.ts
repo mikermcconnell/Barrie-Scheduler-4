@@ -10,7 +10,7 @@ import {
   getRequestIp,
   validateDownloadUrl,
   validateGtfsUrl,
-} from './api/_security';
+} from './lib/apiSecurity';
 
 /**
  * Vite Configuration

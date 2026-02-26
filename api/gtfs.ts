@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import AdmZip from 'adm-zip';
-import { checkRateLimit, getRequestIp, validateGtfsUrl } from './_security';
+import { checkRateLimit, getRequestIp, validateGtfsUrl } from '../lib/apiSecurity';
 
 /**
  * GTFS Proxy API
