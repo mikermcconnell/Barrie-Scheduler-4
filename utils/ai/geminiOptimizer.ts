@@ -36,7 +36,7 @@ export const optimizeScheduleWithGemini = async (
 
     const optimizeUrl = import.meta.env.DEV
       ? '/api/optimize'
-      : 'https://us-central1-barrie-scheduler-7844a.cloudfunctions.net/optimizeSchedule';
+      : 'https://optimizeschedule-ieeja7khcq-uc.a.run.app';
 
     const response = await fetch(optimizeUrl, {
       method: 'POST',

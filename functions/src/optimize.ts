@@ -259,7 +259,11 @@ export const optimizeSchedule = onRequest(
         timeoutSeconds: 300,
         maxInstances: 5,
         region: 'us-central1',
-        cors: true,
+        cors: [
+            'https://transitscheduler.ca',
+            'https://www.transitscheduler.ca',
+            'http://localhost:3008',
+        ],
     },
     async (req, res) => {
         console.log("🚀 Optimization Request Received");
