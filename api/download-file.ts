@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { checkRateLimit, getRequestIp, validateDownloadUrl } from './security';
+import { checkRateLimit, getRequestIp, validateDownloadUrl } from './_security';
 
 /**
  * Serverless proxy for downloading files from Firebase Storage

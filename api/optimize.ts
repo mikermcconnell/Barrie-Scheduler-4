@@ -4,7 +4,7 @@ import {
     authenticateFirebaseRequest,
     checkRateLimit,
     getRequestIp,
-} from './security';
+} from './_security';
 
 /**
  * ==========================================
