@@ -217,6 +217,15 @@ function splitCityPlace(name: string): { city: string | null; place: string } {
     return { city: null, place: name };
 }
 
+export function passesCityGate(displayName: string, city: string | null): boolean {
+    if (!city) return true;
+    const normalizedDisplay = displayName.toLowerCase();
+    // Normalize punctuation so "Sault Ste. Marie" matches "Sault Ste Marie"
+    const normalizedCity = city.toLowerCase().replace(/[.]/g, '');
+    const normalizedDisplayClean = normalizedDisplay.replace(/[.]/g, '');
+    return normalizedDisplayClean.includes(normalizedCity);
+}
+
 function tokenize(value: string): string[] {
     return value
         .toLowerCase()
