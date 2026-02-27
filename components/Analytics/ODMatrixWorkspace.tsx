@@ -13,15 +13,18 @@ import {
     BarChart3,
     Trophy,
     Grid3X3,
+    Route,
     Clock,
     Download,
     FileText,
+    CheckCircle2,
 } from 'lucide-react';
 import type { ODMatrixDataSummary, GeocodeCache } from '../../utils/od-matrix/odMatrixTypes';
 import { ODOverviewPanel } from './ODOverviewPanel';
 import { ODTopPairsModule } from './ODTopPairsModule';
 import { ODStationRankingsModule } from './ODStationRankingsModule';
 import { ODHeatmapGridModule } from './ODHeatmapGridModule';
+import { ODRouteEstimationModule } from './ODRouteEstimationModule';
 import { ODDataConfidencePanel } from './ODDataConfidencePanel';
 import { ODImportFileManager } from './ODImportFileManager';
 import { exportODExcel, exportODPdf, exportStopReportExcel, exportStopReportPdf } from '../../utils/od-matrix/odReportExporter';
@@ -47,6 +50,7 @@ interface TabConfig {
 
 const TAB_CONFIG: TabConfig[] = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard, enabled: true },
+    { id: 'route-estimation', label: 'Route Assignment', icon: Route, enabled: true },
     { id: 'top-pairs', label: 'Top Pairs', icon: BarChart3, enabled: true },
     { id: 'rankings', label: 'Station Rankings', icon: Trophy, enabled: true },
     { id: 'heatmap', label: 'Heatmap Grid', icon: Grid3X3, enabled: true },
@@ -73,6 +77,17 @@ export const ODMatrixWorkspace: React.FC<ODMatrixWorkspaceProps> = ({
     const [exportingStopPdf, setExportingStopPdf] = useState(false);
     const [isolatedStation, setIsolatedStation] = useState<string | null>(null);
     const confidenceReport = useMemo(() => computeODConfidenceReport(data), [data]);
+    const savedAtLabel = useMemo(() => {
+        const savedAt = new Date(data.metadata.importedAt);
+        if (Number.isNaN(savedAt.getTime())) return null;
+        return savedAt.toLocaleString([], {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+        });
+    }, [data.metadata.importedAt]);
 
     const handleIsolatedStationChange = useCallback((station: string | null) => {
         setIsolatedStation(station);
@@ -154,6 +169,8 @@ export const ODMatrixWorkspace: React.FC<ODMatrixWorkspaceProps> = ({
                 return <ODStationRankingsModule data={data} chartContainerRef={rankingsElRef} />;
             case 'heatmap':
                 return <ODHeatmapGridModule data={data} containerRef={heatmapElRef} />;
+            case 'route-estimation':
+                return <ODRouteEstimationModule data={data} geocodeCache={geocodeCache} />;
             default:
                 return <ComingSoonPlaceholder />;
         }
@@ -176,6 +193,16 @@ export const ODMatrixWorkspace: React.FC<ODMatrixWorkspaceProps> = ({
                             {data.stationCount} stations &middot; {data.totalJourneys.toLocaleString()} journeys
                             {data.metadata.dateRange && ` &middot; ${data.metadata.dateRange}`}
                         </p>
+                        <div className="mt-1 inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1">
+                            <CheckCircle2 size={12} className="text-emerald-600" />
+                            <span className="text-xs font-medium text-emerald-700">Planning data saved</span>
+                            {savedAtLabel && (
+                                <>
+                                    <Clock size={11} className="text-emerald-500" />
+                                    <span className="text-xs text-emerald-700">{savedAtLabel}</span>
+                                </>
+                            )}
+                        </div>
                     </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -199,8 +226,8 @@ export const ODMatrixWorkspace: React.FC<ODMatrixWorkspaceProps> = ({
             {/* Tab Bar */}
             <ODDataConfidencePanel
                 report={confidenceReport}
-                title="Active Dataset Verification"
-                subtitle="Uploaded baseline is reconciled against the currently displayed dataset before planning decisions."
+                title="Active Dataset Integrity"
+                subtitle="Metadata and recalculated totals are validated against the currently displayed dataset before planning decisions."
                 metadata={{
                     importId: data.metadata.importId,
                     fileName: data.metadata.fileName,
