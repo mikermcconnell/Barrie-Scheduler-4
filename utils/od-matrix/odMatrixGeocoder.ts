@@ -340,6 +340,7 @@ function scoreCandidate(
 async function geocodeStation(name: string): Promise<GeocodedLocation | null> {
     const queries = buildSearchQueries(name);
     const context = buildScoringContext(name);
+    const { city, place } = splitCityPlace(expandAbbreviations(sanitizeStationName(name)));
     let best: { candidate: NominatimCandidate; score: number } | null = null;
 
     for (const q of queries) {
@@ -362,6 +363,38 @@ async function geocodeStation(name: string): Promise<GeocodedLocation | null> {
             }
         } catch {
             // Try next query variant
+        }
+    }
+
+    // City gate check: if station has "City - Place" format, verify best result is in the right city
+    if (best && best.score >= MIN_ACCEPT_SCORE && city && !passesCityGate(best.candidate.display_name, city)) {
+        const retryQueries = buildCityConstrainedQueries(city, place);
+        let retryBest: { candidate: NominatimCandidate; score: number } | null = null;
+
+        for (const q of retryQueries) {
+            try {
+                const results = await fetchCandidates(q);
+                for (const result of results) {
+                    const lat = parseFloat(result.lat);
+                    const lon = parseFloat(result.lon);
+                    if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+                    if (!isWithinCanada(lat, lon)) continue;
+                    if (!passesCityGate(result.display_name, city)) continue;
+
+                    const score = scoreCandidate(result, context, q);
+                    if (!retryBest || score > retryBest.score) {
+                        retryBest = { candidate: result, score };
+                    }
+                }
+            } catch {
+                // Try next retry query
+            }
+        }
+
+        if (retryBest && retryBest.score >= MIN_ACCEPT_SCORE) {
+            best = retryBest;
+        } else {
+            return null;
         }
     }
 
