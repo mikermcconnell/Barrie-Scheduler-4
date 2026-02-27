@@ -24,6 +24,7 @@ import {
     XCircle,
     Search,
     Loader2,
+    MapPin,
 } from 'lucide-react';
 import { ChartCard, MetricCard, fmt } from './AnalyticsShared';
 import type { ODMatrixDataSummary, GeocodeCache } from '../../utils/od-matrix/odMatrixTypes';
@@ -32,7 +33,9 @@ import {
     type ODRouteEstimationResult,
     type MatchConfidence,
     type StationMatchType,
+    type ODPairRouteMatch,
 } from '../../utils/od-matrix/odRouteEstimation';
+import { ODPairMapModal } from './ODPairMapModal';
 import gtfsZipUrl from '../../gtfs.zip?url';
 
 interface ODRouteEstimationModuleProps {
@@ -51,6 +54,7 @@ const MATCH_TYPE_COLORS: Record<StationMatchType, string> = {
     exact: 'text-emerald-700 bg-emerald-50',
     contains: 'text-cyan-700 bg-cyan-50',
     alias: 'text-amber-700 bg-amber-50',
+    coordinate: 'text-blue-700 bg-blue-50',
     unmatched: 'text-red-700 bg-red-50',
 };
 
@@ -70,7 +74,13 @@ let cachedEstimation: {
 } | null = null;
 
 function getDataKey(data: ODMatrixDataSummary): string {
-    return `${data.metadata.importId || ''}_${data.totalJourneys}_${data.pairs.length}`;
+    let geocodeCount = 0;
+    for (const station of data.stations) {
+        if (station.geocode && Number.isFinite(station.geocode.lat) && Number.isFinite(station.geocode.lon)) {
+            geocodeCount++;
+        }
+    }
+    return `${data.metadata.importId || ''}_${data.metadata.importedAt || ''}_${data.totalJourneys}_${data.pairs.length}_${geocodeCount}`;
 }
 
 function normalizeKey(value: string): string {
@@ -202,14 +212,14 @@ function stationMatchExplanation(match: {
     reason?: string;
     nearMatches?: string[];
 }): string {
-    const nameOnlyNote = 'Route assignment matching here is name-based (not geocode-based).';
+    const matchingNote = 'Route assignment uses name matching first, with coordinate fallback when OD coordinates are available.';
 
     if (match.reason && match.reason.trim()) {
         if (match.nearMatches && match.nearMatches.length > 0 && match.matchType === 'unmatched') {
-            return `${match.reason} Closest GTFS: ${match.nearMatches.join(', ')}. ${nameOnlyNote}`;
+            return `${match.reason} Closest GTFS: ${match.nearMatches.join(', ')}. ${matchingNote}`;
         }
         if (match.matchType === 'unmatched') {
-            return `${match.reason} ${nameOnlyNote}`;
+            return `${match.reason} ${matchingNote}`;
         }
         return match.reason;
     }
@@ -221,6 +231,8 @@ function stationMatchExplanation(match: {
             return 'Partial/token match to a GTFS stop name variant.';
         case 'alias':
             return 'Matched through known station alias mapping.';
+        case 'coordinate':
+            return 'Matched using nearest coordinate fallback.';
         case 'unmatched':
             return 'No GTFS stop matched after exact, partial/token, and alias checks.';
         default:
@@ -228,7 +240,7 @@ function stationMatchExplanation(match: {
     }
 }
 
-export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = ({ data }) => {
+export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = ({ data, geocodeCache }) => {
     const dataKey = getDataKey(data);
     const hasCached = cachedEstimation?.dataKey === dataKey;
 
@@ -239,6 +251,7 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
     const [search, setSearch] = useState('');
     const [confidenceFilter, setConfidenceFilter] = useState<MatchConfidence | 'all'>('all');
     const [updating, setUpdating] = useState(false);
+    const [selectedPair, setSelectedPair] = useState<ODPairRouteMatch | null>(null);
     const [pairScrollTop, setPairScrollTop] = useState(0);
     const [stationScrollTop, setStationScrollTop] = useState(0);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -323,6 +336,31 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
         }));
     }, [result]);
 
+    const stationWindow = useMemo(() => {
+        const rows = result?.stationMatchReport || [];
+        const totalRows = rows.length;
+        if (totalRows === 0) {
+            return {
+                start: 0,
+                end: 0,
+                topSpacerPx: 0,
+                bottomSpacerPx: 0,
+                rows: [] as typeof rows,
+            };
+        }
+
+        const start = Math.max(0, Math.floor(stationScrollTop / STATION_ROW_HEIGHT_PX) - STATION_OVERSCAN_ROWS);
+        const visibleCount = Math.ceil(STATION_TABLE_HEIGHT_PX / STATION_ROW_HEIGHT_PX) + (STATION_OVERSCAN_ROWS * 2);
+        const end = Math.min(totalRows, start + visibleCount);
+        return {
+            start,
+            end,
+            topSpacerPx: start * STATION_ROW_HEIGHT_PX,
+            bottomSpacerPx: Math.max(0, (totalRows - end) * STATION_ROW_HEIGHT_PX),
+            rows: rows.slice(start, end),
+        };
+    }, [result?.stationMatchReport, stationScrollTop]);
+
     const pairWindow = useMemo(() => {
         const totalRows = filteredMatches.length;
         if (totalRows === 0) {
@@ -351,9 +389,17 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
         setPairScrollTop(e.currentTarget.scrollTop);
     }, []);
 
+    const handleStationTableScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+        setStationScrollTop(e.currentTarget.scrollTop);
+    }, []);
+
     useEffect(() => {
         setPairScrollTop(0);
     }, [deferredSearch, confidenceFilter, result?.totalMatched, result?.totalUnmatched]);
+
+    useEffect(() => {
+        setStationScrollTop(0);
+    }, [result?.stationMatchReport.length]);
 
     // Loading state
     if (loading) {
@@ -494,38 +540,61 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
                     title="Station Match Report"
                     subtitle={`${result.stationMatchReport.filter(s => s.matchType !== 'unmatched').length} of ${result.stationMatchReport.length} stations matched`}
                 >
-                    <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
+                    <div
+                        className="overflow-x-auto overflow-y-auto"
+                        style={{ maxHeight: `${STATION_TABLE_HEIGHT_PX}px` }}
+                        onScroll={handleStationTableScroll}
+                    >
                         <table className="w-full text-sm">
                             <thead className="sticky top-0 bg-white">
                                 <tr className="border-b border-gray-200">
-                                <th className="text-left py-2 px-3 text-gray-500 font-medium">OD Station</th>
-                                <th className="text-left py-2 px-3 text-gray-500 font-medium">GTFS Stop</th>
-                                <th className="text-left py-2 px-3 text-gray-500 font-medium w-28">Match Type</th>
-                                <th className="text-left py-2 px-3 text-gray-500 font-medium min-w-[260px]">Why</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {result.stationMatchReport.map((s) => (
-                                <tr
-                                        key={s.odName}
-                                        className={`border-b border-gray-50 ${s.matchType === 'unmatched' ? 'bg-red-50/30' : 'hover:bg-gray-50'}`}
-                                    >
-                                        <td className="py-2 px-3 text-xs text-gray-700 font-medium">{s.odName}</td>
-                                        <td className="py-2 px-3 text-xs text-gray-600">
-                                            {s.gtfsStopName || <span className="text-red-400 italic">No match</span>}
-                                        </td>
-                                    <td className="py-2 px-3">
-                                        <span className={`inline-flex px-2 py-0.5 text-[11px] font-semibold rounded-full ${MATCH_TYPE_COLORS[s.matchType]}`}>
-                                            {s.matchType}
-                                        </span>
-                                    </td>
-                                    <td className="py-2 px-3 text-xs text-gray-600">
-                                        {stationMatchExplanation(s)}
-                                    </td>
+                                    <th className="text-left py-2 px-3 text-gray-500 font-medium">OD Station</th>
+                                    <th className="text-left py-2 px-3 text-gray-500 font-medium">GTFS Stop</th>
+                                    <th className="text-left py-2 px-3 text-gray-500 font-medium w-28">Match Type</th>
+                                    <th className="text-left py-2 px-3 text-gray-500 font-medium min-w-[260px]">Why</th>
                                 </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                            </thead>
+                            <tbody>
+                                {stationWindow.topSpacerPx > 0 && (
+                                    <tr aria-hidden="true">
+                                        <td colSpan={4} style={{ height: `${stationWindow.topSpacerPx}px`, padding: 0, border: 0 }} />
+                                    </tr>
+                                )}
+                                {stationWindow.rows.map((s, i) => {
+                                    const rowIndex = stationWindow.start + i;
+                                    return (
+                                        <tr
+                                            key={`${s.odName}-${rowIndex}`}
+                                            className={`h-10 border-b border-gray-50 ${s.matchType === 'unmatched' ? 'bg-red-50/30' : 'hover:bg-gray-50'}`}
+                                        >
+                                            <td className="py-2 px-3 text-xs text-gray-700 font-medium">
+                                                <span className="block truncate max-w-[220px]" title={s.odName}>{s.odName}</span>
+                                            </td>
+                                            <td className="py-2 px-3 text-xs text-gray-600">
+                                                {s.gtfsStopName
+                                                    ? <span className="block truncate max-w-[220px]" title={s.gtfsStopName}>{s.gtfsStopName}</span>
+                                                    : <span className="text-red-400 italic">No match</span>}
+                                            </td>
+                                            <td className="py-2 px-3">
+                                                <span className={`inline-flex px-2 py-0.5 text-[11px] font-semibold rounded-full ${MATCH_TYPE_COLORS[s.matchType]}`}>
+                                                    {s.matchType}
+                                                </span>
+                                            </td>
+                                            <td className="py-2 px-3 text-xs text-gray-600">
+                                                <span className="block truncate max-w-[520px]" title={stationMatchExplanation(s)}>
+                                                    {stationMatchExplanation(s)}
+                                                </span>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                                {stationWindow.bottomSpacerPx > 0 && (
+                                    <tr aria-hidden="true">
+                                        <td colSpan={4} style={{ height: `${stationWindow.bottomSpacerPx}px`, padding: 0, border: 0 }} />
+                                    </tr>
+                                )}
+                            </tbody>
+                        </table>
                     </div>
                 </ChartCard>
             </div>
@@ -585,6 +654,7 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
                     <table className="w-full text-sm">
                         <thead className="sticky top-0 bg-white">
                             <tr className="border-b border-gray-200">
+                                <th className="w-10 py-2 px-2"></th>
                                 <th className="text-left py-2 px-3 text-gray-500 font-medium">Origin</th>
                                 <th className="text-left py-2 px-3 text-gray-500 font-medium">Destination</th>
                                 <th className="text-right py-2 px-3 text-gray-500 font-medium w-24">Journeys</th>
@@ -598,7 +668,7 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
                         <tbody>
                             {pairWindow.topSpacerPx > 0 && (
                                 <tr aria-hidden="true">
-                                    <td colSpan={8} style={{ height: `${pairWindow.topSpacerPx}px`, padding: 0, border: 0 }} />
+                                    <td colSpan={9} style={{ height: `${pairWindow.topSpacerPx}px`, padding: 0, border: 0 }} />
                                 </tr>
                             )}
                             {pairWindow.rows.map((m, i) => {
@@ -617,6 +687,15 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
                                         key={`${m.origin}-${m.destination}-${rowIndex}`}
                                         className="h-11 border-b border-gray-50 hover:bg-gray-50"
                                     >
+                                        <td className="py-2 px-2 text-center">
+                                            <button
+                                                onClick={() => setSelectedPair(m)}
+                                                className="p-1 rounded hover:bg-violet-50 text-gray-400 hover:text-violet-500 transition-colors"
+                                                title="View journey map"
+                                            >
+                                                <MapPin size={16} />
+                                            </button>
+                                        </td>
                                         <td className="py-2 px-3 text-xs text-gray-700"><span className="block truncate max-w-[180px]" title={m.origin}>{m.origin}</span></td>
                                         <td className="py-2 px-3 text-xs text-gray-700"><span className="block truncate max-w-[180px]" title={m.destination}>{m.destination}</span></td>
                                         <td className="py-2 px-3 text-right font-bold text-gray-900">{fmt(m.journeys)}</td>
@@ -664,7 +743,7 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
                             })}
                             {pairWindow.bottomSpacerPx > 0 && (
                                 <tr aria-hidden="true">
-                                    <td colSpan={8} style={{ height: `${pairWindow.bottomSpacerPx}px`, padding: 0, border: 0 }} />
+                                    <td colSpan={9} style={{ height: `${pairWindow.bottomSpacerPx}px`, padding: 0, border: 0 }} />
                                 </tr>
                             )}
                         </tbody>
@@ -672,6 +751,13 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
                 </div>
                 </ChartCard>
             </div>
+            {selectedPair && (
+                <ODPairMapModal
+                    pair={selectedPair}
+                    geocodeCache={geocodeCache}
+                    onClose={() => setSelectedPair(null)}
+                />
+            )}
         </div>
     );
 };
