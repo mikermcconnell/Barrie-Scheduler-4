@@ -226,6 +226,16 @@ export function passesCityGate(displayName: string, city: string | null): boolea
     return normalizedDisplayClean.includes(normalizedCity);
 }
 
+export function buildCityConstrainedQueries(city: string | null, place: string): string[] {
+    if (!city) return [];
+    const queries = [
+        `${place}, ${city}, Ontario, Canada`,
+        `${place} ${city}, Ontario, Canada`,
+        `${city} ${place}, Ontario, Canada`,
+    ];
+    return dedupeQueries(queries);
+}
+
 function tokenize(value: string): string[] {
     return value
         .toLowerCase()

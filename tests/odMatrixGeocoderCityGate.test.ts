@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { passesCityGate } from '../utils/od-matrix/odMatrixGeocoder';
+import { passesCityGate, buildCityConstrainedQueries } from '../utils/od-matrix/odMatrixGeocoder';
 
 describe('passesCityGate', () => {
     it('passes when display_name contains the city token', () => {
@@ -35,5 +35,24 @@ describe('passesCityGate', () => {
             'Barrie, Ontario, Canada',
             null,
         )).toBe(true);
+    });
+});
+
+describe('buildCityConstrainedQueries', () => {
+    it('builds city-constrained queries for a city + place station', () => {
+        const queries = buildCityConstrainedQueries('Orillia', 'Rec Centre');
+        expect(queries).toContain('Rec Centre, Orillia, Ontario, Canada');
+        expect(queries).toContain('Rec Centre Orillia, Ontario, Canada');
+        expect(queries).toContain('Orillia Rec Centre, Ontario, Canada');
+    });
+
+    it('returns empty array when city is null', () => {
+        expect(buildCityConstrainedQueries(null, 'Union Station')).toEqual([]);
+    });
+
+    it('dedupes queries', () => {
+        const queries = buildCityConstrainedQueries('Barrie', 'Barrie');
+        const unique = new Set(queries.map(q => q.toLowerCase()));
+        expect(unique.size).toBe(queries.length);
     });
 });
