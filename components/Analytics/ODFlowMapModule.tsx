@@ -1003,14 +1003,25 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
                 )}
 
                     {ungeocodedCount > 0 && (
-                        <div className="mb-3 px-4 py-2.5 border border-amber-200 bg-amber-50 text-amber-700 text-sm rounded-lg">
-                            {ungeocodedCount} station{ungeocodedCount === 1 ? '' : 's'} still missing coordinates.
+                        <div className="mb-3 px-4 py-2.5 border border-amber-200 bg-amber-50 rounded-lg flex items-center gap-3">
+                            <div className="flex-1 min-w-0">
+                                <div className="flex items-center justify-between text-sm text-amber-700 mb-1.5">
+                                    <span className="font-medium">{geocodedCount}/{data.stationCount} stations geocoded</span>
+                                    <span className="text-xs">{((geocodedCount / data.stationCount) * 100).toFixed(1)}%</span>
+                                </div>
+                                <div className="w-full h-1.5 bg-amber-200 rounded-full overflow-hidden">
+                                    <div
+                                        className="h-full bg-amber-500 rounded-full transition-all"
+                                        style={{ width: `${(geocodedCount / data.stationCount) * 100}%` }}
+                                    />
+                                </div>
+                            </div>
                             {onFixMissingCoordinates && (
                                 <button
                                     onClick={onFixMissingCoordinates}
-                                    className="ml-2 underline font-medium hover:text-amber-800"
+                                    className="shrink-0 px-3 py-1.5 text-xs font-medium bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors"
                                 >
-                                    Fix coordinates
+                                    Fix {ungeocodedCount} missing
                                 </button>
                             )}
                         </div>
@@ -1157,29 +1168,44 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
                         </div>
                     )}
 
-                    <div className="mt-3 flex flex-wrap items-center gap-5 text-xs text-gray-500 border border-gray-200 rounded-lg px-3 py-2 bg-gray-50/70">
-                        <span className="flex items-center gap-1.5">
-                            <svg width="14" height="14" viewBox="0 0 14 14" className="shrink-0">
+                    <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3 text-xs text-gray-500">
+                        <div className="flex items-center gap-2 bg-gray-50 rounded-lg px-3 py-2 border border-gray-100">
+                            <svg width="16" height="16" viewBox="0 0 14 14" className="shrink-0">
                                 <path d="M2,7 A5,5 0 0,0 12,7 Z" fill="#10b981" />
                                 <path d="M2,7 A5,5 0 0,1 12,7 Z" fill="#ef4444" />
                                 <circle cx="7" cy="7" r="5" fill="none" stroke="white" strokeWidth="1.5" />
                             </svg>
-                            Green = origin trips, Red = destination trips
-                        </span>
-                        <span className="flex items-center gap-1.5">
-                            <span className="w-14 h-2 rounded" style={{ background: `linear-gradient(to right, ${ARC_COLORS[0]}, ${ARC_COLORS[3]}, ${ARC_COLORS[5]}, #94a3b8)` }} />
-                            Arc color: rank #1 (dark blue) → lower ranks (slate)
-                        </span>
-                        <span className="flex items-center gap-1.5">
-                            <svg width="36" height="10" viewBox="0 0 36 10" className="shrink-0">
-                                <line x1="0" y1="2.5" x2="36" y2="2.5" stroke="#9ca3af" strokeWidth="1.5" strokeLinecap="round" />
-                                <line x1="0" y1="7.5" x2="36" y2="7.5" stroke="#6b7280" strokeWidth="4" strokeLinecap="round" />
+                            <div>
+                                <span className="text-[10px] font-medium text-gray-700 block leading-tight">Stops</span>
+                                <span className="text-[10px] text-gray-400 leading-tight">
+                                    <span className="text-emerald-600">Green</span> origin · <span className="text-red-500">Red</span> dest
+                                </span>
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-2 bg-gray-50 rounded-lg px-3 py-2 border border-gray-100">
+                            <span className="w-10 h-2.5 rounded shrink-0" style={{ background: `linear-gradient(to right, ${ARC_COLORS[0]}, ${ARC_COLORS[3]}, ${ARC_COLORS[5]}, #94a3b8)` }} />
+                            <div>
+                                <span className="text-[10px] font-medium text-gray-700 block leading-tight">Arc Color</span>
+                                <span className="text-[10px] text-gray-400 leading-tight">Rank #1 dark → lower light</span>
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-2 bg-gray-50 rounded-lg px-3 py-2 border border-gray-100">
+                            <svg width="32" height="12" viewBox="0 0 32 12" className="shrink-0">
+                                <line x1="0" y1="3" x2="32" y2="3" stroke="#9ca3af" strokeWidth="1.5" strokeLinecap="round" />
+                                <line x1="0" y1="9" x2="32" y2="9" stroke="#6b7280" strokeWidth="4" strokeLinecap="round" />
                             </svg>
-                            Arc width = trip volume
-                        </span>
-                        <span className="flex items-center gap-1.5 text-gray-400">
-                            Right-click stop for direction filter
-                        </span>
+                            <div>
+                                <span className="text-[10px] font-medium text-gray-700 block leading-tight">Arc Width</span>
+                                <span className="text-[10px] text-gray-400 leading-tight">Proportional to volume</span>
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-2 bg-gray-50 rounded-lg px-3 py-2 border border-gray-100">
+                            <span className="text-[11px] text-gray-400 font-mono shrink-0">R-click</span>
+                            <div>
+                                <span className="text-[10px] font-medium text-gray-700 block leading-tight">Direction Filter</span>
+                                <span className="text-[10px] text-gray-400 leading-tight">Right-click any stop</span>
+                            </div>
+                        </div>
                     </div>
                 </ChartCard>
             </div>

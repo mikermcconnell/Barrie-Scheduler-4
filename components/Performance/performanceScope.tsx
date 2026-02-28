@@ -11,12 +11,13 @@ const PerformanceScopeContext = createContext<PerformanceScopeContextValue | nul
 
 export const PerformanceScopeProvider: React.FC<{
     scope: PerformanceDataScope;
+    label?: string;
     children: React.ReactNode;
-}> = ({ scope, children }) => {
+}> = ({ scope, label, children }) => {
     const value = useMemo<PerformanceScopeContextValue>(() => ({
         scope,
-        label: getPerformanceScopeLabel(scope),
-    }), [scope]);
+        label: label ?? getPerformanceScopeLabel(scope),
+    }), [scope, label]);
 
     return (
         <PerformanceScopeContext.Provider value={value}>

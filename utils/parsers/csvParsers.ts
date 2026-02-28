@@ -185,7 +185,7 @@ export const parseRideCo = (input: string | RowData[]): Shift[] => {
     const ROW_BREAK_END = 18;
     const ROW_BREAK_DURATION = 19;
 
-    if (lines.length <= ROW_BREAK_END) {
+    if (lines.length <= ROW_BREAK_DURATION) {
         console.error("RideCo file is too short");
         return [];
     }
@@ -198,7 +198,7 @@ export const parseRideCo = (input: string | RowData[]): Shift[] => {
     const endRow = lines[ROW_END];
     const breakStartRow = lines[ROW_BREAK_START];
     const breakEndRow = lines[ROW_BREAK_END];
-    const breakDurationRow = lines[ROW_BREAK_DURATION];
+    const breakDurationRow = lines[ROW_BREAK_DURATION] || [];
 
     // Determine start column. Look for "Shift1" or "Shift 1" in Row 10 (Index 9)
     // Or just assume it starts at column 2 (Index 2) as per previous observation,

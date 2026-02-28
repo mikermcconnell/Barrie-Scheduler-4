@@ -22,14 +22,12 @@ import {
     MoreVertical,
     Clock,
     HardDrive,
-    Filter,
     ChevronDown,
     FileSpreadsheet,
     Bus,
     Loader2,
     AlertCircle,
     X,
-    Plus,
     Star
 } from 'lucide-react';
 
@@ -48,7 +46,9 @@ type FileFilter = 'all' | 'schedule_master' | 'rideco' | 'barrie_tod' | 'other';
 export const FileManager: React.FC<FileManagerProps> = ({
     onSelectFile,
     onSelectSchedule,
-    onClose
+    onClose,
+    defaultScheduleId,
+    onSetDefaultSchedule
 }) => {
     const { user } = useAuth();
     const [activeTab, setActiveTab] = useState<Tab>('schedules');
@@ -129,10 +129,20 @@ export const FileManager: React.FC<FileManagerProps> = ({
         try {
             await deleteSchedule(user.uid, schedule.id);
             setSchedules(prev => prev.filter(s => s.id !== schedule.id));
+            if (defaultScheduleId === schedule.id) {
+                onSetDefaultSchedule?.(null);
+            }
         } catch (err: any) {
             setError(err.message || 'Failed to delete schedule');
         }
         setMenuOpen(null);
+    };
+
+    const isDefaultSchedule = (scheduleId: string) => defaultScheduleId === scheduleId;
+
+    const handleToggleDefaultSchedule = (scheduleId: string) => {
+        if (!onSetDefaultSchedule) return;
+        onSetDefaultSchedule(defaultScheduleId === scheduleId ? null : scheduleId);
     };
 
     const formatFileSize = (bytes: number) => {
@@ -360,6 +370,23 @@ export const FileManager: React.FC<FileManagerProps> = ({
                                             <div className="bg-green-100 p-3 rounded-xl">
                                                 <Calendar className="text-brand-green" size={24} />
                                             </div>
+                                            <div className="flex items-center gap-1">
+                                                {onSetDefaultSchedule && (
+                                                    <button
+                                                        onClick={e => {
+                                                            e.stopPropagation();
+                                                            handleToggleDefaultSchedule(schedule.id);
+                                                        }}
+                                                        className={`p-2 rounded-lg transition-colors ${
+                                                            isDefaultSchedule(schedule.id)
+                                                                ? 'text-amber-500 hover:bg-amber-50'
+                                                                : 'text-gray-300 hover:text-amber-500 hover:bg-amber-50'
+                                                        }`}
+                                                        title={isDefaultSchedule(schedule.id) ? 'Unset default schedule' : 'Set as default schedule'}
+                                                    >
+                                                        <Star size={16} className={isDefaultSchedule(schedule.id) ? 'fill-amber-500' : ''} />
+                                                    </button>
+                                                )}
                                             <div className="relative">
                                                 <button
                                                     onClick={e => { e.stopPropagation(); setMenuOpen(menuOpen === schedule.id ? null : schedule.id); }}
@@ -378,8 +405,16 @@ export const FileManager: React.FC<FileManagerProps> = ({
                                                     </div>
                                                 )}
                                             </div>
+                                            </div>
                                         </div>
-                                        <h3 className="font-bold text-gray-800 mb-1 truncate">{schedule.name}</h3>
+                                        <div className="flex items-center gap-2 mb-1">
+                                            <h3 className="font-bold text-gray-800 truncate">{schedule.name}</h3>
+                                            {isDefaultSchedule(schedule.id) && (
+                                                <span className="text-[10px] uppercase tracking-wide font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">
+                                                    Default
+                                                </span>
+                                            )}
+                                        </div>
                                         {schedule.description && (
                                             <p className="text-sm text-gray-500 mb-3 line-clamp-2">{schedule.description}</p>
                                         )}
@@ -404,7 +439,7 @@ export const FileManager: React.FC<FileManagerProps> = ({
                                             <th className="text-left px-5 py-3 text-xs font-bold text-gray-500 uppercase">Name</th>
                                             <th className="text-left px-5 py-3 text-xs font-bold text-gray-500 uppercase">Status</th>
                                             <th className="text-left px-5 py-3 text-xs font-bold text-gray-500 uppercase">Last Updated</th>
-                                            <th className="w-10"></th>
+                                            <th className="w-24"></th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -418,6 +453,11 @@ export const FileManager: React.FC<FileManagerProps> = ({
                                                     <div className="flex items-center gap-3">
                                                         <Calendar className="text-brand-green" size={20} />
                                                         <span className="font-bold text-gray-800">{schedule.name}</span>
+                                                        {isDefaultSchedule(schedule.id) && (
+                                                            <span className="text-[10px] uppercase tracking-wide font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">
+                                                                Default
+                                                            </span>
+                                                        )}
                                                     </div>
                                                 </td>
                                                 <td className="px-5 py-4">
@@ -427,12 +467,30 @@ export const FileManager: React.FC<FileManagerProps> = ({
                                                 </td>
                                                 <td className="px-5 py-4 text-sm text-gray-500">{formatDate(schedule.updatedAt)}</td>
                                                 <td className="px-3">
-                                                    <button
-                                                        onClick={e => { e.stopPropagation(); handleDeleteSchedule(schedule); }}
-                                                        className="p-2 hover:bg-red-50 rounded-lg text-gray-400 hover:text-red-500"
-                                                    >
-                                                        <Trash2 size={16} />
-                                                    </button>
+                                                    <div className="flex items-center justify-end gap-1">
+                                                        {onSetDefaultSchedule && (
+                                                            <button
+                                                                onClick={e => {
+                                                                    e.stopPropagation();
+                                                                    handleToggleDefaultSchedule(schedule.id);
+                                                                }}
+                                                                className={`p-2 rounded-lg transition-colors ${
+                                                                    isDefaultSchedule(schedule.id)
+                                                                        ? 'text-amber-500 hover:bg-amber-50'
+                                                                        : 'text-gray-300 hover:text-amber-500 hover:bg-amber-50'
+                                                                }`}
+                                                                title={isDefaultSchedule(schedule.id) ? 'Unset default schedule' : 'Set as default schedule'}
+                                                            >
+                                                                <Star size={16} className={isDefaultSchedule(schedule.id) ? 'fill-amber-500' : ''} />
+                                                            </button>
+                                                        )}
+                                                        <button
+                                                            onClick={e => { e.stopPropagation(); handleDeleteSchedule(schedule); }}
+                                                            className="p-2 hover:bg-red-50 rounded-lg text-gray-400 hover:text-red-500"
+                                                        >
+                                                            <Trash2 size={16} />
+                                                        </button>
+                                                    </div>
                                                 </td>
                                             </tr>
                                         ))}

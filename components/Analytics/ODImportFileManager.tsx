@@ -34,6 +34,7 @@ export const ODImportFileManager: React.FC<ODImportFileManagerProps> = ({
     const [isOpen, setIsOpen] = useState(false);
     const [imports, setImports] = useState<ODMatrixImportRecord[]>([]);
     const [loadingImports, setLoadingImports] = useState(false);
+    const [loadError, setLoadError] = useState<string | null>(null);
     const [renamingId, setRenamingId] = useState<string | null>(null);
     const [renameValue, setRenameValue] = useState('');
     const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -55,22 +56,30 @@ export const ODImportFileManager: React.FC<ODImportFileManagerProps> = ({
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, [isOpen, deletingId]);
 
+    const fetchImports = useCallback(async () => {
+        setLoadingImports(true);
+        setLoadError(null);
+        try {
+            const list = await listODMatrixImports(teamId);
+            setImports(list);
+        } catch (err) {
+            console.error('Failed to load OD imports:', err);
+            setLoadError('Failed to load datasets. Please try again.');
+        } finally {
+            setLoadingImports(false);
+        }
+    }, [teamId]);
+
     // Fetch imports when dropdown opens
-    const handleToggle = useCallback(async () => {
+    const handleToggle = useCallback(() => {
         if (isOpen) {
             setIsOpen(false);
             setRenamingId(null);
             return;
         }
         setIsOpen(true);
-        setLoadingImports(true);
-        try {
-            const list = await listODMatrixImports(teamId);
-            setImports(list);
-        } finally {
-            setLoadingImports(false);
-        }
-    }, [isOpen, teamId]);
+        void fetchImports();
+    }, [isOpen, fetchImports]);
 
     // Focus rename input
     useEffect(() => {
@@ -159,6 +168,16 @@ export const ODImportFileManager: React.FC<ODImportFileManagerProps> = ({
                             {loadingImports ? (
                                 <div className="flex items-center justify-center py-8">
                                     <Loader2 size={18} className="animate-spin text-gray-400" />
+                                </div>
+                            ) : loadError ? (
+                                <div className="py-6 px-4 text-center">
+                                    <p className="text-sm text-red-500">{loadError}</p>
+                                    <button
+                                        onClick={() => void fetchImports()}
+                                        className="mt-2 text-xs font-medium text-violet-600 hover:text-violet-800"
+                                    >
+                                        Retry
+                                    </button>
                                 </div>
                             ) : imports.length === 0 ? (
                                 <p className="text-sm text-gray-400 text-center py-8">No datasets found.</p>

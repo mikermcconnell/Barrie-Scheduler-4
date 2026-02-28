@@ -1,5 +1,6 @@
 import ExcelJS from 'exceljs';
 import type { ODMatrixDataSummary, ODPairRecord, ODStation } from './odMatrixTypes';
+import type { ODRouteEstimationResult, ODPairRouteMatch } from './odRouteEstimation';
 
 // ─── Shared Helpers ──────────────────────────────────────────────
 

@@ -29,11 +29,7 @@ export const MetricCard: React.FC<{
                     <div className={`p-2 rounded-lg ${colors[color]}`}>{icon}</div>
                 </div>
                 {scope && (
-                    <span className={`inline-flex items-center px-2 py-0.5 text-[10px] font-semibold rounded-full ${
-                        scope.scope === 'yesterday'
-                            ? 'bg-cyan-50 text-cyan-700 border border-cyan-100'
-                            : 'bg-gray-100 text-gray-600 border border-gray-200'
-                    }`}>
+                    <span className="inline-flex items-center px-2 py-0.5 text-[10px] font-semibold rounded-full bg-cyan-50 text-cyan-700 border border-cyan-100">
                         {scope.label}
                     </span>
                 )}
@@ -61,11 +57,7 @@ export const ChartCard: React.FC<{
                     <div className="flex items-center gap-2">
                         <p className="text-xs text-gray-400">{subtitle}</p>
                         {scope && (
-                            <span className={`inline-flex items-center px-2 py-0.5 text-[10px] font-semibold rounded-full ${
-                                scope.scope === 'yesterday'
-                                    ? 'bg-cyan-50 text-cyan-700 border border-cyan-100'
-                                    : 'bg-gray-100 text-gray-600 border border-gray-200'
-                            }`}>
+                            <span className="inline-flex items-center px-2 py-0.5 text-[10px] font-semibold rounded-full bg-cyan-50 text-cyan-700 border border-cyan-100">
                                 {scope.label}
                             </span>
                         )}

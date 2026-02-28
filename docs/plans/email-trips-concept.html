@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Daily Email KPI Concepts — Trips Operated + Dwell</title>
+  <style>
+    body { margin: 0; padding: 40px; background: #f3f4f6; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+    .container { max-width: 680px; margin: 0 auto; }
+    h1 { color: #1e3a5f; font-size: 20px; margin: 0 0 32px; }
+    h2 { color: #1e3a5f; font-size: 16px; margin: 40px 0 12px; border-bottom: 2px solid #e5e7eb; padding-bottom: 6px; }
+    h2:first-of-type { margin-top: 0; }
+    .label { font-size: 13px; color: #6b7280; margin-bottom: 8px; line-height: 1.5; }
+    .kpi-row { display: flex; gap: 12px; margin-bottom: 16px; }
+    .kpi-card { flex: 1; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px; text-align: center; }
+    .kpi-card .kpi-label { font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; }
+    .kpi-card .kpi-value { font-size: 24px; font-weight: 700; color: #111827; margin: 4px 0; }
+    .kpi-card .kpi-sub { font-size: 11px; color: #9ca3af; }
+    .kpi-card .kpi-sub2 { font-size: 10px; color: #b0b8c4; margin-top: 3px; }
+    .divider { border: none; border-top: 3px solid #1e3a5f; margin: 48px 0 16px; }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <h1>Daily Email KPI Concepts</h1>
+
+  <!-- ========================================= -->
+  <!-- TRIPS OPERATED                            -->
+  <!-- ========================================= -->
+
+  <h2>CURRENT — Trips Operated (no missed-trip data)</h2>
+  <div class="label">Generic fallback when missedTrips data isn't available</div>
+  <div class="kpi-row">
+    <div class="kpi-card">
+      <div class="kpi-label">Trips Operated</div>
+      <div class="kpi-value">539</div>
+      <div class="kpi-sub">36 vehicles · 452.8 svc hrs</div>
+    </div>
+    <div class="kpi-card" style="border-left: 3px solid #0891b2;">
+      <div class="kpi-label">Operator Dwell</div>
+      <div class="kpi-value">40.0 hrs</div>
+      <div class="kpi-sub">338 high · 360 moderate</div>
+    </div>
+  </div>
+
+  <h2>PROPOSED — All trips operated (success)</h2>
+  <div class="label">Green accent border, dark value, success in subtitle only</div>
+  <div class="kpi-row">
+    <div class="kpi-card" style="border-left: 3px solid #16a34a;">
+      <div class="kpi-label">Trips Operated</div>
+      <div class="kpi-value">539 / 539</div>
+      <div class="kpi-sub" style="color: #16a34a; font-weight: 600;">&#10003; All trips operated</div>
+    </div>
+    <div class="kpi-card" style="border-left: 3px solid #0891b2;">
+      <div class="kpi-label">Yesterday's Dwell</div>
+      <div class="kpi-value">5.2 hrs</div>
+      <div class="kpi-sub">12 high · 28 moderate</div>
+      <div class="kpi-sub2">Weekday avg: 4.8 hrs</div>
+    </div>
+  </div>
+
+  <h2>PROPOSED — Some trips missed (amber / &lt;5%)</h2>
+  <div class="kpi-row">
+    <div class="kpi-card" style="border-left: 3px solid #d97706;">
+      <div class="kpi-label">Trips Operated</div>
+      <div class="kpi-value">531 / 539</div>
+      <div class="kpi-sub" style="color: #d97706; font-weight: 600;">8 missed (1.5%)</div>
+    </div>
+    <div class="kpi-card" style="border-left: 3px solid #0891b2;">
+      <div class="kpi-label">Yesterday's Dwell</div>
+      <div class="kpi-value">5.2 hrs</div>
+      <div class="kpi-sub">12 high · 28 moderate</div>
+      <div class="kpi-sub2">Weekday avg: 4.8 hrs</div>
+    </div>
+  </div>
+
+  <h2>PROPOSED — Many trips missed (red / 5%+)</h2>
+  <div class="kpi-row">
+    <div class="kpi-card" style="border-left: 3px solid #dc2626;">
+      <div class="kpi-label">Trips Operated</div>
+      <div class="kpi-value">512 / 539</div>
+      <div class="kpi-sub" style="color: #dc2626; font-weight: 600;">27 missed (5.0%)</div>
+    </div>
+    <div class="kpi-card" style="border-left: 3px solid #0891b2;">
+      <div class="kpi-label">Yesterday's Dwell</div>
+      <div class="kpi-value">5.2 hrs</div>
+      <div class="kpi-sub">12 high · 28 moderate</div>
+      <div class="kpi-sub2">Weekday avg: 4.8 hrs</div>
+    </div>
+  </div>
+
+  <!-- ========================================= -->
+  <!-- DWELL METRIC CONCEPTS                     -->
+  <!-- ========================================= -->
+
+  <hr class="divider">
+  <h2>DWELL — Current (weekly total)</h2>
+  <div class="label">Currently shows cumulative total across all trend days. Hard to contextualize.</div>
+  <div class="kpi-row">
+    <div class="kpi-card" style="border-left: 3px solid #0891b2;">
+      <div class="kpi-label">Operator Dwell</div>
+      <div class="kpi-value">40.0 hrs</div>
+      <div class="kpi-sub">338 high · 360 moderate</div>
+    </div>
+  </div>
+
+  <h2>DWELL — Proposed: Previous day only + day-type average</h2>
+  <div class="label">
+    Show yesterday's dwell only. Add context line showing the historical average for that day type
+    (weekday / saturday / sunday) so reader can instantly tell if it was a good or bad day.
+  </div>
+
+  <div class="label" style="font-weight: 600; color: #374151;">Weekday example (below average — normal):</div>
+  <div class="kpi-row">
+    <div class="kpi-card" style="border-left: 3px solid #0891b2;">
+      <div class="kpi-label">Yesterday's Dwell</div>
+      <div class="kpi-value">5.2 hrs</div>
+      <div class="kpi-sub">12 high · 28 moderate</div>
+      <div class="kpi-sub2">Weekday avg: 4.8 hrs</div>
+    </div>
+  </div>
+
+  <div class="label" style="font-weight: 600; color: #374151;">Weekday example (above average — flagged):</div>
+  <div class="kpi-row">
+    <div class="kpi-card" style="border-left: 3px solid #d97706;">
+      <div class="kpi-label">Yesterday's Dwell</div>
+      <div class="kpi-value" style="color: #d97706;">8.1 hrs</div>
+      <div class="kpi-sub">31 high · 42 moderate</div>
+      <div class="kpi-sub2" style="color: #d97706;">&#9650; Weekday avg: 4.8 hrs</div>
+    </div>
+  </div>
+
+  <div class="label" style="font-weight: 600; color: #374151;">Saturday example:</div>
+  <div class="kpi-row">
+    <div class="kpi-card" style="border-left: 3px solid #0891b2;">
+      <div class="kpi-label">Yesterday's Dwell</div>
+      <div class="kpi-value">2.8 hrs</div>
+      <div class="kpi-sub">5 high · 14 moderate</div>
+      <div class="kpi-sub2">Saturday avg: 3.1 hrs</div>
+    </div>
+  </div>
+
+  <div class="label" style="font-weight: 600; color: #374151;">Sunday example:</div>
+  <div class="kpi-row">
+    <div class="kpi-card" style="border-left: 3px solid #0891b2;">
+      <div class="kpi-label">Yesterday's Dwell</div>
+      <div class="kpi-value">1.4 hrs</div>
+      <div class="kpi-sub">2 high · 8 moderate</div>
+      <div class="kpi-sub2">Sunday avg: 1.6 hrs</div>
+    </div>
+  </div>
+
+  <h2>DWELL — Threshold logic</h2>
+  <div class="label" style="line-height: 1.8;">
+    <strong>Normal</strong> (teal accent): Yesterday's dwell &le; 1.5&times; the day-type average<br>
+    <strong>Flagged</strong> (amber accent + amber value): Yesterday's dwell &gt; 1.5&times; the day-type average<br>
+    <strong>Average calculation</strong>: Mean of all same day-type days in the trend window (up to 56 days = ~8 weeks)
+  </div>
+
+  <!-- ========================================= -->
+  <!-- COMBINED VIEW                             -->
+  <!-- ========================================= -->
+
+  <hr class="divider">
+  <h2>Full KPI row — proposed (all trips + normal dwell)</h2>
+  <div class="kpi-row">
+    <div class="kpi-card" style="border-left: 3px solid #16a34a;">
+      <div class="kpi-label">On-Time Performance</div>
+      <div class="kpi-value">89.8%</div>
+      <div class="kpi-sub">3.4% early · 6.9% late</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Total Ridership</div>
+      <div class="kpi-value">8,529</div>
+      <div class="kpi-sub">8,251 alightings</div>
+    </div>
+  </div>
+  <div class="kpi-row">
+    <div class="kpi-card" style="border-left: 3px solid #16a34a;">
+      <div class="kpi-label">Trips Operated</div>
+      <div class="kpi-value">539 / 539</div>
+      <div class="kpi-sub" style="color: #16a34a; font-weight: 600;">&#10003; All trips operated</div>
+    </div>
+    <div class="kpi-card" style="border-left: 3px solid #0891b2;">
+      <div class="kpi-label">Yesterday's Dwell</div>
+      <div class="kpi-value">5.2 hrs</div>
+      <div class="kpi-sub">12 high · 28 moderate</div>
+      <div class="kpi-sub2">Weekday avg: 4.8 hrs</div>
+    </div>
+  </div>
+
+  <h2>Full KPI row — proposed (missed trips + high dwell)</h2>
+  <div class="kpi-row">
+    <div class="kpi-card" style="border-left: 3px solid #16a34a;">
+      <div class="kpi-label">On-Time Performance</div>
+      <div class="kpi-value">89.8%</div>
+      <div class="kpi-sub">3.4% early · 6.9% late</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Total Ridership</div>
+      <div class="kpi-value">8,529</div>
+      <div class="kpi-sub">8,251 alightings</div>
+    </div>
+  </div>
+  <div class="kpi-row">
+    <div class="kpi-card" style="border-left: 3px solid #dc2626;">
+      <div class="kpi-label">Trips Operated</div>
+      <div class="kpi-value">512 / 539</div>
+      <div class="kpi-sub" style="color: #dc2626; font-weight: 600;">27 missed (5.0%)</div>
+    </div>
+    <div class="kpi-card" style="border-left: 3px solid #d97706;">
+      <div class="kpi-label">Yesterday's Dwell</div>
+      <div class="kpi-value" style="color: #d97706;">8.1 hrs</div>
+      <div class="kpi-sub">31 high · 42 moderate</div>
+      <div class="kpi-sub2" style="color: #d97706;">&#9650; Weekday avg: 4.8 hrs</div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

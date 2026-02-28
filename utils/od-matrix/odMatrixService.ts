@@ -13,6 +13,7 @@ import {
     getDoc,
     setDoc,
     updateDoc,
+    writeBatch,
     deleteDoc,
     collection,
     getDocs,
@@ -97,7 +98,7 @@ export async function saveODMatrixData(
     await Promise.all(
         existingImports
             .filter(imp => imp.isActive)
-            .map(imp => setDoc(getImportRef(teamId, imp.id), { ...imp, isActive: false }))
+            .map(imp => updateDoc(getImportRef(teamId, imp.id), { isActive: false }))
     );
 
     await setDoc(getImportRef(teamId, importId), { id: importId, ...importRecord });
@@ -170,7 +171,7 @@ export async function listODMatrixImports(teamId: string): Promise<ODMatrixImpor
         return snapshot.docs.map(d => ({ id: d.id, ...d.data() } as ODMatrixImportRecord));
     } catch (error) {
         console.error('Error listing OD matrix imports:', error);
-        return [];
+        throw error;
     }
 }
 
@@ -195,6 +196,39 @@ export async function loadODMatrixImportById(
         console.error('Error loading OD import by id:', error);
         return null;
     }
+}
+
+// ============ SET ACTIVE IMPORT ============
+
+export async function setActiveODMatrixImport(teamId: string, importId: string): Promise<void> {
+    const importSnap = await getDoc(getImportRef(teamId, importId));
+    if (!importSnap.exists()) {
+        throw new Error(`OD import not found: ${importId}`);
+    }
+
+    const target = importSnap.data() as ODMatrixImportRecord;
+    const imports = await listODMatrixImports(teamId);
+
+    const batch = writeBatch(db);
+    for (const imp of imports) {
+        const shouldBeActive = imp.id === importId;
+        if (imp.isActive !== shouldBeActive) {
+            batch.update(getImportRef(teamId, imp.id), { isActive: shouldBeActive });
+        }
+    }
+
+    batch.set(getDefaultRef(teamId), {
+        activeImportId: importId,
+        importedAt: serverTimestamp(),
+        importedBy: target.importedBy,
+        storagePath: target.storagePath,
+        fileName: target.fileName,
+        dateRange: target.dateRange || null,
+        stationCount: target.stationCount,
+        totalJourneys: target.totalJourneys,
+    });
+
+    await batch.commit();
 }
 
 // ============ RENAME IMPORT ============
@@ -234,6 +268,9 @@ export async function deleteODMatrixImport(
     if (!importSnap.exists()) return 'unchanged';
 
     const record = importSnap.data() as ODMatrixImportRecord;
+    const defaultSnap = await getDoc(getDefaultRef(teamId));
+    const defaultActiveImportId = defaultSnap.exists() ? (defaultSnap.data().activeImportId as string | undefined) : undefined;
+    const isCurrentlyActive = record.isActive || defaultActiveImportId === importId;
 
     // Delete Storage file
     try {
@@ -245,7 +282,7 @@ export async function deleteODMatrixImport(
     // Delete Firestore import record
     await deleteDoc(getImportRef(teamId, importId));
 
-    if (!record.isActive) return 'unchanged';
+    if (!isCurrentlyActive) return 'unchanged';
 
     // Was active — find a replacement
     const remaining = await listODMatrixImports(teamId);
@@ -255,17 +292,7 @@ export async function deleteODMatrixImport(
     }
 
     const next = remaining[0]; // already sorted desc by importedAt
-    await setDoc(getImportRef(teamId, next.id), { ...next, isActive: true });
-    await setDoc(getDefaultRef(teamId), {
-        activeImportId: next.id,
-        importedAt: serverTimestamp(),
-        importedBy: next.importedBy,
-        storagePath: next.storagePath,
-        fileName: next.fileName,
-        dateRange: next.dateRange || null,
-        stationCount: next.stationCount,
-        totalJourneys: next.totalJourneys,
-    });
+    await setActiveODMatrixImport(teamId, next.id);
 
     return next.id;
 }

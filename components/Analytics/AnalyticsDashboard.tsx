@@ -10,7 +10,7 @@ import { Map, ArrowRight, Loader2, Smartphone, Network } from 'lucide-react';
 import { useTeam } from '../contexts/TeamContext';
 import { useAuth } from '../contexts/AuthContext';
 import { getTransitAppData, getTransitAppMetadata } from '../../utils/transit-app/transitAppService';
-import { getODMatrixData, getODMatrixMetadata, loadGeocodeCache, loadODMatrixImportById } from '../../utils/od-matrix/odMatrixService';
+import { getODMatrixData, getODMatrixMetadata, loadGeocodeCache, setActiveODMatrixImport } from '../../utils/od-matrix/odMatrixService';
 import { TransitAppImport } from './TransitAppImport';
 import { TransitAppWorkspace } from './TransitAppWorkspace';
 import { ODMatrixImport } from './ODMatrixImport';
@@ -30,28 +30,49 @@ interface AnalyticsCardProps {
     onClick: () => void;
 }
 
-const AnalyticsCard: React.FC<AnalyticsCardProps> = ({ color, icon, title, description, hasData, onClick }) => (
-    <button
-        onClick={onClick}
-        className={`group bg-white p-6 rounded-xl border border-gray-200 shadow-sm hover:shadow-md hover:border-${color}-300 transition-all text-left flex flex-col h-full active:scale-[0.99]`}
-    >
-        <div className="flex items-center justify-between mb-4">
-            <div className={`bg-${color}-50/50 p-2.5 rounded-lg text-${color}-600 group-hover:bg-${color}-100 transition-colors`}>
-                {icon}
+const cardStyles = {
+    cyan: {
+        hover: 'hover:border-cyan-300',
+        bg: 'bg-cyan-50/50 text-cyan-600 group-hover:bg-cyan-100',
+        arrow: 'group-hover:text-cyan-500',
+    },
+    violet: {
+        hover: 'hover:border-violet-300',
+        bg: 'bg-violet-50/50 text-violet-600 group-hover:bg-violet-100',
+        arrow: 'group-hover:text-violet-500',
+    },
+    teal: {
+        hover: 'hover:border-teal-300',
+        bg: 'bg-teal-50/50 text-teal-600 group-hover:bg-teal-100',
+        arrow: 'group-hover:text-teal-500',
+    },
+};
+
+const AnalyticsCard: React.FC<AnalyticsCardProps> = ({ color, icon, title, description, hasData, onClick }) => {
+    const s = cardStyles[color];
+    return (
+        <button
+            onClick={onClick}
+            className={`group bg-white p-6 rounded-xl border border-gray-200 shadow-sm hover:shadow-md ${s.hover} transition-all text-left flex flex-col h-full active:scale-[0.99]`}
+        >
+            <div className="flex items-center justify-between mb-4">
+                <div className={`p-2.5 rounded-lg transition-colors ${s.bg}`}>
+                    {icon}
+                </div>
+                <div className="flex items-center gap-2">
+                    {hasData && (
+                        <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-[10px] font-semibold rounded-full">
+                            Data Loaded
+                        </span>
+                    )}
+                    <ArrowRight size={16} className={`text-gray-300 ${s.arrow} transition-colors`} />
+                </div>
             </div>
-            <div className="flex items-center gap-2">
-                {hasData && (
-                    <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-[10px] font-bold rounded-full uppercase tracking-wide">
-                        Data Loaded
-                    </span>
-                )}
-                <ArrowRight size={16} className={`text-gray-300 group-hover:text-${color}-500 transition-colors`} />
-            </div>
-        </div>
-        <h3 className="text-lg font-bold text-gray-900 mb-1">{title}</h3>
-        <p className="text-sm text-gray-500 leading-relaxed">{description}</p>
-    </button>
-);
+            <h3 className="text-lg font-bold text-gray-900 mb-1">{title}</h3>
+            <p className="text-sm text-gray-500 leading-relaxed">{description}</p>
+        </button>
+    );
+};
 
 interface AnalyticsDashboardProps {
     onClose: () => void;
@@ -148,16 +169,18 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
         if (!team?.id) return;
         setLoading(true);
         try {
+            if (opts.importId) {
+                await setActiveODMatrixImport(team.id, opts.importId);
+            }
+
             const [loadedData, cache] = await Promise.all([
-                opts.importId
-                    ? loadODMatrixImportById(team.id, opts.importId)
-                    : getODMatrixData(team.id),
+                getODMatrixData(team.id),
                 loadGeocodeCache(team.id),
             ]);
             if (loadedData) {
                 setOdData(loadedData);
                 setOdGeocodeCache(cache);
-                if (opts.markAsLoaded) setHasODData(true);
+                if (opts.markAsLoaded || opts.importId) setHasODData(true);
                 setView('od-workspace');
             } else if (opts.fallbackToImport) {
                 setHasODData(false);
@@ -165,6 +188,10 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
             }
         } catch (error) {
             console.error('Error loading OD matrix data:', error);
+            if (opts.fallbackToImport) {
+                setHasODData(false);
+                setView('od-import');
+            }
         } finally {
             setLoading(false);
         }
@@ -182,9 +209,15 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
         loadODData({ importId, fallbackToImport: true });
 
     const handleDeletedImport = (_deletedId: string, result: string | null | 'unchanged') => {
-        if (result === 'unchanged') return;
+        if (result === 'unchanged') {
+            // Defensive fallback for any out-of-sync active state.
+            if (odData?.metadata.importId === _deletedId) {
+                loadODData({ fallbackToImport: true });
+            }
+            return;
+        }
         if (result !== null) {
-            loadODData({ importId: result });
+            loadODData({ importId: result, fallbackToImport: true });
         } else {
             setOdData(null);
             setHasODData(false);

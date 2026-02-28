@@ -227,7 +227,7 @@ function otpBar(earlyPct: number, onTimePct: number, latePct: number): string {
     </table>`;
 }
 
-function buildMissedTripsTable(latestDay: DailySummary): string {
+function buildMissedTripsTable(latestDay: DailySummary, trendDays: DailySummary[]): string {
   const mt = latestDay.missedTrips;
   if (!mt || mt.totalScheduled <= 0) return '';
   if (mt.totalMissed === 0) {
@@ -263,33 +263,99 @@ function buildMissedTripsTable(latestDay: DailySummary): string {
   const lateTrips = sortTrips(allTrips.filter(t => t.missType === 'late_over_15'));
   const noDataTrips = sortTrips(allTrips.filter(t => t.missType === 'not_performed'));
 
+  // Late trips table is built from a rolling multi-day window (min 3 days).
+  const tripDaysWithRows = trendDays.filter(d => (d.missedTrips?.trips?.length ?? 0) > 0);
+  const lateTrendDays = tripDaysWithRows.slice(-7);
+  const canBuildLateTrend = lateTrendDays.length >= 3;
+  const lateTrendRangeLabel = lateTrendDays.length > 0
+    ? `${formatDate(lateTrendDays[0].date)} to ${formatDate(lateTrendDays[lateTrendDays.length - 1].date)}`
+    : '';
+
+  type LateTrendAggregate = {
+    routeId: string;
+    departure: string;
+    occurrences: number;
+    totalLateMinutes: number;
+    lateSamples: number;
+  };
+
+  const lateTrendMap = new Map<string, LateTrendAggregate>();
+  if (canBuildLateTrend) {
+    for (const day of lateTrendDays) {
+      const dayTrips = day.missedTrips?.trips || [];
+      for (const t of dayTrips) {
+        if (t.missType !== 'late_over_15') continue;
+        const key = `${t.routeId}|${t.departure}`;
+        const prev = lateTrendMap.get(key);
+        if (!prev) {
+          lateTrendMap.set(key, {
+            routeId: t.routeId,
+            departure: t.departure,
+            occurrences: 1,
+            totalLateMinutes: t.lateByMinutes ?? 0,
+            lateSamples: t.lateByMinutes ? 1 : 0,
+          });
+        } else {
+          prev.occurrences += 1;
+          if (t.lateByMinutes) {
+            prev.totalLateMinutes += t.lateByMinutes;
+            prev.lateSamples += 1;
+          }
+        }
+      }
+    }
+  }
+
+  const lateTrendRows = [...lateTrendMap.values()].sort((a, b) => {
+    const occCmp = b.occurrences - a.occurrences;
+    if (occCmp !== 0) return occCmp;
+    const aAvg = a.lateSamples > 0 ? a.totalLateMinutes / a.lateSamples : 0;
+    const bAvg = b.lateSamples > 0 ? b.totalLateMinutes / b.lateSamples : 0;
+    const avgCmp = bAvg - aAvg;
+    if (avgCmp !== 0) return avgCmp;
+    const depCmp = departureSortMinutes(a.departure) - departureSortMinutes(b.departure);
+    if (depCmp !== 0) return depCmp;
+    return a.routeId.localeCompare(b.routeId, undefined, { numeric: true });
+  });
+
   // If we have trip-level data, render the two-section layout
   if (allTrips.length > 0) {
     let html = sectionHeader('Missed Trips', `${num(mt.totalMissed)} of ${num(mt.totalScheduled)} scheduled trips missed (${mt.missedPct.toFixed(1)}%)`);
 
-    // --- Late departures (15+ min) ---
-    if (lateTrips.length > 0) {
-      const lateRows = lateTrips.map((t, i) => {
+    // --- Late departures (15+ min), aggregated over a multi-day window ---
+    if (canBuildLateTrend && lateTrendRows.length > 0) {
+      const totalLateOccurrences = lateTrendRows.reduce((sum, row) => sum + row.occurrences, 0);
+      const lateRows = lateTrendRows.map((t, i) => {
         const bg = i % 2 === 0 ? '#ffffff' : '#f9fafb';
-        const lateLabel = t.lateByMinutes ? `${Math.round(t.lateByMinutes)} min late` : '15+ min late';
+        const avgDelay = t.lateSamples > 0
+          ? `${Math.round(t.totalLateMinutes / t.lateSamples)} min`
+          : '15+ min';
         return `
         <tr style="background:${bg};">
           <td style="padding:6px 10px;font-size:12px;font-weight:700;color:#374151;border-bottom:1px solid #f3f4f6;">${t.routeId}</td>
           <td style="padding:6px 10px;font-size:12px;text-align:right;color:#374151;border-bottom:1px solid #f3f4f6;">${t.departure}</td>
-          <td style="padding:6px 10px;font-size:12px;text-align:right;color:#d97706;border-bottom:1px solid #f3f4f6;">${lateLabel}</td>
+          <td style="padding:6px 10px;font-size:12px;text-align:right;color:#374151;border-bottom:1px solid #f3f4f6;">${num(t.occurrences)}</td>
+          <td style="padding:6px 10px;font-size:12px;text-align:right;color:#d97706;border-bottom:1px solid #f3f4f6;">${avgDelay}</td>
         </tr>`;
       }).join('');
 
       html += `
-      <div style="font-size:12px;font-weight:600;color:#92400e;background:#fffbeb;border:1px solid #fcd34d;border-radius:6px;padding:8px 10px;margin:8px 0 6px;">Late Departures (15+ min) — ${num(lateTrips.length)} trip${lateTrips.length !== 1 ? 's' : ''}</div>
+      <div style="font-size:12px;font-weight:600;color:#92400e;background:#fffbeb;border:1px solid #fcd34d;border-radius:6px;padding:8px 10px;margin:8px 0 6px;">Late Departures (15+ min) — ${num(totalLateOccurrences)} occurrence${totalLateOccurrences !== 1 ? 's' : ''} over ${lateTrendDays.length} days</div>
+      <div style="font-size:11px;color:#9ca3af;margin-bottom:6px;">Window: ${lateTrendRangeLabel}</div>
       <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;margin-bottom:12px;">
         <tr style="background:#f9fafb;">
           <th style="padding:6px 10px;text-align:left;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Route</th>
           <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Sched. Departure</th>
-          <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Delay</th>
+          <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Late Trips</th>
+          <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Avg Delay</th>
         </tr>
         ${lateRows}
       </table>`;
+    } else if (!canBuildLateTrend && lateTrips.length > 0) {
+      html += `
+      <div style="font-size:11px;color:#92400e;background:#fffbeb;border:1px solid #fcd34d;border-radius:6px;padding:8px 10px;margin:8px 0 12px;">
+        Late departures table is shown after at least 3 days of trip-level data (currently ${lateTrendDays.length} day${lateTrendDays.length === 1 ? '' : 's'}).
+      </div>`;
     }
 
     // --- No data trips ---
@@ -560,7 +626,7 @@ export function buildReportHtml(data: ReportData): string {
       ${buildRouteScorecard(latestDay.byRoute)}
 
       <!-- ═══ 3. MISSED TRIPS ═══ -->
-      ${buildMissedTripsTable(latestDay)}
+      ${buildMissedTripsTable(latestDay, trendDays)}
 
       <!-- ═══ 4. OTP TREND ═══ -->
       ${trendDays.length > 1 ? (() => {
@@ -570,11 +636,9 @@ export function buildReportHtml(data: ReportData): string {
       <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;">
         <tr style="background:#f9fafb;">
           <th style="padding:6px 10px;text-align:left;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Date</th>
-          <th style="padding:6px 10px;text-align:center;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Day</th>
+          <th style="padding:6px 10px;text-align:center;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Shift</th>
           <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">OTP</th>
           <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Riders</th>
-          <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Vehicles</th>
-          <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Peak Load</th>
         </tr>
         ${recentTrend.map((day, i) => {
           const isLatest = day.date === latestDay.date;
@@ -586,8 +650,6 @@ export function buildReportHtml(data: ReportData): string {
           <td style="padding:6px 10px;font-size:11px;text-align:center;color:#6b7280;border-bottom:1px solid #f3f4f6;">${dayLabel}</td>
           <td style="padding:6px 10px;font-size:12px;text-align:right;border-bottom:1px solid #f3f4f6;">${otpPill(day.system.otp.onTimePercent)}</td>
           <td style="padding:6px 10px;font-size:12px;text-align:right;color:#374151;border-bottom:1px solid #f3f4f6;">${num(day.system.totalRidership)}</td>
-          <td style="padding:6px 10px;font-size:12px;text-align:right;color:#374151;border-bottom:1px solid #f3f4f6;">${num(day.system.vehicleCount)}</td>
-          <td style="padding:6px 10px;font-size:12px;text-align:right;color:#374151;border-bottom:1px solid #f3f4f6;">${num(day.system.peakLoad)}</td>
         </tr>`;
         }).join('')}
       </table>`;

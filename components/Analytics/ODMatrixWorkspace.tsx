@@ -237,93 +237,90 @@ export const ODMatrixWorkspace: React.FC<ODMatrixWorkspaceProps> = ({
                 }}
             />
 
-            {/* Export Toolbar */}
-            <div className="flex items-center justify-between px-1 py-2.5 border-b border-gray-100 mt-3">
-                {/* Network exports */}
-                <div className="flex items-center gap-2">
-                    <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mr-1">Network</span>
-                    <button
-                        onClick={handleExportExcel}
-                        disabled={exportingExcel}
-                        title="Export full network Excel report"
-                        className="px-3 py-1.5 text-xs font-bold text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-50 flex items-center gap-1.5 transition-colors"
+            {/* Sticky Tab Bar with integrated exports */}
+            <div className="sticky top-0 z-10 bg-white border-b border-gray-200 rounded-t-lg -mx-1 px-1 mt-1">
+                <div className="flex items-center justify-between">
+                    {/* Tabs */}
+                    <div
+                        ref={tabBarRef}
+                        className="flex overflow-x-auto scrollbar-hide"
+                        style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
                     >
-                        <Download size={14} />
-                        {exportingExcel ? 'Exporting...' : 'Excel'}
-                    </button>
-                    <button
-                        onClick={handleExportPDF}
-                        disabled={exportingPDF}
-                        title="Export full network PDF report"
-                        className="px-3 py-1.5 text-xs font-bold text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-50 flex items-center gap-1.5 transition-colors"
-                    >
-                        <FileText size={14} />
-                        {exportingPDF ? 'Exporting...' : 'PDF'}
-                    </button>
-                </div>
+                        {tabs.map(tab => {
+                            const Icon = tab.icon;
+                            const isActive = activeTab === tab.id;
+                            const isDisabled = !tab.enabled;
 
-                {/* Stop Focus exports */}
-                <div className={`flex items-center gap-2 rounded-xl px-3 py-1.5 transition-colors ${isolatedStation ? 'bg-violet-50 ring-1 ring-violet-200' : 'opacity-50'}`}>
-                    <span className={`text-[11px] font-semibold uppercase tracking-wide mr-1 ${isolatedStation ? 'text-violet-500' : 'text-gray-400'}`}>
-                        {isolatedStation ? isolatedStation : 'Stop Focus'}
-                    </span>
-                    <button
-                        onClick={handleExportStopReport}
-                        disabled={!isolatedStation || exportingStop}
-                        title={isolatedStation ? `Export stop Excel: ${isolatedStation}` : 'Select a stop on the map first'}
-                        className={`px-3 py-1.5 text-xs font-bold rounded-lg flex items-center gap-1.5 transition-colors disabled:cursor-not-allowed ${isolatedStation ? 'bg-violet-100 text-violet-700 hover:bg-violet-200' : 'bg-gray-100 text-gray-400'}`}
-                    >
-                        <Download size={14} />
-                        {exportingStop ? 'Exporting...' : 'Excel'}
-                    </button>
-                    <button
-                        onClick={handleExportStopPdf}
-                        disabled={!isolatedStation || exportingStopPdf}
-                        title={isolatedStation ? `Export stop PDF: ${isolatedStation}` : 'Select a stop on the map first'}
-                        className={`px-3 py-1.5 text-xs font-bold rounded-lg flex items-center gap-1.5 transition-colors disabled:cursor-not-allowed ${isolatedStation ? 'bg-violet-100 text-violet-700 hover:bg-violet-200' : 'bg-gray-100 text-gray-400'}`}
-                    >
-                        <FileText size={14} />
-                        {exportingStopPdf ? 'Exporting...' : 'PDF'}
-                    </button>
-                </div>
-            </div>
+                            return (
+                                <button
+                                    key={tab.id}
+                                    data-tab={tab.id}
+                                    onClick={() => handleTabClick(tab)}
+                                    disabled={isDisabled}
+                                    className={`
+                                        relative flex items-center gap-1.5 px-4 py-3 text-sm font-medium whitespace-nowrap transition-colors
+                                        ${isActive
+                                            ? 'text-gray-900 font-bold'
+                                            : isDisabled
+                                                ? 'text-gray-300 cursor-not-allowed'
+                                                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+                                        }
+                                    `}
+                                >
+                                    <Icon size={15} />
+                                    <span>{tab.label}</span>
+                                    {isActive && (
+                                        <span className="absolute bottom-0 left-2 right-2 h-0.5 bg-violet-500 rounded-t" />
+                                    )}
+                                </button>
+                            );
+                        })}
+                    </div>
 
-            {/* Tab Bar */}
-            <div className="border-b border-gray-200 bg-gray-50/50 rounded-t-lg -mx-1 px-1">
-                <div
-                    ref={tabBarRef}
-                    className="flex overflow-x-auto scrollbar-hide"
-                    style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
-                >
-                    {tabs.map(tab => {
-                        const Icon = tab.icon;
-                        const isActive = activeTab === tab.id;
-                        const isDisabled = !tab.enabled;
-
-                        return (
-                            <button
-                                key={tab.id}
-                                data-tab={tab.id}
-                                onClick={() => handleTabClick(tab)}
-                                disabled={isDisabled}
-                                className={`
-                                    relative flex items-center gap-1.5 px-4 py-3 text-sm font-medium whitespace-nowrap transition-colors
-                                    ${isActive
-                                        ? 'text-gray-900 font-bold'
-                                        : isDisabled
-                                            ? 'text-gray-300 cursor-not-allowed'
-                                            : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
-                                    }
-                                `}
-                            >
-                                <Icon size={15} />
-                                <span>{tab.label}</span>
-                                {isActive && (
-                                    <span className="absolute bottom-0 left-2 right-2 h-0.5 bg-violet-500 rounded-t" />
-                                )}
-                            </button>
-                        );
-                    })}
+                    {/* Export buttons */}
+                    <div className="flex items-center gap-1.5 pr-2 shrink-0">
+                        {/* Stop focus exports (when a station is selected) */}
+                        {isolatedStation && (
+                            <div className="flex items-center gap-1.5 bg-violet-50 rounded-lg px-2 py-1 mr-1">
+                                <span className="text-[10px] font-semibold text-violet-500 max-w-[100px] truncate">{isolatedStation}</span>
+                                <button
+                                    onClick={handleExportStopReport}
+                                    disabled={exportingStop}
+                                    title={`Export stop Excel: ${isolatedStation}`}
+                                    className="p-1 text-violet-600 hover:bg-violet-100 rounded transition-colors disabled:opacity-50"
+                                >
+                                    <Download size={13} />
+                                </button>
+                                <button
+                                    onClick={handleExportStopPdf}
+                                    disabled={exportingStopPdf}
+                                    title={`Export stop PDF: ${isolatedStation}`}
+                                    className="p-1 text-violet-600 hover:bg-violet-100 rounded transition-colors disabled:opacity-50"
+                                >
+                                    <FileText size={13} />
+                                </button>
+                            </div>
+                        )}
+                        {/* Network exports */}
+                        <button
+                            onClick={handleExportExcel}
+                            disabled={exportingExcel}
+                            title="Export full network Excel report"
+                            className="px-2.5 py-1.5 text-xs font-medium text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg disabled:opacity-50 flex items-center gap-1.5 transition-colors"
+                        >
+                            <Download size={13} />
+                            {exportingExcel ? '...' : 'Excel'}
+                        </button>
+                        <button
+                            onClick={handleExportPDF}
+                            disabled={exportingPDF}
+                            title="Export full network PDF report"
+                            className="px-2.5 py-1.5 text-xs font-medium text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg disabled:opacity-50 flex items-center gap-1.5 transition-colors"
+                        >
+                            <FileText size={13} />
+                            {exportingPDF ? '...' : 'PDF'}
+                        </button>
+                    </div>
                 </div>
             </div>
 

@@ -11,7 +11,7 @@ import { LoadProfileModule } from './LoadProfileModule';
 import { PerformanceFilterBar, filterDailySummaries, type TimeRange } from './PerformanceFilterBar';
 import { OperatorDwellModule } from './OperatorDwellModule';
 import { PerformanceScopeProvider } from './performanceScope';
-import { getPerformanceScopeLabel, resolveFilteredScope } from '../../utils/performanceDataScope';
+import { resolveFilteredScope } from '../../utils/performanceDataScope';
 
 interface PerformanceWorkspaceProps {
     data: PerformanceDataSummary;
@@ -44,13 +44,11 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data
         [allowIncompleteTabs]
     );
     const [activeTab, setActiveTab] = useState<PerformanceTab>('overview');
-    const [timeRanges, setTimeRanges] = useState<Partial<Record<PerformanceTab, TimeRange>>>({
-        'operator-dwell': 'past-week',
-    });
+    const [timeRanges, setTimeRanges] = useState<Partial<Record<PerformanceTab, TimeRange>>>({});
     const [selectedDate, setSelectedDate] = useState<string | null>(null);
     const [dayTypeFilter, setDayTypeFilter] = useState<DayType | 'all'>('all');
 
-    const timeRange = timeRanges[activeTab] ?? 'all';
+    const timeRange = timeRanges[activeTab] ?? 'past-week';
     const tabBarRef = useRef<HTMLDivElement>(null);
 
     const availableDayTypes = useMemo(() => {
@@ -95,7 +93,24 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data
 
     const showFilterBar = activeTab !== 'overview';
     const filteredScope = useMemo(() => resolveFilteredScope(timeRange), [timeRange]);
-    const filteredScopeLabel = useMemo(() => getPerformanceScopeLabel(filteredScope), [filteredScope]);
+
+    const DAY_TYPE_LABELS: Record<DayType, string> = { weekday: 'Weekday', saturday: 'Saturday', sunday: 'Sunday' };
+    const filteredScopeLabel = useMemo(() => {
+        const n = filteredData.dailySummaries.length;
+        if (n === 0) return 'No data';
+        if (filteredScope === 'yesterday') {
+            const d = filteredData.dailySummaries[0];
+            if (d) {
+                const dt = new Date(d.date + 'T12:00:00');
+                return dt.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+            }
+            return 'Single day';
+        }
+        if (dayTypeFilter !== 'all') {
+            return `${n} ${DAY_TYPE_LABELS[dayTypeFilter]}${n !== 1 ? 's' : ''} avg`;
+        }
+        return `${n}-day avg`;
+    }, [filteredData, filteredScope, dayTypeFilter]);
 
     const renderPanel = () => {
         switch (activeTab) {
@@ -103,25 +118,25 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data
                 return <SystemOverviewModule data={data} onNavigate={handleNavigate} />;
             case 'otp':
                 return (
-                    <PerformanceScopeProvider scope={filteredScope}>
+                    <PerformanceScopeProvider scope={filteredScope} label={filteredScopeLabel}>
                         <OTPModule data={filteredData} />
                     </PerformanceScopeProvider>
                 );
             case 'ridership':
                 return (
-                    <PerformanceScopeProvider scope={filteredScope}>
+                    <PerformanceScopeProvider scope={filteredScope} label={filteredScopeLabel}>
                         <RidershipModule data={filteredData} />
                     </PerformanceScopeProvider>
                 );
             case 'load-profiles':
                 return (
-                    <PerformanceScopeProvider scope={filteredScope}>
+                    <PerformanceScopeProvider scope={filteredScope} label={filteredScopeLabel}>
                         <LoadProfileModule data={filteredData} />
                     </PerformanceScopeProvider>
                 );
             case 'operator-dwell':
                 return (
-                    <PerformanceScopeProvider scope={filteredScope}>
+                    <PerformanceScopeProvider scope={filteredScope} label={filteredScopeLabel}>
                         <OperatorDwellModule data={filteredData} />
                     </PerformanceScopeProvider>
                 );
@@ -224,7 +239,7 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data
                         <span className={`inline-flex items-center px-2.5 py-1 text-xs font-semibold rounded-full ${
                             filteredScope === 'yesterday'
                                 ? 'bg-cyan-50 text-cyan-700 border border-cyan-100'
-                                : 'bg-gray-100 text-gray-600 border border-gray-200'
+                                : 'bg-cyan-50 text-cyan-700 border border-cyan-100'
                         }`}>
                             {filteredScopeLabel}
                         </span>

@@ -8,6 +8,7 @@ import {
   OperatorDwellMetrics, DwellIncident, OperatorDwellSummary,
   classifyDwell, DWELL_THRESHOLDS,
   DailySegmentRuntimes, DailySegmentRuntimeEntry, SegmentRuntimeObservation,
+  RouteStopDeviationProfile, RouteStopDeviationEntry,
 } from './performanceDataTypes';
 import type { MonthlySnapshot, MonthlyRouteSnapshot, MonthlyDayTypeSnapshot } from './performanceSnapshotTypes';
 import { SNAPSHOT_VERSION } from './performanceSnapshotTypes';
@@ -883,6 +884,49 @@ function buildSegmentRuntimes(records: STREETSRecord[]): DailySegmentRuntimes {
   };
 }
 
+function buildRouteStopDeviations(records: STREETSRecord[]): RouteStopDeviationProfile[] {
+  const eligible = otpEligible(records);
+
+  // Group by routeId||direction
+  const profileMap = new Map<string, Map<string, { stopName: string; stopId: string; routeStopIndex: number; deviations: number[] }>>();
+
+  for (const r of eligible) {
+    const profileKey = `${r.routeId}||${r.direction}`;
+    let stopMap = profileMap.get(profileKey);
+    if (!stopMap) {
+      stopMap = new Map();
+      profileMap.set(profileKey, stopMap);
+    }
+
+    const deviation = computeDeviation(r);
+    const existing = stopMap.get(r.stopId);
+    if (existing) {
+      existing.deviations.push(deviation);
+    } else {
+      stopMap.set(r.stopId, {
+        stopName: r.stopName,
+        stopId: r.stopId,
+        routeStopIndex: r.routeStopIndex,
+        deviations: [deviation],
+      });
+    }
+  }
+
+  const profiles: RouteStopDeviationProfile[] = [];
+  for (const [key, stopMap] of profileMap) {
+    const [routeId, direction] = key.split('||');
+    const stops: RouteStopDeviationEntry[] = Array.from(stopMap.values())
+      .sort((a, b) => a.routeStopIndex - b.routeStopIndex);
+    profiles.push({ routeId, direction, stops });
+  }
+
+  return profiles.sort((a, b) => {
+    const cmp = a.routeId.localeCompare(b.routeId, undefined, { numeric: true });
+    if (cmp !== 0) return cmp;
+    return a.direction.localeCompare(b.direction);
+  });
+}
+
 function buildDataQuality(
   records: STREETSRecord[],
   sanitization: { loadCapped: number; apcExcludedFromLoad: number }
@@ -938,6 +982,7 @@ function aggregateSingleDay(date: string, records: STREETSRecord[]): DailySummar
     byOperatorDwell: dwellMetrics,
     byCascade: buildDailyCascadeMetrics(records, dwellMetrics.incidents),
     segmentRuntimes: buildSegmentRuntimes(records),
+    routeStopDeviations: buildRouteStopDeviations(records),
     dataQuality: buildDataQuality(records, sanitization),
     schemaVersion: PERFORMANCE_SCHEMA_VERSION,
   };

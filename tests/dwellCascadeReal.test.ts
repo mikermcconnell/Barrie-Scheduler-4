@@ -120,15 +120,15 @@ describe.skipIf(!csvExists())('Dwell Cascade — Real STREETS Data', () => {
 
         console.log('\n  === CASCADE RESULTS ===');
         console.log(`  Total cascades computed: ${result.cascades.length}`);
-        console.log(`  Absorbed (recovery contained): ${result.totalAbsorbed}`);
-        console.log(`  Cascaded (escaped recovery): ${result.totalCascades}`);
+        console.log(`  Absorbed (recovery contained): ${result.totalNonCascaded}`);
+        console.log(`  Cascaded (escaped recovery): ${result.totalCascaded}`);
         console.log(`  Avg blast radius: ${result.avgBlastRadius.toFixed(1)}`);
-        console.log(`  Total OTP damage (trip-observations): ${result.totalCascadeOTPDamage}`);
+        console.log(`  Total OTP damage (trip-observations): ${result.totalBlastRadius}`);
 
         if (result.byStop.length > 0) {
             console.log('\n  === TOP 5 STOPS BY DOWNSTREAM DAMAGE ===');
             for (const s of result.byStop.slice(0, 5)) {
-                console.log(`    ${s.stopName} (Route ${s.routeId}): ${s.totalBlastRadius} damage, ${s.cascadedCount} cascaded, ${s.absorbedCount} absorbed`);
+                console.log(`    ${s.stopName} (Route ${s.routeId}): ${s.totalBlastRadius} damage, ${s.cascadedCount} cascaded, ${s.nonCascadedCount} non-cascaded`);
             }
         }
 
@@ -142,13 +142,13 @@ describe.skipIf(!csvExists())('Dwell Cascade — Real STREETS Data', () => {
 
         // Structural assertions
         expect(result.cascades.length).toBe(incidents.length);
-        expect(result.totalAbsorbed + result.totalCascades).toBe(result.cascades.length);
-        expect(result.totalCascadeOTPDamage).toBe(
+        expect(result.totalNonCascaded + result.totalCascaded).toBe(result.cascades.length);
+        expect(result.totalBlastRadius).toBe(
             result.cascades.reduce((s, c) => s + c.blastRadius, 0)
         );
 
-        // Every non-absorbed cascade should have at least one cascaded trip
-        for (const c of result.cascades.filter(c => !c.absorbed)) {
+        // Every cascading incident should have at least one cascaded trip
+        for (const c of result.cascades.filter(c => c.blastRadius > 0)) {
             expect(c.cascadedTrips.length).toBeGreaterThan(0);
             expect(c.blastRadius).toBeGreaterThanOrEqual(0);
         }
@@ -156,7 +156,7 @@ describe.skipIf(!csvExists())('Dwell Cascade — Real STREETS Data', () => {
 
     it('every absorbed cascade has zero blast radius', () => {
         const result = buildDailyCascadeMetrics(records, incidents);
-        for (const c of result.cascades.filter(c => c.absorbed)) {
+        for (const c of result.cascades.filter(c => c.blastRadius === 0)) {
             expect(c.blastRadius).toBe(0);
             expect(c.cascadedTrips).toHaveLength(0);
         }

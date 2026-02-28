@@ -4,6 +4,15 @@ import { defineSecret } from 'firebase-functions/params';
 import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai';
 
 const GEMINI_API_KEY = defineSecret('GEMINI_API_KEY');
+const isTruthy = (value?: string) => ['1', 'true', 'yes', 'on'].includes((value || '').toLowerCase());
+const isExtendedPipelineEnabled = () => isTruthy(process.env.OPTIMIZE_MULTI_PHASE);
+const createServerRequestId = () => `srv-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+const inferErrorCode = (message: string) => {
+    const text = message.toLowerCase();
+    if (text.includes('timeout') || text.includes('timed out') || text.includes('deadline')) return 'TIMEOUT';
+    if (text.includes('auth')) return 'AUTH_REQUIRED';
+    return 'UPSTREAM';
+};
 
 // ==========================================
 // SCHEMAS
@@ -43,7 +52,17 @@ const criticSchema = {
 // CORE LOGIC
 // ==========================================
 
-async function callGemini(apiKey: string, prompt: string, systemInstruction: string, schema: any, modelName: string = "gemini-3.1-pro-preview", temperature: number = 0.3) {
+async function callGemini(
+    apiKey: string,
+    prompt: string,
+    systemInstruction: string,
+    schema: any,
+    modelName: string = "gemini-3.1-pro-preview",
+    temperature: number = 0.3,
+    traceLabel: string = 'gemini',
+    requestId: string = 'unknown'
+) {
+    const startedAt = Date.now();
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({
         model: modelName,
@@ -57,10 +76,19 @@ async function callGemini(apiKey: string, prompt: string, systemInstruction: str
 
     const result = await model.generateContent(prompt);
     const text = result.response.text();
+    const durationMs = Date.now() - startedAt;
+    console.log(`[${requestId}] ${traceLabel} completed in ${durationMs}ms`);
     return JSON.parse(text || (schema.type === SchemaType.ARRAY ? "[]" : "{}"));
 }
 
-function optimizeImplementation(requirements: any[], apiKey: string, mode: 'full' | 'refine' = 'full', currentShifts: any[] = [], focusInstruction?: string) {
+function optimizeImplementation(
+    requirements: any[],
+    apiKey: string,
+    mode: 'full' | 'refine' = 'full',
+    currentShifts: any[] = [],
+    focusInstruction?: string,
+    requestId: string = 'unknown'
+) {
     const totalDemandCurve = new Array(96).fill(0);
     const northDemandCurve = new Array(96).fill(0);
     const southDemandCurve = new Array(96).fill(0);
@@ -94,12 +122,22 @@ function optimizeImplementation(requirements: any[], apiKey: string, mode: 'full
     2. **HUG THE CURVE**: Do not schedule 8 hours of work for a 2-hour peak. Use split shifts or short 5h shifts.
     `;
 
-    return runPipeline(apiKey, demandContext, commonRules, mode, currentShifts, focusInstruction);
+    return runPipeline(apiKey, demandContext, commonRules, mode, currentShifts, focusInstruction, isExtendedPipelineEnabled(), requestId);
 }
 
-async function runPipeline(apiKey: string, demandContext: string, commonRules: string, mode: string, currentShifts: any[], focusInstruction?: string) {
+async function runPipeline(
+    apiKey: string,
+    demandContext: string,
+    commonRules: string,
+    mode: string,
+    currentShifts: any[],
+    focusInstruction: string | undefined,
+    extendedPipeline: boolean,
+    requestId: string
+) {
+    console.log(`[${requestId}] Pipeline mode: ${extendedPipeline ? 'multi-phase' : 'fast'}`);
     // Phase 1: Generator
-    console.log(`🤖 [Phase 1] Generating Draft Schedule (${mode})...`);
+    console.log(`[${requestId}] 🤖 [Phase 1] Generating Draft Schedule (${mode})...`);
 
     const draftSystemInstruction = `You are an expert Transit Scheduler. Generate a draft schedule.
     ${commonRules}
@@ -118,15 +156,20 @@ async function runPipeline(apiKey: string, demandContext: string, commonRules: s
 
     let draftShifts = [];
     try {
-        draftShifts = await callGemini(apiKey, draftPrompt, draftSystemInstruction, generatorSchema, "gemini-3.1-pro-preview", 0.4);
-        console.log(`✅ [Phase 1] Draft Generated: ${draftShifts.length} shifts.`);
+        draftShifts = await callGemini(apiKey, draftPrompt, draftSystemInstruction, generatorSchema, "gemini-3.1-pro-preview", 0.4, 'phase1-generator', requestId);
+        console.log(`[${requestId}] ✅ [Phase 1] Draft Generated: ${draftShifts.length} shifts.`);
     } catch (e) {
-        console.error("❌ [Phase 1] Failed:", e);
+        console.error(`[${requestId}] ❌ [Phase 1] Failed:`, e);
         throw e;
     }
 
+    if (!extendedPipeline) {
+        console.log(`[${requestId}] Fast path enabled; skipping critic and polisher phases.`);
+        return processShifts(draftShifts);
+    }
+
     // Phase 2: Critic
-    console.log(`🕵️ [Phase 2] Critic Reviewing Draft...`);
+    console.log(`[${requestId}] 🕵️ [Phase 2] Critic Reviewing Draft...`);
 
     const criticSystemInstruction = `You are a SENIOR AUDITOR for Transit Schedules.
     Your job is to CRITIQUE the provided draft schedule and produce a FINAL, PERFECTED version.
@@ -165,17 +208,17 @@ async function runPipeline(apiKey: string, demandContext: string, commonRules: s
 
     let finalShifts = [];
     try {
-        const criticOutput = await callGemini(apiKey, criticPrompt, criticSystemInstruction, criticSchema, "gemini-3.1-pro-preview", 0.2);
-        console.log("📝 [Phase 2] Critic's Analysis:\n" + criticOutput.critique);
+        const criticOutput = await callGemini(apiKey, criticPrompt, criticSystemInstruction, criticSchema, "gemini-3.1-pro-preview", 0.2, 'phase2-critic', requestId);
+        console.log(`[${requestId}] 📝 [Phase 2] Critic's Analysis:\n${criticOutput.critique}`);
         finalShifts = criticOutput.shifts;
-        console.log(`✅ [Phase 2] Final Schedule: ${finalShifts.length} shifts.`);
+        console.log(`[${requestId}] ✅ [Phase 2] Final Schedule: ${finalShifts.length} shifts.`);
     } catch (e) {
-        console.error("❌ [Phase 2] Failed. Falling back to draft.", e);
+        console.error(`[${requestId}] ❌ [Phase 2] Failed. Falling back to draft.`, e);
         finalShifts = draftShifts;
     }
 
     // Phase 3: Polisher
-    console.log(`✨ [Phase 3] Polishing Schedule...`);
+    console.log(`[${requestId}] ✨ [Phase 3] Polishing Schedule...`);
 
     const polisherSystemInstruction = `You are the FINAL COMPLIANCE OFFICER.
     Your job is to take the "Refined Schedule" and apply STRICT UNION RULES and MICRO-OPTIMIZATIONS.
@@ -205,11 +248,11 @@ async function runPipeline(apiKey: string, demandContext: string, commonRules: s
     `;
 
     try {
-        const polishedOutput = await callGemini(apiKey, polisherPrompt, polisherSystemInstruction, generatorSchema, "gemini-3.1-pro-preview", 0.1);
-        console.log(`✅ [Phase 3] Polished Schedule: ${polishedOutput.length} shifts.`);
+        const polishedOutput = await callGemini(apiKey, polisherPrompt, polisherSystemInstruction, generatorSchema, "gemini-3.1-pro-preview", 0.1, 'phase3-polisher', requestId);
+        console.log(`[${requestId}] ✅ [Phase 3] Polished Schedule: ${polishedOutput.length} shifts.`);
         finalShifts = polishedOutput;
     } catch (e) {
-        console.error("❌ [Phase 3] Failed. Keeping Phase 2 result.", e);
+        console.error(`[${requestId}] ❌ [Phase 3] Failed. Keeping Phase 2 result.`, e);
     }
 
     return processShifts(finalShifts);
@@ -266,17 +309,19 @@ export const optimizeSchedule = onRequest(
         ],
     },
     async (req, res) => {
-        console.log("🚀 Optimization Request Received");
+        const requestId = typeof req.body?.requestId === 'string' ? req.body.requestId : createServerRequestId();
+        const requestStartedAt = Date.now();
+        console.log(`[${requestId}] 🚀 Optimization Request Received`);
 
         if (req.method !== 'POST') {
-            res.status(405).json({ error: 'Method not allowed. Use POST.' });
+            res.status(405).json({ error: 'Method not allowed. Use POST.', code: 'METHOD_NOT_ALLOWED', requestId });
             return;
         }
 
         // Verify Firebase ID token
         const authHeader = req.headers.authorization;
         if (!authHeader || !authHeader.startsWith('Bearer ')) {
-            res.status(401).json({ error: 'Authentication required' });
+            res.status(401).json({ error: 'Authentication required', code: 'AUTH_REQUIRED', requestId });
             return;
         }
 
@@ -284,7 +329,7 @@ export const optimizeSchedule = onRequest(
         try {
             await admin.auth().verifyIdToken(idToken);
         } catch {
-            res.status(401).json({ error: 'Invalid authentication token' });
+            res.status(401).json({ error: 'Invalid authentication token', code: 'AUTH_REQUIRED', requestId });
             return;
         }
 
@@ -292,29 +337,37 @@ export const optimizeSchedule = onRequest(
             const apiKey = GEMINI_API_KEY.value();
             if (!apiKey) {
                 console.error('GEMINI_API_KEY secret is not set');
-                res.status(500).json({ error: 'Server configuration error: Missing API Key' });
+                res.status(500).json({ error: 'Server configuration error: Missing API Key', code: 'SERVER_CONFIG', requestId });
                 return;
             }
 
             const { requirements, mode, currentShifts, focusInstruction } = req.body;
 
             if (!requirements || !Array.isArray(requirements)) {
-                console.error("❌ Invalid requirements payload");
-                res.status(400).json({ error: 'Missing or invalid requirements data' });
+                console.error(`[${requestId}] ❌ Invalid requirements payload`);
+                res.status(400).json({ error: 'Missing or invalid requirements data', code: 'INVALID_REQUEST', requestId });
                 return;
             }
 
-            console.log(`📦 Processing ${requirements.length} requirements...`);
+            console.log(`[${requestId}] 📦 Processing ${requirements.length} requirements...`);
 
-            const processedShifts = await optimizeImplementation(requirements, apiKey, mode || 'full', currentShifts || [], focusInstruction);
+            const processedShifts = await optimizeImplementation(requirements, apiKey, mode || 'full', currentShifts || [], focusInstruction, requestId);
+            const durationMs = Date.now() - requestStartedAt;
+            const pipeline = isExtendedPipelineEnabled() ? 'multi-phase' : 'fast';
+            console.log(`[${requestId}] ✅ Optimization complete in ${durationMs}ms (pipeline=${pipeline})`);
 
-            res.status(200).json({ shifts: processedShifts });
+            res.status(200).json({ shifts: processedShifts, requestId, durationMs, pipeline });
 
         } catch (error: any) {
-            console.error('❌ CRITICAL SERVER ERROR:', error);
-            res.status(500).json({
+            const message = error?.message || 'Unknown server error';
+            const code = inferErrorCode(message);
+            const status = code === 'TIMEOUT' ? 504 : 500;
+            console.error(`[${requestId}] ❌ CRITICAL SERVER ERROR:`, error);
+            res.status(status).json({
                 error: 'Internal Server Error',
-                message: error?.message || 'Unknown server error',
+                message,
+                code,
+                requestId,
             });
         }
     }

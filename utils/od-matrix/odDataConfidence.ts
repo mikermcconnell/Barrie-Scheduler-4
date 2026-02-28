@@ -57,10 +57,11 @@ function scoreStatus(
     );
 }
 
-function calculateLevel(score: number): 'high' | 'medium' | 'low' {
-    if (score >= 90) return 'high';
-    if (score >= 75) return 'medium';
-    return 'low';
+function calculateLevel(score: number, warnCount: number, failCount: number): 'high' | 'medium' | 'low' {
+    const baseLevel = score >= 90 ? 'high' : score >= 75 ? 'medium' : 'low';
+    if (failCount > 0 && baseLevel === 'high') return 'medium';
+    if (warnCount > 0 && baseLevel === 'high') return 'medium';
+    return baseLevel;
 }
 
 export function computeODConfidenceReport(data: ODMatrixDataSummary): ODConfidenceReport {
@@ -86,29 +87,38 @@ export function computeODConfidenceReport(data: ODMatrixDataSummary): ODConfiden
 
     const normalizedNames = data.stations.map(station => station.name.trim().toLowerCase());
     const duplicateStationCount = normalizedNames.length - new Set(normalizedNames).size;
-    const geocodedCount = data.stations.filter(station => Boolean(station.geocode)).length;
+    const geocodedCount = data.stations.filter(station => {
+        if (!station.geocode) return false;
+        return Number.isFinite(station.geocode.lat) && Number.isFinite(station.geocode.lon);
+    }).length;
     const geocodeCoverage = data.stationCount > 0 ? geocodedCount / data.stationCount : 0;
 
     const rows: ODConfidenceRow[] = [
         scoreStatus(data.metadata.stationCount, stationCountFromRows, 15, 'station_count', 'Station Count'),
         scoreStatus(data.metadata.totalJourneys, journeySumFromPairs, 20, 'total_journeys', 'Total Journeys'),
-        scoreStatus(journeySumFromPairs, stationOriginSum, 15, 'origin_balance', 'Pairs Sum vs Origin Trips'),
-        scoreStatus(journeySumFromPairs, stationDestinationSum, 15, 'destination_balance', 'Pairs Sum vs Destination Trips'),
+        scoreStatus(journeySumFromPairs, stationOriginSum, 10, 'origin_balance', 'Pairs Sum vs Origin Trips'),
+        scoreStatus(journeySumFromPairs, stationDestinationSum, 10, 'destination_balance', 'Pairs Sum vs Destination Trips'),
         scoreStatus(journeySumFromPairs * 2, stationTotalVolumeSum, 10, 'volume_balance', 'Total Volume Balance'),
     ];
 
     if (topPairFromPairs && topPairFromSummary) {
-        const topPairMatches = topPairFromPairs.origin === topPairFromSummary.origin
-            && topPairFromPairs.destination === topPairFromSummary.destination
-            && topPairFromPairs.journeys === topPairFromSummary.journeys;
+        const maxJourneys = topPairFromPairs.journeys;
+        const topTiedPairs = sortedPairs.filter(pair => pair.journeys === maxJourneys);
+        const topPairMatches = topPairFromSummary.journeys === maxJourneys
+            && topTiedPairs.some(pair =>
+                pair.origin === topPairFromSummary.origin
+                && pair.destination === topPairFromSummary.destination
+            );
         rows.push(buildRow(
             'top_pair',
             'Top Pair Alignment',
             `${topPairFromSummary.origin} -> ${topPairFromSummary.destination} (${formatNumber(topPairFromSummary.journeys)})`,
-            `${topPairFromPairs.origin} -> ${topPairFromPairs.destination} (${formatNumber(topPairFromPairs.journeys)})`,
+            topTiedPairs.length > 1
+                ? `Tie at ${formatNumber(maxJourneys)} journeys (${formatNumber(topTiedPairs.length)} pairs)`
+                : `${topPairFromPairs.origin} -> ${topPairFromPairs.destination} (${formatNumber(topPairFromPairs.journeys)})`,
             topPairMatches ? 'pass' : 'fail',
             10,
-            topPairMatches ? undefined : 'Saved top pair does not match recalculated top pair',
+            topPairMatches ? undefined : 'Saved top pair is not in the recalculated highest-journey set',
         ));
     } else {
         rows.push(buildRow(
@@ -146,11 +156,11 @@ export function computeODConfidenceReport(data: ODMatrixDataSummary): ODConfiden
     rows.push(buildRow(
         'geocode_coverage',
         'Geocode Coverage',
-        '>= 80%',
+        '100%',
         `${(geocodeCoverage * 100).toFixed(1)}% (${formatNumber(geocodedCount)}/${formatNumber(data.stationCount)})`,
-        geocodeCoverage >= 0.8 ? 'pass' : geocodeCoverage >= 0.5 ? 'warn' : 'fail',
-        0,
-        'Advisory only: low coverage limits map confidence, not numeric totals',
+        geocodeCoverage >= 1 ? 'pass' : geocodeCoverage >= 0.8 ? 'warn' : 'fail',
+        10,
+        geocodeCoverage < 1 ? 'Low coverage limits map confidence, not numeric totals' : undefined,
     ));
 
     let weighted = 0;
@@ -167,7 +177,7 @@ export function computeODConfidenceReport(data: ODMatrixDataSummary): ODConfiden
 
     return {
         score,
-        level: calculateLevel(score),
+        level: calculateLevel(score, warnCount, failCount),
         passCount,
         warnCount,
         failCount,

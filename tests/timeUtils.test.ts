@@ -44,25 +44,26 @@ describe('toMinutes - Excel decimal time parsing', () => {
     });
 
     describe('CRITICAL: Post-midnight times (Excel values >= 1.0)', () => {
-        it('parses 12:30 AM (1.02083) as ~30 minutes', () => {
-            // 0.02083 * 24 * 60 = 30 minutes
+        // Post-midnight Excel decimals preserve the day offset (wholeDays * 1440 + fractionalMinutes).
+        // Downstream consumers use >= 1440 to detect post-midnight trips for correct sorting
+        // and midnight-rollover logic. See masterScheduleParserV2.ts, parserAdapter.ts, etc.
+
+        it('parses 12:30 AM (1.02083) as ~1470 minutes (1440 + 30)', () => {
             const result = toMinutes(1.02083333);
-            expect(result).toBeGreaterThanOrEqual(29);
-            expect(result).toBeLessThanOrEqual(31);
+            expect(result).toBeGreaterThanOrEqual(1469);
+            expect(result).toBeLessThanOrEqual(1471);
         });
 
-        it('parses 1:00 AM (1.04167) as ~60 minutes', () => {
-            // 0.04167 * 24 * 60 = 60 minutes
+        it('parses 1:00 AM (1.04167) as ~1500 minutes (1440 + 60)', () => {
             const result = toMinutes(1.04166667);
-            expect(result).toBeGreaterThanOrEqual(59);
-            expect(result).toBeLessThanOrEqual(61);
+            expect(result).toBeGreaterThanOrEqual(1499);
+            expect(result).toBeLessThanOrEqual(1501);
         });
 
-        it('parses 2:00 AM (1.08333) as ~120 minutes', () => {
-            // 0.08333 * 24 * 60 = 120 minutes
+        it('parses 2:00 AM (1.08333) as ~1560 minutes (1440 + 120)', () => {
             const result = toMinutes(1.08333333);
-            expect(result).toBeGreaterThanOrEqual(119);
-            expect(result).toBeLessThanOrEqual(121);
+            expect(result).toBeGreaterThanOrEqual(1559);
+            expect(result).toBeLessThanOrEqual(1561);
         });
 
         it('rejects pure integer dates (no time component)', () => {
@@ -71,9 +72,11 @@ describe('toMinutes - Excel decimal time parsing', () => {
             expect(toMinutes(45000.0)).toBeNull(); // Excel date serial
         });
 
-        it('handles dates with times (e.g., 45000.5 = noon on some date)', () => {
-            // Should extract 0.5 = 720 minutes (noon)
-            expect(toMinutes(45000.5)).toBe(720);
+        it('handles dates with times — preserves day offset', () => {
+            // 45000.5 = day 45000 + 0.5 (noon) → 45000*1440 + 720
+            const result = toMinutes(45000.5);
+            expect(result).not.toBeNull();
+            expect(result! % 1440).toBe(720); // within-day portion is noon
         });
     });
 
@@ -152,22 +155,23 @@ describe('fromMinutes - Time formatting', () => {
 
 describe('parseTimeToMinutes (V2 Parser) - Post-midnight parsing', () => {
     describe('CRITICAL: Post-midnight Excel decimal times', () => {
-        it('parses 12:30 AM (1.02083) as ~30 minutes', () => {
+        // Same as toMinutes: day offset is preserved (1440 + fractional minutes).
+        it('parses 12:30 AM (1.02083) as ~1470 minutes (1440 + 30)', () => {
             const result = parseTimeToMinutes(1.02083333);
-            expect(result).toBeGreaterThanOrEqual(29);
-            expect(result).toBeLessThanOrEqual(31);
+            expect(result).toBeGreaterThanOrEqual(1469);
+            expect(result).toBeLessThanOrEqual(1471);
         });
 
-        it('parses 1:00 AM (1.04167) as ~60 minutes', () => {
+        it('parses 1:00 AM (1.04167) as ~1500 minutes (1440 + 60)', () => {
             const result = parseTimeToMinutes(1.04166667);
-            expect(result).toBeGreaterThanOrEqual(59);
-            expect(result).toBeLessThanOrEqual(61);
+            expect(result).toBeGreaterThanOrEqual(1499);
+            expect(result).toBeLessThanOrEqual(1501);
         });
 
-        it('parses 2:00 AM (1.08333) as ~120 minutes', () => {
+        it('parses 2:00 AM (1.08333) as ~1560 minutes (1440 + 120)', () => {
             const result = parseTimeToMinutes(1.08333333);
-            expect(result).toBeGreaterThanOrEqual(119);
-            expect(result).toBeLessThanOrEqual(121);
+            expect(result).toBeGreaterThanOrEqual(1559);
+            expect(result).toBeLessThanOrEqual(1561);
         });
 
         it('parses early morning time 12:07 AM (0.00486) as ~7 minutes', () => {

@@ -6,6 +6,128 @@ import {
 } from "../demandConstants";
 import { auth } from "../firebase";
 
+type OptimizeApiResponse = {
+  shifts?: Shift[];
+  error?: string;
+  code?: string;
+  message?: string;
+  requestId?: string;
+};
+
+type ParsedApiError = {
+  message: string;
+  code?: string;
+};
+
+type RequestFailure = Error & {
+  endpoint: string;
+  status?: number;
+  code?: string;
+  retryable: boolean;
+};
+
+const CLOUD_RUN_OPTIMIZE_URL = 'https://optimizeschedule-ieeja7khcq-uc.a.run.app';
+const REQUEST_TIMEOUT_MS = Number(import.meta.env.VITE_OPTIMIZE_TIMEOUT_MS || 90000);
+const MAX_RETRIES_PER_ENDPOINT = Math.max(0, Number(import.meta.env.VITE_OPTIMIZE_MAX_RETRIES || 1));
+const ENDPOINT_OVERRIDE = (import.meta.env.VITE_OPTIMIZE_API_URL || '').trim();
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+const createRequestId = (): string => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `opt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+};
+
+const getEndpointCandidates = (): string[] => {
+  const urls = [
+    ENDPOINT_OVERRIDE,
+    '/api/optimize',
+    CLOUD_RUN_OPTIMIZE_URL
+  ].filter(Boolean);
+
+  return Array.from(new Set(urls));
+};
+
+const parseErrorPayload = async (response: Response): Promise<ParsedApiError> => {
+  const contentType = response.headers.get('content-type') || '';
+  if (contentType.includes('application/json')) {
+    const data = await response.json() as OptimizeApiResponse;
+    return {
+      message: data.error || data.message || `HTTP ${response.status}`,
+      code: data.code
+    };
+  }
+
+  const text = await response.text();
+  return {
+    message: text || `HTTP ${response.status}`
+  };
+};
+
+const isRetryableFailure = (status?: number, code?: string): boolean => {
+  if (!status) return true;
+  if (status === 404 || status === 408 || status === 429) return true;
+  if (status >= 500) return true;
+  if (code === 'TIMEOUT' || code === 'UPSTREAM') return true;
+  return false;
+};
+
+const fetchWithTimeout = async (url: string, options: RequestInit, timeoutMs: number): Promise<Response> => {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
+const requestOptimization = async (
+  endpoint: string,
+  idToken: string,
+  payload: {
+    requirements: Requirement[];
+    mode: 'full' | 'refine';
+    currentShifts: any[];
+    focusInstruction?: string;
+    requestId: string;
+  }
+): Promise<Shift[]> => {
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${idToken}`,
+      },
+      body: JSON.stringify(payload),
+    }, REQUEST_TIMEOUT_MS);
+  } catch (error) {
+    const isTimeout = error instanceof DOMException && error.name === 'AbortError';
+    const failure = new Error(isTimeout ? `Request timed out after ${REQUEST_TIMEOUT_MS}ms` : 'Network error') as RequestFailure;
+    failure.endpoint = endpoint;
+    failure.code = isTimeout ? 'CLIENT_TIMEOUT' : 'NETWORK';
+    failure.retryable = true;
+    throw failure;
+  }
+
+  if (!response.ok) {
+    const parsed = await parseErrorPayload(response);
+    const failure = new Error(parsed.message) as RequestFailure;
+    failure.endpoint = endpoint;
+    failure.status = response.status;
+    failure.code = parsed.code;
+    failure.retryable = isRetryableFailure(response.status, parsed.code);
+    throw failure;
+  }
+
+  const data = await response.json() as OptimizeApiResponse;
+  return data.shifts || [];
+};
+
 /**
  * Calls our secure serverless API to optimize the schedule.
  * 
@@ -25,43 +147,65 @@ export const optimizeScheduleWithGemini = async (
   currentShifts: any[] = [],
   focusInstruction?: string
 ): Promise<Shift[]> => {
+  const requestId = createRequestId();
+  const endpoints = getEndpointCandidates();
+  const startedAt = Date.now();
+
   try {
-    console.log(`Calling Gemini Optimization API (Model: gemini-3.1-pro-preview)... Mode: ${mode}`);
+    console.log(`[${requestId}] Calling Gemini Optimization API (Model: gemini-3.1-pro-preview)... Mode: ${mode}`);
     const currentUser = auth.currentUser;
     if (!currentUser) {
       throw new Error('Authentication required');
     }
 
     const idToken = await currentUser.getIdToken();
+    const payload = {
+      requirements,
+      mode,
+      currentShifts,
+      focusInstruction,
+      requestId
+    };
 
-    const optimizeUrl = import.meta.env.DEV
-      ? '/api/optimize'
-      : 'https://optimizeschedule-ieeja7khcq-uc.a.run.app';
+    let lastError: RequestFailure | null = null;
+    for (const endpoint of endpoints) {
+      for (let attempt = 0; attempt <= MAX_RETRIES_PER_ENDPOINT; attempt++) {
+        try {
+          console.log(`[${requestId}] Optimize request attempt ${attempt + 1} to ${endpoint}`);
+          const shifts = await requestOptimization(endpoint, idToken, payload);
+          console.log(`[${requestId}] Optimization succeeded via ${endpoint} in ${Date.now() - startedAt}ms`);
+          return shifts;
+        } catch (error) {
+          const failure = error as RequestFailure;
+          lastError = failure;
+          console.warn(
+            `[${requestId}] Optimization attempt failed via ${endpoint} (attempt ${attempt + 1}):`,
+            {
+              status: failure.status,
+              code: failure.code,
+              message: failure.message,
+              retryable: failure.retryable
+            }
+          );
 
-    const response = await fetch(optimizeUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${idToken}`,
-      },
-      body: JSON.stringify({
-        requirements,
-        mode,
-        currentShifts,
-        focusInstruction
-      }),
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.error || 'API request failed');
+          if (!failure.retryable) break;
+          if (attempt < MAX_RETRIES_PER_ENDPOINT) {
+            await sleep((attempt + 1) * 600);
+            continue;
+          }
+          break;
+        }
+      }
     }
 
-    const data = await response.json();
-    return data.shifts || [];
+    if (lastError) {
+      const code = lastError.code || 'UNKNOWN';
+      throw new Error(`Optimization failed (${code}): ${lastError.message}`);
+    }
+    throw new Error('Optimization failed: No endpoint available');
 
   } catch (error) {
-    console.error("Optimization failed:", error);
+    console.error(`[${requestId}] Optimization failed after ${Date.now() - startedAt}ms:`, error);
     // Fallback to local optimization if API fails
     return localOptimizationFallback(requirements);
   }

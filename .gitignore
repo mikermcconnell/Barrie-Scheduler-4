@@ -30,9 +30,10 @@ dist-ssr
 .vercel
 .env*.local
 
-# Data files (samples, images, analysis outputs)
+# Data files (samples, images, analysis outputs, external GTFS feeds)
 data/samples/
 data/images/
 data/analysis/
+data/gtfs/
 *.xlsx
 *.JPG

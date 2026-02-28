@@ -107,10 +107,8 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
     );
     const latestDate = sortedDates.length > 0 ? sortedDates[sortedDates.length - 1] : null;
 
-    // Default to latest date (yesterday's snapshot)
-    const [selectedDate, setSelectedDate] = useState<string>(() =>
-        sortedDates.length > 0 ? sortedDates[sortedDates.length - 1] : 'all'
-    );
+    // Default to all dates and all day types for complete visibility.
+    const [selectedDate, setSelectedDate] = useState<string>('all');
     const [dayTypeFilter, setDayTypeFilter] = useState<DayType | 'all'>('all');
 
     const availableDayTypes = useMemo(() => {
