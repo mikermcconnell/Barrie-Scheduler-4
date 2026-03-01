@@ -3,6 +3,11 @@ import { passesCityGate, buildCityConstrainedQueries } from '../utils/od-matrix/
 import { geocodeStations } from '../utils/od-matrix/odMatrixGeocoder';
 import type { ODStation } from '../utils/od-matrix/odMatrixTypes';
 
+// Mock reference lookup so Nominatim/city-gate paths are tested in isolation
+vi.mock('../utils/od-matrix/odStationReference', () => ({
+    lookupStationCoordinates: (): null => null,
+}));
+
 describe('passesCityGate', () => {
     it('passes when display_name contains the city token', () => {
         expect(passesCityGate(

@@ -2,6 +2,11 @@ import { describe, expect, it, vi, afterEach } from 'vitest';
 import { geocodeStations } from '../utils/od-matrix/odMatrixGeocoder';
 import type { GeocodeCache, ODStation } from '../utils/od-matrix/odMatrixTypes';
 
+// Mock reference lookup so cache path is tested in isolation
+vi.mock('../utils/od-matrix/odStationReference', () => ({
+    lookupStationCoordinates: (): null => null,
+}));
+
 describe('odMatrixGeocoder cache reuse', () => {
     afterEach(() => {
         vi.restoreAllMocks();

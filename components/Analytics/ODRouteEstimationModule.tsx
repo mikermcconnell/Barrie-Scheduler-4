@@ -25,6 +25,8 @@ import {
     Search,
     Loader2,
     MapPin,
+    ChevronUp,
+    ChevronDown,
 } from 'lucide-react';
 import { ChartCard, MetricCard, fmt } from './AnalyticsShared';
 import type { ODMatrixDataSummary, GeocodeCache } from '../../utils/od-matrix/odMatrixTypes';
@@ -240,6 +242,21 @@ function stationMatchExplanation(match: {
     }
 }
 
+type PairSortColumn = 'origin' | 'destination' | 'route' | 'stops' | 'confidence' | 'why';
+type SortDirection = 'asc' | 'desc';
+
+const CONFIDENCE_ORDER: Record<MatchConfidence, number> = { high: 0, medium: 1, low: 2, none: 3 };
+
+function getRouteLabel(m: ODPairRouteMatch): string {
+    if (m.transfer) {
+        const names = m.transfer.legs?.length
+            ? m.transfer.legs.map(leg => leg.routeName)
+            : [m.transfer.leg1RouteName, m.transfer.leg2RouteName];
+        return names.join(' → ');
+    }
+    return m.routeLongName || '';
+}
+
 export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = ({ data, geocodeCache }) => {
     const dataKey = getDataKey(data);
     const hasCached = cachedEstimation?.dataKey === dataKey;
@@ -254,6 +271,8 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
     const [selectedPair, setSelectedPair] = useState<ODPairRouteMatch | null>(null);
     const [pairScrollTop, setPairScrollTop] = useState(0);
     const [stationScrollTop, setStationScrollTop] = useState(0);
+    const [pairSortCol, setPairSortCol] = useState<PairSortColumn | null>(null);
+    const [pairSortDir, setPairSortDir] = useState<SortDirection>('asc');
     const fileInputRef = useRef<HTMLInputElement>(null);
     const deferredSearch = useDeferredValue(search);
 
@@ -326,6 +345,50 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
         return matches;
     }, [result, deferredSearch, confidenceFilter]);
 
+    const sortedMatches = useMemo(() => {
+        if (!pairSortCol) return filteredMatches;
+        const dir = pairSortDir === 'asc' ? 1 : -1;
+        return [...filteredMatches].sort((a, b) => {
+            switch (pairSortCol) {
+                case 'origin':
+                    return dir * a.origin.localeCompare(b.origin);
+                case 'destination':
+                    return dir * a.destination.localeCompare(b.destination);
+                case 'route':
+                    return dir * getRouteLabel(a).localeCompare(getRouteLabel(b));
+                case 'stops': {
+                    const aStops = a.confidence !== 'none' ? a.intermediateStops : Infinity;
+                    const bStops = b.confidence !== 'none' ? b.intermediateStops : Infinity;
+                    return dir * (aStops - bStops);
+                }
+                case 'confidence':
+                    return dir * (CONFIDENCE_ORDER[a.confidence] - CONFIDENCE_ORDER[b.confidence]);
+                case 'why':
+                    return dir * confidenceExplanation(a).localeCompare(confidenceExplanation(b));
+                default:
+                    return 0;
+            }
+        });
+    }, [filteredMatches, pairSortCol, pairSortDir]);
+
+    const handlePairSort = useCallback((col: PairSortColumn) => {
+        setPairSortCol(prev => {
+            if (prev === col) {
+                // Toggle direction, or clear on third click
+                setPairSortDir(d => {
+                    if (d === 'asc') return 'desc';
+                    // Already desc → clear sort
+                    setPairSortCol(null);
+                    return 'asc';
+                });
+                return col;
+            }
+            setPairSortDir('asc');
+            return col;
+        });
+        setPairScrollTop(0);
+    }, []);
+
     const chartData = useMemo(() => {
         if (!result) return [];
         return result.routeDistribution.map(r => ({
@@ -362,14 +425,14 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
     }, [result?.stationMatchReport, stationScrollTop]);
 
     const pairWindow = useMemo(() => {
-        const totalRows = filteredMatches.length;
+        const totalRows = sortedMatches.length;
         if (totalRows === 0) {
             return {
                 start: 0,
                 end: 0,
                 topSpacerPx: 0,
                 bottomSpacerPx: 0,
-                rows: [] as typeof filteredMatches,
+                rows: [] as typeof sortedMatches,
             };
         }
 
@@ -381,9 +444,9 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
             end,
             topSpacerPx: start * PAIR_ROW_HEIGHT_PX,
             bottomSpacerPx: Math.max(0, (totalRows - end) * PAIR_ROW_HEIGHT_PX),
-            rows: filteredMatches.slice(start, end),
+            rows: sortedMatches.slice(start, end),
         };
-    }, [filteredMatches, pairScrollTop]);
+    }, [sortedMatches, pairScrollTop]);
 
     const handlePairTableScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
         setPairScrollTop(e.currentTarget.scrollTop);
@@ -395,7 +458,7 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
 
     useEffect(() => {
         setPairScrollTop(0);
-    }, [deferredSearch, confidenceFilter, result?.totalMatched, result?.totalUnmatched]);
+    }, [deferredSearch, confidenceFilter, result?.totalMatched, result?.totalUnmatched, pairSortCol, pairSortDir]);
 
     useEffect(() => {
         setStationScrollTop(0);
@@ -477,6 +540,9 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
                     label="Unmatched Pairs"
                     value={fmt(result.totalUnmatched)}
                     color={result.totalUnmatched > 0 ? 'red' : 'emerald'}
+                    subValue={result.totalUnmatched > 0
+                        ? `${fmt(result.unmatchedRoutePairs)} no route · ${fmt(result.unmatchedStationPairs)} no station`
+                        : undefined}
                 />
                 <MetricCard
                     icon={<CheckCircle2 size={20} />}
@@ -652,17 +718,38 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
                     onScroll={handlePairTableScroll}
                 >
                     <table className="w-full text-sm">
-                        <thead className="sticky top-0 bg-white">
+                        <thead className="sticky top-0 bg-white z-10">
                             <tr className="border-b border-gray-200">
                                 <th className="w-10 py-2 px-2"></th>
-                                <th className="text-left py-2 px-3 text-gray-500 font-medium">Origin</th>
-                                <th className="text-left py-2 px-3 text-gray-500 font-medium">Destination</th>
-                                <th className="text-right py-2 px-3 text-gray-500 font-medium w-24">Journeys</th>
-                                <th className="text-left py-2 px-3 text-gray-500 font-medium">Route</th>
-                                <th className="text-left py-2 px-3 text-gray-500 font-medium">Via</th>
-                                <th className="text-right py-2 px-3 text-gray-500 font-medium w-16">Stops</th>
-                                <th className="text-left py-2 px-3 text-gray-500 font-medium w-24">Confidence</th>
-                                <th className="text-left py-2 px-3 text-gray-500 font-medium min-w-[260px]">Why</th>
+                                {([
+                                    ['origin', 'text-left', 'Origin', ''],
+                                    ['destination', 'text-left', 'Destination', ''],
+                                    [null, 'text-right', 'Journeys', 'w-24'],
+                                    ['route', 'text-left', 'Route', ''],
+                                    [null, 'text-left', 'Via', ''],
+                                    ['stops', 'text-right', 'Stops', 'w-16'],
+                                    ['confidence', 'text-left', 'Confidence', 'w-24'],
+                                    ['why', 'text-left', 'Why', 'min-w-[260px]'],
+                                ] as const).map(([col, align, label, extra]) => {
+                                    const sortable = col !== null;
+                                    const active = pairSortCol === col;
+                                    return (
+                                        <th
+                                            key={label}
+                                            className={`${align} py-2 px-3 font-medium ${extra} ${sortable ? 'cursor-pointer select-none hover:text-gray-700' : ''} ${active ? 'text-gray-800' : 'text-gray-500'}`}
+                                            onClick={sortable ? () => handlePairSort(col) : undefined}
+                                        >
+                                            <span className="inline-flex items-center gap-0.5">
+                                                {label}
+                                                {sortable && active && (
+                                                    pairSortDir === 'asc'
+                                                        ? <ChevronUp size={14} className="text-violet-500" />
+                                                        : <ChevronDown size={14} className="text-violet-500" />
+                                                )}
+                                            </span>
+                                        </th>
+                                    );
+                                })}
                             </tr>
                         </thead>
                         <tbody>
