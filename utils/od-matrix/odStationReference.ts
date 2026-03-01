@@ -332,9 +332,9 @@ function normalizeForLookup(name: string): string {
         .toLowerCase()
         .normalize('NFD')
         .replace(/[\u0300-\u036f]/g, '')
+        .replace(/\./g, '')
         .replace(/\s+/g, ' ')
-        .trim()
-        .replace(/\.+$/, '');
+        .trim();
 }
 
 function splitCityPlace(name: string): { city: string | null; place: string } {
