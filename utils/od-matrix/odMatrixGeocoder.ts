@@ -495,7 +495,16 @@ export async function geocodeStations(
         const report = (status: GeocodeProgress['status']) =>
             onProgress?.({ current: i + 1, total: stations.length, stationName: station.name, status });
 
-        // Check cache first
+        // Check authoritative reference lookup first (instant, no API call)
+        const refResult = lookupStationCoordinates(station.name);
+        if (refResult) {
+            cache.stations[station.name] = refResult;
+            referenced++;
+            report('reference');
+            continue;
+        }
+
+        // Check Firebase cache (for stations not in the reference CSV)
         const cachedLocation = cache.stations[station.name];
         if (cachedLocation && isWithinCanada(cachedLocation.lat, cachedLocation.lon)) {
             cached++;
@@ -518,15 +527,6 @@ export async function geocodeStations(
                 report('cached');
                 continue;
             }
-        }
-
-        // Check static reference lookup before hitting Nominatim
-        const refResult = lookupStationCoordinates(station.name);
-        if (refResult) {
-            cache.stations[station.name] = refResult;
-            referenced++;
-            report('reference');
-            continue;
         }
 
         report('geocoding');
