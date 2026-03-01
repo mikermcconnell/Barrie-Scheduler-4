@@ -50,6 +50,7 @@ interface GeocodingProgress {
     status: string;
     geocoded: number;
     cached: number;
+    referenced: number;
     failed: number;
 }
 
@@ -57,6 +58,7 @@ interface PendingGeocodeResult {
     cache: GeocodeCache;
     geocoded: number;
     cached: number;
+    referenced: number;
     failed: string[];
 }
 
@@ -104,10 +106,10 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
     const [dateRange, setDateRange] = useState('');
     const [errorMessage, setErrorMessage] = useState('');
     const [geocodeProgress, setGeocodeProgress] = useState<GeocodingProgress>({
-        current: 0, total: 0, stationName: '', status: '', geocoded: 0, cached: 0, failed: 0,
+        current: 0, total: 0, stationName: '', status: '', geocoded: 0, cached: 0, referenced: 0, failed: 0,
     });
     const [completedStats, setCompletedStats] = useState<{
-        stations: number; journeys: number; geocoded: number; cached: number; manual: number; failed: string[];
+        stations: number; journeys: number; geocoded: number; cached: number; referenced: number; manual: number; failed: string[];
     } | null>(null);
     const [pendingGeocode, setPendingGeocode] = useState<PendingGeocodeResult | null>(null);
     const [manualCoords, setManualCoords] = useState<Record<string, { lat: string; lon: string }>>({});
@@ -210,6 +212,7 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
 
         let geocodedCount = 0;
         let cachedCount = 0;
+        let referencedCount = 0;
         let failedCount = 0;
 
         try {
@@ -221,6 +224,7 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
                 (progress) => {
                     if (progress.status === 'cached') cachedCount++;
                     if (progress.status === 'success') geocodedCount++;
+                    if (progress.status === 'reference') referencedCount++;
                     if (progress.status === 'failed') failedCount++;
                     setGeocodeProgress({
                         current: progress.current,
@@ -229,6 +233,7 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
                         status: progress.status,
                         geocoded: geocodedCount,
                         cached: cachedCount,
+                        referenced: referencedCount,
                         failed: failedCount,
                     });
                 },
@@ -261,6 +266,7 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
                 journeys: parseResult.totalJourneys,
                 geocoded: geocodeResult.geocoded,
                 cached: geocodeResult.cached,
+                referenced: geocodeResult.referenced,
                 manual: 0,
                 failed: [],
             });
@@ -285,6 +291,7 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
                 journeys: parseResult.totalJourneys,
                 geocoded: 0,
                 cached: 0,
+                referenced: 0,
                 manual: 0,
                 failed: parseResult.stations.map(station => station.name),
             });
@@ -374,6 +381,7 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
                 journeys: parseResult.totalJourneys,
                 geocoded: pendingGeocode.geocoded,
                 cached: pendingGeocode.cached,
+                referenced: pendingGeocode.referenced,
                 manual: manualCount,
                 failed: stillMissing,
             });
@@ -577,7 +585,7 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
                     </div>
 
                     {/* Stats */}
-                    <div className="grid grid-cols-3 gap-4 mt-4 pt-4 border-t border-gray-100">
+                    <div className="grid grid-cols-4 gap-4 mt-4 pt-4 border-t border-gray-100">
                         <div className="text-center">
                             <p className="text-lg font-bold text-emerald-600">{geocodeProgress.geocoded}</p>
                             <p className="text-xs text-gray-500">Geocoded</p>
@@ -585,6 +593,10 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
                         <div className="text-center">
                             <p className="text-lg font-bold text-blue-600">{geocodeProgress.cached}</p>
                             <p className="text-xs text-gray-500">From Cache</p>
+                        </div>
+                        <div className="text-center">
+                            <p className="text-lg font-bold text-violet-600">{geocodeProgress.referenced}</p>
+                            <p className="text-xs text-gray-500">From Reference</p>
                         </div>
                         <div className="text-center">
                             <p className="text-lg font-bold text-gray-400">{geocodeProgress.failed}</p>
@@ -727,11 +739,16 @@ export const ODMatrixImport: React.FC<ODMatrixImportProps> = ({
                         </div>
                     </div>
 
-                    {(completedStats.geocoded > 0 || completedStats.cached > 0 || completedStats.manual > 0 || completedStats.failed.length > 0) && (
+                    {(completedStats.geocoded > 0 || completedStats.cached > 0 || completedStats.referenced > 0 || completedStats.manual > 0 || completedStats.failed.length > 0) && (
                         <div className="mb-6 text-sm text-gray-500">
                             <p>
-                                <span className="font-medium text-emerald-600">{completedStats.geocoded}</span> stations geocoded,{' '}
+                                <span className="font-medium text-emerald-600">{completedStats.geocoded}</span> geocoded,{' '}
                                 <span className="font-medium text-blue-600">{completedStats.cached}</span> from cache
+                                {completedStats.referenced > 0 && (
+                                    <>
+                                        , <span className="font-medium text-violet-600">{completedStats.referenced}</span> from reference
+                                    </>
+                                )}
                                 {completedStats.manual > 0 && (
                                     <>
                                         , <span className="font-medium text-violet-600">{completedStats.manual}</span> entered manually

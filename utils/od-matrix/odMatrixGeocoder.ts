@@ -7,6 +7,7 @@
  */
 
 import type { GeocodedLocation, GeocodeCache, ODStation } from './odMatrixTypes';
+import { lookupStationCoordinates } from './odStationReference';
 
 const NOMINATIM_BASE = 'https://nominatim.openstreetmap.org/search';
 const RATE_LIMIT_MS = 1100; // 1.1 seconds between requests
@@ -163,13 +164,14 @@ interface GeocodeProgress {
     current: number;
     total: number;
     stationName: string;
-    status: 'geocoding' | 'cached' | 'failed' | 'skipped' | 'success';
+    status: 'geocoding' | 'cached' | 'failed' | 'skipped' | 'success' | 'reference';
 }
 
 interface GeocodeResult {
     cache: GeocodeCache;
     geocoded: number;
     cached: number;
+    referenced: number;
     failed: string[];
 }
 
@@ -454,7 +456,7 @@ function validateGeocodeResults(cache: GeocodeCache, failed: string[]): string[]
     for (const [name, location] of Object.entries(cache.stations)) {
         const normalized = name.toLowerCase().trim();
         if (KNOWN_OUT_OF_PROVINCE[normalized]) continue;
-        if (location.source === 'manual') continue;
+        if (location.source === 'manual' || location.source === 'reference') continue;
         if (!isWithinOntarioBounds(location.lat, location.lon)) {
             delete cache.stations[name];
             flagged.push(name);
@@ -483,6 +485,7 @@ export async function geocodeStations(
 
     let geocoded = 0;
     let cached = 0;
+    let referenced = 0;
     const failed: string[] = [];
 
     for (let i = 0; i < stations.length; i++) {
@@ -517,6 +520,15 @@ export async function geocodeStations(
             }
         }
 
+        // Check static reference lookup before hitting Nominatim
+        const refResult = lookupStationCoordinates(station.name);
+        if (refResult) {
+            cache.stations[station.name] = refResult;
+            referenced++;
+            report('reference');
+            continue;
+        }
+
         report('geocoding');
         const result = await geocodeStation(station.name);
 
@@ -537,10 +549,10 @@ export async function geocodeStations(
 
     cache.lastUpdated = new Date().toISOString();
 
-    // Move out-of-Ontario results (except known exceptions) to manual review
+    // Move out-of-Ontario results (except known exceptions and reference data) to manual review
     validateGeocodeResults(cache, failed);
 
-    return { cache, geocoded, cached, failed };
+    return { cache, geocoded, cached, referenced, failed };
 }
 
 export function applyGeocodesToStations(

@@ -11,7 +11,7 @@ export interface GeocodedLocation {
     lat: number;
     lon: number;
     displayName: string;
-    source: 'auto' | 'manual';
+    source: 'auto' | 'manual' | 'reference';
     confidence: 'high' | 'medium' | 'low';
 }
 
