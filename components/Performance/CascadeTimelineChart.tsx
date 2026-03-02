@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState, useRef } from 'react';
 import type { CascadeAffectedTrip } from '../../utils/performanceDataTypes';
 import { buildTimelinePoints, type TimelinePoint } from '../../utils/schedule/cascadeStoryUtils';
 
@@ -23,8 +23,9 @@ const CascadeTimelineChart: React.FC<CascadeTimelineChartProps> = ({
 }) => {
     const [tooltip, setTooltip] = useState<TooltipState | null>(null);
     const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+    const prevSelectedRef = useRef<number | null>(null);
 
-    const points = buildTimelinePoints(trips);
+    const points = useMemo(() => buildTimelinePoints(trips), [trips]);
 
     if (points.length === 0) {
         return (
@@ -118,12 +119,16 @@ const CascadeTimelineChart: React.FC<CascadeTimelineChartProps> = ({
 
         if (nearest && nearestDist <= 30) {
             setTooltip({ x: mouseX, y: mouseY, point: nearest });
-            setHoveredIndex(nearestIdx);
-            onSelectPoint(nearestIdx);
-        } else {
+            if (nearestIdx !== hoveredIndex) {
+                setHoveredIndex(nearestIdx);
+                onSelectPoint(nearestIdx);
+                prevSelectedRef.current = nearestIdx;
+            }
+        } else if (prevSelectedRef.current !== null) {
             setTooltip(null);
             setHoveredIndex(null);
             onSelectPoint(null);
+            prevSelectedRef.current = null;
         }
     };
 

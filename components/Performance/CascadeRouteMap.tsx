@@ -37,6 +37,12 @@ const CascadeRouteMap: React.FC<CascadeRouteMapProps> = ({
         return m;
     }, []);
 
+    // Memoize timeline points (used by both marker update and hasAnyCoords)
+    const timelinePoints = useMemo(
+        () => buildTimelinePoints(cascade.cascadedTrips),
+        [cascade.cascadedTrips],
+    );
+
     // ── Map initialization ───────────────────────────────────────────────────
     useEffect(() => {
         if (!containerRef.current || mapRef.current) return;
@@ -78,8 +84,6 @@ const CascadeRouteMap: React.FC<CascadeRouteMapProps> = ({
 
         layer.clearLayers();
 
-        const points = buildTimelinePoints(cascade.cascadedTrips);
-
         // Deduplicate stops by stopId, keeping worst (highest) deviationSeconds per stop
         const stopMap = new Map<string, {
             stopId: string;
@@ -89,7 +93,7 @@ const CascadeRouteMap: React.FC<CascadeRouteMapProps> = ({
             isRecovery: boolean;
         }>();
 
-        for (const pt of points) {
+        for (const pt of timelinePoints) {
             const existing = stopMap.get(pt.stopId);
             const devSec = pt.deviationMinutes != null ? pt.deviationMinutes * 60 : null;
             if (!existing) {
@@ -186,14 +190,13 @@ const CascadeRouteMap: React.FC<CascadeRouteMapProps> = ({
         } else if (boundsPoints.length === 1) {
             map.setView(boundsPoints[0], 14);
         }
-    }, [cascade, selectedTripIndex, selectedPointIndex, gtfsCoords]);
+    }, [cascade, timelinePoints, selectedTripIndex, gtfsCoords]);
 
     // Check if any coords are available for a fallback message
     const hasAnyCoords = useMemo(() => {
         if (gtfsCoords.get(cascade.stopId)) return true;
-        const points = buildTimelinePoints(cascade.cascadedTrips);
-        return points.some(pt => gtfsCoords.has(pt.stopId));
-    }, [cascade, gtfsCoords]);
+        return timelinePoints.some(pt => gtfsCoords.has(pt.stopId));
+    }, [cascade.stopId, timelinePoints, gtfsCoords]);
 
     if (!hasAnyCoords) {
         return (

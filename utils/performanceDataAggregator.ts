@@ -108,7 +108,8 @@ function isLoadReliable(r: STREETSRecord): boolean {
   return r.apcSource !== 0 && r.departureLoad > 0;
 }
 
-/** Cap departureLoad values and return sanitization counts. */
+/** Cap departureLoad values and return sanitization counts.
+ *  WARNING: Mutates records in place. Only call once per record set. */
 function sanitizeRecords(records: STREETSRecord[]): { loadCapped: number; apcExcludedFromLoad: number } {
   let loadCapped = 0;
   let apcExcludedFromLoad = 0;
