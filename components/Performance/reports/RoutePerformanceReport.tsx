@@ -6,6 +6,7 @@ import {
 import { Clock, Users, Bus, AlertTriangle, ArrowUpDown, Filter, Download } from 'lucide-react';
 import { MetricCard, ChartCard } from '../../Analytics/AnalyticsShared';
 import type { DailySummary } from '../../../utils/performanceDataTypes';
+import { classifyOTP } from '../../../utils/performanceDataTypes';
 import { exportRoutePerformance } from './reportExporter';
 import { compareDateStrings, shortDateLabel } from '../../../utils/performanceDateUtils';
 
@@ -49,10 +50,20 @@ export const RoutePerformanceReport: React.FC<RoutePerformanceReportProps> = ({ 
         if (routeDays.length === 0) return null;
 
         const n = routeDays.length;
+        // Sum raw OTP counts across days (avoids averaging-percentages statistical error)
+        const mergedOtp = routeDays.reduce(
+            (acc, r) => ({
+                total: acc.total + r.otp.total,
+                onTime: acc.onTime + r.otp.onTime,
+                early: acc.early + r.otp.early,
+                late: acc.late + r.otp.late,
+            }),
+            { total: 0, onTime: 0, early: 0, late: 0 }
+        );
         return {
-            otp: Math.round(routeDays.reduce((s, r) => s + r.otp.onTimePercent, 0) / n * 10) / 10,
-            earlyPct: Math.round(routeDays.reduce((s, r) => s + r.otp.earlyPercent, 0) / n * 10) / 10,
-            latePct: Math.round(routeDays.reduce((s, r) => s + r.otp.latePercent, 0) / n * 10) / 10,
+            otp: mergedOtp.total > 0 ? Math.round(mergedOtp.onTime / mergedOtp.total * 1000) / 10 : 0,
+            earlyPct: mergedOtp.total > 0 ? Math.round(mergedOtp.early / mergedOtp.total * 1000) / 10 : 0,
+            latePct: mergedOtp.total > 0 ? Math.round(mergedOtp.late / mergedOtp.total * 1000) / 10 : 0,
             ridership: routeDays.reduce((s, r) => s + r.ridership, 0),
             alightings: routeDays.reduce((s, r) => s + r.alightings, 0),
             tripCount: routeDays.reduce((s, r) => s + r.tripCount, 0),
@@ -69,47 +80,59 @@ export const RoutePerformanceReport: React.FC<RoutePerformanceReportProps> = ({ 
         };
     }, [filteredDays, activeRoute]);
 
-    // OTP by timepoint (stop-level, filtered to route)
+    // OTP by timepoint (stop-level, route-specific deviations)
     const timepointOTP = useMemo(() => {
         if (!activeRoute) return [];
         const stopMap = new Map<string, {
-            stopName: string; otp: number[]; early: number[]; late: number[];
-            deviations: number[]; boardings: number;
+            stopName: string; total: number; onTime: number; early: number; late: number;
+            deviationSum: number; boardings: number;
         }>();
-        for (const day of filteredDays) {
-            for (const stop of day.byStop) {
-                if (!stop.isTimepoint) continue;
-                // Filter to route's stops - check if any trips on this route visit this stop
-                const routeTrips = day.byTrip.filter(t => t.routeId === activeRoute);
-                if (routeTrips.length === 0) continue;
-                // We can't perfectly filter stops by route from byStop (it's system-wide),
-                // so we use a heuristic: look at stops that appear in the load profiles for this route
-                const routeProfiles = day.loadProfiles.filter(lp => lp.routeId === activeRoute);
-                const routeStopIds = new Set(routeProfiles.flatMap(lp => lp.stops.map(s => s.stopId)));
-                if (routeStopIds.size > 0 && !routeStopIds.has(stop.stopId)) continue;
 
-                const existing = stopMap.get(stop.stopId) || {
-                    stopName: stop.stopName, otp: [], early: [], late: [], deviations: [], boardings: 0,
-                };
-                existing.otp.push(stop.otp.onTimePercent);
-                existing.early.push(stop.otp.earlyPercent);
-                existing.late.push(stop.otp.latePercent);
-                existing.deviations.push(stop.otp.avgDeviationSeconds);
-                existing.boardings += stop.boardings;
-                stopMap.set(stop.stopId, existing);
+        for (const day of filteredDays) {
+            const profiles = (day.routeStopDeviations ?? []).filter(p => p.routeId === activeRoute);
+            const routeProfiles = day.loadProfiles.filter(lp => lp.routeId === activeRoute);
+            const timepointIds = new Set(
+                routeProfiles.flatMap(lp => lp.stops.filter(s => s.isTimepoint).map(s => s.stopId))
+            );
+
+            for (const profile of profiles) {
+                for (const stop of profile.stops) {
+                    if (!timepointIds.has(stop.stopId)) continue;
+                    const existing = stopMap.get(stop.stopId) || {
+                        stopName: stop.stopName, total: 0, onTime: 0, early: 0, late: 0,
+                        deviationSum: 0, boardings: 0,
+                    };
+                    for (const dev of stop.deviations) {
+                        existing.total++;
+                        existing.deviationSum += dev;
+                        const status = classifyOTP(dev);
+                        if (status === 'on-time') existing.onTime++;
+                        else if (status === 'early') existing.early++;
+                        else existing.late++;
+                    }
+                    stopMap.set(stop.stopId, existing);
+                }
+            }
+
+            // Accumulate boardings from byStop for display
+            for (const stop of day.byStop) {
+                if (!timepointIds.has(stop.stopId)) continue;
+                const existing = stopMap.get(stop.stopId);
+                if (existing) existing.boardings += stop.boardings;
             }
         }
-        const avg = (arr: number[]) => arr.length > 0 ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
+
         return Array.from(stopMap.values())
+            .filter(s => s.total > 0)
             .map(s => ({
                 stopName: s.stopName,
-                otp: Math.round(avg(s.otp) * 10) / 10,
-                early: Math.round(avg(s.early) * 10) / 10,
-                late: Math.round(avg(s.late) * 10) / 10,
-                avgDeviation: Math.round(avg(s.deviations)),
+                otp: Math.round(s.onTime / s.total * 1000) / 10,
+                early: Math.round(s.early / s.total * 1000) / 10,
+                late: Math.round(s.late / s.total * 1000) / 10,
+                avgDeviation: Math.round(s.deviationSum / s.total),
                 boardings: s.boardings,
             }))
-            .sort((a, b) => a.otp - b.otp); // worst first
+            .sort((a, b) => a.otp - b.otp);
     }, [filteredDays, activeRoute]);
 
     // Ridership by stop (from load profiles)
