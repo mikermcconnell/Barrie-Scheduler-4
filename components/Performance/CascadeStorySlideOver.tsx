@@ -3,6 +3,7 @@ import { X } from 'lucide-react';
 import type { DwellCascade, DwellSeverity } from '../../utils/performanceDataTypes';
 import CascadeTimelineChart from './CascadeTimelineChart';
 import CascadeTripChain from './CascadeTripChain';
+import CascadeRouteMap from './CascadeRouteMap';
 
 interface CascadeStorySlideOverProps {
     cascade: DwellCascade;
@@ -41,9 +42,6 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
         document.addEventListener('keydown', handler);
         return () => document.removeEventListener('keydown', handler);
     }, [onClose]);
-
-    // selectedPointIndex used by later panels
-    void selectedPointIndex;
 
     return (
         <>
@@ -128,12 +126,14 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
                         />
                     </div>
 
-                    {/* Panel 3: Route map placeholder */}
+                    {/* Panel 3: Route map */}
                     <div className="border border-gray-200 rounded-xl p-4 bg-white" style={{ minHeight: 300 }}>
-                        <p className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">Route Map</p>
-                        <div className="flex items-center justify-center h-64 text-gray-300 text-sm">
-                            Route map coming in Task 5
-                        </div>
+                        <h3 className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">Route Map</h3>
+                        <CascadeRouteMap
+                            cascade={cascade}
+                            selectedPointIndex={selectedPointIndex}
+                            selectedTripIndex={selectedTripIndex}
+                        />
                     </div>
                 </div>
             </div>
