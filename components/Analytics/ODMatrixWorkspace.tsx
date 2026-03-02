@@ -20,6 +20,7 @@ import {
     CheckCircle2,
 } from 'lucide-react';
 import type { ODMatrixDataSummary, GeocodeCache } from '../../utils/od-matrix/odMatrixTypes';
+import type { ODRouteEstimationResult } from '../../utils/od-matrix/odRouteEstimation';
 import { ODOverviewPanel } from './ODOverviewPanel';
 import { ODTopPairsModule } from './ODTopPairsModule';
 import { ODStationRankingsModule } from './ODStationRankingsModule';
@@ -50,7 +51,7 @@ interface TabConfig {
 
 const TAB_CONFIG: TabConfig[] = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard, enabled: true },
-    { id: 'route-estimation', label: 'Route Assignment', icon: Route, enabled: true },
+    { id: 'route-estimation', label: 'Routes & Transfers', icon: Route, enabled: true },
     { id: 'top-pairs', label: 'Top Pairs', icon: BarChart3, enabled: true },
     { id: 'rankings', label: 'Station Rankings', icon: Trophy, enabled: true },
     { id: 'heatmap', label: 'Heatmap Grid', icon: Grid3X3, enabled: true },
@@ -76,6 +77,7 @@ export const ODMatrixWorkspace: React.FC<ODMatrixWorkspaceProps> = ({
     const [exportingStop, setExportingStop] = useState(false);
     const [exportingStopPdf, setExportingStopPdf] = useState(false);
     const [isolatedStation, setIsolatedStation] = useState<string | null>(null);
+    const [routeEstimation, setRouteEstimation] = useState<ODRouteEstimationResult | null>(null);
     const confidenceReport = useMemo(() => computeODConfidenceReport(data), [data]);
     const savedAtLabel = useMemo(() => {
         const savedAt = new Date(data.metadata.importedAt);
@@ -93,25 +95,29 @@ export const ODMatrixWorkspace: React.FC<ODMatrixWorkspaceProps> = ({
         setIsolatedStation(station);
     }, []);
 
+    const handleRouteEstimationReady = useCallback((result: ODRouteEstimationResult) => {
+        setRouteEstimation(result);
+    }, []);
+
     const handleExportExcel = useCallback(async () => {
         setExportingExcel(true);
-        try { await exportODExcel(data); }
+        try { await exportODExcel(data, routeEstimation); }
         finally { setExportingExcel(false); }
-    }, [data]);
+    }, [data, routeEstimation]);
 
     const handleExportStopReport = useCallback(async () => {
         if (!isolatedStation) return;
         setExportingStop(true);
-        try { await exportStopReportExcel(data, isolatedStation); }
+        try { await exportStopReportExcel(data, isolatedStation, routeEstimation); }
         finally { setExportingStop(false); }
-    }, [data, isolatedStation]);
+    }, [data, isolatedStation, routeEstimation]);
 
     const handleExportStopPdf = useCallback(async () => {
         if (!isolatedStation) return;
         setExportingStopPdf(true);
-        try { await exportStopReportPdf(data, isolatedStation, mapElRef.current); }
+        try { await exportStopReportPdf(data, isolatedStation, mapElRef.current, routeEstimation); }
         finally { setExportingStopPdf(false); }
-    }, [data, isolatedStation]);
+    }, [data, isolatedStation, routeEstimation]);
 
     const handleExportPDF = useCallback(async () => {
         setExportingPDF(true);
@@ -121,10 +127,11 @@ export const ODMatrixWorkspace: React.FC<ODMatrixWorkspaceProps> = ({
                 mapElRef.current,
                 rankingsElRef.current,
                 heatmapElRef.current,
+                routeEstimation,
             );
         }
         finally { setExportingPDF(false); }
-    }, [data]);
+    }, [data, routeEstimation]);
 
     const tabs = useMemo(() => TAB_CONFIG, []);
 
@@ -170,7 +177,7 @@ export const ODMatrixWorkspace: React.FC<ODMatrixWorkspaceProps> = ({
             case 'heatmap':
                 return <ODHeatmapGridModule data={data} containerRef={heatmapElRef} />;
             case 'route-estimation':
-                return <ODRouteEstimationModule data={data} geocodeCache={geocodeCache} />;
+                return <ODRouteEstimationModule data={data} geocodeCache={geocodeCache} onResultReady={handleRouteEstimationReady} />;
             default:
                 return <ComingSoonPlaceholder />;
         }

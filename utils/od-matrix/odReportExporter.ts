@@ -1,6 +1,6 @@
 import ExcelJS from 'exceljs';
 import type { ODMatrixDataSummary, ODPairRecord, ODStation } from './odMatrixTypes';
-import type { ODRouteEstimationResult, ODPairRouteMatch } from './odRouteEstimation';
+import type { ODRouteEstimationResult, ODPairRouteMatch, StationMatch } from './odRouteEstimation';
 
 // ─── Shared Helpers ──────────────────────────────────────────────
 
@@ -60,9 +60,55 @@ function stationKey(name: string): string {
         .replace(/^_+|_+$/g, '');
 }
 
+// ─── Route Assignment Helpers ────────────────────────────────────
+
+function routeLabel(m: ODPairRouteMatch): string {
+    if (m.transfer) {
+        const names = m.transfer.legs?.length
+            ? m.transfer.legs.map(leg => leg.routeName)
+            : [m.transfer.leg1RouteName, m.transfer.leg2RouteName];
+        return names.join(' → ');
+    }
+    return m.routeLongName || '';
+}
+
+function routeNumberLabel(m: ODPairRouteMatch): string {
+    if (m.transfer) {
+        const legs = m.transfer.legs;
+        if (legs?.length) {
+            return legs.map(leg => leg.routeName).join(' → ');
+        }
+        return [m.transfer.leg1RouteName, m.transfer.leg2RouteName].join(' → ');
+    }
+    if (m.routeShortName && m.routeLongName) {
+        return `${m.routeShortName} - ${m.routeLongName}`;
+    }
+    return m.routeShortName || m.routeLongName || '';
+}
+
+function viaStopsLabel(m: ODPairRouteMatch): string {
+    if (!m.transfer) return '';
+    const stops = m.transfer.transferStops?.length
+        ? m.transfer.transferStops
+        : m.transfer.viaStop ? [m.transfer.viaStop] : [];
+    return stops.join(', ');
+}
+
+function confidenceExplanation(m: ODPairRouteMatch): string {
+    if (m.confidence === 'none') return 'No viable route found.';
+    if (!m.transfer) {
+        if (m.candidateCount <= 1) return 'Single direct route match.';
+        if (m.confidence === 'medium') return `Direct (${m.candidateCount} routes): shortest-stop route selected.`;
+        return `Direct ambiguous (${m.candidateCount} routes).`;
+    }
+    if (m.candidateCount <= 1) return 'Transfer required; single option.';
+    if (m.confidence === 'medium') return `Transfer (${m.candidateCount} options): shortest path selected.`;
+    return `Transfer ambiguous (${m.candidateCount} options).`;
+}
+
 // ─── Excel Export ────────────────────────────────────────────────
 
-export async function exportODExcel(data: ODMatrixDataSummary): Promise<void> {
+export async function exportODExcel(data: ODMatrixDataSummary, routeEstimation?: ODRouteEstimationResult | null): Promise<void> {
     const wb = new ExcelJS.Workbook();
     wb.creator = 'Barrie Transit Scheduler';
     wb.created = new Date();
@@ -219,6 +265,76 @@ export async function exportODExcel(data: ODMatrixDataSummary): Promise<void> {
     autoWidth(stationSheet);
     setHeaderFilterAndFreeze(stationSheet, 3, 11);
 
+    // ── Route Assignment Sheets (optional) ─────────────────────────
+    if (routeEstimation) {
+        // Sheet 6: Route Distribution
+        const routeDistSheet = wb.addWorksheet('Route Distribution');
+        routeDistSheet.addRow(['Route Distribution']);
+        routeDistSheet.getRow(1).font = { bold: true, size: 14 };
+        routeDistSheet.addRow([`${routeEstimation.routeDistribution.length} routes found · ${routeEstimation.matchedJourneys.toLocaleString()} matched journeys`]);
+        routeDistSheet.addRow([]);
+
+        const routeDistHeader = routeDistSheet.addRow(['Route Number', 'Route Name', 'Est. Journeys', 'Pair Count']);
+        styleHeader(routeDistHeader);
+        for (const r of routeEstimation.routeDistribution) {
+            routeDistSheet.addRow([r.routeShortName, r.routeLongName, r.journeys, r.pairCount]);
+        }
+        autoWidth(routeDistSheet);
+        setHeaderFilterAndFreeze(routeDistSheet, 4, 4);
+
+        // Sheet 7: Station Matches
+        const stationMatchSheet = wb.addWorksheet('Station Matches');
+        stationMatchSheet.addRow(['Station Match Report']);
+        stationMatchSheet.getRow(1).font = { bold: true, size: 14 };
+        const matchedCount = routeEstimation.stationMatchReport.filter(s => s.matchType !== 'unmatched').length;
+        stationMatchSheet.addRow([`${matchedCount} of ${routeEstimation.stationMatchReport.length} stations matched to GTFS stops`]);
+        stationMatchSheet.addRow([]);
+
+        const stationMatchHeader = stationMatchSheet.addRow(['OD Station', 'GTFS Stop', 'Match Type', 'Reason']);
+        styleHeader(stationMatchHeader);
+        for (const s of routeEstimation.stationMatchReport) {
+            stationMatchSheet.addRow([
+                s.odName,
+                s.gtfsStopName || '',
+                s.matchType,
+                s.reason || '',
+            ]);
+        }
+        autoWidth(stationMatchSheet);
+        setHeaderFilterAndFreeze(stationMatchSheet, 4, 4);
+
+        // Sheet 8: Route Assignments (all pairs)
+        const routeAssignSheet = wb.addWorksheet('Route Assignments');
+        routeAssignSheet.addRow(['Pair Route Assignments']);
+        routeAssignSheet.getRow(1).font = { bold: true, size: 14 };
+        routeAssignSheet.addRow([`${routeEstimation.totalMatched} matched · ${routeEstimation.totalUnmatched} unmatched`]);
+        routeAssignSheet.addRow([]);
+
+        const raHeader = routeAssignSheet.addRow([
+            'Origin', 'Destination', 'Journeys', 'Route Number', 'Route', 'Via Stops',
+            'Intermediate Stops', 'Confidence', 'Explanation',
+        ]);
+        styleHeader(raHeader);
+
+        const allAssignments = [...routeEstimation.matches, ...routeEstimation.unmatchedPairs]
+            .sort((a, b) => b.journeys - a.journeys);
+        for (const m of allAssignments) {
+            routeAssignSheet.addRow([
+                m.origin,
+                m.destination,
+                m.journeys,
+                m.routeShortName || '',
+                routeLabel(m),
+                viaStopsLabel(m),
+                m.confidence !== 'none' ? m.intermediateStops : '',
+                m.confidence,
+                confidenceExplanation(m),
+            ]);
+        }
+        autoWidth(routeAssignSheet);
+        setHeaderFilterAndFreeze(routeAssignSheet, 4, 9);
+    }
+
     const dateSlug = data.metadata.dateRange?.replace(/\s+/g, '_') || 'export';
     const buffer = await wb.xlsx.writeBuffer();
     downloadBuffer(buffer, `od_analysis_${dateSlug}.xlsx`);
@@ -226,7 +342,7 @@ export async function exportODExcel(data: ODMatrixDataSummary): Promise<void> {
 
 // ─── Stop Focus Excel Export ─────────────────────────────────────
 
-export async function exportStopReportExcel(data: ODMatrixDataSummary, stopName: string): Promise<void> {
+export async function exportStopReportExcel(data: ODMatrixDataSummary, stopName: string, routeEstimation?: ODRouteEstimationResult | null): Promise<void> {
     const station = data.stations.find(s => s.name === stopName);
     if (!station) return;
 
@@ -472,6 +588,51 @@ export async function exportStopReportExcel(data: ODMatrixDataSummary, stopName:
     autoWidth(underSheet);
     setHeaderFilterAndFreeze(underSheet, 4, 5);
 
+    // ── Sheet 7: Route Assignments (filtered to this stop) ──────
+    if (routeEstimation) {
+        const stopLower = stopName.toLowerCase();
+        const stopAssignments = [
+            ...routeEstimation.matches.filter(
+                m => m.origin.toLowerCase() === stopLower || m.destination.toLowerCase() === stopLower,
+            ),
+            ...routeEstimation.unmatchedPairs.filter(
+                m => m.origin.toLowerCase() === stopLower || m.destination.toLowerCase() === stopLower,
+            ),
+        ].sort((a, b) => b.journeys - a.journeys);
+
+        if (stopAssignments.length > 0) {
+            const raSheet = wb.addWorksheet('Route Assignments');
+            raSheet.addRow([`Route Assignments: ${stopName}`]);
+            raSheet.getRow(1).font = { bold: true, size: 14 };
+            const matchedForStop = stopAssignments.filter(m => m.confidence !== 'none').length;
+            raSheet.addRow([`${matchedForStop} matched of ${stopAssignments.length} pairs involving this stop`]);
+            raSheet.addRow([]);
+
+            const raHeader = raSheet.addRow([
+                'Direction', 'Partner Station', 'Journeys', 'Route Number', 'Route',
+                'Via Stops', 'Intermediate Stops', 'Confidence',
+            ]);
+            styleHeader(raHeader);
+
+            for (const m of stopAssignments) {
+                const isOutbound = m.origin.toLowerCase() === stopLower;
+                const partner = isOutbound ? m.destination : m.origin;
+                raSheet.addRow([
+                    isOutbound ? 'Outbound' : 'Inbound',
+                    partner,
+                    m.journeys,
+                    m.routeShortName || '',
+                    routeLabel(m),
+                    viaStopsLabel(m),
+                    m.confidence !== 'none' ? m.intermediateStops : '',
+                    m.confidence,
+                ]);
+            }
+            autoWidth(raSheet);
+            setHeaderFilterAndFreeze(raSheet, 4, 8);
+        }
+    }
+
     const buffer = await wb.xlsx.writeBuffer();
     downloadBuffer(buffer, `stop_focus_${nameSlug}_${dateSlug}.xlsx`);
 }
@@ -689,6 +850,7 @@ export async function exportODPdf(
     mapEl: HTMLDivElement | null,
     _rankingsEl: HTMLDivElement | null,
     heatmapEl: HTMLDivElement | null,
+    routeEstimation?: ODRouteEstimationResult | null,
 ): Promise<void> {
     const [{ default: jsPDF }, { default: autoTable }, { default: html2canvas }] = await Promise.all([
         import('jspdf'),
@@ -931,6 +1093,86 @@ export async function exportODPdf(
         alternateRowStyles: { fillColor: [...ALT_ROW] },
     });
 
+    // ─── Route Assignment Summary ──────────────────────────────
+
+    if (routeEstimation) {
+        doc.addPage();
+        tocEntries.push({ title: 'Route Assignment Summary', page: doc.getNumberOfPages() });
+        drawSectionHeader('Route Assignment Summary', 25, 110);
+
+        // Summary metrics
+        let ry = 38;
+        doc.setFontSize(9);
+        doc.setTextColor(...MID_GRAY);
+        const matchPct = routeEstimation.totalJourneys > 0
+            ? ((routeEstimation.matchedJourneys / routeEstimation.totalJourneys) * 100).toFixed(1)
+            : '0';
+        const summaryLines = [
+            `Matched Pairs: ${routeEstimation.totalMatched.toLocaleString()} of ${(routeEstimation.totalMatched + routeEstimation.totalUnmatched).toLocaleString()} total`,
+            `Unmatched Pairs: ${routeEstimation.totalUnmatched.toLocaleString()} (${routeEstimation.unmatchedStationPairs ?? 0} no station match · ${routeEstimation.unmatchedRoutePairs ?? 0} no route path)`,
+            `Journey Match Rate: ${matchPct}% (${routeEstimation.matchedJourneys.toLocaleString()} of ${routeEstimation.totalJourneys.toLocaleString()})`,
+            `Routes Found: ${routeEstimation.routeDistribution.length}`,
+        ];
+        for (const line of summaryLines) {
+            doc.setFillColor(...ON_NAVY);
+            doc.circle(margin + 2, ry - 1, 1.2, 'F');
+            doc.text(line, margin + 8, ry);
+            ry += 6;
+        }
+
+        // Route distribution bar chart
+        ry += 6;
+        doc.setFontSize(12);
+        doc.setTextColor(...DARK_TEXT);
+        doc.text('Route Distribution (Est. Journeys)', margin, ry);
+        ry += 3;
+        doc.setDrawColor(...ON_NAVY);
+        doc.setLineWidth(0.5);
+        doc.line(margin, ry, margin + 115, ry);
+        ry += 7;
+
+        const routeChartItems = routeEstimation.routeDistribution.slice(0, 12).map(r => ({
+            label: r.routeShortName ? `${r.routeShortName} - ${r.routeLongName}` : r.routeLongName,
+            value: r.journeys,
+        }));
+        drawHorizontalBarChart(doc, routeChartItems, margin, ry, pageW - 2 * margin, VIOLET);
+
+        // Page 2: Pair Route Assignments table (top 50)
+        doc.addPage();
+        tocEntries.push({ title: 'Pair Route Assignments', page: doc.getNumberOfPages() });
+        drawSectionHeader('Pair Route Assignments (Top 50)', 25, 130);
+
+        doc.setFontSize(8);
+        doc.setTextColor(...MID_GRAY);
+        doc.text('Top 50 matched pairs by journey volume. Route numbers shown where available.', margin, 33);
+
+        const topMatched = [...routeEstimation.matches]
+            .sort((a, b) => b.journeys - a.journeys)
+            .slice(0, 50);
+
+        autoTable(doc, {
+            startY: 37,
+            margin: { left: margin, right: margin, bottom: 20 },
+            head: [['Origin', 'Destination', 'Journeys', 'Route', 'Stops', 'Confidence']],
+            body: topMatched.map(m => [
+                m.origin,
+                m.destination,
+                m.journeys.toLocaleString(),
+                routeNumberLabel(m),
+                m.confidence !== 'none' ? String(m.intermediateStops) : '—',
+                m.confidence,
+            ]),
+            styles: { fontSize: 8 },
+            headStyles: { fillColor: [...ON_NAVY] },
+            alternateRowStyles: { fillColor: [...ALT_ROW] },
+            columnStyles: {
+                0: { cellWidth: 50 },
+                1: { cellWidth: 50 },
+                3: { cellWidth: 70 },
+            },
+        });
+    }
+
     // ─── Station Rankings (autoTable) ───────────────────────────
 
     doc.addPage();
@@ -1041,6 +1283,7 @@ export async function exportStopReportPdf(
     data: ODMatrixDataSummary,
     stopName: string,
     mapEl?: HTMLDivElement | null,
+    routeEstimation?: ODRouteEstimationResult | null,
 ): Promise<void> {
     const station = data.stations.find(s => s.name === stopName);
     if (!station) return;
@@ -1354,6 +1597,59 @@ export async function exportStopReportPdf(
         columnStyles: { 4: { fontStyle: 'bold' } },
     });
     drawFooterTag(pageH - 7);
+
+    // ─── Route Assignments (filtered to this stop) ────────────
+
+    if (routeEstimation) {
+        const stopLower = stopName.toLowerCase();
+        const stopAssignments = [
+            ...routeEstimation.matches.filter(
+                m => m.origin.toLowerCase() === stopLower || m.destination.toLowerCase() === stopLower,
+            ),
+            ...routeEstimation.unmatchedPairs.filter(
+                m => m.origin.toLowerCase() === stopLower || m.destination.toLowerCase() === stopLower,
+            ),
+        ].sort((a, b) => b.journeys - a.journeys);
+
+        if (stopAssignments.length > 0) {
+            doc.addPage();
+            tocEntries.push({ title: 'Route Assignments', page: doc.getNumberOfPages() });
+            drawSectionHeader(`Route Assignments — ${stopName}`, 25, 120);
+
+            const matchedForStop = stopAssignments.filter(m => m.confidence !== 'none').length;
+            doc.setFontSize(8);
+            doc.setTextColor(...MID_GRAY);
+            doc.text(
+                `${matchedForStop} matched of ${stopAssignments.length} pairs involving this stop. Route numbers shown where available.`,
+                margin, 33,
+            );
+
+            autoTable(doc, {
+                startY: 37,
+                margin: { left: margin, right: margin, bottom: 20 },
+                head: [['Direction', 'Partner', 'Journeys', 'Route', 'Stops', 'Confidence']],
+                body: stopAssignments.map(m => {
+                    const isOutbound = m.origin.toLowerCase() === stopLower;
+                    return [
+                        isOutbound ? 'Outbound' : 'Inbound',
+                        isOutbound ? m.destination : m.origin,
+                        m.journeys.toLocaleString(),
+                        routeNumberLabel(m),
+                        m.confidence !== 'none' ? String(m.intermediateStops) : '—',
+                        m.confidence,
+                    ];
+                }),
+                styles: { fontSize: 8 },
+                headStyles: { fillColor: [...ON_NAVY] },
+                alternateRowStyles: { fillColor: [...ALT_ROW] },
+                columnStyles: {
+                    1: { cellWidth: 55 },
+                    3: { cellWidth: 70 },
+                },
+            });
+            drawFooterTag(pageH - 7);
+        }
+    }
 
     // ─── Page 6: Two-Way Corridors ───────────────────────────────
 

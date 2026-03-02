@@ -28,8 +28,10 @@ import {
     ChevronUp,
     ChevronDown,
 } from 'lucide-react';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 import { ChartCard, MetricCard, fmt } from './AnalyticsShared';
-import type { ODMatrixDataSummary, GeocodeCache } from '../../utils/od-matrix/odMatrixTypes';
+import type { ODMatrixDataSummary, GeocodeCache, GeocodedLocation } from '../../utils/od-matrix/odMatrixTypes';
 import {
     estimateRoutes,
     type ODRouteEstimationResult,
@@ -43,6 +45,7 @@ import gtfsZipUrl from '../../gtfs.zip?url';
 interface ODRouteEstimationModuleProps {
     data: ODMatrixDataSummary;
     geocodeCache: GeocodeCache | null;
+    onResultReady?: (result: ODRouteEstimationResult) => void;
 }
 
 const CONFIDENCE_COLORS: Record<MatchConfidence, string> = {
@@ -257,7 +260,38 @@ function getRouteLabel(m: ODPairRouteMatch): string {
     return m.routeLongName || '';
 }
 
-export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = ({ data, geocodeCache }) => {
+function resolveGeocode(
+    stationName: string,
+    geocodeCache: GeocodeCache | null,
+): GeocodedLocation | null {
+    if (!geocodeCache) return null;
+    const key = Object.keys(geocodeCache.stations).find(
+        k => k.toLowerCase() === stationName.toLowerCase(),
+    );
+    return key ? geocodeCache.stations[key] : null;
+}
+
+interface TransferPointAgg {
+    stopName: string;
+    lat: number;
+    lon: number;
+    totalJourneys: number;
+    pairCount: number;
+    connectingRoutes: string[];
+}
+
+const TRANSFER_MAP_HEIGHT_PX = 400;
+
+// Heat gradient: amber (low) → deep violet (high)
+function heatColor(ratio: number): string {
+    // 0.0 = amber #f59e0b  →  1.0 = violet #7c3aed
+    const r = Math.round(245 + (124 - 245) * ratio);
+    const g = Math.round(158 + (58 - 158) * ratio);
+    const b = Math.round(11 + (237 - 11) * ratio);
+    return `rgb(${r},${g},${b})`;
+}
+
+export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = ({ data, geocodeCache, onResultReady }) => {
     const dataKey = getDataKey(data);
     const hasCached = cachedEstimation?.dataKey === dataKey;
 
@@ -273,8 +307,17 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
     const [stationScrollTop, setStationScrollTop] = useState(0);
     const [pairSortCol, setPairSortCol] = useState<PairSortColumn | null>(null);
     const [pairSortDir, setPairSortDir] = useState<SortDirection>('asc');
+    const [transferTopN, setTransferTopN] = useState<number | 'all'>(10);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const deferredSearch = useDeferredValue(search);
+
+    // Emit cached result on mount so parent always gets it
+    useEffect(() => {
+        if (hasCached && cachedEstimation?.result) {
+            onResultReady?.(cachedEstimation.result);
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     // Auto-load bundled GTFS zip on mount (skipped if cached)
     useEffect(() => {
@@ -291,6 +334,7 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
                 if (!cancelled) {
                     cachedEstimation = { dataKey, fileName: 'Ontario Northland GTFS (bundled)', result: estimation };
                     setResult(estimation);
+                    onResultReady?.(estimation);
                 }
             } catch (err) {
                 if (!cancelled) {
@@ -316,13 +360,14 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
             cachedEstimation = { dataKey, fileName: file.name, result: estimation };
             setResult(estimation);
             setFileName(file.name);
+            onResultReady?.(estimation);
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to process GTFS zip');
         } finally {
             setUpdating(false);
             if (fileInputRef.current) fileInputRef.current.value = '';
         }
-    }, [data, dataKey]);
+    }, [data, dataKey, onResultReady]);
 
     const filteredMatches = useMemo(() => {
         if (!result) return [];
@@ -464,6 +509,118 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
         setStationScrollTop(0);
     }, [result?.stationMatchReport.length]);
 
+    // ── Transfer heatmap data ────────────────────────────────────
+    const transferPoints = useMemo((): TransferPointAgg[] => {
+        if (!result || !geocodeCache) return [];
+        const agg = new Map<string, { journeys: number; pairs: number; routes: Set<string> }>();
+
+        for (const m of result.matches) {
+            if (!m.transfer) continue;
+            const stops = m.transfer.transferStops?.length
+                ? m.transfer.transferStops
+                : m.transfer.viaStop ? [m.transfer.viaStop] : [];
+            const routeNames = m.transfer.legs?.length
+                ? m.transfer.legs.map(leg => leg.routeName)
+                : [m.transfer.leg1RouteName, m.transfer.leg2RouteName];
+
+            for (const stop of stops) {
+                const entry = agg.get(stop) ?? { journeys: 0, pairs: 0, routes: new Set<string>() };
+                entry.journeys += m.journeys;
+                entry.pairs += 1;
+                for (const r of routeNames) {
+                    if (r) entry.routes.add(r);
+                }
+                agg.set(stop, entry);
+            }
+        }
+
+        const points: TransferPointAgg[] = [];
+        for (const [stopName, { journeys, pairs, routes }] of agg) {
+            const geo = resolveGeocode(stopName, geocodeCache);
+            if (!geo) continue;
+            points.push({
+                stopName,
+                lat: geo.lat,
+                lon: geo.lon,
+                totalJourneys: journeys,
+                pairCount: pairs,
+                connectingRoutes: [...routes].sort(),
+            });
+        }
+        return points.sort((a, b) => b.totalJourneys - a.totalJourneys);
+    }, [result, geocodeCache]);
+
+    const displayedTransferPoints = useMemo(() => {
+        if (transferTopN === 'all') return transferPoints;
+        return transferPoints.slice(0, transferTopN);
+    }, [transferPoints, transferTopN]);
+
+    const transferMapRef = useRef<HTMLDivElement>(null);
+    const leafletMapRef = useRef<L.Map | null>(null);
+
+    useEffect(() => {
+        // Cleanup previous map if data changed
+        if (leafletMapRef.current) {
+            leafletMapRef.current.remove();
+            leafletMapRef.current = null;
+        }
+        if (!transferMapRef.current || displayedTransferPoints.length === 0) return;
+
+        const map = L.map(transferMapRef.current, {
+            scrollWheelZoom: false,
+            zoomControl: true,
+            attributionControl: false,
+        });
+        leafletMapRef.current = map;
+
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+            maxZoom: 19,
+        }).addTo(map);
+
+        const maxJourneys = Math.max(...displayedTransferPoints.map(p => p.totalJourneys));
+        const minRadius = 8;
+        const maxRadius = 30;
+
+        const bounds = L.latLngBounds([]);
+        for (const pt of displayedTransferPoints) {
+            const ratio = maxJourneys > 0 ? pt.totalJourneys / maxJourneys : 0;
+            const radius = minRadius + ratio * (maxRadius - minRadius);
+
+            const marker = L.circleMarker([pt.lat, pt.lon], {
+                radius,
+                fillColor: heatColor(ratio),
+                fillOpacity: 0.8,
+                color: '#ffffff',
+                weight: 2,
+            }).addTo(map);
+
+            const routeList = pt.connectingRoutes.length > 0
+                ? pt.connectingRoutes.map(r => `<li style="font-size:11px;color:#374151">${r}</li>`).join('')
+                : '<li style="font-size:11px;color:#9ca3af;font-style:italic">Unknown</li>';
+
+            marker.bindPopup(
+                `<div style="min-width:180px">` +
+                `<div style="font-weight:700;font-size:13px;color:#1f2937;margin-bottom:4px">${pt.stopName}</div>` +
+                `<div style="font-size:11px;color:#6b7280;margin-bottom:6px">${fmt(pt.totalJourneys)} journeys · ${pt.pairCount} pair${pt.pairCount === 1 ? '' : 's'}</div>` +
+                `<div style="font-size:10px;font-weight:600;color:#7c3aed;text-transform:uppercase;margin-bottom:2px">Connecting Routes</div>` +
+                `<ul style="margin:0;padding-left:14px">${routeList}</ul>` +
+                `</div>`,
+                { maxWidth: 260 },
+            );
+
+            bounds.extend([pt.lat, pt.lon]);
+        }
+
+        if (bounds.isValid()) {
+            map.fitBounds(bounds, { padding: [40, 40], maxZoom: 10 });
+        }
+
+        return () => {
+            map.remove();
+            leafletMapRef.current = null;
+        };
+    }, [displayedTransferPoints]);
+
     // Loading state
     if (loading) {
         return (
@@ -599,6 +756,68 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
                     </ChartCard>
                 )}
             </div>
+
+            {/* Transfer Point Heatmap */}
+            {transferPoints.length > 0 && (
+                <div className="order-[3]">
+                    <ChartCard
+                        title="Transfer Point Map"
+                        subtitle={`${displayedTransferPoints.length} of ${transferPoints.length} transfer point${transferPoints.length === 1 ? '' : 's'} · ${fmt(displayedTransferPoints.reduce((s, p) => s + p.totalJourneys, 0))} journeys`}
+                        headerExtra={
+                            <div className="flex rounded-lg border border-gray-200 overflow-hidden">
+                                {([10, 20, 50, 100, 'all'] as const).map(opt => (
+                                    <button
+                                        key={String(opt)}
+                                        onClick={() => setTransferTopN(opt)}
+                                        className={`px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                                            transferTopN === opt
+                                                ? 'bg-gray-900 text-white'
+                                                : 'bg-white text-gray-500 hover:bg-gray-50'
+                                        }`}
+                                    >
+                                        {opt === 'all' ? 'All' : `Top ${opt}`}
+                                    </button>
+                                ))}
+                            </div>
+                        }
+                    >
+                        <div
+                            ref={transferMapRef}
+                            style={{ height: `${TRANSFER_MAP_HEIGHT_PX}px`, borderRadius: '8px' }}
+                        />
+
+                        {/* Ranked transfer points table */}
+                        <div className="mt-4 overflow-x-auto overflow-y-auto" style={{ maxHeight: '260px' }}>
+                            <table className="w-full text-sm">
+                                <thead className="sticky top-0 bg-white">
+                                    <tr className="border-b border-gray-200">
+                                        <th className="text-left py-2 px-3 text-gray-500 font-medium w-12">Rank</th>
+                                        <th className="text-left py-2 px-3 text-gray-500 font-medium">Transfer Point</th>
+                                        <th className="text-right py-2 px-3 text-gray-500 font-medium w-24">Journeys</th>
+                                        <th className="text-right py-2 px-3 text-gray-500 font-medium w-16">Pairs</th>
+                                        <th className="text-left py-2 px-3 text-gray-500 font-medium">Connecting Routes</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {displayedTransferPoints.map((pt, i) => (
+                                        <tr key={pt.stopName} className="border-b border-gray-50 hover:bg-gray-50">
+                                            <td className="py-1.5 px-3 text-xs text-gray-400 font-medium">{i + 1}</td>
+                                            <td className="py-1.5 px-3 text-xs text-gray-800 font-medium">{pt.stopName}</td>
+                                            <td className="py-1.5 px-3 text-right text-xs font-bold text-gray-900">{fmt(pt.totalJourneys)}</td>
+                                            <td className="py-1.5 px-3 text-right text-xs text-gray-500">{pt.pairCount}</td>
+                                            <td className="py-1.5 px-3 text-xs text-gray-600">
+                                                <span className="block truncate max-w-[300px]" title={pt.connectingRoutes.join(', ')}>
+                                                    {pt.connectingRoutes.join(', ') || '—'}
+                                                </span>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </ChartCard>
+                </div>
+            )}
 
             <div className="order-4">
                 {/* Station Match Report */}
