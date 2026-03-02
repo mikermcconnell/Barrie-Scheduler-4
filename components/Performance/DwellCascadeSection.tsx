@@ -11,6 +11,7 @@ import type {
 } from '../../utils/performanceDataTypes';
 import { MetricCard, ChartCard, fmt } from '../Analytics/AnalyticsShared';
 import { aggregateCascadeAcrossDays } from '../../utils/schedule/operatorDwellUtils';
+import CascadeStorySlideOver from './CascadeStorySlideOver';
 
 interface DwellCascadeSectionProps {
     data: PerformanceDataSummary;
@@ -62,6 +63,7 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
     const [stopFilter, setStopFilter] = useState<string | null>(null);
     const [cascadePage, setCascadePage] = useState(1);
     const [showDetails, setShowDetails] = useState(false);
+    const [selectedCascade, setSelectedCascade] = useState<DwellCascade | null>(null);
 
     const hasCascadeData = data.dailySummaries.some(d => d.byCascade);
 
@@ -185,6 +187,7 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
     }
 
     return (
+        <>
         <div className="space-y-5">
 
             {/* ── A: Impact Attribution Banner ── */}
@@ -303,7 +306,8 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                                     return (
                                         <div
                                             key={`${incident.block}-${incident.tripName}-${incident.date}-${i}`}
-                                            className="border border-gray-200 rounded-lg p-3 bg-white"
+                                            className="border border-gray-200 rounded-lg p-3 bg-white cursor-pointer hover:border-cyan-300 hover:shadow-sm transition-all"
+                                            onClick={() => setSelectedCascade(incident)}
                                         >
                                             {/* Card header */}
                                             <div className="flex items-start justify-between gap-2 mb-1.5">
@@ -675,5 +679,12 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                 )}
             </div>
         </div>
+        {selectedCascade && (
+            <CascadeStorySlideOver
+                cascade={selectedCascade}
+                onClose={() => setSelectedCascade(null)}
+            />
+        )}
+        </>
     );
 };
