@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import type { DwellCascade, DwellSeverity } from '../../utils/performanceDataTypes';
+import CascadeTimelineChart from './CascadeTimelineChart';
 
 interface CascadeStorySlideOverProps {
     cascade: DwellCascade;
@@ -40,11 +41,9 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
         return () => document.removeEventListener('keydown', handler);
     }, [onClose]);
 
-    // Suppress unused-variable warnings — these will be used by child panels in subsequent tasks
-    void selectedTripIndex;
-    void setSelectedTripIndex;
+    // selectedPointIndex / setSelectedTripIndex used by later panels
     void selectedPointIndex;
-    void setSelectedPointIndex;
+    void setSelectedTripIndex;
 
     return (
         <>
@@ -109,12 +108,14 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
 
                 {/* Body — scrollable, 3 placeholder panels */}
                 <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
-                    {/* Panel 1: Timeline chart placeholder */}
+                    {/* Panel 1: Timeline chart */}
                     <div className="border border-gray-200 rounded-xl p-4 bg-white" style={{ minHeight: 200 }}>
-                        <p className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">Timeline</p>
-                        <div className="flex items-center justify-center h-40 text-gray-300 text-sm">
-                            Timeline chart coming in Task 3
-                        </div>
+                        <h3 className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">Delay Timeline</h3>
+                        <CascadeTimelineChart
+                            trips={cascade.cascadedTrips}
+                            selectedTripIndex={selectedTripIndex}
+                            onSelectPoint={setSelectedPointIndex}
+                        />
                     </div>
 
                     {/* Panel 2: Trip chain placeholder */}
