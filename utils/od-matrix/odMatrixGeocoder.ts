@@ -172,6 +172,7 @@ interface GeocodeResult {
     geocoded: number;
     cached: number;
     referenced: number;
+    healed: number;
     failed: string[];
 }
 
@@ -472,6 +473,38 @@ function validateGeocodeResults(cache: GeocodeCache, failed: string[]): string[]
     return flagged;
 }
 
+/**
+ * Scan cache for `source: 'auto'` entries that now match the authoritative
+ * reference lookup and upgrade them to `source: 'reference'` coordinates.
+ */
+export function healCacheFromReference(cache: GeocodeCache): number {
+    let healed = 0;
+    for (const [name, location] of Object.entries(cache.stations)) {
+        if (location.source !== 'auto') continue;
+        const ref = lookupStationCoordinates(name);
+        if (ref) {
+            cache.stations[name] = ref;
+            healed++;
+        }
+    }
+    return healed;
+}
+
+/**
+ * Remove all `source: 'auto'` entries from cache so they get re-geocoded
+ * on next import (with improved reference lookup).
+ */
+export function purgeAutoEntries(cache: GeocodeCache): number {
+    let purged = 0;
+    for (const [name, location] of Object.entries(cache.stations)) {
+        if (location.source === 'auto') {
+            delete cache.stations[name];
+            purged++;
+        }
+    }
+    return purged;
+}
+
 export async function geocodeStations(
     stations: ODStation[],
     existingCache: GeocodeCache | null,
@@ -482,6 +515,9 @@ export async function geocodeStations(
         stations: { ...(existingCache?.stations || {}) },
         lastUpdated: '',
     };
+
+    // Heal stale auto-geocoded entries that now match the reference lookup
+    const healed = healCacheFromReference(cache);
 
     let geocoded = 0;
     let cached = 0;
@@ -552,7 +588,7 @@ export async function geocodeStations(
     // Move out-of-Ontario results (except known exceptions and reference data) to manual review
     validateGeocodeResults(cache, failed);
 
-    return { cache, geocoded, cached, referenced, failed };
+    return { cache, geocoded, cached, referenced, healed, failed };
 }
 
 export function applyGeocodesToStations(

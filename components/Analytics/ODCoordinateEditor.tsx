@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
-import { ArrowLeft, AlertTriangle, Loader2, CheckCircle2, ExternalLink, RotateCcw } from 'lucide-react';
-import { applyGeocodesToStations, isWithinCanada } from '../../utils/od-matrix/odMatrixGeocoder';
+import { ArrowLeft, AlertTriangle, Loader2, CheckCircle2, ExternalLink, RotateCcw, Trash2 } from 'lucide-react';
+import { applyGeocodesToStations, isWithinCanada, purgeAutoEntries } from '../../utils/od-matrix/odMatrixGeocoder';
 import { saveGeocodeCache, saveODMatrixData } from '../../utils/od-matrix/odMatrixService';
 import {
     parseLatLonInput,
@@ -99,6 +99,35 @@ export const ODCoordinateEditor: React.FC<ODCoordinateEditorProps> = ({
     const [errorMessage, setErrorMessage] = useState('');
     const [filterMode, setFilterMode] = useState<FilterMode>('missing');
     const [resetStations, setResetStations] = useState<Set<string>>(new Set());
+    const [isPurging, setIsPurging] = useState(false);
+
+    const autoCount = useMemo(
+        () => Object.values(geocodeCache?.stations || {}).filter(loc => loc.source === 'auto').length,
+        [geocodeCache],
+    );
+
+    const handlePurgeAuto = async () => {
+        if (autoCount === 0) return;
+        const confirmed = window.confirm(
+            `Remove ${autoCount} auto-geocoded cache ${autoCount === 1 ? 'entry' : 'entries'}? They will be re-geocoded (with improved reference matching) on next import.`
+        );
+        if (!confirmed) return;
+
+        setIsPurging(true);
+        try {
+            const nextCache: GeocodeCache = {
+                stations: { ...(geocodeCache?.stations || {}) },
+                lastUpdated: new Date().toISOString(),
+            };
+            purgeAutoEntries(nextCache);
+            await saveGeocodeCache(teamId, nextCache);
+            onComplete(); // triggers parent reload
+        } catch (err) {
+            setErrorMessage(err instanceof Error ? err.message : 'Failed to purge cache');
+        } finally {
+            setIsPurging(false);
+        }
+    };
 
     const validLookup = useMemo(
         () => buildValidLookup(data.stations, geocodeCache),
@@ -278,6 +307,17 @@ export const ODCoordinateEditor: React.FC<ODCoordinateEditorProps> = ({
                             {' · '}
                             <span className="font-semibold">{geocodedStations.length}</span> stop{geocodedStations.length === 1 ? '' : 's'} geocoded
                         </p>
+                        <div className="flex items-center gap-2">
+                        {autoCount > 0 && (
+                            <button
+                                onClick={handlePurgeAuto}
+                                disabled={isPurging}
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs border border-red-300 text-red-600 rounded-lg hover:bg-red-50 transition-colors disabled:opacity-50"
+                            >
+                                {isPurging ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                                Purge Auto ({autoCount})
+                            </button>
+                        )}
                         <div className="inline-flex rounded-lg border border-blue-300 overflow-hidden text-xs">
                             <button
                                 onClick={() => setFilterMode('missing')}
@@ -299,6 +339,7 @@ export const ODCoordinateEditor: React.FC<ODCoordinateEditorProps> = ({
                             >
                                 All Stations ({missingStations.length + geocodedStations.length})
                             </button>
+                        </div>
                         </div>
                     </div>
                     <p className="text-xs text-blue-700 mt-2">

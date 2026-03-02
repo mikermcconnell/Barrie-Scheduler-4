@@ -332,7 +332,7 @@ function normalizeForLookup(name: string): string {
         .toLowerCase()
         .normalize('NFD')
         .replace(/[\u0300-\u036f]/g, '')
-        .replace(/\./g, '')
+        .replace(/[.\-]/g, ' ')
         .replace(/\s+/g, ' ')
         .trim();
 }
@@ -367,6 +367,49 @@ for (const entry of STATION_DATA) {
     }
 }
 
+// ============ EXTRA STATIONS (not in CSV) ============
+// Stations appearing in OD matrices but absent from the authoritative CSV.
+
+const EXTRA_STATIONS: StationReference[] = [
+    { stationId: 9001, name: 'ELLIOT LAKE', province: 'ON', lat: 46.3833, lon: -82.6500 },
+    { stationId: 9002, name: 'MCMASTER UNIVERSITY', province: 'ON', lat: 43.2609, lon: -79.9192 },
+    { stationId: 9003, name: 'ONTARIO TECH UNIVERSITY OSHAWA', province: 'ON', lat: 43.9449, lon: -78.8960 },
+    { stationId: 9004, name: 'PEARSON AIRPORT TERMINAL 1', province: 'ON', lat: 43.6777, lon: -79.6248 },
+    { stationId: 9005, name: 'KANATA - OC TRANSPO TERRY FOX', province: 'ON', lat: 45.3430, lon: -75.8039 },
+];
+
+for (const entry of EXTRA_STATIONS) {
+    const normalized = normalizeForLookup(entry.name);
+    byNormalized.set(normalized, entry);
+    const { city, place } = splitCityPlace(entry.name);
+    if (city) {
+        byPlacePortion.set(normalizeForLookup(place), entry);
+    }
+}
+
+// ============ NAME ALIASES ============
+// Maps OD matrix Excel names (place portion) to CSV reference names.
+// These handle cases where the Excel format differs from the CSV name.
+
+const NAME_ALIASES: [string, string][] = [
+    ['Education Centre - Lower Residence', 'EDU CENTRE LOWER RES'],
+    ['Timmins and District Hospital', 'TIMMINS HOSPITAL'],
+    ['Regional Health Sciences Centre', 'TB HEALTH SCIENCES CTR'],
+    ['CHEO', 'CHEO HOSPITAL'],
+    ['Hospital - General Campus', 'OTTAWA HOSPITAL'],
+    ['River Dr-Hwy 17', 'KENORA RIVER DRIVE AT HWY 17'],
+    ['Vaughan - Highway 407 Terminal', 'VAUGHAN - HWY 407'],
+    ['Fisher-Archibald Rds', 'FISHER RD'],
+    ['Health Centre', 'NORTH BAY HEALTH CTR'],
+];
+
+for (const [alias, refName] of NAME_ALIASES) {
+    const ref = byNormalized.get(normalizeForLookup(refName));
+    if (ref) {
+        byNormalized.set(normalizeForLookup(alias), ref);
+    }
+}
+
 // ============ LOOKUP ============
 
 const DIRECTION_SUFFIXES = [' northbound', ' southbound', ' eastbound', ' westbound', ' old'];
@@ -398,6 +441,13 @@ export function lookupStationCoordinates(name: string): GeocodedLocation | null 
         const normalizedPlace = normalizeForLookup(place);
         const placeMatch = tryMatch(normalizedPlace);
         if (placeMatch) return buildResult(placeMatch);
+    }
+
+    // Stage 2b: recombine city+place without separator ("Orillia - Transit" → "orillia transit")
+    if (city) {
+        const recombined = normalizeForLookup(`${city} ${place}`);
+        const recombinedMatch = byNormalized.get(recombined);
+        if (recombinedMatch) return buildResult(recombinedMatch);
     }
 
     // Stage 3: strip direction suffixes and retry both indexes
