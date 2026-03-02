@@ -27,7 +27,7 @@ type RequestFailure = Error & {
 };
 
 const CLOUD_RUN_OPTIMIZE_URL = 'https://optimizeschedule-ieeja7khcq-uc.a.run.app';
-const REQUEST_TIMEOUT_MS = Number(import.meta.env.VITE_OPTIMIZE_TIMEOUT_MS || 90000);
+const REQUEST_TIMEOUT_MS = Number(import.meta.env.VITE_OPTIMIZE_TIMEOUT_MS || 300000);
 const MAX_RETRIES_PER_ENDPOINT = Math.max(0, Number(import.meta.env.VITE_OPTIMIZE_MAX_RETRIES || 1));
 const ENDPOINT_OVERRIDE = (import.meta.env.VITE_OPTIMIZE_API_URL || '').trim();
 
@@ -110,7 +110,7 @@ const requestOptimization = async (
     const failure = new Error(isTimeout ? `Request timed out after ${REQUEST_TIMEOUT_MS}ms` : 'Network error') as RequestFailure;
     failure.endpoint = endpoint;
     failure.code = isTimeout ? 'CLIENT_TIMEOUT' : 'NETWORK';
-    failure.retryable = true;
+    failure.retryable = !isTimeout;
     throw failure;
   }
 
