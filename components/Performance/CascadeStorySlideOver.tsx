@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import type { DwellCascade, DwellSeverity } from '../../utils/performanceDataTypes';
 import CascadeTimelineChart from './CascadeTimelineChart';
+import CascadeTripChain from './CascadeTripChain';
 
 interface CascadeStorySlideOverProps {
     cascade: DwellCascade;
@@ -41,9 +42,8 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
         return () => document.removeEventListener('keydown', handler);
     }, [onClose]);
 
-    // selectedPointIndex / setSelectedTripIndex used by later panels
+    // selectedPointIndex used by later panels
     void selectedPointIndex;
-    void setSelectedTripIndex;
 
     return (
         <>
@@ -118,12 +118,14 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
                         />
                     </div>
 
-                    {/* Panel 2: Trip chain placeholder */}
+                    {/* Panel 2: Trip chain */}
                     <div className="border border-gray-200 rounded-xl p-4 bg-white" style={{ minHeight: 120 }}>
-                        <p className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">Trip Chain</p>
-                        <div className="flex items-center justify-center h-16 text-gray-300 text-sm">
-                            Trip chain coming in Task 4
-                        </div>
+                        <h3 className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">Trip Chain</h3>
+                        <CascadeTripChain
+                            cascade={cascade}
+                            selectedTripIndex={selectedTripIndex}
+                            onSelectTrip={setSelectedTripIndex}
+                        />
                     </div>
 
                     {/* Panel 3: Route map placeholder */}
