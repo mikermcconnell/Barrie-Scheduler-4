@@ -541,7 +541,7 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
                     value={fmt(result.totalUnmatched)}
                     color={result.totalUnmatched > 0 ? 'red' : 'emerald'}
                     subValue={result.totalUnmatched > 0
-                        ? `${fmt(result.unmatchedRoutePairs)} no route · ${fmt(result.unmatchedStationPairs)} no station`
+                        ? `${fmt(result.unmatchedRoutePairs ?? 0)} no route · ${fmt(result.unmatchedStationPairs ?? 0)} no station`
                         : undefined}
                 />
                 <MetricCard
