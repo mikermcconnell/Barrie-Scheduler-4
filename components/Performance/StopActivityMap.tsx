@@ -802,9 +802,11 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({ stops }) => {
             markersRef.current.push({ marker, bin, stop });
         }
 
-        // Auto-fit on first load
+        // Auto-fit on first load — zoom to ALL Barrie stops, not just filtered subset
         if (!hasFittedRef.current && displayedStops.length > 0 && map) {
-            const bounds = L.latLngBounds(displayedStops.map(s => [s.lat, s.lon] as [number, number]));
+            const allGeoStops = enrichedStops.filter(s => s.lat && s.lon);
+            const boundsStops = allGeoStops.length > 0 ? allGeoStops : displayedStops;
+            const bounds = L.latLngBounds(boundsStops.map(s => [s.lat, s.lon] as [number, number]));
             map.fitBounds(bounds, { padding: [20, 20] });
             hasFittedRef.current = true;
         }
