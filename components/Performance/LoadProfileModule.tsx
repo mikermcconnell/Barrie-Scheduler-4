@@ -94,9 +94,12 @@ export const LoadProfileModule: React.FC<LoadProfileModuleProps> = ({ data }) =>
                         stopName: s.stopName,
                         stopId: s.stopId,
                         routeStopIndex: s.routeStopIndex,
-                        avgBoardings: Math.round(s.sumBoardings / s.sampleCount),
-                        avgAlightings: Math.round(s.sumAlightings / s.sampleCount),
-                        avgLoad: Math.round(s.sumLoad / s.sampleCount),
+                        avgBoardings: s.sampleCount > 0 ? Math.round(s.sumBoardings / s.sampleCount) : 0,
+                        avgAlightings: s.sampleCount > 0 ? Math.round(s.sumAlightings / s.sampleCount) : 0,
+                        // Note: avgLoad is an unweighted average-of-averages across days. A proper weighted
+                        // average would require per-stop reliable-load-trip counts on LoadProfileStop.
+                        // Accepted approximation since same-route APC coverage is stable day-to-day.
+                        avgLoad: s.sampleCount > 0 ? Math.round(s.sumLoad / s.sampleCount) : 0,
                         maxLoad: s.maxLoad,
                         isTimepoint: s.isTimepoint,
                     }))
@@ -319,7 +322,7 @@ export const LoadProfileModule: React.FC<LoadProfileModuleProps> = ({ data }) =>
                     {/* Load Curve — the key Transify replacement chart */}
                     <ChartCard
                         title={`Load Profile: Route ${activeProfile.routeId} ${activeProfile.direction}`}
-                        subtitle={`${activeProfile.routeName} — avg passenger load at each stop (${activeProfile.tripCount} trips)`}
+                        subtitle={`${activeProfile.routeName} — avg passenger load at each stop (${activeProfile.tripCount} trips across ${filtered.length} day${filtered.length !== 1 ? 's' : ''})`}
                     >
                         <ResponsiveContainer width="100%" height={350}>
                             <AreaChart data={chartData} margin={{ top: 10, right: 10, bottom: 60, left: -10 }}>
