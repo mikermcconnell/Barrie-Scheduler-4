@@ -104,7 +104,20 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
                     </div>
                 </div>
 
-                {/* Body — scrollable, 3 placeholder panels */}
+                {/* Quick stats row */}
+                <div className="flex items-center gap-4 px-5 py-2 bg-gray-50/50 border-b border-gray-100 text-xs text-gray-600 flex-shrink-0">
+                    <span><span className="font-semibold text-red-600">{cascade.blastRadius}</span> trips impacted</span>
+                    <span><span className="font-semibold text-gray-800">{cascade.cascadedTrips.length}</span> downstream trips</span>
+                    <span><span className="font-semibold text-gray-800">{fmtMin(cascade.recoveryTimeAvailableSeconds)}</span> min recovery available</span>
+                    {cascade.recoveredAtTrip && (
+                        <span className="text-emerald-600 font-medium">✓ Recovered at {cascade.recoveredAtTrip}</span>
+                    )}
+                    {!cascade.recoveredAtTrip && cascade.cascadedTrips.length > 0 && (
+                        <span className="text-red-600 font-medium">✗ Never recovered</span>
+                    )}
+                </div>
+
+                {/* Body — scrollable, 3 panels */}
                 <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
                     {/* Panel 1: Timeline chart */}
                     <div className="border border-gray-200 rounded-xl p-4 bg-white" style={{ minHeight: 200 }}>
