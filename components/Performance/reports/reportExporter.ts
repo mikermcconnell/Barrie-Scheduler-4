@@ -54,9 +54,18 @@ export async function exportWeeklySummary(
 
     const n = filteredDays.length;
     if (n > 0) {
-        const otp = Math.round(filteredDays.reduce((s, d) => s + d.system.otp.onTimePercent, 0) / n * 10) / 10;
-        const early = Math.round(filteredDays.reduce((s, d) => s + d.system.otp.earlyPercent, 0) / n * 10) / 10;
-        const late = Math.round(filteredDays.reduce((s, d) => s + d.system.otp.latePercent, 0) / n * 10) / 10;
+        const otpTotals = filteredDays.reduce(
+            (acc, d) => ({
+                total: acc.total + d.system.otp.total,
+                onTime: acc.onTime + d.system.otp.onTime,
+                early: acc.early + d.system.otp.early,
+                late: acc.late + d.system.otp.late,
+            }),
+            { total: 0, onTime: 0, early: 0, late: 0 }
+        );
+        const otp = otpTotals.total > 0 ? Math.round(otpTotals.onTime / otpTotals.total * 1000) / 10 : 0;
+        const early = otpTotals.total > 0 ? Math.round(otpTotals.early / otpTotals.total * 1000) / 10 : 0;
+        const late = otpTotals.total > 0 ? Math.round(otpTotals.late / otpTotals.total * 1000) / 10 : 0;
         const ridership = filteredDays.reduce((s, d) => s + d.system.totalRidership, 0);
         const trips = filteredDays.reduce((s, d) => s + d.system.tripCount, 0);
         const vehicles = Math.round(filteredDays.reduce((s, d) => s + d.system.vehicleCount, 0) / n);
@@ -82,20 +91,21 @@ export async function exportWeeklySummary(
     styleHeader(routeHeader);
 
     const routeMap = new Map<string, {
-        otp: number[]; early: number[]; late: number[];
+        otpTotal: number; otpOnTime: number; otpEarly: number; otpLate: number;
         ridership: number; alightings: number; serviceHours: number;
         tripCount: number; routeId: string; routeName: string;
     }>();
     for (const day of filteredDays) {
         for (const r of day.byRoute) {
             const ex = routeMap.get(r.routeId) || {
-                otp: [], early: [], late: [],
+                otpTotal: 0, otpOnTime: 0, otpEarly: 0, otpLate: 0,
                 ridership: 0, alightings: 0, serviceHours: 0,
                 tripCount: 0, routeId: r.routeId, routeName: r.routeName,
             };
-            ex.otp.push(r.otp.onTimePercent);
-            ex.early.push(r.otp.earlyPercent);
-            ex.late.push(r.otp.latePercent);
+            ex.otpTotal += r.otp.total;
+            ex.otpOnTime += r.otp.onTime;
+            ex.otpEarly += r.otp.early;
+            ex.otpLate += r.otp.late;
             ex.ridership += r.ridership;
             ex.alightings += r.alightings;
             ex.serviceHours += r.serviceHours;
@@ -103,11 +113,12 @@ export async function exportWeeklySummary(
             routeMap.set(r.routeId, ex);
         }
     }
-    const avg = (arr: number[]) => arr.length > 0 ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length * 10) / 10 : 0;
     const routes = Array.from(routeMap.values())
         .map(r => ({
             routeId: r.routeId, routeName: r.routeName,
-            otp: avg(r.otp), early: avg(r.early), late: avg(r.late),
+            otp: r.otpTotal > 0 ? Math.round(r.otpOnTime / r.otpTotal * 1000) / 10 : 0,
+            early: r.otpTotal > 0 ? Math.round(r.otpEarly / r.otpTotal * 1000) / 10 : 0,
+            late: r.otpTotal > 0 ? Math.round(r.otpLate / r.otpTotal * 1000) / 10 : 0,
             ridership: r.ridership, alightings: r.alightings, tripCount: r.tripCount,
             bph: r.serviceHours > 0 ? Math.round(r.ridership / r.serviceHours * 10) / 10 : 0,
         }))
@@ -193,9 +204,18 @@ export async function exportRoutePerformance(
         const sumField = (fn: (r: typeof routeDays[0]['route']) => number) =>
             routeDays.reduce((s, d) => s + fn(d.route), 0);
 
-        summary.addRow(['OTP%', avgField(r => r.otp.onTimePercent)]);
-        summary.addRow(['Early%', avgField(r => r.otp.earlyPercent)]);
-        summary.addRow(['Late%', avgField(r => r.otp.latePercent)]);
+        const mergedOtp = routeDays.reduce(
+            (acc, d) => ({
+                total: acc.total + d.route.otp.total,
+                onTime: acc.onTime + d.route.otp.onTime,
+                early: acc.early + d.route.otp.early,
+                late: acc.late + d.route.otp.late,
+            }),
+            { total: 0, onTime: 0, early: 0, late: 0 }
+        );
+        summary.addRow(['OTP%', mergedOtp.total > 0 ? Math.round(mergedOtp.onTime / mergedOtp.total * 1000) / 10 : 0]);
+        summary.addRow(['Early%', mergedOtp.total > 0 ? Math.round(mergedOtp.early / mergedOtp.total * 1000) / 10 : 0]);
+        summary.addRow(['Late%', mergedOtp.total > 0 ? Math.round(mergedOtp.late / mergedOtp.total * 1000) / 10 : 0]);
         summary.addRow(['Total Ridership', sumField(r => r.ridership)]);
         summary.addRow(['Total Alightings', sumField(r => r.alightings)]);
         summary.addRow(['Total Trips', sumField(r => r.tripCount)]);
@@ -207,15 +227,15 @@ export async function exportRoutePerformance(
 
     // Sheet 2: Stop Performance
     const stopSheet = wb.addWorksheet('Stop Performance');
-    const stopHeader = stopSheet.addRow(['Stop', 'Timepoint', 'Boardings', 'Alightings', 'Avg Load', 'Max Load']);
+    const stopHeader = stopSheet.addRow(['Date', 'Direction', 'Stop', 'Timepoint', 'Boardings', 'Alightings', 'Avg Load', 'Max Load']);
     styleHeader(stopHeader);
 
-    for (const day of filteredDays) {
+    for (const { day } of routeDays) {
         for (const lp of day.loadProfiles) {
             if (lp.routeId !== routeId) continue;
             for (const stop of lp.stops) {
                 stopSheet.addRow([
-                    stop.stopName, stop.isTimepoint ? 'Yes' : 'No',
+                    day.date, lp.direction, stop.stopName, stop.isTimepoint ? 'Yes' : 'No',
                     Math.round(stop.avgBoardings * lp.tripCount),
                     Math.round(stop.avgAlightings * lp.tripCount),
                     stop.avgLoad, stop.maxLoad,
