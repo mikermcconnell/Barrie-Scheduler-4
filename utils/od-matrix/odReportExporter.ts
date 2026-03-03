@@ -869,7 +869,7 @@ export async function exportODPdf(
     const DARK_TEXT: [number, number, number] = [31, 33, 35];     // #1f2123
     const MID_GRAY: [number, number, number] = [107, 114, 128];
     const ALT_ROW: [number, number, number] = [226, 237, 252];   // #e2edfc (ON light blue)
-    const VIOLET: [number, number, number] = [79, 70, 229];      // #4f46e5 indigo-600
+    const VIOLET: [number, number, number] = [249, 115, 22];     // #f97316 orange-500 (matches map green→red scale)
 
     // Pre-compute analysis data
     const sortedStations = [...data.stations].sort((a, b) => b.totalVolume - a.totalVolume);
@@ -1305,7 +1305,7 @@ export async function exportStopReportPdf(
     const DARK_TEXT: [number, number, number] = [31, 33, 35];
     const MID_GRAY: [number, number, number] = [107, 114, 128];
     const ALT_ROW: [number, number, number] = [226, 237, 252];
-    const VIOLET: [number, number, number] = [79, 70, 229];
+    const VIOLET: [number, number, number] = [249, 115, 22];     // #f97316 orange-500
 
     // Pre-compute stop data
     const outboundPairs = [...data.pairs]
