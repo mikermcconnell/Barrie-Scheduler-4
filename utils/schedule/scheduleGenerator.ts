@@ -1,7 +1,7 @@
 
 import { MasterRouteTable, MasterTrip } from '../parsers/masterScheduleParser';
 import { ScheduleConfig } from '../../components/NewSchedule/steps/Step3Build';
-import { TimeBand, TripBucketAnalysis, BandSummary, DirectionBandSummary } from '../ai/runtimeAnalysis';
+import { TimeBand, TripBucketAnalysis, BandSummary, DirectionBandSummary, MIN_RELIABLE_OBSERVATIONS } from '../ai/runtimeAnalysis';
 import { SegmentRawData, extractTimepointsFromSegments } from '../../components/NewSchedule/utils/csvParser';
 import { getOperationalSortTime, reassignBlocksForTables } from '../blocks/blockAssignmentCore';
 
@@ -341,12 +341,55 @@ export const generateSchedule = (
                 currentBand = getBandForTime(currentTime, currentDir);
             }
 
-            // Helper: Get segment time directly from currentBand
-            const getSegmentTimeFromBand = (fromStop: string, toStop: string): number | null => {
-                if (!currentBand) return null;
+            // Hardened segment time lookup with adjacent-band fallback
+            const getReliableSegmentTime = (fromStop: string, toStop: string): { time: number; source: string } => {
                 const segmentName = `${fromStop} to ${toStop}`;
-                const segment = currentBand.segments.find(s => s.segmentName === segmentName);
-                return segment?.avgTime ?? null;
+                const dirBands = bandSummary[currentDir];
+
+                // 1. Current band — use if reliable (n >= threshold)
+                if (currentBand) {
+                    const seg = currentBand.segments.find(s => s.segmentName === segmentName);
+                    if (seg && seg.totalN >= MIN_RELIABLE_OBSERVATIONS) {
+                        return { time: seg.avgTime, source: 'band' };
+                    }
+                }
+
+                // 2. Adjacent band fallback — walk outward from current band
+                if (dirBands && currentBand) {
+                    const bandOrder = ['A', 'B', 'C', 'D', 'E'];
+                    const currentIdx = bandOrder.indexOf(currentBand.bandId);
+
+                    for (let offset = 1; offset < bandOrder.length; offset++) {
+                        for (const step of [1, -1]) {
+                            const idx = currentIdx + (offset * step);
+                            if (idx < 0 || idx >= bandOrder.length) continue;
+                            const adjacentBand = dirBands.find(b => b.bandId === bandOrder[idx]);
+                            if (!adjacentBand) continue;
+                            const seg = adjacentBand.segments.find(s => s.segmentName === segmentName);
+                            if (seg && seg.totalN >= MIN_RELIABLE_OBSERVATIONS) {
+                                return { time: seg.avgTime, source: `adjacent-${adjacentBand.bandId}` };
+                            }
+                        }
+                    }
+
+                    // 3. All-band weighted average
+                    let totalSum = 0;
+                    let totalCount = 0;
+                    dirBands.forEach(b => {
+                        const seg = b.segments.find(s => s.segmentName === segmentName);
+                        if (seg && seg.avgTime > 0) {
+                            totalSum += seg.avgTime * b.timeSlots.length;
+                            totalCount += b.timeSlots.length;
+                        }
+                    });
+                    if (totalCount > 0) {
+                        return { time: totalSum / totalCount, source: 'all-band-avg' };
+                    }
+                }
+
+                // 4. Raw time bucket fallback
+                const rawTime = getRawSegmentRuntime(dirSegments, fromStop, toStop, currentTime);
+                return { time: rawTime, source: rawTime === 5 ? 'default-5min' : 'raw-bucket' };
             };
 
             // Mid-route start: active segment index (0 = full trip)
@@ -361,12 +404,9 @@ export const generateSchedule = (
                 const fromStop = dirTimepoints[i];
                 const toStop = dirTimepoints[i + 1];
 
-                // Get segment time directly from the current band (NOT by time lookup)
-                let segTime = getSegmentTimeFromBand(fromStop, toStop);
-
-                if (segTime === null) {
-                    // Fallback: use raw segment data
-                    segTime = getRawSegmentRuntime(dirSegments, fromStop, toStop, currentTime);
+                const reliable = getReliableSegmentTime(fromStop, toStop);
+                let segTime: number | null = reliable.time;
+                if (reliable.source !== 'band') {
                     usedBandData = false;
                 }
 
