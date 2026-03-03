@@ -9,7 +9,7 @@ describe('runtimeAnalysis.calculateTotalTripTimes', () => {
                 {
                     segmentName: 'N1 to N2',
                     timeBuckets: {
-                        '06:00': { p50: 10, p80: 12 },
+                        '06:00': { p50: 10, p80: 12, n: 10 },
                     },
                 },
             ],
@@ -23,7 +23,7 @@ describe('runtimeAnalysis.calculateTotalTripTimes', () => {
                 {
                     segmentName: 'S1 to S2',
                     timeBuckets: {
-                        '06:30': { p50: 20, p80: 22 },
+                        '06:30': { p50: 20, p80: 22, n: 10 },
                     },
                 },
             ],
@@ -44,13 +44,13 @@ describe('runtimeAnalysis.calculateTotalTripTimes', () => {
                 {
                     segmentName: 'A to B',
                     timeBuckets: {
-                        '07:00': { p50: 10.4, p80: 12.6 },
+                        '07:00': { p50: 10.4, p80: 12.6, n: 10 },
                     },
                 },
                 {
                     segmentName: 'B to C',
                     timeBuckets: {
-                        '07:00': { p50: 4.6, p80: 5.4 },
+                        '07:00': { p50: 4.6, p80: 5.4, n: 10 },
                     },
                 },
             ],

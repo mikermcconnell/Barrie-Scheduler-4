@@ -109,6 +109,10 @@ export interface OperatorDwellSummary {
   totalIncidents: number;
   totalTrackedDwellSeconds: number;
   avgTrackedDwellSeconds: number;
+  stopVisitCount?: number;
+  serviceHours?: number;
+  incidentsPer1kVisits?: number;
+  incidentsPer100ServiceHours?: number;
 }
 
 export interface OperatorDwellMetrics {
@@ -116,6 +120,10 @@ export interface OperatorDwellMetrics {
   byOperator: OperatorDwellSummary[];
   totalIncidents: number;
   totalTrackedDwellMinutes: number;
+  totalStopVisits?: number;
+  totalServiceHours?: number;
+  incidentsPer1kVisits?: number;
+  incidentsPer100ServiceHours?: number;
 }
 
 // ─── Dwell Cascade Types ──────────────────────────────────────────────

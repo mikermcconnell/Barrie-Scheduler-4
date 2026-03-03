@@ -27,7 +27,7 @@ describe('scheduleGenerator floating mode defaults', () => {
                 assignedBand: 'A',
                 isOutlier: false,
                 ignored: false,
-                details: [{ segmentName: 'Start to End', p50: 20, p80: 25 }]
+                details: [{ segmentName: 'Start to End', p50: 20, p80: 25, n: 10 }]
             }
         ];
 
@@ -41,7 +41,7 @@ describe('scheduleGenerator floating mode defaults', () => {
                     bandId: 'A',
                     color: '#ef4444',
                     avgTotal: 20,
-                    segments: [{ segmentName: 'Start to End', avgTime: 20 }],
+                    segments: [{ segmentName: 'Start to End', avgTime: 20, totalN: 100 }],
                     timeSlots: ['06:00']
                 }
             ]
@@ -52,7 +52,7 @@ describe('scheduleGenerator floating mode defaults', () => {
                 {
                     segmentName: 'Start to End',
                     timeBuckets: {
-                        '06:00 - 06:29': { p50: 20, p80: 25 }
+                        '06:00 - 06:29': { p50: 20, p80: 25, n: 10 }
                     }
                 }
             ]
@@ -87,7 +87,7 @@ describe('scheduleGenerator floating mode defaults', () => {
                 assignedBand: 'A',
                 isOutlier: false,
                 ignored: false,
-                details: [{ segmentName: 'Start to End', p50: 20, p80: 25 }]
+                details: [{ segmentName: 'Start to End', p50: 20, p80: 25, n: 10 }]
             }
         ];
 
@@ -101,7 +101,7 @@ describe('scheduleGenerator floating mode defaults', () => {
                     bandId: 'A',
                     color: '#ef4444',
                     avgTotal: 20,
-                    segments: [{ segmentName: 'Start to End', avgTime: 20 }],
+                    segments: [{ segmentName: 'Start to End', avgTime: 20, totalN: 100 }],
                     timeSlots: ['23:30']
                 }
             ]
@@ -112,7 +112,7 @@ describe('scheduleGenerator floating mode defaults', () => {
                 {
                     segmentName: 'Start to End',
                     timeBuckets: {
-                        '23:30 - 23:59': { p50: 20, p80: 25 }
+                        '23:30 - 23:59': { p50: 20, p80: 25, n: 10 }
                     }
                 }
             ]

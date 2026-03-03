@@ -209,30 +209,46 @@ export const OnDemandWorkspace: React.FC = () => {
 
     const handleStartOptimization = async (instruction: string) => {
         setShowFocusPrompt(false);
-        setFocusInstruction(instruction); // Save for reference
+        setFocusInstruction(instruction);
 
+        const controller = new AbortController();
+        abortControllerRef.current = controller;
         setOptimizationMode('refine');
         setIsAnimating(true);
+        setOptimizationPhase('Connecting...');
 
         try {
-            // Call Gemini API - Refine Mode
-            const result = await optimizeScheduleWithGemini(requirements, 'refine', shifts, instruction);
+            setOptimizationPhase('Optimizing...');
+            const result = await optimizeScheduleWithGemini(requirements, 'refine', shifts, instruction, controller.signal);
+
+            if (controller.signal.aborted) return;
+
+            setOptimizationPhase('Processing results...');
+
+            if (result.warning) {
+                toast.warning('Used fallback scheduler', result.warning);
+            }
 
             if (result.shifts.length > 0) {
-                // Open Review Modal instead of applying directly
                 setReviewModalData({
                     current: shifts,
                     optimized: result.shifts
                 });
+
+                if (result.source === 'ai') {
+                    toast.success('Refinement complete', `AI optimization completed in ${Math.round(result.durationMs / 1000)}s`);
+                }
             } else {
-                alert("No refinements found.");
+                toast.error('No refinements found', 'The optimizer returned no changes');
             }
         } catch (e) {
             console.error("Refinement error", e);
-            alert("Refinement failed.");
+            toast.error('Refinement failed', e instanceof Error ? e.message : 'Unknown error');
         } finally {
             setIsAnimating(false);
             setOptimizationMode(null);
+            setOptimizationPhase('');
+            abortControllerRef.current = null;
         }
     };
 
@@ -883,11 +899,21 @@ export const OnDemandWorkspace: React.FC = () => {
                                 <div className="flex items-center justify-between text-xs font-semibold text-gray-600">
                                     <div className="flex items-center gap-1.5">
                                         <Loader2 size={12} className="animate-spin" />
-                                        <span>{optimizationMode === 'full' ? 'Generating schedule...' : 'Refining schedule...'}</span>
+                                        <span>{optimizationPhase || (optimizationMode === 'full' ? 'Generating schedule...' : 'Refining schedule...')}</span>
                                     </div>
-                                    <span className="tabular-nums text-gray-400">
-                                        {Math.floor(elapsedSeconds / 60)}:{String(elapsedSeconds % 60).padStart(2, '0')}
-                                    </span>
+                                    <div className="flex items-center gap-3">
+                                        <span className="tabular-nums text-gray-400">
+                                            {Math.floor(elapsedSeconds / 60)}:{String(elapsedSeconds % 60).padStart(2, '0')}
+                                        </span>
+                                        <button
+                                            onClick={handleCancelOptimization}
+                                            className="flex items-center gap-1 text-red-500 hover:text-red-700 font-bold transition-colors"
+                                            title="Cancel optimization"
+                                        >
+                                            <X size={12} />
+                                            <span>Cancel</span>
+                                        </button>
+                                    </div>
                                 </div>
                                 <div className="h-2 w-full rounded-full bg-gray-200 overflow-hidden relative">
                                     <div

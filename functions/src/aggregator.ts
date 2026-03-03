@@ -586,11 +586,65 @@ function buildOperatorDwellMetrics(records: STREETSRecord[], date: string): Oper
 
   const totalTrackedSeconds = incidents.reduce((s, i) => s + i.trackedDwellSeconds, 0);
 
+  // ─── Normalization: stop visits + service hours per operator ───
+  const opVisits = new Map<string, number>();
+  const opTripTimes = new Map<string, { min: number; max: number }>();
+  for (const r of records) {
+    if (r.inBetween || r.isTripper || r.isDetour) continue;
+    const opId = r.operatorId;
+    opVisits.set(opId, (opVisits.get(opId) ?? 0) + 1);
+
+    if (r.observedArrivalTime || r.observedDepartureTime) {
+      const obsSec = timeToSeconds(r.observedDepartureTime ?? r.observedArrivalTime!);
+      const tripKey = `${opId}||${r.tripId}`;
+      const entry = opTripTimes.get(tripKey);
+      if (entry) {
+        if (obsSec < entry.min) entry.min = obsSec;
+        if (obsSec > entry.max) entry.max = obsSec;
+      } else {
+        opTripTimes.set(tripKey, { min: obsSec, max: obsSec });
+      }
+    }
+  }
+
+  const opServiceSec = new Map<string, number>();
+  for (const [tripKey, range] of opTripTimes) {
+    const opId = tripKey.split('||')[0];
+    opServiceSec.set(opId, (opServiceSec.get(opId) ?? 0) + (range.max - range.min));
+  }
+
+  for (const op of byOperator) {
+    op.stopVisitCount = opVisits.get(op.operatorId) ?? 0;
+    const svcSec = opServiceSec.get(op.operatorId) ?? 0;
+    op.serviceHours = Math.round(svcSec / 3600 * 100) / 100;
+    op.incidentsPer1kVisits = op.stopVisitCount > 0
+      ? Math.round(op.totalIncidents / op.stopVisitCount * 1000 * 100) / 100
+      : undefined;
+    op.incidentsPer100ServiceHours = op.serviceHours > 0
+      ? Math.round(op.totalIncidents / op.serviceHours * 100 * 100) / 100
+      : undefined;
+  }
+
+  let totalStopVisits = 0;
+  for (const v of opVisits.values()) totalStopVisits += v;
+  let totalServiceSec = 0;
+  for (const v of opServiceSec.values()) totalServiceSec += v;
+
+  const totalServiceHours = Math.round(totalServiceSec / 3600 * 100) / 100;
+
   return {
     incidents,
     byOperator,
     totalIncidents: incidents.length,
     totalTrackedDwellMinutes: Math.round(totalTrackedSeconds / 60 * 10) / 10,
+    totalStopVisits,
+    totalServiceHours,
+    incidentsPer1kVisits: totalStopVisits > 0
+      ? Math.round(incidents.length / totalStopVisits * 1000 * 100) / 100
+      : undefined,
+    incidentsPer100ServiceHours: totalServiceHours > 0
+      ? Math.round(incidents.length / totalServiceHours * 100 * 100) / 100
+      : undefined,
   };
 }
 

@@ -322,10 +322,10 @@ export const OperatorDwellModule: React.FC<OperatorDwellModuleProps> = ({ data }
                 />
                 <MetricCard
                     icon={<Users size={18} />}
-                    label="Operators w/ Incidents"
-                    value={fmt(metrics.byOperator.length)}
+                    label="per 100 Svc Hours"
+                    value={metrics.incidentsPer100ServiceHours?.toFixed(1) ?? '—'}
                     color="indigo"
-                    subValue={`${avgPerOperator} avg each`}
+                    subValue={`${metrics.byOperator.length} operators · ${avgPerOperator} avg each`}
                 />
             </div>
 
@@ -374,7 +374,8 @@ export const OperatorDwellModule: React.FC<OperatorDwellModuleProps> = ({ data }
                                         <th className="pb-2 pr-3 font-medium text-right">High</th>
                                         <th className="pb-2 pr-3 font-medium text-right">Total</th>
                                         <th className="pb-2 pr-3 font-medium text-right">Total (hr)</th>
-                                        <th className="pb-2 font-medium text-right">Avg (min)</th>
+                                        <th className="pb-2 pr-3 font-medium text-right">Avg (min)</th>
+                                        <th className="pb-2 font-medium text-right" title="Incidents per 100 service hours">/100h</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -393,7 +394,8 @@ export const OperatorDwellModule: React.FC<OperatorDwellModuleProps> = ({ data }
                                                 <td className="py-2 pr-3 text-right text-red-600">{op.highCount}</td>
                                                 <td className="py-2 pr-3 text-right font-medium">{op.totalIncidents}</td>
                                                 <td className="py-2 pr-3 text-right font-medium text-cyan-700">{(op.totalTrackedDwellSeconds / 3600).toFixed(2)}</td>
-                                                <td className="py-2 text-right">{(op.avgTrackedDwellSeconds / 60).toFixed(1)}</td>
+                                                <td className="py-2 pr-3 text-right">{(op.avgTrackedDwellSeconds / 60).toFixed(1)}</td>
+                                                <td className="py-2 text-right tabular-nums text-indigo-600">{op.incidentsPer100ServiceHours?.toFixed(1) ?? '—'}</td>
                                             </tr>
                                         );
                                     })}

@@ -339,6 +339,7 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
         odPairsRef?: ODPairData;
         locationBoundsRef: TransitAppMapProps['locationDensity']['bounds'];
     } | null>(null);
+    const prevMapViewRef = useRef<{ center: L.LatLng; zoom: number } | null>(null);
 
     const hasODData = Boolean(odPairs && odPairs.pairs.length > 0);
     const resolvedDefaultLayer: MapLayer =
@@ -359,6 +360,7 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
     const [minCount, setMinCount] = useState(1);
     const [distanceBand, setDistanceBand] = useState<DistanceBand>('all');
     const [isolatedZone, setIsolatedZone] = useState<string | null>(null);
+    const [zonePanelTopN, setZonePanelTopN] = useState<10 | 20>(10);
     const [timePeriod, setTimePeriod] = useState<TimePeriod>('all');
     const [mergeBidirectional, setMergeBidirectional] = useState(false);
     const [dayFilter, setDayFilter] = useState<DayFilter>('all');
@@ -521,6 +523,146 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
         onDisplayedODPairsChange?.(displayedPairs);
     }, [displayedPairs, onDisplayedODPairsChange]);
 
+    // Auto-zoom to zone extents when zone is selected
+    useEffect(() => {
+        const map = mapRef.current;
+        if (!map) return;
+
+        if (isolatedZone) {
+            if (!prevMapViewRef.current) {
+                prevMapViewRef.current = { center: map.getCenter(), zoom: map.getZoom() };
+            }
+            if (displayedPairs.length > 0) {
+                const points: L.LatLngExpression[] = [];
+                for (const pair of displayedPairs) {
+                    points.push([pair.originLat, pair.originLon]);
+                    points.push([pair.destLat, pair.destLon]);
+                }
+                const bounds = L.latLngBounds(points);
+                map.fitBounds(bounds, { paddingTopLeft: [50, 50], paddingBottomRight: [340, 50], maxZoom: 15 });
+            }
+        } else {
+            if (prevMapViewRef.current) {
+                map.setView(prevMapViewRef.current.center, prevMapViewRef.current.zoom, { animate: true });
+                prevMapViewRef.current = null;
+            }
+        }
+    }, [isolatedZone, displayedPairs]);
+
+    // Invalidate map size when zone panel opens/closes (flex layout changes)
+    useEffect(() => {
+        setTimeout(() => mapRef.current?.invalidateSize(), 100);
+    }, [isolatedZone]);
+
+    const zoneNameCache = useMemo(() => {
+        const cache = new Map<string, string>();
+        if (!displayedPairs.length) return cache;
+        for (const pair of displayedPairs) {
+            for (const [lat, lon] of [
+                [pair.originLat, pair.originLon],
+                [pair.destLat, pair.destLon],
+            ]) {
+                const key = `${lat.toFixed(4)}_${lon.toFixed(4)}`;
+                if (cache.has(key)) continue;
+                const name = findNearestStopName(lat, lon, 0.5);
+                cache.set(key, name ?? describeLocationRelativeToBarrie(lat, lon));
+            }
+        }
+        return cache;
+    }, [displayedPairs]);
+
+    const getZoneName = useCallback((lat: number, lon: number): string => {
+        const key = `${lat.toFixed(4)}_${lon.toFixed(4)}`;
+        return zoneNameCache.get(key) ?? describeLocationRelativeToBarrie(lat, lon);
+    }, [zoneNameCache]);
+
+    // Zone detail panel data
+    const zonePanelData = useMemo(() => {
+        if (!isolatedZone || displayedPairs.length === 0) return null;
+
+        const [latStr, lonStr] = isolatedZone.split('_');
+        const zoneLat = parseFloat(latStr);
+        const zoneLon = parseFloat(lonStr);
+        const zoneName = getZoneName(zoneLat, zoneLon);
+
+        let totalTrips = 0;
+        const connectionSet = new Set<string>();
+        let totalDistKm = 0;
+        const hourlyTotals = new Array(24).fill(0);
+        let hasHourly = false;
+
+        interface FlowEntry {
+            name: string;
+            lat: number;
+            lon: number;
+            outbound: number;
+            inbound: number;
+            total: number;
+            distKm: number;
+        }
+        const flowMap = new Map<string, FlowEntry>();
+
+        for (const pair of displayedPairs) {
+            const oKey = coordKey(pair.originLat, pair.originLon);
+            const dKey = coordKey(pair.destLat, pair.destLon);
+            const isOrigin = oKey === isolatedZone;
+            const otherKey = isOrigin ? dKey : oKey;
+            const otherLat = isOrigin ? pair.destLat : pair.originLat;
+            const otherLon = isOrigin ? pair.destLon : pair.originLon;
+
+            totalTrips += pair.count;
+            connectionSet.add(otherKey);
+
+            const distKm = haversineKm(pair.originLat, pair.originLon, pair.destLat, pair.destLon);
+            totalDistKm += distKm * pair.count;
+
+            if (pair.hourlyBins) {
+                hasHourly = true;
+                for (let h = 0; h < 24; h++) hourlyTotals[h] += pair.hourlyBins[h];
+            }
+
+            const existing = flowMap.get(otherKey);
+            if (existing) {
+                if (isOrigin) existing.outbound += pair.count;
+                else existing.inbound += pair.count;
+                existing.total += pair.count;
+            } else {
+                flowMap.set(otherKey, {
+                    name: getZoneName(otherLat, otherLon),
+                    lat: otherLat,
+                    lon: otherLon,
+                    outbound: isOrigin ? pair.count : 0,
+                    inbound: isOrigin ? 0 : pair.count,
+                    total: pair.count,
+                    distKm,
+                });
+            }
+        }
+
+        const flows = Array.from(flowMap.values()).sort((a, b) => b.total - a.total);
+        const avgDistKm = totalTrips > 0 ? totalDistKm / totalTrips : 0;
+
+        let peakPeriod: string | null = null;
+        if (hasHourly) {
+            const maxHour = hourlyTotals.indexOf(Math.max(...hourlyTotals));
+            if (maxHour >= 6 && maxHour < 9) peakPeriod = 'AM Peak';
+            else if (maxHour >= 9 && maxHour < 15) peakPeriod = 'Midday';
+            else if (maxHour >= 15 && maxHour < 19) peakPeriod = 'PM Peak';
+            else peakPeriod = 'Evening';
+        }
+
+        return {
+            zoneName,
+            zoneLat,
+            zoneLon,
+            totalTrips,
+            uniqueConnections: connectionSet.size,
+            avgDistKm,
+            peakPeriod,
+            flows,
+        };
+    }, [isolatedZone, displayedPairs, getZoneName]);
+
     useEffect(() => {
         setMatrixPage(1);
     }, [matrixSearch, filteredPairs, allZonesMode]);
@@ -555,27 +697,7 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
     }, [odPairs]);
 
     // Zone name cache: map coordinate key → nearest GTFS stop name
-    const zoneNameCache = useMemo(() => {
-        const cache = new Map<string, string>();
-        if (!displayedPairs.length) return cache;
-        for (const pair of displayedPairs) {
-            for (const [lat, lon] of [
-                [pair.originLat, pair.originLon],
-                [pair.destLat, pair.destLon],
-            ]) {
-                const key = `${lat.toFixed(4)}_${lon.toFixed(4)}`;
-                if (cache.has(key)) continue;
-                const name = findNearestStopName(lat, lon, 0.5);
-                cache.set(key, name ?? describeLocationRelativeToBarrie(lat, lon));
-            }
-        }
-        return cache;
-    }, [displayedPairs]);
-
-    const getZoneName = useCallback((lat: number, lon: number): string => {
-        const key = `${lat.toFixed(4)}_${lon.toFixed(4)}`;
-        return zoneNameCache.get(key) ?? describeLocationRelativeToBarrie(lat, lon);
-    }, [zoneNameCache]);
+    // (moved above zonePanelData useMemo)
 
     // Initialize map
     useEffect(() => {
@@ -712,7 +834,9 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
 
         const maxZoneTrips = Math.max(...Array.from(zoneMap.values()).map(z => z.trips), 1);
         for (const [zoneKey, zone] of zoneMap) {
-            const fillColor = zone.isOrigin && zone.isDest ? '#8b5cf6'
+            const isSelected = zoneKey === isolatedZone;
+            const fillColor = isSelected ? '#3b82f6'
+                : zone.isOrigin && zone.isDest ? '#8b5cf6'
                 : zone.isOrigin ? '#10b981'
                 : '#ef4444';
             const zoneName = getZoneName(zone.lat, zone.lon);
@@ -723,23 +847,23 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
                 [[zone.lat - half, zone.lon - half], [zone.lat + half, zone.lon + half]],
                 {
                     fillColor,
-                    fillOpacity: isOverview ? 0.14 + t * 0.12 : 0.25,
-                    color: fillColor,
-                    weight: isOverview ? 0.8 : 1,
-                    opacity: isOverview ? 0.35 : 0.5,
+                    fillOpacity: isSelected ? 0.3 : (isOverview ? 0.14 + t * 0.12 : 0.25),
+                    color: isSelected ? '#1d4ed8' : fillColor,
+                    weight: isSelected ? 2.5 : (isOverview ? 0.8 : 1),
+                    opacity: isSelected ? 0.9 : (isOverview ? 0.35 : 0.5),
                 }
             )
                 .bindTooltip(`${zoneName} — ${zone.trips.toLocaleString()} trips`, { direction: 'top' })
                 .addTo(group);
 
-            const baseRadius = isOverview ? 4 + t * 7 : 8;
+            const baseRadius = isSelected ? 11 : (isOverview ? 4 + t * 7 : 8);
             const zoneDot = L.circleMarker([zone.lat, zone.lon], {
                 radius: baseRadius,
                 fillColor,
-                fillOpacity: isOverview ? 0.55 : 0.4,
+                fillOpacity: isSelected ? 0.7 : (isOverview ? 0.55 : 0.4),
                 color: '#ffffff',
-                weight: 1.5,
-                opacity: 0.7,
+                weight: isSelected ? 3 : 1.5,
+                opacity: isSelected ? 1 : 0.7,
             }).addTo(group);
 
             zoneDot.on('mouseover', function (this: L.CircleMarker) {
@@ -908,7 +1032,7 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
         }
 
         return group;
-    }, [displayedPairs, odPairs, getZoneName, allZonesMode, allZonesRenderMode]);
+    }, [displayedPairs, odPairs, getZoneName, allZonesMode, allZonesRenderMode, isolatedZone]);
 
     // Feature 10: GTFS route overlay layer
     const buildRouteLayer = useCallback(() => {
@@ -1612,20 +1736,157 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
                         return (
                             <>
                                 <span className="text-gray-300"> · </span>
-                                <span className="text-gray-600">Flows through {spiderName}</span>
-                                <button onClick={() => setIsolatedZone(null)} className="ml-1 text-gray-400 hover:text-gray-600">×</button>
+                                <span className="inline-flex items-center gap-1 bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full text-[11px] font-medium">
+                                    {spiderName}
+                                    <button onClick={() => setIsolatedZone(null)} className="text-blue-400 hover:text-blue-600 ml-0.5">×</button>
+                                </span>
                             </>
                         );
                     })()}
                 </div>
             )}
 
-            {/* Map container */}
-            <div
-                ref={containerRef}
-                style={{ height: isFullscreen ? 'calc(100vh - 200px)' : height, width: '100%' }}
-                className={`rounded-lg overflow-hidden border border-gray-200 ${showMatrixPlanner ? 'hidden' : ''}`}
-            />
+            {/* Map + Zone Panel row */}
+            <div className={`flex gap-0 ${showMatrixPlanner ? 'hidden' : ''}`}
+                 style={{ height: isFullscreen ? 'calc(100vh - 200px)' : height }}>
+                {/* Map container */}
+                <div
+                    ref={containerRef}
+                    className={`flex-1 overflow-hidden border border-gray-200 ${
+                        isolatedZone && zonePanelData && activeLayer === 'od' ? 'rounded-l-lg' : 'rounded-lg'
+                    }`}
+                    style={{ minHeight: 0 }}
+                />
+
+                {/* Zone Detail Panel */}
+                {isolatedZone && zonePanelData && activeLayer === 'od' && (
+                    <div className="w-80 shrink-0 border border-l-0 border-gray-200 rounded-r-lg bg-white overflow-y-auto">
+                        {/* Header */}
+                        <div className="sticky top-0 z-10 bg-white border-b border-gray-100 px-4 py-3 flex items-start justify-between">
+                            <div className="min-w-0">
+                                <div className="text-[10px] text-gray-400 uppercase tracking-wider font-medium">Selected Zone</div>
+                                <div className="text-sm font-semibold text-gray-900 truncate">{zonePanelData.zoneName}</div>
+                            </div>
+                            <button
+                                onClick={() => setIsolatedZone(null)}
+                                className="shrink-0 ml-2 w-6 h-6 flex items-center justify-center rounded-full hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
+                                title="Close zone panel"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                                    <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+                                </svg>
+                            </button>
+                        </div>
+
+                        {/* Summary Stats */}
+                        <div className="grid grid-cols-2 gap-2 px-4 py-3 border-b border-gray-100">
+                            <div className="bg-gray-50 rounded-lg px-3 py-2">
+                                <div className="text-[10px] text-gray-400 uppercase tracking-wider">Trips</div>
+                                <div className="text-lg font-bold text-gray-900 tabular-nums">{zonePanelData.totalTrips.toLocaleString()}</div>
+                            </div>
+                            <div className="bg-gray-50 rounded-lg px-3 py-2">
+                                <div className="text-[10px] text-gray-400 uppercase tracking-wider">Connections</div>
+                                <div className="text-lg font-bold text-gray-900 tabular-nums">{zonePanelData.uniqueConnections}</div>
+                            </div>
+                            <div className="bg-gray-50 rounded-lg px-3 py-2">
+                                <div className="text-[10px] text-gray-400 uppercase tracking-wider">Avg Distance</div>
+                                <div className="text-lg font-bold text-gray-900 tabular-nums">{zonePanelData.avgDistKm.toFixed(1)} <span className="text-xs font-normal text-gray-500">km</span></div>
+                            </div>
+                            <div className="bg-gray-50 rounded-lg px-3 py-2">
+                                <div className="text-[10px] text-gray-400 uppercase tracking-wider">Peak Period</div>
+                                <div className="text-lg font-bold text-gray-900">{zonePanelData.peakPeriod ?? '—'}</div>
+                            </div>
+                        </div>
+
+                        {/* Top Flows Header */}
+                        <div className="px-4 py-2 flex items-center justify-between border-b border-gray-100">
+                            <span className="text-[10px] text-gray-400 uppercase tracking-wider font-medium">Top Flows</span>
+                            <div className="flex rounded border border-gray-200 overflow-hidden">
+                                <button
+                                    onClick={() => setZonePanelTopN(10)}
+                                    className={`px-2 py-0.5 text-[10px] font-medium transition-colors ${
+                                        zonePanelTopN === 10 ? 'bg-gray-900 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'
+                                    }`}
+                                >
+                                    10
+                                </button>
+                                <button
+                                    onClick={() => setZonePanelTopN(20)}
+                                    className={`px-2 py-0.5 text-[10px] font-medium transition-colors ${
+                                        zonePanelTopN === 20 ? 'bg-gray-900 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'
+                                    }`}
+                                >
+                                    20
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Top Flows List */}
+                        <div className="divide-y divide-gray-50">
+                            {zonePanelData.flows.slice(0, zonePanelTopN).map((flow, i) => {
+                                const pct = zonePanelData.totalTrips > 0
+                                    ? ((flow.total / zonePanelData.totalTrips) * 100).toFixed(1)
+                                    : '0';
+                                return (
+                                    <div
+                                        key={`${flow.lat}_${flow.lon}`}
+                                        className="px-4 py-2 flex items-center gap-2 hover:bg-gray-50 cursor-pointer transition-colors"
+                                        onMouseEnter={() => {
+                                            const matchPair = displayedPairs.find(p => {
+                                                const oKey = coordKey(p.originLat, p.originLon);
+                                                const dKey = coordKey(p.destLat, p.destLon);
+                                                const otherKey = coordKey(flow.lat, flow.lon);
+                                                return oKey === otherKey || dKey === otherKey;
+                                            });
+                                            if (matchPair) highlightArc(matchPair);
+                                        }}
+                                        onMouseLeave={unhighlightArcs}
+                                        onClick={() => {
+                                            const map = mapRef.current;
+                                            if (map) {
+                                                map.fitBounds(
+                                                    [[zonePanelData.zoneLat, zonePanelData.zoneLon], [flow.lat, flow.lon]],
+                                                    { paddingTopLeft: [50, 50], paddingBottomRight: [340, 50], maxZoom: 15 }
+                                                );
+                                            }
+                                        }}
+                                    >
+                                        <span
+                                            className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white shrink-0"
+                                            style={{ backgroundColor: rankColor(i) }}
+                                        >
+                                            {i + 1}
+                                        </span>
+                                        <div className="min-w-0 flex-1">
+                                            <div className="text-xs font-medium text-gray-800 truncate">{flow.name}</div>
+                                            <div className="text-[10px] text-gray-400">
+                                                {flow.outbound > 0 && <span>{flow.outbound.toLocaleString()} out</span>}
+                                                {flow.outbound > 0 && flow.inbound > 0 && <span> · </span>}
+                                                {flow.inbound > 0 && <span>{flow.inbound.toLocaleString()} in</span>}
+                                                <span className="ml-1">· {flow.distKm.toFixed(1)} km</span>
+                                            </div>
+                                        </div>
+                                        <div className="text-right shrink-0">
+                                            <div className="text-xs font-semibold text-gray-900 tabular-nums">{flow.total.toLocaleString()}</div>
+                                            <div className="text-[10px] text-gray-400 tabular-nums">{pct}%</div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+
+                            {zonePanelData.flows.length === 0 && (
+                                <div className="px-4 py-6 text-center text-xs text-gray-400">No flows for this zone</div>
+                            )}
+
+                            {zonePanelData.flows.length > zonePanelTopN && (
+                                <div className="px-4 py-2 text-center text-[10px] text-gray-400">
+                                    +{zonePanelData.flows.length - zonePanelTopN} more flows
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                )}
+            </div>
 
             {!showMatrixPlanner ? (
                 <>

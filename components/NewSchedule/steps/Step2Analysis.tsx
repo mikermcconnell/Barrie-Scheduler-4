@@ -256,16 +256,19 @@ export const Step2Analysis: React.FC<Step2Props> = ({ dayType, analysis, bands, 
                 const avgSegments = segmentNamesArr.map(segName => {
                     let sum = 0;
                     let count = 0;
+                    let totalN = 0;
                     bucketsInBand.forEach(bucket => {
                         const detail = bucket.details?.find(d => d.segmentName === segName);
                         if (detail) {
                             sum += detail.p50;
                             count++;
+                            totalN += detail.n;
                         }
                     });
                     return {
                         segmentName: segName,
-                        avgTime: count > 0 ? sum / count : 0
+                        avgTime: count > 0 ? sum / count : 0,
+                        totalN,
                     };
                 }).filter(s => s.avgTime > 0); // Only keep segments with data
 

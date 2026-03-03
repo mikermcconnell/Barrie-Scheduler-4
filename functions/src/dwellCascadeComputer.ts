@@ -130,17 +130,24 @@ function buildBlockTripSequences(records: STREETSRecord[]): Map<string, BlockTri
 }
 
 /**
- * Compute scheduled recovery time between two consecutive trips in a block.
- * Recovery = next trip's scheduled terminal departure - current trip's scheduled last stop arrival.
+ * Compute recovery time between two consecutive trips in a block.
+ * Returns both scheduled (based on timetable) and observed (based on AVL) recovery.
  */
-function computeRecoveryTime(currentTrip: BlockTrip, nextTrip: BlockTrip): number {
+function computeRecoveryTime(currentTrip: BlockTrip, nextTrip: BlockTrip): { scheduled: number; observed: number } {
   const lastRec = currentTrip.records[currentTrip.records.length - 1];
-  const currentEndSec = timeToSeconds(lastRec.arrivalTime);
+  const scheduledEndSec = timeToSeconds(lastRec.arrivalTime);
   const nextStartSec = nextTrip.scheduledTerminalDepartureSec;
 
-  let gap = nextStartSec - currentEndSec;
-  if (gap < 0) gap += 86400; // overnight wrap
-  return gap;
+  let scheduledGap = nextStartSec - scheduledEndSec;
+  if (scheduledGap < 0) scheduledGap += 86400;
+
+  const observedEndSec = lastRec.observedDepartureTime
+    ? timeToSeconds(lastRec.observedDepartureTime)
+    : scheduledEndSec;
+  let observedGap = nextStartSec - observedEndSec;
+  if (observedGap < 0) observedGap += 86400;
+
+  return { scheduled: scheduledGap, observed: observedGap };
 }
 
 // ─── Cascade Tracing (Pure AVL Forward Walk) ─────────────────────────
@@ -155,16 +162,16 @@ function traceCascade(
   let recoveredAtTrip: string | null = null;
   let recoveredAtStop: string | null = null;
   // Recovery between the incident trip and the first subsequent trip
-  const firstRecovery = subsequentTrips.length > 0
+  const topRecovery = subsequentTrips.length > 0
     ? computeRecoveryTime(incidentTrip, subsequentTrips[0])
-    : 0;
+    : { scheduled: 0, observed: 0 };
 
   for (let i = 0; i < subsequentTrips.length; i++) {
     if (chainBroken) break;
 
     const nextTrip = subsequentTrips[i];
     const prevTrip = i === 0 ? incidentTrip : subsequentTrips[i - 1];
-    const recovery = computeRecoveryTime(prevTrip, nextTrip);
+    const recoveryResult = computeRecoveryTime(prevTrip, nextTrip);
 
     // Walk every timepoint in this trip
     const maxStopIdx = Math.max(...nextTrip.records.map(r => r.routeStopIndex));
@@ -238,7 +245,8 @@ function traceCascade(
       routeId: nextTrip.routeId,
       routeName: nextTrip.routeName,
       terminalDepartureTime: nextTrip.records[0].terminalDepartureTime,
-      scheduledRecoverySeconds: recovery,
+      scheduledRecoverySeconds: recoveryResult.scheduled,
+      observedRecoverySeconds: recoveryResult.observed,
       timepoints,
       lateTimepointCount: lateCount,
       recoveredAtStop: tripRecoveredAtStop,
@@ -293,7 +301,8 @@ function traceCascade(
     recoveredAtTrip,
     recoveredAtStop,
     totalLateSeconds,
-    recoveryTimeAvailableSeconds: firstRecovery,
+    recoveryTimeAvailableSeconds: topRecovery.scheduled,
+    observedRecoverySeconds: topRecovery.observed,
   };
 }
 
@@ -335,7 +344,7 @@ function buildByStop(cascades: DwellCascade[]): CascadeStopImpact[] {
 }
 
 function buildByTerminal(cascades: DwellCascade[], blockTrips: Map<string, BlockTrip[]>): TerminalRecoveryStats[] {
-  const terminalMap = new Map<string, { cascades: DwellCascade[]; recoveryTimes: number[] }>();
+  const terminalMap = new Map<string, { cascades: DwellCascade[]; scheduledRecoveries: number[]; observedRecoveries: number[] }>();
 
   for (const c of cascades) {
     const trips = blockTrips.get(c.block);
@@ -349,16 +358,18 @@ function buildByTerminal(cascades: DwellCascade[], blockTrips: Map<string, Block
     const terminalKey = `${lastRec.stopId}||${lastRec.stopName}||${c.routeId}`;
 
     const nextTrip = tripIdx < trips.length - 1 ? trips[tripIdx + 1] : null;
-    const recovery = nextTrip ? computeRecoveryTime(trip, nextTrip) : 0;
+    const recoveryResult = nextTrip ? computeRecoveryTime(trip, nextTrip) : { scheduled: 0, observed: 0 };
 
     const entry = terminalMap.get(terminalKey);
     if (entry) {
       entry.cascades.push(c);
-      entry.recoveryTimes.push(recovery);
+      entry.scheduledRecoveries.push(recoveryResult.scheduled);
+      entry.observedRecoveries.push(recoveryResult.observed);
     } else {
       terminalMap.set(terminalKey, {
         cascades: [c],
-        recoveryTimes: [recovery],
+        scheduledRecoveries: [recoveryResult.scheduled],
+        observedRecoveries: [recoveryResult.observed],
       });
     }
   }
@@ -377,7 +388,8 @@ function buildByTerminal(cascades: DwellCascade[], blockTrips: Map<string, Block
 
     const cascadedCount = entry.cascades.filter(c => c.blastRadius > 0).length;
     const nonCascadedCount = entry.cascades.length - cascadedCount;
-    const totalRecovery = entry.recoveryTimes.reduce((s, r) => s + r, 0);
+    const totalScheduledRecovery = entry.scheduledRecoveries.reduce((s, r) => s + r, 0);
+    const totalObservedRecovery = entry.observedRecoveries.reduce((s, r) => s + r, 0);
     const totalLate = entry.cascades.reduce((s, c) => s + c.totalLateSeconds, 0);
 
     results.push({
@@ -387,7 +399,8 @@ function buildByTerminal(cascades: DwellCascade[], blockTrips: Map<string, Block
       incidentCount: entry.cascades.length,
       absorbedCount: nonCascadedCount,
       cascadedCount,
-      avgScheduledRecoverySeconds: safeDivide(totalRecovery, entry.cascades.length),
+      avgScheduledRecoverySeconds: safeDivide(totalScheduledRecovery, entry.cascades.length),
+      avgObservedRecoverySeconds: safeDivide(totalObservedRecovery, entry.cascades.length),
       avgExcessLateSeconds: safeDivide(totalLate, entry.cascades.length),
       sufficientRecovery: nonCascadedCount >= entry.cascades.length * 0.75,
     });

@@ -37,10 +37,10 @@ const buckets: TripBucketAnalysis[] = [
         isOutlier: false,
         ignored: false,
         details: [
-            { segmentName: 'Park Place to Georgian College', p50: 12, p80: 14 },
-            { segmentName: 'Georgian College to Rose Street', p50: 13, p80: 15 },
-            { segmentName: 'Rose Street to Georgian College', p50: 12, p80: 14 },
-            { segmentName: 'Georgian College to Park Place', p50: 13, p80: 15 }
+            { segmentName: 'Park Place to Georgian College', p50: 12, p80: 14, n: 10 },
+            { segmentName: 'Georgian College to Rose Street', p50: 13, p80: 15, n: 10 },
+            { segmentName: 'Rose Street to Georgian College', p50: 12, p80: 14, n: 10 },
+            { segmentName: 'Georgian College to Park Place', p50: 13, p80: 15, n: 10 }
         ]
     },
     {
@@ -51,10 +51,10 @@ const buckets: TripBucketAnalysis[] = [
         isOutlier: false,
         ignored: false,
         details: [
-            { segmentName: 'Park Place to Georgian College', p50: 12, p80: 14 },
-            { segmentName: 'Georgian College to Rose Street', p50: 13, p80: 15 },
-            { segmentName: 'Rose Street to Georgian College', p50: 12, p80: 14 },
-            { segmentName: 'Georgian College to Park Place', p50: 13, p80: 15 }
+            { segmentName: 'Park Place to Georgian College', p50: 12, p80: 14, n: 10 },
+            { segmentName: 'Georgian College to Rose Street', p50: 13, p80: 15, n: 10 },
+            { segmentName: 'Rose Street to Georgian College', p50: 12, p80: 14, n: 10 },
+            { segmentName: 'Georgian College to Park Place', p50: 13, p80: 15, n: 10 }
         ]
     },
     {
@@ -65,10 +65,10 @@ const buckets: TripBucketAnalysis[] = [
         isOutlier: false,
         ignored: false,
         details: [
-            { segmentName: 'Park Place to Georgian College', p50: 13, p80: 15 },
-            { segmentName: 'Georgian College to Rose Street', p50: 13, p80: 15 },
-            { segmentName: 'Rose Street to Georgian College', p50: 13, p80: 15 },
-            { segmentName: 'Georgian College to Park Place', p50: 13, p80: 15 }
+            { segmentName: 'Park Place to Georgian College', p50: 13, p80: 15, n: 10 },
+            { segmentName: 'Georgian College to Rose Street', p50: 13, p80: 15, n: 10 },
+            { segmentName: 'Rose Street to Georgian College', p50: 13, p80: 15, n: 10 },
+            { segmentName: 'Georgian College to Park Place', p50: 13, p80: 15, n: 10 }
         ]
     }
 ];
@@ -83,16 +83,16 @@ const bandSummary: DirectionBandSummary = {
         {
             bandId: 'A', color: '#ef4444', avgTotal: 25,
             segments: [
-                { segmentName: 'Park Place to Georgian College', avgTime: 12 },
-                { segmentName: 'Georgian College to Rose Street', avgTime: 13 }
+                { segmentName: 'Park Place to Georgian College', avgTime: 12, totalN: 100 },
+                { segmentName: 'Georgian College to Rose Street', avgTime: 13, totalN: 100 }
             ],
             timeSlots: ['06:00', '06:30']
         },
         {
             bandId: 'B', color: '#f59e0b', avgTotal: 26,
             segments: [
-                { segmentName: 'Park Place to Georgian College', avgTime: 13 },
-                { segmentName: 'Georgian College to Rose Street', avgTime: 13 }
+                { segmentName: 'Park Place to Georgian College', avgTime: 13, totalN: 100 },
+                { segmentName: 'Georgian College to Rose Street', avgTime: 13, totalN: 100 }
             ],
             timeSlots: ['07:00']
         }
@@ -101,16 +101,16 @@ const bandSummary: DirectionBandSummary = {
         {
             bandId: 'A', color: '#ef4444', avgTotal: 25,
             segments: [
-                { segmentName: 'Rose Street to Georgian College', avgTime: 12 },
-                { segmentName: 'Georgian College to Park Place', avgTime: 13 }
+                { segmentName: 'Rose Street to Georgian College', avgTime: 12, totalN: 100 },
+                { segmentName: 'Georgian College to Park Place', avgTime: 13, totalN: 100 }
             ],
             timeSlots: ['06:00', '06:30']
         },
         {
             bandId: 'B', color: '#f59e0b', avgTotal: 26,
             segments: [
-                { segmentName: 'Rose Street to Georgian College', avgTime: 13 },
-                { segmentName: 'Georgian College to Park Place', avgTime: 13 }
+                { segmentName: 'Rose Street to Georgian College', avgTime: 13, totalN: 100 },
+                { segmentName: 'Georgian College to Park Place', avgTime: 13, totalN: 100 }
             ],
             timeSlots: ['07:00']
         }
@@ -119,12 +119,12 @@ const bandSummary: DirectionBandSummary = {
 
 const segmentsMap: Record<string, SegmentRawData[]> = {
     North: [
-        { segmentName: 'Park Place to Georgian College', timeBuckets: { '06:00 - 06:29': { p50: 12, p80: 14 }, '06:30 - 06:59': { p50: 12, p80: 14 }, '07:00 - 07:29': { p50: 13, p80: 15 } } },
-        { segmentName: 'Georgian College to Rose Street', timeBuckets: { '06:00 - 06:29': { p50: 13, p80: 15 }, '06:30 - 06:59': { p50: 13, p80: 15 }, '07:00 - 07:29': { p50: 13, p80: 15 } } }
+        { segmentName: 'Park Place to Georgian College', timeBuckets: { '06:00 - 06:29': { p50: 12, p80: 14, n: 10 }, '06:30 - 06:59': { p50: 12, p80: 14, n: 10 }, '07:00 - 07:29': { p50: 13, p80: 15, n: 10 } } },
+        { segmentName: 'Georgian College to Rose Street', timeBuckets: { '06:00 - 06:29': { p50: 13, p80: 15, n: 10 }, '06:30 - 06:59': { p50: 13, p80: 15, n: 10 }, '07:00 - 07:29': { p50: 13, p80: 15, n: 10 } } }
     ],
     South: [
-        { segmentName: 'Rose Street to Georgian College', timeBuckets: { '06:00 - 06:29': { p50: 12, p80: 14 }, '06:30 - 06:59': { p50: 12, p80: 14 }, '07:00 - 07:29': { p50: 13, p80: 15 } } },
-        { segmentName: 'Georgian College to Park Place', timeBuckets: { '06:00 - 06:29': { p50: 13, p80: 15 }, '06:30 - 06:59': { p50: 13, p80: 15 }, '07:00 - 07:29': { p50: 13, p80: 15 } } }
+        { segmentName: 'Rose Street to Georgian College', timeBuckets: { '06:00 - 06:29': { p50: 12, p80: 14, n: 10 }, '06:30 - 06:59': { p50: 12, p80: 14, n: 10 }, '07:00 - 07:29': { p50: 13, p80: 15, n: 10 } } },
+        { segmentName: 'Georgian College to Park Place', timeBuckets: { '06:00 - 06:29': { p50: 13, p80: 15, n: 10 }, '06:30 - 06:59': { p50: 13, p80: 15, n: 10 }, '07:00 - 07:29': { p50: 13, p80: 15, n: 10 } } }
     ]
 };
 
