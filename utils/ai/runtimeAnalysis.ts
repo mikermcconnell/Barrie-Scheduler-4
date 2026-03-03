@@ -5,6 +5,7 @@ export interface SegmentDetail {
     segmentName: string;
     p50: number;
     p80: number;
+    n?: number;
 }
 
 export interface TripBucketAnalysis {
@@ -27,10 +28,13 @@ export interface TimeBand {
     count: number;
 }
 
+export const MIN_RELIABLE_OBSERVATIONS = 10;
+
 // Band summary with averaged segment times - used by schedule generator
 export interface BandSegmentAverage {
     segmentName: string;
     avgTime: number; // Averaged p50 across all time slots in this band
+    totalN?: number;
 }
 
 export interface BandSummary {
@@ -99,7 +103,8 @@ export const calculateTotalTripTimes = (data: RuntimeData[]): TripBucketAnalysis
                     details.push({
                         segmentName: seg.segmentName,
                         p50: roundedP50,
-                        p80: roundedP80
+                        p80: roundedP80,
+                        n: times.n,
                     });
                 }
             });
@@ -262,16 +267,19 @@ export const computeDirectionBandSummary = (
             const avgSegments = segmentNamesArr.map(segName => {
                 let sum = 0;
                 let count = 0;
+                let totalN = 0;
                 bucketsInBand.forEach(bucket => {
                     const detail = bucket.details?.find(d => d.segmentName === segName);
                     if (detail) {
                         sum += detail.p50;
                         count++;
+                        totalN += detail.n;
                     }
                 });
                 return {
                     segmentName: segName,
-                    avgTime: count > 0 ? sum / count : 0
+                    avgTime: count > 0 ? sum / count : 0,
+                    totalN,
                 };
             }).filter(s => s.avgTime > 0); // Only keep segments with data
 

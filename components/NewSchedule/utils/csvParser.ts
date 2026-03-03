@@ -1,7 +1,7 @@
 
 export interface SegmentRawData {
     segmentName: string;
-    timeBuckets: Record<string, { p50: number, p80: number }>;
+    timeBuckets: Record<string, { p50: number, p80: number, n?: number }>;
 }
 
 export type RouteDirection = 'North' | 'South' | 'A' | 'B' | 'Loop';
@@ -69,7 +69,7 @@ export const parseRuntimeCSV = async (file: File): Promise<RuntimeData> => {
                     if (currentSegmentName) {
                         const segData = resultSegments[currentSegmentName];
                         if (!segData.timeBuckets[bucket]) {
-                            segData.timeBuckets[bucket] = { p50: 0, p80: 0 };
+                            segData.timeBuckets[bucket] = { p50: 0, p80: 0, n: 1 };
                         }
                     }
                 }
@@ -89,7 +89,7 @@ export const parseRuntimeCSV = async (file: File): Promise<RuntimeData> => {
                 if (bucket && !isNaN(val)) {
                     // Initialize bucket if missing (e.g. if Half-Hour row had more cols than initialized?)
                     if (!segData.timeBuckets[bucket]) {
-                        segData.timeBuckets[bucket] = { p50: 0, p80: 0 };
+                        segData.timeBuckets[bucket] = { p50: 0, p80: 0, n: 1 };
                     }
 
                     if (isP50) segData.timeBuckets[bucket].p50 = val;

@@ -116,7 +116,7 @@ export function computeRuntimesFromPerformance(
     const segments: SegmentRawData[] = [];
 
     for (const [segmentName, bucketMap] of segMap) {
-      const timeBuckets: Record<string, { p50: number; p80: number }> = {};
+      const timeBuckets: Record<string, { p50: number; p80: number; n: number }> = {};
 
       for (const [bucket, values] of bucketMap) {
         allTimeBuckets.add(bucket);
@@ -124,6 +124,7 @@ export function computeRuntimesFromPerformance(
         timeBuckets[bucket] = {
           p50: Math.round(percentileInc(sorted, 0.5) * 100) / 100,
           p80: Math.round(percentileInc(sorted, 0.8) * 100) / 100,
+          n: sorted.length,
         };
       }
 

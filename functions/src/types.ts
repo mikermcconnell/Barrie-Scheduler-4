@@ -104,6 +104,10 @@ export interface OperatorDwellSummary {
   totalIncidents: number;
   totalTrackedDwellSeconds: number;
   avgTrackedDwellSeconds: number;
+  stopVisitCount?: number;
+  serviceHours?: number;
+  incidentsPer1kVisits?: number;
+  incidentsPer100ServiceHours?: number;
 }
 
 export interface OperatorDwellMetrics {
@@ -111,6 +115,10 @@ export interface OperatorDwellMetrics {
   byOperator: OperatorDwellSummary[];
   totalIncidents: number;
   totalTrackedDwellMinutes: number;
+  totalStopVisits?: number;
+  totalServiceHours?: number;
+  incidentsPer1kVisits?: number;
+  incidentsPer100ServiceHours?: number;
 }
 
 // ─── Dwell Cascade Types ──────────────────────────────────────────────
@@ -134,6 +142,7 @@ export interface CascadeAffectedTrip {
   routeName: string;
   terminalDepartureTime: string;
   scheduledRecoverySeconds: number;   // recovery before this trip (context only)
+  observedRecoverySeconds?: number;   // actual recovery (uses AVL departure from prior trip)
   timepoints: CascadeTimepointObs[];  // every timepoint in the trip
   lateTimepointCount: number;         // count of late timepoint departures
   recoveredAtStop: string | null;     // stop where first on-time observed (chain-ender)
@@ -159,12 +168,13 @@ export interface DwellCascade {
 
   // Cascade results
   cascadedTrips: CascadeAffectedTrip[];
-  blastRadius: number;            // total late timepoint departures across all trips
-  affectedTripCount: number;      // number of trips touched before recovery
-  recoveredAtTrip: string | null; // trip name where chain ended
-  recoveredAtStop: string | null; // specific stop where on-time observed
-  totalLateSeconds: number;       // sum of deviation across all late timepoints
-  recoveryTimeAvailableSeconds: number; // scheduled recovery between incident trip and next trip
+  blastRadius: number;
+  affectedTripCount: number;
+  recoveredAtTrip: string | null;
+  recoveredAtStop: string | null;
+  totalLateSeconds: number;
+  recoveryTimeAvailableSeconds: number;
+  observedRecoverySeconds?: number;
 }
 
 export interface CascadeStopImpact {
@@ -175,9 +185,9 @@ export interface CascadeStopImpact {
   totalTrackedDwellSeconds: number;
   totalBlastRadius: number;
   avgBlastRadius: number;
-  cascadedCount: number;        // incidents that produced any cascade
-  nonCascadedCount: number;     // incidents with no downstream late timepoints
-  avgTotalLateSeconds: number;  // avg totalLateSeconds per cascading incident
+  cascadedCount: number;
+  nonCascadedCount: number;
+  avgTotalLateSeconds: number;
 }
 
 export interface TerminalRecoveryStats {
@@ -188,6 +198,7 @@ export interface TerminalRecoveryStats {
   absorbedCount: number;
   cascadedCount: number;
   avgScheduledRecoverySeconds: number;
+  avgObservedRecoverySeconds?: number;
   avgExcessLateSeconds: number;
   sufficientRecovery: boolean;
 }

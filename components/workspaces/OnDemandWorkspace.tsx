@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { generateRequirements, generateShifts, calculateSchedule, calculateMetrics } from '../../utils/dataGenerator';
-import { optimizeScheduleWithGemini } from '../../utils/ai/geminiOptimizer';
+import { optimizeScheduleWithGemini, OptimizationResult } from '../../utils/ai/geminiOptimizer';
+import { useToast } from '../contexts/ToastContext';
 import { SummaryCards } from '../SummaryCards';
 import { GapChart } from '../GapChart';
 import { FileUpload } from '../FileUpload';
@@ -27,7 +28,7 @@ import { generateRideCoCSV, downloadCSV } from '../../utils/services/exportServi
 import { SummaryMetrics, Shift, Requirement, Zone, ZoneFilterType } from '../../utils/demandTypes';
 import {
     Wand2, Users, BarChart3, Sparkles, AlertTriangle, Loader2,
-    FolderOpen, Save, CloudDownload, Check, Edit3, RotateCcw, ArrowLeft, Star
+    FolderOpen, Save, CloudDownload, Check, Edit3, RotateCcw, ArrowLeft, Star, X
 } from 'lucide-react';
 import { SHIFT_DURATION_SLOTS, BREAK_DURATION_SLOTS } from '../../utils/demandConstants';
 
@@ -42,6 +43,7 @@ const toValidDayType = (day: string): DayType => {
 
 export const OnDemandWorkspace: React.FC = () => {
     const { user } = useAuth();
+    const toast = useToast();
 
     const [schedules, setSchedules] = useState<Record<string, Requirement[]> | null>(null);
     const [selectedDayType, setSelectedDayType] = useState<DayType>('Weekday');
@@ -87,18 +89,26 @@ export const OnDemandWorkspace: React.FC = () => {
     const [reviewModalData, setReviewModalData] = useState<{ current: Shift[], optimized: Shift[] } | null>(null);
     const [elapsedSeconds, setElapsedSeconds] = useState(0);
     const elapsedRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const [optimizationPhase, setOptimizationPhase] = useState('');
+    const abortControllerRef = useRef<AbortController | null>(null);
 
     // Elapsed timer for optimization progress
     useEffect(() => {
         if (isAnimating) {
             setElapsedSeconds(0);
-            elapsedRef.current = setInterval(() => setElapsedSeconds(s => s + 1), 1000);
+            elapsedRef.current = setInterval(() => setElapsedSeconds(s => {
+                const next = s + 1;
+                if (next === 60) {
+                    toast.info('Still working...', 'AI optimization can take 2-3 minutes');
+                }
+                return next;
+            }), 1000);
         } else {
             if (elapsedRef.current) clearInterval(elapsedRef.current);
             elapsedRef.current = null;
         }
         return () => { if (elapsedRef.current) clearInterval(elapsedRef.current); };
-    }, [isAnimating]);
+    }, [isAnimating, toast]);
 
     // Derived State
     // Now guaranteed to have valid inputs on first render
@@ -127,6 +137,15 @@ export const OnDemandWorkspace: React.FC = () => {
         }
     };
 
+    const handleCancelOptimization = () => {
+        abortControllerRef.current?.abort();
+        setIsAnimating(false);
+        setOptimizationMode(null);
+        setOptimizationPhase('');
+        abortControllerRef.current = null;
+        toast.info('Optimization cancelled');
+    };
+
     const handleRegenerate = async () => {
         if (shifts.length > 0) {
             if (!confirm('This will replace your current schedule with a brand new one generated from scratch. All custom changes will be lost. Continue?')) {
@@ -134,38 +153,49 @@ export const OnDemandWorkspace: React.FC = () => {
             }
         }
 
+        const controller = new AbortController();
+        abortControllerRef.current = controller;
         setOptimizationMode('full');
         setIsAnimating(true);
+        setOptimizationPhase('Connecting...');
 
         try {
-            // Call Gemini API - Full Mode
-            const aiShifts = await optimizeScheduleWithGemini(requirements, 'full');
+            setOptimizationPhase('Generating schedule...');
+            const result = await optimizeScheduleWithGemini(requirements, 'full', [], undefined, controller.signal);
 
-            if (aiShifts.length > 0) {
-                // Fix: State Persistence Bug
-                // We must update BOTH 'shifts' (view) and 'allShifts' (master storage)
-                // Also, we must tag these new shifts with the current dayType
-                const taggedShifts = aiShifts.map(s => ({ ...s, dayType: selectedDayType }));
+            if (controller.signal.aborted) return;
+
+            setOptimizationPhase('Processing results...');
+
+            if (result.warning) {
+                toast.warning('Used fallback scheduler', result.warning);
+            }
+
+            if (result.shifts.length > 0) {
+                const taggedShifts = result.shifts.map(s => ({ ...s, dayType: selectedDayType }));
 
                 setShifts(taggedShifts);
-
                 setAllShifts(prev => {
-                    // Remove old shifts for this day, keep others (e.g. Saturday)
                     const others = prev.filter(s => (s.dayType || 'Weekday') !== selectedDayType);
                     return [...others, ...taggedShifts];
                 });
-
                 setIsOptimized(true);
+
+                if (result.source === 'ai') {
+                    toast.success('Schedule generated', `AI optimization completed in ${Math.round(result.durationMs / 1000)}s`);
+                }
             } else {
-                console.warn("Gemini API returned no shifts.");
-                alert("Optimization failed to return shifts.");
+                console.warn("Optimization returned no shifts.");
+                toast.error('Generation failed', 'No shifts were returned');
             }
         } catch (e) {
             console.error("Optimization error", e);
-            alert("Optimization failed.");
+            toast.error('Generation failed', e instanceof Error ? e.message : 'Unknown error');
         } finally {
             setIsAnimating(false);
             setOptimizationMode(null);
+            setOptimizationPhase('');
+            abortControllerRef.current = null;
         }
     };
 
@@ -186,13 +216,13 @@ export const OnDemandWorkspace: React.FC = () => {
 
         try {
             // Call Gemini API - Refine Mode
-            const aiShifts = await optimizeScheduleWithGemini(requirements, 'refine', shifts, instruction);
+            const result = await optimizeScheduleWithGemini(requirements, 'refine', shifts, instruction);
 
-            if (aiShifts.length > 0) {
+            if (result.shifts.length > 0) {
                 // Open Review Modal instead of applying directly
                 setReviewModalData({
                     current: shifts,
-                    optimized: aiShifts
+                    optimized: result.shifts
                 });
             } else {
                 alert("No refinements found.");
