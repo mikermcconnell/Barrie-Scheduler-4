@@ -193,8 +193,8 @@ function traceCascade(
           isLate = true;
           lateCount++;
         } else {
-          // First on-time departure → chain stops here
-          if (lateCount > 0 || i > 0) {
+          // First on-time departure → chain absorbed here
+          {
             tripRecoveredAtStop = rec.stopName;
             timepoints.push({
               stopName: rec.stopName,

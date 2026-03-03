@@ -296,6 +296,7 @@ export const Step1Upload: React.FC<Step1Props> = ({
                                     {availableRoutes.map((route) => (
                                         <option key={route.routeId} value={route.routeId}>
                                             Route {route.routeId} — {route.routeName} ({route.dayCount} days, {route.totalObs.toLocaleString()} obs)
+                                            {route.segmentDayCount < route.dayCount ? ` — ${route.segmentDayCount} with runtimes` : ''}
                                         </option>
                                     ))}
                                 </select>
@@ -377,20 +378,28 @@ export const Step1Upload: React.FC<Step1Props> = ({
                                         const route = availableRoutes.find(r => r.routeId === performanceConfig.routeId);
                                         if (!route) return null;
                                         return (
-                                            <div className="grid grid-cols-3 gap-4 text-sm">
-                                                <div>
-                                                    <span className="text-teal-600">Directions</span>
-                                                    <p className="font-bold text-teal-900">{route.directions.join(', ')}</p>
+                                            <>
+                                                <div className="grid grid-cols-3 gap-4 text-sm">
+                                                    <div>
+                                                        <span className="text-teal-600">Directions</span>
+                                                        <p className="font-bold text-teal-900">{route.directions.join(', ')}</p>
+                                                    </div>
+                                                    <div>
+                                                        <span className="text-teal-600">Days of Data</span>
+                                                        <p className="font-bold text-teal-900">{route.dayCount}</p>
+                                                    </div>
+                                                    <div>
+                                                        <span className="text-teal-600">Observations</span>
+                                                        <p className="font-bold text-teal-900">{route.totalObs.toLocaleString()}</p>
+                                                    </div>
                                                 </div>
-                                                <div>
-                                                    <span className="text-teal-600">Days of Data</span>
-                                                    <p className="font-bold text-teal-900">{route.dayCount}</p>
-                                                </div>
-                                                <div>
-                                                    <span className="text-teal-600">Observations</span>
-                                                    <p className="font-bold text-teal-900">{route.totalObs.toLocaleString()}</p>
-                                                </div>
-                                            </div>
+                                                {route.segmentDayCount < route.dayCount && (
+                                                    <p className="mt-2 text-xs text-amber-700">
+                                                        Segment runtimes available for {route.segmentDayCount} of {route.dayCount} days.
+                                                        Re-import STREETS data to compute runtimes for all days.
+                                                    </p>
+                                                )}
+                                            </>
                                         );
                                     })()}
                                 </div>

@@ -159,12 +159,28 @@ export async function exportODExcel(data: ODMatrixDataSummary, routeEstimation?:
     const headerRow = matrixSheet.addRow(['', ...stationNames]);
     styleHeader(headerRow);
 
+    const matrixMaxVal = Math.max(...data.pairs.map(p => p.journeys), 1);
     for (const origin of stationNames) {
         const row: (string | number)[] = [origin];
         for (const dest of stationNames) {
             row.push(journeyMap.get(`${origin}|${dest}`) || 0);
         }
-        matrixSheet.addRow(row);
+        const xlRow = matrixSheet.addRow(row);
+        // Apply heatmap color scale to data cells
+        for (let ci = 2; ci <= stationNames.length + 1; ci++) {
+            const val = Number(xlRow.getCell(ci).value) || 0;
+            if (val > 0) {
+                const ratio = Math.min(val / matrixMaxVal, 1);
+                const r = Math.round(255 - ratio * 131);
+                const g = Math.round(255 - ratio * 197);
+                const b = Math.round(255 - ratio * 18);
+                const argb = `FF${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+                xlRow.getCell(ci).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb } };
+                if (ratio > 0.45) {
+                    xlRow.getCell(ci).font = { color: { argb: 'FFFFFFFF' } };
+                }
+            }
+        }
     }
     // Fixed column widths for cross-tab readability
     matrixSheet.columns.forEach((col, i) => {
@@ -588,7 +604,49 @@ export async function exportStopReportExcel(data: ODMatrixDataSummary, stopName:
     autoWidth(underSheet);
     setHeaderFilterAndFreeze(underSheet, 4, 5);
 
-    // ── Sheet 7: Route Assignments (filtered to this stop) ──────
+    // ── Sheet 7: Heatmap Row/Column ──────────────────────────────
+    const heatmapSheet = wb.addWorksheet('Heatmap');
+    heatmapSheet.addRow([`Heatmap: ${stopName}`]);
+    heatmapSheet.getRow(1).font = { bold: true, size: 14 };
+    heatmapSheet.addRow([`Journey volumes between ${stopName} and all other stations`]);
+    heatmapSheet.addRow([]);
+
+    const hmHeader = heatmapSheet.addRow(['Partner Station', 'Outbound (from here)', 'Inbound (to here)', 'Combined']);
+    styleHeader(hmHeader);
+
+    const journeyMap = new Map<string, number>();
+    data.pairs.forEach(p => journeyMap.set(`${p.origin}|${p.destination}`, p.journeys));
+
+    const hmStations = [...data.stations]
+        .filter(s => s.name !== stopName)
+        .map(s => {
+            const out = journeyMap.get(`${stopName}|${s.name}`) || 0;
+            const inc = journeyMap.get(`${s.name}|${stopName}`) || 0;
+            return { name: s.name, out, inc, total: out + inc };
+        })
+        .sort((a, b) => b.total - a.total);
+
+    const hmMax = Math.max(...hmStations.map(s => s.total), 1);
+
+    hmStations.forEach(s => {
+        const row = heatmapSheet.addRow([s.name, s.out, s.inc, s.total]);
+        // Conditional fill: scale violet intensity by combined volume
+        const ratio = s.total / hmMax;
+        if (ratio > 0) {
+            const r = Math.round(255 - ratio * 131);
+            const g = Math.round(255 - ratio * 197);
+            const b = Math.round(255 - ratio * 18);
+            const argb = `FF${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+            row.getCell(4).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb } };
+            if (ratio > 0.45) {
+                row.getCell(4).font = { color: { argb: 'FFFFFFFF' } };
+            }
+        }
+    });
+    autoWidth(heatmapSheet);
+    setHeaderFilterAndFreeze(heatmapSheet, 4, 4);
+
+    // ── Sheet 8: Route Assignments (filtered to this stop) ──────
     if (routeEstimation) {
         const stopLower = stopName.toLowerCase();
         const stopAssignments = [
@@ -1284,6 +1342,7 @@ export async function exportStopReportPdf(
     stopName: string,
     mapEl?: HTMLDivElement | null,
     routeEstimation?: ODRouteEstimationResult | null,
+    heatmapEl?: HTMLDivElement | null,
 ): Promise<void> {
     const station = data.stations.find(s => s.name === stopName);
     if (!station) return;
@@ -1734,6 +1793,30 @@ export async function exportStopReportPdf(
             columnStyles: { 4: { fontStyle: 'italic', textColor: [...MID_GRAY] as [number, number, number] } },
         });
         drawFooterTag(pageH - 7);
+    }
+
+    // ─── Heatmap Grid ─────────────────────────────────────────────
+
+    if (heatmapEl) {
+        try {
+            const canvas = await html2canvas(heatmapEl, { scale: 1.5 });
+            const imgData = canvas.toDataURL('image/png');
+            doc.addPage();
+            tocEntries.push({ title: 'Heatmap Grid', page: doc.getNumberOfPages() });
+            drawSectionHeader(`Heatmap Grid — ${stopName}`, 25, 100);
+
+            doc.setFontSize(8);
+            doc.setTextColor(...MID_GRAY);
+            doc.text('Darker cells indicate higher journey volumes between station pairs.', margin, 33);
+
+            const imgW = pageW - 2 * margin;
+            const imgH = (canvas.height / canvas.width) * imgW;
+            const maxImgH = pageH - 65;
+            doc.addImage(imgData, 'PNG', margin, 38, imgW, Math.min(imgH, maxImgH));
+            drawFooterTag(pageH - 7);
+        } catch {
+            // Skip heatmap on capture failure
+        }
     }
 
     // ─── Fill Table of Contents ──────────────────────────────────

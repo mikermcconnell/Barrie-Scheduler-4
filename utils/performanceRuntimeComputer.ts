@@ -150,6 +150,8 @@ export interface AvailableRuntimeRoute {
   routeName: string;
   directions: string[];
   dayCount: number;
+  /** Days that have segment runtime data (usable for schedule generation) */
+  segmentDayCount: number;
   totalObs: number;
   memberRouteIds: string[];
 }
@@ -158,38 +160,60 @@ export function getAvailableRuntimeRoutes(
   dailySummaries: DailySummary[],
   dayType?: DayType
 ): AvailableRuntimeRoute[] {
-  // Accumulate per route: routeName, directions set, day dates set, obs count
+  // Accumulate per route from byRoute (always present) + byTrip (for directions)
   const routeMap = new Map<string, {
     routeName: string;
     directions: Set<string>;
     dates: Set<string>;
+    segmentDates: Set<string>;
     totalObs: number;
     memberRouteIds: Set<string>;
   }>();
 
   for (const day of dailySummaries) {
     if (dayType && day.dayType !== dayType) continue;
-    if (!day.segmentRuntimes) continue;
 
-    for (const entry of day.segmentRuntimes.entries) {
-      const canonicalRouteId = getCanonicalRouteId(entry.routeId);
-      const normalizedEntryRouteId = normalizeRouteId(entry.routeId);
+    // Build route info from byRoute (always present on every DailySummary)
+    for (const rm of day.byRoute) {
+      const canonicalRouteId = getCanonicalRouteId(rm.routeId);
+      const normalizedRouteId = normalizeRouteId(rm.routeId);
       const existing = routeMap.get(canonicalRouteId);
       if (existing) {
-        existing.directions.add(entry.direction);
         existing.dates.add(day.date);
-        existing.totalObs += entry.observations.length;
-        existing.memberRouteIds.add(normalizedEntryRouteId);
+        existing.memberRouteIds.add(normalizedRouteId);
+        if (!existing.routeName && rm.routeName) existing.routeName = rm.routeName;
       } else {
-        // Look up routeName from the day's byRoute
-        const routeMetric = day.byRoute.find(r => normalizeRouteId(r.routeId) === normalizedEntryRouteId);
         routeMap.set(canonicalRouteId, {
-          routeName: routeMetric?.routeName || entry.routeId,
-          directions: new Set([entry.direction]),
+          routeName: rm.routeName || rm.routeId,
+          directions: new Set<string>(),
           dates: new Set([day.date]),
-          totalObs: entry.observations.length,
-          memberRouteIds: new Set([normalizedEntryRouteId]),
+          segmentDates: new Set<string>(),
+          totalObs: 0,
+          memberRouteIds: new Set([normalizedRouteId]),
         });
+      }
+    }
+
+    // Collect directions from byTrip (always present)
+    for (const tm of day.byTrip) {
+      const canonicalRouteId = getCanonicalRouteId(tm.routeId);
+      const existing = routeMap.get(canonicalRouteId);
+      if (existing && tm.direction) {
+        existing.directions.add(tm.direction);
+      }
+    }
+
+    // Overlay segment runtime observations (may be absent on older imports)
+    if (day.segmentRuntimes) {
+      for (const entry of day.segmentRuntimes.entries) {
+        const canonicalRouteId = getCanonicalRouteId(entry.routeId);
+        const existing = routeMap.get(canonicalRouteId);
+        if (existing) {
+          existing.segmentDates.add(day.date);
+          existing.totalObs += entry.observations.length;
+          existing.directions.add(entry.direction);
+          existing.memberRouteIds.add(normalizeRouteId(entry.routeId));
+        }
       }
     }
   }
@@ -204,6 +228,7 @@ export function getAvailableRuntimeRoutes(
       routeName: data.routeName || memberRouteIds.join(' / '),
       directions: Array.from(data.directions).sort(),
       dayCount: data.dates.size,
+      segmentDayCount: data.segmentDates.size,
       totalObs: data.totalObs,
       memberRouteIds,
     });

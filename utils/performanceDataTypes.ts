@@ -139,6 +139,7 @@ export interface CascadeAffectedTrip {
   routeName: string;
   terminalDepartureTime: string;
   scheduledRecoverySeconds: number;   // recovery before this trip (context only)
+  observedRecoverySeconds?: number;   // actual recovery (uses AVL departure from prior trip)
   timepoints: CascadeTimepointObs[];  // every timepoint in the trip
   lateTimepointCount: number;         // count of late timepoint departures
   recoveredAtStop: string | null;     // stop where first on-time observed (chain-ender)
@@ -170,6 +171,7 @@ export interface DwellCascade {
   recoveredAtStop: string | null; // specific stop where on-time observed
   totalLateSeconds: number;       // sum of deviation across all late timepoints
   recoveryTimeAvailableSeconds: number; // scheduled recovery between incident trip and next trip
+  observedRecoverySeconds?: number;     // actual recovery (AVL-based, less if bus ran late)
 }
 
 export interface CascadeStopImpact {
@@ -194,6 +196,7 @@ export interface TerminalRecoveryStats {
   absorbedCount: number;
   cascadedCount: number;
   avgScheduledRecoverySeconds: number;
+  avgObservedRecoverySeconds?: number;        // actual recovery (AVL-based)
   avgExcessLateSeconds: number;
   sufficientRecovery: boolean;                // true if ≥75% of incidents absorbed
 }

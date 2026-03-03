@@ -314,6 +314,41 @@ describe('buildOperatorDwellMetrics (via aggregateDailySummaries)', () => {
     expect(op2.totalTrackedDwellSeconds).toBe(120);
   });
 
+  it('filters zero-tracked-dwell incidents from cascade input', () => {
+    // rawDwell = 120s (exactly at threshold), trackedDwell = 0s
+    // Should appear in byOperatorDwell but NOT produce a cascade entry
+    const records = [
+      makeRecord({
+        observedArrivalTime: '10:00:00',
+        observedDepartureTime: '10:02:00', // 120s raw = exactly threshold, tracked = 0
+        timePoint: true,
+        tripId: 'trip-zero-tracked',
+        tripName: '10 - 10FD - 10:00',
+        block: '10-01',
+      }),
+      // Add a second trip on the same block so cascade has something to trace
+      makeRecord({
+        observedArrivalTime: '10:30:00',
+        observedDepartureTime: '10:31:00',
+        timePoint: true,
+        tripId: 'trip-downstream',
+        tripName: '10 - 10FD - 10:30',
+        block: '10-01',
+        terminalDepartureTime: '10:30',
+        stopTime: '10:30',
+        arrivalTime: '10:30',
+      }),
+    ];
+    const [day] = aggregateDailySummaries(records);
+
+    // Incident DOES appear in dwell metrics (rawDwell >= threshold)
+    expect(day.byOperatorDwell!.totalIncidents).toBe(1);
+    expect(day.byOperatorDwell!.incidents[0].trackedDwellSeconds).toBe(0);
+
+    // But cascade should NOT contain this zero-tracked incident
+    expect(day.byCascade!.cascades).toHaveLength(0);
+  });
+
   it('handles post-midnight rollover', () => {
     const records = [
       // Arrival at 23:58:00, departure at 00:04:00 next day = 6 min dwell

@@ -7,12 +7,15 @@
  */
 
 import React, { useMemo, useState, useCallback } from 'react';
+import { Download, FileText } from 'lucide-react';
 import { ChartCard } from './AnalyticsShared';
 import type { ODMatrixDataSummary } from '../../utils/od-matrix/odMatrixTypes';
 
 interface ODHeatmapGridModuleProps {
     data: ODMatrixDataSummary;
     containerRef?: React.RefObject<HTMLDivElement | null>;
+    onExportStopExcel?: (stopName: string) => void;
+    onExportStopPdf?: (stopName: string) => void;
 }
 
 type SortMode = 'volume' | 'origin' | 'destination' | 'alpha';
@@ -39,12 +42,13 @@ function textColorForBg(value: number, max: number): string {
     return ratio > 0.45 ? '#ffffff' : '#374151';
 }
 
-export const ODHeatmapGridModule: React.FC<ODHeatmapGridModuleProps> = ({ data, containerRef }) => {
+export const ODHeatmapGridModule: React.FC<ODHeatmapGridModuleProps> = ({ data, containerRef, onExportStopExcel, onExportStopPdf }) => {
     const [topN, setTopN] = useState(30);
     const [sortMode, setSortMode] = useState<SortMode>('volume');
     const [compact, setCompact] = useState(false);
     const [search, setSearch] = useState('');
     const [hoveredCell, setHoveredCell] = useState<{ row: number; col: number } | null>(null);
+    const [selectedStation, setSelectedStation] = useState<string | null>(null);
 
     // Sort and filter stations
     const visibleStations = useMemo(() => {
@@ -158,6 +162,44 @@ export const ODHeatmapGridModule: React.FC<ODHeatmapGridModuleProps> = ({ data, 
                 </button>
             </div>
 
+            {/* Selected Station Bar */}
+            {selectedStation && (onExportStopExcel || onExportStopPdf) && (
+                <div className="flex items-center justify-between bg-violet-50 border border-violet-200 rounded-lg px-4 py-2">
+                    <div className="flex items-center gap-2">
+                        <span className="text-xs font-semibold text-violet-500 uppercase tracking-wide">Selected</span>
+                        <span className="text-sm font-bold text-violet-800">{selectedStation}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        {onExportStopExcel && (
+                            <button
+                                onClick={() => onExportStopExcel(selectedStation)}
+                                title={`Export stop Excel: ${selectedStation}`}
+                                className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-white hover:text-gray-800 transition-colors"
+                            >
+                                <Download size={12} />
+                                Excel
+                            </button>
+                        )}
+                        {onExportStopPdf && (
+                            <button
+                                onClick={() => onExportStopPdf(selectedStation)}
+                                title={`Export stop PDF: ${selectedStation}`}
+                                className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-white hover:text-gray-800 transition-colors"
+                            >
+                                <FileText size={12} />
+                                PDF
+                            </button>
+                        )}
+                        <button
+                            onClick={() => setSelectedStation(null)}
+                            className="px-2 py-1 text-xs text-violet-400 hover:text-violet-600 transition-colors"
+                        >
+                            Clear
+                        </button>
+                    </div>
+                </div>
+            )}
+
             {/* Heatmap Grid */}
             <ChartCard
                 title="Origin-Destination Heatmap"
@@ -203,12 +245,17 @@ export const ODHeatmapGridModule: React.FC<ODHeatmapGridModuleProps> = ({ data, 
                             <React.Fragment key={`row-${ri}`}>
                                 {/* Row header */}
                                 <div
-                                    className={`sticky left-0 z-10 bg-white border-r border-gray-200 flex items-center pr-2 ${
-                                        hoveredCell?.row === ri ? 'bg-violet-50' : ''
+                                    className={`sticky left-0 z-10 border-r border-gray-200 flex items-center pr-2 cursor-pointer transition-colors ${
+                                        selectedStation === rowName
+                                            ? 'bg-violet-100'
+                                            : hoveredCell?.row === ri ? 'bg-violet-50' : 'bg-white'
                                     }`}
+                                    onClick={() => setSelectedStation(prev => prev === rowName ? null : rowName)}
                                 >
                                     <span
-                                        className="text-[10px] text-gray-600 font-medium truncate"
+                                        className={`text-[10px] font-medium truncate ${
+                                            selectedStation === rowName ? 'text-violet-700' : 'text-gray-600'
+                                        }`}
                                         title={rowName}
                                     >
                                         {rowName.length > 20 ? rowName.slice(0, 18) + '..' : rowName}

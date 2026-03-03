@@ -434,6 +434,34 @@ describe('dwellCascadeComputer.buildDailyCascadeMetrics', () => {
     }
   });
 
+  it('breaks chain on first on-time TP even when later TP in same trip is late', () => {
+    // Trip-2 (i=0): TP1 on-time (dev=0), TP2 late (dev=480s)
+    // Bug: old code with (lateCount > 0 || i > 0) would NOT break on TP1
+    //       because lateCount=0 and i=0, allowing TP2-lateness to propagate.
+    // Fix: any on-time TP breaks the chain unconditionally.
+    //       TP1 on-time → chain absorbed → TP2 lateness should NOT count.
+    const records = buildBlockRecords({
+      block: '10-01',
+      tripCount: 3,
+      baseHour: 8,
+      intervalMin: 25,
+      observedDepartures: {
+        // Trip-2: first TP on-time, second TP late
+        1: { 1: '08:25:00', 2: '08:43:00' }, // TP1: dev=0 (on-time), TP2: dev=480s (late)
+      },
+    });
+    const incident = makeIncident({ tripName: 'Trip-1', block: '10-01' });
+
+    const result = buildDailyCascadeMetrics(records, [incident]);
+    const cascade = result.cascades[0];
+
+    // Chain should break at Trip-2 TP1 (on-time) → no late departures count
+    // Trailing trim removes Trip-2 (0 late TPs) → cascadedTrips empty
+    expect(cascade.blastRadius).toBe(0);
+    expect(cascade.cascadedTrips).toHaveLength(0);
+    expect(result.totalNonCascaded).toBe(1);
+  });
+
   it('picks canonical (closest-to-schedule) observation when duplicates exist', () => {
     const records = buildBlockRecords({
       block: '10-01',

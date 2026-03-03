@@ -51,10 +51,10 @@ interface TabConfig {
 
 const TAB_CONFIG: TabConfig[] = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard, enabled: true },
+    { id: 'heatmap', label: 'Heatmap Grid', icon: Grid3X3, enabled: true },
     { id: 'route-estimation', label: 'Routes & Transfers', icon: Route, enabled: true },
     { id: 'top-pairs', label: 'Top Pairs', icon: BarChart3, enabled: true },
     { id: 'rankings', label: 'Station Rankings', icon: Trophy, enabled: true },
-    { id: 'heatmap', label: 'Heatmap Grid', icon: Grid3X3, enabled: true },
 ];
 
 export const ODMatrixWorkspace: React.FC<ODMatrixWorkspaceProps> = ({
@@ -115,7 +115,7 @@ export const ODMatrixWorkspace: React.FC<ODMatrixWorkspaceProps> = ({
     const handleExportStopPdf = useCallback(async () => {
         if (!isolatedStation) return;
         setExportingStopPdf(true);
-        try { await exportStopReportPdf(data, isolatedStation, mapElRef.current, routeEstimation); }
+        try { await exportStopReportPdf(data, isolatedStation, mapElRef.current, routeEstimation, heatmapElRef.current); }
         finally { setExportingStopPdf(false); }
     }, [data, isolatedStation, routeEstimation]);
 
@@ -131,6 +131,14 @@ export const ODMatrixWorkspace: React.FC<ODMatrixWorkspaceProps> = ({
             );
         }
         finally { setExportingPDF(false); }
+    }, [data, routeEstimation]);
+
+    const handleHeatmapStopExcel = useCallback(async (stopName: string) => {
+        await exportStopReportExcel(data, stopName, routeEstimation);
+    }, [data, routeEstimation]);
+
+    const handleHeatmapStopPdf = useCallback(async (stopName: string) => {
+        await exportStopReportPdf(data, stopName, mapElRef.current, routeEstimation, heatmapElRef.current);
     }, [data, routeEstimation]);
 
     const tabs = useMemo(() => TAB_CONFIG, []);
@@ -175,9 +183,9 @@ export const ODMatrixWorkspace: React.FC<ODMatrixWorkspaceProps> = ({
             case 'rankings':
                 return <ODStationRankingsModule data={data} chartContainerRef={rankingsElRef} />;
             case 'heatmap':
-                return <ODHeatmapGridModule data={data} containerRef={heatmapElRef} />;
+                return <ODHeatmapGridModule data={data} containerRef={heatmapElRef} onExportStopExcel={handleHeatmapStopExcel} onExportStopPdf={handleHeatmapStopPdf} />;
             case 'route-estimation':
-                return <ODRouteEstimationModule data={data} geocodeCache={geocodeCache} onResultReady={handleRouteEstimationReady} />;
+                return <ODRouteEstimationModule data={data} geocodeCache={geocodeCache} onResultReady={handleRouteEstimationReady} onExportStopExcel={handleHeatmapStopExcel} onExportStopPdf={handleHeatmapStopPdf} />;
             default:
                 return <ComingSoonPlaceholder />;
         }

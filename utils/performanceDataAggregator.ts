@@ -982,7 +982,7 @@ function aggregateSingleDay(date: string, records: STREETSRecord[]): DailySummar
     loadProfiles: buildLoadProfiles(records),
     ridershipHeatmaps: buildRidershipHeatmaps(records),
     byOperatorDwell: dwellMetrics,
-    byCascade: buildDailyCascadeMetrics(records, dwellMetrics.incidents),
+    byCascade: buildDailyCascadeMetrics(records, dwellMetrics.incidents.filter(i => i.trackedDwellSeconds > 0)),
     segmentRuntimes: buildSegmentRuntimes(records),
     routeStopDeviations: buildRouteStopDeviations(records),
     dataQuality: buildDataQuality(records, sanitization),

@@ -30,6 +30,10 @@ import {
     Route,
     Layers,
     BarChart3,
+    Maximize2,
+    Minimize2,
+    Download,
+    FileText,
 } from 'lucide-react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -49,6 +53,8 @@ interface ODRouteEstimationModuleProps {
     data: ODMatrixDataSummary;
     geocodeCache: GeocodeCache | null;
     onResultReady?: (result: ODRouteEstimationResult) => void;
+    onExportStopExcel?: (stopName: string) => void;
+    onExportStopPdf?: (stopName: string) => void;
 }
 
 const CONFIDENCE_COLORS: Record<MatchConfidence, string> = {
@@ -436,7 +442,7 @@ const SectionCard: React.FC<{
 
 // ── Main Component ──────────────────────────────────────────────────────────
 
-export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = ({ data, geocodeCache, onResultReady }) => {
+export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = ({ data, geocodeCache, onResultReady, onExportStopExcel, onExportStopPdf }) => {
     const dataKey = getDataKey(data);
     const hasCached = cachedEstimation?.dataKey === dataKey;
 
@@ -455,6 +461,7 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
     const [transferTopN, setTransferTopN] = useState<number | 'all'>(10);
     const [showBars, setShowBars] = useState(true);
     const [selectedTransferPoint, setSelectedTransferPoint] = useState<string | null>(null);
+    const [transferMapFullscreen, setTransferMapFullscreen] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const deferredSearch = useDeferredValue(search);
 
@@ -943,6 +950,28 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
         return () => { map.remove(); leafletMapRef.current = null; };
     }, [displayedTransferPoints, showBars, selectedTransferPoint, transferFlowPairs]);
 
+    // Invalidate map size when entering/exiting fullscreen
+    useEffect(() => {
+        if (leafletMapRef.current) {
+            setTimeout(() => leafletMapRef.current?.invalidateSize(), 100);
+        }
+    }, [transferMapFullscreen]);
+
+    // Escape key + body overflow lock for transfer map fullscreen
+    useEffect(() => {
+        if (!transferMapFullscreen) return;
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') setTransferMapFullscreen(false);
+        };
+        document.addEventListener('keydown', onKeyDown);
+        const prevOverflow = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+        return () => {
+            document.removeEventListener('keydown', onKeyDown);
+            document.body.style.overflow = prevOverflow;
+        };
+    }, [transferMapFullscreen]);
+
     // ── Loading state ───────────────────────────────────────────
     if (loading) {
         return (
@@ -1199,7 +1228,8 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
 
             {/* ── Transfer Point Heatmap ──────────────────────────── */}
             {transferPoints.length > 0 && (
-                <div className="order-[3]">
+                <div className="order-1">
+                    <div className={transferMapFullscreen ? 'fixed inset-3 z-[80] bg-white rounded-xl border border-gray-200 shadow-2xl p-3 overflow-auto' : ''}>
                     <SectionCard
                         title="Transfer Point Heatmap"
                         subtitle={`${transferPoints.length} transfer point${transferPoints.length === 1 ? '' : 's'}${transferPoints.length > 10 ? ` (showing ${displayedTransferPoints.length})` : ' (showing all)'} · ${fmt(displayedTransferPoints.reduce((s, p) => s + p.totalJourneys, 0))} journeys`}
@@ -1229,6 +1259,12 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
                                             ))}
                                     </div>
                                 )}
+                                <button
+                                    onClick={() => setTransferMapFullscreen(prev => !prev)}
+                                    className="px-3 py-1.5 text-xs font-medium border border-gray-200 rounded-md text-gray-600 hover:text-gray-800 hover:bg-gray-50"
+                                >
+                                    {transferMapFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+                                </button>
                             </div>
                         }
                     >
@@ -1247,9 +1283,29 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
                                             <XCircle size={14} />
                                         </button>
                                     </div>
+                                    {onExportStopExcel && (
+                                        <button
+                                            onClick={() => onExportStopExcel(toTitleCase(selectedTransferPoint))}
+                                            title={`Export stop Excel: ${toTitleCase(selectedTransferPoint)}`}
+                                            className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-white hover:text-gray-800 transition-colors"
+                                        >
+                                            <Download size={12} />
+                                            Excel
+                                        </button>
+                                    )}
+                                    {onExportStopPdf && (
+                                        <button
+                                            onClick={() => onExportStopPdf(toTitleCase(selectedTransferPoint))}
+                                            title={`Export stop PDF: ${toTitleCase(selectedTransferPoint)}`}
+                                            className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-white hover:text-gray-800 transition-colors"
+                                        >
+                                            <FileText size={12} />
+                                            PDF
+                                        </button>
+                                    )}
                                 </div>
                             )}
-                            <div ref={transferMapRef} style={{ height: `${TRANSFER_MAP_HEIGHT_PX}px` }} className="rounded-lg shadow-inner" />
+                            <div ref={transferMapRef} style={{ height: transferMapFullscreen ? 'calc(100vh - 220px)' : `${TRANSFER_MAP_HEIGHT_PX}px` }} className="rounded-lg shadow-inner" />
                             {/* Floating legend overlay */}
                             <div className="absolute bottom-3 left-3 z-[1000] bg-white/90 backdrop-blur-sm rounded-lg shadow-md border border-slate-200/60 px-3 py-2.5 flex items-center gap-4">
                                 <div className="flex items-center gap-2">
@@ -1289,6 +1345,7 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
                             </table>
                         </div>
                     </SectionCard>
+                    </div>
                 </div>
             )}
 

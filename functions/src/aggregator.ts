@@ -644,7 +644,7 @@ function aggregateSingleDay(date: string, records: STREETSRecord[]): DailySummar
     byTrip: buildTripMetrics(records),
     loadProfiles: buildLoadProfiles(records),
     byOperatorDwell: dwellMetrics,
-    byCascade: buildDailyCascadeMetrics(records, dwellMetrics.incidents),
+    byCascade: buildDailyCascadeMetrics(records, dwellMetrics.incidents.filter(i => i.trackedDwellSeconds > 0)),
     dataQuality: buildDataQuality(records, sanitization),
     schemaVersion: PERFORMANCE_SCHEMA_VERSION,
   };
