@@ -3,7 +3,7 @@ import {
   STREETSRecord, DailySummary, parseDayType, deriveDayTypeFromDate,
   SystemMetrics, RouteMetrics, HourMetrics, StopMetrics, TripMetrics,
   RouteLoadProfile, LoadProfileStop, DataQuality, OTPBreakdown,
-  classifyOTP, PERFORMANCE_SCHEMA_VERSION,
+  classifyOTP, PERFORMANCE_SCHEMA_VERSION, DEFAULT_LOAD_CAP,
   OperatorDwellMetrics, DwellIncident, OperatorDwellSummary,
   classifyDwell, DWELL_THRESHOLDS,
 } from './types';
@@ -51,6 +51,30 @@ function groupBy<T>(items: T[], keyFn: (item: T) => string): Map<string, T[]> {
     }
   }
   return map;
+}
+
+function isLoadReliable(r: STREETSRecord): boolean {
+  // APC-backed zero load is valid and must be kept in averages (e.g. terminals).
+  return r.apcSource !== 0 && r.departureLoad >= 0;
+}
+
+/** Cap departureLoad values and return sanitization counts.
+ *  WARNING: Mutates records in place. Only call once per record set. */
+function sanitizeRecords(records: STREETSRecord[]): { loadCapped: number; apcExcludedFromLoad: number } {
+  let loadCapped = 0;
+  let apcExcludedFromLoad = 0;
+
+  for (const r of records) {
+    if (r.departureLoad > DEFAULT_LOAD_CAP) {
+      r.departureLoad = DEFAULT_LOAD_CAP;
+      loadCapped++;
+    }
+    if (r.apcSource === 0) {
+      apcExcludedFromLoad++;
+    }
+  }
+
+  return { loadCapped, apcExcludedFromLoad };
 }
 
 function otpEligible(records: STREETSRecord[]): STREETSRecord[] {
@@ -150,12 +174,16 @@ function buildSystemMetrics(records: STREETSRecord[]): SystemMetrics {
   const vehicles = new Set<string>();
   const trips = new Set<string>();
   const wheelchairTrips = new Set<string>();
+  let loadCount = 0;
 
   for (const r of records) {
     totalBoardings += r.boardings;
     totalAlightings += r.alightings;
-    loadSum += r.departureLoad;
-    if (r.departureLoad > peakLoad) peakLoad = r.departureLoad;
+    if (isLoadReliable(r)) {
+      loadSum += r.departureLoad;
+      loadCount++;
+      if (r.departureLoad > peakLoad) peakLoad = r.departureLoad;
+    }
     vehicles.add(r.vehicleId);
     trips.add(r.tripId);
     if (r.wheelchairUsageCount > 0) wheelchairTrips.add(r.tripId);
@@ -169,7 +197,7 @@ function buildSystemMetrics(records: STREETSRecord[]): SystemMetrics {
     vehicleCount: vehicles.size,
     tripCount: trips.size,
     wheelchairTrips: wheelchairTrips.size,
-    avgSystemLoad: safeDivide(loadSum, records.length),
+    avgSystemLoad: safeDivide(loadSum, loadCount),
     peakLoad,
   };
 }
@@ -184,14 +212,18 @@ function buildRouteMetrics(records: STREETSRecord[]): RouteMetrics[] {
     let alightings = 0;
     let maxLoad = 0;
     let loadSum = 0;
+    let loadCount = 0;
     const trips = new Set<string>();
     const wheelchairTrips = new Set<string>();
     let routeName = '';
     for (const r of recs) {
       ridership += r.boardings;
       alightings += r.alightings;
-      loadSum += r.departureLoad;
-      if (r.departureLoad > maxLoad) maxLoad = r.departureLoad;
+      if (isLoadReliable(r)) {
+        loadSum += r.departureLoad;
+        loadCount++;
+        if (r.departureLoad > maxLoad) maxLoad = r.departureLoad;
+      }
       trips.add(r.tripId);
       if (r.wheelchairUsageCount > 0) wheelchairTrips.add(r.tripId);
       if (!routeName) routeName = r.routeName;
@@ -229,7 +261,7 @@ function buildRouteMetrics(records: STREETSRecord[]): RouteMetrics[] {
       alightings,
       tripCount,
       serviceHours,
-      avgLoad: safeDivide(loadSum, recs.length),
+      avgLoad: safeDivide(loadSum, loadCount),
       maxLoad,
       avgDeviationSeconds: otp.avgDeviationSeconds,
       wheelchairTrips: wheelchairTrips.size,
@@ -253,11 +285,15 @@ function buildHourMetrics(records: STREETSRecord[]): HourMetrics[] {
     let boardings = 0;
     let alightings = 0;
     let loadSum = 0;
+    let loadCount = 0;
 
     for (const r of recs) {
       boardings += r.boardings;
       alightings += r.alightings;
-      loadSum += r.departureLoad;
+      if (isLoadReliable(r)) {
+        loadSum += r.departureLoad;
+        loadCount++;
+      }
     }
 
     results.push({
@@ -265,7 +301,7 @@ function buildHourMetrics(records: STREETSRecord[]): HourMetrics[] {
       otp,
       boardings,
       alightings,
-      avgLoad: safeDivide(loadSum, recs.length),
+      avgLoad: safeDivide(loadSum, loadCount),
     });
   }
 
@@ -281,6 +317,7 @@ function buildStopMetrics(records: STREETSRecord[]): StopMetrics[] {
     let boardings = 0;
     let alightings = 0;
     let loadSum = 0;
+    let loadCount = 0;
     const routes = new Set<string>();
     let lat = 0;
     let lon = 0;
@@ -291,7 +328,10 @@ function buildStopMetrics(records: STREETSRecord[]): StopMetrics[] {
     for (const r of recs) {
       boardings += r.boardings;
       alightings += r.alightings;
-      loadSum += r.departureLoad;
+      if (isLoadReliable(r)) {
+        loadSum += r.departureLoad;
+        loadCount++;
+      }
       routes.add(r.routeId);
       if (!lat) { lat = r.stopLat; lon = r.stopLon; }
       if (r.timePoint) isTimepoint = true;
@@ -313,7 +353,7 @@ function buildStopMetrics(records: STREETSRecord[]): StopMetrics[] {
       otp,
       boardings,
       alightings,
-      avgLoad: safeDivide(loadSum, recs.length),
+      avgLoad: safeDivide(loadSum, loadCount),
       routeCount: routes.size,
       routes: Array.from(routes).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
       hourlyBoardings: hBoard,
@@ -341,7 +381,7 @@ function buildTripMetrics(records: STREETSRecord[]): TripMetrics[] {
 
     for (const r of recs) {
       boardings += r.boardings;
-      if (r.departureLoad > maxLoad) maxLoad = r.departureLoad;
+      if (isLoadReliable(r) && r.departureLoad > maxLoad) maxLoad = r.departureLoad;
       if (!tripName) {
         tripName = r.tripName;
         block = r.block;
@@ -404,10 +444,14 @@ function buildLoadProfiles(records: STREETSRecord[]): RouteLoadProfile[] {
         let b = 0;
         let a = 0;
         let load = 0;
+        let hasReliableLoad = false;
         for (const r of tripRecs) {
           b += r.boardings;
           a += r.alightings;
-          if (r.departureLoad > load) load = r.departureLoad;
+          if (isLoadReliable(r) && (!hasReliableLoad || r.departureLoad > load)) {
+            load = r.departureLoad;
+            hasReliableLoad = true;
+          }
           if (!stopName) {
             stopName = r.stopName;
             stopId = r.stopId;
@@ -416,8 +460,10 @@ function buildLoadProfiles(records: STREETSRecord[]): RouteLoadProfile[] {
         }
         tripBoardings.push(b);
         tripAlightings.push(a);
-        tripLoads.push(load);
-        if (load > maxLoad) maxLoad = load;
+        if (hasReliableLoad) {
+          tripLoads.push(load);
+          if (load > maxLoad) maxLoad = load;
+        }
       }
 
       stops.push({
@@ -548,7 +594,10 @@ function buildOperatorDwellMetrics(records: STREETSRecord[], date: string): Oper
   };
 }
 
-function buildDataQuality(records: STREETSRecord[]): DataQuality {
+function buildDataQuality(
+  records: STREETSRecord[],
+  sanitization: { loadCapped: number; apcExcludedFromLoad: number }
+): DataQuality {
   let inBetweenFiltered = 0;
   let missingAVL = 0;
   let missingAPC = 0;
@@ -570,8 +619,8 @@ function buildDataQuality(records: STREETSRecord[]): DataQuality {
     missingAPC,
     detourRecords,
     tripperRecords,
-    loadCapped: 0,
-    apcExcludedFromLoad: 0,
+    loadCapped: sanitization.loadCapped,
+    apcExcludedFromLoad: sanitization.apcExcludedFromLoad,
   };
 }
 
@@ -581,6 +630,7 @@ function aggregateSingleDay(date: string, records: STREETSRecord[]): DailySummar
     rawDay === 'TUESDAY' || rawDay === 'WEDNESDAY' || rawDay === 'THURSDAY' || rawDay === 'FRIDAY')
     ? parseDayType(rawDay)
     : deriveDayTypeFromDate(date);
+  const sanitization = sanitizeRecords(records);
 
   const dwellMetrics = buildOperatorDwellMetrics(records, date);
 
@@ -595,7 +645,7 @@ function aggregateSingleDay(date: string, records: STREETSRecord[]): DailySummar
     loadProfiles: buildLoadProfiles(records),
     byOperatorDwell: dwellMetrics,
     byCascade: buildDailyCascadeMetrics(records, dwellMetrics.incidents),
-    dataQuality: buildDataQuality(records),
+    dataQuality: buildDataQuality(records, sanitization),
     schemaVersion: PERFORMANCE_SCHEMA_VERSION,
   };
 }

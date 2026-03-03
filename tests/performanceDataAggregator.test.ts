@@ -320,6 +320,20 @@ describe('APC load sanitization', () => {
         expect(summaries[0].system.totalBoardings).toBe(8);
     });
 
+    it('includes APC-backed zero loads in averages', () => {
+        const records = [
+            makeRecord({ routeId: '10', tripId: 'T1', routeStopIndex: 0, stopId: 'A', departureLoad: 0, apcSource: 1 }),
+            makeRecord({ routeId: '10', tripId: 'T2', routeStopIndex: 0, stopId: 'A', departureLoad: 10, apcSource: 1 }),
+        ];
+        const summaries = aggregateDailySummaries(records);
+        const route10 = summaries[0].byRoute.find(r => r.routeId === '10');
+        const profile = summaries[0].loadProfiles.find(p => p.routeId === '10');
+
+        expect(summaries[0].system.avgSystemLoad).toBe(5);
+        expect(route10?.avgLoad).toBe(5);
+        expect(profile?.stops[0].avgLoad).toBe(5);
+    });
+
     it('tracks apcExcludedFromLoad count in dataQuality', () => {
         const records = [
             makeRecord({ apcSource: 1 }),

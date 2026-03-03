@@ -16,6 +16,7 @@ interface OTPModuleProps {
 
 const OTP_COLORS = { early: '#f59e0b', 'on-time': '#22c55e', late: '#ef4444' };
 const MIN_LATE_TRIP_DAYS = 3;
+const MIN_ADHERENCE_DAYS = 3;
 const OTP_TARGET_PERCENT = 85;
 const DAY_TYPE_LABELS = { weekday: 'Weekday', saturday: 'Saturday', sunday: 'Sunday' } as const;
 
@@ -242,23 +243,67 @@ export const OTPModule: React.FC<OTPModuleProps> = ({ data }) => {
     }, [missedTripsDay]);
 
     // ── Schedule Adherence Profile ──────────────────────────────────────
+    const hasAnyRouteStopDeviationPayload = useMemo(
+        () => filtered.some(day => Array.isArray(day.routeStopDeviations)),
+        [filtered]
+    );
+
+    const routeDirectionCoverage = useMemo(() => {
+        const counts = new Map<string, number>();
+        for (const day of filtered) {
+            if (!day.routeStopDeviations || day.routeStopDeviations.length === 0) continue;
+            const seen = new Set<string>();
+            for (const profile of day.routeStopDeviations) {
+                const key = `${profile.routeId}||${profile.direction}`;
+                if (seen.has(key)) continue;
+                seen.add(key);
+                counts.set(key, (counts.get(key) || 0) + 1);
+            }
+        }
+        return counts;
+    }, [filtered]);
+
     const availableRouteDirections = useMemo(() => {
         const set = new Map<string, { routeId: string; directions: Set<string> }>();
-        for (const day of filtered) {
-            if (!day.routeStopDeviations) continue;
-            for (const profile of day.routeStopDeviations) {
-                const existing = set.get(profile.routeId);
-                if (existing) {
-                    existing.directions.add(profile.direction);
-                } else {
-                    set.set(profile.routeId, { routeId: profile.routeId, directions: new Set([profile.direction]) });
-                }
+        for (const key of routeDirectionCoverage.keys()) {
+            const [routeId, direction] = key.split('||');
+            const existing = set.get(routeId);
+            if (existing) {
+                existing.directions.add(direction);
+            } else {
+                set.set(routeId, { routeId, directions: new Set([direction]) });
             }
         }
         return Array.from(set.values())
             .sort((a, b) => a.routeId.localeCompare(b.routeId, undefined, { numeric: true }))
             .map(r => ({ routeId: r.routeId, directions: Array.from(r.directions).sort() }));
-    }, [filtered]);
+    }, [routeDirectionCoverage]);
+
+    const routeCoverageByRoute = useMemo(() => {
+        const routeDays = new Map<string, number>();
+        for (const [key, days] of routeDirectionCoverage) {
+            const [routeId] = key.split('||');
+            const existing = routeDays.get(routeId) ?? 0;
+            if (days > existing) routeDays.set(routeId, days);
+        }
+        return routeDays;
+    }, [routeDirectionCoverage]);
+
+    const defaultRouteDirection = useMemo(() => {
+        const ranked = Array.from(routeDirectionCoverage.entries()).sort((a, b) => {
+            const dayCmp = b[1] - a[1];
+            if (dayCmp !== 0) return dayCmp;
+            const [aRoute, aDir] = a[0].split('||');
+            const [bRoute, bDir] = b[0].split('||');
+            const routeCmp = aRoute.localeCompare(bRoute, undefined, { numeric: true });
+            if (routeCmp !== 0) return routeCmp;
+            return aDir.localeCompare(bDir);
+        });
+        if (ranked.length === 0) return { routeId: '', direction: '' };
+        const preferred = ranked.find(([, days]) => days >= MIN_ADHERENCE_DAYS) ?? ranked[0];
+        const [routeId, direction] = preferred[0].split('||');
+        return { routeId, direction };
+    }, [routeDirectionCoverage]);
 
     const [selectedRoute, setSelectedRoute] = useState<string>('');
     const [selectedDirection, setSelectedDirection] = useState<string>('');
@@ -268,12 +313,24 @@ export const OTPModule: React.FC<OTPModuleProps> = ({ data }) => {
         if (selectedRoute && availableRouteDirections.some(r => r.routeId === selectedRoute)) {
             return selectedRoute;
         }
+        if (defaultRouteDirection.routeId) return defaultRouteDirection.routeId;
         return availableRouteDirections[0]?.routeId ?? '';
-    }, [selectedRoute, availableRouteDirections]);
-    const directionsForRoute = availableRouteDirections.find(r => r.routeId === activeRoute)?.directions ?? [];
-    const activeDirection = selectedDirection && directionsForRoute.includes(selectedDirection)
-        ? selectedDirection
-        : (directionsForRoute[0] ?? '');
+    }, [selectedRoute, availableRouteDirections, defaultRouteDirection.routeId]);
+    const directionsForRoute = useMemo(
+        () => availableRouteDirections.find(r => r.routeId === activeRoute)?.directions ?? [],
+        [availableRouteDirections, activeRoute]
+    );
+    const activeDirection = useMemo(() => {
+        if (selectedDirection && directionsForRoute.includes(selectedDirection)) return selectedDirection;
+        if (
+            activeRoute === defaultRouteDirection.routeId &&
+            defaultRouteDirection.direction &&
+            directionsForRoute.includes(defaultRouteDirection.direction)
+        ) {
+            return defaultRouteDirection.direction;
+        }
+        return directionsForRoute[0] ?? '';
+    }, [selectedDirection, directionsForRoute, activeRoute, defaultRouteDirection.routeId, defaultRouteDirection.direction]);
 
     const adherenceProfile = useMemo(() => {
         if (!activeRoute || !activeDirection) return null;
@@ -304,7 +361,7 @@ export const OTPModule: React.FC<OTPModuleProps> = ({ data }) => {
             }
         }
 
-        if (daysWithData < 3) return { insufficientData: true as const, daysWithData };
+        if (daysWithData < MIN_ADHERENCE_DAYS) return { insufficientData: true as const, daysWithData };
 
         const stops = Array.from(stopMap.values())
             .sort((a, b) => a.routeStopIndex - b.routeStopIndex)
@@ -471,7 +528,9 @@ export const OTPModule: React.FC<OTPModuleProps> = ({ data }) => {
                 title="Schedule Adherence Profile"
                 subtitle={
                     availableRouteDirections.length === 0
-                        ? 'No route/timepoint deviation data available in the current filter selection'
+                        ? (hasAnyRouteStopDeviationPayload
+                            ? 'No route/timepoint deviation data available in the current filter selection'
+                            : 'This import does not include route timepoint deviations for schedule-adherence charting')
                         : adherenceProfile && !adherenceProfile.insufficientData
                             ? `Median of ${adherenceProfile.avgObsPerStop} observations per stop across ${adherenceProfile.daysWithData} days`
                             : 'Median deviation at each timepoint stop along a route'
@@ -479,9 +538,19 @@ export const OTPModule: React.FC<OTPModuleProps> = ({ data }) => {
             >
                 {availableRouteDirections.length === 0 ? (
                     <div className="flex items-center justify-center h-48 text-sm text-gray-400 text-center">
-                        No schedule-adherence data for this time range/day type.
-                        <br />
-                        Try a broader time range or set Day Type to All.
+                        {hasAnyRouteStopDeviationPayload ? (
+                            <>
+                                No schedule-adherence data for this time range/day type.
+                                <br />
+                                Try a broader time range or set Day Type to All.
+                            </>
+                        ) : (
+                            <>
+                                This dataset was imported before route timepoint deviations were stored.
+                                <br />
+                                Re-import STREETS data to populate Schedule Adherence.
+                            </>
+                        )}
                     </div>
                 ) : (
                     <>
@@ -493,7 +562,9 @@ export const OTPModule: React.FC<OTPModuleProps> = ({ data }) => {
                                 onChange={e => { setSelectedRoute(e.target.value); setSelectedDirection(''); }}
                             >
                                 {availableRouteDirections.map(r => (
-                                    <option key={r.routeId} value={r.routeId}>{r.routeId}</option>
+                                    <option key={r.routeId} value={r.routeId}>
+                                        {r.routeId} ({routeCoverageByRoute.get(r.routeId) ?? 0}d)
+                                    </option>
                                 ))}
                             </select>
                             <label className="text-xs font-medium text-gray-500 uppercase">Direction</label>
@@ -509,7 +580,7 @@ export const OTPModule: React.FC<OTPModuleProps> = ({ data }) => {
                         </div>
                         {adherenceProfile?.insufficientData ? (
                             <div className="flex items-center justify-center h-48 text-sm text-gray-400">
-                                Insufficient data — need at least 3 days ({adherenceProfile.daysWithData} available for this route/direction)
+                                Insufficient data — need at least {MIN_ADHERENCE_DAYS} days ({adherenceProfile.daysWithData} available for this route/direction)
                             </div>
                         ) : adherenceProfile && adherenceProfile.stops.length > 0 ? (
                             <ResponsiveContainer width="100%" height={320}>

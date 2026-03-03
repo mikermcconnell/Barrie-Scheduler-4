@@ -24,15 +24,17 @@ interface TabConfig {
     label: string;
     icon: React.FC<{ size?: number }>;
     status: 'complete' | 'partial' | 'not-started';
+    badge?: string;
 }
 
 const TAB_CONFIG: TabConfig[] = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard, status: 'complete' },
     { id: 'otp', label: 'OTP Analysis', icon: Clock, status: 'complete' },
     { id: 'ridership', label: 'Ridership', icon: TrendingUp, status: 'complete' },
-    { id: 'load-profiles', label: 'Load Profiles', icon: BarChart3, status: 'complete' },
-    { id: 'operator-dwell', label: 'Operator Dwell', icon: Timer, status: 'complete' },
+    { id: 'load-profiles', label: 'Load Profiles', icon: BarChart3, status: 'complete', badge: 'Testing' },
+    { id: 'operator-dwell', label: 'Operator Dwell', icon: Timer, status: 'complete', badge: 'Testing' },
 ];
+const DAY_TYPE_LABELS: Record<DayType, string> = { weekday: 'Weekday', saturday: 'Saturday', sunday: 'Sunday' };
 
 const LOCALHOST_HOSTNAMES = new Set(['localhost', '127.0.0.1', '::1']);
 const isLocalhost = () => typeof window !== 'undefined' && LOCALHOST_HOSTNAMES.has(window.location.hostname);
@@ -91,10 +93,9 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data
         }
     };
 
-    const showFilterBar = activeTab !== 'overview';
+    const showFilterBar = true;
     const filteredScope = useMemo(() => resolveFilteredScope(timeRange), [timeRange]);
 
-    const DAY_TYPE_LABELS: Record<DayType, string> = { weekday: 'Weekday', saturday: 'Saturday', sunday: 'Sunday' };
     const filteredScopeLabel = useMemo(() => {
         const n = filteredData.dailySummaries.length;
         if (n === 0) return 'No data';
@@ -115,7 +116,15 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data
     const renderPanel = () => {
         switch (activeTab) {
             case 'overview':
-                return <SystemOverviewModule data={data} onNavigate={handleNavigate} />;
+                return (
+                    <SystemOverviewModule
+                        data={filteredData}
+                        onNavigate={handleNavigate}
+                        scope={filteredScope}
+                        scopeLabel={filteredScopeLabel}
+                        dayTypeFilter={dayTypeFilter}
+                    />
+                );
             case 'otp':
                 return (
                     <PerformanceScopeProvider scope={filteredScope} label={filteredScopeLabel}>
@@ -194,6 +203,9 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data
                             >
                                 <Icon size={15} />
                                 {tab.label}
+                                {tab.badge && (
+                                    <span className="ml-1 px-1.5 py-0.5 text-[9px] font-bold bg-amber-100 text-amber-700 border border-amber-200 rounded-full uppercase">{tab.badge}</span>
+                                )}
                                 {tab.status === 'not-started' && tab.enabled && (
                                     <span className="ml-1 px-1.5 py-0.5 text-[9px] font-bold bg-gray-200 text-gray-500 rounded-full uppercase">Soon</span>
                                 )}
@@ -234,17 +246,11 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data
 
             {/* Panel */}
             <div className="bg-white border border-t-0 border-gray-200 rounded-b-lg p-5 min-h-[500px]">
-                {activeTab !== 'overview' && (
-                    <div className="mb-4">
-                        <span className={`inline-flex items-center px-2.5 py-1 text-xs font-semibold rounded-full ${
-                            filteredScope === 'yesterday'
-                                ? 'bg-cyan-50 text-cyan-700 border border-cyan-100'
-                                : 'bg-cyan-50 text-cyan-700 border border-cyan-100'
-                        }`}>
-                            {filteredScopeLabel}
-                        </span>
-                    </div>
-                )}
+                <div className="mb-4">
+                    <span className="inline-flex items-center px-2.5 py-1 text-xs font-semibold rounded-full bg-cyan-50 text-cyan-700 border border-cyan-100">
+                        {filteredScopeLabel}
+                    </span>
+                </div>
                 {renderPanel()}
             </div>
         </div>

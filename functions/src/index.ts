@@ -18,6 +18,103 @@ const INGEST_API_KEY = defineSecret('INGEST_API_KEY');
 // Team ID for Barrie Transit — passed as query param or defaults to this
 const DEFAULT_TEAM_ID = 'PHICwXGlvDen0RGt7fCG';
 
+function parseBooleanFlag(value: unknown, fallback = false): boolean {
+  if (value == null) return fallback;
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  const normalized = String(value).trim().toLowerCase();
+  if (['1', 'true', 'yes', 'y', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'n', 'off'].includes(normalized)) return false;
+  return fallback;
+}
+
+function getTotalRecords(summary: PerformanceDataSummary): number {
+  if (typeof summary?.metadata?.totalRecords === 'number') return summary.metadata.totalRecords;
+  return (summary?.dailySummaries || []).reduce((acc, d) => acc + (d?.dataQuality?.totalRecords || 0), 0);
+}
+
+function sanitizeNumericField(obj: Record<string, unknown> | undefined, key: string, cap: number, stats: {
+  dayChanged: boolean;
+  fieldsChanged: number;
+  overCapClamps: number;
+  negativeClamps: number;
+}): void {
+  if (!obj || typeof obj[key] !== 'number' || !Number.isFinite(obj[key] as number)) return;
+
+  const original = obj[key] as number;
+  let next = original;
+
+  if (original > cap) {
+    next = cap;
+    stats.overCapClamps++;
+  }
+  if (next < 0) {
+    next = 0;
+    stats.negativeClamps++;
+  }
+
+  if (next !== original) {
+    obj[key] = next;
+    stats.fieldsChanged++;
+    stats.dayChanged = true;
+  }
+}
+
+function sanitizeDailySummaryLoads(day: Record<string, unknown>, cap: number): {
+  dayChanged: boolean;
+  fieldsChanged: number;
+  overCapClamps: number;
+  negativeClamps: number;
+} {
+  const stats = {
+    dayChanged: false,
+    fieldsChanged: 0,
+    overCapClamps: 0,
+    negativeClamps: 0,
+  };
+
+  sanitizeNumericField(day.system as Record<string, unknown> | undefined, 'peakLoad', cap, stats);
+  sanitizeNumericField(day.system as Record<string, unknown> | undefined, 'avgSystemLoad', cap, stats);
+
+  if (Array.isArray(day.byRoute)) {
+    for (const route of day.byRoute) {
+      sanitizeNumericField(route as Record<string, unknown>, 'maxLoad', cap, stats);
+      sanitizeNumericField(route as Record<string, unknown>, 'avgLoad', cap, stats);
+    }
+  }
+
+  if (Array.isArray(day.byHour)) {
+    for (const hour of day.byHour) {
+      sanitizeNumericField(hour as Record<string, unknown>, 'avgLoad', cap, stats);
+    }
+  }
+
+  if (Array.isArray(day.byStop)) {
+    for (const stop of day.byStop) {
+      sanitizeNumericField(stop as Record<string, unknown>, 'avgLoad', cap, stats);
+    }
+  }
+
+  if (Array.isArray(day.byTrip)) {
+    for (const trip of day.byTrip) {
+      sanitizeNumericField(trip as Record<string, unknown>, 'maxLoad', cap, stats);
+    }
+  }
+
+  if (Array.isArray(day.loadProfiles)) {
+    for (const profile of day.loadProfiles) {
+      const stops = (profile as Record<string, unknown>).stops;
+      if (!Array.isArray(stops)) continue;
+      for (const stop of stops) {
+        sanitizeNumericField(stop as Record<string, unknown>, 'maxLoad', cap, stats);
+        sanitizeNumericField(stop as Record<string, unknown>, 'avgLoad', cap, stats);
+      }
+    }
+  }
+
+  return stats;
+}
+
 /**
  * ingestPerformanceData
  *
@@ -199,6 +296,156 @@ export const ingestPerformanceData = onRequest(
       console.error('Ingest failed:', err);
       res.status(500).json({
         error: 'Ingest failed',
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+);
+
+/**
+ * backfillLoadSanitization
+ *
+ * One-off HTTP endpoint to sanitize historical load metrics already stored in
+ * teams/{teamId}/performanceData/{timestamp}.json files.
+ *
+ * Uses same API key auth as ingestPerformanceData.
+ *
+ * Query/body options:
+ *   teamId   string   (optional, default team)
+ *   cap      number   (optional, default 65)
+ *   apply    boolean  (optional, default false = dry run)
+ *   deleteOld boolean (optional, default false)
+ */
+export const backfillLoadSanitization = onRequest(
+  {
+    secrets: [INGEST_API_KEY],
+    memory: '1GiB',
+    timeoutSeconds: 300,
+    maxInstances: 1,
+    region: 'us-central1',
+  },
+  async (req, res) => {
+    if (req.method !== 'POST') {
+      res.status(405).json({ error: 'Method not allowed. Use POST.' });
+      return;
+    }
+
+    const apiKey = req.headers['x-api-key'] as string | undefined;
+    if (!apiKey || apiKey !== INGEST_API_KEY.value()) {
+      res.status(401).json({ error: 'Invalid or missing API key' });
+      return;
+    }
+
+    const body = (typeof req.body === 'string')
+      ? (() => {
+        try { return JSON.parse(req.body); } catch { return {}; }
+      })()
+      : (req.body || {});
+
+    const teamId = String(req.query.teamId || body.teamId || DEFAULT_TEAM_ID);
+    const capRaw = req.query.cap ?? body.cap;
+    const parsedCap = Number.parseInt(String(capRaw ?? '65'), 10);
+    const cap = Number.isFinite(parsedCap) && parsedCap > 0 ? parsedCap : 65;
+    const apply = parseBooleanFlag(req.query.apply ?? body.apply, false);
+    const deleteOld = parseBooleanFlag(req.query.deleteOld ?? body.deleteOld, false);
+
+    try {
+      const metadataRef = getDb().doc(`teams/${teamId}/performanceData/metadata`);
+      const metadataSnap = await metadataRef.get();
+      if (!metadataSnap.exists) {
+        res.status(404).json({ error: `No metadata found for team ${teamId}` });
+        return;
+      }
+
+      const metadata = metadataSnap.data() || {};
+      const oldStoragePath = metadata.storagePath as string | undefined;
+      if (!oldStoragePath) {
+        res.status(400).json({ error: `Metadata for team ${teamId} has no storagePath` });
+        return;
+      }
+
+      const [buf] = await getBucket().file(oldStoragePath).download();
+      const summary = JSON.parse(buf.toString('utf8')) as PerformanceDataSummary;
+      if (!Array.isArray(summary.dailySummaries)) {
+        res.status(400).json({ error: 'Stored summary has no dailySummaries array' });
+        return;
+      }
+
+      let daysChanged = 0;
+      let fieldsChanged = 0;
+      let overCapClamps = 0;
+      let negativeClamps = 0;
+
+      for (const day of summary.dailySummaries as unknown as Array<Record<string, unknown>>) {
+        const dayStats = sanitizeDailySummaryLoads(day, cap);
+        if (dayStats.dayChanged) daysChanged++;
+        fieldsChanged += dayStats.fieldsChanged;
+        overCapClamps += dayStats.overCapClamps;
+        negativeClamps += dayStats.negativeClamps;
+      }
+
+      if (!apply) {
+        res.status(200).json({
+          success: true,
+          mode: 'dry-run',
+          teamId,
+          cap,
+          storagePath: oldStoragePath,
+          dayCount: summary.dailySummaries.length,
+          daysChanged,
+          fieldsChanged,
+          overCapClamps,
+          negativeClamps,
+        });
+        return;
+      }
+
+      const timestamp = Date.now().toString();
+      const newStoragePath = `teams/${teamId}/performanceData/${timestamp}-load-sanitize-backfill.json`;
+      await getBucket().file(newStoragePath).save(JSON.stringify(summary), {
+        contentType: 'application/json',
+      });
+
+      const dates = summary.dailySummaries.map(d => d.date).filter(Boolean).sort();
+      const dateRange = dates.length > 0
+        ? { start: dates[0], end: dates[dates.length - 1] }
+        : (summary.metadata?.dateRange || { start: '', end: '' });
+
+      await metadataRef.set({
+        importedAt: admin.firestore.FieldValue.serverTimestamp(),
+        importedBy: 'load-sanitize-backfill',
+        storagePath: newStoragePath,
+        dateRange,
+        dayCount: summary.dailySummaries.length,
+        totalRecords: getTotalRecords(summary),
+      }, { merge: true });
+
+      if (deleteOld && oldStoragePath !== newStoragePath) {
+        try {
+          await getBucket().file(oldStoragePath).delete();
+        } catch {
+          // Non-fatal cleanup failure
+        }
+      }
+
+      res.status(200).json({
+        success: true,
+        mode: 'apply',
+        teamId,
+        cap,
+        oldStoragePath,
+        newStoragePath,
+        dayCount: summary.dailySummaries.length,
+        daysChanged,
+        fieldsChanged,
+        overCapClamps,
+        negativeClamps,
+        deletedOld: deleteOld,
+      });
+    } catch (err) {
+      console.error('Load sanitization backfill failed:', err);
+      res.status(500).json({
+        error: 'Load sanitization backfill failed',
         message: err instanceof Error ? err.message : String(err),
       });
     }

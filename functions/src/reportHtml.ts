@@ -55,15 +55,15 @@ function formatDateLong(dateStr: string): string {
 }
 
 function bphColor(value: number): string {
-  if (value >= 30) return '#16a34a'; // green
-  if (value >= 20) return '#d97706'; // amber
-  return '#dc2626'; // red
+  if (value < 10 || value > 30) return '#dc2626'; // red
+  if (value >= 20) return '#16a34a'; // green
+  return '#111827'; // black
 }
 
 function bphBg(value: number): string {
-  if (value >= 30) return '#f0fdf4';
-  if (value >= 20) return '#fffbeb';
-  return '#fef2f2';
+  if (value < 10 || value > 30) return '#fef2f2';
+  if (value >= 20) return '#f0fdf4';
+  return 'transparent';
 }
 
 function bphPill(value: number): string {
@@ -74,122 +74,6 @@ function bphPill(value: number): string {
 
 function stopLabel(name: string, id: string): string {
   return `${name} <span style="color:#9ca3af;font-weight:400;">(${id})</span>`;
-}
-
-/** Returns 'YYYY-MM-DD' of the Monday starting the ISO week for a given date string. */
-function getWeekStartMonday(dateStr: string): string | null {
-  const m = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!m) return null;
-  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
-  if (isNaN(d.getTime())) return null;
-  const dayOfWeek = (d.getUTCDay() + 6) % 7; // Mon=0 ... Sun=6
-  d.setUTCDate(d.getUTCDate() - dayOfWeek);
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
-}
-
-function buildDwellKpiCard(latestDay: DailySummary, trendDays: DailySummary[]): string {
-  const dwell = latestDay.byOperatorDwell;
-  if (!dwell || !dwell.totalTrackedDwellMinutes) {
-    return kpiCard("Yesterday's Dwell", '—', 'No dwell data', '#0891b2');
-  }
-  const hours = (dwell.totalTrackedDwellMinutes / 60).toFixed(1);
-  const high = dwell.byOperator.reduce((s, o) => s + o.highCount, 0);
-  const moderate = dwell.byOperator.reduce((s, o) => s + o.moderateCount, 0);
-
-  // Compute day-type average from trend data (excluding the latest day itself)
-  const dayType = latestDay.dayType;
-  const sameTypeDays = trendDays.filter(
-    d => d.dayType === dayType && d.date !== latestDay.date && d.byOperatorDwell?.totalTrackedDwellMinutes
-  );
-
-  let avgLine = '';
-  let accentColor = '#0891b2'; // default teal
-
-  if (sameTypeDays.length > 0) {
-    const avgMinutes = sameTypeDays.reduce((s, d) => s + (d.byOperatorDwell?.totalTrackedDwellMinutes ?? 0), 0) / sameTypeDays.length;
-    const avgHours = (avgMinutes / 60).toFixed(1);
-    const dayTypeLabel = dayType === 'weekday' ? 'Weekday' : dayType === 'saturday' ? 'Saturday' : 'Sunday';
-
-    const isHigh = dwell.totalTrackedDwellMinutes > avgMinutes * 1.5;
-    if (isHigh) {
-      accentColor = '#d97706'; // amber
-      avgLine = `<div style="font-size:10px;color:#d97706;margin-top:3px;">&#9650; ${dayTypeLabel} avg: ${avgHours} hrs</div>`;
-    } else {
-      avgLine = `<div style="font-size:10px;color:#b0b8c4;margin-top:3px;">${dayTypeLabel} avg: ${avgHours} hrs</div>`;
-    }
-  }
-
-  // Custom HTML for two subtitle lines
-  const border = `border-left:3px solid ${accentColor};`;
-  const valueColor = accentColor === '#d97706' ? 'color:#d97706;' : '';
-  return `
-    <td style="width:50%;padding:6px;">
-      <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px;text-align:center;${border}">
-        <div style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;">Yesterday's Dwell</div>
-        <div style="font-size:24px;font-weight:700;${valueColor}color:#111827;margin:4px 0;">${hours} hrs</div>
-        <div style="font-size:11px;color:#9ca3af;">${high} high · ${moderate} moderate</div>
-        ${avgLine}
-      </div>
-    </td>`;
-}
-
-function buildDwellTrendChart(trendDays: DailySummary[]): string {
-  // Group days into ISO weeks (Mon–Sun), keyed by week-start Monday date
-  const weekMap = new Map<string, number>();
-  const weekDayCount = new Map<string, number>();
-  for (const day of trendDays) {
-    const weekStart = getWeekStartMonday(day.date);
-    if (!weekStart) continue;
-    const minutes = day.byOperatorDwell?.totalTrackedDwellMinutes ?? 0;
-    weekMap.set(weekStart, (weekMap.get(weekStart) ?? 0) + minutes);
-    weekDayCount.set(weekStart, (weekDayCount.get(weekStart) ?? 0) + 1);
-  }
-
-  if (weekMap.size === 0) return '';
-
-  // Sort by week start, keep last 8 weeks
-  const weeks = [...weekMap.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .slice(-8);
-
-  const maxMinutes = Math.max(...weeks.map(([, m]) => m), 1);
-  const lastWeekStart = weeks[weeks.length - 1][0];
-
-  // Build bar data with week-ending Sunday label
-  const bars = weeks.map(([weekStart, minutes]) => {
-    const [y, mo, da] = weekStart.split('-').map(Number);
-    const sunday = new Date(Date.UTC(y, mo - 1, da + 6));
-    const weekEnd = `${String(sunday.getUTCMonth() + 1).padStart(2, '0')}/${String(sunday.getUTCDate()).padStart(2, '0')}`;
-    const hours = (minutes / 60).toFixed(1);
-    const heightPx = Math.max(4, Math.round((minutes / maxMinutes) * 80));
-    const hasData = minutes > 0;
-    const dayCount = weekDayCount.get(weekStart) ?? 0;
-    const isPartial = weekStart === lastWeekStart && dayCount < 7;
-    return { weekEnd, hours, heightPx, hasData, isPartial, dayCount };
-  });
-
-  const barCells = bars.map(b => `
-        <td style="text-align:center;vertical-align:bottom;padding:0 4px;width:${Math.floor(100 / bars.length)}%;">
-          <div style="font-size:10px;color:${b.isPartial ? '#9ca3af' : '#0891b2'};font-weight:600;margin-bottom:2px;">${b.hasData ? b.hours : ''}</div>
-          <div style="background:${b.hasData ? (b.isPartial ? '#b0e0e6' : '#0891b2') : '#e5e7eb'};height:${b.heightPx}px;border-radius:3px 3px 0 0;min-height:4px;${b.isPartial ? 'opacity:0.6;' : ''}"></div>
-          <div style="font-size:9px;color:#9ca3af;margin-top:4px;white-space:nowrap;">${b.weekEnd}</div>
-          ${b.isPartial ? `<div style="font-size:8px;color:#d97706;margin-top:1px;">${b.dayCount}/7 days</div>` : ''}
-        </td>`).join('');
-
-  return `
-      ${sectionHeader('Operator Dwell — Weekly Trend', 'Total tracked dwell hours per week (Mon–Sun)')}
-      <div style="border:1px solid #e5e7eb;border-radius:6px;padding:16px 12px 12px;background:#f9fafb;">
-        <table width="100%" cellpadding="0" cellspacing="0">
-          <tr style="vertical-align:bottom;">${barCells}</tr>
-        </table>
-        <div style="border-top:1px solid #e5e7eb;margin-top:4px;"></div>
-        <div style="font-size:10px;color:#9ca3af;margin-top:6px;text-align:right;">week ending (MM/DD)</div>
-        <div style="font-size:10px;color:#6b7280;margin-top:8px;line-height:1.45;">
-          Operator dwell measures stop time at timepoints (observed departure minus observed arrival), grouped by operator.
-          The first 2 minutes are treated as normal boarding time; only extra time is tracked.
-          Incidents are moderate at 2-5 minutes total stop time and high above 5 minutes.
-        </div>
-      </div>`;
 }
 
 function sectionHeader(title: string, subtitle?: string): string {
@@ -615,7 +499,6 @@ export function buildReportHtml(data: ReportData): string {
             }
             return kpiCard('Trips Operated', num(sys.tripCount), `${num(sys.vehicleCount)} vehicles · ${totalServiceHours.toFixed(1)} svc hrs`);
           })()}
-          ${buildDwellKpiCard(latestDay, trendDays)}
         </tr>
       </table>
 
@@ -660,9 +543,6 @@ export function buildReportHtml(data: ReportData): string {
 
       <!-- ═══ 6. STOP HIGHLIGHTS ═══ -->
       ${buildTopStops(latestDay.byStop)}
-
-      <!-- ═══ 7. DWELL TREND CHART ═══ -->
-      ${buildDwellTrendChart(trendDays)}
 
     </div>
 

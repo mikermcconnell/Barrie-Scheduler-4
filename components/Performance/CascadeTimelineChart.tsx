@@ -1,6 +1,12 @@
 import React, { useMemo, useState, useRef } from 'react';
 import type { CascadeAffectedTrip } from '../../utils/performanceDataTypes';
-import { buildTimelinePoints, type TimelinePoint } from '../../utils/schedule/cascadeStoryUtils';
+import {
+    buildTimelinePoints,
+    buildTripSegments,
+    TRIP_FILL_COLORS,
+    type TimelinePoint,
+    type TripSegment,
+} from '../../utils/schedule/cascadeStoryUtils';
 
 interface CascadeTimelineChartProps {
     trips: CascadeAffectedTrip[];
@@ -26,6 +32,7 @@ const CascadeTimelineChart: React.FC<CascadeTimelineChartProps> = ({
     const prevSelectedRef = useRef<number | null>(null);
 
     const points = useMemo(() => buildTimelinePoints(trips), [trips]);
+    const segments = useMemo(() => buildTripSegments(trips, points), [trips, points]);
 
     if (points.length === 0) {
         return (
@@ -35,7 +42,7 @@ const CascadeTimelineChart: React.FC<CascadeTimelineChartProps> = ({
         );
     }
 
-    const marginTop = 20;
+    const marginTop = 28;
     const marginRight = 20;
     const marginBottom = 50;
     const marginLeft = 45;
@@ -60,25 +67,40 @@ const CascadeTimelineChart: React.FC<CascadeTimelineChartProps> = ({
     const yBaseline = yOf(0);
     const yThreshold = yOf(OTP_LATE_MINUTES);
 
-    // Build area polygon points string
-    const areaPoints: string[] = [];
-    // Start at baseline of first point
-    areaPoints.push(`${xOf(0)},${yBaseline}`);
-    for (let i = 0; i < points.length; i++) {
-        const dev = points[i].deviationMinutes ?? 0;
-        areaPoints.push(`${xOf(i)},${yOf(Math.max(dev, 0))}`);
-    }
-    // End at baseline of last point
-    areaPoints.push(`${xOf(points.length - 1)},${yBaseline}`);
+    // Build per-segment area polygons and line paths
+    const segmentAreas = segments.map((seg) => {
+        const pts: string[] = [];
+        pts.push(`${xOf(seg.startPointIndex)},${yBaseline}`);
+        for (let i = seg.startPointIndex; i <= seg.endPointIndex; i++) {
+            const dev = points[i].deviationMinutes ?? 0;
+            pts.push(`${xOf(i)},${yOf(Math.max(dev, 0))}`);
+        }
+        pts.push(`${xOf(seg.endPointIndex)},${yBaseline}`);
+        return pts.join(' ');
+    });
 
-    // Build line path
-    const lineParts: string[] = [];
-    for (let i = 0; i < points.length; i++) {
-        const dev = points[i].deviationMinutes ?? 0;
-        const cmd = i === 0 ? 'M' : 'L';
-        lineParts.push(`${cmd}${xOf(i)},${yOf(Math.max(dev, 0))}`);
+    const segmentLines = segments.map((seg) => {
+        const parts: string[] = [];
+        for (let i = seg.startPointIndex; i <= seg.endPointIndex; i++) {
+            const dev = points[i].deviationMinutes ?? 0;
+            const cmd = i === seg.startPointIndex ? 'M' : 'L';
+            parts.push(`${cmd}${xOf(i)},${yOf(Math.max(dev, 0))}`);
+        }
+        return parts.join(' ');
+    });
+
+    // Connecting lines between segments for visual continuity
+    const segmentConnectors: { path: string; stroke: string }[] = [];
+    for (let si = 0; si < segments.length - 1; si++) {
+        const endIdx = segments[si].endPointIndex;
+        const startIdx = segments[si + 1].startPointIndex;
+        const endDev = points[endIdx].deviationMinutes ?? 0;
+        const startDev = points[startIdx].deviationMinutes ?? 0;
+        segmentConnectors.push({
+            path: `M${xOf(endIdx)},${yOf(Math.max(endDev, 0))} L${xOf(startIdx)},${yOf(Math.max(startDev, 0))}`,
+            stroke: TRIP_FILL_COLORS[segments[si + 1].color].stroke,
+        });
     }
-    const linePath = lineParts.join(' ');
 
     // Recovery markers: first non-late point after a late point
     const recoveryIndices = new Set<number>();
@@ -97,13 +119,16 @@ const CascadeTimelineChart: React.FC<CascadeTimelineChartProps> = ({
     const midDeviation = yMax / 2;
     const yTicks = [0, midDeviation, yMax];
 
+    // Find segment for a point index (for dot coloring)
+    const segmentForPoint = (ptIdx: number): TripSegment | undefined =>
+        segments.find(s => ptIdx >= s.startPointIndex && ptIdx <= s.endPointIndex);
+
     // Mouse tracking
     const handleMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
         const rect = e.currentTarget.getBoundingClientRect();
         const mouseX = e.clientX - rect.left;
         const mouseY = e.clientY - rect.top;
 
-        // Find nearest point by x-distance
         let nearest: TimelinePoint | null = null;
         let nearestDist = Infinity;
         let nearestIdx = -1;
@@ -177,66 +202,64 @@ const CascadeTimelineChart: React.FC<CascadeTimelineChartProps> = ({
                     5m
                 </text>
 
-                {/* Trip boundary lines and labels */}
-                {points.map((p, i) => {
-                    if (!p.isTripStart) return null;
-                    if (i === 0) {
-                        // First trip label above first point
+                {/* === LAYER 1: Per-trip area fills === */}
+                {segments.map((seg, si) => {
+                    const dimmed = selectedTripIndex !== null && seg.tripIndex !== selectedTripIndex;
+                    return (
+                        <polygon
+                            key={`area-${si}`}
+                            points={segmentAreas[si]}
+                            fill={TRIP_FILL_COLORS[seg.color].fill}
+                            opacity={dimmed ? 0.12 : 0.4}
+                        />
+                    );
+                })}
+
+                {/* === LAYER 2: Trip boundary lines and labels === */}
+                {segments.map((seg, si) => {
+                    const ptIdx = seg.startPointIndex;
+                    const colors = TRIP_FILL_COLORS[seg.color];
+                    if (si === 0) {
                         return (
                             <text
-                                key={`trip-label-${i}`}
-                                x={xOf(i)}
-                                y={marginTop - 6}
+                                key={`trip-label-${si}`}
+                                x={xOf(ptIdx)}
+                                y={marginTop - 10}
                                 textAnchor="middle"
-                                fontSize={9}
-                                fill="#6b7280"
-                                fontWeight={500}
+                                fontSize={10}
+                                fill={colors.stroke}
+                                fontWeight={600}
                             >
-                                {p.tripName}
+                                {seg.tripName} · {seg.lateCount}/{seg.totalCount}
                             </text>
                         );
                     }
                     return (
-                        <g key={`trip-boundary-${i}`}>
+                        <g key={`trip-boundary-${si}`}>
                             <line
-                                x1={xOf(i)}
+                                x1={xOf(ptIdx)}
                                 y1={marginTop}
-                                x2={xOf(i)}
+                                x2={xOf(ptIdx)}
                                 y2={yBaseline}
-                                stroke="#9ca3af"
-                                strokeWidth={1}
-                                strokeDasharray="3 3"
+                                stroke="#6b7280"
+                                strokeWidth={1.5}
+                                strokeDasharray="6 3"
                             />
                             <text
-                                x={xOf(i)}
-                                y={marginTop - 6}
+                                x={xOf(ptIdx)}
+                                y={marginTop - 10}
                                 textAnchor="middle"
-                                fontSize={9}
-                                fill="#6b7280"
-                                fontWeight={500}
+                                fontSize={10}
+                                fill={colors.stroke}
+                                fontWeight={600}
                             >
-                                {p.tripName}
+                                {seg.tripName} · {seg.lateCount}/{seg.totalCount}
                             </text>
                         </g>
                     );
                 })}
 
-                {/* Red filled area */}
-                <polygon
-                    points={areaPoints.join(' ')}
-                    fill="#fecaca"
-                    opacity={0.4}
-                />
-
-                {/* Red deviation line */}
-                <path
-                    d={linePath}
-                    fill="none"
-                    stroke="#ef4444"
-                    strokeWidth={2}
-                    strokeLinejoin="round"
-                />
-
+                {/* === LAYER 3: Axes === */}
                 {/* Y-axis */}
                 <line
                     x1={marginLeft}
@@ -293,16 +316,45 @@ const CascadeTimelineChart: React.FC<CascadeTimelineChartProps> = ({
                     </text>
                 ))}
 
-                {/* Data point circles */}
+                {/* === LAYER 4: Per-trip line paths === */}
+                {segments.map((seg, si) => {
+                    const dimmed = selectedTripIndex !== null && seg.tripIndex !== selectedTripIndex;
+                    return (
+                        <path
+                            key={`line-${si}`}
+                            d={segmentLines[si]}
+                            fill="none"
+                            stroke={TRIP_FILL_COLORS[seg.color].stroke}
+                            strokeWidth={2}
+                            strokeLinejoin="round"
+                            opacity={dimmed ? 0.25 : 1}
+                        />
+                    );
+                })}
+
+                {/* Connecting lines between segments */}
+                {segmentConnectors.map((conn, ci) => (
+                    <path
+                        key={`conn-${ci}`}
+                        d={conn.path}
+                        fill="none"
+                        stroke={conn.stroke}
+                        strokeWidth={1.5}
+                        strokeDasharray="3 2"
+                        opacity={0.5}
+                    />
+                ))}
+
+                {/* === LAYER 5: Data point dots === */}
                 {points.map((p, i) => {
                     const cx = xOf(i);
                     const dev = p.deviationMinutes;
-                    const isSelected = selectedTripIndex !== null && p.tripIndex !== selectedTripIndex;
+                    const isDimmed = selectedTripIndex !== null && p.tripIndex !== selectedTripIndex;
                     const isHovered = hoveredIndex === i;
                     const r = isHovered ? 5 : 3.5;
+                    const seg = segmentForPoint(i);
 
                     if (dev === null) {
-                        // Null deviation: gray circle at baseline
                         return (
                             <circle
                                 key={`dot-${i}`}
@@ -310,13 +362,15 @@ const CascadeTimelineChart: React.FC<CascadeTimelineChartProps> = ({
                                 cy={yBaseline}
                                 r={r}
                                 fill="#9ca3af"
-                                opacity={isSelected ? 0.3 : 0.6}
+                                opacity={isDimmed ? 0.3 : 0.6}
                             />
                         );
                     }
 
                     const cy = yOf(Math.max(dev, 0));
-                    const fill = p.isLate ? '#ef4444' : '#22c55e';
+                    const fill = p.isLate
+                        ? (seg ? TRIP_FILL_COLORS[seg.color].stroke : '#ef4444')
+                        : '#22c55e';
 
                     return (
                         <circle
@@ -325,12 +379,12 @@ const CascadeTimelineChart: React.FC<CascadeTimelineChartProps> = ({
                             cy={cy}
                             r={r}
                             fill={fill}
-                            opacity={isSelected ? 0.3 : 1}
+                            opacity={isDimmed ? 0.3 : 1}
                         />
                     );
                 })}
 
-                {/* Recovery markers: green checkmark circle */}
+                {/* === LAYER 6: Recovery markers === */}
                 {points.map((p, i) => {
                     if (!recoveryIndices.has(i)) return null;
                     const cx = xOf(i);
@@ -345,7 +399,6 @@ const CascadeTimelineChart: React.FC<CascadeTimelineChartProps> = ({
                                 fill="#22c55e"
                                 opacity={0.9}
                             />
-                            {/* Checkmark path inside circle */}
                             <path
                                 d={`M${cx - 3},${cy - 10} L${cx - 0.5},${cy - 7.5} L${cx + 3.5},${cy - 13}`}
                                 fill="none"
@@ -367,7 +420,6 @@ const CascadeTimelineChart: React.FC<CascadeTimelineChartProps> = ({
                         left: tooltip.x + 12,
                         top: tooltip.y - 10,
                         maxWidth: 200,
-                        // Flip left if near right edge
                         transform: tooltip.x > svgWidth - 200 ? 'translateX(-110%)' : undefined,
                     }}
                 >

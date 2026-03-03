@@ -202,6 +202,9 @@ export interface DailyCascadeMetrics {
   totalBlastRadius: number;       // sum of all blast radii
 }
 
+// APC load sanitization — cap absurd departureLoad values from hardware malfunctions
+export const DEFAULT_LOAD_CAP = 65; // just above crush load of 60
+
 export const OTP_THRESHOLDS = {
   earlySeconds: -180,
   lateSeconds: 300,

@@ -12,8 +12,14 @@ interface LoadProfileModuleProps {
     data: PerformanceDataSummary;
 }
 
+const MIN_LOAD_PROFILE_DAYS = 5;
+
 export const LoadProfileModule: React.FC<LoadProfileModuleProps> = ({ data }) => {
     const filtered = data.dailySummaries;
+    const daysWithLoadProfiles = useMemo(
+        () => filtered.reduce((count, day) => count + (day.loadProfiles.length > 0 ? 1 : 0), 0),
+        [filtered]
+    );
 
     // Merge load profiles across filtered days
     const mergedProfiles = useMemo(() => {
@@ -197,6 +203,14 @@ export const LoadProfileModule: React.FC<LoadProfileModuleProps> = ({ data }) =>
             isTimepoint: s.isTimepoint,
         }));
     }, [activeProfile]);
+
+    if (daysWithLoadProfiles < MIN_LOAD_PROFILE_DAYS) {
+        return (
+            <div className="flex items-center justify-center h-48 text-sm text-gray-400">
+                Insufficient data - need at least {MIN_LOAD_PROFILE_DAYS} days ({daysWithLoadProfiles} available for this filter)
+            </div>
+        );
+    }
 
     if (mergedProfiles.length === 0) {
         return <div className="text-center text-gray-400 py-16">No load profile data available.</div>;

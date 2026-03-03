@@ -106,6 +106,10 @@ export interface ODRouteEstimationResult {
     stationMatchReport: StationMatch[];
     totalMatched: number;
     totalUnmatched: number;
+    /** Unmatched because origin or destination didn't resolve to a GTFS stop */
+    unmatchedStationPairs: number;
+    /** Unmatched because no GTFS route path connects the two resolved stops */
+    unmatchedRoutePairs: number;
     matchedJourneys: number;
     totalJourneys: number;
 }
@@ -1020,6 +1024,8 @@ export function estimateRoutes(
     const matches: ODPairRouteMatch[] = [];
     const unmatchedPairs: ODPairRouteMatch[] = [];
     let matchedJourneys = 0;
+    let unmatchedStationPairs = 0;
+    let unmatchedRoutePairs = 0;
 
     for (const pair of data.pairs) {
         const originMatch = stationMatches.get(pair.origin);
@@ -1040,6 +1046,7 @@ export function estimateRoutes(
             };
             matches.push(noMatch);
             unmatchedPairs.push(noMatch);
+            unmatchedStationPairs++;
             continue;
         }
 
@@ -1132,6 +1139,7 @@ export function estimateRoutes(
         };
         matches.push(noMatch);
         unmatchedPairs.push(noMatch);
+        unmatchedRoutePairs++;
     }
 
     // 7. Build route distribution (count each leg of transfers separately)
@@ -1182,6 +1190,8 @@ export function estimateRoutes(
         }),
         totalMatched: matches.length - unmatchedPairs.length,
         totalUnmatched: unmatchedPairs.length,
+        unmatchedStationPairs,
+        unmatchedRoutePairs,
         matchedJourneys,
         totalJourneys: data.totalJourneys,
     };

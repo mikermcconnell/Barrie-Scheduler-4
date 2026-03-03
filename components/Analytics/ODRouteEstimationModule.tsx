@@ -329,6 +329,39 @@ function barColorDark(ratio: number): string { return interpolateColor(ratio, -0
 function barColorLight(ratio: number): string { return interpolateColor(ratio, 0.35); }
 function glowGradientColor(ratio: number): string { return interpolateColor(ratio); }
 
+function quadraticBezierArc(
+    origin: [number, number],
+    dest: [number, number],
+    curveDirection: 1 | -1 = 1,
+    segments = 16,
+): [number, number][] {
+    const midLat = (origin[0] + dest[0]) / 2;
+    const midLon = (origin[1] + dest[1]) / 2;
+    const dLat = dest[0] - origin[0];
+    const dLon = dest[1] - origin[1];
+    const offsetLat = midLat + dLon * 0.18 * curveDirection;
+    const offsetLon = midLon - dLat * 0.18 * curveDirection;
+
+    const points: [number, number][] = [];
+    for (let i = 0; i <= segments; i++) {
+        const t = i / segments;
+        const u = 1 - t;
+        points.push([
+            u * u * origin[0] + 2 * u * t * offsetLat + t * t * dest[0],
+            u * u * origin[1] + 2 * u * t * offsetLon + t * t * dest[1],
+        ]);
+    }
+    return points;
+}
+
+interface TransferFlowPair {
+    stopName: string;
+    lat: number;
+    lon: number;
+    journeys: number;
+    isInbound: boolean;
+}
+
 /** Title case: "THUNDER BAY" → "Thunder Bay" */
 function toTitleCase(s: string): string {
     return s.replace(/\w\S*/g, t => t.charAt(0).toUpperCase() + t.slice(1).toLowerCase());
@@ -421,6 +454,7 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
     const [pairSortDir, setPairSortDir] = useState<SortDirection>('asc');
     const [transferTopN, setTransferTopN] = useState<number | 'all'>(10);
     const [showBars, setShowBars] = useState(true);
+    const [selectedTransferPoint, setSelectedTransferPoint] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const deferredSearch = useDeferredValue(search);
 
@@ -634,6 +668,66 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
         return transferPoints.slice(0, transferTopN);
     }, [transferPoints, transferTopN]);
 
+    const transferFlowPairs = useMemo((): TransferFlowPair[] => {
+        if (!selectedTransferPoint || !result || !geocodeCache) return [];
+        const selKey = selectedTransferPoint.toLowerCase();
+
+        // Aggregate inbound (origin→transfer) and outbound (transfer→destination) by stop name
+        const agg = new Map<string, { journeys: number; lat: number; lon: number; isInbound: boolean }>();
+
+        for (const m of result.matches) {
+            if (!m.transfer) continue;
+            const stops = m.transfer.transferStops?.length
+                ? m.transfer.transferStops
+                : m.transfer.viaStop ? [m.transfer.viaStop] : [];
+            if (!stops.some(s => s.toLowerCase() === selKey)) continue;
+
+            // Inbound: origin flows into this transfer point
+            const originGeo = resolveGeocode(m.origin, geocodeCache);
+            if (originGeo) {
+                const key = `in:${m.origin.toLowerCase()}`;
+                const existing = agg.get(key);
+                if (existing) {
+                    existing.journeys += m.journeys;
+                } else {
+                    agg.set(key, { journeys: m.journeys, lat: originGeo.lat, lon: originGeo.lon, isInbound: true });
+                }
+            }
+
+            // Outbound: transfer point flows to destination
+            const destGeo = resolveGeocode(m.destination, geocodeCache);
+            if (destGeo) {
+                const key = `out:${m.destination.toLowerCase()}`;
+                const existing = agg.get(key);
+                if (existing) {
+                    existing.journeys += m.journeys;
+                } else {
+                    agg.set(key, { journeys: m.journeys, lat: destGeo.lat, lon: destGeo.lon, isInbound: false });
+                }
+            }
+        }
+
+        const pairs: TransferFlowPair[] = [];
+        for (const [key, val] of agg) {
+            const name = key.slice(key.indexOf(':') + 1);
+            // Skip if origin or destination IS the selected transfer point itself
+            if (name === selKey) continue;
+            // Find the original-cased name from result.matches
+            const displayName = result.matches.find(m => {
+                const cand = val.isInbound ? m.origin : m.destination;
+                return cand.toLowerCase() === name;
+            });
+            pairs.push({
+                stopName: displayName ? (val.isInbound ? displayName.origin : displayName.destination) : name,
+                lat: val.lat,
+                lon: val.lon,
+                journeys: val.journeys,
+                isInbound: val.isInbound,
+            });
+        }
+        return pairs.sort((a, b) => b.journeys - a.journeys);
+    }, [selectedTransferPoint, result, geocodeCache]);
+
     const transferMapRef = useRef<HTMLDivElement>(null);
     const leafletMapRef = useRef<L.Map | null>(null);
 
@@ -659,18 +753,34 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
             `.transfer-label::before{display:none!important;}`,
             `.transfer-label-minor{background:rgba(255,255,255,0.7)!important;border:none!important;box-shadow:none!important;font-size:9px!important;font-weight:600!important;color:#64748b!important;padding:1px 4px!important;border-radius:3px!important;}`,
             `.transfer-label-minor::before{display:none!important;}`,
+            `.transfer-flow-label{background:rgba(255,255,255,0.85)!important;border:none!important;box-shadow:0 1px 2px rgba(0,0,0,0.1)!important;font-size:10px!important;font-weight:600!important;color:#334155!important;padding:1px 5px!important;border-radius:3px!important;line-height:1.3!important;}`,
+            `.transfer-flow-label::before{display:none!important;}`,
         ].join('');
         transferMapRef.current.appendChild(style);
 
+        // Create panes for flow arcs (below markers but above glows)
+        const flowPane = map.createPane('transfer-flows');
+        flowPane.style.zIndex = '418';
+        const flowLabelPane = map.createPane('transfer-flow-labels');
+        flowLabelPane.style.zIndex = '435';
+        flowLabelPane.style.pointerEvents = 'none';
+
         const maxJourneys = Math.max(...displayedTransferPoints.map(p => p.totalJourneys));
+        const isSelected = selectedTransferPoint !== null;
+        const connectedStopNames = isSelected
+            ? new Set(transferFlowPairs.map(p => p.stopName.toLowerCase()))
+            : new Set<string>();
 
         // Radial glow per point — no additive stacking, largest point = hottest glow
         for (const pt of displayedTransferPoints) {
             const ratio = maxJourneys > 0 ? pt.totalJourneys / maxJourneys : 0;
-            const glowSize = 40 + Math.round(ratio * 120); // 40–160px diameter
+            const isThisSelected = isSelected && pt.stopName.toLowerCase() === selectedTransferPoint!.toLowerCase();
+            const isDimmed = isSelected && !isThisSelected && !connectedStopNames.has(pt.stopName.toLowerCase());
+            const glowSize = isThisSelected ? 60 + Math.round(ratio * 160) : 40 + Math.round(ratio * 120);
             const glowColor = glowGradientColor(ratio);
+            const glowOpacity = isDimmed ? 0.1 : isThisSelected ? 0.6 + ratio * 0.3 : 0.35 + ratio * 0.35;
             const glowIcon = L.divIcon({
-                html: `<div style="width:${glowSize}px;height:${glowSize}px;border-radius:50%;background:radial-gradient(circle,${glowColor} 0%,rgba(255,255,255,0) 70%);opacity:${0.35 + ratio * 0.35};pointer-events:none;"></div>`,
+                html: `<div style="width:${glowSize}px;height:${glowSize}px;border-radius:50%;background:radial-gradient(circle,${glowColor} 0%,rgba(255,255,255,0) 70%);opacity:${glowOpacity};pointer-events:none;"></div>`,
                 className: '',
                 iconSize: [glowSize, glowSize],
                 iconAnchor: [glowSize / 2, glowSize / 2],
@@ -695,6 +805,8 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
             const pt = displayedTransferPoints[i];
             const ratio = maxJourneys > 0 ? pt.totalJourneys / maxJourneys : 0;
             const bHeight = Math.max(18, Math.round(ratio * MAX_BAR_HEIGHT));
+            const isThisSelected = isSelected && pt.stopName.toLowerCase() === selectedTransferPoint!.toLowerCase();
+            const isDimmed = isSelected && !isThisSelected && !connectedStopNames.has(pt.stopName.toLowerCase());
 
             let marker: L.Marker | L.CircleMarker;
             if (showBars) {
@@ -704,23 +816,22 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
                     iconSize: [BAR_WIDTH + BAR_SIDE_WIDTH, bHeight + 26],
                     iconAnchor: [BAR_WIDTH / 2, bHeight],
                 });
-                marker = L.marker([pt.lat, pt.lon], { icon }).addTo(map);
+                marker = L.marker([pt.lat, pt.lon], { icon, opacity: isDimmed ? 0.25 : 1 }).addTo(map);
             } else {
                 const radius = 6 + Math.round(ratio * 18);
                 marker = L.circleMarker([pt.lat, pt.lon], {
-                    radius,
+                    radius: isThisSelected ? radius + 4 : radius,
                     fillColor: barColor(ratio),
-                    fillOpacity: 0.85,
-                    color: '#fff',
-                    weight: 2,
+                    fillOpacity: isDimmed ? 0.2 : 0.85,
+                    color: isThisSelected ? '#1e293b' : '#fff',
+                    weight: isThisSelected ? 3 : 2,
                 }).addTo(map);
             }
 
             // Label: title case, smart direction, visual hierarchy by volume
             const displayName = toTitleCase(pt.stopName);
-            const isMinor = ratio < LABEL_VOLUME_THRESHOLD;
+            const isMinor = isDimmed || ratio < LABEL_VOLUME_THRESHOLD;
             const dir = pickDirection(pt.lat, pt.lon);
-            // In dot mode, include journey count in label for non-minor points
             const labelText = !showBars && !isMinor
                 ? `${displayName}  <span style="font-weight:800;color:#475569">${fmt(pt.totalJourneys)}</span>`
                 : displayName;
@@ -735,22 +846,102 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
                 offset: labelOffset as L.PointExpression,
             });
 
-            const routeList = pt.connectingRoutes.length > 0
-                ? pt.connectingRoutes.map(r => `<li style="font-size:11px;color:#374151">${r}</li>`).join('')
-                : '<li style="font-size:11px;color:#9ca3af;font-style:italic">Unknown</li>';
-            marker.bindPopup(
-                `<div style="min-width:180px"><div style="font-weight:700;font-size:13px;color:#1e293b;margin-bottom:4px">${displayName}</div>` +
-                `<div style="font-size:11px;color:#64748b;margin-bottom:6px">${fmt(pt.totalJourneys)} journeys · ${pt.pairCount} pair${pt.pairCount === 1 ? '' : 's'}</div>` +
-                `<div style="font-size:10px;font-weight:600;color:#7c3aed;text-transform:uppercase;margin-bottom:2px">Connecting Routes</div>` +
-                `<ul style="margin:0;padding-left:14px">${routeList}</ul></div>`, { maxWidth: 260 },
-            );
+            // Click handler — toggle selection
+            marker.on('click', () => {
+                setSelectedTransferPoint(prev =>
+                    prev?.toLowerCase() === pt.stopName.toLowerCase() ? null : pt.stopName,
+                );
+            });
+
+            if (!isThisSelected) {
+                const routeList = pt.connectingRoutes.length > 0
+                    ? pt.connectingRoutes.map(r => `<li style="font-size:11px;color:#374151">${r}</li>`).join('')
+                    : '<li style="font-size:11px;color:#9ca3af;font-style:italic">Unknown</li>';
+                marker.bindPopup(
+                    `<div style="min-width:180px"><div style="font-weight:700;font-size:13px;color:#1e293b;margin-bottom:4px">${displayName}</div>` +
+                    `<div style="font-size:11px;color:#64748b;margin-bottom:6px">${fmt(pt.totalJourneys)} journeys · ${pt.pairCount} pair${pt.pairCount === 1 ? '' : 's'}</div>` +
+                    `<div style="font-size:10px;font-weight:600;color:#7c3aed;text-transform:uppercase;margin-bottom:2px">Connecting Routes</div>` +
+                    `<ul style="margin:0;padding-left:14px">${routeList}</ul></div>`, { maxWidth: 260 },
+                );
+            }
             bounds.extend([pt.lat, pt.lon]);
+        }
+
+        // ── Draw flow arcs when a transfer point is selected ──
+        if (isSelected && transferFlowPairs.length > 0) {
+            const selPt = displayedTransferPoints.find(
+                p => p.stopName.toLowerCase() === selectedTransferPoint!.toLowerCase(),
+            );
+            if (selPt) {
+                const maxFlowJourneys = Math.max(...transferFlowPairs.map(f => f.journeys));
+
+                for (let idx = 0; idx < transferFlowPairs.length; idx++) {
+                    const flow = transferFlowPairs[idx];
+                    const volRatio = maxFlowJourneys > 0 ? flow.journeys / maxFlowJourneys : 0;
+                    const weight = 2 + volRatio * 5;
+                    const color = interpolateColor(volRatio);
+
+                    const arcFrom: [number, number] = flow.isInbound
+                        ? [flow.lat, flow.lon]
+                        : [selPt.lat, selPt.lon];
+                    const arcTo: [number, number] = flow.isInbound
+                        ? [selPt.lat, selPt.lon]
+                        : [flow.lat, flow.lon];
+
+                    const arc = quadraticBezierArc(arcFrom, arcTo, idx % 2 === 0 ? 1 : -1);
+                    const line = L.polyline(arc, {
+                        pane: 'transfer-flows',
+                        color,
+                        weight,
+                        opacity: 0.6,
+                        lineCap: 'round',
+                    });
+                    line.bindPopup(
+                        `<div style="min-width:170px">` +
+                        `<div style="font-weight:600;font-size:12px;color:#1e293b">${flow.isInbound ? flow.stopName : toTitleCase(selectedTransferPoint!)} → ${flow.isInbound ? toTitleCase(selectedTransferPoint!) : flow.stopName}</div>` +
+                        `<div style="color:#555;margin-top:3px;font-size:11px">${flow.journeys.toLocaleString()} journeys</div>` +
+                        `<div style="color:#777;margin-top:2px;font-size:10px">${flow.isInbound ? 'Inbound' : 'Outbound'}</div>` +
+                        `</div>`,
+                    );
+                    line.addTo(map);
+
+                    // Small circle at endpoint (flow origin/destination) if not already a transfer point
+                    const endLatLng: [number, number] = [flow.lat, flow.lon];
+                    const alreadyShown = displayedTransferPoints.some(
+                        p => p.stopName.toLowerCase() === flow.stopName.toLowerCase(),
+                    );
+                    if (!alreadyShown) {
+                        L.circleMarker(endLatLng, {
+                            radius: 5,
+                            fillColor: color,
+                            fillOpacity: 0.7,
+                            color: '#fff',
+                            weight: 1.5,
+                        }).addTo(map);
+
+                        // Label for endpoint
+                        const endDir = pickDirection(flow.lat, flow.lon);
+                        L.marker(endLatLng, {
+                            pane: 'transfer-flow-labels',
+                            icon: L.divIcon({ className: '', html: '', iconSize: [0, 0] }),
+                            interactive: false,
+                        }).bindTooltip(flow.stopName, {
+                            permanent: true,
+                            direction: endDir,
+                            className: 'transfer-flow-label',
+                            offset: [6, 0],
+                        }).addTo(map);
+
+                        bounds.extend(endLatLng);
+                    }
+                }
+            }
         }
 
         if (bounds.isValid()) map.fitBounds(bounds, { padding: [50, 50], maxZoom: 9 });
 
         return () => { map.remove(); leafletMapRef.current = null; };
-    }, [displayedTransferPoints, showBars]);
+    }, [displayedTransferPoints, showBars, selectedTransferPoint, transferFlowPairs]);
 
     // ── Loading state ───────────────────────────────────────────
     if (loading) {
@@ -1042,6 +1233,22 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
                         }
                     >
                         <div className="relative">
+                            {selectedTransferPoint && (
+                                <div className="flex items-center gap-2 mb-2">
+                                    <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-slate-900 text-white text-xs font-medium rounded-full shadow-sm">
+                                        <span>Showing flows through <span className="font-bold">{toTitleCase(selectedTransferPoint)}</span></span>
+                                        <span className="text-slate-400">·</span>
+                                        <span className="tabular-nums">{transferFlowPairs.length} pair{transferFlowPairs.length === 1 ? '' : 's'}</span>
+                                        <button
+                                            onClick={() => setSelectedTransferPoint(null)}
+                                            className="ml-0.5 p-0.5 rounded-full hover:bg-white/20 transition-colors"
+                                            title="Clear selection"
+                                        >
+                                            <XCircle size={14} />
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
                             <div ref={transferMapRef} style={{ height: `${TRANSFER_MAP_HEIGHT_PX}px` }} className="rounded-lg shadow-inner" />
                             {/* Floating legend overlay */}
                             <div className="absolute bottom-3 left-3 z-[1000] bg-white/90 backdrop-blur-sm rounded-lg shadow-md border border-slate-200/60 px-3 py-2.5 flex items-center gap-4">

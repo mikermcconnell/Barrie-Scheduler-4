@@ -105,7 +105,8 @@ function groupBy<T>(items: T[], keyFn: (item: T) => string): Map<string, T[]> {
 
 /** Returns true if the record has usable load data. */
 function isLoadReliable(r: STREETSRecord): boolean {
-  return r.apcSource !== 0 && r.departureLoad > 0;
+  // APC-backed zero load is valid and must be kept in averages (e.g. terminals).
+  return r.apcSource !== 0 && r.departureLoad >= 0;
 }
 
 /** Cap departureLoad values and return sanitization counts.
@@ -556,7 +557,7 @@ function buildLoadProfiles(records: STREETSRecord[]): RouteLoadProfile[] {
         for (const r of tripRecs) {
           b += r.boardings;
           a += r.alightings;
-          if (isLoadReliable(r) && r.departureLoad > load) {
+          if (isLoadReliable(r) && (!hasReliableLoad || r.departureLoad > load)) {
             load = r.departureLoad;
             hasReliableLoad = true;
           }
