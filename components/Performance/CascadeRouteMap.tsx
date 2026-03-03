@@ -2,13 +2,21 @@ import React, { useRef, useEffect, useMemo } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { getAllStopsWithCoords } from '../../utils/gtfs/gtfsStopLookup';
-import { buildTimelinePoints } from '../../utils/schedule/cascadeStoryUtils';
+import { loadGtfsRouteShapes } from '../../utils/gtfs/gtfsShapesLoader';
+import {
+    buildTimelinePoints,
+    buildTripSegments,
+    getTripNodeColor,
+    TRIP_FILL_COLORS,
+} from '../../utils/schedule/cascadeStoryUtils';
+import type { StopLoadData } from '../../utils/schedule/cascadeStoryUtils';
 import type { DwellCascade } from '../../utils/performanceDataTypes';
 
 interface CascadeRouteMapProps {
     cascade: DwellCascade;
     selectedPointIndex: number | null;
     selectedTripIndex: number | null;
+    stopLoadLookup: Map<string, StopLoadData>;
 }
 
 function devColor(devSec: number | null): string {
@@ -18,14 +26,29 @@ function devColor(devSec: number | null): string {
     return '#10b981';
 }
 
+function buildLegendEntry(container: HTMLElement, color: string, label: string): void {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:4px;';
+    const swatch = document.createElement('span');
+    swatch.style.cssText = `color:${color};font-weight:600;font-size:11px;`;
+    swatch.textContent = '\u2501\u2501';
+    const text = document.createElement('span');
+    text.textContent = label;
+    row.appendChild(swatch);
+    row.appendChild(text);
+    container.appendChild(row);
+}
+
 const CascadeRouteMap: React.FC<CascadeRouteMapProps> = ({
     cascade,
     selectedPointIndex,
     selectedTripIndex,
+    stopLoadLookup,
 }) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const mapRef = useRef<L.Map | null>(null);
     const markerLayerRef = useRef<L.LayerGroup | null>(null);
+    const legendRef = useRef<L.Control | null>(null);
 
     // Build stop_id → coords map from GTFS stops.txt (cached, bundled at build time)
     const gtfsCoords = useMemo(() => {
@@ -37,10 +60,21 @@ const CascadeRouteMap: React.FC<CascadeRouteMapProps> = ({
         return m;
     }, []);
 
-    // Memoize timeline points (used by both marker update and hasAnyCoords)
+    // GTFS route shape for base polyline
+    const routeShape = useMemo(() => {
+        const shapes = loadGtfsRouteShapes();
+        return shapes.find(s => s.routeId === cascade.routeId) ?? null;
+    }, [cascade.routeId]);
+
+    // Memoize timeline points and trip segments
     const timelinePoints = useMemo(
         () => buildTimelinePoints(cascade.cascadedTrips),
         [cascade.cascadedTrips],
+    );
+
+    const tripSegments = useMemo(
+        () => buildTripSegments(cascade.cascadedTrips, timelinePoints),
+        [cascade.cascadedTrips, timelinePoints],
     );
 
     // ── Map initialization ───────────────────────────────────────────────────
@@ -65,6 +99,29 @@ const CascadeRouteMap: React.FC<CascadeRouteMapProps> = ({
         markerLayerRef.current = L.layerGroup().addTo(map);
         mapRef.current = map;
 
+        // Legend control using safe DOM methods
+        const legend = new L.Control({ position: 'bottomleft' });
+        legend.onAdd = () => {
+            const div = L.DomUtil.create('div', 'leaflet-control');
+            div.style.cssText = 'background:white;padding:6px 10px;border-radius:6px;font-size:10px;line-height:1.6;box-shadow:0 1px 4px rgba(0,0,0,0.15);';
+            buildLegendEntry(div, '#ef4444', 'All late');
+            buildLegendEntry(div, '#f59e0b', 'Some late');
+            buildLegendEntry(div, '#10b981', 'Recovered');
+            const originRow = document.createElement('div');
+            originRow.style.cssText = 'display:flex;align-items:center;gap:4px;';
+            const bolt = document.createElement('span');
+            bolt.style.cssText = 'font-size:11px;color:#dc2626;';
+            bolt.textContent = '\u26a1';
+            const originLabel = document.createElement('span');
+            originLabel.textContent = 'Dwell origin';
+            originRow.appendChild(bolt);
+            originRow.appendChild(originLabel);
+            div.appendChild(originRow);
+            return div;
+        };
+        legend.addTo(map);
+        legendRef.current = legend;
+
         const ro = new ResizeObserver(() => map.invalidateSize());
         ro.observe(containerRef.current!);
 
@@ -73,10 +130,11 @@ const CascadeRouteMap: React.FC<CascadeRouteMapProps> = ({
             map.remove();
             mapRef.current = null;
             markerLayerRef.current = null;
+            legendRef.current = null;
         };
     }, []);
 
-    // ── Marker update ────────────────────────────────────────────────────────
+    // ── Layer update ──────────────────────────────────────────────────────────
     useEffect(() => {
         const map = mapRef.current;
         const layer = markerLayerRef.current;
@@ -84,24 +142,62 @@ const CascadeRouteMap: React.FC<CascadeRouteMapProps> = ({
 
         layer.clearLayers();
 
-        // Deduplicate stops by stopId, keeping worst (highest) deviationSeconds per stop
+        const boundsPoints: L.LatLng[] = [];
+
+        // ── 3a: GTFS route polyline (gray base layer) ──
+        if (routeShape && routeShape.points.length > 1) {
+            const basePolyline = L.polyline(
+                routeShape.points.map(([lat, lon]) => [lat, lon] as L.LatLngTuple),
+                { color: '#9ca3af', weight: 3, opacity: 0.3 },
+            );
+            basePolyline.addTo(layer);
+        }
+
+        // ── 3b: Trip-colored segments between timepoint stops ──
+        for (const seg of tripSegments) {
+            const segPoints = timelinePoints.filter(
+                p => p.tripIndex === seg.tripIndex,
+            );
+            const latLngs: L.LatLng[] = [];
+            for (const pt of segPoints) {
+                const coords = gtfsCoords.get(pt.stopId);
+                if (coords) latLngs.push(L.latLng(coords.lat, coords.lon));
+            }
+            if (latLngs.length < 2) continue;
+
+            const isDimmed = selectedTripIndex !== null && seg.tripIndex !== selectedTripIndex;
+            const colors = TRIP_FILL_COLORS[seg.color];
+
+            const polyline = L.polyline(latLngs, {
+                color: colors.stroke,
+                weight: isDimmed ? 1.5 : 4,
+                opacity: isDimmed ? 0.3 : 0.85,
+            });
+            polyline.addTo(layer);
+        }
+
+        // ── Build deduplicated stop map for markers ──
         const stopMap = new Map<string, {
             stopId: string;
             stopName: string;
             worstDevSec: number | null;
             tripIndex: number;
+            tripColor: string;
             isRecovery: boolean;
         }>();
 
         for (const pt of timelinePoints) {
-            const existing = stopMap.get(pt.stopId);
             const devSec = pt.deviationMinutes != null ? pt.deviationMinutes * 60 : null;
+            const trip = cascade.cascadedTrips[pt.tripIndex];
+            const color = trip ? getTripNodeColor(trip) : 'red';
+            const existing = stopMap.get(pt.stopId);
             if (!existing) {
                 stopMap.set(pt.stopId, {
                     stopId: pt.stopId,
                     stopName: pt.stopName,
                     worstDevSec: devSec,
                     tripIndex: pt.tripIndex,
+                    tripColor: TRIP_FILL_COLORS[color].stroke,
                     isRecovery: false,
                 });
             } else {
@@ -110,11 +206,12 @@ const CascadeRouteMap: React.FC<CascadeRouteMapProps> = ({
                 if (curDev > prevDev) {
                     existing.worstDevSec = devSec;
                     existing.tripIndex = pt.tripIndex;
+                    existing.tripColor = TRIP_FILL_COLORS[color].stroke;
                 }
             }
         }
 
-        // Mark recovery stop by name match against cascade.recoveredAtStop
+        // Mark recovery stop
         if (cascade.recoveredAtStop) {
             const recoveryName = cascade.recoveredAtStop.toLowerCase();
             for (const entry of stopMap.values()) {
@@ -124,60 +221,112 @@ const CascadeRouteMap: React.FC<CascadeRouteMapProps> = ({
             }
         }
 
-        const boundsPoints: L.LatLng[] = [];
-
-        // Origin stop marker
+        // ── 3c: Origin stop marker with pulsing ring ──
         const originCoords = gtfsCoords.get(cascade.stopId);
         if (originCoords) {
             const originMin = (cascade.trackedDwellSeconds / 60).toFixed(1);
+
+            // Outer pulsing ring via divIcon (static markup, no user input)
+            const pulseEl = document.createElement('div');
+            pulseEl.style.cssText = 'width:28px;height:28px;border-radius:50%;background:rgba(220,38,38,0.15);border:2px solid rgba(220,38,38,0.5);animation:cascadePulse 2s ease-out infinite;';
+            const pulseIcon = L.divIcon({
+                html: pulseEl.outerHTML,
+                className: '',
+                iconSize: [28, 28],
+                iconAnchor: [14, 14],
+            });
+            L.marker([originCoords.lat, originCoords.lon], { icon: pulseIcon, interactive: false }).addTo(layer);
+
+            // Solid center marker
             const originMarker = L.circleMarker([originCoords.lat, originCoords.lon], {
-                radius: 12,
+                radius: 10,
                 fillColor: '#dc2626',
                 color: '#991b1b',
                 weight: 3,
                 opacity: 1,
                 fillOpacity: 0.9,
             });
-            originMarker.bindTooltip(
-                `\u26a1 ${cascade.stopName}\nDwell event origin\n${originMin} min excess`,
-                { sticky: true }
-            );
+
+            let originTooltip = `\u26a1 ${cascade.stopName}\nDwell event origin\n${originMin} min excess`;
+            const originLoad = stopLoadLookup.get(`${cascade.routeId}_${cascade.stopId}`);
+            if (originLoad) {
+                originTooltip += `\n${originLoad.avgBoardings.toFixed(0)} boarding \u00b7 load: ${originLoad.avgLoad.toFixed(0)}`;
+            }
+            originMarker.bindTooltip(originTooltip, { sticky: true });
             originMarker.addTo(layer);
             boundsPoints.push(L.latLng(originCoords.lat, originCoords.lon));
         }
 
-        // Timepoint stop markers
+        // ── 3c/3d: Timepoint stop markers with trip-colored borders + load tooltips ──
         for (const entry of stopMap.values()) {
             const coords = gtfsCoords.get(entry.stopId);
             if (!coords) continue;
 
             const isDimmed = selectedTripIndex !== null && entry.tripIndex !== selectedTripIndex;
             const fillColor = devColor(entry.worstDevSec);
-            const radius = entry.isRecovery ? 9 : 6;
-            const fillOpacity = isDimmed ? 0.2 : 0.85;
-            const borderColor = entry.isRecovery ? '#065f46' : '#374151';
-            const weight = entry.isRecovery ? 2.5 : 1.5;
 
-            const marker = L.circleMarker([coords.lat, coords.lon], {
-                radius,
-                fillColor,
-                color: borderColor,
-                weight,
-                opacity: isDimmed ? 0.3 : 1,
-                fillOpacity,
-            });
+            if (entry.isRecovery) {
+                // Recovery stop: green border + checkmark badge via divIcon
+                const markerSize = 22;
+                const wrapper = document.createElement('div');
+                wrapper.style.cssText = `width:${markerSize}px;height:${markerSize}px;border-radius:50%;background:${fillColor};border:2.5px solid #065f46;display:flex;align-items:center;justify-content:center;opacity:${isDimmed ? 0.2 : 1};`;
+                const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+                svg.setAttribute('width', '10');
+                svg.setAttribute('height', '10');
+                svg.setAttribute('viewBox', '0 0 10 10');
+                const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                path.setAttribute('d', 'M2 5 L4 7 L8 3');
+                path.setAttribute('fill', 'none');
+                path.setAttribute('stroke', 'white');
+                path.setAttribute('stroke-width', '1.5');
+                path.setAttribute('stroke-linecap', 'round');
+                path.setAttribute('stroke-linejoin', 'round');
+                svg.appendChild(path);
+                wrapper.appendChild(svg);
 
-            let devLabel = 'No data';
-            if (entry.worstDevSec != null) {
-                const sign = entry.worstDevSec >= 0 ? '+' : '';
-                devLabel = `${sign}${(entry.worstDevSec / 60).toFixed(1)} min`;
+                const recoveryIcon = L.divIcon({
+                    html: wrapper.outerHTML,
+                    className: '',
+                    iconSize: [markerSize, markerSize],
+                    iconAnchor: [markerSize / 2, markerSize / 2],
+                });
+                const marker = L.marker([coords.lat, coords.lon], { icon: recoveryIcon });
+
+                let tooltip = `${entry.stopName}\nRecovery stop`;
+                if (entry.worstDevSec != null) {
+                    const sign = entry.worstDevSec >= 0 ? '+' : '';
+                    tooltip += `\n${sign}${(entry.worstDevSec / 60).toFixed(1)} min`;
+                }
+                const loadData = stopLoadLookup.get(`${cascade.routeId}_${entry.stopId}`);
+                if (loadData) {
+                    tooltip += `\n${loadData.avgBoardings.toFixed(0)} boarding \u00b7 load: ${loadData.avgLoad.toFixed(0)}`;
+                }
+                marker.bindTooltip(tooltip, { sticky: true });
+                marker.addTo(layer);
+            } else {
+                // Standard timepoint marker with trip-colored border
+                const marker = L.circleMarker([coords.lat, coords.lon], {
+                    radius: 6,
+                    fillColor,
+                    color: entry.tripColor,
+                    weight: 2,
+                    opacity: isDimmed ? 0.3 : 1,
+                    fillOpacity: isDimmed ? 0.2 : 0.85,
+                });
+
+                let devLabel = 'No data';
+                if (entry.worstDevSec != null) {
+                    const sign = entry.worstDevSec >= 0 ? '+' : '';
+                    devLabel = `${sign}${(entry.worstDevSec / 60).toFixed(1)} min`;
+                }
+                let tooltip = `${entry.stopName}\n${devLabel}`;
+                const loadData = stopLoadLookup.get(`${cascade.routeId}_${entry.stopId}`);
+                if (loadData) {
+                    tooltip += `\n${loadData.avgBoardings.toFixed(0)} boarding \u00b7 load: ${loadData.avgLoad.toFixed(0)}`;
+                }
+                marker.bindTooltip(tooltip, { sticky: true });
+                marker.addTo(layer);
             }
-            const recoveryNote = entry.isRecovery ? '\nRecovery stop' : '';
-            marker.bindTooltip(
-                `${entry.stopName}\n${devLabel}${recoveryNote}`,
-                { sticky: true }
-            );
-            marker.addTo(layer);
             boundsPoints.push(L.latLng(coords.lat, coords.lon));
         }
 
@@ -190,7 +339,7 @@ const CascadeRouteMap: React.FC<CascadeRouteMapProps> = ({
         } else if (boundsPoints.length === 1) {
             map.setView(boundsPoints[0], 14);
         }
-    }, [cascade, timelinePoints, selectedTripIndex, gtfsCoords]);
+    }, [cascade, timelinePoints, tripSegments, selectedTripIndex, gtfsCoords, routeShape, stopLoadLookup]);
 
     // Check if any coords are available for a fallback message
     const hasAnyCoords = useMemo(() => {
@@ -210,7 +359,15 @@ const CascadeRouteMap: React.FC<CascadeRouteMapProps> = ({
     }
 
     return (
-        <div ref={containerRef} className="w-full rounded-lg" style={{ height: 300 }} />
+        <>
+            <style>{`
+                @keyframes cascadePulse {
+                    0% { transform: scale(1); opacity: 1; }
+                    100% { transform: scale(2.2); opacity: 0; }
+                }
+            `}</style>
+            <div ref={containerRef} className="w-full rounded-lg" style={{ height: 300 }} />
+        </>
     );
 };
 
