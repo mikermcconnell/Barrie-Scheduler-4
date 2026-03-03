@@ -1,6 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { X } from 'lucide-react';
-import type { DwellCascade, DwellSeverity } from '../../utils/performanceDataTypes';
+import type { DwellCascade, DwellSeverity, DailySummary } from '../../utils/performanceDataTypes';
+import type { StopLoadData } from '../../utils/schedule/cascadeStoryUtils';
+import { buildTimelinePoints } from '../../utils/schedule/cascadeStoryUtils';
 import CascadeTimelineChart from './CascadeTimelineChart';
 import CascadeTripChain from './CascadeTripChain';
 import CascadeRouteMap from './CascadeRouteMap';
@@ -8,6 +10,8 @@ import CascadeRouteMap from './CascadeRouteMap';
 interface CascadeStorySlideOverProps {
     cascade: DwellCascade;
     onClose: () => void;
+    stopLoadLookup: Map<string, StopLoadData>;
+    dailySummaries: DailySummary[];
 }
 
 const fmtTime = (hhmm: string): string => hhmm.length >= 5 ? hhmm.slice(0, 5) : hhmm;
@@ -23,10 +27,41 @@ const SeverityBadge: React.FC<{ severity: DwellSeverity }> = ({ severity }) => (
     </span>
 );
 
-const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, onClose }) => {
+const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, onClose, stopLoadLookup, dailySummaries }) => {
     const [selectedTripIndex, setSelectedTripIndex] = useState<number | null>(null);
     const [selectedPointIndex, setSelectedPointIndex] = useState<number | null>(null);
     const [visible, setVisible] = useState(false);
+
+    // Customer impact: passengers affected + peak load at late stops
+    const customerImpact = useMemo(() => {
+        if (stopLoadLookup.size === 0) return null;
+        let totalBoardings = 0;
+        let peakLoad = 0;
+        for (const trip of cascade.cascadedTrips) {
+            for (const tp of trip.timepoints) {
+                if (!tp.isLate) continue;
+                const data = stopLoadLookup.get(`${trip.routeId}_${tp.stopId}`);
+                if (!data) continue;
+                totalBoardings += data.avgBoardings;
+                if (data.avgLoad > peakLoad) peakLoad = data.avgLoad;
+            }
+        }
+        if (totalBoardings === 0) return null;
+        return { totalBoardings: Math.round(totalBoardings), peakLoad: Math.round(peakLoad) };
+    }, [cascade.cascadedTrips, stopLoadLookup]);
+
+    // Per-cascade OTP impact
+    const otpImpact = useMemo(() => {
+        if (cascade.blastRadius === 0) return null;
+        let totalRouteTrips = 0;
+        for (const d of dailySummaries) {
+            const routeMetrics = d.byRoute?.find(r => r.routeId === cascade.routeId);
+            if (routeMetrics?.otp?.total) totalRouteTrips += routeMetrics.otp.total;
+        }
+        if (totalRouteTrips === 0) return null;
+        const penaltyPct = (cascade.blastRadius / totalRouteTrips) * 100;
+        return { totalRouteTrips, penaltyPct };
+    }, [cascade.blastRadius, cascade.routeId, dailySummaries]);
 
     // Trigger open animation on mount
     useEffect(() => {
@@ -117,7 +152,32 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
                     {!cascade.recoveredAtTrip && cascade.cascadedTrips.length > 0 && (
                         <span className="text-red-600 font-medium">✗ Never recovered</span>
                     )}
+                    {customerImpact && (
+                        <>
+                            <span className="text-gray-300">|</span>
+                            <span>~<span className="font-semibold text-gray-800">{customerImpact.totalBoardings}</span> passengers affected</span>
+                            <span>Peak load: <span className="font-semibold text-gray-800">{customerImpact.peakLoad}</span> on bus</span>
+                        </>
+                    )}
                 </div>
+
+                {/* OTP Impact mini-card */}
+                {otpImpact && (
+                    <div className="flex items-center gap-3 px-5 py-2 border-b border-gray-100 flex-shrink-0">
+                        <div className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-red-50 border border-red-100 text-xs text-red-700">
+                            <span className="font-medium">OTP Impact</span>
+                            <span className="text-red-400">·</span>
+                            <span>
+                                Route {cascade.routeId}: <span className="font-semibold">{cascade.blastRadius}</span> late departures
+                                of <span className="font-semibold">{otpImpact.totalRouteTrips}</span> assessed
+                            </span>
+                            <span className="text-red-400">·</span>
+                            <span>
+                                est. <span className="font-semibold">{otpImpact.penaltyPct.toFixed(1)}%</span> OTP penalty
+                            </span>
+                        </div>
+                    </div>
+                )}
 
                 {/* Body — scrollable, 3 panels */}
                 <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
@@ -131,8 +191,10 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
                         </div>
                         <CascadeTimelineChart
                             trips={cascade.cascadedTrips}
+                            routeId={cascade.routeId}
                             selectedTripIndex={selectedTripIndex}
                             onSelectPoint={setSelectedPointIndex}
+                            stopLoadLookup={stopLoadLookup}
                         />
                     </div>
 
@@ -153,6 +215,7 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
                             cascade={cascade}
                             selectedPointIndex={selectedPointIndex}
                             selectedTripIndex={selectedTripIndex}
+                            stopLoadLookup={stopLoadLookup}
                         />
                     </div>
                 </div>

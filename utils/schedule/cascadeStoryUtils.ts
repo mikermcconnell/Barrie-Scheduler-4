@@ -1,4 +1,64 @@
-import type { CascadeAffectedTrip } from '../performanceDataTypes';
+import type { CascadeAffectedTrip, DailySummary } from '../performanceDataTypes';
+
+// ─── Stop Load Lookup (aggregated APC data for customer impact) ──────
+
+export interface StopLoadData {
+  avgBoardings: number;
+  avgAlightings: number;
+  avgLoad: number;
+  dayCount: number;
+}
+
+/**
+ * Aggregate load profile data across multiple daily summaries.
+ * Returns Map keyed by `${routeId}_${stopId}` with averaged load data.
+ * Returns empty map if fewer than `minDays` unique days are present.
+ */
+export function buildStopLoadLookup(
+  dailySummaries: DailySummary[],
+  minDays: number = 14,
+): Map<string, StopLoadData> {
+  const uniqueDates = new Set(dailySummaries.map(d => d.date));
+  if (uniqueDates.size < minDays) return new Map();
+
+  const acc = new Map<string, { boardings: number; alightings: number; load: number; days: number }>();
+
+  for (const day of dailySummaries) {
+    if (!day.loadProfiles) continue;
+    for (const profile of day.loadProfiles) {
+      for (const stop of profile.stops) {
+        const key = `${profile.routeId}_${stop.stopId}`;
+        const existing = acc.get(key);
+        if (existing) {
+          existing.boardings += stop.avgBoardings;
+          existing.alightings += stop.avgAlightings;
+          existing.load += stop.avgLoad;
+          existing.days += 1;
+        } else {
+          acc.set(key, {
+            boardings: stop.avgBoardings,
+            alightings: stop.avgAlightings,
+            load: stop.avgLoad,
+            days: 1,
+          });
+        }
+      }
+    }
+  }
+
+  const result = new Map<string, StopLoadData>();
+  for (const [key, val] of acc) {
+    result.set(key, {
+      avgBoardings: val.boardings / val.days,
+      avgAlightings: val.alightings / val.days,
+      avgLoad: val.load / val.days,
+      dayCount: val.days,
+    });
+  }
+  return result;
+}
+
+// ─── Timeline + Trip Segment Utils ──────────────────────────────────
 
 export interface TimelinePoint {
   index: number;

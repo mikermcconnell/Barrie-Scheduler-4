@@ -6,12 +6,15 @@ import {
     TRIP_FILL_COLORS,
     type TimelinePoint,
     type TripSegment,
+    type StopLoadData,
 } from '../../utils/schedule/cascadeStoryUtils';
 
 interface CascadeTimelineChartProps {
     trips: CascadeAffectedTrip[];
+    routeId: string;
     selectedTripIndex: number | null;
     onSelectPoint: (pointIndex: number | null) => void;
+    stopLoadLookup: Map<string, StopLoadData>;
 }
 
 interface TooltipState {
@@ -24,8 +27,10 @@ const OTP_LATE_MINUTES = 5;
 
 const CascadeTimelineChart: React.FC<CascadeTimelineChartProps> = ({
     trips,
+    routeId,
     selectedTripIndex,
     onSelectPoint,
+    stopLoadLookup,
 }) => {
     const [tooltip, setTooltip] = useState<TooltipState | null>(null);
     const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
@@ -122,6 +127,17 @@ const CascadeTimelineChart: React.FC<CascadeTimelineChartProps> = ({
     // Find segment for a point index (for dot coloring)
     const segmentForPoint = (ptIdx: number): TripSegment | undefined =>
         segments.find(s => ptIdx >= s.startPointIndex && ptIdx <= s.endPointIndex);
+
+    // Max boardings for dot radius scaling
+    const maxBoardings = useMemo(() => {
+        if (stopLoadLookup.size === 0) return 0;
+        let max = 0;
+        for (const p of points) {
+            const data = stopLoadLookup.get(`${routeId}_${p.stopId}`);
+            if (data && data.avgBoardings > max) max = data.avgBoardings;
+        }
+        return max;
+    }, [points, routeId, stopLoadLookup]);
 
     // Mouse tracking
     const handleMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
@@ -345,13 +361,17 @@ const CascadeTimelineChart: React.FC<CascadeTimelineChartProps> = ({
                     />
                 ))}
 
-                {/* === LAYER 5: Data point dots === */}
+                {/* === LAYER 5: Data point dots (scaled by boardings when available) === */}
                 {points.map((p, i) => {
                     const cx = xOf(i);
                     const dev = p.deviationMinutes;
                     const isDimmed = selectedTripIndex !== null && p.tripIndex !== selectedTripIndex;
                     const isHovered = hoveredIndex === i;
-                    const r = isHovered ? 5 : 3.5;
+                    const loadData = stopLoadLookup.get(`${routeId}_${p.stopId}`);
+                    const baseR = maxBoardings > 0 && loadData
+                        ? Math.max(3.5, Math.min(8, (loadData.avgBoardings / maxBoardings) * 7))
+                        : 3.5;
+                    const r = isHovered ? baseR + 1.5 : baseR;
                     const seg = segmentForPoint(i);
 
                     if (dev === null) {
@@ -445,6 +465,16 @@ const CascadeTimelineChart: React.FC<CascadeTimelineChartProps> = ({
                             </span>
                         </div>
                     )}
+                    {(() => {
+                        const ld = stopLoadLookup.get(`${routeId}_${tooltip.point.stopId}`);
+                        if (!ld) return null;
+                        return (
+                            <div className="flex gap-2 mt-1 border-t border-gray-100 pt-1">
+                                <span className="text-gray-400">Load</span>
+                                <span>{ld.avgBoardings.toFixed(0)} boarding · {ld.avgLoad.toFixed(0)} on bus</span>
+                            </div>
+                        );
+                    })()}
                 </div>
             )}
         </div>

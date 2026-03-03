@@ -11,6 +11,7 @@ import type {
 } from '../../utils/performanceDataTypes';
 import { MetricCard, ChartCard, fmt } from '../Analytics/AnalyticsShared';
 import { aggregateCascadeAcrossDays } from '../../utils/schedule/operatorDwellUtils';
+import { buildStopLoadLookup } from '../../utils/schedule/cascadeStoryUtils';
 import CascadeStorySlideOver from './CascadeStorySlideOver';
 
 interface DwellCascadeSectionProps {
@@ -69,6 +70,11 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
 
     const metrics: DailyCascadeMetrics = useMemo(
         () => aggregateCascadeAcrossDays(data.dailySummaries),
+        [data.dailySummaries],
+    );
+
+    const stopLoadLookup = useMemo(
+        () => buildStopLoadLookup(data.dailySummaries),
         [data.dailySummaries],
     );
 
@@ -132,15 +138,16 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
         }
 
         // Join and filter: only routes with cascade-caused > 0
-        const rows: { routeId: string; routeName: string; totalTrips: number; cascadeCaused: number }[] = [];
+        const rows: { routeId: string; routeName: string; totalTrips: number; cascadeCaused: number; otpPenaltyPp: number }[] = [];
         for (const [routeId, count] of cascadeLateByRoute.entries()) {
             const routeInfo = routeMap.get(routeId);
             if (routeInfo && count > 0) {
-                rows.push({ ...routeInfo, cascadeCaused: count });
+                const otpPenaltyPp = routeInfo.totalTrips > 0 ? (count / routeInfo.totalTrips) * 100 : 0;
+                rows.push({ ...routeInfo, cascadeCaused: count, otpPenaltyPp });
             }
         }
 
-        return rows.sort((a, b) => b.cascadeCaused - a.cascadeCaused);
+        return rows.sort((a, b) => b.otpPenaltyPp - a.otpPenaltyPp);
     }, [data.dailySummaries, cascadedOnly]);
 
     // Top 5 incidents by blast radius
@@ -234,7 +241,7 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                                     Worst: Route {worstIncident.routeId} · Block {worstIncident.block} · {worstIncident.stopName}
                                     {' '}({fmtTime(worstIncident.observedDepartureTime)})
                                     {' '}—{' '}
-                                    {fmtMin(worstIncident.trackedDwellSeconds)} min excess dwell → {worstIncident.blastRadius} trips late
+                                    {fmtMin(worstIncident.trackedDwellSeconds)} min excess dwell → {worstIncident.affectedTripCount} trips affected
                                 </p>
                             )}
                         </>
@@ -261,25 +268,38 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                                             <th className="pb-2 pr-3 font-medium">Route</th>
                                             <th className="pb-2 pr-2 font-medium text-right">Trips</th>
                                             <th className="pb-2 pr-2 font-medium text-right">Cascade Late</th>
-                                            <th className="pb-2 font-medium text-right">% of Trips</th>
+                                            <th className="pb-2 pr-2 font-medium text-right">OTP Penalty</th>
+                                            <th className="pb-2 font-medium w-20"></th>
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {routeRows.map(row => (
-                                            <tr key={row.routeId} className="border-b border-gray-100">
-                                                <td className="py-2 pr-3">
-                                                    <span className="font-medium text-gray-800">{row.routeId}</span>
-                                                    <span className="ml-1.5 text-xs text-gray-400 truncate">{row.routeName}</span>
-                                                </td>
-                                                <td className="py-2 pr-2 text-right text-gray-500 tabular-nums">{fmt(row.totalTrips)}</td>
-                                                <td className="py-2 pr-2 text-right font-semibold text-red-600 tabular-nums">
-                                                    {row.cascadeCaused}
-                                                </td>
-                                                <td className="py-2 text-right tabular-nums text-gray-600">
-                                                    {fmtPct(row.cascadeCaused, row.totalTrips)}
-                                                </td>
-                                            </tr>
-                                        ))}
+                                        {routeRows.map(row => {
+                                            const maxPenalty = routeRows[0]?.otpPenaltyPp ?? 1;
+                                            const barPct = maxPenalty > 0 ? (row.otpPenaltyPp / maxPenalty) * 100 : 0;
+                                            return (
+                                                <tr key={row.routeId} className="border-b border-gray-100">
+                                                    <td className="py-2 pr-3">
+                                                        <span className="font-medium text-gray-800">{row.routeId}</span>
+                                                        <span className="ml-1.5 text-xs text-gray-400 truncate">{row.routeName}</span>
+                                                    </td>
+                                                    <td className="py-2 pr-2 text-right text-gray-500 tabular-nums">{fmt(row.totalTrips)}</td>
+                                                    <td className="py-2 pr-2 text-right font-semibold text-red-600 tabular-nums">
+                                                        {row.cascadeCaused}
+                                                    </td>
+                                                    <td className="py-2 pr-2 text-right tabular-nums text-red-600 font-medium">
+                                                        {row.otpPenaltyPp.toFixed(1)} pp
+                                                    </td>
+                                                    <td className="py-2">
+                                                        <div className="w-full bg-gray-100 rounded-full h-1.5">
+                                                            <div
+                                                                className="bg-red-400 h-1.5 rounded-full"
+                                                                style={{ width: `${Math.max(barPct, 2)}%` }}
+                                                            />
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
                                     </tbody>
                                 </table>
                             </div>
@@ -360,8 +380,8 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                                             )}
                                             {/* Footer */}
                                             <p className="text-xs text-gray-500">
-                                                <span className="font-semibold text-red-600">{incident.blastRadius}</span>
-                                                {' '}trips late
+                                                <span className="font-semibold text-red-600">{incident.affectedTripCount}</span>
+                                                {' '}trips affected · {incident.blastRadius} late departures
                                                 {recoveryTrip ? (
                                                     <span className="text-emerald-600"> · Recovered at {recoveryTrip.tripName}</span>
                                                 ) : lastTrip && !lastTrip.recoveredHere ? (
@@ -535,7 +555,7 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                                                                     {cascade.stopName}
                                                                 </td>
                                                                 <td className="py-2 pr-2 text-right tabular-nums">{fmtMin(cascade.trackedDwellSeconds)}</td>
-                                                                <td className="py-2 pr-2 text-right tabular-nums">{fmtMin(cascade.recoveryTimeAvailableSeconds)}</td>
+                                                                <td className="py-2 pr-2 text-right tabular-nums">{Number.isFinite(cascade.recoveryTimeAvailableSeconds) ? fmtMin(cascade.recoveryTimeAvailableSeconds) : '—'}</td>
                                                                 <td className="py-2 pr-2 text-right font-medium tabular-nums">
                                                                     {cascade.blastRadius > 0 ? (
                                                                         <span className="text-red-600">{cascade.blastRadius}</span>
@@ -683,6 +703,8 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
             <CascadeStorySlideOver
                 cascade={selectedCascade}
                 onClose={() => setSelectedCascade(null)}
+                stopLoadLookup={stopLoadLookup}
+                dailySummaries={data.dailySummaries}
             />
         )}
         </>
