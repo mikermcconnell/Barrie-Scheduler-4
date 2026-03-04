@@ -1,62 +1,100 @@
-import React, { useState, useCallback } from 'react';
-import { AlertTriangle, Download, Loader2, GraduationCap, Bus, ArrowRight } from 'lucide-react';
+import React, { useState, useCallback, useEffect } from 'react';
+import { AlertTriangle, Download, Loader2, GraduationCap, Bus, ArrowRight, ArrowLeft } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import {
     BARRIE_SCHOOLS,
-    findBestTrip,
+    findTripOptions,
     minutesToDisplayTime,
 } from '../../utils/transit-app/studentPassUtils';
-import type { SchoolConfig, StudentPassResult } from '../../utils/transit-app/studentPassUtils';
+import type { SchoolConfig, StudentPassResult, TripOptions, RouteOption } from '../../utils/transit-app/studentPassUtils';
 import { StudentPassMap } from './StudentPassMap';
 import { StudentPassPreview } from './StudentPassPreview';
 
-export const StudentPassModule: React.FC = () => {
+interface StudentPassModuleProps {
+    onBack: () => void;
+}
+
+export const StudentPassModule: React.FC<StudentPassModuleProps> = ({ onBack }) => {
     const [selectedSchoolId, setSelectedSchoolId] = useState<string>(BARRIE_SCHOOLS[0].id);
     const [bellStart, setBellStart] = useState<string>('');
     const [bellEnd, setBellEnd] = useState<string>('');
     const [polygon, setPolygon] = useState<[number, number][] | null>(null);
-    const [result, setResult] = useState<StudentPassResult | null>(null);
+    const [tripOptions, setTripOptions] = useState<TripOptions | null>(null);
+    const [selectedMorningIdx, setSelectedMorningIdx] = useState(0);
+    const [selectedAfternoonIdx, setSelectedAfternoonIdx] = useState(0);
     const [isCalculating, setIsCalculating] = useState(false);
     const [isExporting, setIsExporting] = useState(false);
 
     const selectedSchool: SchoolConfig =
         BARRIE_SCHOOLS.find((s) => s.id === selectedSchoolId) ?? BARRIE_SCHOOLS[0];
 
-    const handlePolygonComplete = useCallback(
-        (coords: [number, number][]) => {
-            setPolygon(coords);
-            if (selectedSchool) {
-                setIsCalculating(true);
-                requestAnimationFrame(() => {
-                    const schoolWithOverrides: SchoolConfig = {
-                        ...selectedSchool,
-                        bellStart: bellStart || selectedSchool.bellStart,
-                        bellEnd: bellEnd || selectedSchool.bellEnd,
-                    };
-                    const tripResult = findBestTrip(coords, schoolWithOverrides);
-                    setResult(tripResult);
-                    setIsCalculating(false);
-                });
-            }
-        },
-        [selectedSchool, bellStart, bellEnd]
-    );
+    const handlePolygonComplete = useCallback((coords: [number, number][]) => {
+        setPolygon(coords);
+    }, []);
 
     const handlePolygonClear = useCallback(() => {
         setPolygon(null);
-        setResult(null);
+        setTripOptions(null);
+        setSelectedMorningIdx(0);
+        setSelectedAfternoonIdx(0);
+        setIsCalculating(false);
     }, []);
 
     const handleSchoolChange = (id: string) => {
         setSelectedSchoolId(id);
         setBellStart('');
         setBellEnd('');
-        setResult(null);
+        setTripOptions(null);
+        setSelectedMorningIdx(0);
+        setSelectedAfternoonIdx(0);
     };
 
     const effectiveBellStart = bellStart || selectedSchool.bellStart;
     const effectiveBellEnd = bellEnd || selectedSchool.bellEnd;
+
+    useEffect(() => {
+        if (!polygon) {
+            setIsCalculating(false);
+            return;
+        }
+
+        setIsCalculating(true);
+        const rafId = requestAnimationFrame(() => {
+            const schoolWithOverrides: SchoolConfig = {
+                ...selectedSchool,
+                bellStart: effectiveBellStart,
+                bellEnd: effectiveBellEnd,
+            };
+            const options = findTripOptions(polygon, schoolWithOverrides);
+            setTripOptions(options);
+            setSelectedMorningIdx(0);
+            setSelectedAfternoonIdx(0);
+            setIsCalculating(false);
+        });
+
+        return () => cancelAnimationFrame(rafId);
+    }, [polygon, selectedSchool, effectiveBellStart, effectiveBellEnd]);
+
+    // Compose the displayed result from selected morning + afternoon options
+    const result: StudentPassResult | null = (() => {
+        if (!tripOptions) return null;
+        const am = tripOptions.morningOptions[selectedMorningIdx];
+        const pm = tripOptions.afternoonOptions[selectedAfternoonIdx];
+        if (!am) return { found: false as const, isDirect: false, morningLegs: [], afternoonLegs: [] };
+
+        if (!pm) return am.result;
+
+        // Merge: morning from selected AM, afternoon from selected PM
+        return {
+            ...am.result,
+            afternoonLegs: pm.result.afternoonLegs,
+            afternoonRouteShapes: pm.result.afternoonRouteShapes,
+            walkFromSchool: pm.result.walkFromSchool,
+            walkToZone: pm.result.walkToZone,
+            nextAfternoonDepartureMinutes: pm.result.nextAfternoonDepartureMinutes,
+        };
+    })();
 
     const handleExportPdf = useCallback(async () => {
         if (!result?.found) return;
@@ -109,6 +147,13 @@ export const StudentPassModule: React.FC = () => {
                 : 0;
             statsLines.push(`Trip Time: ${tripDuration} min`);
 
+            if (result.walkToStop) {
+                statsLines.push(`Walk to Stop: ${result.walkToStop.walkMinutes} min (${(result.walkToStop.distanceKm * 1000).toFixed(0)}m)`);
+            }
+            if (result.walkToSchool) {
+                statsLines.push(`Walk to School: ${result.walkToSchool.walkMinutes} min (${(result.walkToSchool.distanceKm * 1000).toFixed(0)}m)`);
+            }
+
             if (!result.isDirect && result.morningLegs.length === 2) {
                 statsLines.push(`Transfer: Rt ${result.morningLegs[0].routeShortName} -> Rt ${result.morningLegs[1].routeShortName} at ${result.morningLegs[0].toStop}`);
             }
@@ -149,25 +194,49 @@ export const StudentPassModule: React.FC = () => {
 
             // Morning steps
             const morningSteps: string[] = [];
+            let stepNum = 1;
+
+            // Walk to boarding stop
+            if (result.walkToStop) {
+                const w = result.walkToStop;
+                morningSteps.push(`${stepNum}. Walk ${w.walkMinutes} min (${(w.distanceKm * 1000).toFixed(0)}m)`);
+                morningSteps.push(`   to ${result.morningLegs[0]?.fromStop ?? 'bus stop'}`);
+                stepNum++;
+            }
+
             if (result.isDirect && result.morningLegs.length === 1) {
                 const leg = result.morningLegs[0];
-                morningSteps.push(`1. Board Rt ${leg.routeShortName} at ${minutesToDisplayTime(leg.departureMinutes)}`);
+                morningSteps.push(`${stepNum}. Board Rt ${leg.routeShortName} at ${minutesToDisplayTime(leg.departureMinutes)}`);
                 morningSteps.push(`   from ${leg.fromStop}`);
-                morningSteps.push(`2. Arrive ${leg.toStop}`);
+                stepNum++;
+                morningSteps.push(`${stepNum}. Arrive ${leg.toStop}`);
                 morningSteps.push(`   at ${minutesToDisplayTime(leg.arrivalMinutes)}`);
-                morningSteps.push(`3. Walk to school`);
-                morningSteps.push(`   Bell: ${effectiveBellStart}`);
+                stepNum++;
             } else if (!result.isDirect && result.morningLegs.length === 2) {
                 const legA = result.morningLegs[0];
                 const legB = result.morningLegs[1];
                 const waitMin = result.transfer?.waitMinutes ?? (legB.departureMinutes - legA.arrivalMinutes);
-                morningSteps.push(`1. Board Rt ${legA.routeShortName} at ${minutesToDisplayTime(legA.departureMinutes)}`);
+                morningSteps.push(`${stepNum}. Board Rt ${legA.routeShortName} at ${minutesToDisplayTime(legA.departureMinutes)}`);
                 morningSteps.push(`   from ${legA.fromStop}`);
-                morningSteps.push(`2. Transfer at ${legA.toStop}`);
+                stepNum++;
+                morningSteps.push(`${stepNum}. Transfer at ${legA.toStop}`);
                 morningSteps.push(`   (${waitMin} min wait)`);
-                morningSteps.push(`3. Board Rt ${legB.routeShortName} at ${minutesToDisplayTime(legB.departureMinutes)}`);
-                morningSteps.push(`4. Arrive ${legB.toStop}`);
+                stepNum++;
+                morningSteps.push(`${stepNum}. Board Rt ${legB.routeShortName} at ${minutesToDisplayTime(legB.departureMinutes)}`);
+                stepNum++;
+                morningSteps.push(`${stepNum}. Arrive ${legB.toStop}`);
                 morningSteps.push(`   at ${minutesToDisplayTime(legB.arrivalMinutes)}`);
+                stepNum++;
+            }
+
+            // Walk to school
+            if (result.walkToSchool) {
+                const w = result.walkToSchool;
+                morningSteps.push(`${stepNum}. Walk ${w.walkMinutes} min (${(w.distanceKm * 1000).toFixed(0)}m) to school`);
+                morningSteps.push(`   Bell: ${effectiveBellStart}`);
+            } else {
+                morningSteps.push(`${stepNum}. Walk to school`);
+                morningSteps.push(`   Bell: ${effectiveBellStart}`);
             }
 
             // Afternoon steps
@@ -214,14 +283,25 @@ export const StudentPassModule: React.FC = () => {
     }, [result, selectedSchool, effectiveBellStart, effectiveBellEnd]);
 
     return (
-        <div className="flex h-[680px] border border-gray-200 rounded-lg overflow-hidden bg-white">
+        <div className="h-full flex flex-col overflow-hidden">
+            {/* Header with back button */}
+            <div className="flex items-center gap-3 px-6 py-3 border-b border-gray-200 bg-white flex-shrink-0">
+                <button
+                    onClick={onBack}
+                    className="p-1 rounded-md hover:bg-gray-100 text-gray-500 hover:text-gray-700 transition-colors"
+                >
+                    <ArrowLeft size={18} />
+                </button>
+                <div className="flex items-center gap-2">
+                    <GraduationCap size={18} className="text-amber-600" />
+                    <h2 className="text-lg font-bold text-gray-900">Student Transit Pass</h2>
+                </div>
+            </div>
+
+            <div className="flex flex-1 overflow-hidden">
             {/* Left config panel */}
             <div className="w-72 bg-gray-50 border-r border-gray-200 flex flex-col overflow-y-auto">
                 <div className="p-4 border-b border-gray-200">
-                    <div className="flex items-center gap-2 mb-1">
-                        <GraduationCap size={18} className="text-blue-600" />
-                        <h3 className="font-semibold text-gray-900 text-sm">Student Pass Planner</h3>
-                    </div>
                     <p className="text-xs text-gray-500">
                         Draw a zone on the map to find transit options.
                     </p>
@@ -243,38 +323,34 @@ export const StudentPassModule: React.FC = () => {
                     </select>
                 </div>
 
-                {/* Bell time overrides */}
+                {/* Bell time overrides — horizontal layout */}
                 <div className="p-4 border-b border-gray-200">
                     <p className="text-xs font-medium text-gray-700 mb-2">Bell Times</p>
-                    <div className="space-y-2">
+                    <div className="grid grid-cols-2 gap-2">
                         <div>
-                            <label className="text-xs text-gray-500 mb-0.5 block">Start</label>
+                            <label className="text-[10px] text-gray-500 mb-0.5 block uppercase tracking-wide">Start</label>
                             <input
                                 type="time"
                                 value={bellStart}
                                 placeholder={selectedSchool.bellStart}
                                 onChange={(e) => setBellStart(e.target.value)}
-                                className="w-full text-sm border border-gray-300 rounded-md px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                className="w-full text-sm border border-gray-300 rounded-md px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent"
                             />
                             {!bellStart && (
-                                <p className="text-xs text-gray-400 mt-0.5">
-                                    Default: {selectedSchool.bellStart}
-                                </p>
+                                <p className="text-[10px] text-gray-400 mt-0.5">{selectedSchool.bellStart}</p>
                             )}
                         </div>
                         <div>
-                            <label className="text-xs text-gray-500 mb-0.5 block">End</label>
+                            <label className="text-[10px] text-gray-500 mb-0.5 block uppercase tracking-wide">End</label>
                             <input
                                 type="time"
                                 value={bellEnd}
                                 placeholder={selectedSchool.bellEnd}
                                 onChange={(e) => setBellEnd(e.target.value)}
-                                className="w-full text-sm border border-gray-300 rounded-md px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                className="w-full text-sm border border-gray-300 rounded-md px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent"
                             />
                             {!bellEnd && (
-                                <p className="text-xs text-gray-400 mt-0.5">
-                                    Default: {selectedSchool.bellEnd}
-                                </p>
+                                <p className="text-[10px] text-gray-400 mt-0.5">{selectedSchool.bellEnd}</p>
                             )}
                         </div>
                     </div>
@@ -295,7 +371,7 @@ export const StudentPassModule: React.FC = () => {
                     )}
                 </div>
 
-                {/* Trip result summary */}
+                {/* Route options */}
                 <div className="p-4 flex-1">
                     {isCalculating && (
                         <div className="flex items-center gap-2 text-sm text-blue-600">
@@ -304,125 +380,153 @@ export const StudentPassModule: React.FC = () => {
                         </div>
                     )}
 
-                    {!isCalculating && result && !result.found && (
+                    {!isCalculating && tripOptions && tripOptions.morningOptions.length === 0 && (
                         <div className="flex items-start gap-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-md p-3">
                             <AlertTriangle size={16} className="flex-shrink-0 mt-0.5" />
                             <div>
                                 <p className="font-medium">No trip found</p>
                                 <p className="text-xs mt-0.5 text-amber-600">
-                                    No weekday service connects this zone to {selectedSchool.name} before{' '}
-                                    {effectiveBellStart}.
+                                    No weekday service connects this zone to {selectedSchool.name} within 30 min of bell time.
                                 </p>
                             </div>
                         </div>
                     )}
 
-                    {!isCalculating && result?.found && (
+                    {!isCalculating && tripOptions && tripOptions.morningOptions.length > 0 && (
                         <div className="space-y-3">
-                            <div className="flex items-center gap-2">
-                                <Bus size={15} className="text-green-600" />
-                                <span className="text-sm font-semibold text-gray-900">
-                                    {result.isDirect ? 'Direct Trip' : '1-Transfer Trip'}
-                                </span>
-                            </div>
-
-                            {/* Morning legs */}
+                            {/* Morning options */}
                             <div>
-                                <p className="text-xs text-gray-500 mb-1.5 font-medium uppercase tracking-wide">
-                                    Morning
+                                <p className="text-xs text-blue-700 mb-1.5 font-semibold uppercase tracking-wide">
+                                    Morning Options
                                 </p>
                                 <div className="space-y-1.5">
-                                    {result.morningLegs.map((leg, i) => (
-                                        <div key={i} className="text-xs bg-white border border-gray-200 rounded p-2">
-                                            <div className="flex items-center gap-1.5 mb-1">
-                                                <span
-                                                    className="px-1.5 py-0.5 rounded text-white font-bold text-[10px]"
-                                                    style={{ backgroundColor: leg.routeColor || '#6B7280' }}
-                                                >
-                                                    {leg.routeShortName}
-                                                </span>
-                                                <span className="text-gray-500">
-                                                    {minutesToDisplayTime(leg.departureMinutes)}
-                                                    <ArrowRight size={10} className="inline mx-0.5" />
-                                                    {minutesToDisplayTime(leg.arrivalMinutes)}
-                                                </span>
-                                            </div>
-                                            <p className="text-gray-600 truncate">
-                                                {leg.fromStop} → {leg.toStop}
-                                            </p>
-                                        </div>
-                                    ))}
+                                    {tripOptions.morningOptions.map((opt, i) => {
+                                        const isSelected = i === selectedMorningIdx;
+                                        const legs = opt.result.morningLegs;
+                                        const firstLeg = legs[0];
+                                        const lastLeg = legs[legs.length - 1];
+                                        const walkMin = opt.result.walkToStop?.walkMinutes;
+                                        return (
+                                            <button
+                                                key={opt.id}
+                                                onClick={() => setSelectedMorningIdx(i)}
+                                                className={`w-full text-left text-xs rounded-lg p-2.5 border-2 transition-all ${
+                                                    isSelected
+                                                        ? 'border-blue-500 bg-blue-50 shadow-sm'
+                                                        : 'border-gray-200 bg-white hover:border-gray-300'
+                                                }`}
+                                            >
+                                                <div className="flex items-center justify-between mb-1">
+                                                    <div className="flex items-center gap-1.5">
+                                                        {legs.map((leg, li) => (
+                                                            <React.Fragment key={li}>
+                                                                {li > 0 && <ArrowRight size={8} className="text-gray-400" />}
+                                                                <span
+                                                                    className="px-1.5 py-0.5 rounded text-white font-bold text-[10px]"
+                                                                    style={{ backgroundColor: leg.routeColor || '#6B7280' }}
+                                                                >
+                                                                    {leg.routeShortName}
+                                                                </span>
+                                                            </React.Fragment>
+                                                        ))}
+                                                    </div>
+                                                    {isSelected && (
+                                                        <span className="text-blue-600 text-[10px] font-semibold">Selected</span>
+                                                    )}
+                                                </div>
+                                                <div className="text-gray-600">
+                                                    {firstLeg && lastLeg && (
+                                                        <span>
+                                                            {minutesToDisplayTime(firstLeg.departureMinutes)}
+                                                            {' → '}
+                                                            {minutesToDisplayTime(lastLeg.arrivalMinutes)}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <div className="text-gray-400 mt-0.5">
+                                                    {opt.result.isDirect ? 'Direct' : 'Transfer'}
+                                                    {walkMin != null && ` · ${walkMin} min walk`}
+                                                    {opt.result.transfer && ` · ${opt.result.transfer.waitMinutes} min wait`}
+                                                </div>
+                                            </button>
+                                        );
+                                    })}
                                 </div>
                             </div>
 
-                            {/* Transfer info */}
-                            {result.transfer && (
-                                <div
-                                    className="text-xs rounded p-2 border"
-                                    style={{
-                                        borderColor: result.transfer.color,
-                                        backgroundColor: `${result.transfer.color}15`,
-                                        color: result.transfer.color,
-                                    }}
-                                >
-                                    <span className="font-semibold">{result.transfer.label}</span>
-                                    {' — '}
-                                    {result.transfer.waitMinutes} min wait
+                            {/* Afternoon options */}
+                            {tripOptions.afternoonOptions.length > 0 && (
+                                <div>
+                                    <p className="text-xs text-amber-700 mb-1.5 font-semibold uppercase tracking-wide">
+                                        Afternoon Options
+                                    </p>
+                                    <div className="space-y-1.5">
+                                        {tripOptions.afternoonOptions.map((opt, i) => {
+                                            const isSelected = i === selectedAfternoonIdx;
+                                            const leg = opt.result.afternoonLegs[0];
+                                            if (!leg) return null;
+                                            return (
+                                                <button
+                                                    key={opt.id}
+                                                    onClick={() => setSelectedAfternoonIdx(i)}
+                                                    className={`w-full text-left text-xs rounded-lg p-2.5 border-2 transition-all ${
+                                                        isSelected
+                                                            ? 'border-amber-500 bg-amber-50 shadow-sm'
+                                                            : 'border-gray-200 bg-white hover:border-gray-300'
+                                                    }`}
+                                                >
+                                                    <div className="flex items-center justify-between mb-1">
+                                                        <div className="flex items-center gap-1.5">
+                                                            <span
+                                                                className="px-1.5 py-0.5 rounded text-white font-bold text-[10px]"
+                                                                style={{ backgroundColor: leg.routeColor || '#6B7280' }}
+                                                            >
+                                                                {leg.routeShortName}
+                                                            </span>
+                                                        </div>
+                                                        {isSelected && (
+                                                            <span className="text-amber-600 text-[10px] font-semibold">Selected</span>
+                                                        )}
+                                                    </div>
+                                                    <div className="text-gray-600">
+                                                        {minutesToDisplayTime(leg.departureMinutes)}
+                                                        {' → '}
+                                                        {minutesToDisplayTime(leg.arrivalMinutes)}
+                                                    </div>
+                                                    <div className="text-gray-400 mt-0.5">
+                                                        {leg.fromStop}
+                                                    </div>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
                                 </div>
                             )}
 
-                            {/* Afternoon legs */}
-                            {result.afternoonLegs.length > 0 && (
-                                <div>
-                                    <p className="text-xs text-gray-500 mb-1.5 font-medium uppercase tracking-wide">
-                                        Afternoon Return
-                                    </p>
-                                    <div className="space-y-1.5">
-                                        {result.afternoonLegs.map((leg, i) => (
-                                            <div
-                                                key={i}
-                                                className="text-xs bg-white border border-gray-200 rounded p-2"
-                                            >
-                                                <div className="flex items-center gap-1.5 mb-1">
-                                                    <span
-                                                        className="px-1.5 py-0.5 rounded text-white font-bold text-[10px]"
-                                                        style={{ backgroundColor: leg.routeColor || '#6B7280' }}
-                                                    >
-                                                        {leg.routeShortName}
-                                                    </span>
-                                                    <span className="text-gray-500">
-                                                        {minutesToDisplayTime(leg.departureMinutes)}
-                                                        <ArrowRight size={10} className="inline mx-0.5" />
-                                                        {minutesToDisplayTime(leg.arrivalMinutes)}
-                                                    </span>
-                                                </div>
-                                                <p className="text-gray-600 truncate">
-                                                    {leg.fromStop} → {leg.toStop}
-                                                </p>
-                                            </div>
-                                        ))}
-                                    </div>
-                                    {result.nextAfternoonDepartureMinutes != null && (
-                                        <p className="text-xs text-gray-400 mt-1">
-                                            Next bus: {minutesToDisplayTime(result.nextAfternoonDepartureMinutes)}
+                            {/* Walking + frequency summary for selected option */}
+                            {result?.found && (
+                                <div className="bg-gray-50 border border-gray-200 rounded-md p-2 space-y-1">
+                                    {result.walkToStop && (
+                                        <p className="text-xs text-gray-600">
+                                            Walk to stop: <span className="font-medium text-gray-800">{result.walkToStop.walkMinutes} min</span> ({(result.walkToStop.distanceKm * 1000).toFixed(0)}m)
+                                        </p>
+                                    )}
+                                    {result.walkToSchool && (
+                                        <p className="text-xs text-gray-600">
+                                            Walk to school: <span className="font-medium text-gray-800">{result.walkToSchool.walkMinutes} min</span> ({(result.walkToSchool.distanceKm * 1000).toFixed(0)}m)
+                                        </p>
+                                    )}
+                                    {result.frequencyPerHour != null && (
+                                        <p className="text-xs text-gray-500">
+                                            AM frequency: <span className="font-medium text-gray-700">{result.frequencyPerHour.toFixed(1)} trips/hr</span>
                                         </p>
                                     )}
                                 </div>
                             )}
-
-                            {/* Frequency */}
-                            {result.frequencyPerHour != null && (
-                                <p className="text-xs text-gray-500">
-                                    AM peak frequency:{' '}
-                                    <span className="font-medium text-gray-700">
-                                        {result.frequencyPerHour.toFixed(1)} trips/hr
-                                    </span>
-                                </p>
-                            )}
                         </div>
                     )}
 
-                    {!isCalculating && !result && (
+                    {!isCalculating && !tripOptions && (
                         <p className="text-xs text-gray-400 italic">
                             Draw a zone on the map to see transit options.
                         </p>
@@ -474,17 +578,34 @@ export const StudentPassModule: React.FC = () => {
                             bellEnd={effectiveBellEnd}
                         />
                     ) : (
-                        <div className="h-full flex items-center justify-center bg-gray-50">
-                            <div className="text-center px-6">
-                                <GraduationCap size={32} className="text-gray-300 mx-auto mb-2" />
-                                <p className="text-sm text-gray-400">
-                                    Pass preview will appear here after a zone is drawn.
-                                </p>
+                        <div className="h-full flex items-center justify-center bg-gray-50/80">
+                            <div className="px-8 py-6 max-w-xs">
+                                <div className="space-y-3">
+                                    {[
+                                        { step: '1', label: 'Select a school', done: true },
+                                        { step: '2', label: 'Draw a residential zone on the map', done: !!polygon },
+                                        { step: '3', label: 'Review trip & download PDF', done: false },
+                                    ].map((item, i) => (
+                                        <div key={i} className="flex items-center gap-3">
+                                            <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${
+                                                item.done
+                                                    ? 'bg-amber-500 text-white'
+                                                    : 'bg-gray-200 text-gray-400'
+                                            }`}>
+                                                {item.done ? '✓' : item.step}
+                                            </div>
+                                            <span className={`text-sm ${item.done ? 'text-gray-700' : 'text-gray-400'}`}>
+                                                {item.label}
+                                            </span>
+                                        </div>
+                                    ))}
+                                </div>
                             </div>
                         </div>
                     )}
                 </div>
             </div>
+        </div>
         </div>
     );
 };

@@ -6,6 +6,64 @@ export interface ReportData {
   teamName: string;
 }
 
+/** Hub definitions — stops at the same hub get merged in stop rankings */
+const HUBS: { name: string; stopCodes: string[] }[] = [
+  { name: 'Park Place', stopCodes: ['777'] },
+  { name: 'Barrie South GO', stopCodes: ['725'] },
+  { name: 'Allandale Terminal', stopCodes: ['9003', '9004', '9005', '9006', '9009', '9012', '9013', '9014'] },
+  { name: 'Downtown', stopCodes: ['1', '2', '10'] },
+  { name: 'Georgian College', stopCodes: ['327', '328', '329', '330', '331', '335'] },
+];
+
+/** Merge stops belonging to the same hub, summing boardings/alightings and averaging OTP */
+function mergeHubStops(stops: StopMetrics[]): StopMetrics[] {
+  const hubMap = new Map<string, string>(); // stopId → hub name
+  for (const hub of HUBS) {
+    for (const code of hub.stopCodes) {
+      hubMap.set(code, hub.name);
+    }
+  }
+
+  const merged = new Map<string, StopMetrics>();
+  const hubRouteSets = new Map<string, Set<string>>();
+  const standalone: StopMetrics[] = [];
+
+  for (const stop of stops) {
+    const hubName = hubMap.get(stop.stopId);
+    if (!hubName) {
+      standalone.push(stop);
+      continue;
+    }
+
+    const existing = merged.get(hubName);
+    if (!existing) {
+      merged.set(hubName, {
+        ...stop,
+        stopName: hubName,
+        stopId: '',
+      });
+      hubRouteSets.set(hubName, new Set());
+    } else {
+      existing.boardings += stop.boardings;
+      existing.alightings += stop.alightings;
+      // Weighted OTP average by observation count
+      const totalObs = existing.otp.total + stop.otp.total;
+      if (totalObs > 0) {
+        existing.otp.onTimePercent =
+          (existing.otp.onTimePercent * existing.otp.total + stop.otp.onTimePercent * stop.otp.total) / totalObs;
+        existing.otp.earlyPercent =
+          (existing.otp.earlyPercent * existing.otp.total + stop.otp.earlyPercent * stop.otp.total) / totalObs;
+        existing.otp.latePercent =
+          (existing.otp.latePercent * existing.otp.total + stop.otp.latePercent * stop.otp.total) / totalObs;
+      }
+      existing.otp.total = totalObs;
+      existing.avgLoad = (existing.avgLoad + stop.avgLoad) / 2;
+    }
+  }
+
+  return [...merged.values(), ...standalone];
+}
+
 function pct(value: number): string {
   return `${value.toFixed(1)}%`;
 }
@@ -73,6 +131,7 @@ function bphPill(value: number): string {
 }
 
 function stopLabel(name: string, id: string): string {
+  if (!id) return name;
   return `${name} <span style="color:#9ca3af;font-weight:400;">(${id})</span>`;
 }
 
@@ -382,8 +441,10 @@ function buildRouteScorecard(routes: RouteMetrics[]): string {
 function buildTopStops(stops: StopMetrics[]): string {
   if (stops.length === 0) return '';
 
-  const busiestStops = [...stops].sort((a, b) => b.boardings - a.boardings).slice(0, 8);
-  const worstOtpStops = [...stops]
+  const hubMerged = mergeHubStops(stops);
+
+  const busiestStops = [...hubMerged].sort((a, b) => b.boardings - a.boardings).slice(0, 8);
+  const worstOtpStops = [...hubMerged]
     .filter(s => s.otp.total >= 10)
     .sort((a, b) => a.otp.onTimePercent - b.otp.onTimePercent)
     .slice(0, 5);

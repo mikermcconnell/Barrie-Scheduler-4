@@ -65,6 +65,7 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
     const [cascadePage, setCascadePage] = useState(1);
     const [showDetails, setShowDetails] = useState(false);
     const [selectedCascade, setSelectedCascade] = useState<DwellCascade | null>(null);
+    const [incidentRouteFilter, setIncidentRouteFilter] = useState<string>('all');
 
     const hasCascadeData = data.dailySummaries.some(d => d.byCascade);
 
@@ -150,14 +151,28 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
         return rows.sort((a, b) => b.otpPenaltyPp - a.otpPenaltyPp);
     }, [data.dailySummaries, cascadedOnly]);
 
-    // Top 5 incidents by blast radius
-    const topIncidents = useMemo(
-        () => cascadedOnly
-            .filter(c => c.trackedDwellSeconds >= 300) // 5+ min dwell only — smaller values likely not the causal dwell
-            .sort((a, b) => b.blastRadius - a.blastRadius)
-            .slice(0, 5),
-        [cascadedOnly],
-    );
+    // Unique route IDs for incident filter dropdown
+    const incidentRouteIds = useMemo(() => {
+        const ids = new Set(cascadedOnly.filter(c => c.severity === 'high').map(c => c.routeId));
+        return Array.from(ids).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    }, [cascadedOnly]);
+
+    // All high-severity incidents, sorted by customer impact (boardings at late stops)
+    const topIncidents = useMemo(() => {
+        const sumBoardings = (c: DwellCascade): number =>
+            c.cascadedTrips.reduce((sum, trip) =>
+                sum + trip.timepoints.reduce((s, tp) =>
+                    s + (tp.isLate ? (tp.boardings ?? 0) : 0), 0), 0);
+
+        const filtered = cascadedOnly
+            .filter(c => c.severity === 'high')
+            .filter(c => incidentRouteFilter === 'all' || c.routeId === incidentRouteFilter);
+
+        const boardingsMap = new Map(filtered.map(c => [c, sumBoardings(c)] as const));
+        return filtered.sort(
+            (a, b) => (boardingsMap.get(b)! - boardingsMap.get(a)!) || b.blastRadius - a.blastRadius,
+        );
+    }, [cascadedOnly, incidentRouteFilter]);
 
     const isMultiDay = data.dailySummaries.length > 1;
 
@@ -306,88 +321,71 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                         )}
                     </ChartCard>
 
-                    {/* C: Top Incident Cards */}
-                    <div className="space-y-3">
+                    {/* C: Top Incident List */}
+                    <div className="space-y-2">
                         <div className="flex items-center justify-between">
                             <div>
                                 <h3 className="text-sm font-semibold text-gray-800">Top Incidents</h3>
-                                <p className="text-xs text-gray-500">Highest blast-radius dwell events</p>
+                                <p className="text-xs text-gray-500">All high-severity cascade events</p>
                             </div>
+                            <select
+                                value={incidentRouteFilter}
+                                onChange={e => setIncidentRouteFilter(e.target.value)}
+                                className="text-xs border border-gray-200 rounded-md px-2 py-1 text-gray-600 bg-white focus:outline-none focus:ring-1 focus:ring-cyan-400"
+                            >
+                                <option value="all">All routes</option>
+                                {incidentRouteIds.map(id => (
+                                    <option key={id} value={id}>Route {id}</option>
+                                ))}
+                            </select>
                         </div>
                         {topIncidents.length === 0 ? (
                             <p className="text-sm text-gray-400 py-4 text-center">No cascaded incidents</p>
                         ) : (
-                            <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                            <div className="space-y-1.5">
                                 {topIncidents.map((incident, i) => {
-                                    const lastTrip = incident.cascadedTrips.length > 0
-                                        ? incident.cascadedTrips[incident.cascadedTrips.length - 1]
-                                        : null;
                                     const recoveryTrip = incident.cascadedTrips.find(ct => ct.recoveredHere);
+                                    const recovered = !!recoveryTrip;
                                     return (
                                         <div
                                             key={`${incident.block}-${incident.tripName}-${incident.date}-${i}`}
-                                            className="border border-gray-200 rounded-lg p-3 bg-white cursor-pointer hover:border-cyan-300 hover:shadow-sm transition-all"
+                                            className="flex items-center gap-3 border border-gray-200 rounded-lg px-3 py-2 bg-white cursor-pointer hover:border-cyan-300 hover:shadow-sm transition-all"
                                             onClick={() => setSelectedCascade(incident)}
                                         >
-                                            {/* Card header */}
-                                            <div className="flex items-start justify-between gap-2 mb-1.5">
-                                                <div className="min-w-0">
-                                                    <span className="text-sm font-semibold text-gray-800">
-                                                        Route {incident.routeId}
-                                                    </span>
-                                                    <span className="mx-1.5 text-gray-300">·</span>
-                                                    <span className="text-sm text-gray-500 font-mono">Block {incident.block}</span>
-                                                </div>
-                                                <SeverityBadge severity={incident.severity} />
+                                            {/* Rank */}
+                                            <span className="text-xs font-medium text-gray-400 w-4 text-right shrink-0">{i + 1}</span>
+                                            {/* Severity dot */}
+                                            <span className={`w-2 h-2 rounded-full shrink-0 ${
+                                                incident.severity === 'high' ? 'bg-red-500' : 'bg-amber-500'
+                                            }`} />
+                                            {/* Route + block */}
+                                            <div className="min-w-0 w-28 shrink-0">
+                                                <span className="text-xs font-semibold text-gray-800">{incident.routeId}</span>
+                                                <span className="ml-1.5 text-xs text-gray-400 font-mono">{incident.block}</span>
                                             </div>
-                                            {/* Location + time */}
-                                            <p className="text-xs text-gray-500 mb-2">
-                                                {incident.stopName}
-                                                <span className="mx-1.5 text-gray-300">·</span>
-                                                {fmtTime(incident.observedDepartureTime)}
+                                            {/* Stop + time */}
+                                            <div className="min-w-0 flex-1 truncate text-xs text-gray-600">
+                                                <span className="truncate">{incident.stopName}</span>
+                                                <span className="mx-1 text-gray-300">·</span>
+                                                <span className="tabular-nums">{fmtTime(incident.observedDepartureTime)}</span>
                                                 {isMultiDay && (
-                                                    <span className="ml-1.5 text-gray-400">({incident.date})</span>
+                                                    <span className="ml-1 text-gray-400">{incident.date}</span>
                                                 )}
-                                            </p>
-                                            {/* Metrics row */}
-                                            <div className="flex items-center gap-4 text-xs text-gray-600 py-2 border-t border-b border-gray-100 mb-2">
-                                                <span>
-                                                    <span className="font-medium text-red-600">{fmtMin(incident.trackedDwellSeconds)} min</span>
-                                                    {' '}excess dwell
+                                            </div>
+                                            {/* Metrics */}
+                                            <div className="flex items-center gap-3 shrink-0 text-xs tabular-nums">
+                                                <span className="font-medium text-red-600">{fmtMin(incident.trackedDwellSeconds)}m</span>
+                                                <span title="Trips affected" className="text-gray-500">
+                                                    <span className="font-semibold text-gray-700">{incident.affectedTripCount}</span> trips
                                                 </span>
-                                                <span>
-                                                    <span className="font-medium text-gray-700">{fmtMin(incident.recoveryTimeAvailableSeconds)} min</span>
-                                                    {' '}recovery
+                                                <span title="Late departures" className="text-gray-500">
+                                                    <span className="font-semibold text-gray-700">{incident.blastRadius}</span> late
                                                 </span>
                                             </div>
-                                            {/* Trip pills */}
-                                            {incident.cascadedTrips.length > 0 && (
-                                                <div className="flex flex-wrap gap-1 mb-2">
-                                                    {incident.cascadedTrips.map((ct, ctIdx) => (
-                                                        <span
-                                                            key={ctIdx}
-                                                            title={`${ct.tripName} — ${ct.otpStatus}`}
-                                                            className={`inline-flex items-center px-1.5 py-0.5 text-xs rounded font-medium ${
-                                                                ct.otpStatus === 'late'
-                                                                    ? 'bg-red-100 text-red-700'
-                                                                    : 'bg-emerald-100 text-emerald-700'
-                                                            }`}
-                                                        >
-                                                            {ct.tripName}
-                                                        </span>
-                                                    ))}
-                                                </div>
-                                            )}
-                                            {/* Footer */}
-                                            <p className="text-xs text-gray-500">
-                                                <span className="font-semibold text-red-600">{incident.affectedTripCount}</span>
-                                                {' '}trips affected · {incident.blastRadius} late departures
-                                                {recoveryTrip ? (
-                                                    <span className="text-emerald-600"> · Recovered at {recoveryTrip.tripName}</span>
-                                                ) : lastTrip && !lastTrip.recoveredHere ? (
-                                                    <span className="text-red-500"> · Not recovered</span>
-                                                ) : null}
-                                            </p>
+                                            {/* Recovery status */}
+                                            <span className={`text-xs font-medium shrink-0 ${recovered ? 'text-emerald-600' : 'text-red-500'}`}>
+                                                {recovered ? '✓' : '✗'}
+                                            </span>
                                         </div>
                                     );
                                 })}

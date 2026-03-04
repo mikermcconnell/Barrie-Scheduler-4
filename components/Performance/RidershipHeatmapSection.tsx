@@ -332,7 +332,7 @@ export const RidershipHeatmapSection: React.FC<Props> = ({ data }) => {
 
                 <div className="flex gap-1">
                     <span className="text-xs font-bold text-gray-400 uppercase tracking-wider self-center mr-1">Range:</span>
-                    {([['yesterday', 'Yesterday'], ['week', 'Past Week'], ['month', 'Past Month']] as [DateRange, string][]).map(([val, label]) => (
+                    {([['yesterday', 'Latest Day'], ['week', 'Past Week'], ['month', 'Past Month']] as [DateRange, string][]).map(([val, label]) => (
                         <FilterPill key={val} active={dateRange === val} onClick={() => setDateRange(val)}>{label}</FilterPill>
                     ))}
                 </div>

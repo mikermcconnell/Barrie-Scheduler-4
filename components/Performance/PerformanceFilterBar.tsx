@@ -8,7 +8,7 @@ const TIME_RANGE_LABELS: Record<TimeRange, string> = {
     all: 'All Data',
     'past-month': 'Past Month',
     'past-week': 'Past Week',
-    yesterday: 'Yesterday',
+    yesterday: 'Latest Day',
     'single-day': 'Single Day',
 };
 
@@ -112,10 +112,7 @@ export function filterDailySummaries(
         latestEnd.setHours(23, 59, 59, 999);
 
         if (timeRange === 'yesterday') {
-            const yesterday = new Date(latestStart);
-            yesterday.setDate(yesterday.getDate() - 1);
-            const yStr = formatDateYMD(yesterday);
-            result = result.filter(d => d.date === yStr);
+            result = latestDate ? result.filter(d => d.date === latestDate) : [];
         } else {
             const daysBack = timeRange === 'past-week' ? 6 : 29;
             const cutoff = new Date(latestStart);

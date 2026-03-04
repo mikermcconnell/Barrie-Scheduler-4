@@ -6,7 +6,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Map, ArrowRight, Loader2, Smartphone, Network } from 'lucide-react';
+import { Map, ArrowRight, Loader2, Smartphone, Network, GraduationCap } from 'lucide-react';
 import { useTeam } from '../contexts/TeamContext';
 import { useAuth } from '../contexts/AuthContext';
 import { getTransitAppData, getTransitAppMetadata } from '../../utils/transit-app/transitAppService';
@@ -18,11 +18,12 @@ import { ODMatrixWorkspace } from './ODMatrixWorkspace';
 import { ODCoordinateEditor } from './ODCoordinateEditor';
 import { TeamManagement } from '../TeamManagement';
 import { HeadwayMap } from '../Mapping/HeadwayMap';
+import { StudentPassModule } from './StudentPassModule';
 import type { TransitAppDataSummary } from '../../utils/transit-app/transitAppTypes';
 import type { ODMatrixDataSummary, GeocodeCache } from '../../utils/od-matrix/odMatrixTypes';
 
 interface AnalyticsCardProps {
-    color: 'cyan' | 'violet' | 'teal';
+    color: 'cyan' | 'violet' | 'teal' | 'amber';
     icon: React.ReactNode;
     title: string;
     description: string;
@@ -45,6 +46,11 @@ const cardStyles = {
         hover: 'hover:border-teal-300',
         bg: 'bg-teal-50/50 text-teal-600 group-hover:bg-teal-100',
         arrow: 'group-hover:text-teal-500',
+    },
+    amber: {
+        hover: 'hover:border-amber-300',
+        bg: 'bg-amber-50/50 text-amber-600 group-hover:bg-amber-100',
+        arrow: 'group-hover:text-amber-500',
     },
 };
 
@@ -85,7 +91,8 @@ type AnalyticsView =
     | 'od-import'
     | 'od-fix-coords'
     | 'od-workspace'
-    | 'headway-map';
+    | 'headway-map'
+    | 'student-pass';
 
 export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose }) => {
     const { team } = useTeam();
@@ -327,6 +334,15 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
         );
     }
 
+    // Student Transit Pass
+    if (view === 'student-pass') {
+        return (
+            <div className="h-full overflow-hidden">
+                <StudentPassModule onBack={() => setView('dashboard')} />
+            </div>
+        );
+    }
+
     // Corridor Headway Map
     if (view === 'headway-map') {
         return (
@@ -369,6 +385,14 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
                         description="Visualize combined service headway where multiple routes share corridors. Identify high-frequency spines and coverage gaps."
                         hasData={false}
                         onClick={() => setView('headway-map')}
+                    />
+                    <AnalyticsCard
+                        color="amber"
+                        icon={<GraduationCap size={20} />}
+                        title="Student Transit Pass"
+                        description="Generate one-page transit flyers for students showing how to reach school by bus from any residential zone."
+                        hasData={false}
+                        onClick={() => setView('student-pass')}
                     />
                 </div>
             </div>

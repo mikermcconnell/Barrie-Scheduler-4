@@ -38,7 +38,7 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
         for (const trip of cascade.cascadedTrips) {
             for (const tp of trip.timepoints) {
                 if (!tp.isLate) continue;
-                totalBoardings += tp.boardings;
+                totalBoardings += tp.boardings ?? 0;
             }
         }
         if (totalBoardings === 0) return null;

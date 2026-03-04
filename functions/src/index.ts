@@ -229,9 +229,19 @@ export const ingestPerformanceData = onRequest(
       for (const summary of newSummaries) {
         mergedMap.set(summary.date, summary); // overwrites if same date exists
       }
-      const mergedSummaries = Array.from(mergedMap.values()).sort(
-        (a, b) => a.date.localeCompare(b.date)
-      );
+      const MAX_RETENTION_DAYS = 380;
+      const cutoffDate = new Date();
+      cutoffDate.setDate(cutoffDate.getDate() - MAX_RETENTION_DAYS);
+      const cutoffStr = cutoffDate.toISOString().slice(0, 10); // YYYY-MM-DD
+
+      const preFilterCount = mergedMap.size;
+      const mergedSummaries = Array.from(mergedMap.values())
+        .filter(s => s.date >= cutoffStr)
+        .sort((a, b) => a.date.localeCompare(b.date));
+      const pruned = preFilterCount - mergedSummaries.length;
+      if (pruned > 0) {
+        console.log(`Pruned ${pruned} days older than ${cutoffStr} (${MAX_RETENTION_DAYS}-day retention)`);
+      }
 
       const allDates = mergedSummaries.map(s => s.date);
       let totalRecords = 0;

@@ -15,6 +15,8 @@ interface CascadeTimelineChartProps {
     selectedTripIndex: number | null;
     onSelectPoint: (pointIndex: number | null) => void;
     stopLoadLookup: Map<string, StopLoadData>;
+    dwellOriginStopId?: string;
+    dwellExcessMinutes?: number;
 }
 
 interface TooltipState {
@@ -31,12 +33,30 @@ const CascadeTimelineChart: React.FC<CascadeTimelineChartProps> = ({
     selectedTripIndex,
     onSelectPoint,
     stopLoadLookup,
+    dwellOriginStopId,
+    dwellExcessMinutes,
 }) => {
     const [tooltip, setTooltip] = useState<TooltipState | null>(null);
     const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
     const prevSelectedRef = useRef<number | null>(null);
 
-    const points = useMemo(() => buildTimelinePoints(trips), [trips]);
+    const rawPoints = useMemo(() => buildTimelinePoints(trips), [trips]);
+
+    // Override dwell origin point: if recorded deviation is lower than the excess dwell,
+    // the AVL didn't capture departure delay at the origin — use the dwell excess instead.
+    // Only override the FIRST occurrence (trip 0) to avoid affecting the same stop on later trips.
+    const points = useMemo(() => {
+        if (!dwellOriginStopId || dwellExcessMinutes == null) return rawPoints;
+        let applied = false;
+        return rawPoints.map(p => {
+            if (applied || p.stopId !== dwellOriginStopId || p.tripIndex !== 0) return p;
+            const recorded = p.deviationMinutes ?? 0;
+            if (recorded >= dwellExcessMinutes) return p;
+            applied = true;
+            return { ...p, deviationMinutes: dwellExcessMinutes, isLate: dwellExcessMinutes > OTP_LATE_MINUTES };
+        });
+    }, [rawPoints, dwellOriginStopId, dwellExcessMinutes]);
+
     const segments = useMemo(() => buildTripSegments(trips, points), [trips, points]);
 
     if (points.length === 0) {
@@ -427,6 +447,59 @@ const CascadeTimelineChart: React.FC<CascadeTimelineChartProps> = ({
                                 strokeLinecap="round"
                                 strokeLinejoin="round"
                             />
+                        </g>
+                    );
+                })}
+
+                {/* === LAYER 7: Dwell origin marker (bolt icon + excess label) === */}
+                {/* Only on the FIRST occurrence (trip 0) — later occurrences may be recovery */}
+                {dwellOriginStopId && points.map((p, i) => {
+                    if (p.stopId !== dwellOriginStopId || p.tripIndex !== 0) return null;
+                    const cx = xOf(i);
+                    const dev = p.deviationMinutes ?? 0;
+                    const cy = yOf(Math.max(dev, 0));
+                    const badgeY = cy - 14;
+                    return (
+                        <g key={`dwell-origin-${i}`}>
+                            {/* Red pulsing ring behind the dot */}
+                            <circle
+                                cx={cx}
+                                cy={cy}
+                                r={10}
+                                fill="none"
+                                stroke="#dc2626"
+                                strokeWidth={1.5}
+                                opacity={0.4}
+                            />
+                            {/* Bolt badge above the point */}
+                            <rect
+                                x={cx - 20}
+                                y={badgeY - 9}
+                                width={40}
+                                height={18}
+                                rx={4}
+                                fill="#dc2626"
+                                opacity={0.9}
+                            />
+                            {/* Bolt icon */}
+                            <text
+                                x={cx - 13}
+                                y={badgeY + 4}
+                                fontSize={10}
+                                fill="white"
+                            >
+                                ⚡
+                            </text>
+                            {/* Excess dwell label */}
+                            <text
+                                x={cx + 1}
+                                y={badgeY + 3}
+                                fontSize={9}
+                                fill="white"
+                                fontWeight={600}
+                            >
+                                {dwellExcessMinutes != null ? `+${dwellExcessMinutes.toFixed(0)}m` : 'dwell'}
+                            </text>
                         </g>
                     );
                 })}

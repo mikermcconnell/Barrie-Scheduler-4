@@ -24,10 +24,10 @@ const SegmentBreakdownMatrix: React.FC<{
     const bandSummary = useMemo(() => {
         const summary: Record<string, {
             band: TimeBand;
-            segmentTotals: Record<string, { sum: number; count: number }>;
+            segmentTotals: Record<string, { sum: number; count: number; totalN: number }>;
             totalSum: number;
             totalCount: number;
-            timeSlots: string[]; // Track which time slots belong to this band
+            timeSlots: string[];
         }> = {};
 
         // Initialize for each band
@@ -40,7 +40,7 @@ const SegmentBreakdownMatrix: React.FC<{
                 timeSlots: []
             };
             segmentNames.forEach(seg => {
-                summary[band.id].segmentTotals[seg] = { sum: 0, count: 0 };
+                summary[band.id].segmentTotals[seg] = { sum: 0, count: 0, totalN: 0 };
             });
         });
 
@@ -59,6 +59,7 @@ const SegmentBreakdownMatrix: React.FC<{
                 if (bandData.segmentTotals[detail.segmentName]) {
                     bandData.segmentTotals[detail.segmentName].sum += value;
                     bandData.segmentTotals[detail.segmentName].count += 1;
+                    bandData.segmentTotals[detail.segmentName].totalN += detail.n;
                 }
             });
 

@@ -221,44 +221,12 @@ const CascadeRouteMap: React.FC<CascadeRouteMapProps> = ({
             }
         }
 
-        // ── 3c: Origin stop marker with pulsing ring ──
-        const originCoords = gtfsCoords.get(cascade.stopId);
-        if (originCoords) {
-            const originMin = (cascade.trackedDwellSeconds / 60).toFixed(1);
-
-            // Outer pulsing ring via divIcon (static markup, no user input)
-            const pulseEl = document.createElement('div');
-            pulseEl.style.cssText = 'width:28px;height:28px;border-radius:50%;background:rgba(220,38,38,0.15);border:2px solid rgba(220,38,38,0.5);animation:cascadePulse 2s ease-out infinite;';
-            const pulseIcon = L.divIcon({
-                html: pulseEl.outerHTML,
-                className: '',
-                iconSize: [28, 28],
-                iconAnchor: [14, 14],
-            });
-            L.marker([originCoords.lat, originCoords.lon], { icon: pulseIcon, interactive: false }).addTo(layer);
-
-            // Solid center marker
-            const originMarker = L.circleMarker([originCoords.lat, originCoords.lon], {
-                radius: 10,
-                fillColor: '#dc2626',
-                color: '#991b1b',
-                weight: 3,
-                opacity: 1,
-                fillOpacity: 0.9,
-            });
-
-            let originTooltip = `\u26a1 ${cascade.stopName}\nDwell event origin\n${originMin} min excess`;
-            const originLoad = stopLoadLookup.get(`${cascade.routeId}_${cascade.stopId}`);
-            if (originLoad) {
-                originTooltip += `\n${originLoad.avgBoardings.toFixed(0)} boarding \u00b7 load: ${originLoad.avgLoad.toFixed(0)}`;
-            }
-            originMarker.bindTooltip(originTooltip, { sticky: true });
-            originMarker.addTo(layer);
-            boundsPoints.push(L.latLng(originCoords.lat, originCoords.lon));
-        }
-
         // ── 3c/3d: Timepoint stop markers with trip-colored borders + load tooltips ──
+        // (Origin stop is rendered separately AFTER this loop to stay on top)
         for (const entry of stopMap.values()) {
+            // Skip the dwell origin stop — rendered as bolt marker below
+            if (entry.stopId === cascade.stopId) continue;
+
             const coords = gtfsCoords.get(entry.stopId);
             if (!coords) continue;
 
@@ -328,6 +296,59 @@ const CascadeRouteMap: React.FC<CascadeRouteMapProps> = ({
                 marker.addTo(layer);
             }
             boundsPoints.push(L.latLng(coords.lat, coords.lon));
+        }
+
+        // ── 3e: Origin stop marker with pulsing ring + bolt icon (rendered last = on top) ──
+        const originCoords = gtfsCoords.get(cascade.stopId);
+        if (originCoords) {
+            const originMin = (cascade.trackedDwellSeconds / 60).toFixed(1);
+            const isAlsoRecovery = cascade.recoveredAtStop
+                && cascade.recoveredAtStop.toLowerCase() === cascade.stopName.toLowerCase();
+
+            // Outer pulsing ring
+            const pulseEl = document.createElement('div');
+            pulseEl.style.cssText = 'width:28px;height:28px;border-radius:50%;background:rgba(220,38,38,0.15);border:2px solid rgba(220,38,38,0.5);animation:cascadePulse 2s ease-out infinite;';
+            const pulseIcon = L.divIcon({
+                html: pulseEl.outerHTML,
+                className: '',
+                iconSize: [28, 28],
+                iconAnchor: [14, 14],
+            });
+            L.marker([originCoords.lat, originCoords.lon], { icon: pulseIcon, interactive: false }).addTo(layer);
+
+            // Solid center marker with bolt icon
+            const originSize = 28;
+            const originWrapper = document.createElement('div');
+            originWrapper.style.cssText = `width:${originSize}px;height:${originSize}px;border-radius:50%;background:#dc2626;border:3px solid #991b1b;display:flex;align-items:center;justify-content:center;`;
+            const boltSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            boltSvg.setAttribute('width', '14');
+            boltSvg.setAttribute('height', '14');
+            boltSvg.setAttribute('viewBox', '0 0 24 24');
+            boltSvg.setAttribute('fill', 'white');
+            const boltPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            boltPath.setAttribute('d', 'M13 2L3 14h9l-1 10 10-12h-9l1-10z');
+            boltSvg.appendChild(boltPath);
+            originWrapper.appendChild(boltSvg);
+
+            const originIcon = L.divIcon({
+                html: originWrapper.outerHTML,
+                className: '',
+                iconSize: [originSize, originSize],
+                iconAnchor: [originSize / 2, originSize / 2],
+            });
+            const originMarker = L.marker([originCoords.lat, originCoords.lon], { icon: originIcon });
+
+            let originTooltip = `\u26a1 ${cascade.stopName}\nDwell event origin\n${originMin} min excess`;
+            if (isAlsoRecovery) {
+                originTooltip += '\n\u2713 Also recovery stop';
+            }
+            const originLoad = stopLoadLookup.get(`${cascade.routeId}_${cascade.stopId}`);
+            if (originLoad) {
+                originTooltip += `\n${originLoad.avgBoardings.toFixed(0)} boarding \u00b7 load: ${originLoad.avgLoad.toFixed(0)}`;
+            }
+            originMarker.bindTooltip(originTooltip, { sticky: true });
+            originMarker.addTo(layer);
+            boundsPoints.push(L.latLng(originCoords.lat, originCoords.lon));
         }
 
         // Fit bounds

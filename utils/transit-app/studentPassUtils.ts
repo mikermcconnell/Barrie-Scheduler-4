@@ -28,6 +28,17 @@ export interface SchoolConfig {
     bellEnd: string;
 }
 
+export interface RouteOption {
+    id: string;
+    label: string;
+    result: StudentPassResult;
+}
+
+export interface TripOptions {
+    morningOptions: RouteOption[];
+    afternoonOptions: RouteOption[];
+}
+
 export type TransferQuality = 'tight' | 'good' | 'ok' | 'long';
 
 export interface TransferInfo {
@@ -81,6 +92,8 @@ export interface StudentPassResult {
     morningLegs: TripLeg[];
     afternoonLegs: TripLeg[];
     transfer?: TransferInfo;
+    /** Transfer info for 2-transfer trips (length 2) */
+    transfers?: TransferInfo[];
     /** Next afternoon bus departure (minutes from midnight), if available */
     nextAfternoonDepartureMinutes?: number;
     /** Trips per hour on key route during AM peak (approx) */
@@ -91,56 +104,62 @@ export interface StudentPassResult {
     walkToStop?: WalkLeg;
     /** Walk from alighting stop to school */
     walkToSchool?: WalkLeg;
-    /** Actual GTFS route shape segments for map display */
+    /** Actual GTFS route shape segments for map display (morning) */
     routeShapes?: RouteShapeSegment[];
+    /** Afternoon route shape segments */
+    afternoonRouteShapes?: RouteShapeSegment[];
+    /** Walk from school to afternoon boarding stop */
+    walkFromSchool?: WalkLeg;
+    /** Walk from afternoon alighting stop back to zone centroid */
+    walkToZone?: WalkLeg;
 }
 
 export const BARRIE_SCHOOLS: SchoolConfig[] = [
     {
         id: 'barrie-north',
         name: 'Barrie North Collegiate',
-        lat: 44.4112,
-        lon: -79.6755,
+        lat: 44.4012,
+        lon: -79.6901,
         bellStart: '08:45',
         bellEnd: '15:10',
     },
     {
         id: 'eastview',
         name: 'Eastview Secondary',
-        lat: 44.3832,
-        lon: -79.6636,
+        lat: 44.4049,
+        lon: -79.6616,
         bellStart: '08:45',
         bellEnd: '15:10',
     },
     {
         id: 'innisdale',
         name: 'Innisdale Secondary',
-        lat: 44.3916,
-        lon: -79.7101,
+        lat: 44.3594,
+        lon: -79.6854,
         bellStart: '08:45',
         bellEnd: '15:10',
     },
     {
         id: 'maple-ridge',
         name: 'Maple Ridge Secondary',
-        lat: 44.3378,
-        lon: -79.6658,
+        lat: 44.3509,
+        lon: -79.6086,
         bellStart: '08:45',
         bellEnd: '15:10',
     },
     {
         id: 'st-josephs',
         name: "St. Joseph's High",
-        lat: 44.3772,
-        lon: -79.7143,
+        lat: 44.4125,
+        lon: -79.6837,
         bellStart: '08:30',
         bellEnd: '15:00',
     },
     {
         id: 'bear-creek',
         name: 'Bear Creek Secondary',
-        lat: 44.3951,
-        lon: -79.7362,
+        lat: 44.3319,
+        lon: -79.7337,
         bellStart: '08:45',
         bellEnd: '15:10',
     },
@@ -583,6 +602,78 @@ export function loadWeekdayServiceIds(): Set<string> {
     return set;
 }
 
+// ─── Transfer clusters ───────────────────────────────────────────────────────
+
+/**
+ * Build clusters of co-located stops (within 150m).
+ * Returns a map where each stop_id maps to the Set of all stop_ids in its cluster.
+ */
+function buildTransferClusters(): Map<string, Set<string>> {
+    const stops = getAllStopsWithCoords();
+    const CLUSTER_RADIUS_KM = 0.15; // 150m
+
+    // Union-Find: merge stops within radius
+    const parent = new Map<string, string>();
+    for (const s of stops) parent.set(s.stop_id, s.stop_id);
+
+    function find(id: string): string {
+        let root = id;
+        while (parent.get(root) !== root) root = parent.get(root)!;
+        let cur = id;
+        while (cur !== root) {
+            const next = parent.get(cur)!;
+            parent.set(cur, root);
+            cur = next;
+        }
+        return root;
+    }
+
+    function union(a: string, b: string): void {
+        const ra = find(a);
+        const rb = find(b);
+        if (ra !== rb) parent.set(ra, rb);
+    }
+
+    // O(n²) but n ≈ 500 stops in Barrie — fine
+    for (let i = 0; i < stops.length; i++) {
+        for (let j = i + 1; j < stops.length; j++) {
+            const dist = haversineKm(stops[i].lat, stops[i].lon, stops[j].lat, stops[j].lon);
+            if (dist <= CLUSTER_RADIUS_KM) {
+                union(stops[i].stop_id, stops[j].stop_id);
+            }
+        }
+    }
+
+    // Group by root
+    const groups = new Map<string, Set<string>>();
+    for (const s of stops) {
+        const root = find(s.stop_id);
+        const set = groups.get(root) ?? new Set<string>();
+        set.add(s.stop_id);
+        groups.set(root, set);
+    }
+
+    // Build per-stop lookup
+    const result = new Map<string, Set<string>>();
+    for (const cluster of groups.values()) {
+        for (const id of cluster) {
+            result.set(id, cluster);
+        }
+    }
+    return result;
+}
+
+let cachedTransferClusters: Map<string, Set<string>> | null = null;
+function getTransferClusters(): Map<string, Set<string>> {
+    if (!cachedTransferClusters) cachedTransferClusters = buildTransferClusters();
+    return cachedTransferClusters;
+}
+
+export function getClusterStopIds(stopId: string): Set<string> {
+    const clusters = getTransferClusters();
+    return clusters.get(stopId) ?? new Set([stopId]);
+}
+
 // ─── Transfer quality ─────────────────────────────────────────────────────────
 
 /**
@@ -670,14 +761,21 @@ function getTripStopTimesIndex(): Map<string, ParsedStopTime[]> {
 
 // ─── Core algorithm ───────────────────────────────────────────────────────────
 
+interface DirectCandidate {
+    zoneDepMinutes: number;
+    schoolArrMinutes: number;
+    travelMinutes: number;
+    tripId: string;
+    routeShortName: string;
+    zoneStopId: string;
+    distToCentroid: number;
+}
+
 /**
- * Find the best morning trip (direct or 1-transfer) from zone stops to school.
- *
- * @param zoneStopIds  Set of stop_ids in the student's zone
- * @param schoolStopId The stop_id nearest to the school
- * @param bellStartMinutes School bell start time in minutes from midnight
+ * Find up to 3 morning direct route options within 30 min of bell start.
+ * Groups by route short name, picks best candidate per route, sorts by latest arrival.
  */
-function findBestMorningDirect(
+function findMorningDirectOptions(
     zoneStopIds: Set<string>,
     schoolStopId: string,
     bellStartMinutes: number,
@@ -687,18 +785,8 @@ function findBestMorningDirect(
     tripStopIndex: Map<string, ParsedStopTime[]>,
     centroid: [number, number],
     stopCoords: Map<string, { lat: number; lon: number }>
-): {
-    leg: TripLeg;
-} | null {
-    let best: {
-        zoneDepMinutes: number;
-        schoolArrMinutes: number;
-        travelMinutes: number;
-        tripId: string;
-        routeShortName: string;
-        zoneStopId: string;
-        distToCentroid: number;
-    } | null = null;
+): { leg: TripLeg }[] {
+    const candidates: DirectCandidate[] = [];
 
     for (const [tripId, stopTimes] of tripStopIndex) {
         const trip = trips.get(tripId);
@@ -708,64 +796,96 @@ function findBestMorningDirect(
         const route = routes.get(trip.routeId);
         if (!route) continue;
 
-        // Find school stop in this trip
         const schoolEntry = stopTimes.find((st) => st.stopId === schoolStopId);
-        if (!schoolEntry || schoolEntry.arrivalMinutes > bellStartMinutes) continue;
+        if (!schoolEntry) continue;
 
-        // Try each zone stop on this trip (pick the one closest to centroid)
+        // 30-min window: must arrive within 30 min before bell and not after bell
+        if (schoolEntry.arrivalMinutes > bellStartMinutes) continue;
+        if (schoolEntry.arrivalMinutes < bellStartMinutes - 30) continue;
+
+        // Find zone stop closest to centroid on this trip
+        let bestZoneSt: ParsedStopTime | null = null;
+        let bestDist = Infinity;
         for (const st of stopTimes) {
             if (!zoneStopIds.has(st.stopId)) continue;
             if (st.stopSequence >= schoolEntry.stopSequence) continue;
-
-            const travelMinutes = schoolEntry.arrivalMinutes - st.departureMinutes;
             const coords = stopCoords.get(st.stopId);
-            const distToCentroid = coords
+            const dist = coords
                 ? haversineKm(centroid[0], centroid[1], coords.lat, coords.lon)
                 : Infinity;
-
-            // Rank: latest departure, then closest to centroid, then shortest travel
-            const isBetter =
-                best === null ||
-                st.departureMinutes > best.zoneDepMinutes ||
-                (st.departureMinutes === best.zoneDepMinutes && distToCentroid < best.distToCentroid) ||
-                (st.departureMinutes === best.zoneDepMinutes && distToCentroid === best.distToCentroid && travelMinutes < best.travelMinutes);
-
-            if (isBetter) {
-                best = {
-                    zoneDepMinutes: st.departureMinutes,
-                    schoolArrMinutes: schoolEntry.arrivalMinutes,
-                    travelMinutes,
-                    tripId,
-                    routeShortName: route.routeShortName,
-                    zoneStopId: st.stopId,
-                    distToCentroid,
-                };
+            if (dist < bestDist) {
+                bestDist = dist;
+                bestZoneSt = st;
             }
+        }
+        if (!bestZoneSt) continue;
+
+        candidates.push({
+            zoneDepMinutes: bestZoneSt.departureMinutes,
+            schoolArrMinutes: schoolEntry.arrivalMinutes,
+            travelMinutes: schoolEntry.arrivalMinutes - bestZoneSt.departureMinutes,
+            tripId,
+            routeShortName: route.routeShortName,
+            zoneStopId: bestZoneSt.stopId,
+            distToCentroid: bestDist,
+        });
+    }
+
+    // Group by route short name — pick best candidate per route (latest arrival, then closest to centroid)
+    const byRoute = new Map<string, DirectCandidate>();
+    for (const c of candidates) {
+        const existing = byRoute.get(c.routeShortName);
+        if (
+            !existing ||
+            c.schoolArrMinutes > existing.schoolArrMinutes ||
+            (c.schoolArrMinutes === existing.schoolArrMinutes && c.distToCentroid < existing.distToCentroid)
+        ) {
+            byRoute.set(c.routeShortName, c);
         }
     }
 
-    if (!best) return null;
+    // Sort by latest arrival (closest to bell) first
+    const sorted = Array.from(byRoute.values()).sort(
+        (a, b) => b.schoolArrMinutes - a.schoolArrMinutes
+    );
 
     const stopIdToName = getStopIdToName();
-    return {
+    return sorted.slice(0, 3).map((c) => ({
         leg: {
-            routeShortName: best.routeShortName,
-            routeColor: getRouteColor(best.routeShortName),
-            tripId: best.tripId,
-            fromStopId: best.zoneStopId,
+            routeShortName: c.routeShortName,
+            routeColor: getRouteColor(c.routeShortName),
+            tripId: c.tripId,
+            fromStopId: c.zoneStopId,
             toStopId: schoolStopId,
-            departureMinutes: best.zoneDepMinutes,
-            arrivalMinutes: best.schoolArrMinutes,
-            fromStop: stopIdToName.get(best.zoneStopId) ?? best.zoneStopId,
+            departureMinutes: c.zoneDepMinutes,
+            arrivalMinutes: c.schoolArrMinutes,
+            fromStop: stopIdToName.get(c.zoneStopId) ?? c.zoneStopId,
             toStop: stopIdToName.get(schoolStopId) ?? schoolStopId,
         },
-    };
+    }));
+}
+
+interface TransferCandidate {
+    qualityScore: number;
+    zoneDepMinutes: number;
+    transferStopId: string;
+    aTripId: string;
+    aRouteId: string;
+    aZoneStopId: string;
+    aArrivalAtTransfer: number;
+    bTripId: string;
+    bRouteId: string;
+    bDepFromTransfer: number;
+    bArrivalAtSchool: number;
+    waitMinutes: number;
+    comboKey: string;
 }
 
 /**
- * Find the best morning 1-transfer trip from zone stops to school.
+ * Find up to 3 morning 1-transfer route options within 30 min of bell start.
+ * Groups by route-A + route-B combo, picks best per combo, sorts by quality then arrival.
  */
-function findBestMorningTransfer(
+function findMorningTransferOptions(
     zoneStopIds: Set<string>,
     schoolStopId: string,
     bellStartMinutes: number,
@@ -780,14 +900,9 @@ function findBestMorningTransfer(
     legB: TripLeg;
     transfer: TransferInfo;
     transferStopName: string;
-} | null {
-    // Find Route A candidates: trips that serve any zone stop
-    // Find Route B candidates: trips that serve the school stop
-    // Find shared transfer stops
-
-    // Build set of route_ids for A (serve zone) and B (serve school)
-    const routeATrips = new Map<string, string[]>(); // routeId → tripIds that serve zone stops
-    const routeBTrips = new Map<string, string[]>(); // routeId → tripIds that serve school stop
+}[] {
+    const routeATrips = new Map<string, string[]>();
+    const routeBTrips = new Map<string, string[]>();
 
     for (const [tripId, stopTimes] of tripStopIndex) {
         const trip = trips.get(tripId);
@@ -808,38 +923,17 @@ function findBestMorningTransfer(
         }
     }
 
-    // For each route B trip, collect the stop_ids it serves (before school stop, in order)
-    // For each route A trip, collect the stop_ids it serves (after zone stop, in order)
-    // Find overlapping stop_ids = potential transfer points
-
-    // This is O(A × B) — acceptable for city-scale GTFS (<1000 trips)
     const stopIdToName = getStopIdToName();
-
-    let best: {
-        qualityScore: number; // 2=good, 1=ok/tight/long, for ranking
-        zoneDepMinutes: number;
-        transferStopId: string;
-        aTripId: string;
-        aRouteId: string;
-        aZoneStopId: string;
-        aArrivalAtTransfer: number;
-        bTripId: string;
-        bRouteId: string;
-        bDepFromTransfer: number;
-        bArrivalAtSchool: number;
-        waitMinutes: number;
-    } | null = null;
+    const candidates: TransferCandidate[] = [];
 
     for (const [aRouteId, aTripIds] of routeATrips) {
         for (const [bRouteId, bTripIds] of routeBTrips) {
-            if (aRouteId === bRouteId) continue; // same route — not a real transfer
+            if (aRouteId === bRouteId) continue;
 
-            // For each A trip, find zone stop entry (closest to centroid) and its subsequent stops
             for (const aTripId of aTripIds) {
                 const aStops = tripStopIndex.get(aTripId);
                 if (!aStops) continue;
 
-                // Find zone stop closest to centroid on this trip
                 let zoneEntry: ParsedStopTime | null = null;
                 let zoneIdx = -1;
                 let bestDist = Infinity;
@@ -856,21 +950,21 @@ function findBestMorningTransfer(
                 }
                 if (!zoneEntry || zoneIdx === -1) continue;
 
-                // Stops reachable after zone entry
                 const aSubsequentStops = aStops.slice(zoneIdx + 1);
 
-                // For each B trip, find school stop entry and its preceding stops
                 for (const bTripId of bTripIds) {
                     const bStops = tripStopIndex.get(bTripId);
                     if (!bStops) continue;
 
                     const schoolIdx = bStops.findIndex((st) => st.stopId === schoolStopId);
                     if (schoolIdx === -1) continue;
-                    if (bStops[schoolIdx].arrivalMinutes > bellStartMinutes) continue;
+
+                    const bSchoolSt = bStops[schoolIdx];
+                    // 30-min window
+                    if (bSchoolSt.arrivalMinutes > bellStartMinutes) continue;
+                    if (bSchoolSt.arrivalMinutes < bellStartMinutes - 30) continue;
 
                     const bPrecedingStops = bStops.slice(0, schoolIdx);
-
-                    // Find shared stops between A (after zone) and B (before school)
                     const bStopIds = new Set(bPrecedingStops.map((s) => s.stopId));
 
                     for (const aSt of aSubsequentStops) {
@@ -879,7 +973,6 @@ function findBestMorningTransfer(
                         const transferStopId = aSt.stopId;
                         const aArrivalAtTransfer = aSt.arrivalMinutes;
 
-                        // Find B's departure from this transfer stop
                         const bTransferEntry = bPrecedingStops.find(
                             (s) => s.stopId === transferStopId && s.departureMinutes >= aArrivalAtTransfer
                         );
@@ -888,31 +981,222 @@ function findBestMorningTransfer(
                         const waitMinutes = bTransferEntry.departureMinutes - aArrivalAtTransfer;
                         if (waitMinutes < 0 || waitMinutes > 30) continue;
 
-                        const bSchoolSt = bStops[schoolIdx];
                         const quality = getTransferQuality(waitMinutes);
-
-                        // Rank: prefer 'good' quality (score 2), then latest A departure, then shortest total
                         const qualityScore = quality.quality === 'good' ? 2 : 1;
-                        const isBetter =
-                            best === null ||
-                            qualityScore > best.qualityScore ||
-                            (qualityScore === best.qualityScore &&
-                                zoneEntry.departureMinutes > best.zoneDepMinutes);
 
-                        if (isBetter) {
+                        const aRoute = routes.get(aRouteId);
+                        const bRoute = routes.get(bRouteId);
+                        const comboKey = `${aRoute?.routeShortName ?? aRouteId}→${bRoute?.routeShortName ?? bRouteId}`;
+
+                        candidates.push({
+                            qualityScore,
+                            zoneDepMinutes: zoneEntry.departureMinutes,
+                            transferStopId,
+                            aTripId,
+                            aRouteId,
+                            aZoneStopId: zoneEntry.stopId,
+                            aArrivalAtTransfer,
+                            bTripId,
+                            bRouteId,
+                            bDepFromTransfer: bTransferEntry.departureMinutes,
+                            bArrivalAtSchool: bSchoolSt.arrivalMinutes,
+                            waitMinutes,
+                            comboKey,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // Group by route combo — pick best per combo (highest quality, then latest arrival)
+    const byCombo = new Map<string, TransferCandidate>();
+    for (const c of candidates) {
+        const existing = byCombo.get(c.comboKey);
+        if (
+            !existing ||
+            c.qualityScore > existing.qualityScore ||
+            (c.qualityScore === existing.qualityScore && c.bArrivalAtSchool > existing.bArrivalAtSchool)
+        ) {
+            byCombo.set(c.comboKey, c);
+        }
+    }
+
+    // Sort by quality (descending) then arrival (latest first)
+    const sorted = Array.from(byCombo.values()).sort((a, b) => {
+        if (b.qualityScore !== a.qualityScore) return b.qualityScore - a.qualityScore;
+        return b.bArrivalAtSchool - a.bArrivalAtSchool;
+    });
+
+    return sorted.slice(0, 3).map((best) => {
+        const aRoute = routes.get(best.aRouteId);
+        const bRoute = routes.get(best.bRouteId);
+        const aShortName = aRoute?.routeShortName ?? best.aRouteId;
+        const bShortName = bRoute?.routeShortName ?? best.bRouteId;
+        const transferStopName = stopIdToName.get(best.transferStopId) ?? best.transferStopId;
+
+        return {
+            legA: {
+                routeShortName: aShortName,
+                routeColor: getRouteColor(aShortName),
+                tripId: best.aTripId,
+                fromStopId: best.aZoneStopId,
+                toStopId: best.transferStopId,
+                departureMinutes: best.zoneDepMinutes,
+                arrivalMinutes: best.aArrivalAtTransfer,
+                fromStop: stopIdToName.get(best.aZoneStopId) ?? best.aZoneStopId,
+                toStop: transferStopName,
+            },
+            legB: {
+                routeShortName: bShortName,
+                routeColor: getRouteColor(bShortName),
+                tripId: best.bTripId,
+                fromStopId: best.transferStopId,
+                toStopId: schoolStopId,
+                departureMinutes: best.bDepFromTransfer,
+                arrivalMinutes: best.bArrivalAtSchool,
+                fromStop: transferStopName,
+                toStop: stopIdToName.get(schoolStopId) ?? schoolStopId,
+            },
+            transfer: getTransferQuality(best.waitMinutes),
+            transferStopName,
+        };
+    });
+}
+
+/**
+ * Find best 2-transfer morning trip: Route A (zone) → transfer1 → Route B → transfer2 → Route C (school).
+ * Works backward from school (C-first) for efficiency since school-serving trips are the smallest bucket.
+ */
+export function findBestMorning2Transfer(
+    zoneStopIds: Set<string>,
+    schoolStopId: string,
+    bellStartMinutes: number,
+    trips: Map<string, ParsedTrip>,
+    routes: Map<string, ParsedRoute>,
+    weekdayServiceIds: Set<string>,
+    tripStopIndex: Map<string, ParsedStopTime[]>,
+    centroid: [number, number],
+    stopCoords: Map<string, { lat: number; lon: number }>
+): {
+    legA: TripLeg;
+    legB: TripLeg;
+    legC: TripLeg;
+    transfer1: TransferInfo;
+    transfer2: TransferInfo;
+} | null {
+    const MAX_WAIT = 30;
+    const MAX_TOTAL = 90;
+    const stopIdToName = getStopIdToName();
+
+    // Classify trips: C = serves school, A = serves zone
+    const cTripIds: string[] = [];
+    const aTripIds: string[] = [];
+
+    for (const [tripId, stopTimes] of tripStopIndex) {
+        const trip = trips.get(tripId);
+        if (!trip || !weekdayServiceIds.has(trip.serviceId)) continue;
+
+        if (stopTimes.some((st) => st.stopId === schoolStopId)) cTripIds.push(tripId);
+        if (stopTimes.some((st) => zoneStopIds.has(st.stopId))) aTripIds.push(tripId);
+    }
+
+    let best: {
+        score: number;
+        zoneDepMinutes: number;
+        totalMinutes: number;
+        aTripId: string; aRouteId: string; aZoneStopId: string; aArrAtT1: number;
+        bTripId: string; bRouteId: string; bT1StopId: string; bDepFromT1: number; bArrAtT2: number; bT2StopId: string;
+        cTripId: string; cRouteId: string; cT2StopId: string; cDepFromT2: number; cArrAtSchool: number;
+        wait1: number; wait2: number;
+    } | null = null;
+
+    for (const cTripId of cTripIds) {
+        const cStops = tripStopIndex.get(cTripId);
+        if (!cStops) continue;
+        const cTrip = trips.get(cTripId);
+        if (!cTrip) continue;
+
+        const schoolIdx = cStops.findIndex((st) => st.stopId === schoolStopId);
+        if (schoolIdx === -1) continue;
+        if (cStops[schoolIdx].arrivalMinutes > bellStartMinutes) continue;
+
+        // Transfer2 candidates: stops BEFORE school on C
+        const cPrecedingStops = cStops.slice(0, schoolIdx);
+
+        for (const cT2Entry of cPrecedingStops) {
+            const t2Cluster = getClusterStopIds(cT2Entry.stopId);
+
+            // Find B trips that serve any stop in transfer2 cluster
+            for (const [bTripId, bStops] of tripStopIndex) {
+                const bTrip = trips.get(bTripId);
+                if (!bTrip || !weekdayServiceIds.has(bTrip.serviceId)) continue;
+                if (bTrip.routeId === cTrip.routeId) continue; // different route required
+
+                // Find B's stop in the transfer2 cluster
+                const bT2Idx = bStops.findIndex((st) => t2Cluster.has(st.stopId));
+                if (bT2Idx === -1) continue;
+
+                const bT2Entry = bStops[bT2Idx];
+                const wait2 = cT2Entry.departureMinutes - bT2Entry.arrivalMinutes;
+                if (wait2 < 0 || wait2 > MAX_WAIT) continue;
+
+                // Transfer1 candidates: stops BEFORE transfer2 on B
+                const bPrecedingStops = bStops.slice(0, bT2Idx);
+
+                for (const bT1Entry of bPrecedingStops) {
+                    const t1Cluster = getClusterStopIds(bT1Entry.stopId);
+
+                    // Find A trips serving zone THEN a stop in transfer1 cluster
+                    for (const aTripId of aTripIds) {
+                        const aStops = tripStopIndex.get(aTripId);
+                        if (!aStops) continue;
+                        const aTrip = trips.get(aTripId);
+                        if (!aTrip) continue;
+                        if (aTrip.routeId === bTrip.routeId) continue;
+
+                        // Find zone stop closest to centroid on A
+                        let aZoneEntry: ParsedStopTime | null = null;
+                        let aZoneIdx = -1;
+                        let bestDist = Infinity;
+                        for (let si = 0; si < aStops.length; si++) {
+                            const st = aStops[si];
+                            if (!zoneStopIds.has(st.stopId)) continue;
+                            const coords = stopCoords.get(st.stopId);
+                            const dist = coords ? haversineKm(centroid[0], centroid[1], coords.lat, coords.lon) : Infinity;
+                            if (dist < bestDist) {
+                                bestDist = dist;
+                                aZoneEntry = st;
+                                aZoneIdx = si;
+                            }
+                        }
+                        if (!aZoneEntry || aZoneIdx === -1) continue;
+
+                        // Find A's stop in transfer1 cluster (after zone stop)
+                        const aT1Entry = aStops.slice(aZoneIdx + 1).find((st) => t1Cluster.has(st.stopId));
+                        if (!aT1Entry) continue;
+
+                        const wait1 = bT1Entry.departureMinutes - aT1Entry.arrivalMinutes;
+                        if (wait1 < 0 || wait1 > MAX_WAIT) continue;
+
+                        const totalMinutes = cStops[schoolIdx].arrivalMinutes - aZoneEntry.departureMinutes;
+                        if (totalMinutes > MAX_TOTAL) continue;
+
+                        // Score: prefer both "good" quality transfers, then latest zone departure, then shortest total
+                        const q1 = getTransferQuality(wait1);
+                        const q2 = getTransferQuality(wait2);
+                        const qualityScore = (q1.quality === 'good' ? 2 : 1) + (q2.quality === 'good' ? 2 : 1);
+                        const score = qualityScore * 10000 + aZoneEntry.departureMinutes * 10 - totalMinutes;
+
+                        if (best === null || score > best.score) {
                             best = {
-                                qualityScore,
-                                zoneDepMinutes: zoneEntry.departureMinutes,
-                                transferStopId,
-                                aTripId,
-                                aRouteId,
-                                aZoneStopId: zoneEntry.stopId,
-                                aArrivalAtTransfer,
-                                bTripId,
-                                bRouteId,
-                                bDepFromTransfer: bTransferEntry.departureMinutes,
-                                bArrivalAtSchool: bSchoolSt.arrivalMinutes,
-                                waitMinutes,
+                                score,
+                                zoneDepMinutes: aZoneEntry.departureMinutes,
+                                totalMinutes,
+                                aTripId, aRouteId: aTrip.routeId, aZoneStopId: aZoneEntry.stopId, aArrAtT1: aT1Entry.arrivalMinutes,
+                                bTripId, bRouteId: bTrip.routeId, bT1StopId: bT1Entry.stopId, bDepFromT1: bT1Entry.departureMinutes, bArrAtT2: bT2Entry.arrivalMinutes, bT2StopId: bT2Entry.stopId,
+                                cTripId, cRouteId: cTrip.routeId, cT2StopId: cT2Entry.stopId, cDepFromT2: cT2Entry.departureMinutes, cArrAtSchool: cStops[schoolIdx].arrivalMinutes,
+                                wait1, wait2,
                             };
                         }
                     }
@@ -925,43 +1209,63 @@ function findBestMorningTransfer(
 
     const aRoute = routes.get(best.aRouteId);
     const bRoute = routes.get(best.bRouteId);
-    const aShortName = aRoute?.routeShortName ?? best.aRouteId;
-    const bShortName = bRoute?.routeShortName ?? best.bRouteId;
-    const transferStopName = stopIdToName.get(best.transferStopId) ?? best.transferStopId;
+    const cRoute = routes.get(best.cRouteId);
+    const aName = aRoute?.routeShortName ?? best.aRouteId;
+    const bName = bRoute?.routeShortName ?? best.bRouteId;
+    const cName = cRoute?.routeShortName ?? best.cRouteId;
 
     return {
         legA: {
-            routeShortName: aShortName,
-            routeColor: getRouteColor(aShortName),
+            routeShortName: aName,
+            routeColor: getRouteColor(aName),
             tripId: best.aTripId,
             fromStopId: best.aZoneStopId,
-            toStopId: best.transferStopId,
+            toStopId: best.bT1StopId,
             departureMinutes: best.zoneDepMinutes,
-            arrivalMinutes: best.aArrivalAtTransfer,
+            arrivalMinutes: best.aArrAtT1,
             fromStop: stopIdToName.get(best.aZoneStopId) ?? best.aZoneStopId,
-            toStop: transferStopName,
+            toStop: stopIdToName.get(best.bT1StopId) ?? best.bT1StopId,
         },
         legB: {
-            routeShortName: bShortName,
-            routeColor: getRouteColor(bShortName),
+            routeShortName: bName,
+            routeColor: getRouteColor(bName),
             tripId: best.bTripId,
-            fromStopId: best.transferStopId,
+            fromStopId: best.bT1StopId,
+            toStopId: best.bT2StopId,
+            departureMinutes: best.bDepFromT1,
+            arrivalMinutes: best.bArrAtT2,
+            fromStop: stopIdToName.get(best.bT1StopId) ?? best.bT1StopId,
+            toStop: stopIdToName.get(best.bT2StopId) ?? best.bT2StopId,
+        },
+        legC: {
+            routeShortName: cName,
+            routeColor: getRouteColor(cName),
+            tripId: best.cTripId,
+            fromStopId: best.cT2StopId,
             toStopId: schoolStopId,
-            departureMinutes: best.bDepFromTransfer,
-            arrivalMinutes: best.bArrivalAtSchool,
-            fromStop: transferStopName,
+            departureMinutes: best.cDepFromT2,
+            arrivalMinutes: best.cArrAtSchool,
+            fromStop: stopIdToName.get(best.cT2StopId) ?? best.cT2StopId,
             toStop: stopIdToName.get(schoolStopId) ?? schoolStopId,
         },
-        transfer: getTransferQuality(best.waitMinutes),
-        transferStopName,
+        transfer1: getTransferQuality(best.wait1),
+        transfer2: getTransferQuality(best.wait2),
     };
 }
 
+interface AfternoonCandidate {
+    depMinutes: number;
+    arrMinutes: number;
+    tripId: string;
+    routeShortName: string;
+    zoneStopId: string;
+}
+
 /**
- * Find afternoon return trip from school to zone stops.
- * Returns first bus departing school ≥ bellEndMinutes, and next bus time.
+ * Find up to 3 afternoon return options within 30 min of bell end.
+ * Groups by route short name, picks earliest departure per route.
  */
-export function findAfternoonTrip(
+export function findAfternoonOptions(
     schoolStopId: string,
     zoneStopIds: Set<string>,
     bellEndMinutes: number,
@@ -969,18 +1273,9 @@ export function findAfternoonTrip(
     routes: Map<string, ParsedRoute>,
     weekdayServiceIds: Set<string>,
     tripStopIndex: Map<string, ParsedStopTime[]>
-): { leg: TripLeg; nextDepartureMinutes?: number } | null {
+): { leg: TripLeg; nextDepartureMinutes?: number }[] {
     const stopIdToName = getStopIdToName();
-
-    let first: {
-        depMinutes: number;
-        arrMinutes: number;
-        tripId: string;
-        routeShortName: string;
-        zoneStopId: string;
-    } | null = null;
-
-    let second: { depMinutes: number } | null = null;
+    const candidates: AfternoonCandidate[] = [];
 
     for (const [tripId, stopTimes] of tripStopIndex) {
         const trip = trips.get(tripId);
@@ -989,56 +1284,60 @@ export function findAfternoonTrip(
         const route = routes.get(trip.routeId);
         if (!route) continue;
 
-        // School stop must appear before a zone stop
         const schoolIdx = stopTimes.findIndex((st) => st.stopId === schoolStopId);
         if (schoolIdx === -1) continue;
 
         const schoolEntry = stopTimes[schoolIdx];
+        // 30-min window: depart >= bell end, depart <= bell end + 30
         if (schoolEntry.departureMinutes < bellEndMinutes) continue;
+        if (schoolEntry.departureMinutes > bellEndMinutes + 30) continue;
 
-        // Find zone stop after school
         const zoneEntry = stopTimes.slice(schoolIdx + 1).find((st) => zoneStopIds.has(st.stopId));
         if (!zoneEntry) continue;
 
-        const depMin = schoolEntry.departureMinutes;
+        candidates.push({
+            depMinutes: schoolEntry.departureMinutes,
+            arrMinutes: zoneEntry.arrivalMinutes,
+            tripId,
+            routeShortName: route.routeShortName,
+            zoneStopId: zoneEntry.stopId,
+        });
+    }
 
-        if (first === null || depMin < first.depMinutes) {
-            if (first !== null) {
-                // Former first becomes candidate for second
-                if (second === null || first.depMinutes < second.depMinutes) {
-                    second = { depMinutes: first.depMinutes };
-                }
-            }
-            first = {
-                depMinutes: depMin,
-                arrMinutes: zoneEntry.arrivalMinutes,
-                tripId,
-                routeShortName: route.routeShortName,
-                zoneStopId: zoneEntry.stopId,
-            };
-        } else if (second === null || depMin < second.depMinutes) {
-            if (depMin > first.depMinutes) {
-                second = { depMinutes: depMin };
-            }
+    // Group by route — pick earliest departure per route
+    const byRoute = new Map<string, AfternoonCandidate>();
+    for (const c of candidates) {
+        const existing = byRoute.get(c.routeShortName);
+        if (!existing || c.depMinutes < existing.depMinutes) {
+            byRoute.set(c.routeShortName, c);
         }
     }
 
-    if (!first) return null;
+    // Sort by earliest departure first
+    const sorted = Array.from(byRoute.values()).sort(
+        (a, b) => a.depMinutes - b.depMinutes
+    );
 
-    return {
-        leg: {
-            routeShortName: first.routeShortName,
-            routeColor: getRouteColor(first.routeShortName),
-            tripId: first.tripId,
-            fromStopId: schoolStopId,
-            toStopId: first.zoneStopId,
-            departureMinutes: first.depMinutes,
-            arrivalMinutes: first.arrMinutes,
-            fromStop: stopIdToName.get(schoolStopId) ?? schoolStopId,
-            toStop: stopIdToName.get(first.zoneStopId) ?? first.zoneStopId,
-        },
-        nextDepartureMinutes: second?.depMinutes,
-    };
+    // Find "next bus" time: earliest departure across ALL candidates after the first option
+    const allDepartures = candidates.map((c) => c.depMinutes).sort((a, b) => a - b);
+
+    return sorted.slice(0, 3).map((c) => {
+        const nextDep = allDepartures.find((d) => d > c.depMinutes);
+        return {
+            leg: {
+                routeShortName: c.routeShortName,
+                routeColor: getRouteColor(c.routeShortName),
+                tripId: c.tripId,
+                fromStopId: schoolStopId,
+                toStopId: c.zoneStopId,
+                departureMinutes: c.depMinutes,
+                arrivalMinutes: c.arrMinutes,
+                fromStop: stopIdToName.get(schoolStopId) ?? schoolStopId,
+                toStop: stopIdToName.get(c.zoneStopId) ?? c.zoneStopId,
+            },
+            nextDepartureMinutes: nextDep,
+        };
+    });
 }
 
 /**
@@ -1171,140 +1470,226 @@ function enrichResult(
         }
     }
 
+    // ── Afternoon enrichment ──
+    const afternoonRouteShapes: RouteShapeSegment[] = [];
+    let walkFromSchool: WalkLeg | undefined;
+    let walkToZone: WalkLeg | undefined;
+
+    if (result.afternoonLegs.length > 0) {
+        // Walk from school to afternoon boarding stop
+        const pmFirstLeg = result.afternoonLegs[0];
+        const pmBoardStop = stopById.get(pmFirstLeg.fromStopId);
+        if (pmBoardStop) {
+            walkFromSchool = buildWalkLeg(
+                school.lat, school.lon,
+                pmBoardStop.lat, pmBoardStop.lon,
+                `Walk to ${pmBoardStop.stop_name}`
+            );
+        }
+
+        // Afternoon route shapes
+        for (const leg of result.afternoonLegs) {
+            const fromStop = stopById.get(leg.fromStopId);
+            const toStop = stopById.get(leg.toStopId);
+            if (fromStop && toStop) {
+                const points = getRouteShapeSegment(
+                    leg.routeShortName,
+                    fromStop.lat, fromStop.lon,
+                    toStop.lat, toStop.lon
+                );
+                afternoonRouteShapes.push({
+                    routeShortName: leg.routeShortName,
+                    routeColor: leg.routeColor,
+                    points,
+                    isDashed: false,
+                });
+            }
+        }
+
+        // Walk from afternoon alighting stop back to zone centroid
+        const pmLastLeg = result.afternoonLegs[result.afternoonLegs.length - 1];
+        const pmAlightStop = stopById.get(pmLastLeg.toStopId);
+        if (pmAlightStop) {
+            walkToZone = buildWalkLeg(
+                pmAlightStop.lat, pmAlightStop.lon,
+                centroid[0], centroid[1],
+                'Walk home'
+            );
+        }
+    }
+
     return {
         ...result,
         zoneCentroid: centroid,
         walkToStop,
         walkToSchool,
         routeShapes,
+        afternoonRouteShapes,
+        walkFromSchool,
+        walkToZone,
     };
 }
 
 // ─── Main entry point ─────────────────────────────────────────────────────────
 
 /**
- * Find the best transit option from a student's zone to a school.
- *
- * @param zonePolygon  Array of [lat, lon] vertices defining the student's zone
- * @param school       School configuration (bell times, coordinates)
+ * Find up to 3 morning + 3 afternoon route options for a zone → school trip.
  */
-export function findBestTrip(
+export function findTripOptions(
     zonePolygon: [number, number][],
     school: SchoolConfig
-): StudentPassResult {
+): TripOptions {
     const bellStartMinutes = parseTimeToMinutes(school.bellStart + ':00');
     const bellEndMinutes = parseTimeToMinutes(school.bellEnd + ':00');
 
-    // Load / use cached GTFS data
     const trips = loadTrips();
     const routes = loadRoutes();
     const weekdayServiceIds = loadWeekdayServiceIds();
     const tripStopIndex = getTripStopTimesIndex();
 
-    // Find zone stops
     const zoneStops = findStopsInZone(zonePolygon);
     const zoneStopIds = new Set(zoneStops.map((s) => s.stop_id));
 
-    if (zoneStopIds.size === 0) {
-        return { found: false, isDirect: false, morningLegs: [], afternoonLegs: [] };
-    }
+    const empty: TripOptions = { morningOptions: [], afternoonOptions: [] };
 
-    // Find nearest stop to school
+    if (zoneStopIds.size === 0) return empty;
+
     const schoolStop = findNearestStopToSchool(school);
-    if (!schoolStop) {
-        return { found: false, isDirect: false, morningLegs: [], afternoonLegs: [] };
-    }
+    if (!schoolStop) return empty;
     const schoolStopId = schoolStop.stop_id;
 
-    // Compute centroid and stop coords for proximity ranking
     const centroid = getPolygonCentroid(zonePolygon);
     const allStops = getAllStopsWithCoords();
     const stopCoords = new Map(allStops.map(s => [s.stop_id, { lat: s.lat, lon: s.lon }]));
 
-    // Try direct trip first
-    const directResult = findBestMorningDirect(
-        zoneStopIds,
-        schoolStopId,
-        bellStartMinutes,
-        trips,
-        routes,
-        weekdayServiceIds,
-        tripStopIndex,
-        centroid,
-        stopCoords
+    // Collect morning direct options
+    const directOptions = findMorningDirectOptions(
+        zoneStopIds, schoolStopId, bellStartMinutes,
+        trips, routes, weekdayServiceIds, tripStopIndex, centroid, stopCoords
     );
 
-    if (directResult) {
-        // Find afternoon return
-        const afternoonResult = findAfternoonTrip(
-            schoolStopId,
-            zoneStopIds,
-            bellEndMinutes,
-            trips,
-            routes,
-            weekdayServiceIds,
-            tripStopIndex
-        );
+    // Collect morning transfer options
+    const transferOptions = findMorningTransferOptions(
+        zoneStopIds, schoolStopId, bellStartMinutes,
+        trips, routes, weekdayServiceIds, tripStopIndex, centroid, stopCoords
+    );
 
+    // Afternoon options (same school stop regardless of morning choice)
+    const pmResults = findAfternoonOptions(
+        schoolStopId, zoneStopIds, bellEndMinutes,
+        trips, routes, weekdayServiceIds, tripStopIndex
+    );
+    const pmFirst = pmResults[0];
+
+    // Merge morning options: direct first, then transfers, cap at 3
+    const morningOptions: RouteOption[] = [];
+
+    for (const d of directOptions) {
+        if (morningOptions.length >= 3) break;
         const freq = calculateFrequency(
-            directResult.leg.routeShortName,
-            trips,
-            routes,
-            weekdayServiceIds,
-            tripStopIndex
+            d.leg.routeShortName, trips, routes, weekdayServiceIds, tripStopIndex
         );
 
-        return enrichResult({
+        const result = enrichResult({
             found: true,
             isDirect: true,
-            morningLegs: [directResult.leg],
-            afternoonLegs: afternoonResult ? [afternoonResult.leg] : [],
-            nextAfternoonDepartureMinutes: afternoonResult?.nextDepartureMinutes,
+            morningLegs: [d.leg],
+            afternoonLegs: pmFirst ? [pmFirst.leg] : [],
+            nextAfternoonDepartureMinutes: pmFirst?.nextDepartureMinutes,
             frequencyPerHour: freq,
         }, zonePolygon, school);
+
+        morningOptions.push({
+            id: `am-${morningOptions.length + 1}`,
+            label: `Rt ${d.leg.routeShortName} Direct — arrive ${minutesToDisplayTime(d.leg.arrivalMinutes)}`,
+            result,
+        });
     }
 
-    // Try 1-transfer trip
-    const transferResult = findBestMorningTransfer(
-        zoneStopIds,
-        schoolStopId,
-        bellStartMinutes,
-        trips,
-        routes,
-        weekdayServiceIds,
-        tripStopIndex,
-        centroid,
-        stopCoords
-    );
-
-    if (transferResult) {
-        const afternoonResult = findAfternoonTrip(
-            schoolStopId,
-            zoneStopIds,
-            bellEndMinutes,
-            trips,
-            routes,
-            weekdayServiceIds,
-            tripStopIndex
-        );
-
+    for (const t of transferOptions) {
+        if (morningOptions.length >= 3) break;
         const freq = calculateFrequency(
-            transferResult.legA.routeShortName,
-            trips,
-            routes,
-            weekdayServiceIds,
-            tripStopIndex
+            t.legA.routeShortName, trips, routes, weekdayServiceIds, tripStopIndex
         );
 
-        return enrichResult({
+        const result = enrichResult({
             found: true,
             isDirect: false,
-            morningLegs: [transferResult.legA, transferResult.legB],
-            afternoonLegs: afternoonResult ? [afternoonResult.leg] : [],
-            transfer: transferResult.transfer,
-            nextAfternoonDepartureMinutes: afternoonResult?.nextDepartureMinutes,
+            morningLegs: [t.legA, t.legB],
+            afternoonLegs: pmFirst ? [pmFirst.leg] : [],
+            transfer: t.transfer,
+            nextAfternoonDepartureMinutes: pmFirst?.nextDepartureMinutes,
             frequencyPerHour: freq,
         }, zonePolygon, school);
+
+        morningOptions.push({
+            id: `am-${morningOptions.length + 1}`,
+            label: `Rt ${t.legA.routeShortName}→${t.legB.routeShortName} Transfer — arrive ${minutesToDisplayTime(t.legB.arrivalMinutes)}`,
+            result,
+        });
+    }
+
+    // Try 2-transfer if we still have room
+    if (morningOptions.length < 3) {
+        const twoTransferResult = findBestMorning2Transfer(
+            zoneStopIds, schoolStopId, bellStartMinutes,
+            trips, routes, weekdayServiceIds, tripStopIndex, centroid, stopCoords
+        );
+
+        if (twoTransferResult) {
+            const freq = calculateFrequency(
+                twoTransferResult.legA.routeShortName, trips, routes, weekdayServiceIds, tripStopIndex
+            );
+
+            const result = enrichResult({
+                found: true,
+                isDirect: false,
+                morningLegs: [twoTransferResult.legA, twoTransferResult.legB, twoTransferResult.legC],
+                afternoonLegs: pmFirst ? [pmFirst.leg] : [],
+                transfers: [twoTransferResult.transfer1, twoTransferResult.transfer2],
+                nextAfternoonDepartureMinutes: pmFirst?.nextDepartureMinutes,
+                frequencyPerHour: freq,
+            }, zonePolygon, school);
+
+            morningOptions.push({
+                id: `am-${morningOptions.length + 1}`,
+                label: `Rt ${twoTransferResult.legA.routeShortName}→${twoTransferResult.legB.routeShortName}→${twoTransferResult.legC.routeShortName} 2-Transfer — arrive ${minutesToDisplayTime(twoTransferResult.legC.arrivalMinutes)}`,
+                result,
+            });
+        }
+    }
+
+    // Afternoon option cards
+    const afternoonOptions: RouteOption[] = pmResults.map((pm, i) => {
+        const result = enrichResult({
+            found: true,
+            isDirect: true,
+            morningLegs: morningOptions[0]?.result.morningLegs ?? [],
+            afternoonLegs: [pm.leg],
+            nextAfternoonDepartureMinutes: pm.nextDepartureMinutes,
+        }, zonePolygon, school);
+
+        return {
+            id: `pm-${i + 1}`,
+            label: `Rt ${pm.leg.routeShortName} — depart ${minutesToDisplayTime(pm.leg.departureMinutes)}`,
+            result,
+        };
+    });
+
+    return { morningOptions, afternoonOptions };
+}
+
+/**
+ * Backward-compatible wrapper: returns the single best trip (first morning option).
+ */
+export function findBestTrip(
+    zonePolygon: [number, number][],
+    school: SchoolConfig
+): StudentPassResult {
+    const options = findTripOptions(zonePolygon, school);
+
+    if (options.morningOptions.length > 0) {
+        return options.morningOptions[0].result;
     }
 
     return { found: false, isDirect: false, morningLegs: [], afternoonLegs: [] };

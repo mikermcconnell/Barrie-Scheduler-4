@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+    BARRIE_SCHOOLS,
+    findBestTrip,
     isPointInPolygon,
     getTransferQuality,
+    getClusterStopIds,
     parseTimeToMinutes,
     minutesToDisplayTime,
 } from '../utils/transit-app/studentPassUtils';
@@ -187,5 +190,102 @@ describe('minutesToDisplayTime', () => {
 
     it('formats midnight correctly', () => {
         expect(minutesToDisplayTime(0)).toBe('12:00 AM');
+    });
+});
+
+// ─── findBestTrip (integration invariants) ────────────────────────────────────
+
+describe('findBestTrip', () => {
+    const cityWideZone: [number, number][] = [
+        [44.20, -79.95],
+        [44.20, -79.40],
+        [44.60, -79.40],
+        [44.60, -79.95],
+    ];
+
+    it('returns stop ids for each leg when a trip is found', { timeout: 60000 }, () => {
+        const results = BARRIE_SCHOOLS.map((school) => findBestTrip(cityWideZone, school));
+        const foundResults = results.filter((r) => r.found);
+
+        expect(foundResults.length).toBeGreaterThan(0);
+
+        for (const result of foundResults) {
+            const allLegs = [...result.morningLegs, ...result.afternoonLegs];
+            expect(allLegs.length).toBeGreaterThan(0);
+            for (const leg of allLegs) {
+                expect(leg.fromStopId).toBeTruthy();
+                expect(leg.toStopId).toBeTruthy();
+            }
+        }
+    });
+
+    it('prefers direct or 1-transfer over 2-transfer when available', () => {
+        // Zone near school should produce direct, not 2-transfer
+        const nearSchoolZone: [number, number][] = [
+            [44.398, -79.695],
+            [44.398, -79.685],
+            [44.404, -79.685],
+            [44.404, -79.695],
+        ];
+        const school = BARRIE_SCHOOLS.find((s) => s.id === 'barrie-north')!;
+        const result = findBestTrip(nearSchoolZone, school);
+        if (result.found) {
+            // Should be direct or 1-transfer, not 2-transfer
+            expect(result.morningLegs.length).toBeLessThanOrEqual(2);
+        }
+    });
+});
+
+// ─── Transfer clusters ───────────────────────────────────────────────────────
+
+describe('getClusterStopIds', () => {
+    it('returns a set containing at least the queried stop', () => {
+        // Stop 1 (Downtown Hub) should always cluster with itself
+        const cluster = getClusterStopIds('1');
+        expect(cluster.has('1')).toBe(true);
+        expect(cluster.size).toBeGreaterThanOrEqual(1);
+    });
+
+    it('clusters co-located Downtown Hub stops together', () => {
+        // Stops 1 and 2 are Downtown Hub platforms ~16m apart
+        const cluster1 = getClusterStopIds('1');
+        const cluster2 = getClusterStopIds('2');
+        expect(cluster1.has('2')).toBe(true);
+        expect(cluster2.has('1')).toBe(true);
+    });
+
+    it('does not cluster distant stops together', () => {
+        // Stop 1 (Downtown) should not cluster with stop 339 (school in north Barrie)
+        const cluster = getClusterStopIds('1');
+        expect(cluster.has('339')).toBe(false);
+    });
+});
+
+// ─── 2-transfer integration ──────────────────────────────────────────────────
+
+describe('findBestTrip — 2-transfer fallback', () => {
+    it('finds a trip for a zone far from Barrie North Collegiate', () => {
+        // South/central Barrie zone — far from school, likely needs 2 transfers
+        const southZone: [number, number][] = [
+            [44.355, -79.700],
+            [44.355, -79.690],
+            [44.365, -79.690],
+            [44.365, -79.700],
+        ];
+        const school = BARRIE_SCHOOLS.find((s) => s.id === 'barrie-north')!;
+        const result = findBestTrip(southZone, school);
+
+        // The key assertion: this zone should find SOME trip (direct, 1-transfer, or 2-transfer)
+        // Previously this would return found: false for many zones
+        expect(result.found).toBe(true);
+        expect(result.morningLegs.length).toBeGreaterThanOrEqual(1);
+
+        // If it's a 2-transfer result, verify structure
+        if (result.morningLegs.length === 3) {
+            expect(result.transfers).toBeDefined();
+            expect(result.transfers!.length).toBe(2);
+            expect(result.transfers![0].waitMinutes).toBeGreaterThanOrEqual(0);
+            expect(result.transfers![1].waitMinutes).toBeGreaterThanOrEqual(0);
+        }
     });
 });

@@ -11,7 +11,6 @@ import {
     MapPinned,
     Train,
     CheckCircle2,
-    GraduationCap,
 } from 'lucide-react';
 import type { TransitAppDataSummary } from '../../utils/transit-app/transitAppTypes';
 import { OverviewPanel } from './OverviewPanel';
@@ -22,7 +21,6 @@ import { AppUsageModule } from './AppUsageModule';
 import { ServiceGapsModule } from './ServiceGapsModule';
 import { HeatmapModule } from './HeatmapModule';
 import { StopAnalysisModule } from './StopAnalysisModule';
-import { StudentPassModule } from './StudentPassModule';
 
 interface TransitAppWorkspaceProps {
     data: TransitAppDataSummary;
@@ -49,7 +47,6 @@ const TAB_CONFIG: TabConfig[] = [
     { id: 'go-integration', label: 'GO Integration', icon: Train, status: 'partial' },
     { id: 'validation', label: 'Validation', icon: CheckCircle2, status: 'not-started' },
     { id: 'service-gaps', label: 'Service Gaps', icon: Clock, status: 'partial', underDevelopment: true },
-    { id: 'student-pass', label: 'Student Pass', icon: GraduationCap, status: 'complete' },
 ];
 
 export const TransitAppWorkspace: React.FC<TransitAppWorkspaceProps> = ({
@@ -114,8 +111,6 @@ export const TransitAppWorkspace: React.FC<TransitAppWorkspaceProps> = ({
                 return <ServiceGapsModule data={data} />;
             case 'stops':
                 return <StopAnalysisModule data={data} />;
-            case 'student-pass':
-                return <StudentPassModule />;
             default:
                 return <ComingSoonPlaceholder />;
         }

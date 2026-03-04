@@ -20,11 +20,16 @@ const QUALITY_STYLES: Record<TransferQuality, string> = {
 function buildMorningSteps(result: StudentPassResult, bellStart: string): string[] {
     const steps: string[] = [];
 
+    // Walk to boarding stop
+    if (result.walkToStop) {
+        const w = result.walkToStop;
+        steps.push(`Walk ${w.walkMinutes} min (${(w.distanceKm * 1000).toFixed(0)}m) to ${result.morningLegs[0]?.fromStop ?? 'bus stop'}`);
+    }
+
     if (result.isDirect && result.morningLegs.length === 1) {
         const leg = result.morningLegs[0];
         steps.push(`Board Route ${leg.routeShortName} at ${minutesToDisplayTime(leg.departureMinutes)} from ${leg.fromStop}`);
         steps.push(`Arrive at ${leg.toStop} at ${minutesToDisplayTime(leg.arrivalMinutes)}`);
-        steps.push(`Walk to school — bell at ${bellStart}`);
     } else if (!result.isDirect && result.morningLegs.length === 2) {
         const legA = result.morningLegs[0];
         const legB = result.morningLegs[1];
@@ -32,6 +37,24 @@ function buildMorningSteps(result: StudentPassResult, bellStart: string): string
         steps.push(`Board Route ${legA.routeShortName} at ${minutesToDisplayTime(legA.departureMinutes)} from ${legA.fromStop}`);
         steps.push(`Transfer at ${legA.toStop} (${waitMin} min wait) — Board Route ${legB.routeShortName} at ${minutesToDisplayTime(legB.departureMinutes)}`);
         steps.push(`Arrive at ${legB.toStop} at ${minutesToDisplayTime(legB.arrivalMinutes)}`);
+    } else if (!result.isDirect && result.morningLegs.length === 3) {
+        const legA = result.morningLegs[0];
+        const legB = result.morningLegs[1];
+        const legC = result.morningLegs[2];
+        const wait1 = result.transfers?.[0]?.waitMinutes ?? (legB.departureMinutes - legA.arrivalMinutes);
+        const wait2 = result.transfers?.[1]?.waitMinutes ?? (legC.departureMinutes - legB.arrivalMinutes);
+        steps.push(`Board Route ${legA.routeShortName} at ${minutesToDisplayTime(legA.departureMinutes)} from ${legA.fromStop}`);
+        steps.push(`Transfer at ${legA.toStop} (${wait1} min wait) — Board Route ${legB.routeShortName} at ${minutesToDisplayTime(legB.departureMinutes)}`);
+        steps.push(`Transfer at ${legB.toStop} (${wait2} min wait) — Board Route ${legC.routeShortName} at ${minutesToDisplayTime(legC.departureMinutes)}`);
+        steps.push(`Arrive at ${legC.toStop} at ${minutesToDisplayTime(legC.arrivalMinutes)}`);
+    }
+
+    // Walk from alighting stop to school
+    if (result.walkToSchool) {
+        const w = result.walkToSchool;
+        steps.push(`Walk ${w.walkMinutes} min (${(w.distanceKm * 1000).toFixed(0)}m) to school — bell at ${bellStart}`);
+    } else {
+        steps.push(`Walk to school — bell at ${bellStart}`);
     }
 
     return steps;
@@ -132,16 +155,34 @@ export const StudentPassPreview: React.FC<StudentPassPreviewProps> = ({
                                     <span className="font-medium text-gray-800">{tripDuration} min</span>
                                 </div>
 
-                                {!result.isDirect && result.morningLegs.length === 2 && (
-                                    <div className="flex items-center gap-1.5 flex-wrap">
-                                        <span className="text-gray-500">Transfer:</span>
+                                {result.walkToStop && (
+                                    <div className="flex items-center gap-1.5">
+                                        <span className="text-gray-500">Walk to Stop:</span>
                                         <span className="font-medium text-gray-800">
-                                            Rt {result.morningLegs[0].routeShortName} → Rt {result.morningLegs[1].routeShortName} at {result.morningLegs[0].toStop}
+                                            {result.walkToStop.walkMinutes} min ({(result.walkToStop.distanceKm * 1000).toFixed(0)}m)
                                         </span>
                                     </div>
                                 )}
 
-                                {!result.isDirect && result.transfer && (
+                                {result.walkToSchool && (
+                                    <div className="flex items-center gap-1.5">
+                                        <span className="text-gray-500">Walk to School:</span>
+                                        <span className="font-medium text-gray-800">
+                                            {result.walkToSchool.walkMinutes} min ({(result.walkToSchool.distanceKm * 1000).toFixed(0)}m)
+                                        </span>
+                                    </div>
+                                )}
+
+                                {!result.isDirect && result.morningLegs.length >= 2 && (
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                        <span className="text-gray-500">Transfer:</span>
+                                        <span className="font-medium text-gray-800">
+                                            {result.morningLegs.map((l) => `Rt ${l.routeShortName}`).join(' → ')}
+                                        </span>
+                                    </div>
+                                )}
+
+                                {!result.isDirect && result.transfer && !result.transfers && (
                                     <div className="flex items-center gap-1.5">
                                         <span className="text-gray-500">Connection:</span>
                                         <span
@@ -151,6 +192,17 @@ export const StudentPassPreview: React.FC<StudentPassPreviewProps> = ({
                                         </span>
                                     </div>
                                 )}
+
+                                {!result.isDirect && result.transfers && result.transfers.map((t, i) => (
+                                    <div key={i} className="flex items-center gap-1.5">
+                                        <span className="text-gray-500">Transfer {i + 1}:</span>
+                                        <span
+                                            className={`px-1.5 py-0.5 rounded border text-[10px] font-semibold ${QUALITY_STYLES[t.quality]}`}
+                                        >
+                                            {t.label} ({t.waitMinutes} min)
+                                        </span>
+                                    </div>
+                                ))}
 
                                 <div className="flex items-center gap-1.5">
                                     <span className="text-gray-500">Bus Frequency:</span>
