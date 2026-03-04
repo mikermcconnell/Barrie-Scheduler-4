@@ -132,6 +132,7 @@ export interface CascadeTimepointObs {
   observedDeparture: string | null; // HH:MM:SS from AVL
   deviationSeconds: number | null;  // positive = late, null = no AVL
   isLate: boolean;                  // deviation > OTP late threshold (300s)
+  boardings: number;                // APC-observed boardings at this stop
 }
 
 /** A downstream trip affected by a dwell incident earlier on the same block. */

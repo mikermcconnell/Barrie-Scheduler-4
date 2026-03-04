@@ -16,6 +16,7 @@ function makeTimepoint(overrides: Partial<CascadeTimepointObs> = {}): CascadeTim
     observedDeparture: '08:06:00',
     deviationSeconds: 360,
     isLate: true,
+    boardings: 0,
     ...overrides,
   };
 }

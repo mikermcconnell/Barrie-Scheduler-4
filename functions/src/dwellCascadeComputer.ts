@@ -211,6 +211,7 @@ function traceCascade(
               observedDeparture: rec.observedDepartureTime,
               deviationSeconds,
               isLate,
+              boardings: rec.boardings,
             });
             chainBroken = true;
             recoveredAtTrip = nextTrip.tripName;
@@ -229,6 +230,7 @@ function traceCascade(
         observedDeparture: rec.observedDepartureTime ?? null,
         deviationSeconds,
         isLate,
+        boardings: rec.boardings,
       });
     }
 
