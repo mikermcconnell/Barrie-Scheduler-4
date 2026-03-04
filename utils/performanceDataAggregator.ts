@@ -745,10 +745,25 @@ function buildOperatorDwellMetrics(records: STREETSRecord[], date: string): Oper
     const rawDwell = depSec - arrSec;
     if (rawDwell < 0) continue;
 
-    const severity = classifyDwell(rawDwell);
+    const schedDepSec = timeToSeconds(chosen.stopTime); // scheduled departure
+    const depLatenessSec = Math.max(0, depSec - schedDepSec); // how late vs schedule
+
+    // Gate: only count dwell if departing > 3 min late (matches legacy)
+    if (depLatenessSec <= DWELL_THRESHOLDS.lateGateSeconds) continue;
+
+    let dwell: number;
+    if (arrSec <= schedDepSec) {
+      // On time or early — recovery covers boarding; dwell = departure lateness
+      dwell = depLatenessSec;
+    } else {
+      // Late past scheduled departure — dwell = raw time at stop
+      dwell = rawDwell;
+    }
+
+    const severity = classifyDwell(dwell);
     if (!severity) continue;
 
-    const trackedDwell = rawDwell - DWELL_THRESHOLDS.boardingAllowanceSeconds;
+    const trackedDwell = dwell;
 
     incidents.push({
       operatorId: chosen.operatorId,
@@ -783,15 +798,17 @@ function buildOperatorDwellMetrics(records: STREETSRecord[], date: string): Oper
 
     for (const inc of opIncidents) {
       if (inc.severity === 'moderate') moderateCount++;
-      else highCount++;
+      else if (inc.severity === 'high') highCount++;
+      // minor events contribute to dwell hours but not incident counts
       totalTrackedDwellSeconds += inc.trackedDwellSeconds;
     }
 
+    const classifiedCount = moderateCount + highCount;
     byOperator.push({
       operatorId,
       moderateCount,
       highCount,
-      totalIncidents: opIncidents.length,
+      totalIncidents: classifiedCount,
       totalTrackedDwellSeconds,
       avgTrackedDwellSeconds: safeDivide(totalTrackedDwellSeconds, opIncidents.length),
     });
@@ -851,18 +868,21 @@ function buildOperatorDwellMetrics(records: STREETSRecord[], date: string): Oper
 
   const totalServiceHours = Math.round(totalServiceSec / 3600 * 100) / 100;
 
+  const classifiedIncidents = incidents.filter(i => i.severity !== 'minor');
+  const classifiedCount = classifiedIncidents.length;
+
   return {
     incidents,
     byOperator,
-    totalIncidents: incidents.length,
+    totalIncidents: classifiedCount,
     totalTrackedDwellMinutes: Math.round(totalTrackedSeconds / 60 * 10) / 10,
     totalStopVisits,
     totalServiceHours,
     incidentsPer1kVisits: totalStopVisits > 0
-      ? Math.round(incidents.length / totalStopVisits * 1000 * 100) / 100
+      ? Math.round(classifiedCount / totalStopVisits * 1000 * 100) / 100
       : undefined,
     incidentsPer100ServiceHours: totalServiceHours > 0
-      ? Math.round(incidents.length / totalServiceHours * 100 * 100) / 100
+      ? Math.round(classifiedCount / totalServiceHours * 100 * 100) / 100
       : undefined,
   };
 }
@@ -1039,7 +1059,7 @@ function aggregateSingleDay(date: string, records: STREETSRecord[]): DailySummar
     loadProfiles: buildLoadProfiles(records),
     ridershipHeatmaps: buildRidershipHeatmaps(records),
     byOperatorDwell: dwellMetrics,
-    byCascade: buildDailyCascadeMetrics(records, dwellMetrics.incidents.filter(i => i.trackedDwellSeconds > 0)),
+    byCascade: buildDailyCascadeMetrics(records, dwellMetrics.incidents.filter(i => i.severity !== 'minor')),
     segmentRuntimes: buildSegmentRuntimes(records),
     routeStopDeviations: buildRouteStopDeviations(records),
     dataQuality: buildDataQuality(records, sanitization),

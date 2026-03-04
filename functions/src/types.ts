@@ -68,17 +68,19 @@ export const STREETS_REQUIRED_COLUMNS = [
 export type OTPStatus = 'early' | 'on-time' | 'late';
 
 // ─── Dwell Classification ───────────────────────────────────────────
-export type DwellSeverity = 'moderate' | 'high';
+export type DwellSeverity = 'minor' | 'moderate' | 'high';
 
 export const DWELL_THRESHOLDS = {
-  boardingAllowanceSeconds: 120,
-  highRawSeconds: 300,
+  lateGateSeconds: 180,          // 3 min late departure gate (matches legacy)
+  boardingAllowanceSeconds: 120, // 2 min — minor/moderate boundary
+  highRawSeconds: 300,           // 5 min — moderate/high boundary
 } as const;
 
-export function classifyDwell(rawDwellSeconds: number): DwellSeverity | null {
-  if (rawDwellSeconds < DWELL_THRESHOLDS.boardingAllowanceSeconds) return null;
-  if (rawDwellSeconds > DWELL_THRESHOLDS.highRawSeconds) return 'high';
-  return 'moderate';
+export function classifyDwell(dwellSeconds: number): DwellSeverity | null {
+  if (dwellSeconds <= 0) return null;
+  if (dwellSeconds > DWELL_THRESHOLDS.highRawSeconds) return 'high';
+  if (dwellSeconds > DWELL_THRESHOLDS.boardingAllowanceSeconds) return 'moderate';
+  return 'minor';
 }
 
 export interface DwellIncident {

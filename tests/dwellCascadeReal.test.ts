@@ -45,9 +45,9 @@ function timeToSeconds(time: string): number {
     return h * 3600 + m * 60 + s;
 }
 
-// ─── Build dwell incidents (mirrors aggregator logic) ─────────────────
+// ─── Build dwell incidents — OLD logic (raw dwell, no recovery awareness) ────
 
-function buildDwellIncidents(records: STREETSRecord[], date: string): DwellIncident[] {
+function buildDwellIncidentsOld(records: STREETSRecord[], date: string): DwellIncident[] {
     const incidents: DwellIncident[] = [];
     for (const r of records) {
         if (!r.timePoint) continue;
@@ -78,6 +78,56 @@ function buildDwellIncidents(records: STREETSRecord[], date: string): DwellIncid
     return incidents;
 }
 
+// ─── Build dwell incidents — NEW logic (recovery-aware) ──────────────────
+
+function buildDwellIncidentsNew(records: STREETSRecord[], date: string): DwellIncident[] {
+    const incidents: DwellIncident[] = [];
+    for (const r of records) {
+        if (!r.timePoint) continue;
+        if (!r.observedArrivalTime || !r.observedDepartureTime) continue;
+        let arrSec = timeToSeconds(r.observedArrivalTime);
+        let depSec = timeToSeconds(r.observedDepartureTime);
+        if (depSec < arrSec) depSec += 86400;
+        const rawDwell = depSec - arrSec;
+        if (rawDwell < 0) continue;
+
+        const schedDepSec = timeToSeconds(r.stopTime);
+        const depLatenessSec = Math.max(0, depSec - schedDepSec);
+
+        // Gate: only count if departing > 3 min late (matches legacy)
+        if (depLatenessSec <= DWELL_THRESHOLDS.lateGateSeconds) continue;
+
+        let dwell: number;
+        if (arrSec <= schedDepSec) {
+            // On time or early — dwell = departure lateness
+            dwell = depLatenessSec;
+        } else {
+            // Late past scheduled departure — dwell = raw time at stop
+            dwell = rawDwell;
+        }
+
+        const severity = classifyDwell(dwell);
+        if (!severity) continue;
+
+        incidents.push({
+            operatorId: r.operatorId,
+            date,
+            routeId: r.routeId,
+            routeName: r.routeName,
+            stopName: r.stopName,
+            stopId: r.stopId,
+            tripName: r.tripName,
+            block: r.block,
+            observedArrivalTime: r.observedArrivalTime,
+            observedDepartureTime: r.observedDepartureTime,
+            rawDwellSeconds: rawDwell,
+            trackedDwellSeconds: dwell,
+            severity,
+        });
+    }
+    return incidents;
+}
+
 // ─── Test ─────────────────────────────────────────────────────────────
 
 // Point this at a local STREETS CSV to run real-data verification.
@@ -97,7 +147,7 @@ describe.skipIf(!csvExists())('Dwell Cascade — Real STREETS Data', () => {
         const text = readFileSync(CSV_PATH, 'utf-8');
         const rawRows = parseCSV(text);
         records = rawRows.map((r, i) => parseRow(r, i + 2)).filter((r): r is STREETSRecord => r !== null);
-        incidents = buildDwellIncidents(records, '2026-02-22');
+        incidents = buildDwellIncidentsOld(records, '2026-02-22');
     } catch {
         records = [];
         incidents = [];
@@ -160,5 +210,199 @@ describe.skipIf(!csvExists())('Dwell Cascade — Real STREETS Data', () => {
             expect(c.blastRadius).toBe(0);
             expect(c.cascadedTrips).toHaveLength(0);
         }
+    });
+});
+
+// ─── March 3 Comparison: Old vs New Dwell Logic ─────────────────────────
+
+const MARCH3_CSV = 'C:/Users/Mike McConnell/Downloads/Eddy Data for previous Day (11).csv';
+
+function march3Exists(): boolean {
+    try { readFileSync(MARCH3_CSV, 'utf-8'); return true; } catch { return false; }
+}
+
+describe.skipIf(!march3Exists())('Dwell Fix Comparison — March 3 Data', () => {
+    let records: STREETSRecord[];
+    let oldIncidents: DwellIncident[];
+    let newIncidents: DwellIncident[];
+
+    try {
+        const text = readFileSync(MARCH3_CSV, 'utf-8');
+        const rawRows = parseCSV(text);
+        records = rawRows.map((r, i) => parseRow(r, i + 2)).filter((r): r is STREETSRecord => r !== null);
+        oldIncidents = buildDwellIncidentsOld(records, '2026-03-03');
+        newIncidents = buildDwellIncidentsNew(records, '2026-03-03');
+    } catch {
+        records = [];
+        oldIncidents = [];
+        newIncidents = [];
+    }
+
+    it('parses March 3 CSV', () => {
+        console.log(`  Parsed ${records.length} STREETS records`);
+        expect(records.length).toBeGreaterThan(10000);
+    });
+
+    it('compares old vs new dwell totals', () => {
+        const oldTotalSec = oldIncidents.reduce((s, i) => s + i.trackedDwellSeconds, 0);
+        const newTotalSec = newIncidents.reduce((s, i) => s + i.trackedDwellSeconds, 0);
+        const oldHours = (oldTotalSec / 3600).toFixed(1);
+        const newHours = (newTotalSec / 3600).toFixed(1);
+        const reduction = oldTotalSec > 0 ? ((1 - newTotalSec / oldTotalSec) * 100).toFixed(0) : '0';
+
+        console.log('\n  ╔══════════════════════════════════════════════╗');
+        console.log('  ║     DWELL FIX COMPARISON — MARCH 3, 2026    ║');
+        console.log('  ╠══════════════════════════════════════════════╣');
+        console.log(`  ║  OLD logic:  ${oldIncidents.length.toString().padStart(5)} incidents  ${oldHours.padStart(6)} hours  ║`);
+        console.log(`  ║  NEW logic:  ${newIncidents.length.toString().padStart(5)} incidents  ${newHours.padStart(6)} hours  ║`);
+        console.log(`  ║  Reduction:  ${reduction.padStart(5)}%                        ║`);
+        console.log('  ╚══════════════════════════════════════════════╝');
+
+        // By severity
+        for (const sev of ['moderate', 'high'] as DwellSeverity[]) {
+            const oldCount = oldIncidents.filter(i => i.severity === sev).length;
+            const newCount = newIncidents.filter(i => i.severity === sev).length;
+            const oldSevSec = oldIncidents.filter(i => i.severity === sev).reduce((s, i) => s + i.trackedDwellSeconds, 0);
+            const newSevSec = newIncidents.filter(i => i.severity === sev).reduce((s, i) => s + i.trackedDwellSeconds, 0);
+            console.log(`  ${sev.toUpperCase()}: ${oldCount} → ${newCount} incidents, ${(oldSevSec / 3600).toFixed(1)} → ${(newSevSec / 3600).toFixed(1)} hours`);
+        }
+
+        // New classified incidents should match legacy (~141)
+        const newClassified = newIncidents.filter(i => i.severity !== 'minor').length;
+        expect(newClassified).toBeGreaterThan(100);
+        expect(newClassified).toBeLessThan(200);
+    });
+
+    it('shows top stops eliminated by the fix', () => {
+        // Group old incidents by stop
+        const oldByStop = new Map<string, { count: number; totalSec: number }>();
+        for (const inc of oldIncidents) {
+            const key = `${inc.stopName} (${inc.routeName})`;
+            const cur = oldByStop.get(key) ?? { count: 0, totalSec: 0 };
+            cur.count++;
+            cur.totalSec += inc.trackedDwellSeconds;
+            oldByStop.set(key, cur);
+        }
+        const newByStop = new Map<string, { count: number; totalSec: number }>();
+        for (const inc of newIncidents) {
+            const key = `${inc.stopName} (${inc.routeName})`;
+            const cur = newByStop.get(key) ?? { count: 0, totalSec: 0 };
+            cur.count++;
+            cur.totalSec += inc.trackedDwellSeconds;
+            newByStop.set(key, cur);
+        }
+
+        // Find biggest reductions
+        const reductions: { stop: string; oldCount: number; newCount: number; oldHrs: number; newHrs: number }[] = [];
+        for (const [stop, old] of oldByStop) {
+            const nw = newByStop.get(stop) ?? { count: 0, totalSec: 0 };
+            reductions.push({
+                stop,
+                oldCount: old.count,
+                newCount: nw.count,
+                oldHrs: old.totalSec / 3600,
+                newHrs: nw.totalSec / 3600,
+            });
+        }
+        reductions.sort((a, b) => (b.oldHrs - b.newHrs) - (a.oldHrs - a.newHrs));
+
+        console.log('\n  TOP 10 STOPS — BIGGEST DWELL REDUCTION:');
+        for (const r of reductions.slice(0, 10)) {
+            const delta = r.oldHrs - r.newHrs;
+            console.log(`    ${r.stop}: ${r.oldCount}→${r.newCount} incidents, ${r.oldHrs.toFixed(2)}→${r.newHrs.toFixed(2)} hrs (−${delta.toFixed(2)} hrs)`);
+        }
+
+        expect(reductions.length).toBeGreaterThan(0);
+    });
+
+    it('diagnoses hours gap vs legacy', () => {
+        // Pure legacy formula — no boarding floor, no classifyDwell, just R>3 gate
+        let legacyCount = 0;
+        let legacyTotalMin = 0;
+        let branch1Count = 0, branch1TotalMin = 0;
+        let branch2Count = 0, branch2TotalMin = 0;
+        let newBranch1Count = 0, newBranch1TotalMin = 0;
+        let newBranch2Count = 0, newBranch2TotalMin = 0;
+        let floorFilteredCount = 0, floorFilteredMin = 0;
+
+        for (const r of records) {
+            if (!r.timePoint) continue;
+            if (!r.observedArrivalTime || !r.observedDepartureTime) continue;
+            let arrSec = timeToSeconds(r.observedArrivalTime);
+            let depSec = timeToSeconds(r.observedDepartureTime);
+            if (depSec < arrSec) depSec += 86400;
+
+            const schedDepSec = timeToSeconds(r.stopTime);
+            const depLateMin = (depSec - schedDepSec) / 60; // R column
+            if (depLateMin <= 3) continue; // Legacy gate: R > 3
+
+            const rawDwellMin = (depSec - arrSec) / 60;
+            const isLateArrival = arrSec > schedDepSec; // N > P
+
+            let legacyDwellMin: number;
+            if (isLateArrival) {
+                legacyDwellMin = rawDwellMin; // (Q-N)*1440
+                branch2Count++;
+                branch2TotalMin += legacyDwellMin;
+            } else {
+                legacyDwellMin = depLateMin; // R
+                branch1Count++;
+                branch1TotalMin += legacyDwellMin;
+            }
+
+            if (legacyDwellMin > 0) {
+                legacyCount++;
+                legacyTotalMin += legacyDwellMin;
+            }
+        }
+
+        // Now compute our new logic totals with branch breakdown
+        for (const inc of newIncidents) {
+            const arrSec = timeToSeconds(inc.observedArrivalTime);
+            const schedDepSec = timeToSeconds(
+                records.find(r => r.tripId === inc.tripName)?.stopTime ?? '00:00'
+            );
+            // Just use the stored values
+            if (inc.trackedDwellSeconds === inc.rawDwellSeconds) {
+                // Could be either branch where arr==schedDep
+            }
+        }
+
+        console.log('\n  === LEGACY FORMULA EXACT REPLICA ===');
+        console.log(`  Total: ${legacyCount} incidents, ${(legacyTotalMin / 60).toFixed(1)} hours`);
+        console.log(`  Branch 1 (on-time arr → depLateness): ${branch1Count} incidents, ${(branch1TotalMin / 60).toFixed(1)} hrs`);
+        console.log(`  Branch 2 (late arr → rawDwell): ${branch2Count} incidents, ${(branch2TotalMin / 60).toFixed(1)} hrs`);
+
+        // Now breakdown of our new incidents
+        let newTotal = 0;
+        for (const inc of newIncidents) {
+            newTotal += inc.trackedDwellSeconds;
+        }
+        console.log(`\n  Our code: ${newIncidents.length} incidents, ${(newTotal / 3600).toFixed(1)} hours`);
+
+        // Show what legacy counts that we don't (below boarding floor)
+        let belowFloorCount = 0, belowFloorMin = 0;
+        for (const r of records) {
+            if (!r.timePoint) continue;
+            if (!r.observedArrivalTime || !r.observedDepartureTime) continue;
+            let arrSec = timeToSeconds(r.observedArrivalTime);
+            let depSec = timeToSeconds(r.observedDepartureTime);
+            if (depSec < arrSec) depSec += 86400;
+            const schedDepSec = timeToSeconds(r.stopTime);
+            const depLateMin = (depSec - schedDepSec) / 60;
+            if (depLateMin <= 3) continue;
+            const rawDwellMin = (depSec - arrSec) / 60;
+            const isLateArrival = arrSec > schedDepSec;
+            const dwellMin = isLateArrival ? rawDwellMin : depLateMin;
+            const dwellSec = dwellMin * 60;
+            // These pass legacy gate but get killed by our boarding floor
+            if (dwellSec > 0 && dwellSec <= 120) {
+                belowFloorCount++;
+                belowFloorMin += dwellMin;
+            }
+        }
+        console.log(`\n  Below boarding floor (0-120s dwell, passes legacy gate): ${belowFloorCount} incidents, ${(belowFloorMin / 60).toFixed(1)} hrs`);
+
+        expect(legacyCount).toBeGreaterThan(0);
     });
 });

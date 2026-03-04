@@ -102,8 +102,9 @@ export const OperatorDwellModule: React.FC<OperatorDwellModuleProps> = ({ data }
     );
 
     const filteredIncidents = useMemo((): DwellIncident[] => {
-        if (!selectedOperator) return metrics.incidents;
-        return metrics.incidents.filter(i => i.operatorId === selectedOperator);
+        const classified = metrics.incidents.filter(i => i.severity !== 'minor');
+        if (!selectedOperator) return classified;
+        return classified.filter(i => i.operatorId === selectedOperator);
     }, [metrics, selectedOperator]);
 
     const handleSort = useCallback((col: SortCol) => {
@@ -451,7 +452,7 @@ export const OperatorDwellModule: React.FC<OperatorDwellModuleProps> = ({ data }
                                             <td className="py-2 pr-3 text-gray-600 tabular-nums">{inc.observedArrivalTime}</td>
                                             <td className="py-2 pr-3 text-gray-600 tabular-nums">{inc.observedDepartureTime}</td>
                                             <td className="py-2 pr-3 text-right tabular-nums">{(inc.trackedDwellSeconds / 60).toFixed(1)}</td>
-                                            <td className="py-2"><SeverityBadge severity={inc.severity} /></td>
+                                            <td className="py-2"><SeverityBadge severity={inc.severity as 'moderate' | 'high'} /></td>
                                         </tr>
                                     ))}
                                 </tbody>
