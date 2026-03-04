@@ -211,8 +211,10 @@ describe('dwellCascadeComputer.buildDailyCascadeMetrics', () => {
     expect(trip2.timepoints).toHaveLength(2);
     expect(trip2.timepoints[0].isLate).toBe(true);
     expect(trip2.timepoints[0].deviationSeconds).toBe(480);
+    expect(trip2.timepoints[0].boardings).toBe(2);
     expect(trip2.timepoints[1].isLate).toBe(true);
     expect(trip2.timepoints[1].deviationSeconds).toBe(360);
+    expect(trip2.timepoints[1].boardings).toBe(2);
 
     // Trip-3: first TP late, second TP on-time → recovery
     const trip3 = cascade.cascadedTrips[1];
