@@ -1,5 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { AlertTriangle, Download, Loader2, GraduationCap, Bus, ArrowRight } from 'lucide-react';
+import html2canvas from 'html2canvas';
+import { jsPDF } from 'jspdf';
 import {
     BARRIE_SCHOOLS,
     findBestTrip,
@@ -7,6 +9,7 @@ import {
 } from '../../utils/transit-app/studentPassUtils';
 import type { SchoolConfig, StudentPassResult } from '../../utils/transit-app/studentPassUtils';
 import { StudentPassMap } from './StudentPassMap';
+import { StudentPassPreview } from './StudentPassPreview';
 
 export const StudentPassModule: React.FC = () => {
     const [selectedSchoolId, setSelectedSchoolId] = useState<string>(BARRIE_SCHOOLS[0].id);
@@ -15,6 +18,7 @@ export const StudentPassModule: React.FC = () => {
     const [polygon, setPolygon] = useState<[number, number][] | null>(null);
     const [result, setResult] = useState<StudentPassResult | null>(null);
     const [isCalculating, setIsCalculating] = useState(false);
+    const [isExporting, setIsExporting] = useState(false);
 
     const selectedSchool: SchoolConfig =
         BARRIE_SCHOOLS.find((s) => s.id === selectedSchoolId) ?? BARRIE_SCHOOLS[0];
@@ -53,6 +57,161 @@ export const StudentPassModule: React.FC = () => {
 
     const effectiveBellStart = bellStart || selectedSchool.bellStart;
     const effectiveBellEnd = bellEnd || selectedSchool.bellEnd;
+
+    const handleExportPdf = useCallback(async () => {
+        if (!result?.found) return;
+        setIsExporting(true);
+        try {
+            const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
+            const pageW = doc.internal.pageSize.getWidth();
+            const margin = 14;
+            const contentW = pageW - margin * 2;
+
+            // Title bar
+            doc.setFillColor(31, 41, 55); // gray-900
+            doc.rect(0, 0, pageW, 22, 'F');
+            doc.setTextColor(255, 255, 255);
+            doc.setFontSize(14);
+            doc.setFont('helvetica', 'bold');
+            doc.text(selectedSchool.name, margin, 13);
+            doc.setFontSize(9);
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(209, 213, 219); // gray-300
+            doc.text('Student Transit Pass', margin, 19);
+
+            let y = 30;
+
+            // Try to capture map
+            const mapEl = document.querySelector('.student-pass-map') as HTMLElement | null;
+            if (mapEl) {
+                try {
+                    const canvas = await html2canvas(mapEl, { useCORS: true, scale: 1.5 });
+                    const imgData = canvas.toDataURL('image/jpeg', 0.85);
+                    const mapH = contentW * 0.55;
+                    doc.addImage(imgData, 'JPEG', margin, y, contentW, mapH);
+                    y += mapH + 6;
+                } catch {
+                    // Map capture failed — continue without it
+                }
+            }
+
+            // "In Numbers" section header
+            doc.setFontSize(9);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(31, 41, 55);
+            doc.text('ZONE — IN NUMBERS', margin, y);
+            y += 5;
+
+            // Stats box background
+            const statsLines: string[] = [];
+            const tripDuration = result.morningLegs.length > 0
+                ? result.morningLegs[result.morningLegs.length - 1].arrivalMinutes - result.morningLegs[0].departureMinutes
+                : 0;
+            statsLines.push(`Trip Time: ${tripDuration} min`);
+
+            if (!result.isDirect && result.morningLegs.length === 2) {
+                statsLines.push(`Transfer: Rt ${result.morningLegs[0].routeShortName} -> Rt ${result.morningLegs[1].routeShortName} at ${result.morningLegs[0].toStop}`);
+            }
+            if (!result.isDirect && result.transfer) {
+                statsLines.push(`Connection: ${result.transfer.label} (${result.transfer.waitMinutes} min wait)`);
+            }
+            if (result.frequencyPerHour != null && result.frequencyPerHour > 0) {
+                const intervalMin = Math.round(60 / result.frequencyPerHour);
+                statsLines.push(`Bus Frequency: Every ${intervalMin} min`);
+            }
+            const routes = [...new Set([
+                ...result.morningLegs.map((l) => l.routeShortName),
+                ...result.afternoonLegs.map((l) => l.routeShortName),
+            ])].join(', ');
+            statsLines.push(`Routes: ${routes}`);
+
+            doc.setFillColor(249, 250, 251); // gray-50
+            doc.setDrawColor(229, 231, 235); // gray-200
+            const statsBoxH = statsLines.length * 5 + 6;
+            doc.roundedRect(margin, y, contentW, statsBoxH, 2, 2, 'FD');
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(8);
+            doc.setTextColor(55, 65, 81);
+            statsLines.forEach((line, i) => {
+                doc.text(line, margin + 4, y + 5 + i * 5);
+            });
+            y += statsBoxH + 6;
+
+            // Morning / Afternoon two-column headers
+            const colW = contentW / 2;
+            doc.setFontSize(8);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(29, 78, 216); // blue-700
+            doc.text('MORNING TRIP', margin, y);
+            doc.setTextColor(180, 83, 9); // amber-700
+            doc.text('AFTERNOON TRIP', margin + colW, y);
+            y += 5;
+
+            // Morning steps
+            const morningSteps: string[] = [];
+            if (result.isDirect && result.morningLegs.length === 1) {
+                const leg = result.morningLegs[0];
+                morningSteps.push(`1. Board Rt ${leg.routeShortName} at ${minutesToDisplayTime(leg.departureMinutes)}`);
+                morningSteps.push(`   from ${leg.fromStop}`);
+                morningSteps.push(`2. Arrive ${leg.toStop}`);
+                morningSteps.push(`   at ${minutesToDisplayTime(leg.arrivalMinutes)}`);
+                morningSteps.push(`3. Walk to school`);
+                morningSteps.push(`   Bell: ${effectiveBellStart}`);
+            } else if (!result.isDirect && result.morningLegs.length === 2) {
+                const legA = result.morningLegs[0];
+                const legB = result.morningLegs[1];
+                const waitMin = result.transfer?.waitMinutes ?? (legB.departureMinutes - legA.arrivalMinutes);
+                morningSteps.push(`1. Board Rt ${legA.routeShortName} at ${minutesToDisplayTime(legA.departureMinutes)}`);
+                morningSteps.push(`   from ${legA.fromStop}`);
+                morningSteps.push(`2. Transfer at ${legA.toStop}`);
+                morningSteps.push(`   (${waitMin} min wait)`);
+                morningSteps.push(`3. Board Rt ${legB.routeShortName} at ${minutesToDisplayTime(legB.departureMinutes)}`);
+                morningSteps.push(`4. Arrive ${legB.toStop}`);
+                morningSteps.push(`   at ${minutesToDisplayTime(legB.arrivalMinutes)}`);
+            }
+
+            // Afternoon steps
+            const afternoonSteps: string[] = [];
+            afternoonSteps.push(`1. Bell rings at ${effectiveBellEnd}`);
+            if (result.afternoonLegs.length > 0) {
+                const leg = result.afternoonLegs[0];
+                afternoonSteps.push(`2. Board Rt ${leg.routeShortName} at ${minutesToDisplayTime(leg.departureMinutes)}`);
+                afternoonSteps.push(`   from ${leg.fromStop}`);
+                afternoonSteps.push(`3. Arrive ${leg.toStop}`);
+                afternoonSteps.push(`   at ${minutesToDisplayTime(leg.arrivalMinutes)}`);
+                if (result.nextAfternoonDepartureMinutes != null) {
+                    afternoonSteps.push(`Next bus: ${minutesToDisplayTime(result.nextAfternoonDepartureMinutes)}`);
+                }
+            } else {
+                afternoonSteps.push('2. No service data available');
+            }
+
+            // Print two columns
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(7.5);
+            const maxRows = Math.max(morningSteps.length, afternoonSteps.length);
+            for (let i = 0; i < maxRows; i++) {
+                const rowY = y + i * 4.5;
+                doc.setTextColor(55, 65, 81);
+                if (morningSteps[i]) doc.text(morningSteps[i], margin, rowY);
+                if (afternoonSteps[i]) doc.text(afternoonSteps[i], margin + colW, rowY);
+            }
+
+            // Footer
+            const footerY = doc.internal.pageSize.getHeight() - 10;
+            doc.setFontSize(7);
+            doc.setTextColor(156, 163, 175); // gray-400
+            const today = new Date().toLocaleDateString('en-CA');
+            doc.text('Barrie Transit', margin, footerY);
+            doc.text(today, pageW - margin, footerY, { align: 'right' });
+
+            // Save
+            const safeName = selectedSchool.name.replace(/[^a-zA-Z0-9]/g, '-');
+            doc.save(`${safeName}-Student-Transit-Pass.pdf`);
+        } finally {
+            setIsExporting(false);
+        }
+    }, [result, selectedSchool, effectiveBellStart, effectiveBellEnd]);
 
     return (
         <div className="flex h-[680px] border border-gray-200 rounded-lg overflow-hidden bg-white">
@@ -270,15 +429,25 @@ export const StudentPassModule: React.FC = () => {
                     )}
                 </div>
 
-                {/* Export button placeholder */}
+                {/* PDF export button */}
                 <div className="p-4 border-t border-gray-200">
                     <button
-                        disabled={!result?.found}
-                        className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-blue-600 text-white hover:bg-blue-700 disabled:hover:bg-blue-600"
-                        title={result?.found ? 'Export pass details' : 'No trip result to export'}
+                        onClick={handleExportPdf}
+                        disabled={!result?.found || isExporting}
+                        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors font-medium shadow-sm disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                        title={result?.found ? 'Download student transit pass PDF' : 'No trip result to export'}
                     >
-                        <Download size={15} />
-                        Export Pass Details
+                        {isExporting ? (
+                            <>
+                                <Loader2 size={15} className="animate-spin" />
+                                Generating...
+                            </>
+                        ) : (
+                            <>
+                                <Download size={15} />
+                                Download PDF
+                            </>
+                        )}
                     </button>
                 </div>
             </div>
@@ -295,24 +464,23 @@ export const StudentPassModule: React.FC = () => {
                     />
                 </div>
 
-                {/* Preview placeholder (~40% of height) */}
-                <div className="flex-[2] border-t border-gray-200 bg-gray-50 flex items-center justify-center min-h-0">
+                {/* Flyer preview — shown only when result found */}
+                <div className="flex-[2] min-h-0 overflow-y-auto">
                     {result?.found ? (
-                        <div className="text-center px-6">
-                            <div className="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center mx-auto mb-2">
-                                <GraduationCap size={24} className="text-blue-600" />
-                            </div>
-                            <p className="text-sm font-medium text-gray-700">Pass Preview</p>
-                            <p className="text-xs text-gray-400 mt-1">
-                                PDF brochure coming in Task 6
-                            </p>
-                        </div>
+                        <StudentPassPreview
+                            school={selectedSchool}
+                            result={result}
+                            bellStart={effectiveBellStart}
+                            bellEnd={effectiveBellEnd}
+                        />
                     ) : (
-                        <div className="text-center px-6">
-                            <GraduationCap size={32} className="text-gray-300 mx-auto mb-2" />
-                            <p className="text-sm text-gray-400">
-                                Pass preview will appear here after a zone is drawn.
-                            </p>
+                        <div className="h-full flex items-center justify-center bg-gray-50">
+                            <div className="text-center px-6">
+                                <GraduationCap size={32} className="text-gray-300 mx-auto mb-2" />
+                                <p className="text-sm text-gray-400">
+                                    Pass preview will appear here after a zone is drawn.
+                                </p>
+                            </div>
                         </div>
                     )}
                 </div>
