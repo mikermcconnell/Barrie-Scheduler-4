@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { AlertTriangle, Download, Loader2, GraduationCap, Bus, ArrowRight, ArrowLeft } from 'lucide-react';
+import { AlertTriangle, Download, Loader2, GraduationCap, ArrowRight, ArrowLeft } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import {
@@ -9,7 +9,9 @@ import {
 } from '../../utils/transit-app/studentPassUtils';
 import type { SchoolConfig, StudentPassResult, TripOptions, RouteOption } from '../../utils/transit-app/studentPassUtils';
 import { StudentPassMap } from './StudentPassMap';
-import { StudentPassPreview } from './StudentPassPreview';
+import { StudentPassPanel } from './StudentPassPanel';
+import StudentPassTimeline from './StudentPassTimeline';
+import './studentPass.css';
 
 interface StudentPassModuleProps {
     onBack: () => void;
@@ -284,282 +286,26 @@ export const StudentPassModule: React.FC<StudentPassModuleProps> = ({ onBack }) 
 
     return (
         <div className="h-full flex flex-col overflow-hidden">
-            {/* Header with back button */}
-            <div className="flex items-center gap-3 px-6 py-3 border-b border-gray-200 bg-white flex-shrink-0">
-                <button
-                    onClick={onBack}
-                    className="p-1 rounded-md hover:bg-gray-100 text-gray-500 hover:text-gray-700 transition-colors"
-                >
+            {/* Dark header */}
+            <div
+                className="flex items-center gap-3 px-6 py-3 flex-shrink-0"
+                style={{ background: '#0B1121', borderBottom: '1px solid rgba(99, 126, 184, 0.12)' }}
+            >
+                <button onClick={onBack} className="text-[#94A3B8] hover:text-[#E2E8F0] transition-colors">
                     <ArrowLeft size={18} />
                 </button>
-                <div className="flex items-center gap-2">
-                    <GraduationCap size={18} className="text-amber-600" />
-                    <h2 className="text-lg font-bold text-gray-900">Student Transit Pass</h2>
-                </div>
+                <GraduationCap size={18} className="text-emerald-400" />
+                <h2
+                    className="text-[15px] font-semibold text-[#E2E8F0]"
+                    style={{ fontFamily: "'JetBrains Mono', monospace" }}
+                >
+                    Student Transit Pass
+                </h2>
             </div>
 
-            <div className="flex flex-1 overflow-hidden">
-            {/* Left config panel */}
-            <div className="w-72 bg-gray-50 border-r border-gray-200 flex flex-col overflow-y-auto">
-                <div className="p-4 border-b border-gray-200">
-                    <p className="text-xs text-gray-500">
-                        Draw a zone on the map to find transit options.
-                    </p>
-                </div>
-
-                {/* School selection */}
-                <div className="p-4 border-b border-gray-200">
-                    <label className="block text-xs font-medium text-gray-700 mb-1.5">School</label>
-                    <select
-                        value={selectedSchoolId}
-                        onChange={(e) => handleSchoolChange(e.target.value)}
-                        className="w-full text-sm border border-gray-300 rounded-md px-3 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    >
-                        {BARRIE_SCHOOLS.map((s) => (
-                            <option key={s.id} value={s.id}>
-                                {s.name}
-                            </option>
-                        ))}
-                    </select>
-                </div>
-
-                {/* Bell time overrides — horizontal layout */}
-                <div className="p-4 border-b border-gray-200">
-                    <p className="text-xs font-medium text-gray-700 mb-2">Bell Times</p>
-                    <div className="grid grid-cols-2 gap-2">
-                        <div>
-                            <label className="text-[10px] text-gray-500 mb-0.5 block uppercase tracking-wide">Start</label>
-                            <input
-                                type="time"
-                                value={bellStart}
-                                placeholder={selectedSchool.bellStart}
-                                onChange={(e) => setBellStart(e.target.value)}
-                                className="w-full text-sm border border-gray-300 rounded-md px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent"
-                            />
-                            {!bellStart && (
-                                <p className="text-[10px] text-gray-400 mt-0.5">{selectedSchool.bellStart}</p>
-                            )}
-                        </div>
-                        <div>
-                            <label className="text-[10px] text-gray-500 mb-0.5 block uppercase tracking-wide">End</label>
-                            <input
-                                type="time"
-                                value={bellEnd}
-                                placeholder={selectedSchool.bellEnd}
-                                onChange={(e) => setBellEnd(e.target.value)}
-                                className="w-full text-sm border border-gray-300 rounded-md px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent"
-                            />
-                            {!bellEnd && (
-                                <p className="text-[10px] text-gray-400 mt-0.5">{selectedSchool.bellEnd}</p>
-                            )}
-                        </div>
-                    </div>
-                </div>
-
-                {/* Zone info */}
-                <div className="p-4 border-b border-gray-200">
-                    <p className="text-xs font-medium text-gray-700 mb-1">Zone Status</p>
-                    {polygon ? (
-                        <div className="text-xs text-gray-600 flex items-center gap-1.5">
-                            <span className="w-2 h-2 rounded-full bg-blue-500 inline-block" />
-                            Zone drawn ({polygon.length} vertices)
-                        </div>
-                    ) : (
-                        <p className="text-xs text-gray-400 italic">
-                            Use the polygon tool (top-right of map) to draw a zone.
-                        </p>
-                    )}
-                </div>
-
-                {/* Route options */}
-                <div className="p-4 flex-1">
-                    {isCalculating && (
-                        <div className="flex items-center gap-2 text-sm text-blue-600">
-                            <Loader2 size={16} className="animate-spin" />
-                            <span>Calculating...</span>
-                        </div>
-                    )}
-
-                    {!isCalculating && tripOptions && tripOptions.morningOptions.length === 0 && (
-                        <div className="flex items-start gap-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-md p-3">
-                            <AlertTriangle size={16} className="flex-shrink-0 mt-0.5" />
-                            <div>
-                                <p className="font-medium">No trip found</p>
-                                <p className="text-xs mt-0.5 text-amber-600">
-                                    No weekday service connects this zone to {selectedSchool.name} within 30 min of bell time.
-                                </p>
-                            </div>
-                        </div>
-                    )}
-
-                    {!isCalculating && tripOptions && tripOptions.morningOptions.length > 0 && (
-                        <div className="space-y-3">
-                            {/* Morning options */}
-                            <div>
-                                <p className="text-xs text-blue-700 mb-1.5 font-semibold uppercase tracking-wide">
-                                    Morning Options
-                                </p>
-                                <div className="space-y-1.5">
-                                    {tripOptions.morningOptions.map((opt, i) => {
-                                        const isSelected = i === selectedMorningIdx;
-                                        const legs = opt.result.morningLegs;
-                                        const firstLeg = legs[0];
-                                        const lastLeg = legs[legs.length - 1];
-                                        const walkMin = opt.result.walkToStop?.walkMinutes;
-                                        return (
-                                            <button
-                                                key={opt.id}
-                                                onClick={() => setSelectedMorningIdx(i)}
-                                                className={`w-full text-left text-xs rounded-lg p-2.5 border-2 transition-all ${
-                                                    isSelected
-                                                        ? 'border-blue-500 bg-blue-50 shadow-sm'
-                                                        : 'border-gray-200 bg-white hover:border-gray-300'
-                                                }`}
-                                            >
-                                                <div className="flex items-center justify-between mb-1">
-                                                    <div className="flex items-center gap-1.5">
-                                                        {legs.map((leg, li) => (
-                                                            <React.Fragment key={li}>
-                                                                {li > 0 && <ArrowRight size={8} className="text-gray-400" />}
-                                                                <span
-                                                                    className="px-1.5 py-0.5 rounded text-white font-bold text-[10px]"
-                                                                    style={{ backgroundColor: leg.routeColor || '#6B7280' }}
-                                                                >
-                                                                    {leg.routeShortName}
-                                                                </span>
-                                                            </React.Fragment>
-                                                        ))}
-                                                    </div>
-                                                    {isSelected && (
-                                                        <span className="text-blue-600 text-[10px] font-semibold">Selected</span>
-                                                    )}
-                                                </div>
-                                                <div className="text-gray-600">
-                                                    {firstLeg && lastLeg && (
-                                                        <span>
-                                                            {minutesToDisplayTime(firstLeg.departureMinutes)}
-                                                            {' → '}
-                                                            {minutesToDisplayTime(lastLeg.arrivalMinutes)}
-                                                        </span>
-                                                    )}
-                                                </div>
-                                                <div className="text-gray-400 mt-0.5">
-                                                    {opt.result.isDirect ? 'Direct' : 'Transfer'}
-                                                    {walkMin != null && ` · ${walkMin} min walk`}
-                                                    {opt.result.transfer && ` · ${opt.result.transfer.waitMinutes} min wait`}
-                                                </div>
-                                            </button>
-                                        );
-                                    })}
-                                </div>
-                            </div>
-
-                            {/* Afternoon options */}
-                            {tripOptions.afternoonOptions.length > 0 && (
-                                <div>
-                                    <p className="text-xs text-amber-700 mb-1.5 font-semibold uppercase tracking-wide">
-                                        Afternoon Options
-                                    </p>
-                                    <div className="space-y-1.5">
-                                        {tripOptions.afternoonOptions.map((opt, i) => {
-                                            const isSelected = i === selectedAfternoonIdx;
-                                            const leg = opt.result.afternoonLegs[0];
-                                            if (!leg) return null;
-                                            return (
-                                                <button
-                                                    key={opt.id}
-                                                    onClick={() => setSelectedAfternoonIdx(i)}
-                                                    className={`w-full text-left text-xs rounded-lg p-2.5 border-2 transition-all ${
-                                                        isSelected
-                                                            ? 'border-amber-500 bg-amber-50 shadow-sm'
-                                                            : 'border-gray-200 bg-white hover:border-gray-300'
-                                                    }`}
-                                                >
-                                                    <div className="flex items-center justify-between mb-1">
-                                                        <div className="flex items-center gap-1.5">
-                                                            <span
-                                                                className="px-1.5 py-0.5 rounded text-white font-bold text-[10px]"
-                                                                style={{ backgroundColor: leg.routeColor || '#6B7280' }}
-                                                            >
-                                                                {leg.routeShortName}
-                                                            </span>
-                                                        </div>
-                                                        {isSelected && (
-                                                            <span className="text-amber-600 text-[10px] font-semibold">Selected</span>
-                                                        )}
-                                                    </div>
-                                                    <div className="text-gray-600">
-                                                        {minutesToDisplayTime(leg.departureMinutes)}
-                                                        {' → '}
-                                                        {minutesToDisplayTime(leg.arrivalMinutes)}
-                                                    </div>
-                                                    <div className="text-gray-400 mt-0.5">
-                                                        {leg.fromStop}
-                                                    </div>
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* Walking + frequency summary for selected option */}
-                            {result?.found && (
-                                <div className="bg-gray-50 border border-gray-200 rounded-md p-2 space-y-1">
-                                    {result.walkToStop && (
-                                        <p className="text-xs text-gray-600">
-                                            Walk to stop: <span className="font-medium text-gray-800">{result.walkToStop.walkMinutes} min</span> ({(result.walkToStop.distanceKm * 1000).toFixed(0)}m)
-                                        </p>
-                                    )}
-                                    {result.walkToSchool && (
-                                        <p className="text-xs text-gray-600">
-                                            Walk to school: <span className="font-medium text-gray-800">{result.walkToSchool.walkMinutes} min</span> ({(result.walkToSchool.distanceKm * 1000).toFixed(0)}m)
-                                        </p>
-                                    )}
-                                    {result.frequencyPerHour != null && (
-                                        <p className="text-xs text-gray-500">
-                                            AM frequency: <span className="font-medium text-gray-700">{result.frequencyPerHour.toFixed(1)} trips/hr</span>
-                                        </p>
-                                    )}
-                                </div>
-                            )}
-                        </div>
-                    )}
-
-                    {!isCalculating && !tripOptions && (
-                        <p className="text-xs text-gray-400 italic">
-                            Draw a zone on the map to see transit options.
-                        </p>
-                    )}
-                </div>
-
-                {/* PDF export button */}
-                <div className="p-4 border-t border-gray-200">
-                    <button
-                        onClick={handleExportPdf}
-                        disabled={!result?.found || isExporting}
-                        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors font-medium shadow-sm disabled:opacity-50 disabled:cursor-not-allowed text-sm"
-                        title={result?.found ? 'Download student transit pass PDF' : 'No trip result to export'}
-                    >
-                        {isExporting ? (
-                            <>
-                                <Loader2 size={15} className="animate-spin" />
-                                Generating...
-                            </>
-                        ) : (
-                            <>
-                                <Download size={15} />
-                                Download PDF
-                            </>
-                        )}
-                    </button>
-                </div>
-            </div>
-
-            {/* Right: map + preview */}
-            <div className="flex-1 flex flex-col min-w-0">
-                {/* Map (~60% of height) */}
-                <div className="flex-[3] min-h-0">
+            {/* Map fills everything */}
+            <div className="flex-1 relative overflow-hidden" style={{ background: '#0B1121' }}>
+                <div className="absolute inset-0 student-pass-dark">
                     <StudentPassMap
                         school={selectedSchool}
                         result={result}
@@ -568,44 +314,34 @@ export const StudentPassModule: React.FC<StudentPassModuleProps> = ({ onBack }) 
                     />
                 </div>
 
-                {/* Flyer preview — shown only when result found */}
-                <div className="flex-[2] min-h-0 overflow-y-auto">
-                    {result?.found ? (
-                        <StudentPassPreview
-                            school={selectedSchool}
-                            result={result}
-                            bellStart={effectiveBellStart}
-                            bellEnd={effectiveBellEnd}
-                        />
-                    ) : (
-                        <div className="h-full flex items-center justify-center bg-gray-50/80">
-                            <div className="px-8 py-6 max-w-xs">
-                                <div className="space-y-3">
-                                    {[
-                                        { step: '1', label: 'Select a school', done: true },
-                                        { step: '2', label: 'Draw a residential zone on the map', done: !!polygon },
-                                        { step: '3', label: 'Review trip & download PDF', done: false },
-                                    ].map((item, i) => (
-                                        <div key={i} className="flex items-center gap-3">
-                                            <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${
-                                                item.done
-                                                    ? 'bg-amber-500 text-white'
-                                                    : 'bg-gray-200 text-gray-400'
-                                            }`}>
-                                                {item.done ? '✓' : item.step}
-                                            </div>
-                                            <span className={`text-sm ${item.done ? 'text-gray-700' : 'text-gray-400'}`}>
-                                                {item.label}
-                                            </span>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        </div>
-                    )}
-                </div>
+                {/* Floating panel overlay */}
+                <StudentPassPanel
+                    selectedSchoolId={selectedSchoolId}
+                    onSchoolChange={handleSchoolChange}
+                    selectedSchool={selectedSchool}
+                    bellStart={bellStart}
+                    bellEnd={bellEnd}
+                    onBellStartChange={setBellStart}
+                    onBellEndChange={setBellEnd}
+                    effectiveBellStart={effectiveBellStart}
+                    effectiveBellEnd={effectiveBellEnd}
+                    polygon={polygon}
+                    isCalculating={isCalculating}
+                    tripOptions={tripOptions}
+                    result={result}
+                    selectedMorningIdx={selectedMorningIdx}
+                    selectedAfternoonIdx={selectedAfternoonIdx}
+                    onMorningSelect={setSelectedMorningIdx}
+                    onAfternoonSelect={setSelectedAfternoonIdx}
+                    onExport={handleExportPdf}
+                    isExporting={isExporting}
+                />
+
+                {/* Journey timeline at bottom */}
+                {result?.found && (
+                    <StudentPassTimeline result={result} />
+                )}
             </div>
-        </div>
         </div>
     );
 };
