@@ -37,3 +37,6 @@ data/analysis/
 data/gtfs/
 *.xlsx
 *.JPG
+
+# Git worktrees
+.worktrees/
