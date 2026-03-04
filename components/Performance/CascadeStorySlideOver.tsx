@@ -32,23 +32,18 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
     const [selectedPointIndex, setSelectedPointIndex] = useState<number | null>(null);
     const [visible, setVisible] = useState(false);
 
-    // Customer impact: passengers affected + peak load at late stops
+    // Customer impact: actual APC boardings at late stops
     const customerImpact = useMemo(() => {
-        if (stopLoadLookup.size === 0) return null;
         let totalBoardings = 0;
-        let peakLoad = 0;
         for (const trip of cascade.cascadedTrips) {
             for (const tp of trip.timepoints) {
                 if (!tp.isLate) continue;
-                const data = stopLoadLookup.get(`${trip.routeId}_${tp.stopId}`);
-                if (!data) continue;
-                totalBoardings += data.avgBoardings;
-                if (data.avgLoad > peakLoad) peakLoad = data.avgLoad;
+                totalBoardings += tp.boardings;
             }
         }
         if (totalBoardings === 0) return null;
-        return { totalBoardings: Math.round(totalBoardings), peakLoad: Math.round(peakLoad) };
-    }, [cascade.cascadedTrips, stopLoadLookup]);
+        return { totalBoardings };
+    }, [cascade.cascadedTrips]);
 
     // Per-cascade OTP impact
     const otpImpact = useMemo(() => {
@@ -155,8 +150,10 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
                     {customerImpact && (
                         <>
                             <span className="text-gray-300">|</span>
-                            <span>~<span className="font-semibold text-gray-800">{customerImpact.totalBoardings}</span> passengers affected</span>
-                            <span>Peak load: <span className="font-semibold text-gray-800">{customerImpact.peakLoad}</span> on bus</span>
+                            <span>
+                                <span className="font-semibold text-gray-800">{customerImpact.totalBoardings}</span>
+                                {' '}boardings at late stops
+                            </span>
                         </>
                     )}
                 </div>
@@ -195,6 +192,8 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
                             selectedTripIndex={selectedTripIndex}
                             onSelectPoint={setSelectedPointIndex}
                             stopLoadLookup={stopLoadLookup}
+                            dwellOriginStopId={cascade.stopId}
+                            dwellExcessMinutes={cascade.trackedDwellSeconds / 60}
                         />
                     </div>
 
