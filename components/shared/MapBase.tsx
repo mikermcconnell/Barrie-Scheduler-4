@@ -1,5 +1,5 @@
 import React from 'react';
-import Map from 'react-map-gl/mapbox';
+import Map, { NavigationControl, ScaleControl, MapRef } from 'react-map-gl/mapbox';
 import 'mapbox-gl/dist/mapbox-gl.css';
 
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN as string;
@@ -17,6 +17,9 @@ export interface MapBaseProps {
     style?: React.CSSProperties;
     children?: React.ReactNode;
     onLoad?: () => void;
+    showNavigation?: boolean;
+    showScale?: boolean;
+    mapRef?: React.RefObject<MapRef | null>;
 }
 
 export const MapBase: React.FC<MapBaseProps> = ({
@@ -29,10 +32,14 @@ export const MapBase: React.FC<MapBaseProps> = ({
     style,
     children,
     onLoad,
+    showNavigation,
+    showScale,
+    mapRef,
 }) => {
     return (
         <div className={className} style={{ width: '100%', height: '100%', minHeight: 300 }}>
             <Map
+                ref={mapRef}
                 mapboxAccessToken={MAPBOX_TOKEN}
                 initialViewState={{ longitude, latitude, zoom }}
                 mapStyle={mapStyle}
@@ -43,6 +50,8 @@ export const MapBase: React.FC<MapBaseProps> = ({
                 dragRotate={false}
                 pitchWithRotate={false}
             >
+                {showNavigation && <NavigationControl position="bottom-right" />}
+                {showScale && <ScaleControl position="bottom-left" unit="metric" />}
                 {children}
             </Map>
         </div>

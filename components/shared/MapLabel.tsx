@@ -6,6 +6,7 @@ export interface MapLabelProps {
     size?: 'sm' | 'md' | 'lg';
     borderColor?: string;
     bgColor?: string;
+    mono?: boolean;
 }
 
 const SIZE_CLASSES = {
@@ -20,6 +21,7 @@ export const MapLabel: React.FC<MapLabelProps> = ({
     bgColor = '#111827',
     borderColor = 'rgba(255,255,255,0.85)',
     size = 'md',
+    mono = false,
 }) => {
     return (
         <div
@@ -29,7 +31,7 @@ export const MapLabel: React.FC<MapLabelProps> = ({
                 color: 'white',
                 border: `1.5px solid ${borderColor}`,
                 boxShadow: '0 2px 8px rgba(0,0,0,0.6)',
-                fontFamily: 'system-ui, -apple-system, sans-serif',
+                fontFamily: mono ? "'JetBrains Mono', monospace" : "'DM Sans', sans-serif",
             }}
         >
             <div>{text}</div>
