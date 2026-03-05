@@ -14,7 +14,38 @@ import type {
   Transfer,
   NearbyStop,
   ServiceCalendar,
+  CalendarEntry,
 } from './types';
+
+/**
+ * Derive reference date and window size from GTFS calendar entries.
+ * Ensures the service calendar covers the full GTFS validity period.
+ */
+function getCalendarSpan(calendar: CalendarEntry[]): { referenceDate: Date; daysAhead: number } {
+  if (calendar.length === 0) {
+    return { referenceDate: new Date(), daysAhead: 30 };
+  }
+
+  const startDates = calendar.map((c) => c.startDate).sort();
+  const endDates = calendar.map((c) => c.endDate).sort();
+
+  const earliest = startDates[0];
+  const latest = endDates[endDates.length - 1];
+
+  const refYear = parseInt(earliest.substring(0, 4), 10);
+  const refMonth = parseInt(earliest.substring(4, 6), 10) - 1;
+  const refDay = parseInt(earliest.substring(6, 8), 10);
+  const referenceDate = new Date(refYear, refMonth, refDay);
+
+  const endYear = parseInt(latest.substring(0, 4), 10);
+  const endMonth = parseInt(latest.substring(4, 6), 10) - 1;
+  const endDay = parseInt(latest.substring(6, 8), 10);
+  const endDate = new Date(endYear, endMonth, endDay);
+
+  const daysAhead = Math.ceil((endDate.getTime() - referenceDate.getTime()) / 86400000) + 1;
+
+  return { referenceDate, daysAhead };
+}
 
 /**
  * Build stop departures index.
@@ -280,7 +311,11 @@ export function buildRoutingData(gtfsData: GtfsData): RoutingData {
   const tripIndex = buildTripIndex(trips);
   const stopIndex = buildStopIndex(stops);
   const stopRoutes = buildStopRoutesIndex(stopDepartures);
-  const serviceCalendar = buildServiceCalendar(calendar, calendarDates);
+
+  // Derive reference date and window from GTFS calendar validity range
+  // so the service calendar covers the full GTFS dataset regardless of today's date
+  const { referenceDate, daysAhead } = getCalendarSpan(calendar);
+  const serviceCalendar = buildServiceCalendar(calendar, calendarDates, daysAhead, referenceDate);
   const stopTimesIndex = buildStopTimesIndex(stopTimes);
   const tripStopTimes = buildTripStopTimesIndex(stopTimes);
 

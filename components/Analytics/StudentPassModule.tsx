@@ -4,10 +4,10 @@ import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import {
     BARRIE_SCHOOLS,
-    findTripOptions,
     minutesToDisplayTime,
 } from '../../utils/transit-app/studentPassUtils';
 import type { SchoolConfig, StudentPassResult, TripOptions, RouteOption } from '../../utils/transit-app/studentPassUtils';
+import { findTripOptionsRaptor } from '../../utils/transit-app/studentPassRaptorAdapter';
 import { StudentPassMap } from './StudentPassMap';
 import { StudentPassPreview } from './StudentPassPreview';
 
@@ -66,7 +66,7 @@ export const StudentPassModule: React.FC<StudentPassModuleProps> = ({ onBack }) 
                 bellStart: effectiveBellStart,
                 bellEnd: effectiveBellEnd,
             };
-            const options = findTripOptions(polygon, schoolWithOverrides);
+            const options = findTripOptionsRaptor(polygon, schoolWithOverrides);
             setTripOptions(options);
             setSelectedMorningIdx(0);
             setSelectedAfternoonIdx(0);
