@@ -429,11 +429,6 @@ interface ParsedRoute {
     routeShortName: string;
 }
 
-interface ParsedCalendar {
-    serviceId: string;
-    weekday: boolean;
-}
-
 // Module-level caches — parse once per session
 let cachedStopTimes: ParsedStopTime[] | null = null;
 let cachedTrips: Map<string, ParsedTrip> | null = null;
@@ -710,53 +705,6 @@ export function getTransferQuality(waitMinutes: number): TransferInfo {
         label: 'Long wait',
         waitMinutes,
     };
-}
-
-// ─── Index helpers ────────────────────────────────────────────────────────────
-
-/**
- * Build a map of stop_id → stop name using the coords data.
- */
-function buildStopIdToName(): Map<string, string> {
-    const stops = getAllStopsWithCoords();
-    const map = new Map<string, string>();
-    for (const s of stops) {
-        map.set(s.stop_id, s.stop_name);
-    }
-    return map;
-}
-
-let cachedStopIdToName: Map<string, string> | null = null;
-function getStopIdToName(): Map<string, string> {
-    if (!cachedStopIdToName) cachedStopIdToName = buildStopIdToName();
-    return cachedStopIdToName;
-}
-
-/**
- * Build a map: trip_id → sorted stop times array (by sequence).
- */
-function buildTripStopTimesIndex(
-    stopTimes: ParsedStopTime[]
-): Map<string, ParsedStopTime[]> {
-    const index = new Map<string, ParsedStopTime[]>();
-    for (const st of stopTimes) {
-        const arr = index.get(st.tripId);
-        if (arr) arr.push(st);
-        else index.set(st.tripId, [st]);
-    }
-    // Sort each trip's stop times by sequence
-    for (const arr of index.values()) {
-        arr.sort((a, b) => a.stopSequence - b.stopSequence);
-    }
-    return index;
-}
-
-let cachedTripStopTimesIndex: Map<string, ParsedStopTime[]> | null = null;
-function getTripStopTimesIndex(): Map<string, ParsedStopTime[]> {
-    if (!cachedTripStopTimesIndex) {
-        cachedTripStopTimesIndex = buildTripStopTimesIndex(loadStopTimes());
-    }
-    return cachedTripStopTimesIndex;
 }
 
 // ─── RAPTOR-powered trip finding ─────────────────────────────────────────────
