@@ -220,20 +220,20 @@ export const HeadwayMap: React.FC<HeadwayMapProps> = ({ onBack }) => {
     };
 
     // Hover layer: same source, filtered to hovered segment with bumped width/opacity
-    const corridorHoverLayerStyle = {
+    const corridorHoverLayerStyle: LayerProps = {
         id: CORRIDOR_HOVER_LAYER,
         type: 'line' as const,
-        filter: hoveredId !== null
+        filter: (hoveredId !== null
             ? ['==', ['get', 'segmentId'], hoveredId]
-            : ['==', ['literal', true], ['literal', false]],
+            : ['==', ['literal', true], ['literal', false]]) as unknown as mapboxgl.FilterSpecification,
         layout: {
             'line-cap': 'round' as const,
             'line-join': 'round' as const,
         },
         paint: {
-            'line-color': ['get', 'color'],
-            'line-width': ['+', ['get', 'weight'], 3],
-            'line-opacity': ['min', ['+', ['get', 'opacity'], 0.15], 1],
+            'line-color': ['get', 'color'] as unknown as string,
+            'line-width': ['+', ['get', 'weight'], 3] as unknown as number,
+            'line-opacity': ['min', ['+', ['get', 'opacity'], 0.15], 1] as unknown as number,
         },
     };
 
@@ -428,13 +428,13 @@ export const HeadwayMap: React.FC<HeadwayMapProps> = ({ onBack }) => {
                 >
                     {/* Corridor polylines */}
                     <Source id={CORRIDOR_SRC} type="geojson" data={corridorGeoJSON}>
-                        <Layer {...corridorLayerStyle as LayerProps} />
-                        <Layer {...corridorHoverLayerStyle as LayerProps} />
+                        <Layer {...corridorLayerStyle} />
+                        <Layer {...corridorHoverLayerStyle} />
                     </Source>
 
                     {/* Blue highlight for selected segment */}
                     <Source id={HIGHLIGHT_SRC} type="geojson" data={highlightGeoJSON}>
-                        <Layer {...highlightLayerStyle as LayerProps} />
+                        <Layer {...highlightLayerStyle} />
                     </Source>
 
                     {/* Junction stops (white dots, minZoom 14) */}

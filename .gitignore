@@ -38,5 +38,8 @@ data/gtfs/
 *.xlsx
 *.JPG
 
+# Temp files
+.tmp/
+
 # Git worktrees
 .worktrees/
