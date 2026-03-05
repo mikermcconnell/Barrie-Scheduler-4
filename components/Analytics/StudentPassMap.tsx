@@ -172,24 +172,32 @@ export const StudentPassMap: React.FC<StudentPassMapProps> = ({
         return toLineGeoJSON([[w.fromLat, w.fromLon], [w.toLat, w.toLon]]);
     }, [result?.walkToZone]);
 
+    // Unique key per result so Mapbox fully removes stale layers on selection change
+    const resultKey = useMemo(() => {
+        if (!result?.found) return '';
+        const am = result.morningLegs.map(l => l.tripId).join('-');
+        const pm = (result.afternoonLegs ?? []).map(l => l.tripId).join('-');
+        return `${am}_${pm}`;
+    }, [result]);
+
     const amRouteShapeGeoJSONs = useMemo(() => {
         if (!result?.routeShapes) return [];
         return result.routeShapes.map((shape, i) => ({
-            id: `route-shape-am-${i}`,
+            id: `am-${resultKey}-${i}`,
             geoJSON: toLineGeoJSON(shape.points),
             color: routeColor(shape.routeColor),
             isDashed: shape.isDashed,
         }));
-    }, [result?.routeShapes]);
+    }, [result?.routeShapes, resultKey]);
 
     const pmRouteShapeGeoJSONs = useMemo(() => {
         if (!result?.afternoonRouteShapes) return [];
         return result.afternoonRouteShapes.map((shape, i) => ({
-            id: `route-shape-pm-${i}`,
+            id: `pm-${resultKey}-${i}`,
             geoJSON: toLineGeoJSON(shape.points),
             color: routeColor(shape.routeColor),
         }));
-    }, [result?.afternoonRouteShapes]);
+    }, [result?.afternoonRouteShapes, resultKey]);
 
     // ── Dash layer IDs for animation ──────────────────────────────────────────
 
@@ -330,8 +338,8 @@ export const StudentPassMap: React.FC<StudentPassMapProps> = ({
                 {/* ── Walking leg: zone centroid → boarding stop ── */}
                 {hasResult && walkToStopGeoJSON && result?.walkToStop && (
                     <>
-                        <Source id="walk-to-stop" type="geojson" data={walkToStopGeoJSON}>
-                            <Layer {...walkLineLayer('walk-to-stop-line', '#94A3B8', 0.7, [4, 8])} />
+                        <Source id={`walk-to-stop-${resultKey}`} type="geojson" data={walkToStopGeoJSON}>
+                            <Layer {...walkLineLayer(`walk-to-stop-line-${resultKey}`, '#94A3B8', 0.7, [4, 8])} />
                         </Source>
 
                         {/* Zone centroid marker — pulsing blue dot */}
@@ -449,8 +457,8 @@ export const StudentPassMap: React.FC<StudentPassMapProps> = ({
                 {/* ── Walking leg: alighting stop → school ── */}
                 {hasResult && walkToSchoolGeoJSON && result?.walkToSchool && (
                     <>
-                        <Source id="walk-to-school" type="geojson" data={walkToSchoolGeoJSON}>
-                            <Layer {...walkLineLayer('walk-to-school-line', '#94A3B8', 0.7, [4, 8])} />
+                        <Source id={`walk-to-school-${resultKey}`} type="geojson" data={walkToSchoolGeoJSON}>
+                            <Layer {...walkLineLayer(`walk-to-school-line-${resultKey}`, '#94A3B8', 0.7, [4, 8])} />
                         </Source>
                     </>
                 )}
@@ -459,8 +467,8 @@ export const StudentPassMap: React.FC<StudentPassMapProps> = ({
 
                 {/* ── Walk from school to afternoon boarding stop ── */}
                 {hasResult && walkFromSchoolGeoJSON && result?.walkFromSchool && (
-                    <Source id="walk-from-school" type="geojson" data={walkFromSchoolGeoJSON}>
-                        <Layer {...walkLineLayer('walk-from-school-line', '#94A3B8', 0.6, [4, 8])} />
+                    <Source id={`walk-from-school-${resultKey}`} type="geojson" data={walkFromSchoolGeoJSON}>
+                        <Layer {...walkLineLayer(`walk-from-school-line-${resultKey}`, '#94A3B8', 0.6, [4, 8])} />
                     </Source>
                 )}
 
@@ -475,8 +483,8 @@ export const StudentPassMap: React.FC<StudentPassMapProps> = ({
 
                 {/* ── Walk from afternoon alighting stop to zone centroid ── */}
                 {hasResult && walkToZoneGeoJSON && (
-                    <Source id="walk-to-zone" type="geojson" data={walkToZoneGeoJSON}>
-                        <Layer {...walkLineLayer('walk-to-zone-line', '#94A3B8', 0.6, [4, 8])} />
+                    <Source id={`walk-to-zone-${resultKey}`} type="geojson" data={walkToZoneGeoJSON}>
+                        <Layer {...walkLineLayer(`walk-to-zone-line-${resultKey}`, '#94A3B8', 0.6, [4, 8])} />
                     </Source>
                 )}
 
