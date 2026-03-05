@@ -13,7 +13,6 @@ import type {
   Place,
   RouteInfo,
   TransitSegment,
-  GtfsStopTime,
 } from './types';
 
 let itineraryCounter = 0;
@@ -68,32 +67,32 @@ function getRouteInfo(routeId: string, routingData: RoutingData): RouteInfo {
 
 /**
  * Get intermediate stops between boarding and alighting on a trip.
+ * Uses tripStopTimes for loop-route safety.
  */
 function getIntermediateStops(
-  tripId: string,
-  boardingStopId: string,
-  alightingStopId: string,
+  segment: TransitSegment,
   routingData: RoutingData
 ): Place[] {
-  // Find all stop times for this trip, sorted by sequence
-  const tripStopTimes: GtfsStopTime[] = [];
-  for (const st of routingData.stopTimes) {
-    if (st.tripId === tripId) {
-      tripStopTimes.push(st);
+  const tripStops = routingData.tripStopTimes[segment.tripId] || [];
+
+  // Find boarding position (matching stop and time)
+  const boardIdx = tripStops.findIndex(
+    (st) => st.stopId === segment.boardingStopId && st.departureTime >= segment.boardingTime
+  );
+  if (boardIdx < 0) return [];
+
+  // Find alighting position AFTER boarding
+  let alightIdx = -1;
+  for (let i = boardIdx + 1; i < tripStops.length; i++) {
+    if (tripStops[i].stopId === segment.alightingStopId) {
+      alightIdx = i;
+      break;
     }
   }
-  tripStopTimes.sort((a, b) => a.stopSequence - b.stopSequence);
 
-  // Find boarding and alighting indices
-  const boardIdx = tripStopTimes.findIndex((st) => st.stopId === boardingStopId);
-  const alightIdx = tripStopTimes.findIndex((st) => st.stopId === alightingStopId);
+  if (alightIdx < 0 || alightIdx <= boardIdx + 1) return [];
 
-  if (boardIdx < 0 || alightIdx < 0 || alightIdx <= boardIdx + 1) {
-    return [];
-  }
-
-  // Return stops between boarding and alighting (exclusive)
-  return tripStopTimes
+  return tripStops
     .slice(boardIdx + 1, alightIdx)
     .map((st) => makePlace(st.stopId, routingData));
 }
@@ -136,21 +135,25 @@ function buildTransitLeg(
   const from = makePlace(segment.boardingStopId, routingData);
   const to = makePlace(segment.alightingStopId, routingData);
   const route = getRouteInfo(segment.routeId, routingData);
-  const intermediateStops = getIntermediateStops(
-    segment.tripId,
-    segment.boardingStopId,
-    segment.alightingStopId,
-    routingData
+  const intermediateStops = getIntermediateStops(segment, routingData);
+
+  // Get accurate times from tripStopTimes (loop-route safe)
+  const tripStops = routingData.tripStopTimes[segment.tripId] || [];
+  const boardIdx = tripStops.findIndex(
+    (st) => st.stopId === segment.boardingStopId && st.departureTime >= segment.boardingTime
   );
 
-  // Get accurate times from stopTimesIndex
-  const boardingKey = `${segment.tripId}_${segment.boardingStopId}`;
-  const alightingKey = `${segment.tripId}_${segment.alightingStopId}`;
-  const boardingSt = routingData.stopTimesIndex[boardingKey];
-  const alightingSt = routingData.stopTimesIndex[alightingKey];
+  const startTimeSec = boardIdx >= 0 ? tripStops[boardIdx].departureTime : segment.boardingTime;
 
-  const startTimeSec = boardingSt?.departureTime ?? segment.boardingTime;
-  const endTimeSec = alightingSt?.arrivalTime ?? segment.alightingTime;
+  let endTimeSec = segment.alightingTime;
+  if (boardIdx >= 0) {
+    for (let i = boardIdx + 1; i < tripStops.length; i++) {
+      if (tripStops[i].stopId === segment.alightingStopId) {
+        endTimeSec = tripStops[i].arrivalTime;
+        break;
+      }
+    }
+  }
   const duration = endTimeSec - startTimeSec;
 
   const distance = haversineDistance(from.lat, from.lon, to.lat, to.lon) * ROUTING_CONFIG.WALK_DISTANCE_BUFFER;
@@ -258,9 +261,8 @@ export function buildItinerary(
 
       case 'TRANSIT': {
         legs.push(buildTransitLeg(segment, routingData, date));
-        const alightingKey = `${segment.tripId}_${segment.alightingStopId}`;
-        const alightingSt = routingData.stopTimesIndex[alightingKey];
-        currentTimeSec = alightingSt?.arrivalTime ?? segment.alightingTime;
+        // Use alightingTime from the segment (already computed loop-safe by the engine)
+        currentTimeSec = segment.alightingTime;
         break;
       }
 

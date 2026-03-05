@@ -249,6 +249,27 @@ export function buildStopTimesIndex(
   return index;
 }
 
+/**
+ * Build trip stop times index: tripId → stop times sorted by sequence.
+ * Essential for loop routes where a trip visits the same stop twice.
+ */
+export function buildTripStopTimesIndex(
+  stopTimes: GtfsStopTime[]
+): Record<string, GtfsStopTime[]> {
+  const index: Record<string, GtfsStopTime[]> = {};
+  for (const st of stopTimes) {
+    if (!index[st.tripId]) {
+      index[st.tripId] = [];
+    }
+    index[st.tripId].push(st);
+  }
+  // Sort each trip's stop times by sequence
+  for (const tripId of Object.keys(index)) {
+    index[tripId].sort((a, b) => a.stopSequence - b.stopSequence);
+  }
+  return index;
+}
+
 /** Build complete routing data structures from GTFS data */
 export function buildRoutingData(gtfsData: GtfsData): RoutingData {
   const { stops, trips, stopTimes, calendar, calendarDates } = gtfsData;
@@ -261,6 +282,7 @@ export function buildRoutingData(gtfsData: GtfsData): RoutingData {
   const stopRoutes = buildStopRoutesIndex(stopDepartures);
   const serviceCalendar = buildServiceCalendar(calendar, calendarDates);
   const stopTimesIndex = buildStopTimesIndex(stopTimes);
+  const tripStopTimes = buildTripStopTimesIndex(stopTimes);
 
   return {
     stopDepartures,
@@ -271,6 +293,7 @@ export function buildRoutingData(gtfsData: GtfsData): RoutingData {
     stopRoutes,
     serviceCalendar,
     stopTimesIndex,
+    tripStopTimes,
     stops,
     trips,
     stopTimes,

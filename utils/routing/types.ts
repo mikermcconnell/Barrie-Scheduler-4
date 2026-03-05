@@ -105,7 +105,8 @@ export interface RoutingData {
   tripIndex: Record<string, GtfsTrip>;
   stopIndex: Record<string, GtfsStop>;
   stopRoutes: Record<string, Set<string>>;
-  stopTimesIndex: Record<string, GtfsStopTime>;  // compound key "tripId_stopId"
+  stopTimesIndex: Record<string, GtfsStopTime>;  // compound key "tripId_stopId" (last visit wins for loop routes)
+  tripStopTimes: Record<string, GtfsStopTime[]>; // tripId → stop times sorted by sequence
   serviceCalendar: ServiceCalendar;
   stops: GtfsStop[];
   trips: GtfsTrip[];

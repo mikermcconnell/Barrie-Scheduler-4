@@ -42,7 +42,7 @@ function raptorForward(
   activeServices: Set<string>,
   excludeTrips: Set<string> = new Set()
 ): RaptorResult[] {
-  const { stopDepartures, transfers, routeStopSequences, stopTimesIndex } = routingData;
+  const { stopDepartures, transfers, routeStopSequences, stopTimesIndex, tripStopTimes } = routingData;
   const maxRounds = ROUTING_CONFIG.MAX_TRANSFERS + 1;
   const maxTime = departureTime + ROUTING_CONFIG.TIME_WINDOW;
 
@@ -107,16 +107,25 @@ function raptorForward(
 
       // Find earliest boarding point on this route
       let currentTrip: string | null = null;
+      let currentTripStops: GtfsStopTime[] | null = null;
       let boardingStopId: string | null = null;
       let boardingTime = 0;
+      let boardingSeqIdx = -1; // position in currentTripStops where we boarded
       let boardingDep: { headsign: string; directionId: number } | null = null;
 
-      for (const stopId of stopSequence) {
-        // Check if we can alight here (only if we boarded a trip)
-        if (currentTrip) {
-          const arrivalTime = getTripArrivalAtStop(stopTimesIndex, currentTrip, stopId);
+      for (let seqPos = 0; seqPos < stopSequence.length; seqPos++) {
+        const stopId = stopSequence[seqPos];
 
-          if (arrivalTime !== null && arrivalTime < maxTime) {
+        // Check if we can alight here (only if we boarded a trip)
+        if (currentTrip && currentTripStops && boardingSeqIdx >= 0) {
+          // Find this stop in the trip's stop times AFTER the boarding position
+          const arrivalTime = getTripArrivalAtStopAfter(
+            currentTripStops,
+            stopId,
+            boardingSeqIdx
+          );
+
+          if (arrivalTime !== null && arrivalTime < maxTime && arrivalTime >= boardingTime) {
             // Can we improve the best known arrival at this stop?
             if (arrivalTime < (bestArrival[stopId] ?? Infinity)) {
               bestArrival[stopId] = arrivalTime;
@@ -152,8 +161,15 @@ function raptorForward(
             // Board this trip if it's earlier than current trip at this stop
             if (!currentTrip || departure.departureTime < boardingTime) {
               currentTrip = departure.tripId;
+              currentTripStops = tripStopTimes[departure.tripId] || null;
               boardingStopId = stopId;
               boardingTime = departure.departureTime;
+              // Find the boarding position in the trip's stop times
+              boardingSeqIdx = currentTripStops
+                ? currentTripStops.findIndex(
+                    (st) => st.stopId === stopId && st.departureTime >= prevArrival
+                  )
+                : -1;
               boardingDep = {
                 headsign: departure.headsign,
                 directionId: departure.directionId,
@@ -226,7 +242,7 @@ function raptorForward(
     const maxDuration = departureTime + ROUTING_CONFIG.MAX_TRIP_DURATION;
     if (totalArrival > maxDuration) continue;
 
-    const path = reconstructPath(labels, stopTimesIndex, stopId, bestRound);
+    const path = reconstructPath(labels, tripStopTimes, stopId, bestRound);
     if (path.length === 0) continue;
 
     results.push({
@@ -269,7 +285,8 @@ function getNextDepartureForRouteDirection(
 }
 
 /**
- * Get the arrival time of a trip at a specific stop.
+ * Get the arrival time of a trip at a specific stop (simple compound key lookup).
+ * WARNING: Not safe for loop routes — use getTripArrivalAtStopAfter for route scanning.
  */
 function getTripArrivalAtStop(
   stopTimesIndex: Record<string, GtfsStopTime>,
@@ -282,11 +299,29 @@ function getTripArrivalAtStop(
 }
 
 /**
+ * Get the arrival time at a stop AFTER a given boarding position.
+ * Safe for loop routes where the same stop appears multiple times.
+ */
+function getTripArrivalAtStopAfter(
+  tripStops: GtfsStopTime[],
+  stopId: string,
+  afterIdx: number
+): number | null {
+  for (let i = afterIdx + 1; i < tripStops.length; i++) {
+    if (tripStops[i].stopId === stopId) {
+      return tripStops[i].arrivalTime;
+    }
+  }
+  return null;
+}
+
+/**
  * Reconstruct the path from labels (back-pointers).
+ * Uses tripStopTimes for loop-route-safe arrival time lookups.
  */
 function reconstructPath(
   labels: Labels[],
-  stopTimesIndex: Record<string, GtfsStopTime>,
+  tripStopTimes: Record<string, GtfsStopTime[]>,
   destStopId: string,
   round: number
 ): PathSegment[] {
@@ -310,7 +345,15 @@ function reconstructPath(
       }
 
       case 'TRANSIT': {
-        const alightingTime = getTripArrivalAtStop(stopTimesIndex, label.tripId, currentStop) ?? 0;
+        // Find alighting time: search trip's stops AFTER the boarding stop
+        const tripStops = tripStopTimes[label.tripId] || [];
+        const boardIdx = tripStops.findIndex(
+          (st) => st.stopId === label.boardingStopId && st.departureTime >= label.boardingTime
+        );
+        const alightingTime = boardIdx >= 0
+          ? (getTripArrivalAtStopAfter(tripStops, currentStop, boardIdx) ?? 0)
+          : 0;
+
         const segment: TransitSegment = {
           type: 'TRANSIT',
           tripId: label.tripId,
