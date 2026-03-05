@@ -217,3 +217,29 @@ const isMergedTerminusStop = i === lastNorthStopIdx && hasMergedTerminus;
 const showArrRCols = hasRecovery || isMergedTerminusStop;
 // Show ARR | R, skip DEP for merged terminus
 ```
+
+---
+
+## RAPTOR Routing Engine (`utils/routing/`)
+
+Local RAPTOR (Round-Based Public Transit Routing) engine ported from BTTP. Used by Student Pass module for trip planning.
+
+### Architecture
+- **`gtfsAdapter.ts`** — Loads raw GTFS txt files from `gtfs/` folder, caches in memory
+- **`routingDataService.ts`** — Builds pre-computed indexes (stop departures, route sequences, transfer graph, service calendar)
+- **`calendarService.ts`** — Builds date→active-services map from calendar.txt + calendar_dates.txt
+- **`raptorEngine.ts`** — Core RAPTOR algorithm: multi-round forward search with transfer expansion
+- **`itineraryBuilder.ts`** — Converts raw RAPTOR results → structured Itinerary with legs, walk segments, timing
+- **`studentPassRaptorAdapter.ts`** (`utils/transit-app/`) — Maps RAPTOR Itinerary → StudentPassResult for the Student Pass UI
+
+### Key Design Decisions
+- **Calendar span derived from GTFS data**: `getCalendarSpan()` computes reference date + daysAhead from calendar start/end dates, not from today's date. This ensures routing works regardless of when the code runs.
+- **Loop route handling**: `tripStopTimes` index enables position-based stop lookup (not just stopId), critical for routes that visit the same stop twice.
+- **Transfer graph uses spatial grid**: O(n) performance via 0.005° grid cells instead of O(n²) all-pairs comparison.
+- **Forward-only search**: RAPTOR searches forward from departure time. Morning trips search 90min before bell; afternoon trips search from bell end.
+
+### Constants (`utils/routing/constants.ts`)
+- `MAX_WALK_TO_TRANSIT`: 800m — max walk from origin/destination to nearest stop
+- `MAX_WALK_FOR_TRANSFER`: 400m — max walk between stops for transfer
+- `WALK_SPEED`: 1.2 m/s
+- `MAX_ROUNDS`: 4 — max transfers + 1

@@ -162,6 +162,9 @@ These files are high-risk for bugs. Apply extra caution and always run the liste
 | Any time parsing (`timeUtils.ts`, `excelTimeToString`, etc.) | Post-midnight >= 1.0 boundary | `npx vitest run tests/timeUtils.test.ts` |
 | `ScheduleEditor.tsx` | Largest component, intricate rendering | `npm run build` + manual verify |
 | `RoundTripTableView.tsx` | 8A/8B sort logic, stop-name matching | `npm run build` + check sort order |
+| `utils/routing/raptorEngine.ts` | RAPTOR algorithm, loop-route logic, service calendar | `npx vitest run tests/routing/` |
+| `utils/routing/routingDataService.ts` | Pre-computed indexes, calendar span derivation | `npx vitest run tests/routing/` |
+| `utils/transit-app/studentPassRaptorAdapter.ts` | RAPTOR→StudentPass mapping, morning/afternoon queries | `npx vitest run tests/routing/ tests/studentPassUtils.test.ts` |
 
 **Rule**: When editing a Danger Zone file, run its verification command BEFORE and AFTER changes.
 

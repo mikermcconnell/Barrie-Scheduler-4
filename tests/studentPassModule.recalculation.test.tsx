@@ -3,8 +3,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 
-const { findBestTripMock } = vi.hoisted(() => ({
-  findBestTripMock: vi.fn(),
+const { findTripOptionsRaptorMock } = vi.hoisted(() => ({
+  findTripOptionsRaptorMock: vi.fn(),
 }));
 
 vi.mock('../utils/transit-app/studentPassUtils', () => ({
@@ -26,8 +26,11 @@ vi.mock('../utils/transit-app/studentPassUtils', () => ({
       bellEnd: '15:30',
     },
   ],
-  findBestTrip: findBestTripMock,
   minutesToDisplayTime: (minutes: number): string => `${minutes}`,
+}));
+
+vi.mock('../utils/transit-app/studentPassRaptorAdapter', () => ({
+  findTripOptionsRaptor: findTripOptionsRaptorMock,
 }));
 
 vi.mock('../components/Analytics/StudentPassMap', () => ({
@@ -47,8 +50,8 @@ vi.mock('../components/Analytics/StudentPassPreview', () => ({
 
 import { StudentPassModule } from '../components/Analytics/StudentPassModule';
 
-function createFoundResult() {
-  return {
+function createTripOptions() {
+  const result = {
     found: true,
     isDirect: true,
     morningLegs: [
@@ -67,6 +70,10 @@ function createFoundResult() {
     afternoonLegs: [] as { routeShortName: string; routeColor: string; tripId: string; fromStopId: string; toStopId: string; departureMinutes: number; arrivalMinutes: number; fromStop: string; toStop: string }[],
     frequencyPerHour: 2,
   };
+  return {
+    morningOptions: [{ id: 'am-1', label: 'Rt 1 Direct', result }],
+    afternoonOptions: [] as { id: string; label: string; result: typeof result }[],
+  };
 }
 
 describe('StudentPassModule recalculation', () => {
@@ -76,8 +83,8 @@ describe('StudentPassModule recalculation', () => {
   let cancelRafSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
-    findBestTripMock.mockReset();
-    findBestTripMock.mockReturnValue(createFoundResult());
+    findTripOptionsRaptorMock.mockReset();
+    findTripOptionsRaptorMock.mockReturnValue(createTripOptions());
 
     rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb: FrameRequestCallback): number => {
       cb(0);
@@ -113,8 +120,8 @@ describe('StudentPassModule recalculation', () => {
     });
     await Promise.resolve();
 
-    expect(findBestTripMock).toHaveBeenCalledTimes(1);
-    expect(findBestTripMock.mock.calls[0]?.[1]).toMatchObject({
+    expect(findTripOptionsRaptorMock).toHaveBeenCalledTimes(1);
+    expect(findTripOptionsRaptorMock.mock.calls[0]?.[1]).toMatchObject({
       id: 'school-a',
       bellStart: '08:45',
       bellEnd: '15:10',
@@ -136,8 +143,8 @@ describe('StudentPassModule recalculation', () => {
     });
     await Promise.resolve();
 
-    expect(findBestTripMock).toHaveBeenCalledTimes(2);
-    expect(findBestTripMock.mock.calls[1]?.[1]).toMatchObject({
+    expect(findTripOptionsRaptorMock).toHaveBeenCalledTimes(2);
+    expect(findTripOptionsRaptorMock.mock.calls[1]?.[1]).toMatchObject({
       id: 'school-a',
       bellStart: '09:10',
       bellEnd: '15:10',
@@ -157,7 +164,7 @@ describe('StudentPassModule recalculation', () => {
       drawButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     await Promise.resolve();
-    expect(findBestTripMock).toHaveBeenCalledTimes(1);
+    expect(findTripOptionsRaptorMock).toHaveBeenCalledTimes(1);
 
     const schoolSelect = container.querySelector('select');
     expect(schoolSelect).toBeTruthy();
@@ -168,8 +175,8 @@ describe('StudentPassModule recalculation', () => {
     });
     await Promise.resolve();
 
-    expect(findBestTripMock).toHaveBeenCalledTimes(2);
-    expect(findBestTripMock.mock.calls[1]?.[1]).toMatchObject({
+    expect(findTripOptionsRaptorMock).toHaveBeenCalledTimes(2);
+    expect(findTripOptionsRaptorMock.mock.calls[1]?.[1]).toMatchObject({
       id: 'school-b',
       bellStart: '09:00',
       bellEnd: '15:30',
