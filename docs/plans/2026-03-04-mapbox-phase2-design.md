@@ -1,8 +1,21 @@
 # Mapbox GL JS Migration — Phases 2–6: Remaining Maps
 
-**Status**: APPROVED — ready for implementation planning
+**Status**: IN PROGRESS
 **Prerequisite**: Phase 1 complete (StudentPassMap + MapBase/MapLabel/DrawControl)
 **Scope**: Migrate remaining 9 Leaflet maps (8,631 lines) to Mapbox GL JS
+
+### Progress Tracker
+
+| Phase | Scope | Status |
+|-------|-------|--------|
+| **Phase 1** | MapBase, MapLabel, DrawControl, StudentPassMap | COMPLETE |
+| **Phase 2** | Shared components (mapUtils, RouteOverlay, StopDotLayer, HeatmapDotLayer, ArcLayer, LassoControl) | COMPLETE |
+| **Phase 3** | Simple maps (CoverageGapMap, HeadwayMap, CascadeRouteMap) | COMPLETE |
+| **Phase 4** | Medium maps (ODPairMapModal, TransfersModule, StopActivityMap) | NOT STARTED |
+| **Phase 5** | Complex maps (ODFlowMapModule, TransitAppMap) | NOT STARTED |
+| **Phase 6** | Final map (ODRouteEstimationModule) + remove Leaflet | NOT STARTED |
+
+**Maps migrated: 4/10** · **Shared components: 8/8** · **Leaflet maps remaining: 6**
 
 ---
 
