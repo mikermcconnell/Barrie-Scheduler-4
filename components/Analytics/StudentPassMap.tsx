@@ -7,7 +7,6 @@ import { MapLabel } from '../shared/MapLabel';
 import { DrawControl } from '../shared/DrawControl';
 import { toLineGeoJSON, toGeoJSON } from '../shared/mapUtils';
 import type { SchoolConfig, StudentPassResult } from '../../utils/transit-app/studentPassUtils';
-import { minutesToDisplayTime } from '../../utils/transit-app/studentPassUtils';
 import { useRouteAnimation } from './useRouteAnimation';
 import './studentPass.css';
 
@@ -89,10 +88,6 @@ function dashOverlayStyle(id: string, opacity = 0.4): LayerProps {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-function midPoint(points: [number, number][], idx: number): [number, number] {
-    return points[Math.floor(idx)];
-}
 
 function routeColor(raw: string): string {
     return raw.startsWith('#') ? raw : `#${raw}`;
@@ -222,65 +217,7 @@ export const StudentPassMap: React.FC<StudentPassMapProps> = ({
         return { transferPt, legA, legB, waitMin, quality, transferQualityColor };
     }, [result]);
 
-    // ── Travel time label positions ───────────────────────────────────────────
-
-    const travelTimeLabels = useMemo(() => {
-        if (!result?.found || !result.routeShapes) return [];
-
-        const labels: Array<{ pt: [number, number]; text: string }> = [];
-
-        if (!result.isDirect && result.morningLegs.length >= 2) {
-            const shapeA = result.routeShapes[0];
-            const shapeB = result.routeShapes[1];
-            const legA = result.morningLegs[0];
-            const legB = result.morningLegs[1];
-
-            if (shapeA && shapeA.points.length > 1) {
-                const midIdx = Math.floor(shapeA.points.length / 2);
-                const travelMin = legA.arrivalMinutes - legA.departureMinutes;
-                labels.push({ pt: midPoint(shapeA.points, midIdx), text: `Rt ${legA.routeShortName} · ${travelMin} min` });
-            }
-            if (shapeB && shapeB.points.length > 1) {
-                const midIdx = Math.floor(shapeB.points.length / 2);
-                const travelMin = legB.arrivalMinutes - legB.departureMinutes;
-                labels.push({ pt: midPoint(shapeB.points, midIdx), text: `Rt ${legB.routeShortName} · ${travelMin} min` });
-            }
-        } else {
-            const shape = result.routeShapes[0];
-            const leg = result.morningLegs[0];
-            if (shape && shape.points.length > 1 && leg) {
-                const midIdx = Math.floor(shape.points.length / 2);
-                const travelMin = leg.arrivalMinutes - leg.departureMinutes;
-                const depTime = minutesToDisplayTime(leg.departureMinutes);
-                const arrTime = minutesToDisplayTime(leg.arrivalMinutes);
-                labels.push({
-                    pt: midPoint(shape.points, midIdx),
-                    text: `Rt ${leg.routeShortName} · ${travelMin} min (${depTime}\u2192${arrTime})`,
-                });
-            }
-        }
-
-        return labels;
-    }, [result]);
-
-    const pmTravelTimeLabels = useMemo(() => {
-        if (!result?.found || !result.afternoonRouteShapes || !result.afternoonLegs) return [];
-        const labels: Array<{ pt: [number, number]; text: string }> = [];
-        for (let i = 0; i < result.afternoonLegs.length && i < result.afternoonRouteShapes.length; i++) {
-            const shape = result.afternoonRouteShapes[i];
-            const leg = result.afternoonLegs[i];
-            if (shape.points.length > 1) {
-                const midIdx = Math.floor(shape.points.length / 2);
-                const travelMin = leg.arrivalMinutes - leg.departureMinutes;
-                const depTime = minutesToDisplayTime(leg.departureMinutes);
-                labels.push({
-                    pt: midPoint(shape.points, midIdx),
-                    text: `PM Rt ${leg.routeShortName} · ${travelMin} min (${depTime})`,
-                });
-            }
-        }
-        return labels;
-    }, [result]);
+    // Travel time labels removed — timeline bar shows all durations
 
     // ── fitBounds when result changes ─────────────────────────────────────────
 
@@ -397,16 +334,6 @@ export const StudentPassMap: React.FC<StudentPassMapProps> = ({
                             <Layer {...walkLineLayer('walk-to-stop-line', '#94A3B8', 0.7, [4, 8])} />
                         </Source>
 
-                        {/* Walk time label at midpoint */}
-                        <Marker
-                            longitude={(result.walkToStop.fromLon + result.walkToStop.toLon) / 2}
-                            latitude={(result.walkToStop.fromLat + result.walkToStop.toLat) / 2}
-                            anchor="bottom"
-                            offset={[0, 6]}
-                        >
-                            <MapLabel text={`Walk ${result.walkToStop.walkMinutes} min`} size="sm" />
-                        </Marker>
-
                         {/* Zone centroid marker — pulsing blue dot */}
                         {centroidLng !== undefined && centroidLat !== undefined && (
                             <Marker longitude={centroidLng} latitude={centroidLat} anchor="center">
@@ -428,11 +355,6 @@ export const StudentPassMap: React.FC<StudentPassMapProps> = ({
                                 </div>
                             </Marker>
                         )}
-
-                        {/* "Start" label above centroid */}
-                        <Marker longitude={result.walkToStop.fromLon} latitude={result.walkToStop.fromLat} anchor="bottom" offset={[0, -10]}>
-                            <MapLabel text="Start" size="sm" />
-                        </Marker>
 
                         {/* Boarding stop marker — green with bus icon */}
                         <Marker longitude={result.walkToStop.toLon} latitude={result.walkToStop.toLat} anchor="center">
@@ -498,52 +420,31 @@ export const StudentPassMap: React.FC<StudentPassMapProps> = ({
                                 </div>
                             </Marker>
 
-                            {/* Glass callout card */}
+                            {/* Compact transfer label */}
                             <Marker longitude={transferLng} latitude={transferLat} anchor="bottom" offset={[0, -28]}>
                                 <div
-                                    className="rounded-lg px-4 py-3"
+                                    className="rounded-md px-2.5 py-1.5 flex items-center gap-2"
                                     style={{
                                         background: 'rgba(11, 17, 33, 0.9)',
-                                        backdropFilter: 'blur(16px)',
-                                        border: '1px solid rgba(99, 126, 184, 0.15)',
-                                        borderLeft: `3px solid ${transferHub.transferQualityColor}`,
-                                        fontFamily: "'DM Sans', sans-serif",
-                                        boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4)',
+                                        backdropFilter: 'blur(12px)',
+                                        border: `1px solid ${transferHub.transferQualityColor}44`,
+                                        fontFamily: "'JetBrains Mono', monospace",
+                                        boxShadow: `0 0 12px ${transferHub.transferQualityColor}33`,
                                         pointerEvents: 'none',
                                         whiteSpace: 'nowrap',
                                     }}
                                 >
-                                    <div
-                                        style={{ fontFamily: "'JetBrains Mono', monospace" }}
-                                        className="text-[13px] font-semibold text-[#E2E8F0]"
-                                    >
-                                        Transfer at {transferHub.legA.toStop}
-                                    </div>
-                                    <div className="border-t border-[rgba(99,126,184,0.15)] my-2" />
-                                    <div className="text-[12px] text-[#94A3B8]">
-                                        Arrive {minutesToDisplayTime(transferHub.legA.arrivalMinutes)} &rarr; Depart {minutesToDisplayTime(transferHub.legB.departureMinutes)}
-                                    </div>
-                                    <div className="text-[11px] text-[#64748B] mt-1">
-                                        {transferHub.waitMin} min wait · {transferHub.quality} · Rt {transferHub.legA.routeShortName} &rarr; Rt {transferHub.legB.routeShortName}
-                                    </div>
+                                    <span className="text-[11px] font-semibold" style={{ color: transferHub.transferQualityColor }}>
+                                        {transferHub.waitMin}m
+                                    </span>
+                                    <span className="text-[11px] text-[#94A3B8]">
+                                        transfer
+                                    </span>
                                 </div>
                             </Marker>
                         </>
                     );
                 })()}
-
-                {/* ── AM travel time labels (midpoint of each shape) ── */}
-                {hasResult && travelTimeLabels.map((label, i) => (
-                    <Marker
-                        key={`tt-am-${i}`}
-                        longitude={toGeoJSON(label.pt)[0]}
-                        latitude={toGeoJSON(label.pt)[1]}
-                        anchor="bottom"
-                        offset={[0, 6]}
-                    >
-                        <MapLabel text={label.text} size="lg" />
-                    </Marker>
-                ))}
 
                 {/* ── Walking leg: alighting stop → school ── */}
                 {hasResult && walkToSchoolGeoJSON && result?.walkToSchool && (
@@ -551,14 +452,6 @@ export const StudentPassMap: React.FC<StudentPassMapProps> = ({
                         <Source id="walk-to-school" type="geojson" data={walkToSchoolGeoJSON}>
                             <Layer {...walkLineLayer('walk-to-school-line', '#94A3B8', 0.7, [4, 8])} />
                         </Source>
-                        <Marker
-                            longitude={(result.walkToSchool.fromLon + result.walkToSchool.toLon) / 2}
-                            latitude={(result.walkToSchool.fromLat + result.walkToSchool.toLat) / 2}
-                            anchor="bottom"
-                            offset={[0, 6]}
-                        >
-                            <MapLabel text={`Walk ${result.walkToSchool.walkMinutes} min to school`} size="sm" />
-                        </Marker>
                     </>
                 )}
 
@@ -578,19 +471,6 @@ export const StudentPassMap: React.FC<StudentPassMapProps> = ({
                         <Layer {...baseLayerStyle(`${id}-base`, color, 4, 0.6)} />
                         <Layer {...dashOverlayStyle(`${id}-dash`, 0.25)} />
                     </Source>
-                ))}
-
-                {/* ── PM travel time labels ── */}
-                {hasResult && pmTravelTimeLabels.map((label, i) => (
-                    <Marker
-                        key={`tt-pm-${i}`}
-                        longitude={toGeoJSON(label.pt)[0]}
-                        latitude={toGeoJSON(label.pt)[1]}
-                        anchor="top"
-                        offset={[0, -6]}
-                    >
-                        <MapLabel text={label.text} size="lg" />
-                    </Marker>
                 ))}
 
                 {/* ── Walk from afternoon alighting stop to zone centroid ── */}
