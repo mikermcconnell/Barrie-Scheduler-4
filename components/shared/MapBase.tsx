@@ -1,5 +1,6 @@
 import React from 'react';
 import Map, { NavigationControl, ScaleControl, MapRef } from 'react-map-gl/mapbox';
+import type { MapMouseEvent } from 'react-map-gl/mapbox';
 import 'mapbox-gl/dist/mapbox-gl.css';
 
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN as string;
@@ -20,6 +21,11 @@ export interface MapBaseProps {
     showNavigation?: boolean;
     showScale?: boolean;
     mapRef?: React.RefObject<MapRef | null>;
+    /** Layer IDs that receive pointer events (required for onMouseMove/onClick feature queries) */
+    interactiveLayerIds?: string[];
+    onMouseMove?: (e: MapMouseEvent) => void;
+    onMouseLeave?: (e: MapMouseEvent) => void;
+    onClick?: (e: MapMouseEvent) => void;
 }
 
 export const MapBase: React.FC<MapBaseProps> = ({
@@ -35,6 +41,10 @@ export const MapBase: React.FC<MapBaseProps> = ({
     showNavigation,
     showScale,
     mapRef,
+    interactiveLayerIds,
+    onMouseMove,
+    onMouseLeave,
+    onClick,
 }) => {
     return (
         <div className={className} style={{ width: '100%', height: '100%', minHeight: 300 }}>
@@ -49,6 +59,10 @@ export const MapBase: React.FC<MapBaseProps> = ({
                 scrollZoom={true}
                 dragRotate={false}
                 pitchWithRotate={false}
+                interactiveLayerIds={interactiveLayerIds}
+                onMouseMove={onMouseMove}
+                onMouseLeave={onMouseLeave}
+                onClick={onClick}
             >
                 {showNavigation && <NavigationControl position="bottom-right" />}
                 {showScale && <ScaleControl position="bottom-left" unit="metric" />}

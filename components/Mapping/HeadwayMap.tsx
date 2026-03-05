@@ -1,16 +1,16 @@
 /**
  * Corridor Headway Map
  *
- * Leaflet map showing corridor-level headway where multiple routes overlap
- * on the same road. Shared corridors are colored/weighted by combined headway;
- * single-route segments are shown as thin route-colored lines.
+ * Mapbox GL JS map showing corridor-level headway where multiple routes overlap
+ * on the same road. Shared corridors are colored/weighted by combined headway
+ * severity; single-route segments are shown as thin route-colored lines.
  *
- * Follows StopActivityMap pattern: raw Leaflet via useRef/useEffect for React 19 compat.
+ * Phase 3b of Leaflet → Mapbox migration.
  */
 
-import React, { useRef, useEffect, useMemo, useState, useCallback } from 'react';
-import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
+import React, { useRef, useMemo, useState, useCallback, useEffect } from 'react';
+import { Source, Layer, Popup } from 'react-map-gl/mapbox';
+import type { LayerProps, MapMouseEvent, MapRef } from 'react-map-gl/mapbox';
 import { ArrowLeft } from 'lucide-react';
 import { buildCorridorSegments, getCorridorJunctionStops, type CorridorSegment } from '../../utils/gtfs/corridorBuilder';
 import {
@@ -20,38 +20,62 @@ import {
     DAY_TYPES,
     type TimePeriod,
     type DayType,
-    type SegmentHeadway,
 } from '../../utils/gtfs/corridorHeadway';
 import { getAllStopsWithCoords } from '../../utils/gtfs/gtfsStopLookup';
+import { MapBase, StopDotLayer, toGeoJSON } from '../shared';
+import type { StopPoint } from '../shared';
 import { HeadwayFilterBar } from './HeadwayFilterBar';
 import { HeadwayLegend } from './HeadwayLegend';
 import { CorridorDetailPanel } from './CorridorDetailPanel';
 
-// ─── Constants ──────────────────────────────────────────────────────────
+// ─── Types ───────────────────────────────────────────────────────────────────
 
-const BARRIE_CENTER: [number, number] = [44.38, -79.69];
+interface SegmentFeatureProps {
+    segmentId: string;
+    color: string;
+    weight: number;
+    opacity: number;
+    isShared: boolean;
+    routeList: string;
+    headwayText: string;
+    fromStop: string;
+    toStop: string;
+}
+
+interface HoverInfo {
+    longitude: number;
+    latitude: number;
+    props: SegmentFeatureProps;
+}
+
+// ─── Props ───────────────────────────────────────────────────────────────────
 
 interface HeadwayMapProps {
     onBack: () => void;
 }
 
-// ─── Main Component ─────────────────────────────────────────────────────
+// ─── Layer IDs ───────────────────────────────────────────────────────────────
+
+const CORRIDOR_SRC = 'corridor-segments';
+const CORRIDOR_LAYER = 'corridor-lines';
+const CORRIDOR_HOVER_LAYER = 'corridor-lines-hover';
+const HIGHLIGHT_SRC = 'corridor-highlight';
+const HIGHLIGHT_LAYER = 'corridor-highlight-line';
+
+// ─── Main Component ──────────────────────────────────────────────────────────
 
 export const HeadwayMap: React.FC<HeadwayMapProps> = ({ onBack }) => {
-    const containerRef = useRef<HTMLDivElement>(null);
-    const wrapperRef = useRef<HTMLDivElement>(null);
-    const mapRef = useRef<L.Map | null>(null);
-    const corridorLayerRef = useRef<L.LayerGroup | null>(null);
-    const junctionLayerRef = useRef<L.LayerGroup | null>(null);
-    const highlightRef = useRef<L.Polyline | null>(null);
+    const mapRef = useRef<MapRef | null>(null);
 
     const [isFullscreen, setIsFullscreen] = useState(false);
     const [period, setPeriod] = useState<TimePeriod>('full-day');
     const [dayType, setDayType] = useState<DayType>('weekday');
     const [selectedSegment, setSelectedSegment] = useState<CorridorSegment | null>(null);
+    const [hoveredId, setHoveredId] = useState<string | null>(null);
+    const [hoverInfo, setHoverInfo] = useState<HoverInfo | null>(null);
     const [loading, setLoading] = useState(true);
 
-    // ─── Data ───────────────────────────────────────────────────────
+    // ─── Data ────────────────────────────────────────────────────────────
 
     const segments = useMemo(() => {
         try {
@@ -81,111 +105,39 @@ export const HeadwayMap: React.FC<HeadwayMapProps> = ({ onBack }) => {
     );
 
     const selectedHeadway = useMemo(
-        () => selectedSegment ? headways.get(selectedSegment.id) || null : null,
+        () => (selectedSegment ? headways.get(selectedSegment.id) || null : null),
         [selectedSegment, headways],
     );
 
     const periodLabel = TIME_PERIODS.find(p => p.id === period)?.label || '';
     const dayTypeLabel = DAY_TYPES.find(d => d.id === dayType)?.label || '';
 
-    // ─── Callbacks ──────────────────────────────────────────────────
+    // ─── Junction stops as StopPoint[] for StopDotLayer ──────────────────
 
-    const toggleFullscreen = useCallback(() => setIsFullscreen(p => !p), []);
-
-    const clearHighlight = useCallback(() => {
-        if (highlightRef.current) {
-            highlightRef.current.remove();
-            highlightRef.current = null;
+    const junctionStopPoints = useMemo((): StopPoint[] => {
+        const points: StopPoint[] = [];
+        for (const stopId of junctionStops) {
+            const coords = stopCoords.get(stopId);
+            if (coords) {
+                points.push({ id: stopId, lat: coords.lat, lon: coords.lon, name: coords.name });
+            }
         }
-    }, []);
+        return points;
+    }, [junctionStops, stopCoords]);
 
-    const highlightSegment = useCallback((seg: CorridorSegment) => {
-        clearHighlight();
-        const map = mapRef.current;
-        if (!map || seg.geometry.length < 2) return;
-        highlightRef.current = L.polyline(seg.geometry, {
-            color: '#3b82f6',
-            weight: 12,
-            opacity: 0.3,
-            interactive: false,
-        }).addTo(map);
-    }, [clearHighlight]);
+    // ─── Corridor GeoJSON ─────────────────────────────────────────────────
+    //
+    // Single-route segments are drawn first (lower sort index → drawn underneath).
+    // Shared segments sit on top. This is achieved by ordering features so that
+    // single-route segments come first, then shared.
 
-    // ─── Effects ────────────────────────────────────────────────────
-
-    // Escape key
-    useEffect(() => {
-        const h = (e: KeyboardEvent) => {
-            if (e.key !== 'Escape') return;
-            if (selectedSegment) { setSelectedSegment(null); clearHighlight(); return; }
-            if (isFullscreen) setIsFullscreen(false);
-        };
-        window.addEventListener('keydown', h);
-        return () => window.removeEventListener('keydown', h);
-    }, [isFullscreen, selectedSegment, clearHighlight]);
-
-    // Invalidate on fullscreen toggle
-    useEffect(() => {
-        const map = mapRef.current;
-        if (!map) return;
-        const raf = requestAnimationFrame(() => map.invalidateSize({ animate: false }));
-        const t1 = setTimeout(() => map.invalidateSize({ animate: false }), 100);
-        const t2 = setTimeout(() => map.invalidateSize({ animate: false }), 300);
-        return () => { cancelAnimationFrame(raf); clearTimeout(t1); clearTimeout(t2); };
-    }, [isFullscreen]);
-
-    // Init map
-    useEffect(() => {
-        if (!containerRef.current || mapRef.current) return;
-
-        const map = L.map(containerRef.current, {
-            center: BARRIE_CENTER,
-            zoom: 13,
-            zoomControl: true,
-            zoomSnap: 0.25,
-            zoomDelta: 0.25,
-            scrollWheelZoom: 'center',
-            wheelDebounceTime: 24,
-            wheelPxPerZoomLevel: 120,
-            preferCanvas: true,
-        });
-
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '&copy; OpenStreetMap contributors',
-            maxZoom: 18,
-        }).addTo(map);
-
-        corridorLayerRef.current = L.layerGroup().addTo(map);
-        junctionLayerRef.current = L.layerGroup().addTo(map);
-        mapRef.current = map;
-
-        const ro = new ResizeObserver(() => map.invalidateSize());
-        ro.observe(containerRef.current);
-
-        return () => {
-            ro.disconnect();
-            map.remove();
-            mapRef.current = null;
-            corridorLayerRef.current = null;
-            junctionLayerRef.current = null;
-        };
-    }, []);
-
-    // Sync corridor polylines
-    useEffect(() => {
-        const layer = corridorLayerRef.current;
-        if (!layer) return;
-        layer.clearLayers();
-        clearHighlight();
-
-        if (segments.length === 0) return;
-
-        // Draw single-route segments first (underneath), then shared
+    const corridorGeoJSON = useMemo((): GeoJSON.FeatureCollection => {
         const sorted = [...segments].sort((a, b) => {
             if (a.isShared === b.isShared) return 0;
-            return a.isShared ? 1 : -1; // shared on top
+            return a.isShared ? 1 : -1; // shared last = rendered on top
         });
 
+        const features: GeoJSON.Feature[] = [];
         for (const seg of sorted) {
             if (seg.geometry.length < 2) continue;
 
@@ -196,94 +148,181 @@ export const HeadwayMap: React.FC<HeadwayMapProps> = ({ onBack }) => {
             if (seg.isShared) {
                 style = getHeadwayStyle(headwayMin, true);
             } else {
-                // Single route: use route color
                 const routeColor = seg.routeColors[0] || '888888';
                 style = { color: `#${routeColor}`, weight: 2, opacity: 0.6 };
             }
 
-            const polyline = L.polyline(seg.geometry, {
-                color: style.color,
-                weight: style.weight,
-                opacity: style.opacity,
-                lineCap: 'round',
-                lineJoin: 'round',
-            });
-
-            // Tooltip
-            const routeList = seg.routes.join(', ');
             const headwayText = hw
                 ? hw.combinedHeadwayMin !== null
                     ? `Every ${hw.combinedHeadwayMin} min (${hw.combinedTripsPerHour} trips/hr · ${hw.totalTrips} trips)`
                     : `No service (${hw.totalTrips} trips)`
                 : 'No data';
-            polyline.bindTooltip(
-                `<div style="font-size:11px;line-height:1.4">
-                    <strong>Routes: ${routeList}</strong><br/>
-                    ${headwayText}<br/>
-                    <span style="color:#9ca3af">${seg.stopNames[0]} → ${seg.stopNames[seg.stopNames.length - 1]}</span>
-                </div>`,
-                { sticky: true },
-            );
 
-            // Hover
-            polyline.on('mouseover', () => {
-                polyline.setStyle({ weight: style.weight + 3, opacity: Math.min(style.opacity + 0.15, 1) });
-            });
-            polyline.on('mouseout', () => {
-                polyline.setStyle({ weight: style.weight, opacity: style.opacity });
-            });
+            const props: SegmentFeatureProps = {
+                segmentId: seg.id,
+                color: style.color,
+                weight: style.weight,
+                opacity: style.opacity,
+                isShared: seg.isShared,
+                routeList: seg.routes.join(', '),
+                headwayText,
+                fromStop: seg.stopNames[0] ?? '',
+                toStop: seg.stopNames[seg.stopNames.length - 1] ?? '',
+            };
 
-            // Click
-            polyline.on('click', () => {
-                setSelectedSegment(seg);
-                highlightSegment(seg);
+            features.push({
+                type: 'Feature',
+                id: seg.id,
+                properties: props,
+                geometry: {
+                    type: 'LineString',
+                    coordinates: seg.geometry.map(toGeoJSON),
+                },
             });
-
-            polyline.addTo(layer);
         }
-    }, [segments, headways, clearHighlight, highlightSegment]);
 
-    // Sync junction markers
-    useEffect(() => {
-        const layer = junctionLayerRef.current;
-        const map = mapRef.current;
-        if (!layer || !map) return;
+        return { type: 'FeatureCollection', features };
+    }, [segments, headways]);
 
-        const updateJunctions = () => {
-            layer.clearLayers();
-            const zoom = map.getZoom();
-            if (zoom < 14) return; // Only show at higher zoom
+    // ─── Highlight GeoJSON for selected segment ───────────────────────────
 
-            for (const stopId of junctionStops) {
-                const coords = stopCoords.get(stopId);
-                if (!coords) continue;
-                const marker = L.circleMarker([coords.lat, coords.lon], {
-                    radius: 4,
-                    fillColor: '#ffffff',
-                    fillOpacity: 0.9,
-                    color: '#374151',
-                    weight: 1.5,
-                });
-                marker.bindTooltip(coords.name, { direction: 'top', offset: [0, -6] });
-                marker.addTo(layer);
-            }
+    const highlightGeoJSON = useMemo((): GeoJSON.FeatureCollection => {
+        if (!selectedSegment || selectedSegment.geometry.length < 2) {
+            return { type: 'FeatureCollection', features: [] };
+        }
+        return {
+            type: 'FeatureCollection',
+            features: [{
+                type: 'Feature',
+                properties: {},
+                geometry: {
+                    type: 'LineString',
+                    coordinates: selectedSegment.geometry.map(toGeoJSON),
+                },
+            }],
         };
+    }, [selectedSegment]);
 
-        updateJunctions();
-        map.on('zoomend', updateJunctions);
-        return () => { map.off('zoomend', updateJunctions); };
-    }, [junctionStops, stopCoords]);
+    // ─── Layer styles ─────────────────────────────────────────────────────
 
-    // Re-highlight selected segment when headways change
+    const corridorLayerStyle: LayerProps = {
+        id: CORRIDOR_LAYER,
+        type: 'line' as const,
+        layout: {
+            'line-cap': 'round' as const,
+            'line-join': 'round' as const,
+        },
+        paint: {
+            'line-color': ['get', 'color'] as unknown as string,
+            'line-width': ['get', 'weight'] as unknown as number,
+            'line-opacity': ['get', 'opacity'] as unknown as number,
+        },
+    };
+
+    // Hover layer: same source, filtered to hovered segment with bumped width/opacity
+    const corridorHoverLayerStyle = {
+        id: CORRIDOR_HOVER_LAYER,
+        type: 'line' as const,
+        filter: hoveredId !== null
+            ? ['==', ['get', 'segmentId'], hoveredId]
+            : ['==', ['literal', true], ['literal', false]],
+        layout: {
+            'line-cap': 'round' as const,
+            'line-join': 'round' as const,
+        },
+        paint: {
+            'line-color': ['get', 'color'],
+            'line-width': ['+', ['get', 'weight'], 3],
+            'line-opacity': ['min', ['+', ['get', 'opacity'], 0.15], 1],
+        },
+    };
+
+    const highlightLayerStyle = {
+        id: HIGHLIGHT_LAYER,
+        type: 'line' as const,
+        layout: {
+            'line-cap': 'round' as const,
+            'line-join': 'round' as const,
+        },
+        paint: {
+            'line-color': '#3b82f6',
+            'line-width': 12,
+            'line-opacity': 0.3,
+        },
+    };
+
+    // ─── Map interaction handlers ─────────────────────────────────────────
+
+    const handleMouseMove = useCallback((e: MapMouseEvent) => {
+        const feature = e.features?.[0];
+        if (!feature) {
+            setHoveredId(null);
+            setHoverInfo(null);
+            // Reset cursor
+            const canvas1 = mapRef.current?.getMap().getCanvas();
+            if (canvas1) canvas1.style.cursor = '';
+            return;
+        }
+        const props = feature.properties as SegmentFeatureProps;
+        setHoveredId(props.segmentId);
+        setHoverInfo({
+            longitude: e.lngLat.lng,
+            latitude: e.lngLat.lat,
+            props,
+        });
+        const canvas2 = mapRef.current?.getMap().getCanvas();
+        if (canvas2) canvas2.style.cursor = 'pointer';
+    }, []);
+
+    const handleMouseLeave = useCallback(() => {
+        setHoveredId(null);
+        setHoverInfo(null);
+        const canvas3 = mapRef.current?.getMap().getCanvas();
+        if (canvas3) canvas3.style.cursor = '';
+    }, []);
+
+    const handleClick = useCallback((e: MapMouseEvent) => {
+        const feature = e.features?.[0];
+        if (!feature) return;
+        const props = feature.properties as SegmentFeatureProps;
+        const seg = segments.find(s => s.id === props.segmentId) ?? null;
+        setSelectedSegment(seg);
+    }, [segments]);
+
+    const clearSelection = useCallback(() => {
+        setSelectedSegment(null);
+    }, []);
+
+    // ─── Fullscreen toggle ────────────────────────────────────────────────
+
+    const toggleFullscreen = useCallback(() => setIsFullscreen(p => !p), []);
+
+    // Invalidate map size on fullscreen change
     useEffect(() => {
-        if (selectedSegment) highlightSegment(selectedSegment);
-    }, [selectedSegment, highlightSegment]);
+        const map = mapRef.current;
+        if (!map) return;
+        const raf = requestAnimationFrame(() => map.resize());
+        const t1 = setTimeout(() => map.resize(), 100);
+        const t2 = setTimeout(() => map.resize(), 300);
+        return () => { cancelAnimationFrame(raf); clearTimeout(t1); clearTimeout(t2); };
+    }, [isFullscreen]);
 
-    // ─── Render ─────────────────────────────────────────────────────
+    // ─── Escape key handler ───────────────────────────────────────────────
+
+    useEffect(() => {
+        const h = (e: KeyboardEvent) => {
+            if (e.key !== 'Escape') return;
+            if (selectedSegment) { clearSelection(); return; }
+            if (isFullscreen) setIsFullscreen(false);
+        };
+        window.addEventListener('keydown', h);
+        return () => window.removeEventListener('keydown', h);
+    }, [isFullscreen, selectedSegment, clearSelection]);
+
+    // ─── Render ───────────────────────────────────────────────────────────
 
     return (
         <div
-            ref={wrapperRef}
             className={isFullscreen
                 ? 'fixed inset-0 z-50 bg-white flex flex-col'
                 : 'relative'
@@ -354,7 +393,7 @@ export const HeadwayMap: React.FC<HeadwayMapProps> = ({ onBack }) => {
                     headway={selectedHeadway}
                     periodLabel={periodLabel}
                     dayTypeLabel={dayTypeLabel}
-                    onClose={() => { setSelectedSegment(null); clearHighlight(); }}
+                    onClose={clearSelection}
                 />
             )}
 
@@ -376,10 +415,61 @@ export const HeadwayMap: React.FC<HeadwayMapProps> = ({ onBack }) => {
             )}
 
             {/* ─── Map Container ─── */}
-            <div
-                ref={containerRef}
-                className={isFullscreen ? 'flex-1 w-full min-h-0' : 'h-[750px] w-full rounded-lg'}
-            />
+            <div className={isFullscreen ? 'flex-1 w-full min-h-0' : 'h-[750px] w-full rounded-lg'}>
+                <MapBase
+                    mapRef={mapRef}
+                    showNavigation
+                    showScale
+                    className="w-full h-full"
+                    interactiveLayerIds={[CORRIDOR_LAYER]}
+                    onMouseMove={handleMouseMove}
+                    onMouseLeave={handleMouseLeave}
+                    onClick={handleClick}
+                >
+                    {/* Corridor polylines */}
+                    <Source id={CORRIDOR_SRC} type="geojson" data={corridorGeoJSON}>
+                        <Layer {...corridorLayerStyle as LayerProps} />
+                        <Layer {...corridorHoverLayerStyle as LayerProps} />
+                    </Source>
+
+                    {/* Blue highlight for selected segment */}
+                    <Source id={HIGHLIGHT_SRC} type="geojson" data={highlightGeoJSON}>
+                        <Layer {...highlightLayerStyle as LayerProps} />
+                    </Source>
+
+                    {/* Junction stops (white dots, minZoom 14) */}
+                    <StopDotLayer
+                        stops={junctionStopPoints}
+                        radius={4}
+                        color="#ffffff"
+                        opacity={0.9}
+                        outlineColor="#374151"
+                        outlineWidth={1.5}
+                        minZoom={14}
+                        idPrefix="junction-stops"
+                    />
+
+                    {/* Hover tooltip */}
+                    {hoverInfo && (
+                        <Popup
+                            longitude={hoverInfo.longitude}
+                            latitude={hoverInfo.latitude}
+                            closeButton={false}
+                            closeOnClick={false}
+                            anchor="bottom"
+                            offset={8}
+                        >
+                            <div style={{ fontSize: 11, lineHeight: 1.4 }}>
+                                <strong>Routes: {hoverInfo.props.routeList}</strong><br />
+                                {hoverInfo.props.headwayText}<br />
+                                <span style={{ color: '#9ca3af' }}>
+                                    {hoverInfo.props.fromStop} → {hoverInfo.props.toStop}
+                                </span>
+                            </div>
+                        </Popup>
+                    )}
+                </MapBase>
+            </div>
         </div>
     );
 };

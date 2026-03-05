@@ -8,12 +8,16 @@
 }
 
 .student-pass-dark .mapboxgl-ctrl-group button {
-    color: #94A3B8;
+    color: #E2E8F0;
+    filter: invert(1) hue-rotate(180deg);
+}
+
+.student-pass-dark .mapboxgl-ctrl-group button + button {
+    border-top-color: rgba(99, 126, 184, 0.15);
 }
 
 .student-pass-dark .mapboxgl-ctrl-group button:hover {
     background: rgba(59, 130, 246, 0.15);
-    color: #E2E8F0;
 }
 
 .student-pass-dark .mapboxgl-ctrl-attrib {

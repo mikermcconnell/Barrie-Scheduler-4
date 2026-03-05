@@ -73,12 +73,13 @@ export const StudentPassPanel: React.FC<StudentPassPanelProps> = ({
 
     return (
         <div
-            className="absolute top-4 left-4 bottom-20 w-80 z-10 rounded-xl shadow-2xl overflow-hidden panel-enter flex flex-col"
+            className="absolute top-4 left-4 w-80 z-10 rounded-xl shadow-2xl overflow-hidden panel-enter flex flex-col"
             style={{
                 background: PANEL_BG,
                 backdropFilter: 'blur(20px)',
                 WebkitBackdropFilter: 'blur(20px)',
                 border: `1px solid ${BORDER}`,
+                maxHeight: 'calc(100vh - 160px)',
             }}
         >
             {/* Panel header — always visible */}
