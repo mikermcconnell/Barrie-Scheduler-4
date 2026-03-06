@@ -6,15 +6,19 @@ import { MapBase } from '../shared/MapBase';
 import { MapLabel } from '../shared/MapLabel';
 import { DrawControl } from '../shared/DrawControl';
 import { toLineGeoJSON, toGeoJSON } from '../shared/mapUtils';
-import type { SchoolConfig, StudentPassResult } from '../../utils/transit-app/studentPassUtils';
+import type { SchoolConfig, StudentPassResult, ZoneStopOption } from '../../utils/transit-app/studentPassUtils';
 import { useRouteAnimation } from './useRouteAnimation';
 import './studentPass.css';
 
 export interface StudentPassMapProps {
     school: SchoolConfig | null;
     result: StudentPassResult | null;
+    journeyMode: 'am' | 'pm';
+    zoneStops: ZoneStopOption[];
+    selectedZoneStopId: string | null;
     onPolygonComplete: (coords: [number, number][]) => void;
     onPolygonClear: () => void;
+    onZoneStopSelect: (stopId: string) => void;
 }
 
 // ── Layer style constants ─────────────────────────────────────────────────────
@@ -116,8 +120,12 @@ function computeBounds(
 export const StudentPassMap: React.FC<StudentPassMapProps> = ({
     school,
     result,
+    journeyMode,
+    zoneStops,
+    selectedZoneStopId,
     onPolygonComplete,
     onPolygonClear,
+    onZoneStopSelect,
 }) => {
     const mapRef = useRef<MapRef>(null);
     const [mapStyle, setMapStyle] = useState('mapbox://styles/mapbox/dark-v11');
@@ -140,36 +148,48 @@ export const StudentPassMap: React.FC<StudentPassMapProps> = ({
 
     // Zone stops layer — empty until result is present (see comment in original)
     const zoneStopsGeoJSON = useMemo((): GeoJSON.FeatureCollection => {
-        if (!result?.zoneCentroid) {
+        if (zoneStops.length === 0) {
             return { type: 'FeatureCollection', features: [] };
         }
-        return { type: 'FeatureCollection', features: [] };
-    }, [result]);
+        return {
+            type: 'FeatureCollection',
+            features: zoneStops.map((stop) => ({
+                type: 'Feature',
+                geometry: {
+                    type: 'Point',
+                    coordinates: [stop.lon, stop.lat],
+                },
+                properties: {
+                    stopId: stop.stopId,
+                },
+            })),
+        };
+    }, [zoneStops]);
 
     // ── GeoJSON data derived from result ──────────────────────────────────────
 
     const walkToStopGeoJSON = useMemo(() => {
         if (!result?.walkToStop) return null;
         const w = result.walkToStop;
-        return toLineGeoJSON([[w.fromLat, w.fromLon], [w.toLat, w.toLon]]);
+        return toLineGeoJSON(w.geometry ?? [[w.fromLat, w.fromLon], [w.toLat, w.toLon]]);
     }, [result?.walkToStop]);
 
     const walkToSchoolGeoJSON = useMemo(() => {
         if (!result?.walkToSchool) return null;
         const w = result.walkToSchool;
-        return toLineGeoJSON([[w.fromLat, w.fromLon], [w.toLat, w.toLon]]);
+        return toLineGeoJSON(w.geometry ?? [[w.fromLat, w.fromLon], [w.toLat, w.toLon]]);
     }, [result?.walkToSchool]);
 
     const walkFromSchoolGeoJSON = useMemo(() => {
         if (!result?.walkFromSchool) return null;
         const w = result.walkFromSchool;
-        return toLineGeoJSON([[w.fromLat, w.fromLon], [w.toLat, w.toLon]]);
+        return toLineGeoJSON(w.geometry ?? [[w.fromLat, w.fromLon], [w.toLat, w.toLon]]);
     }, [result?.walkFromSchool]);
 
     const walkToZoneGeoJSON = useMemo(() => {
         if (!result?.walkToZone) return null;
         const w = result.walkToZone;
-        return toLineGeoJSON([[w.fromLat, w.fromLon], [w.toLat, w.toLon]]);
+        return toLineGeoJSON(w.geometry ?? [[w.fromLat, w.fromLon], [w.toLat, w.toLon]]);
     }, [result?.walkToZone]);
 
     // Unique key per result so Mapbox fully removes stale layers on selection change
@@ -183,30 +203,33 @@ export const StudentPassMap: React.FC<StudentPassMapProps> = ({
     const amRouteShapeGeoJSONs = useMemo(() => {
         if (!result?.routeShapes) return [];
         return result.routeShapes.map((shape, i) => ({
-            id: `am-${resultKey}-${i}`,
+            id: `am-route-${i}`,
             geoJSON: toLineGeoJSON(shape.points),
             color: routeColor(shape.routeColor),
             isDashed: shape.isDashed,
         }));
-    }, [result?.routeShapes, resultKey]);
+    }, [result?.routeShapes]);
 
     const pmRouteShapeGeoJSONs = useMemo(() => {
         if (!result?.afternoonRouteShapes) return [];
         return result.afternoonRouteShapes.map((shape, i) => ({
-            id: `pm-${resultKey}-${i}`,
+            id: `pm-route-${i}`,
             geoJSON: toLineGeoJSON(shape.points),
             color: routeColor(shape.routeColor),
         }));
-    }, [result?.afternoonRouteShapes, resultKey]);
+    }, [result?.afternoonRouteShapes]);
 
     // ── Dash layer IDs for animation ──────────────────────────────────────────
 
     const dashLayerIds = useMemo(() => {
         const ids: string[] = [];
-        amRouteShapeGeoJSONs.forEach(({ id }) => ids.push(`${id}-dash`));
-        pmRouteShapeGeoJSONs.forEach(({ id }) => ids.push(`${id}-dash`));
+        if (journeyMode === 'am') {
+            amRouteShapeGeoJSONs.forEach(({ id }) => ids.push(`${id}-dash`));
+        } else {
+            pmRouteShapeGeoJSONs.forEach(({ id }) => ids.push(`${id}-dash`));
+        }
         return ids;
-    }, [amRouteShapeGeoJSONs, pmRouteShapeGeoJSONs]);
+    }, [amRouteShapeGeoJSONs, pmRouteShapeGeoJSONs, journeyMode]);
 
     useRouteAnimation(mapRef, { layerIds: dashLayerIds, speed: 30, enabled: true });
 
@@ -234,9 +257,12 @@ export const StudentPassMap: React.FC<StudentPassMapProps> = ({
 
         const allPoints: [number, number][] = [];
 
-        // Collect all route shape points
-        result.routeShapes?.forEach((shape) => allPoints.push(...shape.points));
-        result.afternoonRouteShapes?.forEach((shape) => allPoints.push(...shape.points));
+        // Collect route shape points for the active journey only
+        if (journeyMode === 'am') {
+            result.routeShapes?.forEach((shape) => allPoints.push(...shape.points));
+        } else {
+            result.afternoonRouteShapes?.forEach((shape) => allPoints.push(...shape.points));
+        }
 
         // Add school
         if (school) allPoints.push([school.lat, school.lon]);
@@ -255,19 +281,23 @@ export const StudentPassMap: React.FC<StudentPassMapProps> = ({
         }, 150);
 
         return () => clearTimeout(timer);
-    }, [result, school]);
+    }, [result, school, journeyMode]);
 
     const hasResult = Boolean(result?.found);
 
     const centroidLng = result?.walkToStop?.fromLon;
     const centroidLat = result?.walkToStop?.fromLat;
+    const selectedZoneStop = useMemo(
+        () => zoneStops.find((stop) => stop.stopId === selectedZoneStopId) ?? null,
+        [selectedZoneStopId, zoneStops]
+    );
 
     return (
-        <div className="relative w-full h-full student-pass-dark">
-            {/* ── Layer style toggle ── */}
+        <div className="relative w-full h-full student-pass-dark student-pass-map">
+            {/* ── Layer style toggle — positioned right of sidebar panel ── */}
             <div
-                className="absolute top-4 left-4 z-20 flex rounded-lg overflow-hidden"
-                style={{ background: 'rgba(11, 17, 33, 0.85)', border: '1px solid rgba(99, 126, 184, 0.15)' }}
+                className="absolute top-4 z-20 flex rounded-lg overflow-hidden"
+                style={{ left: 344, background: 'rgba(11, 17, 33, 0.85)', border: '1px solid rgba(99, 126, 184, 0.15)' }}
             >
                 <button
                     onClick={() => setMapStyle('mapbox://styles/mapbox/dark-v11')}
@@ -282,6 +312,31 @@ export const StudentPassMap: React.FC<StudentPassMapProps> = ({
                     <Globe size={14} />
                 </button>
             </div>
+
+            {zoneStops.length > 0 && (
+                <div
+                    className="absolute top-16 z-20 rounded-lg px-3 py-2 text-[11px] text-[#CBD5E1]"
+                    style={{
+                        left: 344,
+                        background: 'rgba(11, 17, 33, 0.85)',
+                        border: '1px solid rgba(99, 126, 184, 0.15)',
+                        fontFamily: "'JetBrains Mono', monospace",
+                    }}
+                >
+                    <div className="flex items-center gap-2">
+                        <span className="inline-block w-2.5 h-2.5 rounded-full bg-[#3B82F6]" />
+                        <span>Zone stop</span>
+                    </div>
+                    <div className="flex items-center gap-2 mt-1">
+                        <span className="inline-block w-2.5 h-2.5 rounded-full bg-[#FCD34D]" />
+                        <span>Selected stop</span>
+                    </div>
+                    <div className="flex items-center gap-2 mt-1">
+                        <span className="inline-block w-2.5 h-2.5 rounded-full bg-[#475569]" />
+                        <span>No trip found</span>
+                    </div>
+                </div>
+            )}
 
             <MapBase
                 mapStyle={mapStyle}
@@ -334,159 +389,240 @@ export const StudentPassMap: React.FC<StudentPassMapProps> = ({
                 <Source id="zone-stops" type="geojson" data={zoneStopsGeoJSON}>
                     <Layer {...ZONE_STOPS_LAYER} />
                 </Source>
-
-                {/* ── Walking leg: zone centroid → boarding stop ── */}
-                {hasResult && walkToStopGeoJSON && result?.walkToStop && (
-                    <>
-                        <Source id={`walk-to-stop-${resultKey}`} type="geojson" data={walkToStopGeoJSON}>
-                            <Layer {...walkLineLayer(`walk-to-stop-line-${resultKey}`, '#94A3B8', 0.7, [4, 8])} />
-                        </Source>
-
-                        {/* Zone centroid marker — pulsing blue dot */}
-                        {centroidLng !== undefined && centroidLat !== undefined && (
-                            <Marker longitude={centroidLng} latitude={centroidLat} anchor="center">
-                                <div className="relative">
-                                    <div
-                                        className="absolute inset-0 -m-2 rounded-full animate-pulse"
-                                        style={{ width: 32, height: 32, background: 'rgba(59, 130, 246, 0.2)' }}
-                                    />
-                                    <div
-                                        style={{
-                                            width: 16,
-                                            height: 16,
-                                            borderRadius: '50%',
-                                            background: '#3B82F6',
-                                            border: '2px solid #fff',
-                                            boxShadow: '0 0 12px rgba(59, 130, 246, 0.5)',
-                                        }}
-                                    />
-                                </div>
-                            </Marker>
-                        )}
-
-                        {/* Boarding stop marker — green with bus icon */}
-                        <Marker longitude={result.walkToStop.toLon} latitude={result.walkToStop.toLat} anchor="center">
-                            <div
+                {zoneStops.map((stop) => {
+                    const isSelected = stop.stopId === selectedZoneStopId;
+                    const hasAnyService = stop.morningOptionCount > 0 || stop.afternoonOptionCount > 0;
+                    return (
+                        <Marker key={stop.stopId} longitude={stop.lon} latitude={stop.lat} anchor="center">
+                            <button
+                                type="button"
+                                onClick={() => onZoneStopSelect(stop.stopId)}
+                                className="rounded-full transition-transform hover:scale-110"
+                                title={`${stop.stopName} — ${stop.morningOptionCount} AM / ${stop.afternoonOptionCount} PM options`}
                                 style={{
-                                    width: 18,
-                                    height: 18,
+                                    width: isSelected ? 18 : 14,
+                                    height: isSelected ? 18 : 14,
                                     borderRadius: '50%',
-                                    background: '#10B981',
-                                    border: '3px solid #fff',
-                                    boxShadow: '0 0 12px rgba(16, 185, 129, 0.5)',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
+                                    background: isSelected ? '#FCD34D' : hasAnyService ? '#3B82F6' : '#475569',
+                                    border: '2px solid #fff',
+                                    boxShadow: isSelected
+                                        ? '0 0 14px rgba(252, 211, 77, 0.5)'
+                                        : '0 0 10px rgba(59, 130, 246, 0.35)',
                                 }}
-                            >
-                                <Bus size={10} color="#fff" />
-                            </div>
+                            />
                         </Marker>
-                    </>
+                    );
+                })}
+                {selectedZoneStop && (
+                    <Marker longitude={selectedZoneStop.lon} latitude={selectedZoneStop.lat} anchor="bottom" offset={[0, -12]}>
+                        <MapLabel
+                            text={selectedZoneStop.stopName}
+                            size="sm"
+                            bgColor="#0F172A"
+                            borderColor="rgba(252,211,77,0.8)"
+                            mono
+                        />
+                    </Marker>
                 )}
 
-                {/* ── AM GTFS route shapes — 3-layer glow system ── */}
-                {hasResult && amRouteShapeGeoJSONs.map(({ id, geoJSON, color }) => (
-                    <Source key={id} id={id} type="geojson" data={geoJSON}>
-                        <Layer {...glowLayerStyle(`${id}-glow`, color, 0.15)} />
-                        <Layer {...baseLayerStyle(`${id}-base`, color, 6, 0.9)} />
-                        <Layer {...dashOverlayStyle(`${id}-dash`, 0.4)} />
-                    </Source>
-                ))}
+                {/* ── Result-dependent layers — keyed to force clean remount on selection change ── */}
+                <React.Fragment key={resultKey}>
 
-                {/* ── Transfer hub (diamond + pulse rings + glass callout) ── */}
-                {hasResult && transferHub && (() => {
-                    const [transferLng, transferLat] = toGeoJSON(transferHub.transferPt);
-                    return (
-                        <>
-                            {/* Animated pulse rings + diamond */}
-                            <Marker longitude={transferLng} latitude={transferLat} anchor="center">
-                                <div className="relative flex items-center justify-center" style={{ width: 48, height: 48 }}>
-                                    <div
-                                        className="absolute rounded-full transfer-ring"
-                                        style={{ width: 40, height: 40, border: '2px solid #F59E0B' }}
-                                    />
-                                    <div
-                                        className="absolute rounded-full transfer-ring-delayed"
-                                        style={{ width: 40, height: 40, border: '2px solid #F59E0B' }}
-                                    />
-                                    <div
-                                        className="absolute rounded-full transfer-ring-delayed-2"
-                                        style={{ width: 40, height: 40, border: '2px solid #F59E0B' }}
-                                    />
+                {/* ── Zone centroid marker — always visible when result exists ── */}
+                {hasResult && centroidLng !== undefined && centroidLat !== undefined && (
+                    <Marker longitude={centroidLng} latitude={centroidLat} anchor="center">
+                        <div className="relative">
+                            <div
+                                className="absolute inset-0 -m-2 rounded-full animate-pulse"
+                                style={{ width: 32, height: 32, background: 'rgba(59, 130, 246, 0.2)' }}
+                            />
+                            <div
+                                style={{
+                                    width: 16,
+                                    height: 16,
+                                    borderRadius: '50%',
+                                    background: '#3B82F6',
+                                    border: '2px solid #fff',
+                                    boxShadow: '0 0 12px rgba(59, 130, 246, 0.5)',
+                                }}
+                            />
+                        </div>
+                    </Marker>
+                )}
+
+                {/* ═══ MORNING JOURNEY ═══════════════════════════════════════════ */}
+                {journeyMode === 'am' && (
+                    <>
+                        {/* Walk to boarding stop */}
+                        {hasResult && walkToStopGeoJSON && result?.walkToStop && (
+                            <>
+                                <Source id="walk-to-stop" type="geojson" data={walkToStopGeoJSON}>
+                                    <Layer {...walkLineLayer('walk-to-stop-line', '#94A3B8', 0.7, [4, 8])} />
+                                </Source>
+                                <Marker longitude={result.walkToStop.toLon} latitude={result.walkToStop.toLat} anchor="center">
                                     <div
                                         style={{
-                                            width: 20,
-                                            height: 20,
-                                            transform: 'rotate(45deg)',
-                                            borderRadius: 4,
-                                            background: '#F59E0B',
-                                            border: '2px solid #fff',
-                                            boxShadow: '0 0 16px rgba(245, 158, 11, 0.6)',
+                                            width: 18,
+                                            height: 18,
+                                            borderRadius: '50%',
+                                            background: '#10B981',
+                                            border: '3px solid #fff',
+                                            boxShadow: '0 0 12px rgba(16, 185, 129, 0.5)',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
                                         }}
+                                    >
+                                        <Bus size={10} color="#fff" />
+                                    </div>
+                                </Marker>
+                            </>
+                        )}
+
+                        {/* AM route shapes — 3-layer glow system */}
+                        {hasResult && amRouteShapeGeoJSONs.map(({ id, geoJSON, color }) => (
+                            <Source key={id} id={id} type="geojson" data={geoJSON}>
+                                <Layer {...glowLayerStyle(`${id}-glow`, color, 0.15)} />
+                                <Layer {...baseLayerStyle(`${id}-base`, color, 6, 0.9)} />
+                                <Layer {...dashOverlayStyle(`${id}-dash`, 0.4)} />
+                            </Source>
+                        ))}
+
+                        {/* Inline route labels on AM shapes */}
+                        {hasResult && result?.routeShapes?.map((shape, i) => {
+                            if (shape.points.length < 3) return null;
+                            const midIdx = Math.floor(shape.points.length * 0.4);
+                            const [lng, lat] = toGeoJSON(shape.points[midIdx]);
+                            const leg = result.morningLegs[i];
+                            if (!leg) return null;
+                            return (
+                                <Marker key={`am-label-${i}`} longitude={lng} latitude={lat} anchor="center">
+                                    <MapLabel
+                                        text={`Rt ${leg.routeShortName}`}
+                                        size="sm"
+                                        bgColor={routeColor(shape.routeColor)}
+                                        borderColor="rgba(255,255,255,0.6)"
+                                        mono
                                     />
-                                </div>
-                            </Marker>
+                                </Marker>
+                            );
+                        })}
 
-                            {/* Compact transfer label */}
-                            <Marker longitude={transferLng} latitude={transferLat} anchor="bottom" offset={[0, -28]}>
-                                <div
-                                    className="rounded-md px-2.5 py-1.5 flex items-center gap-2"
-                                    style={{
-                                        background: 'rgba(11, 17, 33, 0.9)',
-                                        backdropFilter: 'blur(12px)',
-                                        border: `1px solid ${transferHub.transferQualityColor}44`,
-                                        fontFamily: "'JetBrains Mono', monospace",
-                                        boxShadow: `0 0 12px ${transferHub.transferQualityColor}33`,
-                                        pointerEvents: 'none',
-                                        whiteSpace: 'nowrap',
-                                    }}
-                                >
-                                    <span className="text-[11px] font-semibold" style={{ color: transferHub.transferQualityColor }}>
-                                        {transferHub.waitMin}m
-                                    </span>
-                                    <span className="text-[11px] text-[#94A3B8]">
-                                        transfer
-                                    </span>
-                                </div>
-                            </Marker>
-                        </>
-                    );
-                })()}
+                        {/* Transfer hub (diamond + pulse rings + glass callout) */}
+                        {hasResult && transferHub && (() => {
+                            const [transferLng, transferLat] = toGeoJSON(transferHub.transferPt);
+                            return (
+                                <>
+                                    <Marker longitude={transferLng} latitude={transferLat} anchor="center">
+                                        <div className="relative flex items-center justify-center" style={{ width: 48, height: 48 }}>
+                                            <div
+                                                className="absolute rounded-full transfer-ring"
+                                                style={{ width: 40, height: 40, border: '2px solid #F59E0B' }}
+                                            />
+                                            <div
+                                                className="absolute rounded-full transfer-ring-delayed"
+                                                style={{ width: 40, height: 40, border: '2px solid #F59E0B' }}
+                                            />
+                                            <div
+                                                className="absolute rounded-full transfer-ring-delayed-2"
+                                                style={{ width: 40, height: 40, border: '2px solid #F59E0B' }}
+                                            />
+                                            <div
+                                                style={{
+                                                    width: 20,
+                                                    height: 20,
+                                                    transform: 'rotate(45deg)',
+                                                    borderRadius: 4,
+                                                    background: '#F59E0B',
+                                                    border: '2px solid #fff',
+                                                    boxShadow: '0 0 16px rgba(245, 158, 11, 0.6)',
+                                                }}
+                                            />
+                                        </div>
+                                    </Marker>
+                                    <Marker longitude={transferLng} latitude={transferLat} anchor="bottom" offset={[0, -28]}>
+                                        <div
+                                            className="rounded-md px-2.5 py-1.5 flex items-center gap-2"
+                                            style={{
+                                                background: 'rgba(11, 17, 33, 0.9)',
+                                                backdropFilter: 'blur(12px)',
+                                                border: `1px solid ${transferHub.transferQualityColor}44`,
+                                                fontFamily: "'JetBrains Mono', monospace",
+                                                boxShadow: `0 0 12px ${transferHub.transferQualityColor}33`,
+                                                pointerEvents: 'none',
+                                                whiteSpace: 'nowrap',
+                                            }}
+                                        >
+                                            <span className="text-[11px] font-semibold" style={{ color: transferHub.transferQualityColor }}>
+                                                {transferHub.waitMin}m
+                                            </span>
+                                            <span className="text-[11px] text-[#94A3B8]">
+                                                transfer
+                                            </span>
+                                        </div>
+                                    </Marker>
+                                </>
+                            );
+                        })()}
 
-                {/* ── Walking leg: alighting stop → school ── */}
-                {hasResult && walkToSchoolGeoJSON && result?.walkToSchool && (
-                    <>
-                        <Source id={`walk-to-school-${resultKey}`} type="geojson" data={walkToSchoolGeoJSON}>
-                            <Layer {...walkLineLayer(`walk-to-school-line-${resultKey}`, '#94A3B8', 0.7, [4, 8])} />
-                        </Source>
+                        {/* Walk to school */}
+                        {hasResult && walkToSchoolGeoJSON && result?.walkToSchool && (
+                            <Source id="walk-to-school" type="geojson" data={walkToSchoolGeoJSON}>
+                                <Layer {...walkLineLayer('walk-to-school-line', '#94A3B8', 0.7, [4, 8])} />
+                            </Source>
+                        )}
                     </>
                 )}
 
                 {/* ═══ AFTERNOON RETURN TRIP ════════════════════════════════════════ */}
+                {journeyMode === 'pm' && (
+                    <>
+                        {/* Walk from school to afternoon boarding stop */}
+                        {hasResult && walkFromSchoolGeoJSON && result?.walkFromSchool && (
+                            <Source id="walk-from-school" type="geojson" data={walkFromSchoolGeoJSON}>
+                                <Layer {...walkLineLayer('walk-from-school-line', '#94A3B8', 0.7, [4, 8])} />
+                            </Source>
+                        )}
 
-                {/* ── Walk from school to afternoon boarding stop ── */}
-                {hasResult && walkFromSchoolGeoJSON && result?.walkFromSchool && (
-                    <Source id={`walk-from-school-${resultKey}`} type="geojson" data={walkFromSchoolGeoJSON}>
-                        <Layer {...walkLineLayer(`walk-from-school-line-${resultKey}`, '#94A3B8', 0.6, [4, 8])} />
-                    </Source>
+                        {/* PM route shapes — full glow (same prominence as AM) */}
+                        {hasResult && pmRouteShapeGeoJSONs.map(({ id, geoJSON, color }) => (
+                            <Source key={id} id={id} type="geojson" data={geoJSON}>
+                                <Layer {...glowLayerStyle(`${id}-glow`, color, 0.15)} />
+                                <Layer {...baseLayerStyle(`${id}-base`, color, 6, 0.9)} />
+                                <Layer {...dashOverlayStyle(`${id}-dash`, 0.4)} />
+                            </Source>
+                        ))}
+
+                        {/* Inline route labels on PM shapes */}
+                        {hasResult && result?.afternoonRouteShapes?.map((shape, i) => {
+                            if (shape.points.length < 3) return null;
+                            const midIdx = Math.floor(shape.points.length * 0.4);
+                            const [lng, lat] = toGeoJSON(shape.points[midIdx]);
+                            const leg = result.afternoonLegs?.[i];
+                            if (!leg) return null;
+                            return (
+                                <Marker key={`pm-label-${i}`} longitude={lng} latitude={lat} anchor="center">
+                                    <MapLabel
+                                        text={`Rt ${leg.routeShortName}`}
+                                        size="sm"
+                                        bgColor={routeColor(shape.routeColor)}
+                                        borderColor="rgba(255,255,255,0.6)"
+                                        mono
+                                    />
+                                </Marker>
+                            );
+                        })}
+
+                        {/* Walk from alighting stop to zone centroid */}
+                        {hasResult && walkToZoneGeoJSON && (
+                            <Source id="walk-to-zone" type="geojson" data={walkToZoneGeoJSON}>
+                                <Layer {...walkLineLayer('walk-to-zone-line', '#94A3B8', 0.7, [4, 8])} />
+                            </Source>
+                        )}
+                    </>
                 )}
 
-                {/* ── Afternoon route shapes — 3-layer glow (lower opacity) ── */}
-                {hasResult && pmRouteShapeGeoJSONs.map(({ id, geoJSON, color }) => (
-                    <Source key={id} id={id} type="geojson" data={geoJSON}>
-                        <Layer {...glowLayerStyle(`${id}-glow`, color, 0.08)} />
-                        <Layer {...baseLayerStyle(`${id}-base`, color, 4, 0.6)} />
-                        <Layer {...dashOverlayStyle(`${id}-dash`, 0.25)} />
-                    </Source>
-                ))}
-
-                {/* ── Walk from afternoon alighting stop to zone centroid ── */}
-                {hasResult && walkToZoneGeoJSON && (
-                    <Source id={`walk-to-zone-${resultKey}`} type="geojson" data={walkToZoneGeoJSON}>
-                        <Layer {...walkLineLayer(`walk-to-zone-line-${resultKey}`, '#94A3B8', 0.6, [4, 8])} />
-                    </Source>
-                )}
+                </React.Fragment>
 
             </MapBase>
         </div>

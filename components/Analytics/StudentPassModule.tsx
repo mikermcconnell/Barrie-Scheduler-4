@@ -1,13 +1,17 @@
-import React, { useState, useCallback, useEffect } from 'react';
-import { AlertTriangle, Download, Loader2, GraduationCap, ArrowRight, ArrowLeft } from 'lucide-react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
+import { ArrowLeft, GraduationCap } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import {
-    BARRIE_SCHOOLS,
-    minutesToDisplayTime,
+  BARRIE_SCHOOLS,
+  minutesToDisplayTime,
 } from '../../utils/transit-app/studentPassUtils';
-import type { SchoolConfig, StudentPassResult, TripOptions, RouteOption } from '../../utils/transit-app/studentPassUtils';
-import { findTripOptionsRaptor } from '../../utils/transit-app/studentPassRaptorAdapter';
+import type { SchoolConfig, StudentPassResult, TripOptions, TransferInfo, ZoneStopOption } from '../../utils/transit-app/studentPassUtils';
+import {
+    enrichStudentPassWalks,
+    findTripOptionsRaptor,
+    getStudentPassServiceDateInfo,
+} from '../../utils/transit-app/studentPassRaptorAdapter';
 import { StudentPassMap } from './StudentPassMap';
 import { StudentPassPanel } from './StudentPassPanel';
 import StudentPassTimeline from './StudentPassTimeline';
@@ -17,16 +21,142 @@ interface StudentPassModuleProps {
     onBack: () => void;
 }
 
+function parseInputDate(value: string): Date {
+    return new Date(`${value}T00:00:00`);
+}
+
+function formatDisplayDate(value: string): string {
+    return new Intl.DateTimeFormat('en-CA', {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+    }).format(parseInputDate(value));
+}
+
+function getJourneyTransfers(
+    result: StudentPassResult,
+    mode: 'am' | 'pm'
+): TransferInfo[] {
+    if (mode === 'am') {
+        if (result.morningTransfers?.length) return result.morningTransfers;
+        if (result.morningTransfer) return [result.morningTransfer];
+        if (result.transfers?.length) return result.transfers;
+        if (result.transfer) return [result.transfer];
+        return [];
+    }
+
+    if (result.afternoonTransfers?.length) return result.afternoonTransfers;
+    if (result.afternoonTransfer) return [result.afternoonTransfer];
+    return [];
+}
+
+function buildMorningSteps(result: StudentPassResult, bellStart: string): string[] {
+    const steps: string[] = [];
+    let stepNumber = 1;
+    const transfers = getJourneyTransfers(result, 'am');
+
+    if (result.walkToStop) {
+        steps.push(
+            `${stepNumber}. Walk ${result.walkToStop.walkMinutes} min (${(result.walkToStop.distanceKm * 1000).toFixed(0)}m) to ${result.walkToStop.label.replace(/^Walk to /, '')}`
+        );
+        stepNumber++;
+    }
+
+    result.morningLegs.forEach((leg, index) => {
+        steps.push(
+            `${stepNumber}. Board Rt ${leg.routeShortName} at ${minutesToDisplayTime(leg.departureMinutes)} from ${leg.fromStop}`
+        );
+        stepNumber++;
+        steps.push(
+            `${stepNumber}. Arrive ${leg.toStop} at ${minutesToDisplayTime(leg.arrivalMinutes)}`
+        );
+        stepNumber++;
+
+        const transfer = transfers[index];
+        if (transfer) {
+            steps.push(
+                `${stepNumber}. Transfer at ${leg.toStop} (${transfer.waitMinutes} min wait)`
+            );
+            stepNumber++;
+        }
+    });
+
+    if (result.walkToSchool) {
+        steps.push(
+            `${stepNumber}. Walk ${result.walkToSchool.walkMinutes} min (${(result.walkToSchool.distanceKm * 1000).toFixed(0)}m) to school`
+        );
+    } else {
+        steps.push(`${stepNumber}. Walk to school`);
+    }
+    stepNumber++;
+    steps.push(`${stepNumber}. Bell time ${bellStart}`);
+
+    return steps;
+}
+
+function buildAfternoonSteps(result: StudentPassResult, bellEnd: string): string[] {
+    const steps: string[] = [`1. Bell rings at ${bellEnd}`];
+    let stepNumber = 2;
+    const transfers = getJourneyTransfers(result, 'pm');
+
+    if (result.walkFromSchool) {
+        steps.push(
+            `${stepNumber}. Walk ${result.walkFromSchool.walkMinutes} min (${(result.walkFromSchool.distanceKm * 1000).toFixed(0)}m) to ${result.walkFromSchool.label.replace(/^Walk to /, '')}`
+        );
+        stepNumber++;
+    }
+
+    result.afternoonLegs.forEach((leg, index) => {
+        steps.push(
+            `${stepNumber}. Board Rt ${leg.routeShortName} at ${minutesToDisplayTime(leg.departureMinutes)} from ${leg.fromStop}`
+        );
+        stepNumber++;
+        steps.push(
+            `${stepNumber}. Arrive ${leg.toStop} at ${minutesToDisplayTime(leg.arrivalMinutes)}`
+        );
+        stepNumber++;
+
+        const transfer = transfers[index];
+        if (transfer) {
+            steps.push(
+                `${stepNumber}. Transfer at ${leg.toStop} (${transfer.waitMinutes} min wait)`
+            );
+            stepNumber++;
+        }
+    });
+
+    if (result.walkToZone) {
+        steps.push(
+            `${stepNumber}. Walk ${result.walkToZone.walkMinutes} min (${(result.walkToZone.distanceKm * 1000).toFixed(0)}m) home`
+        );
+        stepNumber++;
+    }
+
+    if (result.nextAfternoonDepartureMinutes != null) {
+        steps.push(
+            `${stepNumber}. Next bus after school departs at ${minutesToDisplayTime(result.nextAfternoonDepartureMinutes)}`
+        );
+    }
+
+    return steps;
+}
+
 export const StudentPassModule: React.FC<StudentPassModuleProps> = ({ onBack }) => {
+    const serviceDateInfo = useMemo(() => getStudentPassServiceDateInfo(), []);
     const [selectedSchoolId, setSelectedSchoolId] = useState<string>(BARRIE_SCHOOLS[0].id);
     const [bellStart, setBellStart] = useState<string>('');
     const [bellEnd, setBellEnd] = useState<string>('');
+    const [serviceDate, setServiceDate] = useState<string>(serviceDateInfo.defaultDate);
     const [polygon, setPolygon] = useState<[number, number][] | null>(null);
+    const [selectedZoneStopId, setSelectedZoneStopId] = useState<string | null>(null);
     const [tripOptions, setTripOptions] = useState<TripOptions | null>(null);
     const [selectedMorningIdx, setSelectedMorningIdx] = useState(0);
     const [selectedAfternoonIdx, setSelectedAfternoonIdx] = useState(0);
     const [isCalculating, setIsCalculating] = useState(false);
     const [isExporting, setIsExporting] = useState(false);
+    const [journeyMode, setJourneyMode] = useState<'am' | 'pm'>('am');
+    const [isFullscreen, setIsFullscreen] = useState(false);
 
     const selectedSchool: SchoolConfig =
         BARRIE_SCHOOLS.find((s) => s.id === selectedSchoolId) ?? BARRIE_SCHOOLS[0];
@@ -37,10 +167,12 @@ export const StudentPassModule: React.FC<StudentPassModuleProps> = ({ onBack }) 
 
     const handlePolygonClear = useCallback(() => {
         setPolygon(null);
+        setSelectedZoneStopId(null);
         setTripOptions(null);
         setSelectedMorningIdx(0);
         setSelectedAfternoonIdx(0);
         setIsCalculating(false);
+        setJourneyMode('am');
     }, []);
 
     const handleSchoolChange = (id: string) => {
@@ -48,18 +180,43 @@ export const StudentPassModule: React.FC<StudentPassModuleProps> = ({ onBack }) 
         setBellStart('');
         setBellEnd('');
         setTripOptions(null);
+        setSelectedZoneStopId(null);
         setSelectedMorningIdx(0);
         setSelectedAfternoonIdx(0);
+        setJourneyMode('am');
     };
+
+    const handleZoneStopChange = useCallback((stopId: string) => {
+        setSelectedZoneStopId(stopId);
+        setTripOptions(null);
+        setSelectedMorningIdx(0);
+        setSelectedAfternoonIdx(0);
+        setJourneyMode('am');
+    }, []);
+
+    const handleServiceDateChange = useCallback((value: string) => {
+        setServiceDate(value);
+        setTripOptions(null);
+        setSelectedMorningIdx(0);
+        setSelectedAfternoonIdx(0);
+        setJourneyMode('am');
+    }, []);
 
     const effectiveBellStart = bellStart || selectedSchool.bellStart;
     const effectiveBellEnd = bellEnd || selectedSchool.bellEnd;
+    const effectiveZoneStopId = selectedZoneStopId ?? tripOptions?.selectedZoneStopId ?? null;
+    const selectedZoneStop: ZoneStopOption | null = useMemo(() => {
+        if (!tripOptions?.zoneStops?.length) return null;
+        return tripOptions.zoneStops.find((stop) => stop.stopId === effectiveZoneStopId) ?? null;
+    }, [effectiveZoneStopId, tripOptions?.zoneStops]);
 
     useEffect(() => {
         if (!polygon) {
             setIsCalculating(false);
             return;
         }
+
+        let cancelled = false;
 
         setIsCalculating(true);
         const rafId = requestAnimationFrame(() => {
@@ -68,32 +225,60 @@ export const StudentPassModule: React.FC<StudentPassModuleProps> = ({ onBack }) 
                 bellStart: effectiveBellStart,
                 bellEnd: effectiveBellEnd,
             };
-            const options = findTripOptionsRaptor(polygon, schoolWithOverrides);
+            const options = findTripOptionsRaptor(polygon, schoolWithOverrides, {
+                serviceDate: parseInputDate(serviceDate),
+                zoneStopId: selectedZoneStopId,
+            });
+            if (cancelled) return;
             setTripOptions(options);
             setSelectedMorningIdx(0);
             setSelectedAfternoonIdx(0);
             setIsCalculating(false);
+
+            // Enrich walk legs with Mapbox street-level geometry (async)
+            const allResults = [
+                ...options.morningOptions.map((o) => o.result),
+                ...options.afternoonOptions.map((o) => o.result),
+            ];
+            Promise.all(allResults.map(enrichStudentPassWalks)).then((enriched) => {
+                if (cancelled) return;
+                let idx = 0;
+                const enrichedOptions = { ...options };
+                enrichedOptions.morningOptions = options.morningOptions.map((o) => ({
+                    ...o,
+                    result: enriched[idx++],
+                }));
+                enrichedOptions.afternoonOptions = options.afternoonOptions.map((o) => ({
+                    ...o,
+                    result: enriched[idx++],
+                }));
+                setTripOptions(enrichedOptions);
+            });
         });
 
-        return () => cancelAnimationFrame(rafId);
-    }, [polygon, selectedSchool, effectiveBellStart, effectiveBellEnd]);
+        return () => {
+            cancelled = true;
+            cancelAnimationFrame(rafId);
+        };
+    }, [polygon, selectedSchool, effectiveBellStart, effectiveBellEnd, serviceDate, selectedZoneStopId]);
 
-    // Compose the displayed result from selected morning + afternoon options
+    // Compose result from selected morning + selected afternoon option
     const result: StudentPassResult | null = (() => {
         if (!tripOptions) return null;
-        const am = tripOptions.morningOptions[selectedMorningIdx];
+        const option = tripOptions.morningOptions[selectedMorningIdx];
+        if (!option) return { found: false as const, isDirect: false, morningLegs: [], afternoonLegs: [] };
+
         const pm = tripOptions.afternoonOptions[selectedAfternoonIdx];
-        if (!am) return { found: false as const, isDirect: false, morningLegs: [], afternoonLegs: [] };
+        if (!pm) return option.result;
 
-        if (!pm) return am.result;
-
-        // Merge: morning from selected AM, afternoon from selected PM
         return {
-            ...am.result,
+            ...option.result,
             afternoonLegs: pm.result.afternoonLegs,
             afternoonRouteShapes: pm.result.afternoonRouteShapes,
             walkFromSchool: pm.result.walkFromSchool,
             walkToZone: pm.result.walkToZone,
+            afternoonTransfer: pm.result.afternoonTransfer,
+            afternoonTransfers: pm.result.afternoonTransfers,
             nextAfternoonDepartureMinutes: pm.result.nextAfternoonDepartureMinutes,
         };
     })();
@@ -118,6 +303,7 @@ export const StudentPassModule: React.FC<StudentPassModuleProps> = ({ onBack }) 
             doc.setFont('helvetica', 'normal');
             doc.setTextColor(209, 213, 219); // gray-300
             doc.text('Student Transit Pass', margin, 19);
+            doc.text(formatDisplayDate(serviceDate), pageW - margin, 13, { align: 'right' });
 
             let y = 30;
 
@@ -147,6 +333,10 @@ export const StudentPassModule: React.FC<StudentPassModuleProps> = ({ onBack }) 
             const tripDuration = result.morningLegs.length > 0
                 ? result.morningLegs[result.morningLegs.length - 1].arrivalMinutes - result.morningLegs[0].departureMinutes
                 : 0;
+            statsLines.push(`Service Date: ${formatDisplayDate(serviceDate)}`);
+            if (selectedZoneStop) {
+                statsLines.push(`Selected Stop: ${selectedZoneStop.stopName}`);
+            }
             statsLines.push(`Trip Time: ${tripDuration} min`);
 
             if (result.walkToStop) {
@@ -194,68 +384,10 @@ export const StudentPassModule: React.FC<StudentPassModuleProps> = ({ onBack }) 
             doc.text('AFTERNOON TRIP', margin + colW, y);
             y += 5;
 
-            // Morning steps
-            const morningSteps: string[] = [];
-            let stepNum = 1;
-
-            // Walk to boarding stop
-            if (result.walkToStop) {
-                const w = result.walkToStop;
-                morningSteps.push(`${stepNum}. Walk ${w.walkMinutes} min (${(w.distanceKm * 1000).toFixed(0)}m)`);
-                morningSteps.push(`   to ${result.morningLegs[0]?.fromStop ?? 'bus stop'}`);
-                stepNum++;
-            }
-
-            if (result.isDirect && result.morningLegs.length === 1) {
-                const leg = result.morningLegs[0];
-                morningSteps.push(`${stepNum}. Board Rt ${leg.routeShortName} at ${minutesToDisplayTime(leg.departureMinutes)}`);
-                morningSteps.push(`   from ${leg.fromStop}`);
-                stepNum++;
-                morningSteps.push(`${stepNum}. Arrive ${leg.toStop}`);
-                morningSteps.push(`   at ${minutesToDisplayTime(leg.arrivalMinutes)}`);
-                stepNum++;
-            } else if (!result.isDirect && result.morningLegs.length === 2) {
-                const legA = result.morningLegs[0];
-                const legB = result.morningLegs[1];
-                const waitMin = result.transfer?.waitMinutes ?? (legB.departureMinutes - legA.arrivalMinutes);
-                morningSteps.push(`${stepNum}. Board Rt ${legA.routeShortName} at ${minutesToDisplayTime(legA.departureMinutes)}`);
-                morningSteps.push(`   from ${legA.fromStop}`);
-                stepNum++;
-                morningSteps.push(`${stepNum}. Transfer at ${legA.toStop}`);
-                morningSteps.push(`   (${waitMin} min wait)`);
-                stepNum++;
-                morningSteps.push(`${stepNum}. Board Rt ${legB.routeShortName} at ${minutesToDisplayTime(legB.departureMinutes)}`);
-                stepNum++;
-                morningSteps.push(`${stepNum}. Arrive ${legB.toStop}`);
-                morningSteps.push(`   at ${minutesToDisplayTime(legB.arrivalMinutes)}`);
-                stepNum++;
-            }
-
-            // Walk to school
-            if (result.walkToSchool) {
-                const w = result.walkToSchool;
-                morningSteps.push(`${stepNum}. Walk ${w.walkMinutes} min (${(w.distanceKm * 1000).toFixed(0)}m) to school`);
-                morningSteps.push(`   Bell: ${effectiveBellStart}`);
-            } else {
-                morningSteps.push(`${stepNum}. Walk to school`);
-                morningSteps.push(`   Bell: ${effectiveBellStart}`);
-            }
-
-            // Afternoon steps
-            const afternoonSteps: string[] = [];
-            afternoonSteps.push(`1. Bell rings at ${effectiveBellEnd}`);
-            if (result.afternoonLegs.length > 0) {
-                const leg = result.afternoonLegs[0];
-                afternoonSteps.push(`2. Board Rt ${leg.routeShortName} at ${minutesToDisplayTime(leg.departureMinutes)}`);
-                afternoonSteps.push(`   from ${leg.fromStop}`);
-                afternoonSteps.push(`3. Arrive ${leg.toStop}`);
-                afternoonSteps.push(`   at ${minutesToDisplayTime(leg.arrivalMinutes)}`);
-                if (result.nextAfternoonDepartureMinutes != null) {
-                    afternoonSteps.push(`Next bus: ${minutesToDisplayTime(result.nextAfternoonDepartureMinutes)}`);
-                }
-            } else {
-                afternoonSteps.push('2. No service data available');
-            }
+            const morningSteps = buildMorningSteps(result, effectiveBellStart);
+            const afternoonSteps = result.afternoonLegs.length > 0 || result.walkFromSchool || result.walkToZone
+                ? buildAfternoonSteps(result, effectiveBellEnd)
+                : ['1. No return trip found for this stop and date'];
 
             // Print two columns
             doc.setFont('helvetica', 'normal');
@@ -274,7 +406,7 @@ export const StudentPassModule: React.FC<StudentPassModuleProps> = ({ onBack }) 
             doc.setTextColor(156, 163, 175); // gray-400
             const today = new Date().toLocaleDateString('en-CA');
             doc.text('Barrie Transit', margin, footerY);
-            doc.text(today, pageW - margin, footerY, { align: 'right' });
+            doc.text(`${formatDisplayDate(serviceDate)} | Exported ${today}`, pageW - margin, footerY, { align: 'right' });
 
             // Save
             const safeName = selectedSchool.name.replace(/[^a-zA-Z0-9]/g, '-');
@@ -282,26 +414,28 @@ export const StudentPassModule: React.FC<StudentPassModuleProps> = ({ onBack }) 
         } finally {
             setIsExporting(false);
         }
-    }, [result, selectedSchool, effectiveBellStart, effectiveBellEnd]);
+    }, [result, selectedSchool, effectiveBellStart, effectiveBellEnd, selectedZoneStop, serviceDate]);
 
     return (
-        <div className="h-full flex flex-col overflow-hidden">
+        <div className={`flex flex-col overflow-hidden ${isFullscreen ? 'fixed inset-0 z-50' : 'h-full'}`}>
             {/* Dark header */}
-            <div
-                className="flex items-center gap-3 px-6 py-3 flex-shrink-0"
-                style={{ background: '#0B1121', borderBottom: '1px solid rgba(99, 126, 184, 0.12)' }}
-            >
-                <button onClick={onBack} className="text-[#94A3B8] hover:text-[#E2E8F0] transition-colors">
-                    <ArrowLeft size={18} />
-                </button>
-                <GraduationCap size={18} className="text-emerald-400" />
-                <h2
-                    className="text-[15px] font-semibold text-[#E2E8F0]"
-                    style={{ fontFamily: "'JetBrains Mono', monospace" }}
+            {!isFullscreen && (
+                <div
+                    className="flex items-center gap-3 px-6 py-3 flex-shrink-0"
+                    style={{ background: '#0B1121', borderBottom: '1px solid rgba(99, 126, 184, 0.12)' }}
                 >
-                    Student Transit Pass
-                </h2>
-            </div>
+                    <button onClick={onBack} className="text-[#94A3B8] hover:text-[#E2E8F0] transition-colors">
+                        <ArrowLeft size={18} />
+                    </button>
+                    <GraduationCap size={18} className="text-emerald-400" />
+                    <h2
+                        className="text-[15px] font-semibold text-[#E2E8F0]"
+                        style={{ fontFamily: "'JetBrains Mono', monospace" }}
+                    >
+                        Student Transit Pass
+                    </h2>
+                </div>
+            )}
 
             {/* Map fills everything */}
             <div className="flex-1 relative overflow-hidden" style={{ background: '#0B1121' }}>
@@ -309,8 +443,12 @@ export const StudentPassModule: React.FC<StudentPassModuleProps> = ({ onBack }) 
                     <StudentPassMap
                         school={selectedSchool}
                         result={result}
+                        journeyMode={journeyMode}
+                        zoneStops={tripOptions?.zoneStops ?? []}
+                        selectedZoneStopId={effectiveZoneStopId}
                         onPolygonComplete={handlePolygonComplete}
                         onPolygonClear={handlePolygonClear}
+                        onZoneStopSelect={handleZoneStopChange}
                     />
                 </div>
 
@@ -323,23 +461,37 @@ export const StudentPassModule: React.FC<StudentPassModuleProps> = ({ onBack }) 
                     bellEnd={bellEnd}
                     onBellStartChange={setBellStart}
                     onBellEndChange={setBellEnd}
+                    serviceDate={serviceDate}
+                    onServiceDateChange={handleServiceDateChange}
+                    minServiceDate={serviceDateInfo.minDate}
+                    maxServiceDate={serviceDateInfo.maxDate}
+                    serviceDateWarning={serviceDateInfo.defaultDateWarning}
                     effectiveBellStart={effectiveBellStart}
                     effectiveBellEnd={effectiveBellEnd}
                     polygon={polygon}
                     isCalculating={isCalculating}
                     tripOptions={tripOptions}
                     result={result}
+                    selectedZoneStopId={effectiveZoneStopId}
+                    selectedZoneStop={selectedZoneStop}
                     selectedMorningIdx={selectedMorningIdx}
                     selectedAfternoonIdx={selectedAfternoonIdx}
                     onMorningSelect={setSelectedMorningIdx}
                     onAfternoonSelect={setSelectedAfternoonIdx}
+                    onZoneStopSelect={handleZoneStopChange}
+                    journeyMode={journeyMode}
+                    onJourneyModeChange={setJourneyMode}
                     onExport={handleExportPdf}
                     isExporting={isExporting}
                 />
 
                 {/* Journey timeline at bottom */}
                 {result?.found && (
-                    <StudentPassTimeline result={result} />
+                    <StudentPassTimeline
+                        result={result}
+                        journeyMode={journeyMode}
+                        onJourneyModeChange={setJourneyMode}
+                    />
                 )}
             </div>
         </div>

@@ -31,14 +31,30 @@ vi.mock('../utils/transit-app/studentPassUtils', () => ({
 
 vi.mock('../utils/transit-app/studentPassRaptorAdapter', () => ({
   findTripOptionsRaptor: findTripOptionsRaptorMock,
+  enrichStudentPassWalks: (result: unknown) => Promise.resolve(result),
+  getStudentPassServiceDateInfo: () => ({
+    minDate: '2026-02-01',
+    maxDate: '2026-02-28',
+    defaultDate: '2026-02-27',
+    defaultDateWarning: 'GTFS feed warning',
+  }),
 }));
 
 vi.mock('../components/Analytics/StudentPassMap', () => ({
-  StudentPassMap: ({ onPolygonComplete }: { onPolygonComplete: (coords: [number, number][]) => void }) => (
+  StudentPassMap: ({
+    onPolygonComplete,
+    onZoneStopSelect,
+  }: {
+    onPolygonComplete: (coords: [number, number][]) => void;
+    onZoneStopSelect: (stopId: string) => void;
+  }) => (
     <div>
       <div className="student-pass-map" />
       <button onClick={() => onPolygonComplete([[44.4, -79.7], [44.42, -79.7], [44.41, -79.68]])}>
         Draw Zone
+      </button>
+      <button onClick={() => onZoneStopSelect('stop-alt')}>
+        Select Alt Stop
       </button>
     </div>
   ),
@@ -73,6 +89,29 @@ function createTripOptions() {
   return {
     morningOptions: [{ id: 'am-1', label: 'Rt 1 Direct', result }],
     afternoonOptions: [] as { id: string; label: string; result: typeof result }[],
+    zoneStops: [
+      {
+        stopId: 'stop-from',
+        stopName: 'From Stop',
+        lat: 44.4,
+        lon: -79.7,
+        distanceKm: 0.2,
+        walkMinutes: 2,
+        morningOptionCount: 1,
+        afternoonOptionCount: 0,
+      },
+      {
+        stopId: 'stop-alt',
+        stopName: 'Alternate Stop',
+        lat: 44.401,
+        lon: -79.701,
+        distanceKm: 0.35,
+        walkMinutes: 4,
+        morningOptionCount: 1,
+        afternoonOptionCount: 1,
+      },
+    ],
+    selectedZoneStopId: 'stop-from',
   };
 }
 
@@ -126,6 +165,9 @@ describe('StudentPassModule recalculation', () => {
       bellStart: '08:45',
       bellEnd: '15:10',
     });
+    expect(findTripOptionsRaptorMock.mock.calls[0]?.[2]).toMatchObject({
+      zoneStopId: null,
+    });
 
     const timeInputs = container.querySelectorAll('input[type="time"]');
     expect(timeInputs.length).toBeGreaterThanOrEqual(2);
@@ -148,6 +190,9 @@ describe('StudentPassModule recalculation', () => {
       id: 'school-a',
       bellStart: '09:10',
       bellEnd: '15:10',
+    });
+    expect(findTripOptionsRaptorMock.mock.calls[1]?.[2]).toMatchObject({
+      zoneStopId: null,
     });
   });
 
@@ -180,6 +225,70 @@ describe('StudentPassModule recalculation', () => {
       id: 'school-b',
       bellStart: '09:00',
       bellEnd: '15:30',
+    });
+  });
+
+  it('recomputes when the service date changes', async () => {
+    flushSync(() => {
+      root.render(<StudentPassModule onBack={() => {}} />);
+    });
+
+    const drawButton = Array.from(container.querySelectorAll('button'))
+      .find((btn) => (btn.textContent || '').includes('Draw Zone'));
+    expect(drawButton).toBeTruthy();
+
+    flushSync(() => {
+      drawButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await Promise.resolve();
+
+    const dateInput = container.querySelector('input[type="date"]') as HTMLInputElement | null;
+    expect(dateInput).toBeTruthy();
+
+    const dateValueSetter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      'value'
+    )?.set;
+    expect(dateValueSetter).toBeTruthy();
+
+    flushSync(() => {
+      dateValueSetter?.call(dateInput, '2026-02-26');
+      dateInput!.dispatchEvent(new Event('input', { bubbles: true }));
+      dateInput!.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await Promise.resolve();
+
+    expect(findTripOptionsRaptorMock).toHaveBeenCalledTimes(2);
+    expect(findTripOptionsRaptorMock.mock.calls[1]?.[2]?.serviceDate).toBeInstanceOf(Date);
+  });
+
+  it('recomputes when a different zone stop is selected', async () => {
+    flushSync(() => {
+      root.render(<StudentPassModule onBack={() => {}} />);
+    });
+
+    const drawButton = Array.from(container.querySelectorAll('button'))
+      .find((btn) => (btn.textContent || '').includes('Draw Zone'));
+    expect(drawButton).toBeTruthy();
+
+    flushSync(() => {
+      drawButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const stopButton = Array.from(container.querySelectorAll('button'))
+      .find((btn) => (btn.textContent || '').includes('Select Alt Stop'));
+    expect(stopButton).toBeTruthy();
+
+    flushSync(() => {
+      stopButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await Promise.resolve();
+
+    expect(findTripOptionsRaptorMock).toHaveBeenCalledTimes(2);
+    expect(findTripOptionsRaptorMock.mock.calls[1]?.[2]).toMatchObject({
+      zoneStopId: 'stop-alt',
     });
   });
 });

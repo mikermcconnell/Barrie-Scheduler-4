@@ -425,7 +425,16 @@ function deduplicateResults(results: RaptorResult[]): RaptorResult[] {
  * with multi-pass diversity to provide different route choices.
  */
 export function planTripLocal(options: PlanTripOptions): RaptorResult[] {
-  const { fromLat, fromLon, toLat, toLon, date, routingData } = options;
+  const {
+    fromLat,
+    fromLon,
+    toLat,
+    toLon,
+    date,
+    routingData,
+    originStopIds,
+    destinationStopIds,
+  } = options;
   const time = options.time ?? date;
 
   // Check if origin and destination are too close (walkable)
@@ -447,12 +456,21 @@ export function planTripLocal(options: PlanTripOptions): RaptorResult[] {
   }
 
   // Find nearby stops for origin and destination
-  const originStops = findNearbyStops(
-    routingData.stops,
-    fromLat,
-    fromLon,
-    ROUTING_CONFIG.MAX_WALK_TO_TRANSIT
-  );
+  const originStops = originStopIds?.length
+    ? originStopIds
+        .map((stopId) => routingData.stopIndex[stopId])
+        .filter((stop): stop is NonNullable<typeof stop> => Boolean(stop))
+        .map((stop) => ({
+          stop,
+          walkMeters: 0,
+          walkSeconds: 0,
+        }))
+    : findNearbyStops(
+        routingData.stops,
+        fromLat,
+        fromLon,
+        ROUTING_CONFIG.MAX_WALK_TO_TRANSIT
+      );
   if (originStops.length === 0) {
     throw new RoutingError(
       ROUTING_ERROR_CODES.OUTSIDE_SERVICE_AREA,
@@ -460,12 +478,21 @@ export function planTripLocal(options: PlanTripOptions): RaptorResult[] {
     );
   }
 
-  const destStops = findNearbyStops(
-    routingData.stops,
-    toLat,
-    toLon,
-    ROUTING_CONFIG.MAX_WALK_TO_TRANSIT
-  );
+  const destStops = destinationStopIds?.length
+    ? destinationStopIds
+        .map((stopId) => routingData.stopIndex[stopId])
+        .filter((stop): stop is NonNullable<typeof stop> => Boolean(stop))
+        .map((stop) => ({
+          stop,
+          walkMeters: 0,
+          walkSeconds: 0,
+        }))
+    : findNearbyStops(
+        routingData.stops,
+        toLat,
+        toLon,
+        ROUTING_CONFIG.MAX_WALK_TO_TRANSIT
+      );
   if (destStops.length === 0) {
     throw new RoutingError(
       ROUTING_ERROR_CODES.OUTSIDE_SERVICE_AREA,

@@ -272,6 +272,8 @@ export interface PlanTripOptions {
   date: Date;
   time?: Date;
   routingData: RoutingData;
+  originStopIds?: string[];
+  destinationStopIds?: string[];
 }
 
 // ─── Coordinate Type ────────────────────────────────────────────────

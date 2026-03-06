@@ -5,17 +5,19 @@
  * with RAPTOR-based routing. Maps RAPTOR Itinerary → StudentPassResult.
  */
 
-import { loadGtfsData } from '../routing/gtfsAdapter';
 import { buildRoutingData } from '../routing/routingDataService';
-import { buildServiceCalendar } from '../routing/calendarService';
+import { loadGtfsData } from '../routing/gtfsAdapter';
+import { getActiveServicesForDate } from '../routing/calendarService';
+import { ROUTING_CONFIG } from '../routing/constants';
 import { planTripLocal } from '../routing/raptorEngine';
 import { buildItinerary } from '../routing/itineraryBuilder';
+import { getWalkingDirections } from '../routing/walkingService';
 import { getRouteColor } from '../config/routeColors';
 import { RoutingError } from '../routing/types';
-import type { RoutingData, Itinerary, Leg, TransitLeg } from '../routing/types';
+import type { RoutingData, Itinerary, TransitLeg } from '../routing/types';
+import { decodePolyline } from '../../components/shared/mapUtils';
 import {
   findStopsInZone,
-  findNearestStopToSchool,
   getPolygonCentroid,
   parseTimeToMinutes,
   minutesToDisplayTime,
@@ -31,6 +33,8 @@ import type {
   TripLeg,
   TransferInfo,
   RouteShapeSegment,
+  WalkLeg,
+  ZoneStopOption,
 } from './studentPassUtils';
 import { getAllStopsWithCoords } from '../gtfs/gtfsStopLookup';
 
@@ -44,6 +48,135 @@ function getRoutingData(): RoutingData {
   const gtfsData = loadGtfsData();
   cachedRoutingData = buildRoutingData(gtfsData);
   return cachedRoutingData;
+}
+
+export interface StudentPassServiceDateInfo {
+  minDate: string;
+  maxDate: string;
+  defaultDate: string;
+  defaultDateWarning: string | null;
+}
+
+export interface StudentPassSearchParams {
+  serviceDate?: Date;
+  zoneStopId?: string | null;
+}
+
+interface StopSearchResult {
+  zoneStop: ZoneStopOption;
+  validMorning: Itinerary[];
+  afternoonItineraries: Itinerary[];
+}
+
+const AUTO_SEARCH_STOP_LIMIT = 8;
+
+function normalizeDate(date: Date): Date {
+  const normalized = new Date(date.getTime());
+  normalized.setHours(0, 0, 0, 0);
+  return normalized;
+}
+
+function toInputDate(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function fromServiceKey(dateStr: string): Date {
+  const year = parseInt(dateStr.slice(0, 4), 10);
+  const month = parseInt(dateStr.slice(4, 6), 10) - 1;
+  const day = parseInt(dateStr.slice(6, 8), 10);
+  return new Date(year, month, day);
+}
+
+function isWeekday(date: Date): boolean {
+  const dow = date.getDay();
+  return dow >= 1 && dow <= 5;
+}
+
+function formatDisplayDate(date: Date): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  }).format(date);
+}
+
+function getActiveServiceDates(routingData: RoutingData): Date[] {
+  return Object.keys(routingData.serviceCalendar)
+    .filter((dateStr) => routingData.serviceCalendar[dateStr]?.size > 0)
+    .sort()
+    .map(fromServiceKey);
+}
+
+function pickDefaultServiceDate(routingData: RoutingData, referenceDate: Date): Date {
+  const activeDates = getActiveServiceDates(routingData);
+  if (activeDates.length === 0) return normalizeDate(referenceDate);
+
+  const target = normalizeDate(referenceDate).getTime();
+  const weekdayDates = activeDates.filter(isWeekday);
+  const candidates = weekdayDates.length > 0 ? weekdayDates : activeDates;
+
+  for (let i = candidates.length - 1; i >= 0; i--) {
+    if (normalizeDate(candidates[i]).getTime() <= target) {
+      return normalizeDate(candidates[i]);
+    }
+  }
+
+  return normalizeDate(candidates[0]);
+}
+
+export function getStudentPassServiceDateInfo(referenceDate = new Date()): StudentPassServiceDateInfo {
+  const routingData = getRoutingData();
+  const activeDates = getActiveServiceDates(routingData);
+  if (activeDates.length === 0) {
+    const fallback = normalizeDate(referenceDate);
+    return {
+      minDate: toInputDate(fallback),
+      maxDate: toInputDate(fallback),
+      defaultDate: toInputDate(fallback),
+      defaultDateWarning: 'No active GTFS service dates are available in the bundled feed.',
+    };
+  }
+
+  const minDate = normalizeDate(activeDates[0]);
+  const maxDate = normalizeDate(activeDates[activeDates.length - 1]);
+  const preferred = pickDefaultServiceDate(routingData, referenceDate);
+  const today = normalizeDate(referenceDate);
+
+  let defaultDateWarning: string | null = null;
+  if (preferred.getTime() !== today.getTime()) {
+    defaultDateWarning = `GTFS feed covers ${formatDisplayDate(minDate)} to ${formatDisplayDate(maxDate)}. Using ${formatDisplayDate(preferred)} for Student Pass planning.`;
+  }
+
+  return {
+    minDate: toInputDate(minDate),
+    maxDate: toInputDate(maxDate),
+    defaultDate: toInputDate(preferred),
+    defaultDateWarning,
+  };
+}
+
+function buildZoneStopCandidate(
+  stopId: string,
+  stopName: string,
+  lat: number,
+  lon: number,
+  centroid: [number, number]
+): ZoneStopOption {
+  const walk = buildStudentWalkLeg(centroid[0], centroid[1], lat, lon, `Walk to ${stopName}`);
+  return {
+    stopId,
+    stopName,
+    lat,
+    lon,
+    distanceKm: walk.distanceKm,
+    walkMinutes: walk.walkMinutes,
+    morningOptionCount: 0,
+    afternoonOptionCount: 0,
+  };
 }
 
 // ─── Itinerary → StudentPassResult Mapping ──────────────────────────
@@ -81,12 +214,20 @@ function itineraryToTripLegs(itin: Itinerary): TripLeg[] {
  */
 function extractTransfers(itin: Itinerary): TransferInfo[] {
   const transfers: TransferInfo[] = [];
-  const transitLegs = itin.legs.filter((l): l is TransitLeg => l.mode === 'BUS');
+  const transitLegIndices = itin.legs
+    .map((leg, index) => ({ leg, index }))
+    .filter((entry): entry is { leg: TransitLeg; index: number } => entry.leg.mode === 'BUS');
 
-  for (let i = 0; i < transitLegs.length - 1; i++) {
-    const alightTime = transitLegs[i].endTime;
-    const boardTime = transitLegs[i + 1].startTime;
-    const waitMinutes = Math.round((boardTime - alightTime) / 60000);
+  for (let i = 0; i < transitLegIndices.length - 1; i++) {
+    const current = transitLegIndices[i];
+    const next = transitLegIndices[i + 1];
+    const alightTime = current.leg.endTime;
+    const boardTime = next.leg.startTime;
+    const transferWalkMinutes = itin.legs
+      .slice(current.index + 1, next.index)
+      .filter((leg) => leg.mode === 'WALK')
+      .reduce((sum, leg) => sum + Math.round(leg.duration / 60), 0);
+    const waitMinutes = Math.max(0, Math.round((boardTime - alightTime) / 60000) - transferWalkMinutes);
     transfers.push(getTransferQuality(waitMinutes));
   }
 
@@ -138,7 +279,8 @@ function itineraryToStudentPassResult(
   itin: Itinerary,
   polygon: [number, number][],
   school: SchoolConfig,
-  direction: 'morning' | 'afternoon'
+  direction: 'morning' | 'afternoon',
+  zoneStop: ZoneStopOption
 ): StudentPassResult {
   const tripLegs = itineraryToTripLegs(itin);
   const transfers = extractTransfers(itin);
@@ -160,26 +302,30 @@ function itineraryToStudentPassResult(
   };
 
   // Transfer info
-  if (transfers.length === 1) {
-    result.transfer = transfers[0];
+  if (direction === 'morning') {
+    if (transfers.length === 1) {
+      result.transfer = transfers[0];
+      result.morningTransfer = transfers[0];
+    } else if (transfers.length >= 2) {
+      result.transfers = transfers;
+      result.morningTransfers = transfers;
+    }
+  } else if (transfers.length === 1) {
+    result.afternoonTransfer = transfers[0];
   } else if (transfers.length >= 2) {
-    result.transfers = transfers;
+    result.afternoonTransfers = transfers;
   }
 
   // Walking legs and route shapes
   if (direction === 'morning' && morningLegs.length > 0) {
-    const firstLeg = morningLegs[0];
     const lastLeg = morningLegs[morningLegs.length - 1];
-    const boardingStop = stopById.get(firstLeg.fromStopId);
     const alightStop = stopById.get(lastLeg.toStopId);
 
-    if (boardingStop) {
-      result.walkToStop = buildStudentWalkLeg(
-        centroid[0], centroid[1],
-        boardingStop.lat, boardingStop.lon,
-        `Walk to ${boardingStop.stop_name}`
-      );
-    }
+    result.walkToStop = buildStudentWalkLeg(
+      centroid[0], centroid[1],
+      zoneStop.lat, zoneStop.lon,
+      `Walk to ${zoneStop.stopName}`
+    );
     if (alightStop) {
       result.walkToSchool = buildStudentWalkLeg(
         alightStop.lat, alightStop.lon,
@@ -192,9 +338,7 @@ function itineraryToStudentPassResult(
 
   if (direction === 'afternoon' && afternoonLegs.length > 0) {
     const firstLeg = afternoonLegs[0];
-    const lastLeg = afternoonLegs[afternoonLegs.length - 1];
     const boardStop = stopById.get(firstLeg.fromStopId);
-    const alightStop = stopById.get(lastLeg.toStopId);
 
     if (boardStop) {
       result.walkFromSchool = buildStudentWalkLeg(
@@ -203,17 +347,138 @@ function itineraryToStudentPassResult(
         `Walk to ${boardStop.stop_name}`
       );
     }
-    if (alightStop) {
-      result.walkToZone = buildStudentWalkLeg(
-        alightStop.lat, alightStop.lon,
-        centroid[0], centroid[1],
-        'Walk home'
-      );
-    }
+    result.walkToZone = buildStudentWalkLeg(
+      zoneStop.lat, zoneStop.lon,
+      centroid[0], centroid[1],
+      'Walk home'
+    );
     result.afternoonRouteShapes = buildRouteShapes(afternoonLegs, false);
   }
 
   return result;
+}
+
+function computeFrequencyPerHour(
+  firstLeg: TripLeg | undefined,
+  routingData: RoutingData,
+  activeServices: Set<string>
+): number | undefined {
+  if (!firstLeg) return undefined;
+  const routeId = routingData.tripIndex[firstLeg.tripId]?.routeId;
+  if (!routeId) return undefined;
+
+  const departures = routingData.stopDepartures[firstLeg.fromStopId] || [];
+  const windowStart = Math.max(0, firstLeg.departureMinutes * 60 - 1800);
+  const windowEnd = firstLeg.departureMinutes * 60 + 1800;
+  const matchingTripIds = new Set(
+    departures
+      .filter((dep) =>
+        dep.routeId === routeId &&
+        dep.departureTime >= windowStart &&
+        dep.departureTime <= windowEnd &&
+        activeServices.has(dep.serviceId)
+      )
+      .map((dep) => dep.tripId)
+  );
+
+  return matchingTripIds.size > 0 ? matchingTripIds.size : undefined;
+}
+
+function getBestMorningSortValue(itinerary: Itinerary): number {
+  return itinerary.endTime;
+}
+
+function buildStopSearchResults(
+  zoneStops: ZoneStopOption[],
+  school: SchoolConfig,
+  queryDate: Date,
+  routingData: RoutingData
+): StopSearchResult[] {
+  const bellStartMinutes = parseTimeToMinutes(school.bellStart + ':00');
+  const bellEndMinutes = parseTimeToMinutes(school.bellEnd + ':00');
+  const morningLookbackMinutes = Math.ceil(ROUTING_CONFIG.MAX_TRIP_DURATION / 60);
+
+  return zoneStops.map((zoneStop) => {
+    const morningTime = new Date(queryDate);
+    morningTime.setHours(0, 0, 0, 0);
+    morningTime.setMinutes(Math.max(0, bellStartMinutes - morningLookbackMinutes));
+
+    const morningItineraries = runRaptorSafe(
+      zoneStop.lat,
+      zoneStop.lon,
+      school.lat,
+      school.lon,
+      queryDate,
+      morningTime,
+      routingData,
+      { originStopId: zoneStop.stopId }
+    );
+
+    const bellCutoffMs =
+      new Date(queryDate).setHours(0, 0, 0, 0) +
+      bellStartMinutes * 60000 +
+      5 * 60000;
+    const validMorning = morningItineraries
+      .filter((itin) => itin.endTime <= bellCutoffMs)
+      .sort((a, b) => getBestMorningSortValue(b) - getBestMorningSortValue(a));
+
+    const afternoonTime = new Date(queryDate);
+    afternoonTime.setHours(0, 0, 0, 0);
+    afternoonTime.setMinutes(bellEndMinutes);
+
+    const afternoonItineraries = runRaptorSafe(
+      school.lat,
+      school.lon,
+      zoneStop.lat,
+      zoneStop.lon,
+      queryDate,
+      afternoonTime,
+      routingData,
+      { destinationStopId: zoneStop.stopId }
+    ).sort((a, b) => a.startTime - b.startTime);
+
+    return {
+      zoneStop: {
+        ...zoneStop,
+        morningOptionCount: validMorning.length,
+        afternoonOptionCount: afternoonItineraries.length,
+        bestMorningArrivalMinutes: validMorning[0]
+          ? unixMsToMinutes(validMorning[0].endTime)
+          : undefined,
+        bestAfternoonDepartureMinutes: afternoonItineraries[0]
+          ? unixMsToMinutes(afternoonItineraries[0].startTime)
+          : undefined,
+      },
+      validMorning,
+      afternoonItineraries,
+    };
+  });
+}
+
+function pickDefaultStopSearch(stopSearches: StopSearchResult[]): StopSearchResult | null {
+  if (stopSearches.length === 0) return null;
+
+  const ranked = [...stopSearches].sort((a, b) => {
+    const aMorning = a.validMorning[0];
+    const bMorning = b.validMorning[0];
+    if (aMorning && bMorning) {
+      const arrivalCmp = bMorning.endTime - aMorning.endTime;
+      if (arrivalCmp !== 0) return arrivalCmp;
+    } else if (aMorning || bMorning) {
+      return aMorning ? -1 : 1;
+    }
+
+    if (a.afternoonItineraries[0] && b.afternoonItineraries[0]) {
+      const departCmp = a.afternoonItineraries[0].startTime - b.afternoonItineraries[0].startTime;
+      if (departCmp !== 0) return departCmp;
+    } else if (a.afternoonItineraries[0] || b.afternoonItineraries[0]) {
+      return a.afternoonItineraries[0] ? -1 : 1;
+    }
+
+    return a.zoneStop.walkMinutes - b.zoneStop.walkMinutes;
+  });
+
+  return ranked[0] ?? null;
 }
 
 // ─── Main Entry Point ───────────────────────────────────────────────
@@ -224,73 +489,102 @@ function itineraryToStudentPassResult(
  */
 export function findTripOptionsRaptor(
   zonePolygon: [number, number][],
-  school: SchoolConfig
+  school: SchoolConfig,
+  params: StudentPassSearchParams = {}
 ): TripOptions {
   const routingData = getRoutingData();
+  const serviceDateInfo = getStudentPassServiceDateInfo(params.serviceDate ?? new Date());
+  const queryDate = params.serviceDate
+    ? normalizeDate(params.serviceDate)
+    : normalizeDate(new Date(`${serviceDateInfo.defaultDate}T00:00:00`));
   const centroid = getPolygonCentroid(zonePolygon);
-  const bellStartMinutes = parseTimeToMinutes(school.bellStart + ':00');
-  const bellEndMinutes = parseTimeToMinutes(school.bellEnd + ':00');
+  const zoneStopCandidates = findStopsInZone(zonePolygon)
+    .map((stop) => buildZoneStopCandidate(stop.stop_id, stop.stop_name, stop.lat, stop.lon, centroid));
 
-  // Use a weekday within the GTFS validity range for service calendar
-  // The calendar was built with a reference date in buildRoutingData
-  const queryDate = getQueryDate(routingData);
+  if (zoneStopCandidates.length === 0) {
+    return {
+      morningOptions: [],
+      afternoonOptions: [],
+      zoneStops: [],
+      selectedZoneStopId: null,
+    };
+  }
 
-  // ── Morning: zone → school (arrive before bell) ──
-  // Search departing 90 min before bell, filter results arriving before bell
-  const morningDepartMinutes = Math.max(0, bellStartMinutes - 90);
-  const morningTime = new Date(queryDate);
-  morningTime.setHours(0, 0, 0, 0);
-  morningTime.setMinutes(morningDepartMinutes);
+  const sortedZoneStops = [...zoneStopCandidates].sort((a, b) => a.walkMinutes - b.walkMinutes);
+  const autoSearchStops = params.zoneStopId
+    ? sortedZoneStops.filter((stop) => stop.stopId === params.zoneStopId)
+    : sortedZoneStops.slice(0, AUTO_SEARCH_STOP_LIMIT);
+  const stopSearches = buildStopSearchResults(autoSearchStops, school, queryDate, routingData);
+  const defaultStopSearch = pickDefaultStopSearch(stopSearches);
+  const selectedStopSearch = (params.zoneStopId
+    ? stopSearches.find((search) => search.zoneStop.stopId === params.zoneStopId)
+    : null) ?? defaultStopSearch;
 
-  const morningItineraries = runRaptorSafe(
-    centroid[0], centroid[1],
-    school.lat, school.lon,
-    queryDate, morningTime,
-    routingData
-  );
+  if (!selectedStopSearch) {
+    return {
+      morningOptions: [],
+      afternoonOptions: [],
+      zoneStops: sortedZoneStops,
+      selectedZoneStopId: null,
+    };
+  }
 
-  // Filter: must arrive before bell (with 5-min grace)
-  const bellCutoffMs = new Date(queryDate).setHours(0, 0, 0, 0) + bellStartMinutes * 60000 + 5 * 60000;
-  const validMorning = morningItineraries.filter((itin) => itin.endTime <= bellCutoffMs);
+  const stopSearchById = new Map(stopSearches.map((search) => [search.zoneStop.stopId, search.zoneStop]));
+  const zoneStops = [...sortedZoneStops]
+    .map((stop) => stopSearchById.get(stop.stopId) ?? stop)
+    .sort((a, b) => {
+      if (b.morningOptionCount !== a.morningOptionCount) {
+        return b.morningOptionCount - a.morningOptionCount;
+      }
+      if (b.afternoonOptionCount !== a.afternoonOptionCount) {
+        return b.afternoonOptionCount - a.afternoonOptionCount;
+      }
+      return a.walkMinutes - b.walkMinutes;
+    });
 
-  // Sort by latest arrival (closest to bell = least waiting)
-  validMorning.sort((a, b) => b.endTime - a.endTime);
+  const activeServices = getActiveServicesForDate(routingData.serviceCalendar, queryDate);
 
-  // ── Afternoon: school → zone (depart after bell) ──
-  const afternoonTime = new Date(queryDate);
-  afternoonTime.setHours(0, 0, 0, 0);
-  afternoonTime.setMinutes(bellEndMinutes);
-
-  const afternoonItineraries = runRaptorSafe(
-    school.lat, school.lon,
-    centroid[0], centroid[1],
-    queryDate, afternoonTime,
-    routingData
-  );
-
-  // Sort by earliest departure
-  afternoonItineraries.sort((a, b) => a.startTime - b.startTime);
-
-  // ── Build morning options (up to 3) ──
+  // ── Build morning options (up to 3) for the selected stop ──
   const morningOptions: RouteOption[] = [];
   const seenMorningRoutes = new Set<string>();
 
-  for (const itin of validMorning) {
+  for (const itin of selectedStopSearch.validMorning) {
     if (morningOptions.length >= 3) break;
 
     const routeKey = getRouteKey(itin);
     if (seenMorningRoutes.has(routeKey)) continue;
     seenMorningRoutes.add(routeKey);
 
-    const spResult = itineraryToStudentPassResult(itin, zonePolygon, school, 'morning');
+    const spResult = itineraryToStudentPassResult(
+      itin,
+      zonePolygon,
+      school,
+      'morning',
+      selectedStopSearch.zoneStop
+    );
+    spResult.frequencyPerHour = computeFrequencyPerHour(
+      spResult.morningLegs[0],
+      routingData,
+      activeServices
+    );
 
     // Add first afternoon leg to morning result for preview
-    if (afternoonItineraries.length > 0) {
-      const pmItin = afternoonItineraries[0];
-      const pmLegs = itineraryToTripLegs(pmItin);
-      if (pmLegs.length > 0) {
-        spResult.afternoonLegs = pmLegs;
-        spResult.nextAfternoonDepartureMinutes = pmLegs[0].departureMinutes;
+    if (selectedStopSearch.afternoonItineraries.length > 0) {
+      const pmPreview = itineraryToStudentPassResult(
+        selectedStopSearch.afternoonItineraries[0],
+        zonePolygon,
+        school,
+        'afternoon',
+        selectedStopSearch.zoneStop
+      );
+      if (pmPreview.afternoonLegs.length > 0) {
+        spResult.afternoonLegs = pmPreview.afternoonLegs;
+        spResult.afternoonRouteShapes = pmPreview.afternoonRouteShapes;
+        spResult.walkFromSchool = pmPreview.walkFromSchool;
+        spResult.walkToZone = pmPreview.walkToZone;
+        spResult.afternoonTransfer = pmPreview.afternoonTransfer;
+        spResult.afternoonTransfers = pmPreview.afternoonTransfers;
+        spResult.nextAfternoonDepartureMinutes = pmPreview.afternoonLegs[0].departureMinutes;
       }
     }
 
@@ -309,18 +603,24 @@ export function findTripOptionsRaptor(
     });
   }
 
-  // ── Build afternoon options (up to 3) ──
+  // ── Build afternoon options (up to 3) for the selected stop ──
   const afternoonOptions: RouteOption[] = [];
   const seenAfternoonRoutes = new Set<string>();
 
-  for (const itin of afternoonItineraries) {
+  for (const itin of selectedStopSearch.afternoonItineraries) {
     if (afternoonOptions.length >= 3) break;
 
     const routeKey = getRouteKey(itin);
     if (seenAfternoonRoutes.has(routeKey)) continue;
     seenAfternoonRoutes.add(routeKey);
 
-    const spResult = itineraryToStudentPassResult(itin, zonePolygon, school, 'afternoon');
+    const spResult = itineraryToStudentPassResult(
+      itin,
+      zonePolygon,
+      school,
+      'afternoon',
+      selectedStopSearch.zoneStop
+    );
 
     // Copy morning legs from first morning option for preview
     if (morningOptions.length > 0) {
@@ -328,6 +628,11 @@ export function findTripOptionsRaptor(
       spResult.routeShapes = morningOptions[0].result.routeShapes;
       spResult.walkToStop = morningOptions[0].result.walkToStop;
       spResult.walkToSchool = morningOptions[0].result.walkToSchool;
+      spResult.transfer = morningOptions[0].result.transfer;
+      spResult.transfers = morningOptions[0].result.transfers;
+      spResult.morningTransfer = morningOptions[0].result.morningTransfer;
+      spResult.morningTransfers = morningOptions[0].result.morningTransfers;
+      spResult.frequencyPerHour = morningOptions[0].result.frequencyPerHour;
     }
 
     const pmLegs = spResult.afternoonLegs;
@@ -335,7 +640,7 @@ export function findTripOptionsRaptor(
     const departStr = firstPmLeg ? minutesToDisplayTime(firstPmLeg.departureMinutes) : '';
 
     // Find next bus departure
-    const nextItin = afternoonItineraries.find((it) => it.startTime > itin.startTime);
+    const nextItin = selectedStopSearch.afternoonItineraries.find((it) => it.startTime > itin.startTime);
     if (nextItin) {
       const nextLegs = itineraryToTripLegs(nextItin);
       if (nextLegs.length > 0) {
@@ -352,7 +657,60 @@ export function findTripOptionsRaptor(
     });
   }
 
-  return { morningOptions, afternoonOptions };
+  return {
+    morningOptions,
+    afternoonOptions,
+    zoneStops,
+    selectedZoneStopId: selectedStopSearch.zoneStop.stopId,
+  };
+}
+
+// ─── Walk Enrichment ─────────────────────────────────────────────────
+
+/**
+ * Enrich a StudentPassResult's walk legs with Mapbox street-level geometry.
+ * Returns a new result with updated walk distances, times, and path coordinates.
+ * Falls back gracefully to original data if Mapbox is unavailable.
+ */
+export async function enrichStudentPassWalks(
+  result: StudentPassResult
+): Promise<StudentPassResult> {
+  if (!result.found) return result;
+
+  const enriched = { ...result };
+
+  const enrichWalk = async (
+    walk: WalkLeg | undefined
+  ): Promise<WalkLeg | undefined> => {
+    if (!walk) return undefined;
+    const directions = await getWalkingDirections(
+      walk.fromLat, walk.fromLon, walk.toLat, walk.toLon
+    );
+    const geometry = directions.geometry
+      ? decodePolyline(directions.geometry)
+      : undefined;
+    return {
+      ...walk,
+      distanceKm: directions.distance / 1000,
+      walkMinutes: Math.round(directions.duration / 60),
+      geometry,
+    };
+  };
+
+  const [walkToStop, walkToSchool, walkFromSchool, walkToZone] =
+    await Promise.all([
+      enrichWalk(result.walkToStop),
+      enrichWalk(result.walkToSchool),
+      enrichWalk(result.walkFromSchool),
+      enrichWalk(result.walkToZone),
+    ]);
+
+  if (walkToStop) enriched.walkToStop = walkToStop;
+  if (walkToSchool) enriched.walkToSchool = walkToSchool;
+  if (walkFromSchool) enriched.walkFromSchool = walkFromSchool;
+  if (walkToZone) enriched.walkToZone = walkToZone;
+
+  return enriched;
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────
@@ -364,12 +722,15 @@ function runRaptorSafe(
   fromLat: number, fromLon: number,
   toLat: number, toLon: number,
   date: Date, time: Date,
-  routingData: RoutingData
+  routingData: RoutingData,
+  stopSelection: { originStopId?: string; destinationStopId?: string } = {}
 ): Itinerary[] {
   try {
     const results = planTripLocal({
       fromLat, fromLon, toLat, toLon,
       date, time, routingData,
+      originStopIds: stopSelection.originStopId ? [stopSelection.originStopId] : undefined,
+      destinationStopIds: stopSelection.destinationStopId ? [stopSelection.destinationStopId] : undefined,
     });
 
     return results.map((r) =>
@@ -389,39 +750,4 @@ function getRouteKey(itin: Itinerary): string {
     .filter((l): l is TransitLeg => l.mode === 'BUS')
     .map((l) => `${l.route.shortName}-${l.tripId}`)
     .join('|');
-}
-
-/**
- * Get a valid query date within the service calendar range.
- * Finds the first weekday with active services.
- */
-function getQueryDate(routingData: RoutingData): Date {
-  const calendar = routingData.serviceCalendar;
-  const dateStrs = Object.keys(calendar).sort();
-
-  for (const dateStr of dateStrs) {
-    const services = calendar[dateStr];
-    if (services && services.size > 0) {
-      const year = parseInt(dateStr.substring(0, 4), 10);
-      const month = parseInt(dateStr.substring(4, 6), 10) - 1;
-      const day = parseInt(dateStr.substring(6, 8), 10);
-      const d = new Date(year, month, day);
-      const dow = d.getDay();
-      // Prefer weekdays (Mon-Fri)
-      if (dow >= 1 && dow <= 5) return d;
-    }
-  }
-
-  // Fallback: use first date with services
-  for (const dateStr of dateStrs) {
-    const services = calendar[dateStr];
-    if (services && services.size > 0) {
-      const year = parseInt(dateStr.substring(0, 4), 10);
-      const month = parseInt(dateStr.substring(4, 6), 10) - 1;
-      const day = parseInt(dateStr.substring(6, 8), 10);
-      return new Date(year, month, day);
-    }
-  }
-
-  return new Date();
 }

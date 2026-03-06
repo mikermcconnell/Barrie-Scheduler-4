@@ -18,10 +18,10 @@ import type { RoutingData } from '../../utils/routing/types';
 
 // ─── Integration Setup ──────────────────────────────────────────────
 
-// GTFS data valid range: 20251219 – 20260228
+// GTFS data valid range: 20260214 – 20260530
 // Use a weekday within range for queries
-const WEEKDAY_IN_RANGE = new Date(2026, 1, 2, 8, 0, 0); // Monday Feb 2, 2026
-const SATURDAY_IN_RANGE = new Date(2026, 1, 7, 10, 0, 0); // Saturday Feb 7, 2026
+const WEEKDAY_IN_RANGE = new Date(2026, 2, 2, 8, 0, 0); // Monday Mar 2, 2026
+const SATURDAY_IN_RANGE = new Date(2026, 2, 7, 10, 0, 0); // Saturday Mar 7, 2026
 
 // Key Barrie stops
 const DOWNTOWN_HUB = { lat: 44.387753, lon: -79.690237 }; // stop_id=2
@@ -78,7 +78,7 @@ describe('RAPTOR Integration (Real Barrie GTFS)', () => {
         toLat: GEORGIAN_COLLEGE.lat,
         toLon: GEORGIAN_COLLEGE.lon,
         date: WEEKDAY_IN_RANGE,
-        time: new Date(2026, 1, 2, 7, 30, 0),
+        time: new Date(2026, 2, 2, 7, 30, 0),
         routingData,
       });
 
@@ -112,7 +112,7 @@ describe('RAPTOR Integration (Real Barrie GTFS)', () => {
         toLat: GEORGIAN_COLLEGE.lat,
         toLon: GEORGIAN_COLLEGE.lon,
         date: WEEKDAY_IN_RANGE,
-        time: new Date(2026, 1, 2, 7, 0, 0),
+        time: new Date(2026, 2, 2, 7, 0, 0),
         routingData,
       });
 
@@ -140,7 +140,7 @@ describe('RAPTOR Integration (Real Barrie GTFS)', () => {
   describe('no service on queried date', () => {
     it('throws NO_SERVICE for a date outside GTFS range', () => {
       // March 15 is outside the calendar range (ends Feb 28)
-      const outOfRange = new Date(2026, 2, 15, 8, 0, 0);
+      const outOfRange = new Date(2026, 5, 15, 8, 0, 0);
 
       expect(() =>
         planTripLocal({
@@ -178,7 +178,7 @@ describe('RAPTOR Integration (Real Barrie GTFS)', () => {
         toLat: ALLANDALE_TERMINAL.lat,
         toLon: ALLANDALE_TERMINAL.lon,
         date: WEEKDAY_IN_RANGE,
-        time: new Date(2026, 1, 2, 8, 0, 0),
+        time: new Date(2026, 2, 2, 8, 0, 0),
         routingData,
       });
 

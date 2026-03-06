@@ -34,9 +34,24 @@ export interface RouteOption {
     result: StudentPassResult;
 }
 
+export interface ZoneStopOption {
+    stopId: string;
+    stopName: string;
+    lat: number;
+    lon: number;
+    distanceKm: number;
+    walkMinutes: number;
+    morningOptionCount: number;
+    afternoonOptionCount: number;
+    bestMorningArrivalMinutes?: number;
+    bestAfternoonDepartureMinutes?: number;
+}
+
 export interface TripOptions {
     morningOptions: RouteOption[];
     afternoonOptions: RouteOption[];
+    zoneStops: ZoneStopOption[];
+    selectedZoneStopId: string | null;
 }
 
 export type TransferQuality = 'tight' | 'good' | 'ok' | 'long';
@@ -76,6 +91,8 @@ export interface WalkLeg {
     /** Walking time in minutes at ~5 km/h */
     walkMinutes: number;
     label: string;
+    /** Street-level walk path as [lat, lon][] from Mapbox Directions API */
+    geometry?: [number, number][];
 }
 
 export interface RouteShapeSegment {
@@ -94,6 +111,10 @@ export interface StudentPassResult {
     transfer?: TransferInfo;
     /** Transfer info for 2-transfer trips (length 2) */
     transfers?: TransferInfo[];
+    morningTransfer?: TransferInfo;
+    morningTransfers?: TransferInfo[];
+    afternoonTransfer?: TransferInfo;
+    afternoonTransfers?: TransferInfo[];
     /** Next afternoon bus departure (minutes from midnight), if available */
     nextAfternoonDepartureMinutes?: number;
     /** Trips per hour on key route during AM peak (approx) */
