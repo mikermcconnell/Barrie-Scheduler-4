@@ -1,5 +1,8 @@
 # Locked Logic & Critical Rules
 
+> Read `docs/CONTEXT_INDEX.md` first for context load order.
+> Durable read-first summary: `docs/rules/LOCKED_LOGIC.md`
+
 > **DO NOT modify locked logic without explicit user approval.**
 
 ---

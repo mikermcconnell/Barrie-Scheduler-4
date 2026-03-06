@@ -9,6 +9,7 @@
 ```
 firebase/
 ├── users/{userId}/
+│   ├── agentSessions/{sessionId}         # Tracked AI/chat work sessions
 │   ├── draftSchedules/{draftId}          # Working schedule copies
 │   ├── newScheduleProjects/{projectId}   # Wizard project state
 │   └── files/{fileId}                    # Uploaded file metadata
@@ -18,10 +19,17 @@ firebase/
 │   ├── masterSchedules/{routeIdentity}/  # Published schedules
 │   │   ├── versions/{versionId}          # Version history
 │   │   └── connectionConfig/default      # Route connection settings
-│   └── connectionLibrary/default         # Shared connection targets
+│   ├── connectionLibrary/default         # Shared connection targets used by app services
+│   ├── transitAppData/{docId}            # Transit App analytics datasets
+│   ├── performanceData/{docId}           # STREETS / ops performance datasets
+│   └── odMatrixData/{docId}              # Origin-destination datasets
+│       └── imports/{importId}            # OD import history
 │
 └── migrations/                           # Data migration tracking
 ```
+
+`teams/{teamId}/connectionLibrary/default` is used by the application and documented here because code reads and writes that document.
+The checked-in `firestore.rules` file does not currently enumerate that subcollection explicitly, so verify or update rules before treating Connection Library access as production-safe.
 
 ### Cloud Storage Paths
 
@@ -33,7 +41,11 @@ storage/
 │   └── files/{timestamp}_{safeName}
 │
 └── teams/{teamId}/
-    └── masterSchedules/{routeIdentity}/{versionId}_{timestamp}.json
+    ├── masterSchedules/{routeIdentity}/{versionId}_{timestamp}.json
+    ├── routeMaps/{safeName}
+    ├── transitAppData/{allPaths}
+    ├── performanceData/{allPaths}
+    └── odMatrixData/{allPaths}
 ```
 
 ---
@@ -83,6 +95,33 @@ interface TeamMember {
   joinedAt: Timestamp;
   displayName: string;
   email: string;
+}
+```
+
+---
+
+## Agent Sessions
+
+### AgentSession (`users/{userId}/agentSessions/{sessionId}`)
+
+```typescript
+type AgentSessionStatus = 'active' | 'waiting' | 'blocked' | 'review' | 'done';
+type AgentSessionPriority = 'critical' | 'high' | 'medium' | 'low';
+
+interface AgentSession {
+  id: string;
+  title: string;               // Optional manual override; UI can auto-derive a display title
+  purpose: string;
+  currentTask: string;
+  lastPrompt: string;
+  status: AgentSessionStatus;
+  priority: AgentSessionPriority;
+  lastSummary: string;
+  nextAction: string;
+  blockedBy: string;
+  chatReference: string;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
 }
 ```
 
@@ -641,11 +680,11 @@ Routes like 2A+2B share a downtown terminus:
 | Type | File |
 |------|------|
 | Team, TeamMember, MasterScheduleEntry | `utils/masterScheduleTypes.ts` |
-| DraftSchedule, PublishedSchedule | `utils/scheduleTypes.ts` |
-| MasterTrip, RoundTripTable | `utils/masterScheduleParser.ts` |
-| Block, BlockedTrip | `utils/blockAssignment.ts` |
-| ConnectionTarget, RouteConnection | `utils/connectionTypes.ts` |
-| GTFS* types | `utils/gtfsTypes.ts` |
-| CycleRouteConfig | `utils/routeDirectionConfig.ts` |
-| TimeBand, RuntimeData | `utils/runtimeAnalysis.ts` |
-| HubConfig, PlatformAnalysis | `utils/platformConfig.ts`, `utils/platformAnalysis.ts` |
+| DraftSchedule, PublishedSchedule, SystemDraft | `utils/schedule/scheduleTypes.ts` |
+| MasterTrip, RoundTripTable | `utils/parsers/masterScheduleParser.ts` |
+| Block, BlockedTrip | `utils/blocks/blockAssignment.ts` |
+| ConnectionTarget, RouteConnection | `utils/connections/connectionTypes.ts` |
+| GTFS* types | `utils/gtfs/gtfsTypes.ts` |
+| CycleRouteConfig | `utils/config/routeDirectionConfig.ts` |
+| TimeBand, RuntimeData | `utils/ai/runtimeAnalysis.ts` |
+| HubConfig, PlatformAnalysis | `utils/platform/platformConfig.ts`, `utils/platform/platformAnalysis.ts` |

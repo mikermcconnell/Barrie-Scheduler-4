@@ -114,6 +114,13 @@ export interface ODRouteEstimationResult {
     totalJourneys: number;
 }
 
+export interface GtfsTextFileSet {
+    routesText: string;
+    tripsText: string;
+    stopTimesText: string;
+    stopsText: string;
+}
+
 // Internal types for GTFS parsing
 interface GtfsRoute {
     routeId: string;
@@ -966,27 +973,23 @@ function routeLabel(seq: RouteStopSequence): string {
 
 // ============ MAIN EXPORT ============
 
-export function estimateRoutes(
-    gtfsZipBuffer: ArrayBuffer,
+export function estimateRoutesFromGtfsTextFiles(
+    gtfsFiles: GtfsTextFileSet,
     data: ODMatrixDataSummary,
 ): ODRouteEstimationResult {
-    // 1. Extract GTFS files from zip
-    const zipData = new Uint8Array(gtfsZipBuffer);
-    const files = unzipSync(zipData);
+    // 1. Parse GTFS tables
+    const routes = parseRoutes(gtfsFiles.routesText);
+    const tripsByRouteDir = parseTrips(gtfsFiles.tripsText);
+    const stopTimesByTrip = parseStopTimes(gtfsFiles.stopTimesText);
+    const stopMetaMap = parseStops(gtfsFiles.stopsText);
 
-    // 2. Parse GTFS tables
-    const routes = parseRoutes(extractTextFile(files, 'routes.txt'));
-    const tripsByRouteDir = parseTrips(extractTextFile(files, 'trips.txt'));
-    const stopTimesByTrip = parseStopTimes(extractTextFile(files, 'stop_times.txt'));
-    const stopMetaMap = parseStops(extractTextFile(files, 'stops.txt'));
-
-    // 3. Build route→stop sequences
+    // 2. Build route→stop sequences
     const sequences = buildRouteStopSequences(routes, tripsByRouteDir, stopTimesByTrip, stopMetaMap);
     const indexedSequences = buildSequenceIndex(sequences);
     const outgoingSegments = buildOutgoingSegments(indexedSequences);
     const gtfsCoordCandidates = buildGtfsCoordCandidates(stopMetaMap);
 
-    // 4. Collect all unique GTFS stop names
+    // 3. Collect all unique GTFS stop names
     const allGtfsStopNames = [...new Set(
         sequences.flatMap(s => s.stopNames)
     )];
@@ -999,7 +1002,7 @@ export function estimateRoutes(
         odCoordsByNormName.set(normalizeStationName(station.name), { lat: geo.lat, lon: geo.lon });
     }
 
-    // 5. Match OD station names to GTFS stops
+    // 4. Match OD station names to GTFS stops
     const uniqueODStations = [...new Set(
         data.pairs.flatMap(p => [p.origin, p.destination])
     )];
@@ -1020,7 +1023,7 @@ export function estimateRoutes(
         });
     }
 
-    // 6. Estimate routes for each OD pair
+    // 5. Estimate routes for each OD pair
     const matches: ODPairRouteMatch[] = [];
     const unmatchedPairs: ODPairRouteMatch[] = [];
     let matchedJourneys = 0;
@@ -1142,7 +1145,7 @@ export function estimateRoutes(
         unmatchedRoutePairs++;
     }
 
-    // 7. Build route distribution (count each leg of transfers separately)
+    // 6. Build route distribution (count each leg of transfers separately)
     const routeJourneys = new Map<string, { shortName: string; longName: string; journeys: number; pairCount: number }>();
 
     function addToDistribution(shortName: string, longName: string, journeys: number) {
@@ -1195,4 +1198,19 @@ export function estimateRoutes(
         matchedJourneys,
         totalJourneys: data.totalJourneys,
     };
+}
+
+export function estimateRoutes(
+    gtfsZipBuffer: ArrayBuffer,
+    data: ODMatrixDataSummary,
+): ODRouteEstimationResult {
+    const zipData = new Uint8Array(gtfsZipBuffer);
+    const files = unzipSync(zipData);
+
+    return estimateRoutesFromGtfsTextFiles({
+        routesText: extractTextFile(files, 'routes.txt'),
+        tripsText: extractTextFile(files, 'trips.txt'),
+        stopTimesText: extractTextFile(files, 'stop_times.txt'),
+        stopsText: extractTextFile(files, 'stops.txt'),
+    }, data);
 }

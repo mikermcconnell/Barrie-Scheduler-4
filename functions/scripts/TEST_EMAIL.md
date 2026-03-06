@@ -5,23 +5,24 @@ Quick reference for sending test performance report emails.
 ## Test Endpoint
 
 ```
-https://testdailyreport-ieeja7khcq-uc.a.run.app?to=EMAIL
+https://testdailyreport-ieeja7khcq-uc.a.run.app?to=YOUR_EMAIL
 ```
 
-## Default Test Recipient
+## Example Recipient
 
 ```
-michaelryanmcconnell@gmail.com
+your.name@example.com
 ```
 
 ## Send a Test
 
 ```bash
-curl "https://testdailyreport-ieeja7khcq-uc.a.run.app?to=michaelryanmcconnell@gmail.com"
+curl "https://testdailyreport-ieeja7khcq-uc.a.run.app?to=your.name@example.com"
 ```
 
 ## Notes
 
+- Use a mailbox you control.
 - Subject is prefixed with `[TEST]` to distinguish from scheduled reports
 - Uses the most recent day's data from Firebase Storage
 - Email is delivered via the Firebase Trigger Email extension (Firestore `mail` collection)

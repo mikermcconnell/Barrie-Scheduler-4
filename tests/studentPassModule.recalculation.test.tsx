@@ -26,6 +26,16 @@ vi.mock('../utils/transit-app/studentPassUtils', () => ({
       bellEnd: '15:30',
     },
   ],
+  getPolygonCentroid: (polygon: [number, number][]) => {
+    let latSum = 0;
+    let lonSum = 0;
+    for (const [lat, lon] of polygon) {
+      latSum += lat;
+      lonSum += lon;
+    }
+    return [latSum / polygon.length, lonSum / polygon.length] as [number, number];
+  },
+  isPointInPolygon: () => true,
   minutesToDisplayTime: (minutes: number): string => `${minutes}`,
 }));
 
@@ -44,9 +54,11 @@ vi.mock('../components/Analytics/StudentPassMap', () => ({
   StudentPassMap: ({
     onPolygonComplete,
     onZoneStopSelect,
+    onZoneOriginChange,
   }: {
     onPolygonComplete: (coords: [number, number][]) => void;
     onZoneStopSelect: (stopId: string) => void;
+    onZoneOriginChange: (coords: [number, number]) => void;
   }) => (
     <div>
       <div className="student-pass-map" />
@@ -55,6 +67,9 @@ vi.mock('../components/Analytics/StudentPassMap', () => ({
       </button>
       <button onClick={() => onZoneStopSelect('stop-alt')}>
         Select Alt Stop
+      </button>
+      <button onClick={() => onZoneOriginChange([44.405, -79.695])}>
+        Move Start
       </button>
     </div>
   ),
@@ -289,6 +304,40 @@ describe('StudentPassModule recalculation', () => {
     expect(findTripOptionsRaptorMock).toHaveBeenCalledTimes(2);
     expect(findTripOptionsRaptorMock.mock.calls[1]?.[2]).toMatchObject({
       zoneStopId: 'stop-alt',
+    });
+  });
+
+  it('recomputes when the home start point is moved', async () => {
+    flushSync(() => {
+      root.render(<StudentPassModule onBack={() => {}} />);
+    });
+
+    const drawButton = Array.from(container.querySelectorAll('button'))
+      .find((btn) => (btn.textContent || '').includes('Draw Zone'));
+    expect(drawButton).toBeTruthy();
+
+    flushSync(() => {
+      drawButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(findTripOptionsRaptorMock).toHaveBeenCalledTimes(1);
+    expect(findTripOptionsRaptorMock.mock.calls[0]?.[2]?.zoneOrigin?.[0]).toBeCloseTo(44.41, 10);
+    expect(findTripOptionsRaptorMock.mock.calls[0]?.[2]?.zoneOrigin?.[1]).toBeCloseTo(-79.69333333333333, 10);
+
+    const moveStartButton = Array.from(container.querySelectorAll('button'))
+      .find((btn) => (btn.textContent || '').includes('Move Start'));
+    expect(moveStartButton).toBeTruthy();
+
+    flushSync(() => {
+      moveStartButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await Promise.resolve();
+
+    expect(findTripOptionsRaptorMock).toHaveBeenCalledTimes(2);
+    expect(findTripOptionsRaptorMock.mock.calls[1]?.[2]).toMatchObject({
+      zoneOrigin: [44.405, -79.695],
     });
   });
 });

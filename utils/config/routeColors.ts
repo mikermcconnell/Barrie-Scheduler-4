@@ -6,36 +6,36 @@
  */
 
 export const ROUTE_COLORS: Record<string, string> = {
-    // Green routes - Barrie Transit official dark green
-    '2A': '#0D6B4B',
-    '2B': '#0D6B4B',
-    '2': '#0D6B4B', // Fallback for just "2"
+    // Green routes
+    '2A': '#006838',
+    '2B': '#006838',
+    '2': '#006838',
 
-    // Blue/Orange routes (7 series) - both are orange
-    '7A': '#F97316',
-    '7B': '#F97316',
-    '7': '#F97316', // Fallback
+    // Orange routes
+    '7A': '#F58220',
+    '7B': '#F58220',
+    '7': '#F58220',
 
-    // Black routes (8 series)
-    '8A': '#1F2937',
-    '8B': '#1F2937',
-    '8': '#1F2937', // Fallback
+    // Black routes
+    '8A': '#000000',
+    '8B': '#000000',
+    '8': '#000000',
 
-    // Standalone routes
-    '10': '#EC4899', // Magenta/Pink
-    '11': '#84CC16', // Lime/Yellow-Green
+    // Loop routes
+    '10': '#681757',
+    '11': '#B2D235',
 
-    // 12 series - same color
-    '12A': '#F472B6', // Pink
-    '12B': '#F472B6', // Pink
-    '12': '#F472B6', // Fallback
+    // 12 series
+    '12A': '#F8A1BE',
+    '12B': '#F8A1BE',
+    '12': '#F8A1BE',
 
-    // 100 series
-    '100': '#EF4444', // Red
-    '101': '#1E40AF', // Navy Blue
+    // Frequent / color routes
+    '100': '#910005',
+    '101': '#2464A2',
 
-    // 400 series
-    '400': '#14B8A6', // Teal/Cyan
+    // Express
+    '400': '#00C4DC',
 };
 
 /**
@@ -71,15 +71,28 @@ export function getRouteColor(routeName: string): string {
  */
 export function getRouteTextColor(routeName: string): 'white' | 'black' {
     const bgColor = getRouteColor(routeName);
+    return getContrastingTextColor(bgColor);
+}
 
-    // Parse hex to RGB
-    const r = parseInt(bgColor.slice(1, 3), 16);
-    const g = parseInt(bgColor.slice(3, 5), 16);
-    const b = parseInt(bgColor.slice(5, 7), 16);
+/**
+ * Get the text color (white or black) that provides best contrast
+ * against any hex background color.
+ */
+export function getContrastingTextColor(backgroundColor: string): 'white' | 'black' {
+    const normalized = backgroundColor.startsWith('#') ? backgroundColor : `#${backgroundColor}`;
+    const hex = normalized.length === 4
+        ? `#${normalized[1]}${normalized[1]}${normalized[2]}${normalized[2]}${normalized[3]}${normalized[3]}`
+        : normalized;
 
-    // Calculate luminance
+    if (!/^#[0-9A-F]{6}$/i.test(hex)) {
+        return 'white';
+    }
+
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+
     const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
 
-    // Return white for dark backgrounds, black for light
     return luminance > 0.5 ? 'black' : 'white';
 }

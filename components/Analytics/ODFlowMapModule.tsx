@@ -9,13 +9,16 @@
  */
 
 import React, { useRef, useEffect, useState, useMemo, useCallback } from 'react';
-import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
+import { Marker, Popup } from 'react-map-gl/mapbox';
+import type { MapRef, MapMouseEvent } from 'react-map-gl/mapbox';
 import { AlertTriangle, Download, Search } from 'lucide-react';
 import { ChartCard } from './AnalyticsShared';
 import type { ODMatrixDataSummary, GeocodeCache, GeocodedLocation } from '../../utils/od-matrix/odMatrixTypes';
+import type { ODRouteEstimationResult } from '../../utils/od-matrix/odRouteEstimation';
 import { isWithinCanada } from '../../utils/od-matrix/odMatrixGeocoder';
 import { exportStopReportExcel } from '../../utils/od-matrix/odReportExporter';
+import { buildStopRouteSummaryRows, getRoutePathLabel, getViaStopsLabel } from '../../utils/od-matrix/odStopRouteSummary';
+import { ArcLayer, MapBase, quadraticBezierArc } from '../shared';
 
 interface ODFlowMapModuleProps {
     data: ODMatrixDataSummary;
@@ -23,6 +26,8 @@ interface ODFlowMapModuleProps {
     onFixMissingCoordinates?: () => void;
     onMapReady?: (el: HTMLDivElement) => void;
     onIsolatedStationChange?: (station: string | null) => void;
+    routeEstimation?: ODRouteEstimationResult | null;
+    routeEstimationLoading?: boolean;
 }
 
 type ViewMode = 'map' | 'table';
@@ -47,6 +52,23 @@ const LABEL_ZOOM_THRESHOLD = 7;
 const LABEL_COLLISION_RADIUS = 28;
 const CLUSTER_RADIUS = 20;
 const CLUSTER_ZOOM_THRESHOLD = 9;   // below this zoom, nearby markers merge
+const ARC_LAYER_ID = 'od-flow-arcs-lines';
+const MAP_STYLE = `
+.od-flow-map .mapboxgl-ctrl-group {
+    border: none !important;
+    border-radius: 10px !important;
+    overflow: hidden !important;
+    box-shadow: 0 2px 10px rgba(15, 23, 42, 0.12) !important;
+}
+.od-flow-map .mapboxgl-ctrl-group button {
+    background: rgba(255,255,255,0.94) !important;
+    color: #475569 !important;
+}
+.od-flow-map .mapboxgl-ctrl-group button:hover {
+    background: #ffffff !important;
+    color: #111827 !important;
+}
+`;
 
 function rankColor(rank: number): string {
     if (rank < ARC_COLORS.length) return ARC_COLORS[rank];
@@ -195,14 +217,14 @@ function splitColorSvg(originTrips: number, destTrips: number, size: number, isI
 /** Clusters stations by pixel proximity (descending trip volume, so dominant stops become cluster centers). */
 function clusterStations(
     stationList: Array<{ name: string; geo: GeocodedLocation; originTrips: number; destinationTrips: number }>,
-    map: L.Map,
+    project: (lat: number, lon: number) => { x: number; y: number },
     radius: number
 ): ClusteredStation[] {
     const clusters: ClusteredStation[] = [];
     const clusterPixels: { x: number; y: number }[] = [];
 
     for (const station of stationList) {
-        const px = map.latLngToContainerPoint(L.latLng(station.geo.lat, station.geo.lon));
+        const px = project(station.geo.lat, station.geo.lon);
         let assigned = false;
         for (let i = 0; i < clusters.length; i++) {
             const cpx = clusterPixels[i];
@@ -232,29 +254,123 @@ function clusterStations(
     return clusters;
 }
 
-function quadraticBezierArc(
-    origin: [number, number],
-    dest: [number, number],
-    curveDirection: 1 | -1 = 1,
-    segments = 16
-): [number, number][] {
-    const midLat = (origin[0] + dest[0]) / 2;
-    const midLon = (origin[1] + dest[1]) / 2;
-    const dLat = dest[0] - origin[0];
-    const dLon = dest[1] - origin[1];
-    const offsetLat = midLat + dLon * 0.18 * curveDirection;
-    const offsetLon = midLon - dLat * 0.18 * curveDirection;
+function pairKey(value: string): string {
+    return value.trim().toLowerCase();
+}
 
-    const points: [number, number][] = [];
-    for (let i = 0; i <= segments; i++) {
-        const t = i / segments;
-        const u = 1 - t;
-        points.push([
-            u * u * origin[0] + 2 * u * t * offsetLat + t * t * dest[0],
-            u * u * origin[1] + 2 * u * t * offsetLon + t * t * dest[1],
-        ]);
+function routeConfidenceBadgeClasses(confidence: 'high' | 'medium' | 'low' | 'none' | 'loading' | 'unavailable'): string {
+    switch (confidence) {
+        case 'high':
+            return 'bg-emerald-100 text-emerald-700';
+        case 'medium':
+            return 'bg-amber-100 text-amber-700';
+        case 'low':
+            return 'bg-orange-100 text-orange-700';
+        case 'none':
+            return 'bg-red-100 text-red-700';
+        case 'loading':
+            return 'bg-slate-100 text-slate-600';
+        default:
+            return 'bg-gray-100 text-gray-600';
     }
-    return points;
+}
+
+function routeConfidenceLabel(confidence: 'high' | 'medium' | 'low' | 'none' | 'loading' | 'unavailable'): string {
+    switch (confidence) {
+        case 'none':
+            return 'Unmatched';
+        case 'loading':
+            return 'Loading';
+        case 'unavailable':
+            return 'Unavailable';
+        default:
+            return confidence[0].toUpperCase() + confidence.slice(1);
+    }
+}
+
+interface ArcPopupState {
+    longitude: number;
+    latitude: number;
+    origin: string;
+    destination: string;
+    journeys: number;
+    rank: number;
+    routePath: string;
+    viaStops: string;
+}
+
+function StopLabel({ text }: { text: string }) {
+    return (
+        <div
+            className="pointer-events-none whitespace-nowrap text-[11px] font-bold text-slate-900"
+            style={{
+                letterSpacing: '0.01em',
+                textShadow: '0 0 3px #fff, 0 0 3px #fff, 0 0 6px #fff',
+            }}
+        >
+            {text}
+        </div>
+    );
+}
+
+function BackgroundStopMarker({ isolated }: { isolated: boolean }) {
+    return (
+        <div
+            style={{
+                width: isolated ? 12 : 8,
+                height: isolated ? 12 : 8,
+                borderRadius: '9999px',
+                background: isolated ? '#8b5cf6' : '#94a3b8',
+                opacity: isolated ? 0.9 : 0.5,
+                border: `${isolated ? 2 : 1}px solid ${isolated ? '#6d28d9' : '#64748b'}`,
+                boxShadow: isolated ? '0 0 10px rgba(139,92,246,0.35)' : 'none',
+            }}
+        />
+    );
+}
+
+function RankBadge({ rank }: { rank: number }) {
+    const size = labelSize(rank);
+    return (
+        <svg width={size} height={size} xmlns="http://www.w3.org/2000/svg">
+            <circle
+                cx={size / 2}
+                cy={size / 2}
+                r={size / 2 - 1}
+                fill={labelBackground(rank)}
+                stroke={rank <= 3 ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.8)'}
+                strokeWidth={rank <= 3 ? 2 : 1}
+                opacity={labelOpacity(rank)}
+            />
+            <text
+                x={size / 2}
+                y={size / 2}
+                textAnchor="middle"
+                dominantBaseline="central"
+                fill="white"
+                fontSize={rank <= 3 ? 11 : 10}
+                fontWeight="700"
+                fontFamily="sans-serif"
+                opacity={labelOpacity(rank)}
+            >
+                {rank}
+            </text>
+        </svg>
+    );
+}
+
+function PulseRing({ size }: { size: number }) {
+    return (
+        <div
+            className="rounded-full"
+            style={{
+                width: size,
+                height: size,
+                background: 'rgba(139,92,246,0.4)',
+                animation: 'od-pulse 1.6s ease-out infinite',
+            }}
+        />
+    );
 }
 
 // Suppress unused warnings — kept for potential future use
@@ -267,12 +383,11 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
     onFixMissingCoordinates,
     onMapReady,
     onIsolatedStationChange,
+    routeEstimation,
+    routeEstimationLoading = false,
 }) => {
-    const mapContainerRef = useRef<HTMLDivElement>(null);
-    const mapRef = useRef<L.Map | null>(null);
-    const layersRef = useRef<L.LayerGroup | null>(null);
-    const bgStopsLayerRef = useRef<L.LayerGroup | null>(null);
-    const styleRef = useRef<HTMLStyleElement | null>(null);
+    const mapHostRef = useRef<HTMLDivElement>(null);
+    const mapRef = useRef<MapRef | null>(null);
 
     const [viewMode, setViewMode] = useState<ViewMode>('map');
     const [topNOption, setTopNOption] = useState<TopNOption>(25);
@@ -284,16 +399,15 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
     const [showDropdown, setShowDropdown] = useState(false);
     const dropdownRef = useRef<HTMLDivElement>(null);
     const searchInputRef = useRef<HTMLInputElement>(null);
-    const labelLayerRef = useRef<L.LayerGroup | null>(null);
-    const lastFitBoundsKeyRef = useRef('');
     const [showLabels, setShowLabels] = useState(true);
     const [currentZoom, setCurrentZoom] = useState(6);
     const [contextMenu, setContextMenu] = useState<{ x: number; y: number; station: string } | null>(null);
     const mapWrapperRef = useRef<HTMLDivElement>(null);
+    const [mapReady, setMapReady] = useState(false);
+    const [arcPopup, setArcPopup] = useState<ArcPopupState | null>(null);
 
     // Suppress unused state warning — showLabels is a UI toggle kept for future use
     void showLabels;
-    void lastFitBoundsKeyRef;
 
     useEffect(() => {
         onIsolatedStationChange?.(isolatedStation);
@@ -367,35 +481,22 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
         () => geocodedPairs.filter(pair => pair.journeys >= minJourneys).length,
         [geocodedPairs, minJourneys]
     );
-    const isolatedSummaryPairs = useMemo(() => {
-        if (!isolatedStation) return [] as Array<{
-            rank: number;
-            direction: 'Outbound' | 'Inbound';
-            counterpart: string;
-            journeys: number;
-            stopShare: number;
-        }>;
-
-        const pairs = geocodedPairs
-            .filter(pair => (
-                pair.journeys >= minJourneys
-                && (pair.origin === isolatedStation || pair.destination === isolatedStation)
-            ))
-            .sort((a, b) => b.journeys - a.journeys);
-
-        const stopTrips = pairs.reduce((sum, pair) => sum + pair.journeys, 0);
-
-        return pairs.map((pair, index) => {
-            const outbound = pair.origin === isolatedStation;
-            return {
-                rank: index + 1,
-                direction: outbound ? 'Outbound' : 'Inbound',
-                counterpart: outbound ? pair.destination : pair.origin,
-                journeys: pair.journeys,
-                stopShare: stopTrips > 0 ? (pair.journeys / stopTrips) * 100 : 0,
-            };
+    const routeMatchLookup = useMemo(() => {
+        const lookup = new Map<string, ODRouteEstimationResult['matches'][number]>();
+        routeEstimation?.matches.forEach(match => {
+            lookup.set(`${pairKey(match.origin)}|${pairKey(match.destination)}`, match);
         });
-    }, [isolatedStation, geocodedPairs, minJourneys]);
+        return lookup;
+    }, [routeEstimation]);
+    const isolatedSummaryPairs = useMemo(() => (
+        buildStopRouteSummaryRows({
+            isolatedStation,
+            pairs: geocodedPairs,
+            minJourneys,
+            routeEstimation,
+            routeEstimationLoading,
+        })
+    ), [isolatedStation, geocodedPairs, minJourneys, routeEstimation, routeEstimationLoading]);
 
     const searchResults = useMemo(() => {
         if (!searchQuery.trim()) return [];
@@ -432,396 +533,244 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
         if (!isolatedStation) setDirectionFilter('all');
     }, [isolatedStation]);
 
-    // Map initialization
-    useEffect(() => {
-        if (!mapContainerRef.current || mapRef.current) return;
-
-        mapRef.current = L.map(mapContainerRef.current, {
-            zoomSnap: 0.25,
-            zoomDelta: 0.25,
-            scrollWheelZoom: 'center',
-            preferCanvas: true,
-        }).setView(ONTARIO_CENTER, 6);
-
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '&copy; OpenStreetMap contributors',
-            maxZoom: 18,
-            opacity: 0.8,
-            crossOrigin: 'anonymous',
-        } as L.TileLayerOptions).addTo(mapRef.current);
-
-        if (onMapReady && mapContainerRef.current) {
-            onMapReady(mapContainerRef.current);
-        }
-
-        // Pane z-index stack: bg-stops → lines → pulse ring → stops → stop labels → rank labels
-        const bgStopsPane = mapRef.current.createPane('od-bg-stops');
-        bgStopsPane.style.zIndex = '415';
-        const linesPane = mapRef.current.createPane('od-lines');
-        linesPane.style.zIndex = '420';
-        const pulsePane = mapRef.current.createPane('od-pulse');
-        pulsePane.style.zIndex = '425';
-        pulsePane.style.pointerEvents = 'none';
-        const stopsPane = mapRef.current.createPane('od-stops');
-        stopsPane.style.zIndex = '430';
-        const stopLabelsPane = mapRef.current.createPane('od-stop-labels');
-        stopLabelsPane.style.zIndex = '435';
-        stopLabelsPane.style.pointerEvents = 'none';
-        const rankLabelsPane = mapRef.current.createPane('od-rank-labels');
-        rankLabelsPane.style.zIndex = '440';
-        rankLabelsPane.style.pointerEvents = 'none';
-
-        // Inject pulse animation CSS once
-        const style = document.createElement('style');
-        style.textContent = `
-          @keyframes od-pulse { 0%{transform:scale(1);opacity:.8} 70%{transform:scale(2.8);opacity:0} 100%{transform:scale(2.8);opacity:0} }
-          .od-pulse-ring { animation: od-pulse 1.6s ease-out infinite; border-radius:50%; }
-          .od-label-icon { background: transparent !important; border: none !important; overflow: visible !important; }
-`;
-        document.head.appendChild(style);
-        styleRef.current = style;
-
-        bgStopsLayerRef.current = L.layerGroup().addTo(mapRef.current);
-        layersRef.current = L.layerGroup().addTo(mapRef.current);
-        labelLayerRef.current = L.layerGroup().addTo(mapRef.current);
-
-        return () => {
-            if (styleRef.current) {
-                document.head.removeChild(styleRef.current);
-                styleRef.current = null;
-            }
-            mapRef.current?.remove();
-            mapRef.current = null;
-            bgStopsLayerRef.current = null;
-            layersRef.current = null;
-            labelLayerRef.current = null;
-        };
-    }, []);
-
-    useEffect(() => {
-        const map = mapRef.current;
-        if (!map) return;
-        let timer: ReturnType<typeof setTimeout>;
-        const onZoomEnd = () => {
-            clearTimeout(timer);
-            timer = setTimeout(() => setCurrentZoom(map.getZoom()), 300);
-        };
-        map.on('zoomend', onZoomEnd);
-        return () => {
-            map.off('zoomend', onZoomEnd);
-            clearTimeout(timer);
-        };
-    }, []);
-
-    const renderLayers = useCallback(() => {
-        if (!mapRef.current || !layersRef.current) return;
-        layersRef.current.clearLayers();
-
-        // Build per-station origin/destination tallies from visible pairs
-        const zoneStats = new Map<string, { originTrips: number; destinationTrips: number }>();
+    const zoneStats = useMemo(() => {
+        const stats = new Map<string, { originTrips: number; destinationTrips: number }>();
         displayedPairs.forEach((pair) => {
-            const originStats = zoneStats.get(pair.origin) || { originTrips: 0, destinationTrips: 0 };
+            const originStats = stats.get(pair.origin) ?? { originTrips: 0, destinationTrips: 0 };
             originStats.originTrips += pair.journeys;
-            zoneStats.set(pair.origin, originStats);
+            stats.set(pair.origin, originStats);
 
-            const destinationStats = zoneStats.get(pair.destination) || { originTrips: 0, destinationTrips: 0 };
+            const destinationStats = stats.get(pair.destination) ?? { originTrips: 0, destinationTrips: 0 };
             destinationStats.destinationTrips += pair.journeys;
-            zoneStats.set(pair.destination, destinationStats);
+            stats.set(pair.destination, destinationStats);
         });
+        return stats;
+    }, [displayedPairs]);
 
-        // Build station list sorted by totalTrips descending (dominant stops become cluster centers)
-        const stationList = Array.from(zoneStats.entries())
+    const stationList = useMemo(() => (
+        Array.from(zoneStats.entries())
             .map(([name, stats]) => {
                 const geo = geoLookup[name];
                 if (!geo) return null;
                 return { name, geo, originTrips: stats.originTrips, destinationTrips: stats.destinationTrips };
             })
-            .filter((s): s is { name: string; geo: GeocodedLocation; originTrips: number; destinationTrips: number } => s !== null)
-            .sort((a, b) => (b.originTrips + b.destinationTrips) - (a.originTrips + a.destinationTrips));
+            .filter((station): station is { name: string; geo: GeocodedLocation; originTrips: number; destinationTrips: number } => station !== null)
+            .sort((a, b) => (b.originTrips + b.destinationTrips) - (a.originTrips + a.destinationTrips))
+    ), [geoLookup, zoneStats]);
 
-        const maxTotal = stationList.length > 0
-            ? stationList[0].originTrips + stationList[0].destinationTrips
-            : 1;
+    const maxStationTotal = useMemo(
+        () => stationList.length > 0 ? stationList[0].originTrips + stationList[0].destinationTrips : 1,
+        [stationList]
+    );
 
-        // Cluster at low zoom to reduce clutter; use individual stations otherwise
-        const clusters: ClusteredStation[] = currentZoom < CLUSTER_ZOOM_THRESHOLD
-            ? clusterStations(stationList, mapRef.current, CLUSTER_RADIUS)
-            : stationList.map(s => ({
-                lat: s.geo.lat,
-                lon: s.geo.lon,
-                names: [s.name],
-                originTrips: s.originTrips,
-                destinationTrips: s.destinationTrips,
-                totalTrips: s.originTrips + s.destinationTrips,
+    const clusteredStations = useMemo(() => {
+        if (stationList.length === 0) return [] as ClusteredStation[];
+        if (!mapReady || !mapRef.current || currentZoom >= CLUSTER_ZOOM_THRESHOLD) {
+            return stationList.map((station) => ({
+                lat: station.geo.lat,
+                lon: station.geo.lon,
+                names: [station.name],
+                originTrips: station.originTrips,
+                destinationTrips: station.destinationTrips,
+                totalTrips: station.originTrips + station.destinationTrips,
             }));
-
-        const coords: [number, number][] = [];
-
-        // Pulse ring for isolated stop (od-pulse pane renders behind the stop dot)
-        if (isolatedStation) {
-            const isolatedGeo = geoLookup[isolatedStation];
-            if (isolatedGeo) {
-                const isolatedStats = zoneStats.get(isolatedStation);
-                const isolatedTotal = isolatedStats
-                    ? isolatedStats.originTrips + isolatedStats.destinationTrips
-                    : 0;
-                const pulseSize = sqrtRadius(isolatedTotal, maxTotal) * 2 * 2.5;
-                const pulseRing = L.marker([isolatedGeo.lat, isolatedGeo.lon], {
-                    pane: 'od-pulse',
-                    icon: L.divIcon({
-                        className: '',
-                        html: `<div class="od-pulse-ring" style="width:${pulseSize}px;height:${pulseSize}px;background:rgba(139,92,246,0.4);"></div>`,
-                        iconSize: [pulseSize, pulseSize],
-                        iconAnchor: [pulseSize / 2, pulseSize / 2],
-                    }),
-                    interactive: false,
-                    keyboard: false,
-                });
-                pulseRing.addTo(layersRef.current);
-            }
         }
 
-        // Render station markers (clustered or individual)
-        clusters.forEach((cluster) => {
-            const isSingleStation = cluster.names.length === 1;
-            const stationName = cluster.names[0];
-            const isIsolated = isSingleStation && isolatedStation === stationName;
-            const size = Math.max(10, Math.round(sqrtRadius(cluster.totalTrips, maxTotal) * 2));
-
-            const marker = L.marker([cluster.lat, cluster.lon], {
-                pane: 'od-stops',
-                icon: L.divIcon({
-                    className: '',
-                    html: splitColorSvg(cluster.originTrips, cluster.destinationTrips, size, isIsolated),
-                    iconSize: [size, size],
-                    iconAnchor: [size / 2, size / 2],
-                }),
-                zIndexOffset: isIsolated ? 1000 : 0,
-            });
-
-            if (isSingleStation) {
-                marker.bindTooltip(
-                    `${stationName}<br/>Origin: ${cluster.originTrips.toLocaleString()} | Destination: ${cluster.destinationTrips.toLocaleString()}`,
-                    { sticky: true, direction: 'top', opacity: 0.95 }
-                );
-                marker.on('contextmenu', (e) => {
-                    const mouseEvent = e as L.LeafletMouseEvent;
-                    setContextMenu({ x: mouseEvent.containerPoint.x, y: mouseEvent.containerPoint.y, station: stationName });
-                });
-            } else {
-                marker.bindTooltip(
-                    `${cluster.names.length} stations<br/>${cluster.names.slice(0, 4).join(', ')}${cluster.names.length > 4 ? '...' : ''}`,
-                    { sticky: true, direction: 'top', opacity: 0.95 }
-                );
-            }
-
-            marker.addTo(layersRef.current!);
-
-            // Attach click directly on the DOM element — Leaflet's map-level event
-            // delegation can miss clicks on L.divIcon SVG markers.
-            const iconEl = marker.getElement();
-            if (iconEl) {
-                iconEl.style.cursor = 'pointer';
-                iconEl.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    if (isSingleStation) {
-                        setIsolatedStation((prev) => (prev === stationName ? null : stationName));
-                    } else {
-                        const zoom = mapRef.current?.getZoom() ?? 8;
-                        mapRef.current?.flyTo([cluster.lat, cluster.lon], zoom + 2);
-                    }
-                });
-            }
-            coords.push([cluster.lat, cluster.lon]);
-        });
-
-        // Station name labels — label every visible station, but skip if another labeled
-        // stop is within 50px on screen (the busiest stop wins since stationList is
-        // sorted by totalTrips descending).
-        const labeledStopPx: { x: number; y: number }[] = [];
-        stationList.forEach((station) => {
-            const stationPx = mapRef.current!.latLngToContainerPoint(
-                L.latLng(station.geo.lat, station.geo.lon)
-            );
-            if (hasCollision(stationPx, labeledStopPx, 50)) return;
-            labeledStopPx.push(stationPx);
-
-            const nameLabel = L.marker([station.geo.lat, station.geo.lon], {
-                pane: 'od-stop-labels',
-                icon: L.divIcon({
-                    className: 'od-label-icon',
-                    html: `<div style="font-size:11px;font-weight:700;color:#0f172a;letter-spacing:0.01em;white-space:nowrap;pointer-events:none;text-shadow:0 0 3px #fff,0 0 3px #fff,0 0 6px #fff;transform:translate(-50%,-100%);padding-bottom:6px">${truncateLabel(station.name)}</div>`,
-                    iconSize: [0, 0],
-                    iconAnchor: [0, 0],
-                }),
-                interactive: false,
-                keyboard: false,
-            });
-            nameLabel.addTo(layersRef.current!);
-        });
-
-        const rankedPairs = displayedPairs.map((pair, index) => ({ pair, rank: index + 1 }));
-        // Always label up to 25 routes — every visible pair gets a number
-        const labelCap = Math.min(rankedPairs.length, 25);
-        const maxJourneys = displayedPairs.length > 0 ? displayedPairs[0].journeys : 1;
-
-        // Pass 1: Draw arcs (lower ranks first so top ranks render on top).
-        const arcsByRank = new Map<number, [number, number][]>();
-        rankedPairs.slice().reverse().forEach(({ pair, rank }) => {
-            const originGeo = geoLookup[pair.origin];
-            const destinationGeo = geoLookup[pair.destination];
-            if (!originGeo || !destinationGeo) return;
-
-            const arc = quadraticBezierArc(
-                [originGeo.lat, originGeo.lon],
-                [destinationGeo.lat, destinationGeo.lon],
-                rank % 2 === 0 ? 1 : -1
-            );
-            arcsByRank.set(rank, arc);
-
-            const line = L.polyline(arc, {
-                pane: 'od-lines',
-                color: rankColor(rank - 1),
-                weight: volumeWeight(pair.journeys, maxJourneys),
-                opacity: 0.68,
-                lineCap: 'round',
-            });
-
-            line.bindPopup(`
-                <div style="min-width:190px">
-                    <div style="font-weight:600">${pair.origin} → ${pair.destination}</div>
-                    <div style="color:#555;margin-top:3px">${pair.journeys.toLocaleString()} trips</div>
-                    <div style="color:#777;margin-top:2px">Rank #${rank}</div>
-                </div>
-            `);
-            line.addTo(layersRef.current!);
-        });
-
-        // Pass 2: Place rank labels — every pair up to labelCap gets a number.
-        // When the ideal arc-midpoint position collides with an existing label, the label
-        // is nudged to the nearest free spot and a dashed leader line connects it back.
-        const placedLabelPositions: { x: number; y: number }[] = [];
-        rankedPairs.forEach(({ rank }) => {
-            if (rank > labelCap) return;
-            const arc = arcsByRank.get(rank);
-            if (!arc) return;
-
-            const mid = arc[Math.floor(arc.length * 0.55)] || arc[Math.floor(arc.length / 2)];
-            const idealPx = mapRef.current!.latLngToContainerPoint(L.latLng(mid[0], mid[1]));
-            const labelPx = findNonCollidingPosition(idealPx, placedLabelPositions, LABEL_COLLISION_RADIUS, 65);
-            if (labelPx === null) return; // No clean slot within 65px — skip rather than float label far away
-            placedLabelPositions.push(labelPx);
-
-            // Draw a dashed leader line when the label was nudged off the arc
-            const offsetDist = Math.hypot(labelPx.x - idealPx.x, labelPx.y - idealPx.y);
-            if (offsetDist > 3) {
-                const arcLatLng = L.latLng(mid[0], mid[1]);
-                const labelLatLng = mapRef.current!.containerPointToLatLng(L.point(labelPx.x, labelPx.y));
-                L.polyline([arcLatLng, labelLatLng], {
-                    pane: 'od-rank-labels',
-                    color: '#1e3a8a',
-                    weight: 2,
-                    opacity: 0.6,
-                    dashArray: '5 4',
-                }).addTo(layersRef.current!);
-            }
-
-            const sz = labelSize(rank);
-            const labelLatLng = mapRef.current!.containerPointToLatLng(L.point(labelPx.x, labelPx.y));
-            const label = L.marker(labelLatLng, {
-                pane: 'od-rank-labels',
-                icon: L.divIcon({
-                    className: '',
-                    html: `<svg width="${sz}" height="${sz}" xmlns="http://www.w3.org/2000/svg">
-                        <circle cx="${sz/2}" cy="${sz/2}" r="${sz/2 - 1}"
-                            fill="${labelBackground(rank)}"
-                            stroke="rgba(255,255,255,${rank <= 3 ? 0.95 : 0.8})"
-                            stroke-width="${rank <= 3 ? 2 : 1}"
-                            opacity="${labelOpacity(rank)}"/>
-                        <text x="${sz/2}" y="${sz/2}"
-                            text-anchor="middle" dominant-baseline="central"
-                            fill="white" font-size="${rank <= 3 ? 11 : 10}"
-                            font-weight="700" font-family="sans-serif"
-                            opacity="${labelOpacity(rank)}">${rank}</text>
-                    </svg>`,
-                    iconSize: [sz, sz],
-                    iconAnchor: [sz / 2, sz / 2],
-                }),
-                interactive: false,
-                keyboard: false,
-                zIndexOffset: 10000 - rank,
-            });
-            label.addTo(layersRef.current!);
-        });
-
-    }, [displayedPairs, geoLookup, isolatedStation, topNOption, currentZoom]);
-
-    useEffect(() => {
-        renderLayers();
-    }, [renderLayers]);
-
-    // Background station markers — all geocoded stations are clickable, same as search
-    useEffect(() => {
-        const layer = bgStopsLayerRef.current;
-        const map = mapRef.current;
-        if (!layer || !map) return;
-        layer.clearLayers();
-
-        // Determine which stations are already rendered in the main layer
-        const activeStations = new Set<string>();
-        displayedPairs.forEach(pair => {
-            if (geoLookup[pair.origin]) activeStations.add(pair.origin);
-            if (geoLookup[pair.destination]) activeStations.add(pair.destination);
-        });
-
-        Object.entries(geoLookup).forEach(([name, geo]) => {
-            if (activeStations.has(name)) return; // already has a clickable marker
-            const isIsolated = isolatedStation === name;
-            const marker = L.circleMarker([geo.lat, geo.lon], {
-                pane: 'od-bg-stops',
-                radius: isIsolated ? 6 : 4,
-                fillColor: isIsolated ? '#8b5cf6' : '#94a3b8',
-                fillOpacity: isIsolated ? 0.9 : 0.5,
-                color: isIsolated ? '#6d28d9' : '#64748b',
-                weight: isIsolated ? 2 : 1,
-                opacity: isIsolated ? 1 : 0.6,
-            });
-            marker.bindTooltip(name, { sticky: true, direction: 'top', opacity: 0.95 });
-            marker.on('click', () => {
-                setIsolatedStation(prev => prev === name ? null : name);
-            });
-            marker.addTo(layer);
-        });
-    }, [geoLookup, displayedPairs, isolatedStation]);
-
-    // Auto-fit to data extent only when the dataset changes, not on every zoom.
-    useEffect(() => {
-        if (!mapRef.current || displayedPairs.length === 0) return;
-        const coords: L.LatLngTuple[] = [];
-        displayedPairs.forEach((pair) => {
-            const og = geoLookup[pair.origin];
-            const dg = geoLookup[pair.destination];
-            if (og) coords.push([og.lat, og.lon]);
-            if (dg) coords.push([dg.lat, dg.lon]);
-        });
-        const unique = coords.filter(
-            (c, i, arr) => arr.findIndex((o) => o[0] === c[0] && o[1] === c[1]) === i
+        const map = mapRef.current.getMap();
+        return clusterStations(
+            stationList,
+            (lat, lon) => {
+                const point = map.project([lon, lat]);
+                return { x: point.x, y: point.y };
+            },
+            CLUSTER_RADIUS
         );
-        if (unique.length > 1) {
-            mapRef.current.fitBounds(L.latLngBounds(unique), { padding: [32, 32], maxZoom: 13.75 });
-        } else if (unique.length === 1) {
-            mapRef.current.setView(unique[0], 11.5);
-        } else {
-            mapRef.current.setView(ONTARIO_CENTER, 6);
-        }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [currentZoom, mapReady, stationList]);
+
+    const activeStations = useMemo(() => {
+        const active = new Set<string>();
+        displayedPairs.forEach((pair) => {
+            if (geoLookup[pair.origin]) active.add(pair.origin);
+            if (geoLookup[pair.destination]) active.add(pair.destination);
+        });
+        return active;
     }, [displayedPairs, geoLookup]);
 
+    const backgroundStations = useMemo(() => (
+        Object.entries(geoLookup)
+            .filter(([name]) => !activeStations.has(name))
+            .map(([name, geo]) => ({ name, geo }))
+    ), [activeStations, geoLookup]);
+
+    const rankedArcs = useMemo(() => {
+        const maxJourneys = displayedPairs.length > 0 ? displayedPairs[0].journeys : 1;
+        return displayedPairs.map((pair, index) => {
+            const originGeo = geoLookup[pair.origin];
+            const destinationGeo = geoLookup[pair.destination];
+            if (!originGeo || !destinationGeo) return null;
+            const rank = index + 1;
+            const routeMatch = routeMatchLookup.get(`${pairKey(pair.origin)}|${pairKey(pair.destination)}`);
+            return {
+                rank,
+                pair,
+                routePath: getRoutePathLabel(routeMatch),
+                viaStops: getViaStopsLabel(routeMatch),
+                points: quadraticBezierArc(
+                    [originGeo.lat, originGeo.lon],
+                    [destinationGeo.lat, destinationGeo.lon],
+                    rank % 2 === 0 ? 1 : -1
+                ),
+                arc: {
+                    origin: [originGeo.lat, originGeo.lon] as [number, number],
+                    dest: [destinationGeo.lat, destinationGeo.lon] as [number, number],
+                    color: rankColor(rank - 1),
+                    width: volumeWeight(pair.journeys, maxJourneys),
+                    opacity: 0.68,
+                    curveDirection: rank % 2 === 0 ? 1 as const : -1 as const,
+                    properties: {
+                        origin: pair.origin,
+                        destination: pair.destination,
+                        journeys: pair.journeys,
+                        rank,
+                        routePath: getRoutePathLabel(routeMatch),
+                        viaStops: getViaStopsLabel(routeMatch),
+                    },
+                },
+            };
+        }).filter((item): item is NonNullable<typeof item> => item !== null);
+    }, [displayedPairs, geoLookup, routeMatchLookup]);
+
+    const stopLabels = useMemo(() => {
+        if (!mapReady || !mapRef.current) return [] as Array<{ name: string; lat: number; lon: number }>;
+        const map = mapRef.current.getMap();
+        const labeledStopPx: { x: number; y: number }[] = [];
+
+        return stationList.flatMap((station) => {
+            const stationPx = map.project([station.geo.lon, station.geo.lat]);
+            const px = { x: stationPx.x, y: stationPx.y };
+            if (hasCollision(px, labeledStopPx, 50)) return [];
+            labeledStopPx.push(px);
+            return [{ name: truncateLabel(station.name), lat: station.geo.lat, lon: station.geo.lon }];
+        });
+    }, [mapReady, stationList, currentZoom]);
+
+    const rankLabels = useMemo(() => {
+        if (!mapReady || !mapRef.current) return [] as Array<{ rank: number; lat: number; lon: number }>;
+        const map = mapRef.current.getMap();
+        const labelCap = Math.min(rankedArcs.length, 25);
+        const placedLabelPositions: { x: number; y: number }[] = [];
+
+        return rankedArcs.flatMap((arcItem) => {
+            if (arcItem.rank > labelCap) return [];
+            const mid = arcItem.points[Math.floor(arcItem.points.length * 0.55)] || arcItem.points[Math.floor(arcItem.points.length / 2)];
+            const idealPoint = map.project([mid[1], mid[0]]);
+            const idealPx = { x: idealPoint.x, y: idealPoint.y };
+            const labelPx = findNonCollidingPosition(idealPx, placedLabelPositions, LABEL_COLLISION_RADIUS, 65);
+            if (labelPx === null) return [];
+            placedLabelPositions.push(labelPx);
+            const labelLngLat = map.unproject([labelPx.x, labelPx.y]);
+            return [{ rank: arcItem.rank, lat: labelLngLat.lat, lon: labelLngLat.lng }];
+        });
+    }, [mapReady, rankedArcs, currentZoom]);
+
+    const isolatedPulse = useMemo(() => {
+        if (!isolatedStation) return null;
+        const isolatedGeo = geoLookup[isolatedStation];
+        if (!isolatedGeo) return null;
+        const isolatedStats = zoneStats.get(isolatedStation);
+        const isolatedTotal = isolatedStats ? isolatedStats.originTrips + isolatedStats.destinationTrips : 0;
+        return {
+            lat: isolatedGeo.lat,
+            lon: isolatedGeo.lon,
+            size: sqrtRadius(isolatedTotal, maxStationTotal) * 2 * 2.5,
+        };
+    }, [geoLookup, isolatedStation, maxStationTotal, zoneStats]);
+
+    const handleStationContextMenu = useCallback((event: React.MouseEvent, station: string) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const rect = mapWrapperRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        setContextMenu({
+            x: event.clientX - rect.left,
+            y: event.clientY - rect.top,
+            station,
+        });
+    }, []);
+
+    const handleMapClick = useCallback((event: MapMouseEvent) => {
+        setContextMenu(null);
+        const feature = (event as unknown as { features?: { layer: { id: string }; properties?: Record<string, unknown> }[] }).features?.find((item: { layer: { id: string } }) => item.layer.id === ARC_LAYER_ID);
+        if (!feature) {
+            setArcPopup(null);
+            return;
+        }
+
+        const properties = (feature.properties ?? {}) as Record<string, unknown>;
+        setArcPopup({
+            longitude: event.lngLat.lng,
+            latitude: event.lngLat.lat,
+            origin: String(properties.origin ?? ''),
+            destination: String(properties.destination ?? ''),
+            journeys: Number(properties.journeys ?? 0),
+            rank: Number(properties.rank ?? 0),
+            routePath: String(properties.routePath ?? ''),
+            viaStops: String(properties.viaStops ?? ''),
+        });
+    }, []);
+
     useEffect(() => {
-        if (viewMode !== 'map' || !mapRef.current) return;
-        const timer = setTimeout(() => mapRef.current?.invalidateSize(), 80);
+        const map = mapRef.current?.getMap();
+        if (!mapReady || !map) return;
+        const onZoomEnd = () => setCurrentZoom(map.getZoom());
+        map.on('zoomend', onZoomEnd);
+        return () => {
+            map.off('zoomend', onZoomEnd);
+        };
+    }, [mapReady]);
+
+    useEffect(() => {
+        if (!mapReady || !mapRef.current || displayedPairs.length === 0) return;
+        const map = mapRef.current.getMap();
+        const coords = displayedPairs.flatMap((pair) => {
+            const originGeo = geoLookup[pair.origin];
+            const destinationGeo = geoLookup[pair.destination];
+            return [
+                ...(originGeo ? [[originGeo.lon, originGeo.lat] as [number, number]] : []),
+                ...(destinationGeo ? [[destinationGeo.lon, destinationGeo.lat] as [number, number]] : []),
+            ];
+        });
+        const unique = coords.filter(
+            (coord, index, list) => list.findIndex((other) => other[0] === coord[0] && other[1] === coord[1]) === index
+        );
+
+        const frameId = window.requestAnimationFrame(() => {
+            map.resize();
+            if (unique.length > 1) {
+                const longitudes = unique.map((coord) => coord[0]);
+                const latitudes = unique.map((coord) => coord[1]);
+                map.fitBounds(
+                    [
+                        [Math.min(...longitudes), Math.min(...latitudes)],
+                        [Math.max(...longitudes), Math.max(...latitudes)],
+                    ],
+                    { padding: 32, maxZoom: 13.75, duration: 0 }
+                );
+            } else if (unique.length === 1) {
+                map.flyTo({ center: unique[0], zoom: 11.5, duration: 0 });
+            } else {
+                map.flyTo({ center: [ONTARIO_CENTER[1], ONTARIO_CENTER[0]], zoom: 6, duration: 0 });
+            }
+        });
+
+        return () => window.cancelAnimationFrame(frameId);
+    }, [displayedPairs, geoLookup, mapReady]);
+
+    useEffect(() => {
+        if (viewMode !== 'map' || !mapReady || !mapRef.current) return;
+        const timer = setTimeout(() => mapRef.current?.getMap().resize(), 80);
         return () => clearTimeout(timer);
-    }, [viewMode, isFullscreen]);
+    }, [viewMode, isFullscreen, mapReady]);
 
     useEffect(() => {
         if (!isFullscreen) return;
@@ -854,8 +803,19 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
         );
     }
 
+    useEffect(() => {
+        if (mapReady && mapHostRef.current) {
+            onMapReady?.(mapHostRef.current);
+        }
+    }, [mapReady, onMapReady]);
+
     return (
-        <div className="space-y-3">
+        <>
+            <style>{`
+                @keyframes od-pulse { 0%{transform:scale(1);opacity:.8} 70%{transform:scale(2.8);opacity:0} 100%{transform:scale(2.8);opacity:0} }
+                ${MAP_STYLE}
+            `}</style>
+            <div className="space-y-3">
             <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
                 <div className="flex flex-wrap items-center gap-4">
                     <div className="flex items-center gap-2">
@@ -1039,10 +999,132 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
                     >
                         <div className="relative" ref={mapWrapperRef}>
                             <div
-                                ref={mapContainerRef}
-                                className="rounded-lg overflow-hidden border border-gray-200"
+                                ref={mapHostRef}
+                                className="od-flow-map rounded-lg overflow-hidden border border-gray-200"
                                 style={{ height: isFullscreen ? 'calc(100vh - 220px)' : 560 }}
-                            />
+                            >
+                                <MapBase
+                                    mapRef={mapRef}
+                                    latitude={ONTARIO_CENTER[0]}
+                                    longitude={ONTARIO_CENTER[1]}
+                                    zoom={6}
+                                    mapStyle="mapbox://styles/mapbox/light-v11"
+                                    showNavigation={true}
+                                    interactiveLayerIds={[ARC_LAYER_ID]}
+                                    onClick={handleMapClick}
+                                    onLoad={() => {
+                                        setMapReady(true);
+                                        setCurrentZoom(mapRef.current?.getMap().getZoom() ?? 6);
+                                    }}
+                                >
+                                    <ArcLayer arcs={rankedArcs.map((item) => item.arc)} idPrefix="od-flow-arcs" />
+
+                                    {isolatedPulse && (
+                                        <Marker longitude={isolatedPulse.lon} latitude={isolatedPulse.lat} anchor="center">
+                                            <PulseRing size={isolatedPulse.size} />
+                                        </Marker>
+                                    )}
+
+                                    {backgroundStations.map(({ name, geo }) => (
+                                        <Marker key={`bg-${name}`} longitude={geo.lon} latitude={geo.lat} anchor="center">
+                                            <button
+                                                type="button"
+                                                onClick={() => setIsolatedStation((prev) => prev === name ? null : name)}
+                                                onContextMenu={(event) => handleStationContextMenu(event, name)}
+                                                className="border-0 bg-transparent p-0"
+                                                title={name}
+                                            >
+                                                <BackgroundStopMarker isolated={isolatedStation === name} />
+                                            </button>
+                                        </Marker>
+                                    ))}
+
+                                    {clusteredStations.map((cluster) => {
+                                        const isSingleStation = cluster.names.length === 1;
+                                        const stationName = cluster.names[0];
+                                        const isIsolated = isSingleStation && isolatedStation === stationName;
+                                        const size = Math.max(10, Math.round(sqrtRadius(cluster.totalTrips, maxStationTotal) * 2));
+                                        const title = isSingleStation
+                                            ? `${stationName} | Origin: ${cluster.originTrips.toLocaleString()} | Destination: ${cluster.destinationTrips.toLocaleString()}`
+                                            : `${cluster.names.length} stations | ${cluster.names.slice(0, 4).join(', ')}${cluster.names.length > 4 ? '...' : ''}`;
+
+                                        return (
+                                            <Marker
+                                                key={`cluster-${cluster.names.join('|')}`}
+                                                longitude={cluster.lon}
+                                                latitude={cluster.lat}
+                                                anchor="center"
+                                            >
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        if (isSingleStation) {
+                                                            setIsolatedStation((prev) => (prev === stationName ? null : stationName));
+                                                            return;
+                                                        }
+                                                        const zoom = mapRef.current?.getMap().getZoom() ?? 8;
+                                                        mapRef.current?.getMap().flyTo({
+                                                            center: [cluster.lon, cluster.lat],
+                                                            zoom: zoom + 2,
+                                                        });
+                                                    }}
+                                                    onContextMenu={isSingleStation ? (event) => handleStationContextMenu(event, stationName) : undefined}
+                                                    className="border-0 bg-transparent p-0"
+                                                    title={title}
+                                                >
+                                                    <div
+                                                        dangerouslySetInnerHTML={{
+                                                            __html: splitColorSvg(cluster.originTrips, cluster.destinationTrips, size, isIsolated),
+                                                        }}
+                                                    />
+                                                </button>
+                                            </Marker>
+                                        );
+                                    })}
+
+                                    {stopLabels.map((label) => (
+                                        <Marker key={`label-${label.name}-${label.lat}-${label.lon}`} longitude={label.lon} latitude={label.lat} anchor="bottom">
+                                            <div className="-translate-y-1/2">
+                                                <StopLabel text={label.name} />
+                                            </div>
+                                        </Marker>
+                                    ))}
+
+                                    {rankLabels.map((label) => (
+                                        <Marker key={`rank-${label.rank}-${label.lat}-${label.lon}`} longitude={label.lon} latitude={label.lat} anchor="center">
+                                            <RankBadge rank={label.rank} />
+                                        </Marker>
+                                    ))}
+
+                                    {arcPopup && (
+                                        <Popup
+                                            longitude={arcPopup.longitude}
+                                            latitude={arcPopup.latitude}
+                                            anchor="bottom"
+                                            closeButton={true}
+                                            closeOnClick={false}
+                                            onClose={() => setArcPopup(null)}
+                                            maxWidth="240px"
+                                        >
+                                            <div style={{ minWidth: 190 }}>
+                                                <div style={{ fontWeight: 600 }}>{arcPopup.origin} {'->'} {arcPopup.destination}</div>
+                                                <div style={{ color: '#555', marginTop: 3 }}>{arcPopup.journeys.toLocaleString()} trips</div>
+                                                {arcPopup.routePath && (
+                                                    <div style={{ color: '#374151', marginTop: 4 }}>
+                                                        <span style={{ fontWeight: 600 }}>Route:</span> {arcPopup.routePath}
+                                                    </div>
+                                                )}
+                                                {arcPopup.viaStops && (
+                                                    <div style={{ color: '#6b7280', marginTop: 2 }}>
+                                                        <span style={{ fontWeight: 600 }}>Via:</span> {arcPopup.viaStops}
+                                                    </div>
+                                                )}
+                                                <div style={{ color: '#777', marginTop: 2 }}>Rank #{arcPopup.rank}</div>
+                                            </div>
+                                        </Popup>
+                                    )}
+                                </MapBase>
+                            </div>
                             {contextMenu && (
                                 <div
                                     className="absolute z-50 bg-white border border-gray-200 rounded-lg shadow-lg py-1 text-xs min-w-[140px]"
@@ -1121,11 +1203,11 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
                         <div className="mt-3 border border-gray-200 rounded-lg overflow-hidden">
                             <div className="px-3 py-2 bg-gray-50 border-b border-gray-200 text-xs text-gray-600 flex items-center justify-between">
                                 <span>
-                                    Stop OD summary for <span className="font-semibold text-gray-800">{isolatedStation}</span> · {isolatedSummaryPairs.length} pair{isolatedSummaryPairs.length === 1 ? '' : 's'} (min journeys filter applied)
+                                    Stop route summary for <span className="font-semibold text-gray-800">{isolatedStation}</span> · {isolatedSummaryPairs.length} pair{isolatedSummaryPairs.length === 1 ? '' : 's'} (min journeys filter applied)
                                 </span>
                                 {isolatedSummaryPairs.length > 0 && (
                                     <button
-                                        onClick={() => exportStopReportExcel(data, isolatedStation)}
+                                        onClick={() => exportStopReportExcel(data, isolatedStation, routeEstimation)}
                                         className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-white hover:text-gray-800 transition-colors"
                                     >
                                         <Download size={11} />
@@ -1143,6 +1225,8 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
                                                 <th className="px-3 py-2 text-left w-10">#</th>
                                                 <th className="px-3 py-2 text-left">Direction</th>
                                                 <th className="px-3 py-2 text-left">Counterpart Stop</th>
+                                                <th className="px-3 py-2 text-left">Route Taken</th>
+                                                <th className="px-3 py-2 text-left">Via</th>
                                                 <th className="px-3 py-2 text-right">Trips</th>
                                                 <th className="px-3 py-2 text-right">% of Stop Total</th>
                                             </tr>
@@ -1157,6 +1241,17 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
                                                         </span>
                                                     </td>
                                                     <td className="px-3 py-1.5 text-gray-700">{row.counterpart}</td>
+                                                    <td className="px-3 py-1.5 text-gray-700">
+                                                        <div className="min-w-[220px]">
+                                                            <div className={row.routePath ? 'font-medium text-gray-900' : 'text-gray-500'}>
+                                                                {row.routePath || (row.confidence === 'loading' ? 'Loading route assignment...' : 'No resolved route')}
+                                                            </div>
+                                                            <span className={`mt-1 inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold ${routeConfidenceBadgeClasses(row.confidence)}`}>
+                                                                {routeConfidenceLabel(row.confidence)}
+                                                            </span>
+                                                        </div>
+                                                    </td>
+                                                    <td className="px-3 py-1.5 text-gray-600">{row.viaStops || '\u2014'}</td>
                                                     <td className="px-3 py-1.5 text-right font-medium text-gray-900">{row.journeys.toLocaleString()}</td>
                                                     <td className="px-3 py-1.5 text-right text-gray-600">{row.stopShare.toFixed(2)}%</td>
                                                 </tr>
@@ -1209,6 +1304,7 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
                     </div>
                 </ChartCard>
             </div>
-        </div>
+            </div>
+        </>
     );
 };

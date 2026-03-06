@@ -26,8 +26,10 @@ Audit these files in order of priority:
 
 | File | Purpose |
 |------|---------|
+| `docs/CONTEXT_INDEX.md` | Canonical load order and doc tiers |
 | `.claude/CLAUDE.md` | Project instructions, danger zones, task patterns |
-| `.claude/context.md` | Locked logic rules, domain terms, gotchas |
+| `docs/rules/LOCKED_LOGIC.md` | Durable locked logic summary |
+| `.claude/context.md` | Detailed compatibility copy of locked logic |
 | `~/.claude/projects/.../memory/MEMORY.md` | Cross-session learnings |
 
 ### Tier 2 — High (referenced during planning and feature work)
@@ -44,12 +46,11 @@ Audit these files in order of priority:
 | File | Purpose |
 |------|---------|
 | `docs/CONNECTIONS_FEATURE.md` | Connection library design, known issues |
-| `docs/PERFORMANCE_DASHBOARD_PLAN.md` | Performance module plan |
-| `docs/PERFORMANCE_REPORTS_PLAN.md` | Reports module plan |
-| `docs/TRANSIT_APP_DATA_USE_CASES.md` | Transit App data analysis features |
 | `docs/AUTO_INGEST_SETUP.md` | Automated data ingestion |
-| `docs/REORGANIZATION_LOG.md` | Feb 2026 repo restructure log |
+| `docs/OD_WORKSPACE_GUIDE.md` | OD workspace user guidance |
+| `docs/DWELL_CASCADE_PLAN.md` | Dwell and cascade reference |
 | `docs/route-colors.md` | Route color scheme reference |
+| `docs/plans/README.md` | Archive policy for dated plans |
 
 ### Tier 4 — Skills & Commands
 
@@ -107,7 +108,7 @@ grep -ri "interline\|tweaker\|DraftManager\|ScenarioComparison\|SaveErrorBoundar
 
 ### Check 4: Locked Logic Validation
 
-For each locked rule in `.claude/context.md`:
+For each locked rule in `docs/rules/LOCKED_LOGIC.md` and `.claude/context.md`:
 
 1. **Verify the source file exists** at the documented path
 2. **Verify the locked logic still matches the code** — read the relevant lines

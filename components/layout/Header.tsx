@@ -9,11 +9,10 @@ import {
     LogOut,
     FolderOpen,
     ChevronDown,
-    Menu,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
-export type View = 'home' | 'ondemand' | 'fixed' | 'operations';
+export type View = 'home' | 'ondemand' | 'fixed' | 'operations' | 'agents';
 
 interface HeaderProps {
     currentView: View;

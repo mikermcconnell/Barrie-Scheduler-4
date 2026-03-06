@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { MetricCard, fmt } from './AnalyticsShared';
 import type { ODMatrixDataSummary, GeocodeCache } from '../../utils/od-matrix/odMatrixTypes';
+import type { ODRouteEstimationResult } from '../../utils/od-matrix/odRouteEstimation';
 import { ODFlowMapModule } from './ODFlowMapModule';
 
 interface ODOverviewPanelProps {
@@ -23,9 +24,21 @@ interface ODOverviewPanelProps {
     onMapElReady?: (el: HTMLDivElement) => void;
     onIsolatedStationChange?: (station: string | null) => void;
     isolatedStation?: string | null;
+    routeEstimation?: ODRouteEstimationResult | null;
+    routeEstimationLoading?: boolean;
 }
 
-export const ODOverviewPanel: React.FC<ODOverviewPanelProps> = ({ data, geocodeCache, onNavigate, onFixCoordinates, onMapElReady, onIsolatedStationChange, isolatedStation }) => {
+export const ODOverviewPanel: React.FC<ODOverviewPanelProps> = ({
+    data,
+    geocodeCache,
+    onNavigate,
+    onFixCoordinates,
+    onMapElReady,
+    onIsolatedStationChange,
+    isolatedStation,
+    routeEstimation,
+    routeEstimationLoading,
+}) => {
     const topOrigin = useMemo(() => {
         const sorted = [...data.stations].sort((a, b) => b.totalOrigin - a.totalOrigin);
         return sorted[0];
@@ -110,6 +123,8 @@ export const ODOverviewPanel: React.FC<ODOverviewPanelProps> = ({ data, geocodeC
                 onFixMissingCoordinates={onFixCoordinates}
                 onMapReady={onMapElReady}
                 onIsolatedStationChange={onIsolatedStationChange}
+                routeEstimation={routeEstimation}
+                routeEstimationLoading={routeEstimationLoading}
             />
 
         </div>

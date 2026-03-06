@@ -107,7 +107,7 @@ Team
 |------|----------|---------|
 | **Linear (A/B)** | 2, 7, 12 | Merged directions, shared downtown terminus |
 | **Linear (Variant)** | 8A, 8B | Separate variants with own stops |
-| **Linear (Single)** | 400 | One direction only |
+| **Linear (Bidirectional)** | 400 | Explicit North/South directions between RVH and Park Place |
 | **Loop** | 10, 11, 100, 101 | Circular routes |
 
 ---
@@ -159,7 +159,10 @@ Team
 
 ## Locked Logic Reference
 
-See `.claude/context.md` for implementation details that must not change:
+Read `docs/rules/LOCKED_LOGIC.md` first.
+
+Use `.claude/CLAUDE.md` for repo workflow, verification expectations, and danger zones.
+Use `.claude/context.md` only when detailed historical implementation notes are needed for core schedule behavior:
 - Segment rounding approach
 - Block assignment algorithm for merged routes
 - ARR/R/DEP column handling at merged terminuses

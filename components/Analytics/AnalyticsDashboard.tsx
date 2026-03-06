@@ -338,7 +338,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
     if (view === 'student-pass') {
         return (
             <div className="h-full overflow-hidden">
-                <StudentPassModule onBack={() => setView('dashboard')} />
+                <StudentPassModule onBack={() => setView('dashboard')} teamId={team.id} />
             </div>
         );
     }

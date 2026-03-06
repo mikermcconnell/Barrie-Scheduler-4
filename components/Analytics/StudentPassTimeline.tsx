@@ -1,14 +1,28 @@
 import React, { useMemo } from 'react';
 import type { StudentPassResult } from '../../utils/transit-app/studentPassUtils';
 import { minutesToDisplayTime } from '../../utils/transit-app/studentPassUtils';
+import { getContrastingTextColor } from '../../utils/config/routeColors';
+import type {
+  StudentPassRouteLoadLookup,
+  StudentPassRouteLoadMetric,
+} from '../../utils/transit-app/studentPassLoadMetrics';
+import {
+  getStudentPassRouteLoadMetric,
+  isStudentPassLoadMetricSmallSample,
+} from '../../utils/transit-app/studentPassLoadMetrics';
 
 interface StudentPassTimelineProps {
   result: StudentPassResult;
   journeyMode: 'am' | 'pm';
   onJourneyModeChange: (mode: 'am' | 'pm') => void;
+  routeLoadLookup?: StudentPassRouteLoadLookup | null;
 }
 
-interface TimelineSegment {
+const TIMELINE_LEFT_OFFSET = 344;
+const TIMELINE_SIDE_MARGIN = 16;
+const TIMELINE_RIGHT_GUTTER = 24;
+
+export interface TimelineSegment {
   type: 'walk' | 'ride' | 'transfer';
   durationMinutes: number;
   label: string;
@@ -17,9 +31,13 @@ interface TimelineSegment {
   routeColor?: string;
   routeShortName?: string;
   index: number;
+  loadMetric?: StudentPassRouteLoadMetric | null;
 }
 
-function buildMorningSegments(result: StudentPassResult): TimelineSegment[] {
+export function buildMorningSegments(
+  result: StudentPassResult,
+  routeLoadLookup?: StudentPassRouteLoadLookup | null
+): TimelineSegment[] {
   const segments: TimelineSegment[] = [];
 
   if (result.walkToStop) {
@@ -41,6 +59,7 @@ function buildMorningSegments(result: StudentPassResult): TimelineSegment[] {
       routeColor: leg.routeColor,
       routeShortName: leg.routeShortName,
       index: i,
+      loadMetric: getStudentPassRouteLoadMetric(routeLoadLookup, leg.routeShortName, leg.departureMinutes),
     });
 
     if (i < result.morningLegs.length - 1) {
@@ -68,7 +87,10 @@ function buildMorningSegments(result: StudentPassResult): TimelineSegment[] {
   return segments;
 }
 
-function buildAfternoonSegments(result: StudentPassResult): TimelineSegment[] {
+export function buildAfternoonSegments(
+  result: StudentPassResult,
+  routeLoadLookup?: StudentPassRouteLoadLookup | null
+): TimelineSegment[] {
   const segments: TimelineSegment[] = [];
   const transfers = result.afternoonTransfers?.length
     ? result.afternoonTransfers
@@ -95,6 +117,7 @@ function buildAfternoonSegments(result: StudentPassResult): TimelineSegment[] {
       routeColor: leg.routeColor,
       routeShortName: leg.routeShortName,
       index: i,
+      loadMetric: getStudentPassRouteLoadMetric(routeLoadLookup, leg.routeShortName, leg.departureMinutes),
     });
 
     if (i < result.afternoonLegs.length - 1) {
@@ -122,7 +145,7 @@ function buildAfternoonSegments(result: StudentPassResult): TimelineSegment[] {
   return segments;
 }
 
-function resolveColor(raw: string | undefined): string {
+export function resolveColor(raw: string | undefined): string {
   if (!raw) return '#3B5BDB';
   return raw.startsWith('#') ? raw : `#${raw}`;
 }
@@ -130,11 +153,18 @@ function resolveColor(raw: string | undefined): string {
 export default function StudentPassTimeline({
   result,
   journeyMode,
+  routeLoadLookup,
 }: StudentPassTimelineProps) {
   if (!result?.found) return null;
 
-  const morningSegments = useMemo(() => buildMorningSegments(result), [result]);
-  const afternoonSegments = useMemo(() => buildAfternoonSegments(result), [result]);
+  const morningSegments = useMemo(
+    () => buildMorningSegments(result, routeLoadLookup),
+    [result, routeLoadLookup]
+  );
+  const afternoonSegments = useMemo(
+    () => buildAfternoonSegments(result, routeLoadLookup),
+    [result, routeLoadLookup]
+  );
 
   const segments = journeyMode === 'am' ? morningSegments : afternoonSegments;
   const totalMinutes = segments.reduce((sum, s) => sum + s.durationMinutes, 0);
@@ -142,35 +172,40 @@ export default function StudentPassTimeline({
 
   return (
     <div
-      className="absolute bottom-0 left-0 right-0 mx-4 mb-4 rounded-t-lg z-10 timeline-enter"
+      className="absolute bottom-0 rounded-t-lg z-10 timeline-enter"
       style={{
-        background: 'rgba(11, 17, 33, 0.9)',
+        left: TIMELINE_LEFT_OFFSET,
+        right: TIMELINE_RIGHT_GUTTER,
+        marginLeft: TIMELINE_SIDE_MARGIN,
+        marginRight: TIMELINE_SIDE_MARGIN,
+        marginBottom: 16,
+        background: 'var(--student-pass-panel)',
         backdropFilter: 'blur(16px)',
         WebkitBackdropFilter: 'blur(16px)',
-        border: '1px solid rgba(99, 126, 184, 0.12)',
+        border: '1px solid var(--student-pass-border)',
         borderBottom: 'none',
       }}
     >
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-[rgba(99,126,184,0.12)]">
+      <div className="flex items-center justify-between px-4 py-2" style={{ borderBottom: '1px solid var(--student-pass-border-subtle)' }}>
         <span
-          className="text-[12px] font-semibold uppercase tracking-wider text-[#94A3B8]"
-          style={{ fontFamily: "'JetBrains Mono', monospace" }}
+          className="text-[14px] font-semibold uppercase tracking-wider"
+          style={{ color: 'var(--student-pass-muted)', fontFamily: "'JetBrains Mono', monospace" }}
         >
           {modeLabel}
         </span>
         <span
-          className="text-[12px] text-[#94A3B8]"
-          style={{ fontFamily: "'JetBrains Mono', monospace" }}
+          className="text-[14px]"
+          style={{ color: 'var(--student-pass-muted)', fontFamily: "'JetBrains Mono', monospace" }}
         >
           {totalMinutes} min total
         </span>
       </div>
 
       {/* Segments bar */}
-      <div className="flex items-stretch px-3 pt-3 pb-1 gap-0.5" style={{ minHeight: 52 }}>
+      <div className="flex items-stretch px-3 pt-3 pb-1 gap-0.5" style={{ minHeight: 64 }}>
         {segments.length === 0 ? (
-          <div className="flex-1 flex items-center justify-center text-[12px] text-[#94A3B8]">
+          <div className="flex-1 flex items-center justify-center text-[14px]" style={{ color: 'var(--student-pass-muted)' }}>
             No {journeyMode === 'pm' ? 'afternoon' : 'morning'} trip data
           </div>
         ) : (
@@ -181,18 +216,18 @@ export default function StudentPassTimeline({
               return (
                 <div
                   key={idx}
-                  className="bg-[#1A2540] rounded flex flex-col items-center justify-center cursor-default"
-                  style={{ flex: flexValue, minWidth: 40 }}
+                  className="rounded flex flex-col items-center justify-center cursor-default"
+                  style={{ flex: flexValue, minWidth: 40, background: 'var(--student-pass-blue-card-alt)' }}
                 >
                   <span
-                    className="text-[12px] font-semibold text-[#94A3B8] leading-none"
-                    style={{ fontFamily: "'JetBrains Mono', monospace" }}
+                    className="text-[14px] font-semibold leading-none"
+                    style={{ color: 'var(--student-pass-text)', fontFamily: "'JetBrains Mono', monospace" }}
                   >
                     Walk
                   </span>
                   <span
-                    className="text-[12px] text-[#94A3B8] leading-none mt-0.5"
-                    style={{ fontFamily: "'JetBrains Mono', monospace" }}
+                    className="text-[14px] leading-none mt-0.5"
+                    style={{ color: 'var(--student-pass-muted)', fontFamily: "'JetBrains Mono', monospace" }}
                   >
                     {seg.durationMinutes}m
                   </span>
@@ -201,24 +236,55 @@ export default function StudentPassTimeline({
             }
 
             if (seg.type === 'ride') {
+              const hasSmallSample = isStudentPassLoadMetricSmallSample(seg.loadMetric);
+              const backgroundColor = resolveColor(seg.routeColor);
+              const foregroundColor = getContrastingTextColor(backgroundColor);
+              const secondaryColor = foregroundColor === 'black' ? 'rgba(0,0,0,0.72)' : 'rgba(255,255,255,0.8)';
+              const tertiaryColor = foregroundColor === 'black' ? 'rgba(0,0,0,0.58)' : 'rgba(255,255,255,0.65)';
+              const loadLabel = seg.loadMetric ? `Load ${Math.round(seg.loadMetric.avgLoad)}` : 'Load n/a';
+              const sampleLabel = seg.loadMetric ? `${seg.loadMetric.observationDays}d obs` : '';
+
               return (
                 <div
                   key={idx}
                   className="rounded flex flex-col items-center justify-center cursor-default"
-                  style={{ flex: flexValue, minWidth: 40, backgroundColor: resolveColor(seg.routeColor) }}
+                  style={{
+                    flex: flexValue,
+                    minWidth: 40,
+                    backgroundColor,
+                    boxShadow: hasSmallSample ? 'inset 0 0 0 1px rgba(245, 158, 11, 0.9)' : undefined,
+                  }}
                 >
-                  <span
-                    className="text-[12px] font-bold text-white leading-none"
+                  <div
+                    className="flex items-center justify-center gap-1.5 leading-none"
                     style={{ fontFamily: "'JetBrains Mono', monospace" }}
                   >
-                    Rt {seg.routeShortName}
-                  </span>
-                  <span
-                    className="text-[12px] text-white/70 leading-none mt-0.5"
+                    <span className="text-[14px] font-bold" style={{ color: foregroundColor }}>
+                      Rt {seg.routeShortName}
+                    </span>
+                    <span className="text-[13px] font-semibold" style={{ color: secondaryColor }}>
+                      {seg.durationMinutes}m
+                    </span>
+                  </div>
+                  <div
+                    className="flex items-center justify-center gap-1.5 leading-none mt-1"
                     style={{ fontFamily: "'JetBrains Mono', monospace" }}
                   >
-                    {seg.durationMinutes}m
-                  </span>
+                    <span
+                      className="text-[12px]"
+                      style={{ color: hasSmallSample ? '#92400E' : secondaryColor }}
+                    >
+                      {loadLabel}
+                    </span>
+                    {sampleLabel && (
+                      <span
+                        className="text-[12px]"
+                        style={{ color: hasSmallSample ? '#92400E' : tertiaryColor }}
+                      >
+                        {sampleLabel}
+                      </span>
+                    )}
+                  </div>
                 </div>
               );
             }
@@ -231,7 +297,7 @@ export default function StudentPassTimeline({
                 style={{ flex: flexValue, minWidth: 40, background: 'rgba(245, 158, 11, 0.06)' }}
               >
                 <span
-                  className="text-[12px] text-[#F59E0B] leading-none"
+                  className="text-[14px] text-[#F59E0B] leading-none"
                   style={{ fontFamily: "'JetBrains Mono', monospace" }}
                 >
                   {seg.durationMinutes}m
@@ -257,8 +323,8 @@ export default function StudentPassTimeline({
               >
                 {timeLabel && (
                   <span
-                    className="text-[12px] text-[#94A3B8]"
-                    style={{ fontFamily: "'JetBrains Mono', monospace" }}
+                    className="text-[14px]"
+                    style={{ color: 'var(--student-pass-muted)', fontFamily: "'JetBrains Mono', monospace" }}
                   >
                     {timeLabel}
                   </span>

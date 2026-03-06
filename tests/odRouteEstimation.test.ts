@@ -1,12 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { estimateRoutes } from '../utils/od-matrix/odRouteEstimation';
+import { estimateRoutesFromGtfsTextFiles } from '../utils/od-matrix/odRouteEstimation';
 import type { ODMatrixDataSummary, ODPairRecord } from '../utils/od-matrix/odMatrixTypes';
-
-function bufferToArrayBuffer(buffer: Buffer): ArrayBuffer {
-    return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer;
-}
 
 function makeSummary(pairs: ODPairRecord[]): ODMatrixDataSummary {
     const stationNames = Array.from(new Set(pairs.flatMap(p => [p.origin, p.destination])));
@@ -33,8 +29,13 @@ function makeSummary(pairs: ODPairRecord[]): ODMatrixDataSummary {
 }
 
 describe('odRouteEstimation', () => {
-    const gtfsZipPath = path.resolve(process.cwd(), 'gtfs.zip');
-    const gtfsBuffer = bufferToArrayBuffer(readFileSync(gtfsZipPath));
+    const gtfsDir = path.resolve(process.cwd(), 'data', 'gtfs', 'ontario-northland');
+    const gtfsFiles = {
+        routesText: readFileSync(path.join(gtfsDir, 'routes.txt'), 'utf8'),
+        tripsText: readFileSync(path.join(gtfsDir, 'trips.txt'), 'utf8'),
+        stopTimesText: readFileSync(path.join(gtfsDir, 'stop_times.txt'), 'utf8'),
+        stopsText: readFileSync(path.join(gtfsDir, 'stops.txt'), 'utf8'),
+    };
 
     it('matches long corridors requiring more than one transfer', () => {
         const summary = makeSummary([
@@ -45,7 +46,7 @@ describe('odRouteEstimation', () => {
             },
         ]);
 
-        const result = estimateRoutes(gtfsBuffer, summary);
+        const result = estimateRoutesFromGtfsTextFiles(gtfsFiles, summary);
         expect(result.totalUnmatched).toBe(0);
         expect(result.totalMatched).toBe(1);
 
@@ -65,7 +66,7 @@ describe('odRouteEstimation', () => {
             },
         ]);
 
-        const result = estimateRoutes(gtfsBuffer, summary);
+        const result = estimateRoutesFromGtfsTextFiles(gtfsFiles, summary);
         expect(result.totalUnmatched).toBe(0);
 
         const station = result.stationMatchReport.find(s => s.odName === 'VAL COTE');

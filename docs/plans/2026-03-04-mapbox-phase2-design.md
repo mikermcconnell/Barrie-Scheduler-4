@@ -11,11 +11,11 @@
 | **Phase 1** | MapBase, MapLabel, DrawControl, StudentPassMap | COMPLETE |
 | **Phase 2** | Shared components (mapUtils, RouteOverlay, StopDotLayer, HeatmapDotLayer, ArcLayer, LassoControl) | COMPLETE |
 | **Phase 3** | Simple maps (CoverageGapMap, HeadwayMap, CascadeRouteMap) | COMPLETE |
-| **Phase 4** | Medium maps (ODPairMapModal, TransfersModule, StopActivityMap) | NOT STARTED |
-| **Phase 5** | Complex maps (ODFlowMapModule, TransitAppMap) | NOT STARTED |
-| **Phase 6** | Final map (ODRouteEstimationModule) + remove Leaflet | NOT STARTED |
+| **Phase 4** | Medium maps (ODPairMapModal, TransfersModule, StopActivityMap) | COMPLETE |
+| **Phase 5** | Complex maps (ODFlowMapModule, TransitAppMap) | IN PROGRESS |
+| **Phase 6** | Final map (ODRouteEstimationModule) + remove Leaflet | COMPLETE |
 
-**Maps migrated: 4/10** · **Shared components: 8/8** · **Leaflet maps remaining: 6**
+**Maps migrated: 9/10** · **Shared components: 8/8** · **Leaflet maps remaining: 1**
 
 ---
 
@@ -83,18 +83,21 @@ Leaflet custom panes (`map.createPane()` with z-index) become Mapbox layer decla
 ### 4a. ODPairMapModal (514 lines)
 - **Features**: Single OD pair visualization with animated sequential arc drawing, transfer diamond markers
 - **Shared components used**: ArcLayer (base arcs)
+- **Status**: COMPLETE
 - **Migration notes**: **Highest-risk pattern.** SVG `strokeDashoffset` animation → either Mapbox `line-dasharray` with `requestAnimationFrame` stepping, or progressive line segment addition via timer. Sequential leg animation uses setTimeout chain — this pattern transfers directly.
 - **Basemap**: CARTO light → `mapbox://styles/mapbox/light-v11`
 
 ### 4b. TransfersModule (1,111 lines)
 - **Features**: Transfer pair circles, animated hub glow, GTFS route overlay, click-to-isolate stop
 - **Shared components used**: RouteOverlay
+- **Status**: COMPLETE
 - **Migration notes**: Dark basemap → `mapbox://styles/mapbox/dark-v11`. Hub glow CSS animation → `<Marker>` with animated div (same pattern as StudentPassMap transfer hub). Dark popup → Mapbox popup with custom className.
 - **Basemap**: CARTO dark → `mapbox://styles/mapbox/dark-v11`
 
 ### 4c. StopActivityMap (1,095 lines)
 - **Features**: 10-bin log-scale heatmap, lasso selection, hourly animation, stop search, GTFS overlay, fullscreen
 - **Shared components used**: HeatmapLayer, StopDotLayer, RouteOverlay, LassoControl
+- **Status**: COMPLETE
 - **Migration notes**: Lasso tool is the key challenge. Options: (a) reuse `@mapbox/mapbox-gl-draw` polygon mode, (b) port raw mouse events to Mapbox `map.on()`. Hour slider animation and stop search are React state — transfer directly.
 
 ---
@@ -104,6 +107,7 @@ Leaflet custom panes (`map.createPane()` with z-index) become Mapbox layer decla
 ### 5a. ODFlowMapModule (1,214 lines)
 - **Features**: Ranked OD flow arcs, zone markers, 6 custom panes, zoom-dependent rendering modes, label collision avoidance, pulse ring SVG markers
 - **Shared components used**: ArcLayer, StopDotLayer
+- **Status**: COMPLETE
 - **Migration notes**: 6 custom panes → Mapbox layer ordering. Zoom modes (overview/corridor/detail) → `minzoom`/`maxzoom` per layer or reactive state. Label collision → Mapbox `text-allow-overlap: false` on symbol layers, or keep manual pixel check via `map.project()`. Pulse SVG → `<Marker>` with CSS animation.
 
 ### 5b. TransitAppMap (2,137 lines)
@@ -118,10 +122,12 @@ Leaflet custom panes (`map.createPane()` with z-index) become Mapbox layer decla
 ### 6a. ODRouteEstimationModule (1,409 lines)
 - **Features**: Bar chart markers (SVG HTML), radial gradient glow, flow arcs in custom panes, smart label placement
 - **Shared components used**: ArcLayer
+- **Status**: COMPLETE
 - **Migration notes**: Bar chart `L.divIcon` → `<Marker>` with React SVG component. Custom panes → layer ordering. This module is largely a data table with an embedded map — the map portion is moderate complexity.
 - **Basemap**: CARTO light → `mapbox://styles/mapbox/light-v11`
 
 ### 6b. Remove Leaflet Dependencies
+- **Blocked by remaining Leaflet map**: `TransitAppMap`
 - Remove from `package.json`: `leaflet`, `leaflet-draw`, `leaflet.heat`, `@types/leaflet`, `@types/leaflet-draw`
 - Remove any remaining Leaflet CSS imports
 - Run `npm install` + `npm run build` to verify clean removal

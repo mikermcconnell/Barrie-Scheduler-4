@@ -1,5 +1,7 @@
 # Dwell Calculation — Current State & Proposed Improvements
 
+> Point-in-time analysis note. Not default repository context; use durable docs first and treat this file as working history.
+
 ## How It Works Today
 
 The system checks every timepoint: **did the bus leave more than 3 minutes late?**

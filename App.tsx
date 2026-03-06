@@ -2,6 +2,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { OnDemandWorkspace } from './components/workspaces/OnDemandWorkspace';
 import { FixedRouteWorkspace } from './components/workspaces/FixedRouteWorkspace';
 import { OperationsWorkspace } from './components/workspaces/OperationsWorkspace';
+import { AgentWorkspace } from './components/workspaces/AgentWorkspace';
 import { AuthProvider, useAuth } from './components/contexts/AuthContext';
 import { TeamProvider } from './components/contexts/TeamContext';
 import { ToastProvider } from './components/contexts/ToastContext';
@@ -13,7 +14,7 @@ import { FileManager } from './components/FileManager';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Modal } from './components/ui/Modal';
 import { TeamManagement } from './components/TeamManagement';
-import { LayoutDashboard, Bus, Settings, Bell, ArrowRight, ArrowLeft, Map, User, LogOut, FolderOpen, ChevronDown, ChevronRight, Loader2, FileSpreadsheet, Plus, Download, CalendarPlus, Timer, BarChart2, Settings2, Sparkles } from 'lucide-react';
+import { LayoutDashboard, Bus, ArrowRight, Map, Loader2, BarChart2, Bot } from 'lucide-react';
 import { Header, View } from './components/layout/Header';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
@@ -24,18 +25,18 @@ function parseHashView(): View {
   if (hash.startsWith('fixed')) return 'fixed';
   if (hash.startsWith('ondemand')) return 'ondemand';
   if (hash.startsWith('operations')) return 'operations';
+  if (hash.startsWith('agents')) return 'agents';
   return 'home';
 }
 
 
 
 const AppContent: React.FC = () => {
-  const { user, loading, signOut } = useAuth();
+  const { user, loading } = useAuth();
   const [currentView, setCurrentViewState] = useState<View>(parseHashView);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showFileManager, setShowFileManager] = useState(false);
   const [showTeamManagement, setShowTeamManagement] = useState(false);
-  const [showUserMenu, setShowUserMenu] = useState(false);
 
   // Wrap navigation to sync URL hash
   const setCurrentView = useCallback((view: View) => {
@@ -61,15 +62,6 @@ const AppContent: React.FC = () => {
       </div>
     );
   }
-
-
-
-  const handleSignOut = async () => {
-    await signOut();
-    setShowUserMenu(false);
-    setCurrentView('home');
-  };
-
   return (
     <div className="flex flex-col h-screen font-sans text-gray-800 bg-[#F7F7F7] overflow-hidden">
 
@@ -123,7 +115,7 @@ const AppContent: React.FC = () => {
               <h2 className="text-4xl font-extrabold text-gray-800 mb-4">Select Workspace</h2>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto pb-12">
+            <div className="grid grid-cols-1 gap-8 md:grid-cols-2 xl:grid-cols-4 max-w-6xl mx-auto pb-12">
               {/* On Demand Card */}
               <button
                 onClick={() => setCurrentView('ondemand')}
@@ -184,6 +176,25 @@ const AppContent: React.FC = () => {
                 </div>
               </button>
 
+              {/* Agent Sessions Card */}
+              <button
+                onClick={() => setCurrentView('agents')}
+                className="group relative bg-white rounded-3xl border-b-8 border-gray-200 p-8 hover:border-slate-700 hover:-translate-y-1 transition-all duration-200 text-left overflow-hidden"
+              >
+                <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:opacity-20 transition-opacity">
+                  <Bot size={120} />
+                </div>
+                <div className="bg-slate-100 w-16 h-16 rounded-2xl flex items-center justify-center text-slate-700 mb-6 group-hover:scale-110 transition-transform">
+                  <Bot size={32} />
+                </div>
+                <h3 className="text-2xl font-extrabold text-gray-800 mb-2 group-hover:text-slate-700 transition-colors">Agent Sessions</h3>
+                <p className="text-gray-500 font-bold mb-6">
+                  Track active chat sessions, blockers, stale work, and the next move you owe each agent.
+                </p>
+                <div className="flex items-center gap-2 text-slate-700 font-extrabold uppercase tracking-wide text-sm">
+                  Enter Workspace <ArrowRight size={16} />
+                </div>
+              </button>
             </div>
 
           </div>
@@ -203,6 +214,11 @@ const AppContent: React.FC = () => {
         {currentView === 'operations' && (
           <ErrorBoundary fallbackTitle="Workspace Error">
             <OperationsWorkspace />
+          </ErrorBoundary>
+        )}
+        {currentView === 'agents' && (
+          <ErrorBoundary fallbackTitle="Workspace Error">
+            <AgentWorkspace />
           </ErrorBoundary>
         )}
 

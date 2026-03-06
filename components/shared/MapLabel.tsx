@@ -1,4 +1,5 @@
 import React from 'react';
+import { getContrastingTextColor } from '../../utils/config/routeColors';
 
 export interface MapLabelProps {
     text: string;
@@ -23,12 +24,15 @@ export const MapLabel: React.FC<MapLabelProps> = ({
     size = 'md',
     mono = false,
 }) => {
+    const textColor = getContrastingTextColor(bgColor);
+    const subtitleColor = textColor === 'black' ? 'rgba(0,0,0,0.72)' : 'rgba(255,255,255,0.74)';
+
     return (
         <div
             className={`${SIZE_CLASSES[size]} whitespace-nowrap rounded leading-tight`}
             style={{
                 background: bgColor,
-                color: 'white',
+                color: textColor,
                 border: `1.5px solid ${borderColor}`,
                 boxShadow: '0 2px 8px rgba(0,0,0,0.6)',
                 fontFamily: mono ? "'JetBrains Mono', monospace" : "'DM Sans', sans-serif",
@@ -36,7 +40,7 @@ export const MapLabel: React.FC<MapLabelProps> = ({
         >
             <div>{text}</div>
             {subtitle && (
-                <div className="text-[10px] font-medium text-gray-300 mt-0.5">{subtitle}</div>
+                <div className="text-[10px] font-medium mt-0.5" style={{ color: subtitleColor }}>{subtitle}</div>
             )}
         </div>
     );

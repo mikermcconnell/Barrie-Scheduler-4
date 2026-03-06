@@ -1,5 +1,7 @@
 # Dwell Cascade Analysis — Implementation Plan
 
+> Point-in-time implementation plan. Not default repository context; use durable docs first and treat this file as delivery history.
+
 > **Goal:** Trace how a single dwell incident at a stop propagates through a block's trip chain, attributing downstream OTP damage back to the originating dwell. Answers: "How much of this route's poor OTP is caused by dwell?"
 
 ---

@@ -26,8 +26,10 @@ Act as a product manager reviewing implementation plans to ensure:
 ### Workflow
 
 1. **Gather Context**
+   - Read `docs/CONTEXT_INDEX.md` (load order and doc tiers)
    - Read `docs/PRODUCT_VISION.md` (product goals, anti-patterns)
-   - Read `.claude/context.md` (locked logic, technical constraints)
+   - Read `docs/rules/LOCKED_LOGIC.md` (locked logic summary)
+   - Read `.claude/context.md` if detailed implementation notes are needed
    - Read `.claude/CLAUDE.md` (development patterns)
    - Review the current plan or proposed changes
 

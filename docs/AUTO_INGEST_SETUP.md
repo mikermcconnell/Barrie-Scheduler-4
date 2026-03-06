@@ -31,7 +31,9 @@ You need your team's Firestore ID for the function URL.
 
 4. Copy that ID — you'll use it in Step 4.
 
-**Your team ID is: `PHICwXGlvDen0RGt7fCG`** (already hardcoded as the default in the Cloud Function, so you don't need to pass it as a query parameter unless you have multiple teams).
+Use your actual team ID here. Do not hardcode personal or environment-specific IDs in shared documentation.
+
+If your local function currently defaults to a specific team, treat that as implementation detail and prefer passing `teamId` explicitly when testing.
 
 ---
 

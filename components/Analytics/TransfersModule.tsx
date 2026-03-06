@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useRef, useEffect, useCallback } from 'react';
-import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
+import { Marker, Popup } from 'react-map-gl/mapbox';
+import type { MapRef } from 'react-map-gl/mapbox';
 import {
     ArrowUpDown,
     Map as MapIcon,
@@ -20,6 +20,7 @@ import type {
 } from '../../utils/transit-app/transitAppTypes';
 import { getAllStopsWithCoords } from '../../utils/gtfs/gtfsStopLookup';
 import { loadGtfsRouteShapes } from '../../utils/gtfs/gtfsShapesLoader';
+import { MapBase, RouteOverlay } from '../shared';
 import { NoData, fmt, formatTimeBand } from './AnalyticsShared';
 
 interface TransfersModuleProps {
@@ -118,6 +119,35 @@ interface GeocodedTransferPair extends TransferPairSummary {
     lon: number;
 }
 
+interface RenderedTransferMarker {
+    markerKey: string;
+    pair: GeocodedTransferPair;
+    lat: number;
+    lon: number;
+    radius: number;
+    color: string;
+    isGo: boolean;
+    stopKey: string;
+    isActive: boolean;
+}
+
+interface HubMarker {
+    markerKey: string;
+    lat: number;
+    lon: number;
+    color: string;
+    stopKey: string;
+    stopName: string;
+    isActive: boolean;
+}
+
+interface TransferPopupState {
+    pair: GeocodedTransferPair;
+    lat: number;
+    lon: number;
+    color: string;
+}
+
 /** Bright arc colors optimized for dark map theme */
 function arcColor(rank: number): string {
     if (rank === 0) return '#ff4d4f'; // bright red — #1
@@ -127,35 +157,95 @@ function arcColor(rank: number): string {
     return '#8c8c8c';                 // neutral — rest
 }
 
-/** Build dark-themed popup HTML for a transfer pair */
-function buildDarkPopup(gp: GeocodedTransferPair, color: string): string {
-    const typeLabel = gp.transferType.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-    const isGo = gp.transferType.includes('go');
-    const goTag = isGo
-        ? '<span style="display:inline-flex;padding:1px 5px;border-radius:4px;background:#4f46e520;color:#818cf8;font-size:9px;font-weight:600;letter-spacing:0.5px">GO</span>'
-        : '';
-    return `
-        <div style="font-size:13px;min-width:220px;font-family:system-ui">
-            <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
-                <span style="display:inline-flex;align-items:center;justify-content:center;padding:2px 8px;border-radius:6px;background:${color}22;color:${color};font-weight:700;font-size:13px">${gp.fromRoute}</span>
-                <span style="color:#64748b;font-size:11px">\u2192</span>
-                <span style="display:inline-flex;align-items:center;justify-content:center;padding:2px 8px;border-radius:6px;background:${color}22;color:${color};font-weight:700;font-size:13px">${gp.toRoute}</span>
-                ${goTag}
-            </div>
-            <div style="color:#94a3b8;margin-bottom:10px;font-size:11px">${gp.transferStopName}</div>
-            <div style="display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:12px">
-                <span style="color:#64748b">Volume</span><span style="text-align:right;font-weight:700;color:#f1f5f9">${gp.totalCount.toLocaleString()}</span>
-                <span style="color:#64748b">Avg Wait</span><span style="text-align:right;color:#f1f5f9">${gp.avgWaitMinutes} min</span>
-                <span style="color:#64748b">Type</span><span style="text-align:right;color:#cbd5e1">${typeLabel}</span>
-                <span style="color:#64748b">Peak Bands</span><span style="text-align:right;color:#cbd5e1">${gp.dominantTimeBands.map(formatTimeBand).join(', ') || 'N/A'}</span>
-                <span style="color:#64748b">Arrivals</span><span style="text-align:right;font-size:11px;color:#94a3b8">${formatTripAnchorsHtml(gp.fromTripAnchors)}</span>
-                <span style="color:#64748b">Departures</span><span style="text-align:right;font-size:11px;color:#94a3b8">${formatTripAnchorsHtml(gp.toTripAnchors)}</span>
-            </div>
-        </div>
-    `;
+function hexToRgba(hex: string, alpha: number): string {
+    const normalized = hex.replace('#', '');
+    const safe = normalized.length === 3
+        ? normalized.split('').map((ch) => ch + ch).join('')
+        : normalized;
+    const value = parseInt(safe, 16);
+    const r = (value >> 16) & 255;
+    const g = (value >> 8) & 255;
+    const b = value & 255;
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-/** CSS for hub glow and dark popups */
+/** Build dark-themed popup content for a transfer pair */
+function renderDarkPopup(gp: GeocodedTransferPair, color: string): React.ReactNode {
+    const typeLabel = gp.transferType.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    const isGo = gp.transferType.includes('go');
+    return (
+        <div style={{ fontSize: 13, minWidth: 220, fontFamily: 'system-ui' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
+                <span
+                    style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        padding: '2px 8px',
+                        borderRadius: 6,
+                        background: hexToRgba(color, 0.14),
+                        color,
+                        fontWeight: 700,
+                        fontSize: 13,
+                    }}
+                >
+                    {gp.fromRoute}
+                </span>
+                <span style={{ color: '#64748b', fontSize: 11 }}>&rarr;</span>
+                <span
+                    style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        padding: '2px 8px',
+                        borderRadius: 6,
+                        background: hexToRgba(color, 0.14),
+                        color,
+                        fontWeight: 700,
+                        fontSize: 13,
+                    }}
+                >
+                    {gp.toRoute}
+                </span>
+                {isGo && (
+                    <span
+                        style={{
+                            display: 'inline-flex',
+                            padding: '1px 5px',
+                            borderRadius: 4,
+                            background: 'rgba(79, 70, 229, 0.12)',
+                            color: '#818cf8',
+                            fontSize: 9,
+                            fontWeight: 600,
+                            letterSpacing: 0.5,
+                        }}
+                    >
+                        GO
+                    </span>
+                )}
+            </div>
+            <div style={{ color: '#94a3b8', marginBottom: 10, fontSize: 11 }}>{gp.transferStopName}</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '4px 12px', fontSize: 12 }}>
+                <span style={{ color: '#64748b' }}>Volume</span>
+                <span style={{ textAlign: 'right', fontWeight: 700, color: '#f1f5f9' }}>{gp.totalCount.toLocaleString()}</span>
+                <span style={{ color: '#64748b' }}>Avg Wait</span>
+                <span style={{ textAlign: 'right', color: '#f1f5f9' }}>{gp.avgWaitMinutes} min</span>
+                <span style={{ color: '#64748b' }}>Type</span>
+                <span style={{ textAlign: 'right', color: '#cbd5e1' }}>{typeLabel}</span>
+                <span style={{ color: '#64748b' }}>Peak Bands</span>
+                <span style={{ textAlign: 'right', color: '#cbd5e1' }}>
+                    {gp.dominantTimeBands.map(formatTimeBand).join(', ') || 'N/A'}
+                </span>
+                <span style={{ color: '#64748b' }}>Arrivals</span>
+                <span style={{ textAlign: 'right', fontSize: 11, color: '#94a3b8' }}>{formatTripAnchors(gp.fromTripAnchors)}</span>
+                <span style={{ color: '#64748b' }}>Departures</span>
+                <span style={{ textAlign: 'right', fontSize: 11, color: '#94a3b8' }}>{formatTripAnchors(gp.toTripAnchors)}</span>
+            </div>
+        </div>
+    );
+}
+
+/** CSS for hub glow and dark Mapbox popups */
 const MAP_STYLES = `
 @keyframes hub-ring {
     0% { transform: scale(0.8); opacity: 0.6; }
@@ -182,18 +272,25 @@ const MAP_STYLES = `
     border: 1.5px solid var(--c);
     animation: hub-ring 2.5s ease-out infinite;
 }
+.transfer-hub-button {
+    background: transparent;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+}
 .hub-glow.dim .core { opacity: 0.15; box-shadow: none; }
 .hub-glow.dim .ring { animation: none; opacity: 0; }
-.dark-popup .leaflet-popup-content-wrapper {
+.dark-popup .mapboxgl-popup-content {
     background: rgba(15, 23, 42, 0.95);
     color: #e2e8f0;
     border-radius: 10px;
     border: 1px solid rgba(148, 163, 184, 0.15);
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+    padding: 12px;
 }
-.dark-popup .leaflet-popup-tip { background: rgba(15, 23, 42, 0.95); }
-.dark-popup .leaflet-popup-close-button { color: #64748b; }
-.dark-popup .leaflet-popup-close-button:hover { color: #e2e8f0; }
+.dark-popup .mapboxgl-popup-tip { border-top-color: rgba(15, 23, 42, 0.95) !important; }
+.dark-popup .mapboxgl-popup-close-button { color: #64748b; }
+.dark-popup .mapboxgl-popup-close-button:hover { color: #e2e8f0; background: transparent; }
 `;
 
 const TIME_BAND_OPTIONS: { key: TimeBandFilter; label: string }[] = [
@@ -215,22 +312,9 @@ interface TransferMapProps {
 const TransferMap: React.FC<TransferMapProps> = ({
     pairs, timeBandFilter, isolatedStop, onIsolateStop, showRoutes,
 }) => {
-    const containerRef = useRef<HTMLDivElement>(null);
-    const mapRef = useRef<L.Map | null>(null);
-    const markerLayerRef = useRef<L.LayerGroup | null>(null);
-    const routeLayerRef = useRef<L.LayerGroup | null>(null);
-    const hasFittedRef = useRef(false);
-
-    // Inject CSS for arc animations, hub glow, and dark popups
-    useEffect(() => {
-        const id = 'transfer-map-styles';
-        if (document.getElementById(id)) return;
-        const el = document.createElement('style');
-        el.id = id;
-        el.textContent = MAP_STYLES;
-        document.head.appendChild(el);
-        return () => { document.getElementById(id)?.remove(); };
-    }, []);
+    const mapRef = useRef<MapRef | null>(null);
+    const [mapReady, setMapReady] = useState(false);
+    const [popup, setPopup] = useState<TransferPopupState | null>(null);
 
     // Build stop name → coords lookup once
     const stopCoordMap = useMemo(() => {
@@ -261,84 +345,24 @@ const TransferMap: React.FC<TransferMapProps> = ({
         return results;
     }, [pairs, stopCoordMap, timeBandFilter]);
 
-    // Build GTFS route layer (dimmer for dark basemap)
-    const buildRouteLayer = useCallback(() => {
-        const group = L.layerGroup();
+    const routeShapes = useMemo(() => {
+        if (!showRoutes) return [];
         try {
-            const shapes = loadGtfsRouteShapes();
-            for (const shape of shapes) {
-                const color = `#${shape.routeColor}`;
-                L.polyline(shape.points, {
-                    color,
-                    weight: 3,
-                    opacity: 0.4,
-                    dashArray: '6 4',
-                    lineCap: 'round',
-                })
-                    .bindTooltip(`Route ${shape.routeShortName}`, { direction: 'top', sticky: true })
-                    .addTo(group);
-            }
+            return loadGtfsRouteShapes();
         } catch {
-            // GTFS shapes not available
+            return [];
         }
-        return group;
-    }, []);
+    }, [showRoutes]);
 
-    // Initialize map with dark basemap
-    useEffect(() => {
-        if (!containerRef.current || mapRef.current) return;
-        const map = L.map(containerRef.current, {
-            center: BARRIE_CENTER,
-            zoom: 13,
-            zoomSnap: 0.25,
-            zoomDelta: 0.25,
-            scrollWheelZoom: 'center',
-            wheelPxPerZoomLevel: 120,
-        });
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
-            maxZoom: 19,
-        }).addTo(map);
-        markerLayerRef.current = L.layerGroup().addTo(map);
-        routeLayerRef.current = L.layerGroup().addTo(map);
-        mapRef.current = map;
+    const renderedMarkers = useMemo(() => {
+        const pairMarkers: RenderedTransferMarker[] = [];
+        const hubMarkers: HubMarker[] = [];
+        if (geoPairs.length === 0) return { pairMarkers, hubMarkers };
 
-        map.on('click', () => onIsolateStop(null));
-
-        return () => {
-            map.remove();
-            mapRef.current = null;
-            markerLayerRef.current = null;
-            routeLayerRef.current = null;
-        };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
-
-    // Toggle GTFS route overlay
-    useEffect(() => {
-        const rl = routeLayerRef.current;
-        if (!rl) return;
-        rl.clearLayers();
-        if (showRoutes) {
-            const routeGroup = buildRouteLayer();
-            routeGroup.eachLayer(layer => layer.addTo(rl));
-        }
-    }, [showRoutes, buildRouteLayer]);
-
-    // Render circle markers + hub glow
-    useEffect(() => {
-        const layer = markerLayerRef.current;
-        if (!layer) return;
-        layer.clearLayers();
-
-        if (geoPairs.length === 0) return;
-
-        // Rank pairs by volume
         const ranked = [...geoPairs].sort((a, b) => b.totalCount - a.totalCount);
         const rankMap = new Map<GeocodedTransferPair, number>();
         ranked.forEach((gp, i) => rankMap.set(gp, i));
 
-        // Group by location to handle overlapping stops
         const byLocation = new Map<string, GeocodedTransferPair[]>();
         for (const gp of geoPairs) {
             const locKey = `${gp.lat.toFixed(5)},${gp.lon.toFixed(5)}`;
@@ -348,7 +372,6 @@ const TransferMap: React.FC<TransferMapProps> = ({
 
         const maxCount = Math.max(...geoPairs.map(p => p.totalCount), 1);
 
-        // Sort groups ascending so highest-volume group renders on top
         const sortedGroups = Array.from(byLocation.entries())
             .sort((a, b) => {
                 const sumA = a[1].reduce((s, p) => s + p.totalCount, 0);
@@ -376,63 +399,64 @@ const TransferMap: React.FC<TransferMapProps> = ({
                 const logScale = Math.log(gp.totalCount + 1) / Math.log(maxCount + 1);
                 const radius = 8 + logScale * 18;
 
-                const circle = L.circleMarker([lat, lon], {
+                pairMarkers.push({
+                    markerKey: `${gp.transferStopName}-${gp.fromRoute}-${gp.toRoute}-${i}`,
+                    pair: gp,
+                    lat,
+                    lon,
                     radius,
-                    fillColor: color,
-                    fillOpacity: isActive ? 0.7 : 0.1,
-                    color: isGo ? '#818cf8' : 'rgba(255,255,255,0.25)',
-                    weight: isGo ? 2.5 : 1.5,
-                    opacity: isActive ? 1 : 0.15,
+                    color,
+                    isGo,
+                    stopKey,
+                    isActive,
                 });
-
-                circle.bindTooltip(
-                    `Route ${gp.fromRoute} \u2192 Route ${gp.toRoute} at ${gp.transferStopName}`,
-                    { direction: 'top', offset: [0, -radius], className: 'dark-popup' }
-                );
-
-                circle.bindPopup(buildDarkPopup(gp, color), { maxWidth: 280, className: 'dark-popup' });
-
-                circle.on('click', (e: L.LeafletMouseEvent) => {
-                    L.DomEvent.stopPropagation(e);
-                    onIsolateStop(isolatedStop === stopKey ? null : stopKey);
-                });
-
-                circle.addTo(layer);
             }
 
-            // Hub glow at center of each location group
             const rep = sorted[sorted.length - 1];
             const repRank = rankMap.get(rep) ?? geoPairs.length;
             const hubColor = arcColor(repRank);
             const stopKey = rep.transferStopName?.toLowerCase().trim() ?? '';
-            const hubActive = isolatedStop === null || isolatedStop === stopKey;
-
-            const hub = L.marker([rep.lat, rep.lon], {
-                icon: L.divIcon({
-                    className: 'transfer-hub',
-                    html: `<div class="hub-glow ${hubActive ? '' : 'dim'}" style="--c:${hubColor}"><div class="core"></div><div class="ring"></div></div>`,
-                    iconSize: [24, 24],
-                    iconAnchor: [12, 12],
-                }),
-                interactive: true,
+            hubMarkers.push({
+                markerKey: `${rep.transferStopName}-hub`,
+                lat: rep.lat,
+                lon: rep.lon,
+                color: hubColor,
+                stopKey,
+                stopName: rep.transferStopName || '',
+                isActive: isolatedStop === null || isolatedStop === stopKey,
             });
-
-            hub.bindTooltip(rep.transferStopName || '', { direction: 'top', offset: [0, -14] });
-            hub.on('click', (e: L.LeafletMouseEvent) => {
-                L.DomEvent.stopPropagation(e);
-                onIsolateStop(isolatedStop === stopKey ? null : stopKey);
-            });
-
-            hub.addTo(layer);
         }
 
-        // Fit bounds only on first render with data
-        if (geoPairs.length > 0 && !hasFittedRef.current) {
-            const bounds = L.latLngBounds(geoPairs.map(gp => [gp.lat, gp.lon] as [number, number]));
-            mapRef.current?.fitBounds(bounds, { padding: [40, 40], maxZoom: 15 });
-            hasFittedRef.current = true;
+        return { pairMarkers, hubMarkers };
+    }, [geoPairs, isolatedStop]);
+
+    const handleMapLoad = useCallback(() => {
+        setMapReady(true);
+    }, []);
+
+    useEffect(() => {
+        if (!mapReady || geoPairs.length === 0) return;
+
+        const bounds: [[number, number], [number, number]] = [
+            [Math.min(...geoPairs.map(gp => gp.lon)), Math.min(...geoPairs.map(gp => gp.lat))],
+            [Math.max(...geoPairs.map(gp => gp.lon)), Math.max(...geoPairs.map(gp => gp.lat))],
+        ];
+        mapRef.current?.fitBounds(bounds, { padding: 40, maxZoom: 15, duration: 0 });
+    }, [mapReady, geoPairs]);
+
+    useEffect(() => {
+        if (!popup) return;
+        const popupStillVisible = geoPairs.some(gp =>
+            gp.fromRoute === popup.pair.fromRoute
+            && gp.toRoute === popup.pair.toRoute
+            && gp.transferStopName === popup.pair.transferStopName
+            && gp.totalCount === popup.pair.totalCount
+            && gp.avgWaitMinutes === popup.pair.avgWaitMinutes
+        );
+        if (!popupStillVisible) {
+            setPopup(null);
         }
-    }, [geoPairs, isolatedStop, onIsolateStop]);
+    }, [geoPairs, popup]);
 
     const unmatchedCount = pairs.filter(p => {
         if (!p.transferStopName) return true;
@@ -441,7 +465,112 @@ const TransferMap: React.FC<TransferMapProps> = ({
 
     return (
         <div className="relative">
-            <div ref={containerRef} style={{ height: 550 }} className="rounded-b-xl" />
+            <style>{MAP_STYLES}</style>
+
+            <div style={{ height: 550 }} className="rounded-b-xl overflow-hidden">
+                <MapBase
+                    mapRef={mapRef}
+                    latitude={BARRIE_CENTER[0]}
+                    longitude={BARRIE_CENTER[1]}
+                    zoom={13}
+                    mapStyle="mapbox://styles/mapbox/dark-v11"
+                    showNavigation={true}
+                    onLoad={handleMapLoad}
+                    onClick={() => {
+                        onIsolateStop(null);
+                        setPopup(null);
+                    }}
+                >
+                    {showRoutes && routeShapes.length > 0 && (
+                        <RouteOverlay
+                            shapes={routeShapes}
+                            opacity={0.4}
+                            weight={3}
+                            dashed={true}
+                            idPrefix="transfer-routes"
+                        />
+                    )}
+
+                    {renderedMarkers.pairMarkers.map(marker => (
+                        <Marker
+                            key={marker.markerKey}
+                            latitude={marker.lat}
+                            longitude={marker.lon}
+                            anchor="center"
+                        >
+                            <button
+                                type="button"
+                                title={`Route ${marker.pair.fromRoute} → Route ${marker.pair.toRoute} at ${marker.pair.transferStopName}`}
+                                onClick={(event) => {
+                                    event.stopPropagation();
+                                    onIsolateStop(isolatedStop === marker.stopKey ? null : marker.stopKey);
+                                    setPopup({
+                                        pair: marker.pair,
+                                        lat: marker.lat,
+                                        lon: marker.lon,
+                                        color: marker.color,
+                                    });
+                                }}
+                                style={{
+                                    width: marker.radius * 2,
+                                    height: marker.radius * 2,
+                                    borderRadius: '9999px',
+                                    background: hexToRgba(marker.color, marker.isActive ? 0.7 : 0.1),
+                                    border: `${marker.isGo ? 2.5 : 1.5}px solid ${marker.isGo ? '#818cf8' : 'rgba(255,255,255,0.25)'}`,
+                                    opacity: marker.isActive ? 1 : 0.15,
+                                    boxShadow: marker.isActive ? `0 0 18px ${hexToRgba(marker.color, 0.18)}` : 'none',
+                                    cursor: 'pointer',
+                                    padding: 0,
+                                }}
+                                aria-label={`Transfer pair ${marker.pair.fromRoute} to ${marker.pair.toRoute} at ${marker.pair.transferStopName}`}
+                            />
+                        </Marker>
+                    ))}
+
+                    {renderedMarkers.hubMarkers.map(hub => (
+                        <Marker
+                            key={hub.markerKey}
+                            latitude={hub.lat}
+                            longitude={hub.lon}
+                            anchor="center"
+                        >
+                            <button
+                                type="button"
+                                className="transfer-hub-button"
+                                title={hub.stopName}
+                                onClick={(event) => {
+                                    event.stopPropagation();
+                                    onIsolateStop(isolatedStop === hub.stopKey ? null : hub.stopKey);
+                                }}
+                                aria-label={`Transfer hub ${hub.stopName}`}
+                            >
+                                <div
+                                    className={`hub-glow ${hub.isActive ? '' : 'dim'}`}
+                                    style={{ ['--c' as string]: hub.color } as React.CSSProperties}
+                                >
+                                    <div className="core" />
+                                    <div className="ring" />
+                                </div>
+                            </button>
+                        </Marker>
+                    ))}
+
+                    {popup && (
+                        <Popup
+                            longitude={popup.lon}
+                            latitude={popup.lat}
+                            anchor="top"
+                            onClose={() => setPopup(null)}
+                            closeButton={true}
+                            closeOnClick={false}
+                            className="dark-popup"
+                            offset={16}
+                        >
+                            {renderDarkPopup(popup.pair, popup.color)}
+                        </Popup>
+                    )}
+                </MapBase>
+            </div>
 
             {geoPairs.length === 0 && (
                 <div className="absolute inset-0 flex items-center justify-center bg-slate-900/80 rounded-b-xl">
@@ -495,11 +624,6 @@ const TransferMap: React.FC<TransferMapProps> = ({
         </div>
     );
 };
-
-function formatTripAnchorsHtml(anchors?: TransferTripAnchor[]): string {
-    if (!anchors || anchors.length === 0) return 'N/A';
-    return anchors.slice(0, 2).map(a => `${a.timeLabel} (${a.sharePct}%)`).join(', ');
-}
 
 // ── Segmented Button Group ──────────────────────────────────────────────────
 

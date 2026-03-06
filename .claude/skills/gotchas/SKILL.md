@@ -60,7 +60,7 @@ Before completing ANY task that touches schedule logic, verify:
 ## Before Submitting
 
 Ask yourself:
-1. Did I check the locked logic in `context.md`?
+1. Did I check the locked logic in `docs/rules/LOCKED_LOGIC.md`?
 2. Did I run the relevant tests?
 3. Could this change affect downstream calculations?
 4. Did I test edge cases (empty data, single trip, post-midnight)?

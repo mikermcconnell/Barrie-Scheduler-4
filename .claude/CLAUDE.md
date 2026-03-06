@@ -1,6 +1,7 @@
 # Claude Code Instructions
 
-> **READ context.md** for locked logic before modifying core schedule files.
+> **READ docs/CONTEXT_INDEX.md** for context load order.
+> **READ docs/rules/LOCKED_LOGIC.md** before modifying core schedule files.
 > **READ docs/PRODUCT_VISION.md** for product goals when planning features.
 > **Use /pm-review** during complex planning to validate alignment.
 
@@ -68,7 +69,7 @@ npx vitest run tests/timeUtils.test.ts  # Time parsing tests (run before any tim
 - Show `file:line` references (e.g., `scheduleGenerator.ts:142`)
 - Use TodoWrite for multi-step tasks
 - Ask 1-3 clarifying questions before implementing features
-- Check locked logic in context.md before modifying core files
+- Check locked logic in `docs/rules/LOCKED_LOGIC.md` before modifying core files
 
 ### Don't
 - Over-engineer or add unrequested features
@@ -176,3 +177,9 @@ These files are high-risk for bugs. Apply extra caution and always run the liste
 - **Dynamic stop-name detection** - Never hardcode stop indices; use name-based matching
 - **ARR → R → DEP pattern** - At merged terminuses, recognized as single stop, not duplicates
 - **Interline code removed** - Don't reference `interlineNext`, `interlinePrev`, or interline functions; they no longer exist
+
+## 10. Context Hygiene
+
+- Default context starts at `docs/CONTEXT_INDEX.md`
+- Treat `docs/plans/` as archive and working notes, not read-first context
+- If a shipped change affects behavior, move the durable outcome into `docs/ARCHITECTURE.md`, `docs/SCHEMA.md`, `docs/PRODUCT_VISION.md`, or `docs/rules/LOCKED_LOGIC.md`

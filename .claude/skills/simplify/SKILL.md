@@ -26,7 +26,7 @@ Reduce complexity while preserving functionality. Focus on:
 2. **Analyze**
    - Read the target code
    - Identify patterns: duplication, nested conditionals, long functions
-   - Note any locked logic (check context.md)
+   - Note any locked logic (check `docs/rules/LOCKED_LOGIC.md`)
 
 3. **Plan Changes**
    - List specific simplifications
@@ -56,7 +56,7 @@ Reduce complexity while preserving functionality. Focus on:
 
 ### What NOT to Change
 
-- **Locked logic** in context.md (ask before modifying)
+- **Locked logic** in `docs/rules/LOCKED_LOGIC.md` (ask before modifying)
 - **Public API signatures** (unless explicitly requested)
 - **Test files** (unless tests are the target)
 - **Configuration files** without explicit request

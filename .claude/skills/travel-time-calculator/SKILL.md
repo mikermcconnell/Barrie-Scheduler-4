@@ -5,7 +5,7 @@ description: Use when working on segment times, travel times, band lookups, or t
 
 ## Travel Time Calculation Rules
 
-> **LOCKED LOGIC**: These rules are from context.md and MUST NOT be changed without explicit approval.
+> **LOCKED LOGIC**: Read `docs/rules/LOCKED_LOGIC.md` first. Detailed notes remain in `.claude/context.md`. These rules MUST NOT be changed without explicit approval.
 
 ### The "Option D" Implementation
 

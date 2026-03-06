@@ -72,7 +72,8 @@ Recommend full `/pm-review` when:
 
 Quick-read before finalizing plans:
 - `docs/PRODUCT_VISION.md` - Section "Decision Framework"
-- `.claude/context.md` - Locked logic details
+- `docs/rules/LOCKED_LOGIC.md` - Locked logic summary
+- `.claude/context.md` - Detailed compatibility notes
 - `.claude/CLAUDE.md` - Development patterns
 
 ## Integration with ExitPlanMode

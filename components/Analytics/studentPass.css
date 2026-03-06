@@ -1,35 +1,73 @@
 /* ── Student Pass Enterprise Map CSS ───────────────────────────────────────── */
 
+.student-pass-theme {
+    /* City of Barrie blue anchor: rgb(0, 78, 126) */
+    --student-pass-blue: rgb(0, 78, 126);
+    --student-pass-blue-deep: #003b61;
+    --student-pass-blue-ink: #00263e;
+    --student-pass-blue-surface: #073552;
+    --student-pass-blue-card: #0a4267;
+    --student-pass-blue-card-alt: #11527d;
+    --student-pass-panel: rgba(0, 43, 69, 0.88);
+    --student-pass-panel-strong: rgba(0, 43, 69, 0.94);
+    --student-pass-border: rgba(86, 166, 213, 0.22);
+    --student-pass-border-subtle: rgba(86, 166, 213, 0.14);
+    --student-pass-text: #ebf6ff;
+    --student-pass-muted: #a7cadd;
+    --student-pass-accent: #56a6d5;
+    --student-pass-accent-strong: #8fd0f6;
+    --student-pass-accent-soft: rgba(86, 166, 213, 0.16);
+}
+
 /* Dark wrapper resets Mapbox UI chrome to match the dark theme */
 .student-pass-dark .mapboxgl-ctrl-group {
-    background: rgba(11, 17, 33, 0.9);
-    border: 1px solid rgba(99, 126, 184, 0.2);
+    background: var(--student-pass-panel-strong);
+    border: 1px solid var(--student-pass-border);
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
 }
 
 .student-pass-dark .mapboxgl-ctrl-group button {
-    color: #E2E8F0;
+    color: var(--student-pass-text);
     filter: invert(1) hue-rotate(180deg);
 }
 
 .student-pass-dark .mapboxgl-ctrl-group button + button {
-    border-top-color: rgba(99, 126, 184, 0.15);
+    border-top-color: var(--student-pass-border-subtle);
 }
 
 .student-pass-dark .mapboxgl-ctrl-group button:hover {
-    background: rgba(59, 130, 246, 0.15);
+    background: var(--student-pass-accent-soft);
 }
 
 .student-pass-dark .mapboxgl-ctrl-attrib {
-    background: rgba(11, 17, 33, 0.7);
-    color: #64748B;
+    background: var(--student-pass-panel);
+    color: var(--student-pass-muted);
 }
 
 .student-pass-dark .mapboxgl-ctrl-scale {
-    background: rgba(11, 17, 33, 0.7);
-    border-color: rgba(99, 126, 184, 0.3);
-    color: #94A3B8;
+    background: var(--student-pass-panel);
+    border-color: var(--student-pass-border);
+    color: var(--student-pass-muted);
     font-size: 10px;
+}
+
+.student-pass-export-map .student-pass-export-hidden,
+.student-pass-export-map .mapboxgl-ctrl-top-right,
+.student-pass-export-map .mapboxgl-ctrl-bottom-right,
+.student-pass-export-map .mapboxgl-ctrl-bottom-left {
+    display: none !important;
+}
+
+/* ── Export-time readability: scale up HTML overlays for print ────────── */
+.student-pass-export-map .mapboxgl-marker {
+    transform-origin: center center;
+}
+
+/* Larger map labels for print */
+.student-pass-export-map [class*="MapLabel"] > div,
+.student-pass-export-map .mapboxgl-marker > div > div[style*="border"] {
+    transform: scale(1.4);
+    transform-origin: center bottom;
 }
 
 /* Transfer hub pulse rings */

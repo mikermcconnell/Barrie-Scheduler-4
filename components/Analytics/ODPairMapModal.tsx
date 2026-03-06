@@ -1,35 +1,32 @@
 /**
  * OD Pair Map Modal
  *
- * Shows a Leaflet map with animated curved arcs for a single OD pair journey.
+ * Shows a Mapbox map with animated curved arcs for a single OD pair journey.
  * Arcs draw sequentially leg-by-leg; transfer markers appear as each leg completes.
  * Falls back to info-only when geocodes are missing.
  */
 
-import React, { useRef, useEffect } from 'react';
-import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Layer, Marker, Source } from 'react-map-gl/mapbox';
+import type { LayerProps, MapRef } from 'react-map-gl/mapbox';
 import { CheckCircle2, AlertTriangle, XCircle, MapPin, Route, ArrowRight } from 'lucide-react';
 import { Modal } from '../ui/Modal';
+import { MapBase, quadraticBezierArc, toGeoJSON } from '../shared';
 import { fmt } from './AnalyticsShared';
 import type { GeocodeCache, GeocodedLocation } from '../../utils/od-matrix/odMatrixTypes';
 import type { ODPairRouteMatch, MatchConfidence } from '../../utils/od-matrix/odRouteEstimation';
-
-/* ── Brand & Color Constants ─────────────────────────── */
 
 const ON_TEAL = '#00594C';
 const ORIGIN_COLOR = '#2563eb';
 const DESTINATION_COLOR = '#dc2626';
 
-/** Distinct color per leg — cycles if more than 4 legs */
 const LEG_COLORS = [
-    '#2563eb', // blue
-    '#7c3aed', // violet
-    '#d97706', // amber
-    '#0d9488', // teal
-    '#e11d48', // rose
+    '#2563eb',
+    '#7c3aed',
+    '#d97706',
+    '#0d9488',
+    '#e11d48',
 ];
-function legColor(i: number): string { return LEG_COLORS[i % LEG_COLORS.length]; }
 
 const CONFIDENCE_COLORS: Record<MatchConfidence, string> = {
     high: 'text-emerald-700 bg-emerald-50 border-emerald-200',
@@ -45,13 +42,9 @@ const CONFIDENCE_TINT: Record<MatchConfidence, string> = {
     none: 'bg-red-50/30',
 };
 
-/* ── Animation Timing ─────────────────────────────────── */
-
 const ARC_START_DELAY = 500;
 const ARC_DRAW_MS = 1000;
 const LEG_GAP_MS = 200;
-
-/* ── Scoped Styles ────────────────────────────────────── */
 
 const MODAL_ANIMATION_STYLES = `
 @keyframes odFadeInUp {
@@ -63,169 +56,46 @@ const MODAL_ANIMATION_STYLES = `
 .od-stagger-3 { animation: odFadeInUp 0.35s ease-out 0.3s both; }
 .od-stagger-4 { animation: odFadeInUp 0.35s ease-out 0.45s both; }
 
-/* Refined zoom controls */
-.od-map-container .leaflet-control-zoom {
+.od-map-container .mapboxgl-ctrl-group {
     border: none !important;
     border-radius: 10px !important;
     overflow: hidden !important;
     box-shadow: 0 2px 8px rgba(0,0,0,0.08) !important;
 }
-.od-map-container .leaflet-control-zoom a {
+.od-map-container .mapboxgl-ctrl-group button {
     background: rgba(255,255,255,0.92) !important;
     color: #4b5563 !important;
-    border-color: rgba(0,0,0,0.06) !important;
-    width: 30px !important;
-    height: 30px !important;
-    line-height: 30px !important;
-    font-size: 15px !important;
     transition: background 0.15s, color 0.15s;
 }
-.od-map-container .leaflet-control-zoom a:hover {
+.od-map-container .mapboxgl-ctrl-group button:hover {
     background: #fff !important;
     color: #111827 !important;
 }
 `;
 
-/* ── Geometry Helpers ─────────────────────────────────── */
-
-function quadraticBezierArc(
-    origin: [number, number],
-    dest: [number, number],
-    curveDirection: 1 | -1 = 1,
-    segments = 32
-): [number, number][] {
-    const midLat = (origin[0] + dest[0]) / 2;
-    const midLon = (origin[1] + dest[1]) / 2;
-    const dLat = dest[0] - origin[0];
-    const dLon = dest[1] - origin[1];
-    const offsetLat = midLat + dLon * 0.18 * curveDirection;
-    const offsetLon = midLon - dLat * 0.18 * curveDirection;
-
-    const points: [number, number][] = [];
-    for (let i = 0; i <= segments; i++) {
-        const t = i / segments;
-        const u = 1 - t;
-        points.push([
-            u * u * origin[0] + 2 * u * t * offsetLat + t * t * dest[0],
-            u * u * origin[1] + 2 * u * t * offsetLon + t * t * dest[1],
-        ]);
-    }
-    return points;
+interface InfoRowProps {
+    icon: React.ReactNode;
+    label: string;
+    children: React.ReactNode;
+    isLast?: boolean;
 }
 
-/* ── Marker Factories ─────────────────────────────────── */
-
-/** Shared label: dark text with white halo, positioned right of marker */
-function labelHtml(text: string, offsetY = '-50%'): string {
-    return `<div style="
-        color: #1f2937;
-        font-size: 11px;
-        font-weight: 600;
-        white-space: nowrap;
-        text-shadow: 0 0 4px #fff, 0 0 4px #fff, 0 0 8px rgba(255,255,255,0.8);
-        transform: translate(14px, ${offsetY});
-    ">${text}</div>`;
+interface LegDescriptor {
+    id: string;
+    color: string;
+    points: [number, number][];
+    revealAtMs: number;
 }
 
-function makeCircleMarker(
-    latlng: [number, number],
-    color: string,
-    label: string,
-    map: L.Map
-): void {
-    // Outer glow ring for visibility on light tiles
-    L.circleMarker(latlng, {
-        radius: 12,
-        fillColor: color,
-        fillOpacity: 0.15,
-        color: color,
-        weight: 0,
-    }).addTo(map);
-
-    L.circleMarker(latlng, {
-        radius: 8,
-        fillColor: color,
-        fillOpacity: 0.9,
-        color: '#fff',
-        weight: 2.5,
-    }).addTo(map);
-
-    L.marker(latlng, {
-        icon: L.divIcon({
-            className: '',
-            html: labelHtml(label),
-            iconSize: [0, 0],
-            iconAnchor: [0, 0],
-        }),
-    }).addTo(map);
+function legColor(i: number): string {
+    return LEG_COLORS[i % LEG_COLORS.length];
 }
 
-function makeDiamondMarker(
-    latlng: [number, number],
-    color: string,
-    label: string,
-    map: L.Map
-): L.Marker[] {
-    const diamond = L.marker(latlng, {
-        icon: L.divIcon({
-            className: '',
-            html: `<div style="
-                width: 14px; height: 14px;
-                background: ${color};
-                border: 2px solid #fff;
-                transform: rotate(45deg) translate(-50%, -50%);
-                box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-                position: absolute;
-                top: -7px; left: -7px;
-            "></div>`,
-            iconSize: [0, 0],
-            iconAnchor: [0, 0],
-        }),
-    }).addTo(map);
-
-    const labelMarker = L.marker(latlng, {
-        icon: L.divIcon({
-            className: '',
-            html: labelHtml(label),
-            iconSize: [0, 0],
-            iconAnchor: [0, 0],
-        }),
-    }).addTo(map);
-
-    return [diamond, labelMarker];
+function clamp01(value: number): number {
+    if (value <= 0) return 0;
+    if (value >= 1) return 1;
+    return value;
 }
-
-/* ── Arc Animation ────────────────────────────────────── */
-
-function animateArc(
-    polyline: L.Polyline,
-    delayMs: number,
-    cancelled: { current: boolean }
-): void {
-    setTimeout(() => {
-        if (cancelled.current) return;
-        const el = polyline.getElement();
-        if (!el) return;
-        const pathEl = el as unknown as SVGPathElement;
-
-        // Reveal the stroke
-        polyline.setStyle({ opacity: 0.85 });
-
-        // Set dash pattern so line starts fully hidden
-        const length = pathEl.getTotalLength?.() ?? 1000;
-        pathEl.style.strokeDasharray = `${length}`;
-        pathEl.style.strokeDashoffset = `${length}`;
-
-        // Force reflow so initial offset commits before transition
-        pathEl.getBoundingClientRect();
-
-        // Animate the offset to draw the arc
-        pathEl.style.transition = `stroke-dashoffset ${ARC_DRAW_MS}ms ease-in-out`;
-        pathEl.style.strokeDashoffset = '0';
-    }, delayMs);
-}
-
-/* ── Geocode Resolver ─────────────────────────────────── */
 
 function resolveGeocode(
     stationName: string,
@@ -233,24 +103,15 @@ function resolveGeocode(
 ): GeocodedLocation | null {
     if (!geocodeCache) return null;
     const key = Object.keys(geocodeCache.stations).find(
-        k => k.toLowerCase() === stationName.toLowerCase()
+        (candidate) => candidate.toLowerCase() === stationName.toLowerCase()
     );
     return key ? geocodeCache.stations[key] : null;
 }
-
-/* ── Sub-components ───────────────────────────────────── */
 
 function ConfidenceIcon({ confidence }: { confidence: MatchConfidence }) {
     if (confidence === 'high') return <CheckCircle2 size={13} />;
     if (confidence === 'none') return <XCircle size={13} />;
     return <AlertTriangle size={13} />;
-}
-
-interface InfoRowProps {
-    icon: React.ReactNode;
-    label: string;
-    children: React.ReactNode;
-    isLast?: boolean;
 }
 
 function InfoRow({ icon, label, children, isLast }: InfoRowProps) {
@@ -263,162 +124,210 @@ function InfoRow({ icon, label, children, isLast }: InfoRowProps) {
     );
 }
 
-/* ── Main Component ───────────────────────────────────── */
+function LabelText({ text }: { text: string }) {
+    return (
+        <div
+            className="absolute left-full top-1/2 ml-3 -translate-y-1/2 whitespace-nowrap text-[11px] font-semibold text-gray-800"
+            style={{ textShadow: '0 0 4px #fff, 0 0 4px #fff, 0 0 8px rgba(255,255,255,0.8)' }}
+        >
+            {text}
+        </div>
+    );
+}
 
-interface ODPairMapModalProps {
+function CircleMapMarker({ color, label }: { color: string; label: string }) {
+    return (
+        <div className="relative pointer-events-none" style={{ width: 24, height: 24 }}>
+            <div
+                className="absolute inset-0 rounded-full"
+                style={{ background: color, opacity: 0.15 }}
+            />
+            <div
+                className="absolute rounded-full border-2 border-white"
+                style={{
+                    width: 16,
+                    height: 16,
+                    top: 4,
+                    left: 4,
+                    background: color,
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+                }}
+            />
+            <LabelText text={label} />
+        </div>
+    );
+}
+
+function DiamondMapMarker({ color, label }: { color: string; label: string }) {
+    return (
+        <div className="relative pointer-events-none" style={{ width: 20, height: 20 }}>
+            <div
+                className="absolute left-1/2 top-1/2 border-2 border-white"
+                style={{
+                    width: 14,
+                    height: 14,
+                    background: color,
+                    transform: 'translate(-50%, -50%) rotate(45deg)',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+                }}
+            />
+            <LabelText text={label} />
+        </div>
+    );
+}
+
+function buildVisibleLine(points: [number, number][], progress: number): [number, number][] {
+    if (points.length <= 1) return points;
+    if (progress >= 1) return points;
+
+    const maxIndex = points.length - 1;
+    const endIndex = Math.max(1, Math.ceil(progress * maxIndex));
+    return points.slice(0, endIndex + 1);
+}
+
+export const ODPairMapModal: React.FC<{
     pair: ODPairRouteMatch;
     geocodeCache: GeocodeCache | null;
     onClose: () => void;
-}
-
-export const ODPairMapModal: React.FC<ODPairMapModalProps> = ({
-    pair,
-    geocodeCache,
-    onClose,
-}) => {
-    const mapContainerRef = useRef<HTMLDivElement>(null);
-    const mapRef = useRef<L.Map | null>(null);
+}> = ({ pair, geocodeCache, onClose }) => {
+    const mapRef = useRef<MapRef | null>(null);
+    const hasFittedRef = useRef(false);
+    const [elapsedMs, setElapsedMs] = useState(0);
+    const [mapReady, setMapReady] = useState(false);
 
     const originGeo = resolveGeocode(pair.origin, geocodeCache);
     const destGeo = resolveGeocode(pair.destination, geocodeCache);
     const hasCoords = Boolean(originGeo && destGeo);
 
-    const transferStops = pair.transfer?.transferStops?.length
-        ? pair.transfer.transferStops
-        : pair.transfer ? [pair.transfer.viaStop] : [];
-    const transferGeos = transferStops
-        .map(name => ({ name, geo: resolveGeocode(name, geocodeCache) }))
-        .filter((t): t is { name: string; geo: GeocodedLocation } => t.geo !== null);
+    const transferStops = useMemo(() => (
+        pair.transfer?.transferStops?.length
+            ? pair.transfer.transferStops
+            : pair.transfer ? [pair.transfer.viaStop] : []
+    ), [pair.transfer]);
 
-    const transferRouteNames = pair.transfer?.legs?.length
-        ? pair.transfer.legs.map(leg => leg.routeName)
-        : pair.transfer ? [pair.transfer.leg1RouteName, pair.transfer.leg2RouteName] : [];
+    const transferGeos = useMemo(() => transferStops
+        .map((name) => ({ name, geo: resolveGeocode(name, geocodeCache) }))
+        .filter((stop): stop is { name: string; geo: GeocodedLocation } => stop.geo !== null), [geocodeCache, transferStops]);
 
-    // Initialize Leaflet map with sequential arc animation
+    const transferRouteNames = useMemo(() => (
+        pair.transfer?.legs?.length
+            ? pair.transfer.legs.map((leg) => leg.routeName)
+            : pair.transfer ? [pair.transfer.leg1RouteName, pair.transfer.leg2RouteName] : []
+    ), [pair.transfer]);
+
+    const allPoints = useMemo(() => {
+        if (!originGeo || !destGeo) return [] as [number, number][];
+        return [
+            [originGeo.lat, originGeo.lon] as [number, number],
+            ...transferGeos.map((stop) => [stop.geo.lat, stop.geo.lon] as [number, number]),
+            [destGeo.lat, destGeo.lon] as [number, number],
+        ];
+    }, [destGeo, originGeo, transferGeos]);
+
+    const legs = useMemo<LegDescriptor[]>(() => {
+        if (allPoints.length < 2) return [];
+        return allPoints.slice(0, -1).map((origin, index) => ({
+            id: `leg-${index}`,
+            color: legColor(index),
+            points: quadraticBezierArc(origin, allPoints[index + 1], index % 2 === 0 ? 1 : -1, 32),
+            revealAtMs: ARC_START_DELAY + index * (ARC_DRAW_MS + LEG_GAP_MS) + ARC_DRAW_MS,
+        }));
+    }, [allPoints]);
+
+    const totalAnimationMs = useMemo(() => {
+        if (legs.length === 0) return 0;
+        return legs[legs.length - 1].revealAtMs;
+    }, [legs]);
+
     useEffect(() => {
-        if (!hasCoords || !mapContainerRef.current || mapRef.current) return;
-        if (!originGeo || !destGeo) return;
-
-        const cancelled = { current: false };
-
-        const map = L.map(mapContainerRef.current, {
-            scrollWheelZoom: false,
-            zoomSnap: 0.25,
-            attributionControl: false,
-        });
-        mapRef.current = map;
-
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-            maxZoom: 18,
-            crossOrigin: 'anonymous',
-            subdomains: 'abcd',
-        } as L.TileLayerOptions).addTo(map);
-
-        const originLatLng: [number, number] = [originGeo.lat, originGeo.lon];
-        const destLatLng: [number, number] = [destGeo.lat, destGeo.lon];
-
-        // Origin marker always visible immediately
-        makeCircleMarker(originLatLng, ORIGIN_COLOR, pair.origin, map);
-
-        if (transferGeos.length > 0) {
-            const waypoints = [
-                originLatLng,
-                ...transferGeos.map(t => [t.geo.lat, t.geo.lon] as [number, number]),
-                destLatLng,
-            ];
-
-            // Create transfer markers — hidden initially, color matches incoming leg
-            const transferMarkerPairs: L.Marker[][] = [];
-            for (let ti = 0; ti < transferGeos.length; ti++) {
-                const t = transferGeos[ti];
-                const markers = makeDiamondMarker(
-                    [t.geo.lat, t.geo.lon], legColor(ti), t.name, map
-                );
-                markers.forEach(m => m.setOpacity(0));
-                transferMarkerPairs.push(markers);
-            }
-
-            // Create all arc polylines — hidden initially (opacity: 0)
-            for (let i = 0; i < waypoints.length - 1; i++) {
-                const arc = quadraticBezierArc(
-                    waypoints[i], waypoints[i + 1],
-                    i % 2 === 0 ? 1 : -1
-                );
-                const polyline = L.polyline(arc, {
-                    color: legColor(i),
-                    weight: 4,
-                    opacity: 0,
-                    lineCap: 'round',
-                    lineJoin: 'round',
-                }).addTo(map);
-
-                // Sequential timing: each leg starts after the previous finishes + gap
-                const legDelay = ARC_START_DELAY + i * (ARC_DRAW_MS + LEG_GAP_MS);
-                animateArc(polyline, legDelay, cancelled);
-
-                // Reveal the transfer marker at this leg's destination
-                if (i < transferMarkerPairs.length) {
-                    const markerRevealTime = legDelay + ARC_DRAW_MS;
-                    setTimeout(() => {
-                        if (cancelled.current) return;
-                        transferMarkerPairs[i].forEach(m => m.setOpacity(1));
-                    }, markerRevealTime);
-                }
-            }
-
-            // Destination marker appears when last arc finishes
-            const lastLegIdx = waypoints.length - 2;
-            const destRevealTime = ARC_START_DELAY + lastLegIdx * (ARC_DRAW_MS + LEG_GAP_MS) + ARC_DRAW_MS;
-            setTimeout(() => {
-                if (cancelled.current) return;
-                makeCircleMarker(destLatLng, DESTINATION_COLOR, pair.destination, map);
-            }, destRevealTime);
-
-        } else {
-            // Direct route: single arc, destination appears when arc finishes
-            const arc = quadraticBezierArc(originLatLng, destLatLng);
-            const polyline = L.polyline(arc, {
-                color: legColor(0),
-                weight: 4,
-                opacity: 0,
-                lineCap: 'round',
-                lineJoin: 'round',
-            }).addTo(map);
-            animateArc(polyline, ARC_START_DELAY, cancelled);
-
-            setTimeout(() => {
-                if (cancelled.current) return;
-                makeCircleMarker(destLatLng, DESTINATION_COLOR, pair.destination, map);
-            }, ARC_START_DELAY + ARC_DRAW_MS);
+        if (!hasCoords || totalAnimationMs === 0) {
+            setElapsedMs(0);
+            return;
         }
 
-        // Fit bounds with asymmetric padding — extra top for labels above markers
-        const allPoints: [number, number][] = [
-            originLatLng,
-            destLatLng,
-            ...transferGeos.map(t => [t.geo.lat, t.geo.lon] as [number, number]),
-        ];
-        const bounds = L.latLngBounds(allPoints.map(p => L.latLng(p[0], p[1])));
-        map.fitBounds(bounds, {
-            paddingTopLeft: L.point(60, 80),
-            paddingBottomRight: L.point(60, 50),
-            maxZoom: 11,
-        });
+        let frameId = 0;
+        let startTime = 0;
 
-        return () => {
-            cancelled.current = true;
-            map.remove();
-            mapRef.current = null;
+        const tick = (timestamp: number) => {
+            if (!startTime) startTime = timestamp;
+            const nextElapsed = Math.min(timestamp - startTime, totalAnimationMs);
+            setElapsedMs(nextElapsed);
+            if (nextElapsed < totalAnimationMs) {
+                frameId = window.requestAnimationFrame(tick);
+            }
         };
-    }, [hasCoords, originGeo, destGeo, pair, transferGeos]);
 
+        setElapsedMs(0);
+        frameId = window.requestAnimationFrame(tick);
+
+        return () => window.cancelAnimationFrame(frameId);
+    }, [hasCoords, totalAnimationMs, pair]);
+
+    useEffect(() => {
+        hasFittedRef.current = false;
+    }, [pair]);
+
+    useEffect(() => {
+        if (!mapReady || hasFittedRef.current || allPoints.length === 0) return;
+
+        const longitudes = allPoints.map((point) => point[1]);
+        const latitudes = allPoints.map((point) => point[0]);
+        mapRef.current?.fitBounds(
+            [
+                [Math.min(...longitudes), Math.min(...latitudes)],
+                [Math.max(...longitudes), Math.max(...latitudes)],
+            ],
+            {
+                padding: { top: 80, right: 60, bottom: 50, left: 60 },
+                maxZoom: 11,
+                duration: 0,
+            }
+        );
+        hasFittedRef.current = true;
+    }, [allPoints, mapReady]);
+
+    const lineGeoJSON = useMemo<GeoJSON.FeatureCollection>(() => ({
+        type: 'FeatureCollection',
+        features: legs.flatMap((leg, index) => {
+            const drawStartMs = ARC_START_DELAY + index * (ARC_DRAW_MS + LEG_GAP_MS);
+            const progress = clamp01((elapsedMs - drawStartMs) / ARC_DRAW_MS);
+            if (progress <= 0) return [];
+
+            return [{
+                type: 'Feature' as const,
+                properties: {
+                    color: leg.color,
+                    opacity: 0.85,
+                },
+                geometry: {
+                    type: 'LineString' as const,
+                    coordinates: buildVisibleLine(leg.points, progress).map(toGeoJSON),
+                },
+            }];
+        }),
+    }), [elapsedMs, legs]);
+
+    const lineLayer = useMemo<LayerProps>(() => ({
+        id: 'od-pair-legs',
+        type: 'line',
+        paint: {
+            'line-color': ['get', 'color'],
+            'line-width': 4,
+            'line-opacity': ['get', 'opacity'],
+        },
+        layout: {
+            'line-cap': 'round',
+            'line-join': 'round',
+        },
+    }), []);
+
+    const destinationVisible = totalAnimationMs > 0 && elapsedMs >= totalAnimationMs;
     const tintClass = CONFIDENCE_TINT[pair.confidence];
 
     return (
         <Modal isOpen onClose={onClose} size="lg">
             <style>{MODAL_ANIMATION_STYLES}</style>
 
-            {/* Ontario Northland brand accent bar */}
             <div
                 className="h-1 rounded-t-2xl"
                 style={{ background: `linear-gradient(90deg, ${ON_TEAL}, ${ON_TEAL}dd)` }}
@@ -434,7 +343,6 @@ export const ODPairMapModal: React.FC<ODPairMapModalProps> = ({
             </Modal.Header>
 
             <Modal.Body className="space-y-5">
-                {/* Hero journey count */}
                 <div className="od-stagger-2">
                     <span
                         className="text-3xl font-bold text-gray-900 tracking-tight"
@@ -445,16 +353,52 @@ export const ODPairMapModal: React.FC<ODPairMapModalProps> = ({
                     <span className="text-sm text-gray-400 ml-2 font-medium">journeys</span>
                 </div>
 
-                {/* Map or fallback */}
                 <div className="od-stagger-3">
-                    {hasCoords ? (
+                    {hasCoords && originGeo && destGeo ? (
                         <div className="od-map-container relative rounded-xl overflow-hidden border border-gray-200/80 shadow-sm">
-                            <div
-                                ref={mapContainerRef}
-                                className="w-full"
-                                style={{ height: 380 }}
-                            />
-                            {/* Inner shadow vignette for depth */}
+                            <div className="w-full" style={{ height: 380 }}>
+                                <MapBase
+                                    mapRef={mapRef}
+                                    latitude={originGeo.lat}
+                                    longitude={originGeo.lon}
+                                    zoom={6}
+                                    mapStyle="mapbox://styles/mapbox/light-v11"
+                                    showNavigation={true}
+                                    onLoad={() => {
+                                        mapRef.current?.getMap().scrollZoom.disable();
+                                        setMapReady(true);
+                                    }}
+                                >
+                                    {lineGeoJSON.features.length > 0 && (
+                                        <Source id="od-pair-lines-src" type="geojson" data={lineGeoJSON}>
+                                            <Layer {...lineLayer} />
+                                        </Source>
+                                    )}
+
+                                    <Marker longitude={originGeo.lon} latitude={originGeo.lat} anchor="center">
+                                        <CircleMapMarker color={ORIGIN_COLOR} label={pair.origin} />
+                                    </Marker>
+
+                                    {transferGeos.map((stop, index) => (
+                                        elapsedMs >= legs[index]?.revealAtMs ? (
+                                            <Marker
+                                                key={`${stop.name}-${index}`}
+                                                longitude={stop.geo.lon}
+                                                latitude={stop.geo.lat}
+                                                anchor="center"
+                                            >
+                                                <DiamondMapMarker color={legColor(index)} label={stop.name} />
+                                            </Marker>
+                                        ) : null
+                                    ))}
+
+                                    {destinationVisible && (
+                                        <Marker longitude={destGeo.lon} latitude={destGeo.lat} anchor="center">
+                                            <CircleMapMarker color={DESTINATION_COLOR} label={pair.destination} />
+                                        </Marker>
+                                    )}
+                                </MapBase>
+                            </div>
                             <div
                                 className="absolute inset-0 pointer-events-none rounded-xl"
                                 style={{ boxShadow: 'inset 0 0 30px rgba(0,0,0,0.08)' }}
@@ -470,38 +414,24 @@ export const ODPairMapModal: React.FC<ODPairMapModalProps> = ({
                     )}
                 </div>
 
-                {/* Info card with confidence-aware background tint */}
                 <div className={`od-stagger-4 rounded-xl border border-gray-200/60 px-4 py-1 ${tintClass}`}>
-                    <InfoRow
-                        icon={<Route size={14} />}
-                        label="Route"
-                    >
+                    <InfoRow icon={<Route size={14} />} label="Route">
                         {pair.transfer
-                            ? transferRouteNames.join(' \u2192 ')
+                            ? transferRouteNames.join(' -> ')
                             : pair.routeLongName || <span className="text-gray-400 italic">No route matched</span>}
                     </InfoRow>
 
-                    <InfoRow
-                        icon={<ArrowRight size={14} />}
-                        label="Via"
-                    >
+                    <InfoRow icon={<ArrowRight size={14} />} label="Via">
                         {transferStops.length > 0
-                            ? transferStops.join(' \u2192 ')
-                            : <span className="text-gray-400">&mdash;</span>}
+                            ? transferStops.join(' -> ')
+                            : <span className="text-gray-400">-</span>}
                     </InfoRow>
 
-                    <InfoRow
-                        icon={<MapPin size={14} />}
-                        label="Stops"
-                    >
-                        {pair.confidence !== 'none' ? `${pair.intermediateStops} intermediate` : '\u2014'}
+                    <InfoRow icon={<MapPin size={14} />} label="Stops">
+                        {pair.confidence !== 'none' ? `${pair.intermediateStops} intermediate` : '-'}
                     </InfoRow>
 
-                    <InfoRow
-                        icon={<ConfidenceIcon confidence={pair.confidence} />}
-                        label="Confidence"
-                        isLast
-                    >
+                    <InfoRow icon={<ConfidenceIcon confidence={pair.confidence} />} label="Confidence" isLast>
                         <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 text-[11px] font-semibold rounded-full border ${CONFIDENCE_COLORS[pair.confidence]}`}>
                             <ConfidenceIcon confidence={pair.confidence} />
                             {pair.confidence}

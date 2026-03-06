@@ -65,5 +65,5 @@ Issue: [description]
 
 - **READ ONLY** - Never modify files
 - Ask clarifying questions if the bug description is unclear
-- Reference locked logic in context.md when relevant
+- Reference locked logic in `docs/rules/LOCKED_LOGIC.md` and `.claude/context.md` when relevant
 - Always run `npx vitest run tests/timeUtils.test.ts` if time parsing is involved

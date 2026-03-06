@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { AlertTriangle, ChevronLeft, ChevronRight, Download, Loader2, ArrowRight } from 'lucide-react';
 import { BARRIE_SCHOOLS, minutesToDisplayTime } from '../../utils/transit-app/studentPassUtils';
+import { getContrastingTextColor } from '../../utils/config/routeColors';
 import type {
     SchoolConfig,
     StudentPassResult,
@@ -40,11 +41,11 @@ interface StudentPassPanelProps {
     selectedSchool: SchoolConfig;
 }
 
-const BORDER = 'rgba(99, 126, 184, 0.12)';
-const BORDER_SUBTLE = 'rgba(99, 126, 184, 0.08)';
-const CARD_BG = '#131B2E';
-const CARD_SELECTED_BG = '#1A2540';
-const PANEL_BG = 'rgba(11, 17, 33, 0.85)';
+const BORDER = 'var(--student-pass-border)';
+const BORDER_SUBTLE = 'var(--student-pass-border-subtle)';
+const CARD_BG = 'var(--student-pass-blue-card)';
+const CARD_SELECTED_BG = 'var(--student-pass-blue-card-alt)';
+const PANEL_BG = 'var(--student-pass-panel)';
 
 const SectionDivider: React.FC = () => (
     <div style={{ height: '1px', background: BORDER_SUBTLE, margin: '0' }} />
@@ -52,8 +53,8 @@ const SectionDivider: React.FC = () => (
 
 const SectionHeader: React.FC<{ children: React.ReactNode }> = ({ children }) => (
     <h3
-        className="text-[11px] font-semibold uppercase tracking-wider text-[#94A3B8]"
-        style={{ fontFamily: "'JetBrains Mono', monospace" }}
+        className="text-[11px] font-semibold uppercase tracking-wider"
+        style={{ color: 'var(--student-pass-muted)', fontFamily: "'JetBrains Mono', monospace" }}
     >
         {children}
     </h3>
@@ -66,6 +67,20 @@ function formatDisplayDate(value: string): string {
         month: 'long',
         day: 'numeric',
     }).format(new Date(`${value}T00:00:00`));
+}
+
+function getJourneyTransfers(result: StudentPassResult, mode: 'am' | 'pm') {
+    if (mode === 'am') {
+        if (result.morningTransfers?.length) return result.morningTransfers;
+        if (result.morningTransfer) return [result.morningTransfer];
+        if (result.transfers?.length) return result.transfers;
+        if (result.transfer) return [result.transfer];
+        return [];
+    }
+
+    if (result.afternoonTransfers?.length) return result.afternoonTransfers;
+    if (result.afternoonTransfer) return [result.afternoonTransfer];
+    return [];
 }
 
 export const StudentPassPanel: React.FC<StudentPassPanelProps> = ({
@@ -127,16 +142,17 @@ export const StudentPassPanel: React.FC<StudentPassPanelProps> = ({
                 style={{ borderBottom: `1px solid ${BORDER}` }}
             >
                 <span
-                    className="text-[13px] font-semibold text-[#E2E8F0] truncate flex-1 mr-2"
-                    style={{ fontFamily: "'DM Sans', sans-serif" }}
+                    className="text-[13px] font-semibold truncate flex-1 mr-2"
+                    style={{ color: 'var(--student-pass-text)', fontFamily: "'DM Sans', sans-serif" }}
                 >
                     {selectedSchool.name}
                 </span>
                 <span
-                    className="text-[10px] px-2 py-1 rounded-md text-[#BFDBFE] mr-2 hidden sm:inline"
+                    className="text-[10px] px-2 py-1 rounded-md mr-2 hidden sm:inline"
                     style={{
-                        background: 'rgba(59,130,246,0.12)',
-                        border: '1px solid rgba(59,130,246,0.18)',
+                        color: 'var(--student-pass-accent-strong)',
+                        background: 'var(--student-pass-accent-soft)',
+                        border: '1px solid var(--student-pass-border)',
                         fontFamily: "'JetBrains Mono', monospace",
                     }}
                 >
@@ -144,8 +160,8 @@ export const StudentPassPanel: React.FC<StudentPassPanelProps> = ({
                 </span>
                 <button
                     onClick={() => setCollapsed((c) => !c)}
-                    className="flex-shrink-0 p-1 rounded-md text-[#94A3B8] hover:text-[#E2E8F0] transition-colors"
-                    style={{ background: 'rgba(99, 126, 184, 0.08)' }}
+                    className="flex-shrink-0 p-1 rounded-md transition-colors"
+                    style={{ color: 'var(--student-pass-muted)', background: 'var(--student-pass-accent-soft)' }}
                     aria-label={collapsed ? 'Expand panel' : 'Collapse panel'}
                 >
                     {collapsed ? (
@@ -164,7 +180,7 @@ export const StudentPassPanel: React.FC<StudentPassPanelProps> = ({
                 >
                     {/* Hint */}
                     <div className="px-4 py-3">
-                        <p className="text-[12px] text-[#94A3B8]">
+                        <p className="text-[12px]" style={{ color: 'var(--student-pass-muted)' }}>
                             Draw a zone on the map to find transit options.
                         </p>
                     </div>
@@ -174,10 +190,11 @@ export const StudentPassPanel: React.FC<StudentPassPanelProps> = ({
                             <SectionDivider />
                             <div className="px-4 py-3">
                                 <div
-                                    className="rounded-lg p-3 text-[11px] text-[#CBD5E1]"
+                                    className="rounded-lg p-3 text-[11px]"
                                     style={{
-                                        background: 'rgba(59, 130, 246, 0.08)',
-                                        border: '1px solid rgba(59, 130, 246, 0.2)',
+                                        color: 'var(--student-pass-text)',
+                                        background: 'var(--student-pass-accent-soft)',
+                                        border: '1px solid var(--student-pass-border)',
                                     }}
                                 >
                                     {serviceDateWarning}
@@ -289,15 +306,20 @@ export const StudentPassPanel: React.FC<StudentPassPanelProps> = ({
                     <div className="px-4 py-3 space-y-1.5">
                         <SectionHeader>Zone Status</SectionHeader>
                         {polygon ? (
-                            <div className="flex items-center gap-2 text-[12px] text-[#94A3B8]">
-                                <span
-                                    className="w-2 h-2 rounded-full flex-shrink-0"
-                                    style={{ background: '#3B82F6' }}
-                                />
-                                Zone drawn ({polygon.length} vertices)
+                            <div className="space-y-1">
+                                <div className="flex items-center gap-2 text-[12px]" style={{ color: 'var(--student-pass-muted)' }}>
+                                    <span
+                                        className="w-2 h-2 rounded-full flex-shrink-0"
+                                        style={{ background: 'var(--student-pass-accent)' }}
+                                    />
+                                    Zone drawn ({polygon.length} vertices)
+                                </div>
+                                <p className="text-[11px]" style={{ color: 'var(--student-pass-muted)' }}>
+                                    Drag the blue home point on the map to fine-tune the exact starting location.
+                                </p>
                             </div>
                         ) : (
-                            <p className="text-[12px] text-[#94A3B8] italic">
+                            <p className="text-[12px] italic" style={{ color: 'var(--student-pass-muted)' }}>
                                 Use the polygon tool (top-right of map) to draw a zone.
                             </p>
                         )}
@@ -320,7 +342,7 @@ export const StudentPassPanel: React.FC<StudentPassPanelProps> = ({
                                         fontFamily: "'DM Sans', sans-serif",
                                     }}
                                 />
-                                <p className="text-[11px] text-[#94A3B8]">
+                                <p className="text-[11px]" style={{ color: 'var(--student-pass-muted)' }}>
                                     Auto-search checks the nearest strong candidates; selecting a stop routes that exact stop.
                                 </p>
                                 <div className="space-y-2 max-h-56 overflow-y-auto dark-scrollbar pr-1">
@@ -340,26 +362,26 @@ export const StudentPassPanel: React.FC<StudentPassPanelProps> = ({
                                                 className="w-full text-left rounded-lg px-3 py-2 transition-all"
                                                 style={{
                                                     background: isSelected ? CARD_SELECTED_BG : CARD_BG,
-                                                    border: `1px solid ${isSelected ? '#3B82F6' : BORDER}`,
-                                                    boxShadow: isSelected ? '0 0 16px rgba(59, 130, 246, 0.2)' : undefined,
+                                                    border: `1px solid ${isSelected ? 'var(--student-pass-accent)' : BORDER}`,
+                                                    boxShadow: isSelected ? '0 0 16px rgba(86, 166, 213, 0.2)' : undefined,
                                                     opacity: hasAnyService ? 1 : 0.75,
                                                 }}
                                             >
                                                 <div className="flex items-center justify-between gap-3">
-                                                    <span className="text-[12px] font-semibold text-[#E2E8F0]">
+                                                    <span className="text-[12px] font-semibold" style={{ color: 'var(--student-pass-text)' }}>
                                                         {stop.stopName}
                                                     </span>
                                                     {isSelected && (
-                                                        <span className="text-[10px] font-semibold text-[#93C5FD]">
+                                                        <span className="text-[10px] font-semibold" style={{ color: 'var(--student-pass-accent-strong)' }}>
                                                             Selected
                                                         </span>
                                                     )}
                                                 </div>
-                                                <p className="text-[11px] text-[#94A3B8] mt-1">
+                                                <p className="text-[11px] mt-1" style={{ color: 'var(--student-pass-muted)' }}>
                                                     {stop.walkMinutes} min walk · {stop.morningOptionCount} AM / {stop.afternoonOptionCount} PM options
                                                 </p>
                                                 {(bestArrival || bestDeparture) && (
-                                                    <p className="text-[10px] text-[#CBD5E1] mt-1">
+                                                    <p className="text-[10px] mt-1" style={{ color: 'var(--student-pass-text)' }}>
                                                         {bestArrival ? `Best AM ${bestArrival}` : 'No AM trip'}
                                                         {bestArrival && bestDeparture ? ' · ' : ''}
                                                         {bestDeparture ? `Best PM ${bestDeparture}` : ''}
@@ -369,7 +391,7 @@ export const StudentPassPanel: React.FC<StudentPassPanelProps> = ({
                                         );
                                     })}
                                     {filteredZoneStops.length === 0 && (
-                                        <p className="text-[12px] text-[#94A3B8] italic">
+                                        <p className="text-[12px] italic" style={{ color: 'var(--student-pass-muted)' }}>
                                             No stops match that filter.
                                         </p>
                                     )}
@@ -451,6 +473,9 @@ export const StudentPassPanel: React.FC<StudentPassPanelProps> = ({
                                                     const firstLeg = legs[0];
                                                     const lastLeg = legs[legs.length - 1];
                                                     const walkMin = opt.result.walkToStop?.walkMinutes;
+                                                    const walkToSchoolMin = opt.result.walkToSchool?.walkMinutes ?? 0;
+                                                    const transitMin = firstLeg && lastLeg ? lastLeg.arrivalMinutes - firstLeg.departureMinutes : 0;
+                                                    const totalMin = (walkMin ?? 0) + transitMin + walkToSchoolMin;
                                                     const primaryColor = firstLeg?.routeColor || '#637EB8';
                                                     return (
                                                         <button
@@ -480,7 +505,7 @@ export const StudentPassPanel: React.FC<StudentPassPanelProps> = ({
                                                                                 style={{
                                                                                     fontFamily: "'JetBrains Mono', monospace",
                                                                                     background: leg.routeColor || '#637EB8',
-                                                                                    color: '#fff',
+                                                                                    color: getContrastingTextColor(leg.routeColor || '#637EB8'),
                                                                                 }}
                                                                             >
                                                                                 Rt {leg.routeShortName}
@@ -498,11 +523,19 @@ export const StudentPassPanel: React.FC<StudentPassPanelProps> = ({
                                                                 )}
                                                             </div>
                                                             {firstLeg && lastLeg && (
-                                                                <p className="text-[12px] text-[#E2E8F0]">
-                                                                    {minutesToDisplayTime(firstLeg.departureMinutes)}
-                                                                    {' → '}
-                                                                    {minutesToDisplayTime(lastLeg.arrivalMinutes)}
-                                                                </p>
+                                                                <div className="flex items-center justify-between">
+                                                                    <p className="text-[12px] text-[#E2E8F0]">
+                                                                        {minutesToDisplayTime(firstLeg.departureMinutes)}
+                                                                        {' → '}
+                                                                        {minutesToDisplayTime(lastLeg.arrivalMinutes)}
+                                                                    </p>
+                                                                    <span
+                                                                        className="text-[11px] font-semibold text-[#CBD5E1]"
+                                                                        style={{ fontFamily: "'JetBrains Mono', monospace" }}
+                                                                    >
+                                                                        {totalMin} min
+                                                                    </span>
+                                                                </div>
                                                             )}
                                                             <p className="text-[11px] text-[#94A3B8] mt-0.5">
                                                                 {opt.result.isDirect ? 'Direct' : 'Transfer'}
@@ -520,7 +553,13 @@ export const StudentPassPanel: React.FC<StudentPassPanelProps> = ({
                                                         const legs = opt.result.afternoonLegs;
                                                         const firstLeg = legs[0];
                                                         const lastLeg = legs[legs.length - 1];
+                                                        const alightStopName = lastLeg?.toStop;
                                                         const walkMin = opt.result.walkFromSchool?.walkMinutes;
+                                                        const walkToZoneMin = opt.result.walkToZone?.walkMinutes ?? 0;
+                                                        const transitMin = firstLeg && lastLeg ? lastLeg.arrivalMinutes - firstLeg.departureMinutes : 0;
+                                                        const totalMin = (walkMin ?? 0) + transitMin + walkToZoneMin;
+                                                        const transfers = getJourneyTransfers(opt.result, 'pm');
+                                                        const firstTransferWait = transfers[0]?.waitMinutes;
                                                         const primaryColor = firstLeg?.routeColor || '#637EB8';
                                                         return (
                                                             <button
@@ -550,7 +589,7 @@ export const StudentPassPanel: React.FC<StudentPassPanelProps> = ({
                                                                                     style={{
                                                                                         fontFamily: "'JetBrains Mono', monospace",
                                                                                         background: leg.routeColor || '#637EB8',
-                                                                                        color: '#fff',
+                                                                                        color: getContrastingTextColor(leg.routeColor || '#637EB8'),
                                                                                     }}
                                                                                 >
                                                                                     Rt {leg.routeShortName}
@@ -568,16 +607,33 @@ export const StudentPassPanel: React.FC<StudentPassPanelProps> = ({
                                                                     )}
                                                                 </div>
                                                                 {firstLeg && lastLeg && (
-                                                                    <p className="text-[12px] text-[#E2E8F0]">
-                                                                        {minutesToDisplayTime(firstLeg.departureMinutes)}
-                                                                        {' → '}
-                                                                        {minutesToDisplayTime(lastLeg.arrivalMinutes)}
-                                                                    </p>
+                                                                    <div className="flex items-center justify-between">
+                                                                        <p className="text-[12px] text-[#E2E8F0]">
+                                                                            {minutesToDisplayTime(firstLeg.departureMinutes)}
+                                                                            {' → '}
+                                                                            {minutesToDisplayTime(lastLeg.arrivalMinutes)}
+                                                                        </p>
+                                                                        <span
+                                                                            className="text-[11px] font-semibold text-[#CBD5E1]"
+                                                                            style={{ fontFamily: "'JetBrains Mono', monospace" }}
+                                                                        >
+                                                                            {totalMin} min
+                                                                        </span>
+                                                                    </div>
                                                                 )}
                                                                 <p className="text-[11px] text-[#94A3B8] mt-0.5">
                                                                     {legs.length === 1 ? 'Direct' : 'Transfer'}
-                                                                    {walkMin != null && ` · ${walkMin} min walk`}
+                                                                    {walkMin != null && ` · ${walkMin} min walk to stop`}
+                                                                    {firstTransferWait != null && ` · ${firstTransferWait} min transfer wait`}
                                                                 </p>
+                                                                {alightStopName && (
+                                                                    <p className="text-[11px] text-[#94A3B8] mt-0.5">
+                                                                        Get off at{' '}
+                                                                        <span className="font-semibold text-[#E2E8F0]">
+                                                                            {alightStopName}
+                                                                        </span>
+                                                                    </p>
+                                                                )}
                                                             </button>
                                                         );
                                                     })
@@ -598,7 +654,7 @@ export const StudentPassPanel: React.FC<StudentPassPanelProps> = ({
                                                     border: `1px solid ${BORDER}`,
                                                 }}
                                             >
-                                                {selectedZoneStop && (
+                                                {journeyMode === 'am' && selectedZoneStop && (
                                                     <p className="text-[11px] text-[#94A3B8]">
                                                         Selected stop:{' '}
                                                         <span className="font-semibold text-[#E2E8F0]">
@@ -606,7 +662,15 @@ export const StudentPassPanel: React.FC<StudentPassPanelProps> = ({
                                                         </span>
                                                     </p>
                                                 )}
-                                                {result.walkToStop && (
+                                                {journeyMode === 'pm' && result.afternoonLegs.length > 0 && (
+                                                    <p className="text-[11px] text-[#94A3B8]">
+                                                        Get off at:{' '}
+                                                        <span className="font-semibold text-[#E2E8F0]">
+                                                            {result.afternoonLegs[result.afternoonLegs.length - 1].toStop}
+                                                        </span>
+                                                    </p>
+                                                )}
+                                                {journeyMode === 'am' && result.walkToStop && (
                                                     <p className="text-[11px] text-[#94A3B8]">
                                                         Walk to stop:{' '}
                                                         <span className="font-semibold text-[#E2E8F0]">
@@ -615,7 +679,7 @@ export const StudentPassPanel: React.FC<StudentPassPanelProps> = ({
                                                         ({(result.walkToStop.distanceKm * 1000).toFixed(0)}m)
                                                     </p>
                                                 )}
-                                                {result.walkToSchool && (
+                                                {journeyMode === 'am' && result.walkToSchool && (
                                                     <p className="text-[11px] text-[#94A3B8]">
                                                         Walk to school:{' '}
                                                         <span className="font-semibold text-[#E2E8F0]">
@@ -624,7 +688,25 @@ export const StudentPassPanel: React.FC<StudentPassPanelProps> = ({
                                                         ({(result.walkToSchool.distanceKm * 1000).toFixed(0)}m)
                                                     </p>
                                                 )}
-                                                {result.frequencyPerHour != null && (
+                                                {journeyMode === 'pm' && result.walkFromSchool && (
+                                                    <p className="text-[11px] text-[#94A3B8]">
+                                                        Walk to stop:{' '}
+                                                        <span className="font-semibold text-[#E2E8F0]">
+                                                            {result.walkFromSchool.walkMinutes} min
+                                                        </span>{' '}
+                                                        ({(result.walkFromSchool.distanceKm * 1000).toFixed(0)}m)
+                                                    </p>
+                                                )}
+                                                {journeyMode === 'pm' && result.walkToZone && (
+                                                    <p className="text-[11px] text-[#94A3B8]">
+                                                        Walk home:{' '}
+                                                        <span className="font-semibold text-[#E2E8F0]">
+                                                            {result.walkToZone.walkMinutes} min
+                                                        </span>{' '}
+                                                        ({(result.walkToZone.distanceKm * 1000).toFixed(0)}m)
+                                                    </p>
+                                                )}
+                                                {journeyMode === 'am' && result.frequencyPerHour != null && (
                                                     <p className="text-[11px] text-[#94A3B8]">
                                                         AM frequency:{' '}
                                                         <span className="font-semibold text-[#E2E8F0]">
@@ -642,7 +724,7 @@ export const StudentPassPanel: React.FC<StudentPassPanelProps> = ({
 
                     {!isCalculating && !tripOptions && (
                         <div className="px-4 pb-3">
-                            <p className="text-[12px] text-[#94A3B8] italic">
+                            <p className="text-[12px] italic" style={{ color: 'var(--student-pass-muted)' }}>
                                 Draw a zone on the map to see transit options.
                             </p>
                         </div>
@@ -662,8 +744,8 @@ export const StudentPassPanel: React.FC<StudentPassPanelProps> = ({
                     <button
                         onClick={onExport}
                         disabled={!result?.found || isExporting}
-                        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg font-semibold text-[13px] text-white transition-colors shadow-sm disabled:opacity-40 disabled:cursor-not-allowed bg-emerald-500 hover:bg-emerald-600"
-                        style={{ fontFamily: "'DM Sans', sans-serif" }}
+                        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg font-semibold text-[13px] text-white transition-colors shadow-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                        style={{ fontFamily: "'DM Sans', sans-serif", background: 'var(--student-pass-blue)' }}
                         title={result?.found ? 'Download student transit pass PDF' : 'No trip result to export'}
                     >
                         {isExporting ? (

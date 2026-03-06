@@ -1,10 +1,12 @@
 # Architecture
 
-> Last verified: February 20, 2026
+> Last reviewed: March 6, 2026
+> Load order: start with `docs/CONTEXT_INDEX.md` before using this file as agent context.
 
 ## Overview
 
 The Barrie Transit Schedule Builder uses a **Draft → Publish** workflow with a single data type (`MasterScheduleContent`) across all views.
+This file is a selective architecture map, not an exhaustive file inventory. Prefer `rg --files` for full discovery, and treat line counts here as approximate.
 
 ```
 ┌─────────────────┐         ┌─────────────────┐
@@ -49,6 +51,7 @@ components/
 ├── FileUpload.tsx                  # Drag-and-drop upload widget
 │
 ├── workspaces/                     # ═══ Top-Level Workspaces ═══
+│   ├── AgentWorkspace.tsx          # Agent session registry workspace
 │   ├── FixedRouteWorkspace.tsx     # Fixed-route scheduling root (719 lines)
 │   ├── OnDemandWorkspace.tsx       # On-demand service analysis (946 lines)
 │   ├── OperationsWorkspace.tsx     # Operations dashboard routing
@@ -116,6 +119,7 @@ components/
 │   ├── ODMatrixWorkspace.tsx       # OD matrix workspace
 │   ├── ODMatrixImport.tsx          # OD matrix CSV import (733 lines)
 │   ├── ODFlowMapModule.tsx         # Origin-destination flow map (654 lines)
+│   ├── ODRouteEstimationModule.tsx # Route matching and transfer analysis
 │   ├── ODCoordinateEditor.tsx      # Edit geocoded stop coords (501 lines)
 │   ├── DemandModule.tsx            # Ridership demand analysis (413 lines)
 │   ├── ServiceGapsModule.tsx       # Service gap detection (380 lines)
@@ -130,6 +134,9 @@ components/
 │   ├── ODOverviewPanel.tsx         # OD data overview
 │   ├── OverviewPanel.tsx           # Transit app overview
 │   ├── AppUsageModule.tsx          # Transit app usage stats
+│   ├── StudentPassModule.tsx       # Student transit pass planner + PDF export
+│   ├── StudentPassMap.tsx          # Student pass map rendering
+│   ├── StudentPassTimeline.tsx     # Student pass timeline view
 │   └── AnalyticsShared.tsx         # Shared analytics types/helpers
 │
 ├── Reports/                        # ═══ Reports & Export ═══
@@ -305,7 +312,7 @@ functions/src/                      # Firebase Cloud Functions
 
 ### Tests
 
-27 test files in `tests/`:
+Representative coverage areas in `tests/`:
 
 | Category | Files |
 |----------|-------|
@@ -319,7 +326,7 @@ functions/src/                      # Firebase Cloud Functions
 | **Performance** | `performanceDataAggregator.test.ts` |
 | **Transit App** | `transitAppAggregator.*.test.ts` (5), `transitAppScoring.test.ts`, `transitAppParsers.test.ts`, `transitAppPipeline.e2e.test.ts` |
 | **Draft/Adapter** | `scheduleDraftAdapter.test.ts`, `fixedRouteDraftState.test.ts` |
-| **Other** | `odMatrixParser.test.ts`, `apiSecurity.test.ts` |
+| **Other** | `odMatrixParser.test.ts`, `apiSecurity.test.ts`, `agentSessions.test.ts`, `studentPassTimeline.test.tsx` |
 
 ★ = Critical files with locked logic or high complexity
 
@@ -374,7 +381,7 @@ interface DraftSchedule {
 
 ```typescript
 interface PublishedSchedule {
-  id: string;                      // Format: "{routeNumber}_{dayType}"
+  id: string;                      // RouteIdentity: "{routeNumber}-{dayType}"
   routeNumber: string;
   dayType: DayType;
   content: MasterScheduleContent;
@@ -525,13 +532,8 @@ TRANSIT APP:
 
 ---
 
-## File Counts
+## Maintenance Note
 
-| Directory | Files | Notes |
-|-----------|-------|-------|
-| `components/` | 97 .tsx | 11 subfolders |
-| `utils/` | 77 .ts | 12 subfolders + root |
-| `hooks/` | 11 .ts | |
-| `api/` | 6 .ts | Vite dev middleware |
-| `functions/src/` | 6 .ts | Firebase Cloud Functions |
-| `tests/` | 27 test files | |
+- Keep this file focused on durable structure, ownership, and major data flow.
+- Do not treat exact file counts or exhaustive inventories as stable documentation.
+- When a feature ships, add only the files and flows that matter for future navigation.

@@ -13,6 +13,7 @@ export interface MapBaseProps {
     latitude?: number;
     zoom?: number;
     mapStyle?: string;
+    preserveDrawingBuffer?: boolean;
     interactive?: boolean;
     className?: string;
     style?: React.CSSProperties;
@@ -33,6 +34,7 @@ export const MapBase: React.FC<MapBaseProps> = ({
     latitude = BARRIE_CENTER.latitude,
     zoom = 13,
     mapStyle = 'mapbox://styles/mapbox/light-v11',
+    preserveDrawingBuffer = false,
     interactive = true,
     className,
     style,
@@ -53,6 +55,7 @@ export const MapBase: React.FC<MapBaseProps> = ({
                 mapboxAccessToken={MAPBOX_TOKEN}
                 initialViewState={{ longitude, latitude, zoom }}
                 mapStyle={mapStyle}
+                preserveDrawingBuffer={preserveDrawingBuffer}
                 interactive={interactive}
                 style={{ width: '100%', height: '100%', ...style }}
                 onLoad={onLoad}

@@ -1,49 +1,61 @@
 # Firebase Security Rules
 
-Since you started Firebase in **production mode**, you need to configure security rules.
+This file is a high-level guide only.
 
-## Firestore Rules
+The source of truth is:
 
-Go to **Firebase Console → Firestore → Rules** and paste:
+- `firestore.rules`
+- `storage.rules`
 
-```javascript
-rules_version = '2';
+Do not paste old snippets into Firebase Console without checking those files first.
 
-service cloud.firestore {
-  match /databases/{database}/documents {
-    // Users can only access their own data
-    match /users/{userId}/{document=**} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
-    }
-  }
-}
+## Current Model
+
+The app uses a mixed model:
+
+- user-scoped data under `users/{userId}/`
+- team-scoped shared data under `teams/{teamId}/`
+- role checks for owners and admins on team management operations
+- team membership checks for shared schedules, analytics, storage assets, and imports
+
+### Firestore
+
+`firestore.rules` currently covers:
+
+- `users/{userId}` and subcollections for personal data
+- `teams/{teamId}` documents
+- `teams/{teamId}/members`
+- `teams/{teamId}/masterSchedules`
+- `teams/{teamId}/transitAppData`
+- `teams/{teamId}/performanceData`
+- `teams/{teamId}/odMatrixData` and `imports`
+
+The checked-in rules do not currently include a dedicated `teams/{teamId}/connectionLibrary` match.
+If Connection Library is relied on in production, update `firestore.rules` and `docs/SCHEMA.md` together.
+
+### Storage
+
+`storage.rules` currently covers:
+
+- `users/{userId}/...`
+- `teams/{teamId}/masterSchedules/...`
+- `teams/{teamId}/routeMaps/...`
+- `teams/{teamId}/transitAppData/...`
+- `teams/{teamId}/performanceData/...`
+- `teams/{teamId}/odMatrixData/...`
+
+## Apply Changes
+
+Update the checked-in rule files first, then deploy from the repository root:
+
+```powershell
+npx firebase deploy --only firestore:rules,storage
 ```
 
-## Storage Rules
+If you prefer to publish in the Firebase Console, copy from the current local files, not from this Markdown summary.
 
-Go to **Firebase Console → Storage → Rules** and paste:
+## Maintenance Guidance
 
-```javascript
-rules_version = '2';
-
-service firebase.storage {
-  match /b/{bucket}/o {
-    // Users can only access their own files
-    match /users/{userId}/{allPaths=**} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
-    }
-  }
-}
-```
-
-## What These Rules Do
-
-1. **Authentication Required**: Only logged-in users can read/write data
-2. **User Isolation**: Each user can only access files and data in their own `users/{userId}/` path
-3. **Complete Protection**: No unauthenticated access, no cross-user access
-
-## To Apply
-
-1. Copy each rule set
-2. Go to Firebase Console → Firestore/Storage → Rules tab
-3. Paste and click "Publish"
+- If team membership behavior changes, update `firestore.rules` and this summary together.
+- If new storage prefixes are introduced, update `storage.rules` and `docs/SCHEMA.md`.
+- Keep this file explanatory. Avoid duplicating the full ruleset here.

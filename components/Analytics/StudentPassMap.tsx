@@ -1,12 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Marker, Source, Layer } from 'react-map-gl/mapbox';
-import type { LayerProps, MapRef } from 'react-map-gl/mapbox';
+import type { LayerProps, MapRef, MarkerDragEvent } from 'react-map-gl/mapbox';
 import { Moon, Globe, Bus, GraduationCap } from 'lucide-react';
 import { MapBase } from '../shared/MapBase';
 import { MapLabel } from '../shared/MapLabel';
 import { DrawControl } from '../shared/DrawControl';
 import { toLineGeoJSON, toGeoJSON } from '../shared/mapUtils';
 import type { SchoolConfig, StudentPassResult, ZoneStopOption } from '../../utils/transit-app/studentPassUtils';
+import { isPointInPolygon } from '../../utils/transit-app/studentPassUtils';
+import { getAllStopsWithCoords } from '../../utils/gtfs/gtfsStopLookup';
 import { useRouteAnimation } from './useRouteAnimation';
 import './studentPass.css';
 
@@ -14,11 +16,14 @@ export interface StudentPassMapProps {
     school: SchoolConfig | null;
     result: StudentPassResult | null;
     journeyMode: 'am' | 'pm';
+    polygon: [number, number][] | null;
+    zoneOrigin: [number, number] | null;
     zoneStops: ZoneStopOption[];
     selectedZoneStopId: string | null;
     onPolygonComplete: (coords: [number, number][]) => void;
     onPolygonClear: () => void;
     onZoneStopSelect: (stopId: string) => void;
+    onZoneOriginChange: (coords: [number, number]) => void;
 }
 
 // ── Layer style constants ─────────────────────────────────────────────────────
@@ -29,8 +34,8 @@ const ZONE_STOPS_LAYER: LayerProps = {
     source: 'zone-stops',
     paint: {
         'circle-radius': 5,
-        'circle-color': '#1E293B',
-        'circle-stroke-color': '#3B82F6',
+        'circle-color': '#003B61',
+        'circle-stroke-color': '#56A6D5',
         'circle-stroke-width': 2,
         'circle-opacity': 0.9,
         'circle-stroke-opacity': 0.8,
@@ -97,6 +102,114 @@ function routeColor(raw: string): string {
     return raw.startsWith('#') ? raw : `#${raw}`;
 }
 
+function buildZoneStopMarkerStyle(fillColor: string, isSelected: boolean): React.CSSProperties {
+    return {
+        width: isSelected ? 18 : 14,
+        height: isSelected ? 18 : 14,
+        borderRadius: '50%',
+        border: '2px solid #fff',
+        backgroundColor: fillColor,
+        boxShadow: isSelected
+            ? '0 0 14px rgba(252, 211, 77, 0.5)'
+            : `0 0 10px ${fillColor}59`,
+        appearance: 'none',
+        WebkitAppearance: 'none',
+        padding: 0,
+        margin: 0,
+        display: 'block',
+        cursor: 'pointer',
+    };
+}
+
+const LegendDot: React.FC<{
+    fill: string;
+    size?: number;
+    border?: string;
+    shadow?: string;
+}> = ({ fill, size = 12, border = '#fff', shadow }) => (
+    <span
+        aria-hidden="true"
+        style={{
+            width: size,
+            height: size,
+            borderRadius: '50%',
+            display: 'inline-block',
+            background: fill,
+            border: `2px solid ${border}`,
+            boxShadow: shadow,
+            flexShrink: 0,
+        }}
+    />
+);
+
+interface StopMarkerPoint {
+    lon: number;
+    lat: number;
+    stopName?: string;
+}
+
+function BoardStopMarker({ selectedZoneStop }: { selectedZoneStop: ZoneStopOption | null }) {
+    return (
+        <div className="relative">
+            {selectedZoneStop && (
+                <div
+                    className="absolute inset-0 -m-1 rounded-full"
+                    style={{
+                        width: 26,
+                        height: 26,
+                        border: '2px solid rgba(252, 211, 77, 0.9)',
+                        boxShadow: '0 0 12px rgba(252, 211, 77, 0.35)',
+                    }}
+                />
+            )}
+            <div
+                style={{
+                    width: 18,
+                    height: 18,
+                    borderRadius: '50%',
+                    background: '#0E5E90',
+                    border: '3px solid #fff',
+                    boxShadow: '0 0 12px rgba(86, 166, 213, 0.45)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                }}
+            >
+                <Bus size={10} color="#fff" />
+            </div>
+        </div>
+    );
+}
+
+function AlightStopMarker() {
+    return (
+        <div
+            style={{
+                width: 18,
+                height: 18,
+                borderRadius: '50%',
+                background: '#F8FAFC',
+                border: '3px solid #56A6D5',
+                boxShadow: '0 0 12px rgba(86, 166, 213, 0.35)',
+            }}
+        />
+    );
+}
+
+function getJourneyTransfers(result: StudentPassResult | null, journeyMode: 'am' | 'pm') {
+    if (!result?.found) return [];
+    if (journeyMode === 'am') {
+        if (result.morningTransfers?.length) return result.morningTransfers;
+        if (result.morningTransfer) return [result.morningTransfer];
+        if (result.transfers?.length) return result.transfers;
+        if (result.transfer) return [result.transfer];
+        return [];
+    }
+    if (result.afternoonTransfers?.length) return result.afternoonTransfers;
+    if (result.afternoonTransfer) return [result.afternoonTransfer];
+    return [];
+}
+
 /** Compute a bounding box over a set of [lat, lng] points */
 function computeBounds(
     points: [number, number][],
@@ -121,15 +234,23 @@ export const StudentPassMap: React.FC<StudentPassMapProps> = ({
     school,
     result,
     journeyMode,
+    polygon,
+    zoneOrigin,
     zoneStops,
     selectedZoneStopId,
     onPolygonComplete,
     onPolygonClear,
     onZoneStopSelect,
+    onZoneOriginChange,
 }) => {
     const mapRef = useRef<MapRef>(null);
     const [mapStyle, setMapStyle] = useState('mapbox://styles/mapbox/dark-v11');
+    const [dragOrigin, setDragOrigin] = useState<[number, number] | null>(null);
     const isDark = mapStyle.includes('dark');
+    const stopLookup = useMemo(
+        () => new Map(getAllStopsWithCoords().map((stop) => [stop.stop_id, stop])),
+        []
+    );
 
     // DrawControl returns [lng, lat][]; flip to [lat, lng][] for the callback
     const handleCreate = useMemo(
@@ -145,6 +266,10 @@ export const StudentPassMap: React.FC<StudentPassMapProps> = ({
         },
         [onPolygonComplete],
     );
+
+    useEffect(() => {
+        setDragOrigin(null);
+    }, [zoneOrigin]);
 
     // Zone stops layer — empty until result is present (see comment in original)
     const zoneStopsGeoJSON = useMemo((): GeoJSON.FeatureCollection => {
@@ -236,17 +361,22 @@ export const StudentPassMap: React.FC<StudentPassMapProps> = ({
     // ── Transfer hub data ─────────────────────────────────────────────────────
 
     const transferHub = useMemo(() => {
-        if (!result?.found || result.isDirect || result.morningLegs.length < 2) return null;
-        const shapeA = result.routeShapes?.[0];
+        if (!result?.found) return null;
+        const routeShapes = journeyMode === 'am' ? result.routeShapes : result.afternoonRouteShapes;
+        const journeyLegs = journeyMode === 'am' ? result.morningLegs : result.afternoonLegs;
+        const journeyTransfers = getJourneyTransfers(result, journeyMode);
+        if (journeyLegs.length < 2) return null;
+        const shapeA = routeShapes?.[0];
         if (!shapeA || shapeA.points.length === 0) return null;
         const transferPt = shapeA.points[shapeA.points.length - 1];
-        const legA = result.morningLegs[0];
-        const legB = result.morningLegs[1];
-        const waitMin = result.transfer?.waitMinutes ?? '?';
-        const quality = result.transfer?.label ?? '';
-        const transferQualityColor = result.transfer?.color ?? '#F59E0B';
+        const legA = journeyLegs[0];
+        const legB = journeyLegs[1];
+        const primaryTransfer = journeyTransfers[0];
+        const waitMin = primaryTransfer?.waitMinutes ?? '?';
+        const quality = primaryTransfer?.label ?? '';
+        const transferQualityColor = primaryTransfer?.color ?? '#F59E0B';
         return { transferPt, legA, legB, waitMin, quality, transferQualityColor };
-    }, [result]);
+    }, [journeyMode, result]);
 
     // Travel time labels removed — timeline bar shows all durations
 
@@ -267,8 +397,9 @@ export const StudentPassMap: React.FC<StudentPassMapProps> = ({
         // Add school
         if (school) allPoints.push([school.lat, school.lon]);
 
-        // Add zone centroid
-        if (result.zoneCentroid) allPoints.push(result.zoneCentroid);
+        // Add the active home start point within the zone
+        if (zoneOrigin) allPoints.push(zoneOrigin);
+        else if (result.zoneCentroid) allPoints.push(result.zoneCentroid);
 
         const bounds = computeBounds(allPoints);
         if (!bounds) return;
@@ -281,33 +412,112 @@ export const StudentPassMap: React.FC<StudentPassMapProps> = ({
         }, 150);
 
         return () => clearTimeout(timer);
-    }, [result, school, journeyMode]);
+    }, [journeyMode, result, school, zoneOrigin]);
 
     const hasResult = Boolean(result?.found);
-
-    const centroidLng = result?.walkToStop?.fromLon;
-    const centroidLat = result?.walkToStop?.fromLat;
     const selectedZoneStop = useMemo(
         () => zoneStops.find((stop) => stop.stopId === selectedZoneStopId) ?? null,
         [selectedZoneStopId, zoneStops]
     );
+    const homeStartPoint = dragOrigin ?? zoneOrigin ?? result?.zoneCentroid ?? null;
+    const canDragHomePoint = Boolean(zoneOrigin && polygon);
+    const handleHomePointDrag = useMemo(
+        () => (event: MarkerDragEvent) => {
+            const { lat, lng } = event.lngLat;
+            setDragOrigin([lat, lng]);
+        },
+        []
+    );
+    const handleHomePointDragEnd = useMemo(
+        () => (event: MarkerDragEvent) => {
+            const { lat, lng } = event.lngLat;
+            const nextOrigin: [number, number] = [lat, lng];
+            setDragOrigin(null);
+            if (polygon && !isPointInPolygon(nextOrigin, polygon)) {
+                return;
+            }
+            onZoneOriginChange(nextOrigin);
+        },
+        [onZoneOriginChange, polygon]
+    );
+    const boardStop = useMemo<StopMarkerPoint | null>(() => {
+        if (!result?.found) return null;
+        if (journeyMode === 'am' && result.walkToStop) {
+            return {
+                lon: result.walkToStop.toLon,
+                lat: result.walkToStop.toLat,
+                stopName: result.morningLegs[0]?.fromStop,
+            };
+        }
+        if (journeyMode === 'pm') {
+            const stopId = result.afternoonLegs[0]?.fromStopId;
+            const stop = stopId ? stopLookup.get(stopId) : null;
+            if (stop) {
+                return {
+                    lon: stop.lon,
+                    lat: stop.lat,
+                    stopName: result.afternoonLegs[0]?.fromStop,
+                };
+            }
+            if (result.walkFromSchool) {
+                return {
+                    lon: result.walkFromSchool.toLon,
+                    lat: result.walkFromSchool.toLat,
+                    stopName: result.afternoonLegs[0]?.fromStop,
+                };
+            }
+        }
+        return null;
+    }, [journeyMode, result, stopLookup]);
+    const alightStop = useMemo<StopMarkerPoint | null>(() => {
+        if (!result?.found) return null;
+        if (journeyMode === 'am') {
+            const stopId = result.morningLegs[result.morningLegs.length - 1]?.toStopId;
+            const stop = stopId ? stopLookup.get(stopId) : null;
+            if (stop) {
+                return {
+                    lon: stop.lon,
+                    lat: stop.lat,
+                    stopName: result.morningLegs[result.morningLegs.length - 1]?.toStop,
+                };
+            }
+            if (result.walkToSchool) {
+                return {
+                    lon: result.walkToSchool.fromLon,
+                    lat: result.walkToSchool.fromLat,
+                    stopName: result.morningLegs[result.morningLegs.length - 1]?.toStop,
+                };
+            }
+        }
+        if (journeyMode === 'pm' && result.walkToZone) {
+            return {
+                lon: result.walkToZone.fromLon,
+                lat: result.walkToZone.fromLat,
+                stopName: result.afternoonLegs[result.afternoonLegs.length - 1]?.toStop,
+            };
+        }
+        return null;
+    }, [journeyMode, result, stopLookup]);
+    const showSelectedZoneStop = journeyMode === 'am';
 
     return (
         <div className="relative w-full h-full student-pass-dark student-pass-map">
             {/* ── Layer style toggle — positioned right of sidebar panel ── */}
             <div
-                className="absolute top-4 z-20 flex rounded-lg overflow-hidden"
-                style={{ left: 344, background: 'rgba(11, 17, 33, 0.85)', border: '1px solid rgba(99, 126, 184, 0.15)' }}
+                className="student-pass-export-hidden absolute top-4 z-20 flex rounded-lg overflow-hidden"
+                style={{ left: 344, background: 'var(--student-pass-panel)', border: '1px solid var(--student-pass-border)' }}
             >
                 <button
                     onClick={() => setMapStyle('mapbox://styles/mapbox/dark-v11')}
-                    className={`px-3 py-2 text-xs transition-colors ${isDark ? 'bg-blue-500/20 text-blue-400' : 'text-gray-400 hover:text-gray-300'}`}
+                    className={`px-3 py-2 text-xs transition-colors ${isDark ? 'text-sky-200' : 'text-slate-400 hover:text-slate-200'}`}
+                    style={{ background: isDark ? 'var(--student-pass-accent-soft)' : 'transparent' }}
                 >
                     <Moon size={14} />
                 </button>
                 <button
                     onClick={() => setMapStyle('mapbox://styles/mapbox/satellite-streets-v12')}
-                    className={`px-3 py-2 text-xs transition-colors ${!isDark ? 'bg-blue-500/20 text-blue-400' : 'text-gray-400 hover:text-gray-300'}`}
+                    className={`px-3 py-2 text-xs transition-colors ${!isDark ? 'text-sky-200' : 'text-slate-400 hover:text-slate-200'}`}
+                    style={{ background: !isDark ? 'var(--student-pass-accent-soft)' : 'transparent' }}
                 >
                     <Globe size={14} />
                 </button>
@@ -315,31 +525,34 @@ export const StudentPassMap: React.FC<StudentPassMapProps> = ({
 
             {zoneStops.length > 0 && (
                 <div
-                    className="absolute top-16 z-20 rounded-lg px-3 py-2 text-[11px] text-[#CBD5E1]"
+                    className="absolute top-16 z-20 rounded-lg px-2.5 py-1.5 flex items-center gap-3 text-[10px] text-[#CBD5E1]"
                     style={{
                         left: 344,
-                        background: 'rgba(11, 17, 33, 0.85)',
-                        border: '1px solid rgba(99, 126, 184, 0.15)',
+                        background: 'var(--student-pass-panel)',
+                        border: '1px solid var(--student-pass-border)',
                         fontFamily: "'JetBrains Mono', monospace",
                     }}
                 >
-                    <div className="flex items-center gap-2">
-                        <span className="inline-block w-2.5 h-2.5 rounded-full bg-[#3B82F6]" />
-                        <span>Zone stop</span>
-                    </div>
-                    <div className="flex items-center gap-2 mt-1">
-                        <span className="inline-block w-2.5 h-2.5 rounded-full bg-[#FCD34D]" />
-                        <span>Selected stop</span>
-                    </div>
-                    <div className="flex items-center gap-2 mt-1">
-                        <span className="inline-block w-2.5 h-2.5 rounded-full bg-[#475569]" />
-                        <span>No trip found</span>
-                    </div>
+                    <span className="flex items-center gap-1.5">
+                        <LegendDot fill="#56A6D5" size={8} />
+                        Has trips
+                    </span>
+                    {showSelectedZoneStop && (
+                        <span className="flex items-center gap-1.5">
+                            <LegendDot fill="#8FD0F6" size={8} />
+                            Selected
+                        </span>
+                    )}
+                    <span className="flex items-center gap-1.5">
+                        <LegendDot fill="#475569" size={8} />
+                        No trips
+                    </span>
                 </div>
             )}
 
             <MapBase
                 mapStyle={mapStyle}
+                preserveDrawingBuffer={true}
                 showNavigation={true}
                 showScale={true}
                 mapRef={mapRef}
@@ -359,7 +572,7 @@ export const StudentPassMap: React.FC<StudentPassMapProps> = ({
                             <div className="relative">
                                 <div
                                     className="absolute inset-0 -m-1 rounded-full"
-                                    style={{ width: 28, height: 28, background: 'rgba(16, 185, 129, 0.15)' }}
+                                    style={{ width: 28, height: 28, background: 'rgba(86, 166, 213, 0.16)' }}
                                 />
                                 <div
                                     style={{
@@ -367,14 +580,14 @@ export const StudentPassMap: React.FC<StudentPassMapProps> = ({
                                         height: 22,
                                         borderRadius: '50%',
                                         background: '#F9FAFB',
-                                        border: '3px solid #10B981',
-                                        boxShadow: '0 0 12px rgba(16, 185, 129, 0.4)',
+                                        border: '3px solid #005D95',
+                                        boxShadow: '0 0 12px rgba(86, 166, 213, 0.4)',
                                         display: 'flex',
                                         alignItems: 'center',
                                         justifyContent: 'center',
                                     }}
                                 >
-                                    <GraduationCap size={12} color="#10B981" />
+                                    <GraduationCap size={12} color="#005D95" />
                                 </div>
                             </div>
                         </Marker>
@@ -390,8 +603,9 @@ export const StudentPassMap: React.FC<StudentPassMapProps> = ({
                     <Layer {...ZONE_STOPS_LAYER} />
                 </Source>
                 {zoneStops.map((stop) => {
-                    const isSelected = stop.stopId === selectedZoneStopId;
+                    const isSelected = showSelectedZoneStop && stop.stopId === selectedZoneStopId;
                     const hasAnyService = stop.morningOptionCount > 0 || stop.afternoonOptionCount > 0;
+                    const fillColor = isSelected ? '#8FD0F6' : hasAnyService ? '#56A6D5' : '#4E6B82';
                     return (
                         <Marker key={stop.stopId} longitude={stop.lon} latitude={stop.lat} anchor="center">
                             <button
@@ -399,21 +613,12 @@ export const StudentPassMap: React.FC<StudentPassMapProps> = ({
                                 onClick={() => onZoneStopSelect(stop.stopId)}
                                 className="rounded-full transition-transform hover:scale-110"
                                 title={`${stop.stopName} — ${stop.morningOptionCount} AM / ${stop.afternoonOptionCount} PM options`}
-                                style={{
-                                    width: isSelected ? 18 : 14,
-                                    height: isSelected ? 18 : 14,
-                                    borderRadius: '50%',
-                                    background: isSelected ? '#FCD34D' : hasAnyService ? '#3B82F6' : '#475569',
-                                    border: '2px solid #fff',
-                                    boxShadow: isSelected
-                                        ? '0 0 14px rgba(252, 211, 77, 0.5)'
-                                        : '0 0 10px rgba(59, 130, 246, 0.35)',
-                                }}
+                                style={buildZoneStopMarkerStyle(fillColor, isSelected)}
                             />
                         </Marker>
                     );
                 })}
-                {selectedZoneStop && (
+                {showSelectedZoneStop && selectedZoneStop && (
                     <Marker longitude={selectedZoneStop.lon} latitude={selectedZoneStop.lat} anchor="bottom" offset={[0, -12]}>
                         <MapLabel
                             text={selectedZoneStop.stopName}
@@ -424,26 +629,45 @@ export const StudentPassMap: React.FC<StudentPassMapProps> = ({
                         />
                     </Marker>
                 )}
+                {!showSelectedZoneStop && alightStop?.stopName && (
+                    <Marker longitude={alightStop.lon} latitude={alightStop.lat} anchor="bottom" offset={[0, -12]}>
+                        <MapLabel
+                            text={alightStop.stopName}
+                            size="sm"
+                            bgColor="#0F172A"
+                            borderColor="rgba(56,189,248,0.8)"
+                            mono
+                        />
+                    </Marker>
+                )}
 
                 {/* ── Result-dependent layers — keyed to force clean remount on selection change ── */}
                 <React.Fragment key={resultKey}>
 
-                {/* ── Zone centroid marker — always visible when result exists ── */}
-                {hasResult && centroidLng !== undefined && centroidLat !== undefined && (
-                    <Marker longitude={centroidLng} latitude={centroidLat} anchor="center">
+                {/* ── Home start point marker — draggable inside the drawn zone ── */}
+                {homeStartPoint && (
+                    <Marker
+                        longitude={homeStartPoint[1]}
+                        latitude={homeStartPoint[0]}
+                        anchor="center"
+                        draggable={canDragHomePoint}
+                        onDrag={handleHomePointDrag}
+                        onDragEnd={handleHomePointDragEnd}
+                    >
                         <div className="relative">
                             <div
                                 className="absolute inset-0 -m-2 rounded-full animate-pulse"
-                                style={{ width: 32, height: 32, background: 'rgba(59, 130, 246, 0.2)' }}
+                                style={{ width: 32, height: 32, background: 'rgba(86, 166, 213, 0.2)' }}
                             />
                             <div
                                 style={{
                                     width: 16,
                                     height: 16,
                                     borderRadius: '50%',
-                                    background: '#3B82F6',
+                                    background: '#005D95',
                                     border: '2px solid #fff',
-                                    boxShadow: '0 0 12px rgba(59, 130, 246, 0.5)',
+                                    boxShadow: '0 0 12px rgba(86, 166, 213, 0.5)',
+                                    cursor: canDragHomePoint ? 'grab' : 'default',
                                 }}
                             />
                         </div>
@@ -460,21 +684,7 @@ export const StudentPassMap: React.FC<StudentPassMapProps> = ({
                                     <Layer {...walkLineLayer('walk-to-stop-line', '#94A3B8', 0.7, [4, 8])} />
                                 </Source>
                                 <Marker longitude={result.walkToStop.toLon} latitude={result.walkToStop.toLat} anchor="center">
-                                    <div
-                                        style={{
-                                            width: 18,
-                                            height: 18,
-                                            borderRadius: '50%',
-                                            background: '#10B981',
-                                            border: '3px solid #fff',
-                                            boxShadow: '0 0 12px rgba(16, 185, 129, 0.5)',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            justifyContent: 'center',
-                                        }}
-                                    >
-                                        <Bus size={10} color="#fff" />
-                                    </div>
+                                    <BoardStopMarker selectedZoneStop={showSelectedZoneStop ? selectedZoneStop : null} />
                                 </Marker>
                             </>
                         )}
@@ -508,80 +718,93 @@ export const StudentPassMap: React.FC<StudentPassMapProps> = ({
                             );
                         })}
 
-                        {/* Transfer hub (diamond + pulse rings + glass callout) */}
-                        {hasResult && transferHub && (() => {
-                            const [transferLng, transferLat] = toGeoJSON(transferHub.transferPt);
-                            return (
-                                <>
-                                    <Marker longitude={transferLng} latitude={transferLat} anchor="center">
-                                        <div className="relative flex items-center justify-center" style={{ width: 48, height: 48 }}>
-                                            <div
-                                                className="absolute rounded-full transfer-ring"
-                                                style={{ width: 40, height: 40, border: '2px solid #F59E0B' }}
-                                            />
-                                            <div
-                                                className="absolute rounded-full transfer-ring-delayed"
-                                                style={{ width: 40, height: 40, border: '2px solid #F59E0B' }}
-                                            />
-                                            <div
-                                                className="absolute rounded-full transfer-ring-delayed-2"
-                                                style={{ width: 40, height: 40, border: '2px solid #F59E0B' }}
-                                            />
-                                            <div
-                                                style={{
-                                                    width: 20,
-                                                    height: 20,
-                                                    transform: 'rotate(45deg)',
-                                                    borderRadius: 4,
-                                                    background: '#F59E0B',
-                                                    border: '2px solid #fff',
-                                                    boxShadow: '0 0 16px rgba(245, 158, 11, 0.6)',
-                                                }}
-                                            />
-                                        </div>
-                                    </Marker>
-                                    <Marker longitude={transferLng} latitude={transferLat} anchor="bottom" offset={[0, -28]}>
-                                        <div
-                                            className="rounded-md px-2.5 py-1.5 flex items-center gap-2"
-                                            style={{
-                                                background: 'rgba(11, 17, 33, 0.9)',
-                                                backdropFilter: 'blur(12px)',
-                                                border: `1px solid ${transferHub.transferQualityColor}44`,
-                                                fontFamily: "'JetBrains Mono', monospace",
-                                                boxShadow: `0 0 12px ${transferHub.transferQualityColor}33`,
-                                                pointerEvents: 'none',
-                                                whiteSpace: 'nowrap',
-                                            }}
-                                        >
-                                            <span className="text-[11px] font-semibold" style={{ color: transferHub.transferQualityColor }}>
-                                                {transferHub.waitMin}m
-                                            </span>
-                                            <span className="text-[11px] text-[#94A3B8]">
-                                                transfer
-                                            </span>
-                                        </div>
-                                    </Marker>
-                                </>
-                            );
-                        })()}
-
                         {/* Walk to school */}
                         {hasResult && walkToSchoolGeoJSON && result?.walkToSchool && (
-                            <Source id="walk-to-school" type="geojson" data={walkToSchoolGeoJSON}>
-                                <Layer {...walkLineLayer('walk-to-school-line', '#94A3B8', 0.7, [4, 8])} />
-                            </Source>
+                            <>
+                                <Source id="walk-to-school" type="geojson" data={walkToSchoolGeoJSON}>
+                                    <Layer {...walkLineLayer('walk-to-school-line', '#94A3B8', 0.7, [4, 8])} />
+                                </Source>
+                                {alightStop && (
+                                    <Marker longitude={alightStop.lon} latitude={alightStop.lat} anchor="center">
+                                        <AlightStopMarker />
+                                    </Marker>
+                                )}
+                            </>
                         )}
                     </>
                 )}
+
+                {hasResult && transferHub && (() => {
+                    const [transferLng, transferLat] = toGeoJSON(transferHub.transferPt);
+                    return (
+                        <>
+                            <Marker longitude={transferLng} latitude={transferLat} anchor="center">
+                                <div className="relative flex items-center justify-center" style={{ width: 48, height: 48 }}>
+                                    <div
+                                        className="absolute rounded-full transfer-ring"
+                                        style={{ width: 40, height: 40, border: '2px solid #F59E0B' }}
+                                    />
+                                    <div
+                                        className="absolute rounded-full transfer-ring-delayed"
+                                        style={{ width: 40, height: 40, border: '2px solid #F59E0B' }}
+                                    />
+                                    <div
+                                        className="absolute rounded-full transfer-ring-delayed-2"
+                                        style={{ width: 40, height: 40, border: '2px solid #F59E0B' }}
+                                    />
+                                    <div
+                                        style={{
+                                            width: 20,
+                                            height: 20,
+                                            transform: 'rotate(45deg)',
+                                            borderRadius: 4,
+                                            background: '#F59E0B',
+                                            border: '2px solid #fff',
+                                            boxShadow: '0 0 16px rgba(245, 158, 11, 0.6)',
+                                        }}
+                                    />
+                                </div>
+                            </Marker>
+                            <Marker longitude={transferLng} latitude={transferLat} anchor="bottom" offset={[0, -28]}>
+                                <div
+                                    className="rounded-md px-2.5 py-1.5 flex items-center gap-2"
+                                    style={{
+                                        background: 'var(--student-pass-panel-strong)',
+                                        backdropFilter: 'blur(12px)',
+                                        border: `1px solid ${transferHub.transferQualityColor}44`,
+                                        fontFamily: "'JetBrains Mono', monospace",
+                                        boxShadow: `0 0 12px ${transferHub.transferQualityColor}33`,
+                                        pointerEvents: 'none',
+                                        whiteSpace: 'nowrap',
+                                    }}
+                                >
+                                    <span className="text-[11px] font-semibold" style={{ color: transferHub.transferQualityColor }}>
+                                        {transferHub.waitMin}m
+                                    </span>
+                                    <span className="text-[11px] text-[#94A3B8]">
+                                        transfer
+                                    </span>
+                                </div>
+                            </Marker>
+                        </>
+                    );
+                })()}
 
                 {/* ═══ AFTERNOON RETURN TRIP ════════════════════════════════════════ */}
                 {journeyMode === 'pm' && (
                     <>
                         {/* Walk from school to afternoon boarding stop */}
                         {hasResult && walkFromSchoolGeoJSON && result?.walkFromSchool && (
-                            <Source id="walk-from-school" type="geojson" data={walkFromSchoolGeoJSON}>
-                                <Layer {...walkLineLayer('walk-from-school-line', '#94A3B8', 0.7, [4, 8])} />
-                            </Source>
+                            <>
+                                <Source id="walk-from-school" type="geojson" data={walkFromSchoolGeoJSON}>
+                                    <Layer {...walkLineLayer('walk-from-school-line', '#94A3B8', 0.7, [4, 8])} />
+                                </Source>
+                                {boardStop && (
+                                    <Marker longitude={boardStop.lon} latitude={boardStop.lat} anchor="center">
+                                        <BoardStopMarker selectedZoneStop={null} />
+                                    </Marker>
+                                )}
+                            </>
                         )}
 
                         {/* PM route shapes — full glow (same prominence as AM) */}
@@ -615,9 +838,16 @@ export const StudentPassMap: React.FC<StudentPassMapProps> = ({
 
                         {/* Walk from alighting stop to zone centroid */}
                         {hasResult && walkToZoneGeoJSON && (
-                            <Source id="walk-to-zone" type="geojson" data={walkToZoneGeoJSON}>
-                                <Layer {...walkLineLayer('walk-to-zone-line', '#94A3B8', 0.7, [4, 8])} />
-                            </Source>
+                            <>
+                                <Source id="walk-to-zone" type="geojson" data={walkToZoneGeoJSON}>
+                                    <Layer {...walkLineLayer('walk-to-zone-line', '#94A3B8', 0.7, [4, 8])} />
+                                </Source>
+                                {alightStop && (
+                                    <Marker longitude={alightStop.lon} latitude={alightStop.lat} anchor="center">
+                                        <AlightStopMarker />
+                                    </Marker>
+                                )}
+                            </>
                         )}
                     </>
                 )}

@@ -20,7 +20,8 @@ import {
     CheckCircle2,
 } from 'lucide-react';
 import type { ODMatrixDataSummary, GeocodeCache } from '../../utils/od-matrix/odMatrixTypes';
-import type { ODRouteEstimationResult } from '../../utils/od-matrix/odRouteEstimation';
+import { estimateRoutesFromGtfsTextFiles, type ODRouteEstimationResult } from '../../utils/od-matrix/odRouteEstimation';
+import { BUNDLED_OD_GTFS_FILE_NAME, loadBundledGtfsTextFiles } from '../../utils/od-matrix/odBundledGtfs';
 import { ODOverviewPanel } from './ODOverviewPanel';
 import { ODTopPairsModule } from './ODTopPairsModule';
 import { ODStationRankingsModule } from './ODStationRankingsModule';
@@ -72,12 +73,16 @@ export const ODMatrixWorkspace: React.FC<ODMatrixWorkspaceProps> = ({
     const mapElRef = useRef<HTMLDivElement | null>(null);
     const rankingsElRef = useRef<HTMLDivElement>(null);
     const heatmapElRef = useRef<HTMLDivElement>(null);
+    const manualRouteOverrideRef = useRef(false);
     const [exportingExcel, setExportingExcel] = useState(false);
     const [exportingPDF, setExportingPDF] = useState(false);
     const [exportingStop, setExportingStop] = useState(false);
     const [exportingStopPdf, setExportingStopPdf] = useState(false);
     const [isolatedStation, setIsolatedStation] = useState<string | null>(null);
     const [routeEstimation, setRouteEstimation] = useState<ODRouteEstimationResult | null>(null);
+    const [routeEstimationLoading, setRouteEstimationLoading] = useState(false);
+    const [routeEstimationError, setRouteEstimationError] = useState<string | null>(null);
+    const [routeEstimationFileName, setRouteEstimationFileName] = useState(BUNDLED_OD_GTFS_FILE_NAME);
     const confidenceReport = useMemo(() => computeODConfidenceReport(data), [data]);
     const savedAtLabel = useMemo(() => {
         const savedAt = new Date(data.metadata.importedAt);
@@ -95,9 +100,46 @@ export const ODMatrixWorkspace: React.FC<ODMatrixWorkspaceProps> = ({
         setIsolatedStation(station);
     }, []);
 
-    const handleRouteEstimationReady = useCallback((result: ODRouteEstimationResult) => {
+    const handleRouteEstimationReady = useCallback((result: ODRouteEstimationResult, fileName: string) => {
+        manualRouteOverrideRef.current = fileName !== BUNDLED_OD_GTFS_FILE_NAME;
         setRouteEstimation(result);
+        setRouteEstimationFileName(fileName);
+        setRouteEstimationError(null);
+        setRouteEstimationLoading(false);
     }, []);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        manualRouteOverrideRef.current = false;
+        setRouteEstimation(null);
+        setRouteEstimationLoading(true);
+        setRouteEstimationError(null);
+        setRouteEstimationFileName(BUNDLED_OD_GTFS_FILE_NAME);
+
+        (async () => {
+            try {
+                const gtfsFiles = await loadBundledGtfsTextFiles();
+                if (cancelled) return;
+                const estimation = estimateRoutesFromGtfsTextFiles(gtfsFiles, data);
+                if (!cancelled && !manualRouteOverrideRef.current) {
+                    setRouteEstimation(estimation);
+                    setRouteEstimationFileName(BUNDLED_OD_GTFS_FILE_NAME);
+                }
+            } catch (error) {
+                if (!cancelled) {
+                    setRouteEstimationError(error instanceof Error ? error.message : 'Failed to preload OD route estimation');
+                    console.error('Failed to preload OD route estimation:', error);
+                }
+            } finally {
+                if (!cancelled) {
+                    setRouteEstimationLoading(false);
+                }
+            }
+        })();
+
+        return () => { cancelled = true; };
+    }, [data]);
 
     const handleExportExcel = useCallback(async () => {
         setExportingExcel(true);
@@ -176,6 +218,8 @@ export const ODMatrixWorkspace: React.FC<ODMatrixWorkspaceProps> = ({
                         onMapElReady={(el) => { mapElRef.current = el; }}
                         onIsolatedStationChange={handleIsolatedStationChange}
                         isolatedStation={isolatedStation}
+                        routeEstimation={routeEstimation}
+                        routeEstimationLoading={routeEstimationLoading}
                     />
                 );
             case 'top-pairs':
@@ -185,7 +229,19 @@ export const ODMatrixWorkspace: React.FC<ODMatrixWorkspaceProps> = ({
             case 'heatmap':
                 return <ODHeatmapGridModule data={data} containerRef={heatmapElRef} onExportStopExcel={handleHeatmapStopExcel} onExportStopPdf={handleHeatmapStopPdf} />;
             case 'route-estimation':
-                return <ODRouteEstimationModule data={data} geocodeCache={geocodeCache} onResultReady={handleRouteEstimationReady} onExportStopExcel={handleHeatmapStopExcel} onExportStopPdf={handleHeatmapStopPdf} />;
+                return (
+                    <ODRouteEstimationModule
+                        data={data}
+                        geocodeCache={geocodeCache}
+                        routeEstimation={routeEstimation}
+                        routeEstimationLoading={routeEstimationLoading}
+                        routeEstimationError={routeEstimationError}
+                        routeEstimationFileName={routeEstimationFileName}
+                        onResultReady={handleRouteEstimationReady}
+                        onExportStopExcel={handleHeatmapStopExcel}
+                        onExportStopPdf={handleHeatmapStopPdf}
+                    />
+                );
             default:
                 return <ComingSoonPlaceholder />;
         }

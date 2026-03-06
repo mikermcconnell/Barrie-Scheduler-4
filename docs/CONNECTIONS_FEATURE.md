@@ -8,7 +8,7 @@ The Connections feature enables transit planners to define external services (GO
 
 - Times are stored as minutes from midnight in local service-day time (e.g., 7:45 AM = 465).
 - If after-midnight service is supported, represent times beyond 1440 (e.g., 25:15 = 1515) to keep ordering monotonic.
-- `DayType` values and holiday rules are shared with the schedule calendar (define in `utils/connectionTypes.ts`).
+- `DayType` values and holiday rules are shared with the schedule calendar (define in `utils/connections/connectionTypes.ts`).
 - This doc does not define route assignment, connection buffers, or optimization logic.
 
 ## Success Criteria
@@ -64,6 +64,9 @@ This ensures consistency because:
 teams/{teamId}/connectionLibrary/default → ConnectionLibrary (shared targets)
 ```
 
+This is the application document path used by `utils/connections/connectionLibraryService.ts`.
+The checked-in `firestore.rules` file does not currently declare a dedicated `connectionLibrary` match, so treat rules coverage for this path as something to verify explicitly.
+
 ### ConnectionTarget Structure
 
 ```typescript
@@ -83,7 +86,7 @@ teams/{teamId}/connectionLibrary/default → ConnectionLibrary (shared targets)
 
 Notes:
 - If `type = 'manual'`, `times` is required and should include day-of-week applicability.
-- If `type = 'route'`, define route-linkage fields (e.g., `routeId`, `direction`, `timepointStopCode`) in `utils/connectionTypes.ts` and document them here.
+- If `type = 'route'`, define route-linkage fields (e.g., `routeId`, `direction`, `timepointStopCode`) in `utils/connections/connectionTypes.ts` and document them here.
 - `stopCode` is required for matching; `stopName` is display-only.
 
 ### ConnectionTime Structure
@@ -135,8 +138,8 @@ Notes:
 
 | Purpose | File |
 |---------|------|
-| Type definitions | `utils/connectionTypes.ts` |
-| Firebase service | `utils/connectionLibraryService.ts` |
+| Type definitions | `utils/connections/connectionTypes.ts` |
+| Firebase service | `utils/connections/connectionLibraryService.ts` |
 | Main panel (Editor) | `components/connections/ConnectionsPanel.tsx` |
 | Library UI | `components/NewSchedule/connections/ConnectionLibraryPanel.tsx` |
 | Add target modal | `components/NewSchedule/connections/AddTargetModal.tsx` |
@@ -151,8 +154,8 @@ Notes:
 
 ### Untested Areas
 
-No connection-specific test coverage exists in `tests/`. Priority test targets:
-- `utils/connectionUtils.ts` - day filtering, stop-code matching
+There is baseline utility coverage in `tests/connectionUtils.test.ts`, but important gaps remain:
+- `utils/connections/connectionUtils.ts` - broaden day filtering and stop-code matching cases
 - `AddTargetModal.tsx` - validation (required stop code, unique name, enabled time/day)
 - Panel → Editor sync (C7 regression guard)
 

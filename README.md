@@ -14,7 +14,7 @@ Generate, edit, and publish fixed-route bus schedules with:
 
 | Layer | Technology |
 |-------|------------|
-| Frontend | React 18 + TypeScript + Vite |
+| Frontend | React 19 + TypeScript + Vite |
 | Styling | Tailwind CSS |
 | Database | Firebase Firestore |
 | Storage | Firebase Storage |
@@ -23,38 +23,43 @@ Generate, edit, and publish fixed-route bus schedules with:
 
 ## Quick Start
 
-```bash
+```powershell
 npm install
-cp .env.local.example .env.local  # Add your API keys
+Copy-Item .env.example .env.local
+# Edit .env.local and set GEMINI_API_KEY
+# Optional: set VITE_MAPBOX_TOKEN for map features
 npm run dev
 ```
 
 ## Project Structure
 
 ```
-├── components/
-│   ├── NewSchedule/          # Schedule creation wizard
-│   ├── ScheduleEditor.tsx    # Main schedule editing view
-│   └── MasterScheduleBrowser.tsx
-├── utils/
-│   ├── scheduleGenerator.ts  # Trip generation logic
-│   ├── masterScheduleParserV2.ts  # Excel parsing
-│   └── blockAssignment.ts    # Vehicle block linking
-├── api/
-│   └── optimize.ts           # AI optimization endpoint
-└── docs/                     # Architecture & specs
+├── components/              # React UI and workspace modules
+├── utils/                   # Domain logic, parsers, services, config
+├── functions/               # Firebase Functions and ops scripts
+├── tests/                   # Vitest coverage
+├── docs/                    # Durable docs, runbooks, plans, archive
+└── .claude/                 # Repo workflow and compatibility context
 ```
+
+Detailed file ownership lives in `docs/ARCHITECTURE.md`. Use the summary above only as a starting point.
 
 ## Documentation
 
-- [Architecture](docs/ARCHITECTURE.md) - System design and data model
-- [Implementation Plan](docs/IMPLEMENTATION_PLAN.md) - Development roadmap
+- [Context Index](docs/CONTEXT_INDEX.md) - Start here for repository context and load order
+- [Locked Logic](docs/rules/LOCKED_LOGIC.md) - Durable behavioral constraints
+- [.claude/CLAUDE.md](.claude/CLAUDE.md) - Repo workflow, verification expectations, and danger zones
+- [Architecture](docs/ARCHITECTURE.md) - System design and source file layout
+- [Schema](docs/SCHEMA.md) - Firestore, storage, and type-location reference
+- [Implementation Plan](docs/IMPLEMENTATION_PLAN.md) - Roadmap and status tracking
+- [Plans Directory](docs/plans/README.md) - Archive and working plans, not default context
+- [Archive](docs/archive/README.md) - Historical notes that should not drive current implementation
 
 ## Routes Supported
 
 | Route | Type | Description |
 |-------|------|-------------|
-| 400 | Linear | RVH ↔ Park Place |
+| 400 | Linear | Explicit North/South service between RVH and Park Place |
 | 2, 7, 12 | Linear | A/B directions |
 | 8A, 8B | Linear | Route variants |
 | 10, 11, 100, 101 | Loop | Circular routes |
