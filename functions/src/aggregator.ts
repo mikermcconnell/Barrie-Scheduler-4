@@ -5,7 +5,8 @@ import {
   RouteLoadProfile, LoadProfileStop, DataQuality, OTPBreakdown,
   classifyOTP, PERFORMANCE_SCHEMA_VERSION, DEFAULT_LOAD_CAP,
   OperatorDwellMetrics, DwellIncident, OperatorDwellSummary,
-  classifyDwell, DWELL_THRESHOLDS, DwellSeverity,
+  classifyDwell, DWELL_THRESHOLDS,
+  RouteHourMetrics,
 } from './types';
 import { buildDailyCascadeMetrics } from './dwellCascadeComputer';
 
@@ -306,6 +307,44 @@ function buildHourMetrics(records: STREETSRecord[]): HourMetrics[] {
   }
 
   return results.sort((a, b) => a.hour - b.hour);
+}
+
+function buildRouteHourMetrics(records: STREETSRecord[]): RouteHourMetrics[] {
+  const byRouteHour = groupBy(records, r => {
+    const h = parseInt(r.arrivalTime.split(':')[0], 10);
+    return `${r.routeId}||${h}`;
+  });
+
+  const results: RouteHourMetrics[] = [];
+
+  for (const [key, recs] of byRouteHour) {
+    const [routeId, hourStr] = key.split('||');
+    const hour = parseInt(hourStr, 10);
+    let boardings = 0;
+    let loadSum = 0;
+    let loadCount = 0;
+
+    for (const r of recs) {
+      boardings += r.boardings;
+      if (isLoadReliable(r)) {
+        loadSum += r.departureLoad;
+        loadCount++;
+      }
+    }
+
+    results.push({
+      routeId,
+      hour,
+      avgLoad: safeDivide(loadSum, loadCount),
+      boardings,
+    });
+  }
+
+  return results.sort((a, b) => {
+    const cmp = a.routeId.localeCompare(b.routeId, undefined, { numeric: true });
+    if (cmp !== 0) return cmp;
+    return a.hour - b.hour;
+  });
 }
 
 function buildStopMetrics(records: STREETSRecord[]): StopMetrics[] {
@@ -719,6 +758,7 @@ function aggregateSingleDay(date: string, records: STREETSRecord[]): DailySummar
     loadProfiles: buildLoadProfiles(records),
     byOperatorDwell: dwellMetrics,
     byCascade: buildDailyCascadeMetrics(records, dwellMetrics.incidents.filter(i => i.severity !== 'minor')),
+    byRouteHour: buildRouteHourMetrics(records),
     dataQuality: buildDataQuality(records, sanitization),
     schemaVersion: PERFORMANCE_SCHEMA_VERSION,
   };

@@ -263,6 +263,13 @@ export interface HourMetrics {
   avgLoad: number;
 }
 
+export interface RouteHourMetrics {
+  routeId: string;
+  hour: number;        // 0-23
+  avgLoad: number;
+  boardings: number;
+}
+
 export interface StopMetrics {
   stopName: string;
   stopId: string;
@@ -364,11 +371,12 @@ export interface DailySummary {
   };
   byOperatorDwell?: OperatorDwellMetrics;
   byCascade?: DailyCascadeMetrics;
+  byRouteHour?: RouteHourMetrics[];
   dataQuality: DataQuality;
   schemaVersion: number;
 }
 
-export const PERFORMANCE_SCHEMA_VERSION = 3;
+export const PERFORMANCE_SCHEMA_VERSION = 5;
 
 export interface PerformanceDataSummary {
   dailySummaries: DailySummary[];

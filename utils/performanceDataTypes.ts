@@ -291,6 +291,13 @@ export interface HourMetrics {
   avgLoad: number;
 }
 
+export interface RouteHourMetrics {
+  routeId: string;
+  hour: number;        // 0-23
+  avgLoad: number;
+  boardings: number;
+}
+
 export interface StopRouteBreakdown {
   routeId: string;
   boardings: number;
@@ -446,11 +453,12 @@ export interface DailySummary {
   byCascade?: DailyCascadeMetrics;
   segmentRuntimes?: DailySegmentRuntimes;
   routeStopDeviations?: RouteStopDeviationProfile[];
+  byRouteHour?: RouteHourMetrics[];
   dataQuality: DataQuality;
   schemaVersion: number;
 }
 
-export const PERFORMANCE_SCHEMA_VERSION = 4;
+export const PERFORMANCE_SCHEMA_VERSION = 5;
 
 // ─── Multi-Day Summary (for trend views) ────────────────────────────
 

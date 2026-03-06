@@ -25,6 +25,7 @@ import {
     getSchedule
 } from '../../utils/services/dataService';
 import { generateRideCoCSV, downloadCSV } from '../../utils/services/exportService';
+import { exportTODPaddlesPDF } from '../../utils/services/paddleExportService';
 import { SummaryMetrics, Shift, Requirement, Zone, ZoneFilterType } from '../../utils/demandTypes';
 import {
     Wand2, Users, BarChart3, Sparkles, AlertTriangle, Loader2,
@@ -768,7 +769,22 @@ export const OnDemandWorkspace: React.FC = () => {
                                 title={`Export all ${allShifts.length} shifts as RideCo Template`}
                             >
                                 <CloudDownload size={14} className="rotate-180" />
-                                Export
+                                Export CSV
+                            </button>
+                            <div className="w-px h-4 bg-gray-200"></div>
+                            <button
+                                onClick={async () => {
+                                    await exportTODPaddlesPDF(allShifts);
+                                }}
+                                disabled={allShifts.length === 0}
+                                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${allShifts.length === 0
+                                    ? 'text-gray-300 cursor-not-allowed'
+                                    : 'text-gray-500 hover:text-gray-900 hover:bg-white hover:shadow-sm'
+                                    }`}
+                                title={`Export ${allShifts.length} paddles as PDF`}
+                            >
+                                <CloudDownload size={14} />
+                                Paddles PDF
                             </button>
                             <div className="w-px h-4 bg-gray-200"></div>
                             <button
