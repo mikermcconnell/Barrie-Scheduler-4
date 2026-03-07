@@ -15,6 +15,8 @@ import type {
   NearbyStop,
   ServiceCalendar,
   CalendarEntry,
+  GtfsRoute,
+  RoutePattern,
 } from './types';
 
 /**
@@ -53,7 +55,8 @@ function getCalendarSpan(calendar: CalendarEntry[]): { referenceDate: Date; days
  */
 export function buildStopDeparturesIndex(
   stopTimes: GtfsStopTime[],
-  trips: GtfsTrip[]
+  trips: GtfsTrip[],
+  tripPatternIndex: Record<string, string> = {}
 ): Record<string, Departure[]> {
   const index: Record<string, Departure[]> = {};
 
@@ -77,6 +80,7 @@ export function buildStopDeparturesIndex(
       routeId: trip.routeId,
       serviceId: trip.serviceId,
       directionId: trip.directionId,
+      patternId: tripPatternIndex[st.tripId] ?? st.tripId,
       headsign: trip.headsign,
       departureTime: st.departureTime,
       arrivalTime: st.arrivalTime,
@@ -94,14 +98,18 @@ export function buildStopDeparturesIndex(
 }
 
 /**
- * Build route stop sequences.
- * Maps each route+direction to an ordered list of stop IDs.
+ * Build route patterns.
+ * Maps each route+direction to all unique stop patterns operated by trips.
  */
-export function buildRouteStopSequences(
+export function buildRoutePatterns(
   stopTimes: GtfsStopTime[],
   trips: GtfsTrip[]
-): Record<string, Record<string, string[]>> {
-  const sequences: Record<string, Record<string, string[]>> = {};
+): {
+  routePatterns: Record<string, Record<string, RoutePattern[]>>;
+  tripPatternIndex: Record<string, string>;
+} {
+  const routePatterns: Record<string, Record<string, RoutePattern[]>> = {};
+  const tripPatternIndex: Record<string, string> = {};
 
   const tripMap: Record<string, GtfsTrip> = {};
   for (const trip of trips) {
@@ -120,7 +128,7 @@ export function buildRouteStopSequences(
     });
   }
 
-  // For each trip, extract the stop sequence (first trip per route-direction is canonical)
+  // For each trip, capture its exact stop pattern.
   for (const tripId of Object.keys(tripStops)) {
     const trip = tripMap[tripId];
     if (!trip) continue;
@@ -131,15 +139,34 @@ export function buildRouteStopSequences(
     tripStops[tripId].sort((a, b) => a.sequence - b.sequence);
     const stopSequence = tripStops[tripId].map((s) => s.stopId);
 
-    if (!sequences[routeId]) {
-      sequences[routeId] = {};
+    if (!routePatterns[routeId]) {
+      routePatterns[routeId] = {};
     }
-    if (!sequences[routeId][directionId]) {
-      sequences[routeId][directionId] = stopSequence;
+    if (!routePatterns[routeId][directionId]) {
+      routePatterns[routeId][directionId] = [];
     }
+
+    const signature = stopSequence.join('>');
+    let pattern = routePatterns[routeId][directionId].find(
+      (existing) => existing.stopSequence.join('>') === signature
+    );
+
+    if (!pattern) {
+      pattern = {
+        patternId: `${routeId}_${directionId}_${routePatterns[routeId][directionId].length}`,
+        routeId,
+        directionId: trip.directionId,
+        stopSequence,
+        tripIds: [],
+      };
+      routePatterns[routeId][directionId].push(pattern);
+    }
+
+    pattern.tripIds.push(tripId);
+    tripPatternIndex[tripId] = pattern.patternId;
   }
 
-  return sequences;
+  return { routePatterns, tripPatternIndex };
 }
 
 /**
@@ -242,6 +269,15 @@ export function buildTripIndex(trips: GtfsTrip[]): Record<string, GtfsTrip> {
   return index;
 }
 
+/** Build route index for fast lookup by routeId */
+export function buildRouteIndex(routes: GtfsRoute[]): Record<string, GtfsRoute> {
+  const index: Record<string, GtfsRoute> = {};
+  for (const route of routes) {
+    index[route.routeId] = route;
+  }
+  return index;
+}
+
 /** Build stop index for fast lookup by stopId */
 export function buildStopIndex(stops: GtfsStop[]): Record<string, GtfsStop> {
   const index: Record<string, GtfsStop> = {};
@@ -303,12 +339,13 @@ export function buildTripStopTimesIndex(
 
 /** Build complete routing data structures from GTFS data */
 export function buildRoutingData(gtfsData: GtfsData): RoutingData {
-  const { stops, trips, stopTimes, calendar, calendarDates } = gtfsData;
+  const { stops, trips, stopTimes, routes, calendar, calendarDates } = gtfsData;
 
-  const stopDepartures = buildStopDeparturesIndex(stopTimes, trips);
-  const routeStopSequences = buildRouteStopSequences(stopTimes, trips);
+  const { routePatterns, tripPatternIndex } = buildRoutePatterns(stopTimes, trips);
+  const stopDepartures = buildStopDeparturesIndex(stopTimes, trips, tripPatternIndex);
   const transfers = buildTransferGraph(stops);
   const tripIndex = buildTripIndex(trips);
+  const routeIndex = buildRouteIndex(routes);
   const stopIndex = buildStopIndex(stops);
   const stopRoutes = buildStopRoutesIndex(stopDepartures);
 
@@ -321,9 +358,11 @@ export function buildRoutingData(gtfsData: GtfsData): RoutingData {
 
   return {
     stopDepartures,
-    routeStopSequences,
+    routePatterns,
     transfers,
     tripIndex,
+    routeIndex,
+    tripPatternIndex,
     stopIndex,
     stopRoutes,
     serviceCalendar,
@@ -331,6 +370,7 @@ export function buildRoutingData(gtfsData: GtfsData): RoutingData {
     tripStopTimes,
     stops,
     trips,
+    routes,
     stopTimes,
   };
 }
@@ -350,7 +390,11 @@ export function getDeparturesAfter(
   const results: Departure[] = [];
 
   for (const dep of departures) {
-    if (dep.departureTime >= afterTime && activeServices.has(dep.serviceId)) {
+    if (
+      dep.departureTime >= afterTime &&
+      activeServices.has(dep.serviceId) &&
+      (dep.pickupType ?? 0) === 0
+    ) {
       results.push(dep);
       if (results.length >= limit) break;
     }
@@ -375,7 +419,8 @@ export function getNextDepartureForRoute(
     if (
       dep.departureTime >= afterTime &&
       dep.routeId === routeId &&
-      activeServices.has(dep.serviceId)
+      activeServices.has(dep.serviceId) &&
+      (dep.pickupType ?? 0) === 0
     ) {
       return dep;
     }

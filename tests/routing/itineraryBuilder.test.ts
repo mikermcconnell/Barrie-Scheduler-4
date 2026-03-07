@@ -91,6 +91,31 @@ function buildTestRoutingData(config: {
 // ─── Tests ───────────────────────────────────────────────────────────
 
 describe('Itinerary Builder', () => {
+  describe('direct walk result', () => {
+    it('builds a single walk leg when RAPTOR returns a walk-only result', () => {
+      const routingData = buildTestRoutingData({
+        stops: [STOPS.A, STOPS.B],
+        trips: [],
+        stopTimes: [],
+      });
+
+      const result: RaptorResult = {
+        destinationStopId: '',
+        walkToDestSeconds: 180,
+        arrivalTime: 28980,
+        path: [],
+        directWalkMeters: 220,
+      };
+
+      const itin = buildItinerary(result, routingData, DATE, 44.391, -79.701, 44.389, -79.699);
+
+      expect(itin.legs).toHaveLength(1);
+      expect(itin.legs[0].mode).toBe('WALK');
+      expect(itin.duration).toBe(180);
+      expect(itin.walkDistance).toBe(220);
+    });
+  });
+
   describe('walk-only itinerary', () => {
     it('produces a walk-only itinerary when path has no transit', () => {
       const routingData = buildTestRoutingData({

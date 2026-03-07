@@ -117,6 +117,7 @@ function loadStopTimes(): GtfsStopTime[] {
   const stopIdx = hdr.get('stop_id') ?? -1;
   const seqIdx = hdr.get('stop_sequence') ?? -1;
   const pickupIdx = hdr.get('pickup_type') ?? -1;
+  const dropOffIdx = hdr.get('drop_off_type') ?? -1;
 
   const results: GtfsStopTime[] = [];
   for (let i = 1; i < lines.length; i++) {
@@ -135,8 +136,17 @@ function loadStopTimes(): GtfsStopTime[] {
     const departureTime = depStr ? parseTimeToSeconds(depStr) : arrivalTime;
     const stopSequence = parseInt(cols[seqIdx], 10) || 0;
     const pickupType = pickupIdx >= 0 ? parseInt(cols[pickupIdx], 10) || 0 : undefined;
+    const dropOffType = dropOffIdx >= 0 ? parseInt(cols[dropOffIdx], 10) || 0 : undefined;
 
-    results.push({ tripId, stopId, arrivalTime, departureTime, stopSequence, pickupType });
+    results.push({
+      tripId,
+      stopId,
+      arrivalTime,
+      departureTime,
+      stopSequence,
+      pickupType,
+      dropOffType,
+    });
   }
   return results;
 }

@@ -51,6 +51,10 @@
     font-size: 10px;
 }
 
+.student-pass-map .mapboxgl-ctrl-top-right {
+    top: 52px;
+}
+
 .student-pass-export-map .student-pass-export-hidden,
 .student-pass-export-map .mapboxgl-ctrl-top-right,
 .student-pass-export-map .mapboxgl-ctrl-bottom-right,
@@ -58,16 +62,10 @@
     display: none !important;
 }
 
-/* ── Export-time readability: scale up HTML overlays for print ────────── */
+/* ── Export-time overlays: no extra scaling — the map image is already ──
+   scaled to fill the PDF page width, so labels render at proper size.  */
 .student-pass-export-map .mapboxgl-marker {
     transform-origin: center center;
-}
-
-/* Larger map labels for print */
-.student-pass-export-map [class*="MapLabel"] > div,
-.student-pass-export-map .mapboxgl-marker > div > div[style*="border"] {
-    transform: scale(1.4);
-    transform-origin: center bottom;
 }
 
 /* Transfer hub pulse rings */

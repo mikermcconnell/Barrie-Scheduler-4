@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildStopDeparturesIndex,
-  buildRouteStopSequences,
+  buildRoutePatterns,
   buildTransferGraph,
   buildStopIndex,
   buildTripIndex,
@@ -80,13 +80,34 @@ describe('routingDataService', () => {
     });
   });
 
-  describe('buildRouteStopSequences', () => {
-    it('builds ordered stop lists per route-direction', () => {
-      const sequences = buildRouteStopSequences(STOP_TIMES, TRIPS);
+  describe('buildRoutePatterns', () => {
+    it('builds ordered stop lists per route-direction pattern', () => {
+      const { routePatterns } = buildRoutePatterns(STOP_TIMES, TRIPS);
 
-      expect(sequences['R1']['0']).toEqual(['S1', 'S2', 'S3']); // direction 0
-      expect(sequences['R1']['1']).toEqual(['S3', 'S2', 'S1']); // direction 1
-      expect(sequences['R2']['0']).toEqual(['S3', 'S4']);
+      expect(routePatterns['R1']['0']).toHaveLength(1);
+      expect(routePatterns['R1']['0'][0].stopSequence).toEqual(['S1', 'S2', 'S3']);
+      expect(routePatterns['R1']['1'][0].stopSequence).toEqual(['S3', 'S2', 'S1']);
+      expect(routePatterns['R2']['0'][0].stopSequence).toEqual(['S3', 'S4']);
+    });
+
+    it('retains multiple patterns for the same route-direction', () => {
+      const variantTrips: GtfsTrip[] = [
+        { tripId: 'V1', routeId: 'R9', serviceId: 'WKD', directionId: 0, headsign: 'Branch A' },
+        { tripId: 'V2', routeId: 'R9', serviceId: 'WKD', directionId: 0, headsign: 'Branch B' },
+      ];
+      const variantStopTimes: GtfsStopTime[] = [
+        { tripId: 'V1', stopId: 'S1', arrivalTime: 21600, departureTime: 21600, stopSequence: 1 },
+        { tripId: 'V1', stopId: 'S2', arrivalTime: 21900, departureTime: 21900, stopSequence: 2 },
+        { tripId: 'V1', stopId: 'S3', arrivalTime: 22200, departureTime: 22200, stopSequence: 3 },
+        { tripId: 'V2', stopId: 'S1', arrivalTime: 25200, departureTime: 25200, stopSequence: 1 },
+        { tripId: 'V2', stopId: 'S4', arrivalTime: 25500, departureTime: 25500, stopSequence: 2 },
+        { tripId: 'V2', stopId: 'S3', arrivalTime: 25800, departureTime: 25800, stopSequence: 3 },
+      ];
+
+      const { routePatterns, tripPatternIndex } = buildRoutePatterns(variantStopTimes, variantTrips);
+
+      expect(routePatterns['R9']['0']).toHaveLength(2);
+      expect(new Set(Object.values(tripPatternIndex))).toHaveLength(2);
     });
   });
 

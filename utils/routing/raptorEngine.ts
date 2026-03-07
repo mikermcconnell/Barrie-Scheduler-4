@@ -4,7 +4,7 @@
 import { ROUTING_CONFIG } from './constants';
 import { haversineDistance } from './geometryUtils';
 import { getActiveServicesForDate } from './calendarService';
-import { findNearbyStops, getDeparturesAfter } from './routingDataService';
+import { findNearbyStops } from './routingDataService';
 import type {
   RoutingData,
   PlanTripOptions,
@@ -42,7 +42,7 @@ function raptorForward(
   activeServices: Set<string>,
   excludeTrips: Set<string> = new Set()
 ): RaptorResult[] {
-  const { stopDepartures, transfers, routeStopSequences, stopTimesIndex, tripStopTimes } = routingData;
+  const { stopDepartures, transfers, routePatterns, tripStopTimes } = routingData;
   const maxRounds = ROUTING_CONFIG.MAX_TRANSFERS + 1;
   const maxTime = departureTime + ROUTING_CONFIG.TIME_WINDOW;
 
@@ -102,78 +102,75 @@ function raptorForward(
 
     for (const routeKey of routesToScan) {
       const [routeId, directionId] = routeKey.split('_');
-      const stopSequence = routeStopSequences[routeId]?.[directionId];
-      if (!stopSequence || stopSequence.length === 0) continue;
+      const patterns = routePatterns[routeId]?.[directionId] || [];
+      if (patterns.length === 0) continue;
 
-      // Find earliest boarding point on this route
-      let currentTrip: string | null = null;
-      let currentTripStops: GtfsStopTime[] | null = null;
-      let boardingStopId: string | null = null;
-      let boardingTime = 0;
-      let boardingSeqIdx = -1; // position in currentTripStops where we boarded
-      let boardingDep: { headsign: string; directionId: number } | null = null;
+      for (const pattern of patterns) {
+        const stopSequence = pattern.stopSequence;
+        let currentTrip: string | null = null;
+        let currentTripStops: GtfsStopTime[] | null = null;
+        let boardingStopId: string | null = null;
+        let boardingTime = 0;
+        let boardingSeqIdx = -1;
+        let boardingDep: { headsign: string; directionId: number } | null = null;
 
-      for (let seqPos = 0; seqPos < stopSequence.length; seqPos++) {
-        const stopId = stopSequence[seqPos];
+        for (let seqPos = 0; seqPos < stopSequence.length; seqPos++) {
+          const stopId = stopSequence[seqPos];
 
-        // Check if we can alight here (only if we boarded a trip)
-        if (currentTrip && currentTripStops && boardingSeqIdx >= 0) {
-          // Find this stop in the trip's stop times AFTER the boarding position
-          const arrivalTime = getTripArrivalAtStopAfter(
-            currentTripStops,
-            stopId,
-            boardingSeqIdx
-          );
+          if (currentTrip && currentTripStops && boardingSeqIdx >= 0) {
+            const alightingStopTime = getTripStopAfter(currentTripStops, stopId, boardingSeqIdx);
+            const arrivalTime = alightingStopTime?.arrivalTime ?? null;
 
-          if (arrivalTime !== null && arrivalTime < maxTime && arrivalTime >= boardingTime) {
-            // Can we improve the best known arrival at this stop?
-            if (arrivalTime < (bestArrival[stopId] ?? Infinity)) {
-              bestArrival[stopId] = arrivalTime;
-              roundArrival[k][stopId] = arrivalTime;
-              labels[k][stopId] = {
-                type: 'TRANSIT',
-                tripId: currentTrip,
-                routeId,
-                directionId: Number(directionId),
-                headsign: boardingDep?.headsign ?? '',
-                boardingStopId: boardingStopId!,
-                boardingTime,
-              };
-              newMarkedStops.add(stopId);
+            if (arrivalTime !== null && arrivalTime < maxTime && arrivalTime >= boardingTime) {
+              if (arrivalTime < (bestArrival[stopId] ?? Infinity)) {
+                bestArrival[stopId] = arrivalTime;
+                roundArrival[k][stopId] = arrivalTime;
+                labels[k][stopId] = {
+                  type: 'TRANSIT',
+                  tripId: currentTrip,
+                  routeId,
+                  directionId: Number(directionId),
+                  headsign: boardingDep?.headsign ?? '',
+                  boardingStopId: boardingStopId!,
+                  boardingTime,
+                };
+                newMarkedStops.add(stopId);
+              }
             }
           }
-        }
 
-        // Check if we can board a trip at this stop
-        const prevArrival = roundArrival[k - 1][stopId];
-        if (prevArrival !== undefined) {
-          const departure = getNextDepartureForRouteDirection(
-            stopDepartures,
-            stopId,
-            routeId,
-            Number(directionId),
-            prevArrival,
-            activeServices,
-            excludeTrips
-          );
+          const prevArrival = roundArrival[k - 1][stopId];
+          if (prevArrival !== undefined) {
+            const departure = getNextDepartureForRouteDirection(
+              stopDepartures,
+              stopId,
+              routeId,
+              Number(directionId),
+              pattern.patternId,
+              prevArrival,
+              activeServices,
+              excludeTrips
+            );
 
-          if (departure) {
-            // Board this trip if it's earlier than current trip at this stop
-            if (!currentTrip || departure.departureTime < boardingTime) {
-              currentTrip = departure.tripId;
-              currentTripStops = tripStopTimes[departure.tripId] || null;
-              boardingStopId = stopId;
-              boardingTime = departure.departureTime;
-              // Find the boarding position in the trip's stop times
-              boardingSeqIdx = currentTripStops
-                ? currentTripStops.findIndex(
-                    (st) => st.stopId === stopId && st.departureTime >= prevArrival
-                  )
-                : -1;
-              boardingDep = {
-                headsign: departure.headsign,
-                directionId: departure.directionId,
-              };
+            if (departure) {
+              if (!currentTrip || departure.departureTime < boardingTime) {
+                currentTrip = departure.tripId;
+                currentTripStops = tripStopTimes[departure.tripId] || null;
+                boardingStopId = stopId;
+                boardingTime = departure.departureTime;
+                boardingSeqIdx = currentTripStops
+                  ? currentTripStops.findIndex(
+                      (st) =>
+                        st.stopId === stopId &&
+                        st.departureTime >= prevArrival &&
+                        isPickupAllowed(st.pickupType)
+                    )
+                  : -1;
+                boardingDep = {
+                  headsign: departure.headsign,
+                  directionId: departure.directionId,
+                };
+              }
             }
           }
         }
@@ -192,7 +189,7 @@ function raptorForward(
         if (arrivalAtStop === undefined) continue;
 
         const walkTime = Math.max(transfer.walkSeconds, ROUTING_CONFIG.MIN_TRANSFER_TIME);
-        const arrivalAfterTransfer = arrivalAtStop + walkTime + ROUTING_CONFIG.TRANSFER_PENALTY;
+        const arrivalAfterTransfer = arrivalAtStop + walkTime;
 
         if (arrivalAfterTransfer >= maxTime) continue;
 
@@ -266,6 +263,7 @@ function getNextDepartureForRouteDirection(
   stopId: string,
   routeId: string,
   directionId: number,
+  patternId: string,
   afterTime: number,
   activeServices: Set<string>,
   excludeTrips: Set<string>
@@ -276,8 +274,10 @@ function getNextDepartureForRouteDirection(
     if (dep.departureTime < afterTime) continue;
     if (dep.routeId !== routeId) continue;
     if (dep.directionId !== directionId) continue;
+    if (dep.patternId !== patternId) continue;
     if (!activeServices.has(dep.serviceId)) continue;
     if (excludeTrips.has(dep.tripId)) continue;
+    if (!isPickupAllowed(dep.pickupType)) continue;
     return dep;
   }
 
@@ -302,14 +302,14 @@ function getTripArrivalAtStop(
  * Get the arrival time at a stop AFTER a given boarding position.
  * Safe for loop routes where the same stop appears multiple times.
  */
-function getTripArrivalAtStopAfter(
+function getTripStopAfter(
   tripStops: GtfsStopTime[],
   stopId: string,
   afterIdx: number
-): number | null {
+): GtfsStopTime | null {
   for (let i = afterIdx + 1; i < tripStops.length; i++) {
-    if (tripStops[i].stopId === stopId) {
-      return tripStops[i].arrivalTime;
+    if (tripStops[i].stopId === stopId && isDropOffAllowed(tripStops[i].dropOffType)) {
+      return tripStops[i];
     }
   }
   return null;
@@ -348,11 +348,13 @@ function reconstructPath(
         // Find alighting time: search trip's stops AFTER the boarding stop
         const tripStops = tripStopTimes[label.tripId] || [];
         const boardIdx = tripStops.findIndex(
-          (st) => st.stopId === label.boardingStopId && st.departureTime >= label.boardingTime
+          (st) =>
+            st.stopId === label.boardingStopId &&
+            st.departureTime >= label.boardingTime &&
+            isPickupAllowed(st.pickupType)
         );
-        const alightingTime = boardIdx >= 0
-          ? (getTripArrivalAtStopAfter(tripStops, currentStop, boardIdx) ?? 0)
-          : 0;
+        const alightingStop = boardIdx >= 0 ? getTripStopAfter(tripStops, currentStop, boardIdx) : null;
+        const alightingTime = alightingStop?.arrivalTime ?? 0;
 
         const segment: TransitSegment = {
           type: 'TRANSIT',
@@ -402,10 +404,7 @@ function deduplicateResults(results: RaptorResult[]): RaptorResult[] {
   const seen = new Map<string, RaptorResult>();
 
   for (const result of results) {
-    const tripSignature = result.path
-      .filter((seg): seg is TransitSegment => seg.type === 'TRANSIT')
-      .map((seg) => seg.tripId)
-      .join(',');
+    const tripSignature = getTransitSignature(result);
 
     const existing = seen.get(tripSignature);
     if (!existing || result.arrivalTime < existing.arrivalTime) {
@@ -413,7 +412,7 @@ function deduplicateResults(results: RaptorResult[]): RaptorResult[] {
     }
   }
 
-  return Array.from(seen.values()).sort((a, b) => a.arrivalTime - b.arrivalTime);
+  return Array.from(seen.values()).sort(compareRaptorResults);
 }
 
 // ─── Public API ──────────────────────────────────────────────────────
@@ -440,10 +439,15 @@ export function planTripLocal(options: PlanTripOptions): RaptorResult[] {
   // Check if origin and destination are too close (walkable)
   const directDistance = haversineDistance(fromLat, fromLon, toLat, toLon);
   if (directDistance < 50) {
-    throw new RoutingError(
-      ROUTING_ERROR_CODES.NO_ROUTE_FOUND,
-      'Origin and destination are within 50m — walk instead'
-    );
+    const walkMeters = Math.round(directDistance * ROUTING_CONFIG.WALK_DISTANCE_BUFFER);
+    const walkSeconds = Math.round(walkMeters / ROUTING_CONFIG.WALK_SPEED);
+    return [{
+      destinationStopId: '',
+      walkToDestSeconds: walkSeconds,
+      arrivalTime: (time.getHours() * 3600) + (time.getMinutes() * 60) + time.getSeconds() + walkSeconds,
+      path: [],
+      directWalkMeters: walkMeters,
+    }];
   }
 
   // Get active services for the query date
@@ -457,14 +461,7 @@ export function planTripLocal(options: PlanTripOptions): RaptorResult[] {
 
   // Find nearby stops for origin and destination
   const originStops = originStopIds?.length
-    ? originStopIds
-        .map((stopId) => routingData.stopIndex[stopId])
-        .filter((stop): stop is NonNullable<typeof stop> => Boolean(stop))
-        .map((stop) => ({
-          stop,
-          walkMeters: 0,
-          walkSeconds: 0,
-        }))
+    ? buildPinnedStops(originStopIds, fromLat, fromLon, routingData)
     : findNearbyStops(
         routingData.stops,
         fromLat,
@@ -479,14 +476,7 @@ export function planTripLocal(options: PlanTripOptions): RaptorResult[] {
   }
 
   const destStops = destinationStopIds?.length
-    ? destinationStopIds
-        .map((stopId) => routingData.stopIndex[stopId])
-        .filter((stop): stop is NonNullable<typeof stop> => Boolean(stop))
-        .map((stop) => ({
-          stop,
-          walkMeters: 0,
-          walkSeconds: 0,
-        }))
+    ? buildPinnedStops(destinationStopIds, toLat, toLon, routingData)
     : findNearbyStops(
         routingData.stops,
         toLat,
@@ -503,11 +493,20 @@ export function planTripLocal(options: PlanTripOptions): RaptorResult[] {
   // Convert departure time to seconds since midnight
   const departureTime = time.getHours() * 3600 + time.getMinutes() * 60 + time.getSeconds();
 
-  // Multi-pass: run RAPTOR multiple times, excluding trips from prior passes
   const allResults: RaptorResult[] = [];
-  const excludeTrips = new Set<string>();
+  const exclusionQueue: Set<string>[] = [new Set<string>()];
+  const queuedExclusions = new Set<string>([serializeTripSet(exclusionQueue[0])]);
+  const exploredExclusions = new Set<string>();
 
-  for (let pass = 0; pass < ROUTING_CONFIG.MAX_ITINERARIES; pass++) {
+  while (exclusionQueue.length > 0 && allResults.length < ROUTING_CONFIG.MAX_ITINERARIES) {
+    const excludeTrips = exclusionQueue.shift();
+    if (!excludeTrips) break;
+
+    const exclusionKey = serializeTripSet(excludeTrips);
+    queuedExclusions.delete(exclusionKey);
+    if (exploredExclusions.has(exclusionKey)) continue;
+    exploredExclusions.add(exclusionKey);
+
     const results = raptorForward(
       originStops,
       destStops,
@@ -517,17 +516,27 @@ export function planTripLocal(options: PlanTripOptions): RaptorResult[] {
       excludeTrips
     );
 
-    if (results.length === 0) break;
+    const nextResult = results.find((candidate) =>
+      !allResults.some((existing) => haveSameTransitSignature(existing, candidate))
+    );
+    if (!nextResult) {
+      continue;
+    }
 
-    // Take the best result from this pass
-    const best = results[0];
-    allResults.push(best);
+    allResults.push(nextResult);
 
-    // Exclude trips used in this result for next pass
-    for (const seg of best.path) {
-      if (seg.type === 'TRANSIT') {
-        excludeTrips.add(seg.tripId);
+    const transitSegments = nextResult.path.filter(
+      (segment): segment is TransitSegment => segment.type === 'TRANSIT'
+    );
+    for (const transitSegment of transitSegments) {
+      const nextExcludeTrips = new Set(excludeTrips);
+      nextExcludeTrips.add(transitSegment.tripId);
+      const nextKey = serializeTripSet(nextExcludeTrips);
+      if (exploredExclusions.has(nextKey) || queuedExclusions.has(nextKey)) {
+        continue;
       }
+      exclusionQueue.push(nextExcludeTrips);
+      queuedExclusions.add(nextKey);
     }
   }
 
@@ -538,7 +547,79 @@ export function planTripLocal(options: PlanTripOptions): RaptorResult[] {
     );
   }
 
-  return deduplicateResults(allResults);
+  return deduplicateResults(allResults).slice(0, ROUTING_CONFIG.MAX_ITINERARIES);
 }
 
 // TODO: implement true reverse RAPTOR (arrive-by)
+
+function isPickupAllowed(pickupType?: number): boolean {
+  return (pickupType ?? 0) === 0;
+}
+
+function isDropOffAllowed(dropOffType?: number): boolean {
+  return (dropOffType ?? 0) === 0;
+}
+
+function buildPinnedStops(
+  stopIds: string[],
+  lat: number,
+  lon: number,
+  routingData: RoutingData
+): NearbyStop[] {
+  return stopIds
+    .map((stopId) => routingData.stopIndex[stopId])
+    .filter((stop): stop is NonNullable<typeof stop> => Boolean(stop))
+    .map((stop) => {
+      const directMeters = haversineDistance(lat, lon, stop.lat, stop.lon);
+      const walkMeters = Math.round(directMeters);
+      return {
+        stop,
+        walkMeters,
+        walkSeconds: Math.round(
+          (directMeters * ROUTING_CONFIG.WALK_DISTANCE_BUFFER) / ROUTING_CONFIG.WALK_SPEED
+        ),
+      };
+    })
+    .sort((a, b) => a.walkMeters - b.walkMeters);
+}
+
+function compareRaptorResults(a: RaptorResult, b: RaptorResult): number {
+  if (a.arrivalTime !== b.arrivalTime) {
+    return a.arrivalTime - b.arrivalTime;
+  }
+
+  const transferCmp = countTransitLegs(a.path) - countTransitLegs(b.path);
+  if (transferCmp !== 0) {
+    return transferCmp;
+  }
+
+  return getWalkSeconds(a) - getWalkSeconds(b);
+}
+
+function countTransitLegs(path: PathSegment[]): number {
+  return path.filter((segment) => segment.type === 'TRANSIT').length;
+}
+
+function getWalkSeconds(result: RaptorResult): number {
+  return result.walkToDestSeconds + result.path.reduce((sum, segment) => {
+    if (segment.type === 'ORIGIN_WALK' || segment.type === 'TRANSFER') {
+      return sum + segment.walkSeconds;
+    }
+    return sum;
+  }, 0);
+}
+
+function haveSameTransitSignature(a: RaptorResult, b: RaptorResult): boolean {
+  return getTransitSignature(a) === getTransitSignature(b);
+}
+
+function getTransitSignature(result: RaptorResult): string {
+  return result.path
+    .filter((segment): segment is TransitSegment => segment.type === 'TRANSIT')
+    .map((segment) => segment.tripId)
+    .join(',') || `WALK:${result.walkToDestSeconds}`;
+}
+
+function serializeTripSet(trips: Set<string>): string {
+  return [...trips].sort().join(',');
+}

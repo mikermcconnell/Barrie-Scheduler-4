@@ -18,6 +18,7 @@ import type { RoutingData, Itinerary, TransitLeg } from '../routing/types';
 import { decodePolyline } from '../../components/shared/mapUtils';
 import {
   findStopsInZone,
+  findStopsNearPoint,
   getPolygonCentroid,
   parseTimeToMinutes,
   minutesToDisplayTime,
@@ -25,6 +26,7 @@ import {
   buildWalkLeg as buildStudentWalkLeg,
   getRouteShapeSegment,
 } from './studentPassUtils';
+import { optimizeSharedTransferStops } from './studentPassTransferOptimization';
 import type {
   SchoolConfig,
   TripOptions,
@@ -75,7 +77,6 @@ interface AfternoonCandidate {
   allItinerariesForStop: Itinerary[];
 }
 
-const AUTO_SEARCH_STOP_LIMIT = 8;
 const STUDENT_SOFT_WALK_LIMIT_MINUTES = 8;
 const STUDENT_HARD_WALK_LIMIT_MINUTES = 15;
 const STUDENT_WALK_PENALTY_PER_MINUTE = 3;
@@ -293,10 +294,17 @@ function itineraryToStudentPassResult(
   school: SchoolConfig,
   direction: 'morning' | 'afternoon',
   zoneStop: ZoneStopOption,
-  zoneOrigin: [number, number]
+  zoneOrigin: [number, number],
+  routingData: RoutingData
 ): StudentPassResult {
-  const tripLegs = itineraryToTripLegs(itin);
-  const transfers = extractTransfers(itin);
+  const { tripLegs, transferWaitOverrides } = optimizeSharedTransferStops(
+    itineraryToTripLegs(itin),
+    routingData
+  );
+  const transfers = extractTransfers(itin).map((transfer, index) => {
+    const waitOverride = transferWaitOverrides[index];
+    return waitOverride == null ? transfer : getTransferQuality(waitOverride);
+  });
   const isDirect = tripLegs.length <= 1;
 
   const allStops = getAllStopsWithCoords();
@@ -458,6 +466,7 @@ function buildStopSearchResults(
   zoneStops: ZoneStopOption[],
   school: SchoolConfig,
   queryDate: Date,
+  zoneOrigin: [number, number],
   routingData: RoutingData
 ): StopSearchResult[] {
   const bellStartMinutes = parseTimeToMinutes(school.bellStart + ':00');
@@ -470,8 +479,8 @@ function buildStopSearchResults(
     morningTime.setMinutes(Math.max(0, bellStartMinutes - morningLookbackMinutes));
 
     const morningItineraries = runRaptorSafe(
-      zoneStop.lat,
-      zoneStop.lon,
+      zoneOrigin[0],
+      zoneOrigin[1],
       school.lat,
       school.lon,
       queryDate,
@@ -495,8 +504,8 @@ function buildStopSearchResults(
     const afternoonItineraries = runRaptorSafe(
       school.lat,
       school.lon,
-      zoneStop.lat,
-      zoneStop.lon,
+      zoneOrigin[0],
+      zoneOrigin[1],
       queryDate,
       afternoonTime,
       routingData,
@@ -570,8 +579,22 @@ export function findTripOptionsRaptor(
     ? normalizeDate(params.serviceDate)
     : normalizeDate(new Date(`${serviceDateInfo.defaultDate}T00:00:00`));
   const zoneOrigin = params.zoneOrigin ?? getPolygonCentroid(zonePolygon);
-  const zoneStopCandidates = findStopsInZone(zonePolygon)
-    .map((stop) => buildZoneStopCandidate(stop.stop_id, stop.stop_name, stop.lat, stop.lon, zoneOrigin));
+  const candidateStopRecords = [
+    ...findStopsInZone(zonePolygon),
+    ...findStopsNearPoint(
+      zoneOrigin[0],
+      zoneOrigin[1],
+      ROUTING_CONFIG.MAX_WALK_TO_TRANSIT / 1000
+    ),
+  ];
+  const zoneStopCandidates = Array.from(
+    new Map(
+      candidateStopRecords.map((stop) => [
+        stop.stop_id,
+        buildZoneStopCandidate(stop.stop_id, stop.stop_name, stop.lat, stop.lon, zoneOrigin),
+      ])
+    ).values()
+  );
 
   if (zoneStopCandidates.length === 0) {
     return {
@@ -583,16 +606,13 @@ export function findTripOptionsRaptor(
   }
 
   const sortedZoneStops = [...zoneStopCandidates].sort((a, b) => a.walkMinutes - b.walkMinutes);
-  const nearestStops = sortedZoneStops.slice(0, AUTO_SEARCH_STOP_LIMIT);
-  const autoSearchStops = params.zoneStopId
-    ? [
-        ...(sortedZoneStops.find((stop) => stop.stopId === params.zoneStopId)
-          ? [sortedZoneStops.find((stop) => stop.stopId === params.zoneStopId)!]
-          : []),
-        ...nearestStops.filter((stop) => stop.stopId !== params.zoneStopId),
-      ]
-    : nearestStops;
-  const stopSearches = buildStopSearchResults(autoSearchStops, school, queryDate, routingData);
+  const stopSearches = buildStopSearchResults(
+    sortedZoneStops,
+    school,
+    queryDate,
+    zoneOrigin,
+    routingData
+  );
   const defaultStopSearch = pickDefaultStopSearch(stopSearches);
   const selectedStopSearch = (params.zoneStopId
     ? stopSearches.find((search) => search.zoneStop.stopId === params.zoneStopId)
@@ -634,14 +654,14 @@ export function findTripOptionsRaptor(
 
   // ── Build morning options (up to 3) for the selected stop ──
   const morningOptions: RouteOption[] = [];
-  const seenMorningRoutes = new Set<string>();
+  const seenMorningRouteFamilies = new Set<string>();
 
   for (const itin of selectedStopSearch.validMorning) {
     if (morningOptions.length >= 3) break;
 
-    const routeKey = getRouteKey(itin);
-    if (seenMorningRoutes.has(routeKey)) continue;
-    seenMorningRoutes.add(routeKey);
+    const routeFamilyKey = getRouteFamilyKey(itin);
+    if (seenMorningRouteFamilies.has(routeFamilyKey)) continue;
+    seenMorningRouteFamilies.add(routeFamilyKey);
 
     const spResult = itineraryToStudentPassResult(
       itin,
@@ -649,7 +669,8 @@ export function findTripOptionsRaptor(
       school,
       'morning',
       selectedStopSearch.zoneStop,
-      zoneOrigin
+      zoneOrigin,
+      routingData
     );
     spResult.frequencyPerHour = computeFrequencyPerHour(
       spResult.morningLegs[0],
@@ -666,7 +687,8 @@ export function findTripOptionsRaptor(
         school,
         'afternoon',
         bestAfternoonCandidate.zoneStop,
-        zoneOrigin
+        zoneOrigin,
+        routingData
       );
       if (pmPreview.afternoonLegs.length > 0) {
         spResult.afternoonLegs = pmPreview.afternoonLegs;
@@ -696,15 +718,15 @@ export function findTripOptionsRaptor(
 
   // ── Build afternoon options (up to 3) across candidate alighting stops ──
   const afternoonOptions: RouteOption[] = [];
-  const seenAfternoonRoutes = new Set<string>();
+  const seenAfternoonRouteFamilies = new Set<string>();
 
   for (const candidate of afternoonCandidates) {
     if (afternoonOptions.length >= 3) break;
 
     const itin = candidate.itinerary;
-    const routeKey = `${getRouteKey(itin)}|${candidate.zoneStop.stopId}`;
-    if (seenAfternoonRoutes.has(routeKey)) continue;
-    seenAfternoonRoutes.add(routeKey);
+    const routeFamilyKey = getRouteFamilyKey(itin);
+    if (seenAfternoonRouteFamilies.has(routeFamilyKey)) continue;
+    seenAfternoonRouteFamilies.add(routeFamilyKey);
 
     const spResult = itineraryToStudentPassResult(
       itin,
@@ -712,7 +734,8 @@ export function findTripOptionsRaptor(
       school,
       'afternoon',
       candidate.zoneStop,
-      zoneOrigin
+      zoneOrigin,
+      routingData
     );
 
     // Copy morning legs from first morning option for preview
@@ -838,9 +861,9 @@ function runRaptorSafe(
 /**
  * Get a unique key for the route combination in an itinerary.
  */
-function getRouteKey(itin: Itinerary): string {
+function getRouteFamilyKey(itin: Itinerary): string {
   return itin.legs
     .filter((l): l is TransitLeg => l.mode === 'BUS')
-    .map((l) => `${l.route.shortName}-${l.tripId}`)
-    .join('|');
+    .map((l) => l.route.shortName)
+    .join('|') || 'WALK';
 }

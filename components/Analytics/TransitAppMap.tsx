@@ -1,7 +1,7 @@
 /**
  * Transit App Map
  *
- * Leaflet map with two toggleable layers:
+ * Mapbox map with two toggleable layers:
  * 1. Location heatmap (circle markers, green→yellow→red by log count)
  * 2. OD desire lines (curved arcs between origin-destination zone centroids)
  *
@@ -19,19 +19,19 @@
  * - GTFS route overlay
  * - Collapsible OD summary table
  * - PDF export via jsPDF + autoTable
- *
- * Uses raw Leaflet via useRef/useEffect (no react-leaflet) for React 19 compat.
  */
 
 import React, { useRef, useEffect, useState, useMemo, useCallback } from 'react';
-import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
+import { Layer, Marker, Popup, Source } from 'react-map-gl/mapbox';
+import type { LayerProps, MapMouseEvent, MapRef } from 'react-map-gl/mapbox';
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
 import type { LocationGridCell, ODPairData, ODPair, StopCoverageGapCluster } from '../../utils/transit-app/transitAppTypes';
 import { loadGtfsRouteShapes, pointToPolylineDistanceKm } from '../../utils/gtfs/gtfsShapesLoader';
 import { findNearestStopName, getAllStopsWithCoords } from '../../utils/gtfs/gtfsStopLookup';
 import { formatTimeBand, formatDayType, formatSeason } from './AnalyticsShared';
+import { ArcLayer, MapBase, RouteOverlay, StopDotLayer, heatColor, quadraticBezierArc, toGeoJSON } from '../shared';
+import type { ArcData } from '../shared';
 
 interface TransitAppMapProps {
     locationDensity: {
@@ -70,44 +70,19 @@ const BARRIE_CENTER: [number, number] = [44.38, -79.69];
 const BARRIE_BOUNDS = { minLat: 44.28, maxLat: 44.48, minLon: -79.80, maxLon: -79.58 };
 // Tighter view bounds for fitBounds — urban core only
 const BARRIE_VIEW_BOUNDS = { minLat: 44.34, maxLat: 44.42, minLon: -79.73, maxLon: -79.64 };
-const SMOOTH_MAP_OPTIONS: Partial<L.MapOptions> = {
-    // Fractional zoom + reduced wheel sensitivity makes trackpad/mouse-wheel zoom feel less jumpy.
-    zoomSnap: 0.25,
-    zoomDelta: 0.25,
-    scrollWheelZoom: 'center',
-    wheelDebounceTime: 24,
-    wheelPxPerZoomLevel: 120,
-    preferCanvas: true,
-};
+const MAP_STYLE = 'mapbox://styles/mapbox/light-v11';
+const HEATMAP_LAYER_ID = 'transit-app-heatmap-circles';
+const HEATMAP_HOTSPOT_LAYER_ID = 'transit-app-heatmap-hotspots';
+const OD_ZONE_FILL_LAYER_ID = 'transit-app-zone-fills';
+const OD_ZONE_OUTLINE_LAYER_ID = 'transit-app-zone-outlines';
+const OD_ZONE_DOT_LAYER_ID = 'transit-app-zone-dots';
+const OD_ARC_LAYER_ID = 'transit-app-arcs-lines';
+const OD_ENDPOINT_LAYER_ID = 'transit-app-endpoints';
+const COVERAGE_LAYER_ID = 'transit-app-coverage-clusters';
 
 function isInBarrie(lat: number, lon: number): boolean {
     return lat >= BARRIE_BOUNDS.minLat && lat <= BARRIE_BOUNDS.maxLat
         && lon >= BARRIE_BOUNDS.minLon && lon <= BARRIE_BOUNDS.maxLon;
-}
-
-function heatColor(t: number): string {
-    const clamped = Math.max(0, Math.min(1, t));
-    const stops: Array<{ t: number; rgb: [number, number, number] }> = [
-        { t: 0.00, rgb: [37, 52, 148] },   // deep indigo
-        { t: 0.25, rgb: [14, 116, 255] },  // vivid blue
-        { t: 0.50, rgb: [6, 182, 212] },   // cyan
-        { t: 0.70, rgb: [250, 204, 21] },  // yellow
-        { t: 0.85, rgb: [249, 115, 22] },  // orange
-        { t: 1.00, rgb: [220, 38, 38] },   // red
-    ];
-    for (let i = 0; i < stops.length - 1; i++) {
-        const a = stops[i];
-        const b = stops[i + 1];
-        if (clamped >= a.t && clamped <= b.t) {
-            const local = (clamped - a.t) / Math.max(0.0001, (b.t - a.t));
-            const r = Math.round(a.rgb[0] + (b.rgb[0] - a.rgb[0]) * local);
-            const g = Math.round(a.rgb[1] + (b.rgb[1] - a.rgb[1]) * local);
-            const bl = Math.round(a.rgb[2] + (b.rgb[2] - a.rgb[2]) * local);
-            return `rgb(${r},${g},${bl})`;
-        }
-    }
-    const last = stops[stops.length - 1].rgb;
-    return `rgb(${last[0]},${last[1]},${last[2]})`;
 }
 
 // Rank-based colors: 1-7 get distinct vivid colors, 8+ get dark→light grey
@@ -173,57 +148,6 @@ export function describeLocationRelativeToBarrie(lat: number, lon: number): stri
     if (dist < 1) return 'Central Barrie';
     if (isInBarrie(lat, lon)) return `${dir} Barrie`;
     return `${dist.toFixed(0)}km ${dir} of Barrie`;
-}
-
-function quadraticBezierArc(
-    origin: [number, number],
-    dest: [number, number],
-    curveDirection: 1 | -1 = 1,
-    segments: number = 16
-): [number, number][] {
-    const midLat = (origin[0] + dest[0]) / 2;
-    const midLon = (origin[1] + dest[1]) / 2;
-    const dLat = dest[0] - origin[0];
-    const dLon = dest[1] - origin[1];
-    const offsetLat = midLat + dLon * 0.2 * curveDirection;
-    const offsetLon = midLon - dLat * 0.2 * curveDirection;
-
-    const points: [number, number][] = [];
-    for (let i = 0; i <= segments; i++) {
-        const t = i / segments;
-        const u = 1 - t;
-        const lat = u * u * origin[0] + 2 * u * t * offsetLat + t * t * dest[0];
-        const lon = u * u * origin[1] + 2 * u * t * offsetLon + t * t * dest[1];
-        points.push([lat, lon]);
-    }
-    return points;
-}
-
-function arrowheadPoints(
-    arcPoints: [number, number][],
-    sizeDeg: number = 0.004
-): [number, number][][] {
-    const n = arcPoints.length;
-    if (n < 2) return [];
-    const tip = arcPoints[n - 1];
-    const prev = arcPoints[n - 2];
-    const dx = tip[1] - prev[1];
-    const dy = tip[0] - prev[0];
-    const len = Math.sqrt(dx * dx + dy * dy);
-    if (len === 0) return [];
-    const ux = dx / len;
-    const uy = dy / len;
-
-    const barb1: [number, number] = [
-        tip[0] - uy * sizeDeg + ux * sizeDeg * 0.5,
-        tip[1] - ux * sizeDeg - uy * sizeDeg * 0.5,
-    ];
-    const barb2: [number, number] = [
-        tip[0] - uy * sizeDeg - ux * sizeDeg * 0.5,
-        tip[1] - ux * sizeDeg + uy * sizeDeg * 0.5,
-    ];
-
-    return [[barb1, tip, barb2]];
 }
 
 // Time period hour ranges
@@ -315,6 +239,52 @@ function coordKey(lat: number, lon: number): string {
     return `${lat.toFixed(4)}_${lon.toFixed(4)}`;
 }
 
+interface MapBoundsState {
+    west: number;
+    south: number;
+    east: number;
+    north: number;
+}
+
+type TransitMapPopupState =
+    | {
+        type: 'pair';
+        latitude: number;
+        longitude: number;
+        pair: MergedODPair;
+    }
+    | {
+        type: 'heatmap';
+        latitude: number;
+        longitude: number;
+        count: number;
+    }
+    | {
+        type: 'coverage';
+        latitude: number;
+        longitude: number;
+        cluster: StopCoverageGapCluster;
+    };
+
+function toNumberProperty(value: unknown): number | null {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string' && value.trim() !== '') {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
+}
+
+function isInPaddedBounds(lat: number, lon: number, bounds: MapBoundsState | null, paddingRatio = 0.2): boolean {
+    if (!bounds) return true;
+    const latPad = (bounds.north - bounds.south) * paddingRatio;
+    const lonPad = (bounds.east - bounds.west) * paddingRatio;
+    return lat >= bounds.south - latPad
+        && lat <= bounds.north + latPad
+        && lon >= bounds.west - lonPad
+        && lon <= bounds.east + lonPad;
+}
+
 export const TransitAppMap: React.FC<TransitAppMapProps> = ({
     locationDensity,
     odPairs,
@@ -325,21 +295,14 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
     onDisplayedODPairsChange,
     coverageGapClusters,
 }) => {
-    const containerRef = useRef<HTMLDivElement>(null);
-    const mapRef = useRef<L.Map | null>(null);
-    const heatmapLayerRef = useRef<L.LayerGroup | null>(null);
-    const odLayerRef = useRef<L.LayerGroup | null>(null);
-    const routeLayerRef = useRef<L.LayerGroup | null>(null);
-    const stopLayerRef = useRef<L.LayerGroup | null>(null);
-    const coverageLayerRef = useRef<L.LayerGroup | null>(null);
-    const odLineGroupsRef = useRef<{ lines: L.Path[]; pair: MergedODPair; origOpacity: number }[]>([]);
+    const mapRef = useRef<MapRef | null>(null);
     const lastFitTriggerRef = useRef<{
         activeLayer: MapLayer;
         geoFilter: GeoFilter;
         odPairsRef?: ODPairData;
         locationBoundsRef: TransitAppMapProps['locationDensity']['bounds'];
     } | null>(null);
-    const prevMapViewRef = useRef<{ center: L.LatLng; zoom: number } | null>(null);
+    const prevMapViewRef = useRef<{ center: [number, number]; zoom: number } | null>(null);
 
     const hasODData = Boolean(odPairs && odPairs.pairs.length > 0);
     const resolvedDefaultLayer: MapLayer =
@@ -369,11 +332,15 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
     const [corridorRoute, setCorridorRoute] = useState<string | null>(null);
     const [showTable, setShowTable] = useState(false);
     const [highlightedPairIdx, setHighlightedPairIdx] = useState<number | null>(null);
+    const [hoveredPairIdx, setHoveredPairIdx] = useState<number | null>(null);
     const [sortColumn, setSortColumn] = useState<'rank' | 'trips' | 'dist' | 'origin' | 'dest'>('rank');
     const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
     const [matrixSearch, setMatrixSearch] = useState('');
     const [matrixPage, setMatrixPage] = useState(1);
     const [localSeasonFilter, setLocalSeasonFilter] = useState<SeasonFilter>('all');
+    const [popupState, setPopupState] = useState<TransitMapPopupState | null>(null);
+    const [mapReady, setMapReady] = useState(false);
+    const [mapBounds, setMapBounds] = useState<MapBoundsState | null>(null);
     const seasonFilter = externalSeasonFilter ?? localSeasonFilter;
     const setSeasonFilter = (v: SeasonFilter) => {
         setLocalSeasonFilter(v);
@@ -523,36 +490,81 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
         onDisplayedODPairsChange?.(displayedPairs);
     }, [displayedPairs, onDisplayedODPairsChange]);
 
+    const updateMapViewState = useCallback(() => {
+        const map = mapRef.current?.getMap();
+        if (!map) return;
+        setMapZoom(map.getZoom());
+        const bounds = map.getBounds();
+        setMapBounds({
+            west: bounds.getWest(),
+            south: bounds.getSouth(),
+            east: bounds.getEast(),
+            north: bounds.getNorth(),
+        });
+    }, []);
+
+    const resizeMap = useCallback((delayMs = 0) => {
+        window.setTimeout(() => {
+            mapRef.current?.getMap().resize();
+            updateMapViewState();
+        }, delayMs);
+    }, [updateMapViewState]);
+
+    useEffect(() => {
+        if (!mapReady) return;
+        const map = mapRef.current?.getMap();
+        if (!map) return;
+
+        updateMapViewState();
+        const handleMoveEnd = () => updateMapViewState();
+        map.on('moveend', handleMoveEnd);
+        map.on('zoomend', handleMoveEnd);
+        return () => {
+            map.off('moveend', handleMoveEnd);
+            map.off('zoomend', handleMoveEnd);
+        };
+    }, [mapReady, updateMapViewState]);
+
     // Auto-zoom to zone extents when zone is selected
     useEffect(() => {
-        const map = mapRef.current;
+        const map = mapRef.current?.getMap();
         if (!map) return;
 
         if (isolatedZone) {
             if (!prevMapViewRef.current) {
-                prevMapViewRef.current = { center: map.getCenter(), zoom: map.getZoom() };
+                const center = map.getCenter();
+                prevMapViewRef.current = { center: [center.lng, center.lat], zoom: map.getZoom() };
             }
             if (displayedPairs.length > 0) {
-                const points: L.LatLngExpression[] = [];
+                const allLats: number[] = [];
+                const allLons: number[] = [];
                 for (const pair of displayedPairs) {
-                    points.push([pair.originLat, pair.originLon]);
-                    points.push([pair.destLat, pair.destLon]);
+                    allLats.push(pair.originLat, pair.destLat);
+                    allLons.push(pair.originLon, pair.destLon);
                 }
-                const bounds = L.latLngBounds(points);
-                map.fitBounds(bounds, { paddingTopLeft: [50, 50], paddingBottomRight: [340, 50], maxZoom: 15 });
+                map.fitBounds(
+                    [
+                        [Math.min(...allLons), Math.min(...allLats)],
+                        [Math.max(...allLons), Math.max(...allLats)],
+                    ],
+                    { padding: { top: 50, left: 50, right: 340, bottom: 50 }, maxZoom: 15 }
+                );
             }
         } else {
             if (prevMapViewRef.current) {
-                map.setView(prevMapViewRef.current.center, prevMapViewRef.current.zoom, { animate: true });
+                map.easeTo({
+                    center: prevMapViewRef.current.center,
+                    zoom: prevMapViewRef.current.zoom,
+                    duration: 700,
+                });
                 prevMapViewRef.current = null;
             }
         }
     }, [isolatedZone, displayedPairs]);
 
-    // Invalidate map size when zone panel opens/closes (flex layout changes)
     useEffect(() => {
-        setTimeout(() => mapRef.current?.invalidateSize(), 100);
-    }, [isolatedZone]);
+        resizeMap(100);
+    }, [isolatedZone, resizeMap]);
 
     const zoneNameCache = useMemo(() => {
         const cache = new Map<string, string>();

@@ -47,7 +47,11 @@ import {
     type ODPairRouteMatch,
 } from '../../utils/od-matrix/odRouteEstimation';
 import { BUNDLED_OD_GTFS_FILE_NAME } from '../../utils/od-matrix/odBundledGtfs';
-import { buildTransferRouteSummaryRows } from '../../utils/od-matrix/odTransferRouteSummary';
+import {
+    buildStopRouteDirectionSummary,
+    type StopRouteDirection,
+    type StopRouteDirectionSummaryRow,
+} from '../../utils/od-matrix/odTransferRouteSummary';
 import { ODPairMapModal } from './ODPairMapModal';
 import { ArcLayer, MapBase } from '../shared';
 
@@ -350,6 +354,26 @@ function barColorDark(ratio: number): string { return interpolateColor(ratio, -0
 function barColorLight(ratio: number): string { return interpolateColor(ratio, 0.35); }
 function glowGradientColor(ratio: number): string { return interpolateColor(ratio); }
 
+function interpolateRgb(start: [number, number, number], end: [number, number, number], ratio: number): string {
+    const clamped = Math.max(0, Math.min(1, ratio));
+    const r = Math.round(start[0] + (end[0] - start[0]) * clamped);
+    const g = Math.round(start[1] + (end[1] - start[1]) * clamped);
+    const b = Math.round(start[2] + (end[2] - start[2]) * clamped);
+    return `rgb(${r},${g},${b})`;
+}
+
+function routeDirectionColor(direction: StopRouteDirection, ratio: number): string {
+    return direction === 'inbound'
+        ? interpolateRgb([125, 211, 252], [3, 105, 161], ratio)
+        : interpolateRgb([253, 186, 116], [234, 88, 12], ratio);
+}
+
+function formatRouteDisplay(routeId: string, routeName: string): string {
+    if (!routeId) return routeName;
+    if (!routeName || routeId === routeName) return routeId;
+    return `${routeId} · ${routeName}`;
+}
+
 function quadraticBezierArc(
     origin: [number, number],
     dest: [number, number],
@@ -381,6 +405,13 @@ interface TransferFlowPair {
     lon: number;
     journeys: number;
     isInbound: boolean;
+}
+
+interface StopRouteMapNode extends StopRouteDirectionSummaryRow {
+    lat: number;
+    lon: number;
+    ratio: number;
+    labelDirection: LabelDirection;
 }
 
 type TransferDrilldownMode = 'stops' | 'routes';
@@ -439,13 +470,48 @@ function labelPositionStyle(direction: LabelDirection, offsetPx: number): React.
     }
 }
 
+function labelDirectionFromAngle(angleDeg: number): LabelDirection {
+    const angleRad = (angleDeg * Math.PI) / 180;
+    const x = Math.cos(angleRad);
+    const y = Math.sin(angleRad);
+    if (Math.abs(x) > Math.abs(y)) return x > 0 ? 'right' : 'left';
+    return y > 0 ? 'top' : 'bottom';
+}
+
+function offsetLatLon(lat: number, lon: number, angleDeg: number, distanceKm: number): { lat: number; lon: number } {
+    const angleRad = (angleDeg * Math.PI) / 180;
+    const latOffset = (distanceKm * Math.sin(angleRad)) / 111;
+    const lonOffset = (distanceKm * Math.cos(angleRad)) / (111 * Math.max(0.2, Math.cos((lat * Math.PI) / 180)));
+    return {
+        lat: lat + latOffset,
+        lon: lon + lonOffset,
+    };
+}
+
+function buildDirectionalAngles(count: number, direction: StopRouteDirection): number[] {
+    if (count <= 0) return [];
+    if (count === 1) return [direction === 'inbound' ? 180 : 0];
+
+    const startAngle = direction === 'inbound' ? 120 : -60;
+    const endAngle = direction === 'inbound' ? 240 : 60;
+    return Array.from({ length: count }, (_, index) => (
+        startAngle + ((endAngle - startAngle) * index) / Math.max(1, count - 1)
+    ));
+}
+
+function stopRouteNodeKey(route: Pick<StopRouteDirectionSummaryRow, 'direction' | 'routeId' | 'routeName'>): string {
+    return `${route.direction}|${route.routeId}|${route.routeName}`;
+}
+
 function TransferMapLabel({
     text,
+    detailText,
     direction,
     minor = false,
     offsetPx = 6,
 }: {
     text: string;
+    detailText?: string;
     direction: LabelDirection;
     minor?: boolean;
     offsetPx?: number;
@@ -465,8 +531,112 @@ function TransferMapLabel({
                 borderRadius: minor ? 3 : 4,
             }}
         >
-            <span dangerouslySetInnerHTML={{ __html: text }} />
+            <span>{text}</span>
+            {detailText && (
+                <span
+                    style={{
+                        marginLeft: 6,
+                        fontWeight: 800,
+                        color: '#475569',
+                    }}
+                >
+                    {detailText}
+                </span>
+            )}
         </div>
+    );
+}
+
+function getRouteEndpointCentroid(
+    row: StopRouteDirectionSummaryRow,
+    geocodeCache: GeocodeCache | null,
+): { lat: number; lon: number } | null {
+    const weightedPoints = row.endpointBreakdown
+        .map((endpoint) => {
+            const geo = resolveGeocode(endpoint.stopName, geocodeCache);
+            if (!geo) return null;
+            return {
+                lat: geo.lat,
+                lon: geo.lon,
+                journeys: endpoint.journeys,
+            };
+        })
+        .filter((point): point is { lat: number; lon: number; journeys: number } => point !== null);
+
+    if (weightedPoints.length === 0) return null;
+
+    const totalJourneys = weightedPoints.reduce((sum, point) => sum + point.journeys, 0);
+    if (totalJourneys <= 0) {
+        return {
+            lat: weightedPoints[0].lat,
+            lon: weightedPoints[0].lon,
+        };
+    }
+
+    return {
+        lat: weightedPoints.reduce((sum, point) => sum + point.lat * point.journeys, 0) / totalJourneys,
+        lon: weightedPoints.reduce((sum, point) => sum + point.lon * point.journeys, 0) / totalJourneys,
+    };
+}
+
+function RouteTransferOrbitNode({
+    routeId,
+    journeys,
+    ratio,
+    color,
+    labelDirection,
+    selected,
+    onClick,
+}: {
+    routeId: string;
+    journeys: number;
+    ratio: number;
+    color: string;
+    labelDirection: LabelDirection;
+    selected: boolean;
+    onClick: () => void;
+}) {
+    const size = 28 + Math.round(ratio * 16) + (selected ? 6 : 0);
+    const routeCode = routeId.trim();
+
+    return (
+        <button
+            type="button"
+            onClick={onClick}
+            className="relative border-0 bg-transparent p-0"
+            aria-label={`${routeCode}, ${fmt(journeys)} journeys`}
+            style={{
+                filter: selected ? 'drop-shadow(0 10px 18px rgba(15,23,42,0.22))' : 'drop-shadow(0 6px 12px rgba(15,23,42,0.16))',
+            }}
+        >
+            <div
+                className="flex items-center justify-center rounded-full border text-white"
+                style={{
+                    width: size,
+                    height: size,
+                    background: color,
+                    borderColor: selected ? '#0f172a' : 'rgba(255,255,255,0.92)',
+                    borderWidth: selected ? 3 : 2,
+                    transform: selected ? 'scale(1.03)' : 'scale(1)',
+                    transition: 'transform 150ms ease, box-shadow 150ms ease',
+                }}
+            >
+                <span className="text-[10px] font-bold leading-none tracking-[0.04em]">{routeCode}</span>
+            </div>
+            <div
+                className="pointer-events-none absolute whitespace-nowrap rounded-full border px-2 py-1 text-[10px] font-semibold"
+                style={{
+                    ...labelPositionStyle(labelDirection, 8),
+                    background: 'rgba(255,255,255,0.95)',
+                    borderColor: selected ? 'rgba(15,23,42,0.18)' : 'rgba(148,163,184,0.24)',
+                    color: '#334155',
+                    letterSpacing: '0.04em',
+                    boxShadow: selected ? '0 8px 16px rgba(15,23,42,0.14)' : '0 4px 10px rgba(15,23,42,0.08)',
+                }}
+            >
+                {fmt(journeys)} journeys
+            </div>
+        </button>
     );
 }
 
@@ -608,6 +778,7 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
     const [showBars, setShowBars] = useState(true);
     const [selectedTransferPoint, setSelectedTransferPoint] = useState<string | null>(null);
     const [transferDrilldownMode, setTransferDrilldownMode] = useState<TransferDrilldownMode>('stops');
+    const [selectedRouteTransferKey, setSelectedRouteTransferKey] = useState<string | null>(null);
     const [transferMapFullscreen, setTransferMapFullscreen] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const deferredSearch = useDeferredValue(search);
@@ -618,6 +789,7 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
         setUploadError(null);
         setSelectedPair(null);
         setSelectedTransferPoint(null);
+        setSelectedRouteTransferKey(null);
         setTransferDrilldownMode('stops');
     }, [dataKey]);
 
@@ -860,8 +1032,8 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
         }
         return pairs.sort((a, b) => b.journeys - a.journeys);
     }, [selectedTransferPoint, result, geocodeCache]);
-    const transferRouteSummaryRows = useMemo(
-        () => buildTransferRouteSummaryRows(result?.matches ?? [], selectedTransferPoint),
+    const stopRouteDirectionSummary = useMemo(
+        () => buildStopRouteDirectionSummary(result?.matches ?? [], selectedTransferPoint),
         [result, selectedTransferPoint],
     );
 
@@ -891,6 +1063,87 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
         () => displayedTransferPoints.find(point => point.stopName.toLowerCase() === selectedTransferKey) ?? null,
         [displayedTransferPoints, selectedTransferKey]
     );
+    const routeModeNodes = useMemo((): StopRouteMapNode[] => {
+        if (!selectedTransferDetails || transferDrilldownMode !== 'routes') return [];
+
+        const groupedRows: StopRouteDirectionSummaryRow[][] = [
+            stopRouteDirectionSummary.inboundRoutes,
+            stopRouteDirectionSummary.outboundRoutes,
+        ];
+        const maxJourneys = Math.max(
+            0,
+            ...groupedRows.flat().map(row => row.journeys),
+        );
+        const nodes: StopRouteMapNode[] = [];
+
+        groupedRows.forEach((rows) => {
+            if (rows.length === 0) return;
+
+            for (let start = 0; start < rows.length; start += 5) {
+                const ringRows = rows.slice(start, start + 5);
+                const ringIndex = Math.floor(start / 5);
+                const direction = ringRows[0].direction;
+                const angles = buildDirectionalAngles(ringRows.length, direction);
+
+                ringRows.forEach((row, ringOffset) => {
+                    const ratio = maxJourneys > 0 ? row.journeys / maxJourneys : 0;
+                    const distanceKm = 34 + ringIndex * 24 + ratio * 18;
+                    const angleDeg = angles[ringOffset] ?? (direction === 'inbound' ? 180 : 0);
+                    const endpointGeo = getRouteEndpointCentroid(row, geocodeCache);
+                    const point = endpointGeo
+                        ? { lat: endpointGeo.lat, lon: endpointGeo.lon }
+                        : offsetLatLon(selectedTransferDetails.lat, selectedTransferDetails.lon, angleDeg, distanceKm);
+                    const labelDirection = pickLabelDirection(
+                        point.lat,
+                        point.lon,
+                        selectedTransferDetails.lat,
+                        selectedTransferDetails.lon,
+                    );
+                    nodes.push({
+                        ...row,
+                        lat: point.lat,
+                        lon: point.lon,
+                        ratio,
+                        labelDirection: endpointGeo ? labelDirection : labelDirectionFromAngle(angleDeg),
+                    });
+                });
+            }
+        });
+
+        return nodes;
+    }, [geocodeCache, selectedTransferDetails, stopRouteDirectionSummary, transferDrilldownMode]);
+    const routeDirectionArcs = useMemo(() => {
+        if (!selectedTransferDetails || transferDrilldownMode !== 'routes') return [];
+        return routeModeNodes.map((node, index) => ({
+            origin: [selectedTransferDetails.lat, selectedTransferDetails.lon] as [number, number],
+            dest: [node.lat, node.lon] as [number, number],
+            color: node.direction === 'inbound' ? '#0ea5e9' : '#f97316',
+            width: (stopRouteNodeKey(node) === selectedRouteTransferKey ? 4.5 : 2.2) + node.ratio * 4.2,
+            opacity: stopRouteNodeKey(node) === selectedRouteTransferKey ? 0.84 : 0.28 + node.ratio * 0.22,
+            curveDirection: index % 2 === 0 ? 1 as const : -1 as const,
+            segments: 12,
+        }));
+    }, [routeModeNodes, selectedRouteTransferKey, selectedTransferDetails, transferDrilldownMode]);
+    const routeModeActive = Boolean(selectedTransferDetails && transferDrilldownMode === 'routes');
+    const transferPointsForMap = useMemo(
+        () => (routeModeActive && selectedTransferDetails ? [selectedTransferDetails] : displayedTransferPoints),
+        [displayedTransferPoints, routeModeActive, selectedTransferDetails]
+    );
+    const selectedRouteTransferNode = useMemo(
+        () => routeModeNodes.find(node => stopRouteNodeKey(node) === selectedRouteTransferKey) ?? routeModeNodes[0] ?? null,
+        [routeModeNodes, selectedRouteTransferKey]
+    );
+    const routeModeLineLabels = useMemo(() => {
+        if (!selectedTransferDetails || !routeModeActive || !selectedRouteTransferNode) return [];
+        return [{
+            key: stopRouteNodeKey(selectedRouteTransferNode),
+            routeId: selectedRouteTransferNode.routeId,
+            lat: selectedTransferDetails.lat + (selectedRouteTransferNode.lat - selectedTransferDetails.lat) * 0.58,
+            lon: selectedTransferDetails.lon + (selectedRouteTransferNode.lon - selectedTransferDetails.lon) * 0.58,
+            color: routeDirectionColor(selectedRouteTransferNode.direction, Math.max(0.45, selectedRouteTransferNode.ratio)),
+            selected: true,
+        }];
+    }, [routeModeActive, selectedRouteTransferNode, selectedTransferDetails]);
     const transferFlowArcs = useMemo(() => {
         if (!selectedTransferDetails) return [];
         const maxFlowJourneys = Math.max(0, ...transferFlowPairs.map(pair => pair.journeys));
@@ -926,23 +1179,54 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
         const stillVisible = displayedTransferPoints.some(point => point.stopName.toLowerCase() === selectedTransferKey);
         if (!stillVisible) {
             setSelectedTransferPoint(null);
+            setSelectedRouteTransferKey(null);
             setTransferDrilldownMode('stops');
         }
     }, [displayedTransferPoints, selectedTransferKey]);
 
     useEffect(() => {
+        if (!routeModeActive) {
+            setSelectedRouteTransferKey(null);
+            return;
+        }
+        if (routeModeNodes.length === 0) {
+            setSelectedRouteTransferKey(null);
+            return;
+        }
+        const currentExists = selectedRouteTransferKey
+            ? routeModeNodes.some(node => stopRouteNodeKey(node) === selectedRouteTransferKey)
+            : false;
+        if (!currentExists) {
+            setSelectedRouteTransferKey(stopRouteNodeKey(routeModeNodes[0]));
+        }
+    }, [routeModeActive, routeModeNodes, selectedRouteTransferKey]);
+
+    useEffect(() => {
         if (!transferMapReady || !transferMapRef.current || displayedTransferPoints.length === 0) return;
 
         const map = transferMapRef.current.getMap();
-        const points = [
-            ...displayedTransferPoints.map(point => ({ lat: point.lat, lon: point.lon })),
-            ...(transferDrilldownMode === 'stops'
-                ? transferFlowEndpoints.map(point => ({ lat: point.lat, lon: point.lon }))
-                : []),
-        ];
+        const points = routeModeActive && selectedTransferDetails
+            ? [
+                { lat: selectedTransferDetails.lat, lon: selectedTransferDetails.lon },
+                ...routeModeNodes.map(point => ({ lat: point.lat, lon: point.lon })),
+            ]
+            : [
+                ...displayedTransferPoints.map(point => ({ lat: point.lat, lon: point.lon })),
+                ...(transferDrilldownMode === 'stops'
+                    ? transferFlowEndpoints.map(point => ({ lat: point.lat, lon: point.lon }))
+                    : []),
+            ];
 
         const frameId = window.requestAnimationFrame(() => {
             map.resize();
+            if (points.length === 1) {
+                map.easeTo({
+                    center: [points[0].lon, points[0].lat],
+                    zoom: 6.5,
+                    duration: 0,
+                });
+                return;
+            }
             const longitudes = points.map(point => point.lon);
             const latitudes = points.map(point => point.lat);
             map.fitBounds(
@@ -951,15 +1235,24 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
                     [Math.max(...longitudes), Math.max(...latitudes)],
                 ],
                 {
-                    padding: 50,
-                    maxZoom: 9,
+                    padding: routeModeActive ? 100 : 50,
+                    maxZoom: routeModeActive ? 7.5 : 9,
                     duration: 0,
                 }
             );
         });
 
         return () => window.cancelAnimationFrame(frameId);
-    }, [displayedTransferPoints, transferDrilldownMode, transferFlowEndpoints, transferMapFullscreen, transferMapReady]);
+    }, [
+        displayedTransferPoints,
+        routeModeActive,
+        routeModeNodes,
+        selectedTransferDetails,
+        transferDrilldownMode,
+        transferFlowEndpoints,
+        transferMapFullscreen,
+        transferMapReady,
+    ]);
 
     // Escape key + body overflow lock for transfer map fullscreen
     useEffect(() => {
@@ -1279,18 +1572,19 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
                                 <div className="mb-2 flex flex-wrap items-center gap-2">
                                     <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-slate-900 text-white text-xs font-medium rounded-full shadow-sm">
                                         <span>
-                                            {transferDrilldownMode === 'routes' ? 'Showing route transfers at ' : 'Showing flows through '}
+                                            {transferDrilldownMode === 'routes' ? 'Showing GTFS routes at ' : 'Showing flows through '}
                                             <span className="font-bold">{toTitleCase(selectedTransferPoint)}</span>
                                         </span>
                                         <span className="text-slate-400">·</span>
                                         <span className="tabular-nums">
                                             {transferDrilldownMode === 'routes'
-                                                ? `${transferRouteSummaryRows.length} route transfer${transferRouteSummaryRows.length === 1 ? '' : 's'}`
+                                                ? `${stopRouteDirectionSummary.inboundRoutes.length} in · ${stopRouteDirectionSummary.outboundRoutes.length} out`
                                                 : `${transferFlowPairs.length} pair${transferFlowPairs.length === 1 ? '' : 's'}`}
                                         </span>
                                         <button
                                             onClick={() => {
                                                 setSelectedTransferPoint(null);
+                                                setSelectedRouteTransferKey(null);
                                                 setTransferDrilldownMode('stops');
                                             }}
                                             className="ml-0.5 p-0.5 rounded-full hover:bg-white/20 transition-colors"
@@ -1337,7 +1631,7 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
                             )}
                             {selectedTransferPoint && transferDrilldownMode === 'routes' && (
                                 <p className="mb-3 text-xs text-slate-500">
-                                    Route transfers group journeys by the inbound and outbound routes that meet at this stop. Geographic endpoint arcs are hidden in this view.
+                                    Incoming routes are shown on the left and outgoing routes on the right. Route-number labels identify the lines; journey pills show ridership totals for each route at this stop.
                                 </p>
                             )}
                             <div
@@ -1356,26 +1650,39 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
                                         setTransferMapReady(true);
                                     }}
                                 >
+                                    {routeModeActive && routeDirectionArcs.length > 0 && (
+                                        <ArcLayer arcs={routeDirectionArcs} idPrefix="od-route-stop-directions" />
+                                    )}
                                     {transferDrilldownMode === 'stops' && selectedTransferDetails && transferFlowArcs.length > 0 && (
                                         <ArcLayer arcs={transferFlowArcs} idPrefix="od-route-transfer-flows" />
                                     )}
 
-                                    {displayedTransferPoints.map((pt) => {
+                                    {transferPointsForMap.map((pt) => {
                                         const ratio = maxTransferJourneys > 0 ? pt.totalJourneys / maxTransferJourneys : 0;
                                         const isThisSelected = selectedTransferKey === pt.stopName.toLowerCase();
-                                        const isDimmed = Boolean(selectedTransferKey) && !isThisSelected && !connectedStopNames.has(pt.stopName.toLowerCase());
+                                        const isDimmed = routeModeActive
+                                            ? false
+                                            : Boolean(selectedTransferKey) && !isThisSelected && !connectedStopNames.has(pt.stopName.toLowerCase());
                                         const glowSize = isThisSelected ? 60 + Math.round(ratio * 160) : 40 + Math.round(ratio * 120);
-                                        const glowOpacity = isDimmed ? 0.1 : isThisSelected ? 0.6 + ratio * 0.3 : 0.35 + ratio * 0.35;
-                                        const direction = transferCentroid
+                                        const glowOpacity = routeModeActive
+                                            ? 0.75
+                                            : isDimmed ? 0.1 : isThisSelected ? 0.6 + ratio * 0.3 : 0.35 + ratio * 0.35;
+                                        const direction = routeModeActive
+                                            ? 'bottom'
+                                            : transferCentroid
                                             ? pickLabelDirection(pt.lat, pt.lon, transferCentroid.lat, transferCentroid.lon)
                                             : 'top';
-                                        const isMinor = isDimmed || ratio < LABEL_VOLUME_THRESHOLD;
-                                        const labelText = !showBars && !isMinor
-                                            ? `${toTitleCase(pt.stopName)} <span style="font-weight:800;color:#475569">${fmt(pt.totalJourneys)}</span>`
-                                            : toTitleCase(pt.stopName);
-                                        const labelOffsetPx = showBars
+                                        const isMinor = routeModeActive ? false : isDimmed || ratio < LABEL_VOLUME_THRESHOLD;
+                                        const labelText = toTitleCase(pt.stopName);
+                                        const labelDetailText = !showBars && !isMinor
+                                            ? fmt(pt.totalJourneys)
+                                            : undefined;
+                                        const labelOffsetPx = routeModeActive
+                                            ? 12
+                                            : showBars
                                             ? direction === 'top' ? 14 : direction === 'bottom' ? 8 : 14
                                             : 6 + Math.round(ratio * 18);
+                                        const renderBars = showBars && !routeModeActive;
 
                                         return (
                                             <React.Fragment key={pt.stopName}>
@@ -1389,26 +1696,29 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
                                                 <Marker
                                                     longitude={pt.lon}
                                                     latitude={pt.lat}
-                                                    anchor={showBars ? 'bottom' : 'center'}
+                                                    anchor={renderBars ? 'bottom' : 'center'}
                                                 >
                                                     <button
                                                         type="button"
                                                         onClick={() => {
+                                                            setSelectedRouteTransferKey(null);
                                                             setSelectedTransferPoint(prev =>
                                                                 prev?.toLowerCase() === pt.stopName.toLowerCase() ? null : pt.stopName
                                                             );
                                                         }}
                                                         className="relative border-0 bg-transparent p-0"
+                                                        aria-label={`${toTitleCase(pt.stopName)}, ${fmt(pt.totalJourneys)} journeys`}
                                                         title={`${toTitleCase(pt.stopName)} · ${fmt(pt.totalJourneys)} journeys`}
                                                     >
-                                                        {showBars ? (
+                                                        {renderBars ? (
                                                             <TransferBarMarker ratio={ratio} journeys={pt.totalJourneys} dimmed={isDimmed} />
                                                         ) : (
-                                                            <TransferCircleMarker ratio={ratio} selected={isThisSelected} dimmed={isDimmed} />
+                                                            <TransferCircleMarker ratio={ratio} selected={isThisSelected || routeModeActive} dimmed={isDimmed} />
                                                         )}
                                                         {!isMinor && (
                                                             <TransferMapLabel
                                                                 text={labelText}
+                                                                detailText={labelDetailText}
                                                                 direction={direction}
                                                                 offsetPx={labelOffsetPx}
                                                             />
@@ -1418,6 +1728,50 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
                                             </React.Fragment>
                                         );
                                     })}
+
+                                    {routeModeActive && routeModeNodes.map((node) => (
+                                        <Marker
+                                            key={stopRouteNodeKey(node)}
+                                            longitude={node.lon}
+                                            latitude={node.lat}
+                                            anchor="center"
+                                        >
+                                            <RouteTransferOrbitNode
+                                                routeId={node.routeId}
+                                                journeys={node.journeys}
+                                                ratio={node.ratio}
+                                                color={routeDirectionColor(node.direction, node.ratio)}
+                                                labelDirection={node.labelDirection}
+                                                selected={selectedRouteTransferNode ? stopRouteNodeKey(selectedRouteTransferNode) === stopRouteNodeKey(node) : false}
+                                                onClick={() => setSelectedRouteTransferKey(stopRouteNodeKey(node))}
+                                            />
+                                        </Marker>
+                                    ))}
+
+                                    {routeModeActive && routeModeLineLabels.map((label) => (
+                                        <Marker
+                                            key={`label-${label.key}`}
+                                            longitude={label.lon}
+                                            latitude={label.lat}
+                                            anchor="center"
+                                        >
+                                            <div
+                                                className="pointer-events-none rounded-lg border px-2 py-1 text-center shadow-md"
+                                                style={{
+                                                    background: 'rgba(255,255,255,0.96)',
+                                                    borderColor: label.selected ? '#0f172a' : 'rgba(148,163,184,0.26)',
+                                                    boxShadow: label.selected ? '0 8px 18px rgba(15,23,42,0.16)' : '0 4px 10px rgba(15,23,42,0.08)',
+                                                }}
+                                            >
+                                                <div className="text-[8px] font-semibold uppercase tracking-[0.18em]" style={{ color: label.color }}>
+                                                    Route
+                                                </div>
+                                                <div className="text-[11px] font-bold leading-none text-slate-900">
+                                                    {label.routeId}
+                                                </div>
+                                            </div>
+                                        </Marker>
+                                    ))}
 
                                     {transferDrilldownMode === 'stops' && transferFlowEndpoints.map((endpoint) => (
                                         <Marker
@@ -1449,70 +1803,169 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
                                     ))}
                                 </MapBase>
                             </div>
-                            {/* Floating legend overlay */}
-                            <div className="absolute bottom-3 left-3 z-[1000] bg-white/90 backdrop-blur-sm rounded-lg shadow-md border border-slate-200/60 px-3 py-2.5 flex items-center gap-4">
-                                <div className="flex items-center gap-2">
-                                    <div className="w-20 h-3 rounded-full" style={{ background: 'linear-gradient(to right, #22c55e, #eab308, #f97316, #ef4444)' }} />
-                                    <div className="flex flex-col">
-                                        <span className="text-[10px] font-semibold text-slate-600 leading-tight">Volume</span>
-                                        <span className="text-[9px] text-slate-400 leading-tight">Low → High</span>
+                            {routeModeActive && selectedRouteTransferNode && (
+                                <div className="absolute right-3 top-3 z-[1000] w-[290px] rounded-2xl border border-slate-200/80 bg-white/92 p-4 shadow-xl backdrop-blur-md">
+                                    <div className="flex items-start gap-3">
+                                        <div
+                                            className="flex h-9 w-9 items-center justify-center rounded-full text-sm font-bold text-white"
+                                            style={{ background: routeDirectionColor(selectedRouteTransferNode.direction, selectedRouteTransferNode.ratio) }}
+                                        >
+                                            {selectedRouteTransferNode.routeId}
+                                        </div>
+                                        <div className="min-w-0 flex-1">
+                                            <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400">
+                                                {selectedRouteTransferNode.direction === 'inbound' ? 'Arriving Route' : 'Departing Route'}
+                                            </div>
+                                            <div className="mt-2 text-sm font-semibold leading-tight text-slate-900">
+                                                {formatRouteDisplay(selectedRouteTransferNode.routeId, selectedRouteTransferNode.routeName)}
+                                            </div>
+                                            <div className="mt-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                                                {selectedRouteTransferNode.direction === 'inbound' ? 'Connects To' : 'Receives From'}
+                                            </div>
+                                            <div className="mt-1 text-xs font-medium leading-tight text-slate-600">
+                                                {selectedRouteTransferNode.counterpartRoutes.join(', ') || 'No linked routes'}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="mt-4 grid grid-cols-2 gap-2">
+                                        <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                                            <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Journeys</div>
+                                            <div className="mt-1 text-lg font-bold text-slate-900">{fmt(selectedRouteTransferNode.journeys)}</div>
+                                        </div>
+                                        <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                                            <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">OD Pairs</div>
+                                            <div className="mt-1 text-lg font-bold text-slate-900">{selectedRouteTransferNode.pairCount}</div>
+                                        </div>
+                                    </div>
+                                    <div className="mt-4">
+                                        <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Examples</div>
+                                        <div className="mt-2 flex flex-wrap gap-1.5">
+                                            {selectedRouteTransferNode.samplePairs.length > 0 ? selectedRouteTransferNode.samplePairs.map(pair => (
+                                                <span
+                                                    key={pair}
+                                                    className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-medium text-slate-600"
+                                                >
+                                                    {pair}
+                                                </span>
+                                            )) : (
+                                                <span className="text-[11px] text-slate-500">No sample OD pairs available.</span>
+                                            )}
+                                        </div>
+                                    </div>
+                                    <div className="mt-4">
+                                        <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">GTFS Path Context</div>
+                                        <div className="mt-2 text-[11px] leading-relaxed text-slate-600">
+                                            {selectedRouteTransferNode.routePaths[0] || 'No route path available.'}
+                                        </div>
                                     </div>
                                 </div>
+                            )}
+                            {/* Floating legend overlay */}
+                            <div className="absolute bottom-3 left-3 z-[1000] bg-white/90 backdrop-blur-sm rounded-lg shadow-md border border-slate-200/60 px-3 py-2.5 flex items-center gap-4">
+                                {routeModeActive ? (
+                                    <>
+                                        <div className="flex items-center gap-2">
+                                            <div className="h-3 w-3 rounded-full" style={{ background: routeDirectionColor('inbound', 0.8) }} />
+                                            <div className="flex flex-col">
+                                                <span className="text-[10px] font-semibold text-slate-600 leading-tight">Arriving</span>
+                                                <span className="text-[9px] text-slate-400 leading-tight">Routes into stop</span>
+                                            </div>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <div className="h-3 w-3 rounded-full" style={{ background: routeDirectionColor('outbound', 0.8) }} />
+                                            <div className="flex flex-col">
+                                                <span className="text-[10px] font-semibold text-slate-600 leading-tight">Departing</span>
+                                                <span className="text-[9px] text-slate-400 leading-tight">Routes leaving stop</span>
+                                            </div>
+                                        </div>
+                                    </>
+                                ) : (
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-20 h-3 rounded-full" style={{ background: 'linear-gradient(to right, #22c55e, #eab308, #f97316, #ef4444)' }} />
+                                        <div className="flex flex-col">
+                                            <span className="text-[10px] font-semibold text-slate-600 leading-tight">Volume</span>
+                                            <span className="text-[9px] text-slate-400 leading-tight">Low → High</span>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         </div>
 
                         {selectedTransferPoint && transferDrilldownMode === 'routes' && (
-                            <div className="mt-4 overflow-hidden rounded-lg border border-slate-200">
-                                <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
-                                    <div className="text-sm font-semibold text-slate-900">Route transfers at {toTitleCase(selectedTransferPoint)}</div>
-                                    <div className="text-xs text-slate-500">Local inbound → outbound route movements for journeys transferring at this stop.</div>
-                                </div>
-                                <div className="overflow-x-auto">
-                                    <table className="w-full text-sm">
-                                        <thead className="bg-white">
-                                            <tr className="border-b border-slate-200">
-                                                <th className="w-12 px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500">Rank</th>
-                                                <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500">Inbound Route</th>
-                                                <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500">Outbound Route</th>
-                                                <th className="w-24 px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wider text-slate-500">Journeys</th>
-                                                <th className="w-16 px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wider text-slate-500">Pairs</th>
-                                                <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500">Example OD Pairs</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {transferRouteSummaryRows.length === 0 ? (
-                                                <tr>
-                                                    <td colSpan={6} className="px-3 py-4 text-sm text-slate-500">
-                                                        No route-transfer summary is available for this stop.
-                                                    </td>
-                                                </tr>
-                                            ) : transferRouteSummaryRows.map((row, index) => (
-                                                <tr
-                                                    key={`${row.inboundRoute}-${row.outboundRoute}`}
-                                                    className={`border-b border-slate-100 ${index % 2 === 1 ? 'bg-slate-25' : 'bg-white'}`}
-                                                >
-                                                    <td className="px-3 py-2 text-xs font-medium tabular-nums text-slate-400">{index + 1}</td>
-                                                    <td className="px-3 py-2 text-xs font-semibold text-slate-800">
-                                                        <span className="block truncate max-w-[220px]" title={row.inboundRoute}>{row.inboundRoute}</span>
-                                                    </td>
-                                                    <td className="px-3 py-2 text-xs font-semibold text-slate-800">
-                                                        <span className="block truncate max-w-[220px]" title={row.outboundRoute}>{row.outboundRoute}</span>
-                                                    </td>
-                                                    <td className="px-3 py-2 text-right text-xs font-bold tabular-nums text-slate-900">{fmt(row.journeys)}</td>
-                                                    <td className="px-3 py-2 text-right text-xs tabular-nums text-slate-500">{row.pairCount}</td>
-                                                    <td className="px-3 py-2 text-xs text-slate-600">
-                                                        <span
-                                                            className="block truncate max-w-[320px]"
-                                                            title={row.samplePairs.join(', ') || row.routePaths.join(' | ')}
+                            <div className="mt-4 grid gap-4 xl:grid-cols-2">
+                                {([
+                                    {
+                                        title: `Routes Arriving Into ${toTitleCase(selectedTransferPoint)}`,
+                                        subtitle: 'Inbound GTFS routes whose matched transfer legs end at this stop.',
+                                        rows: stopRouteDirectionSummary.inboundRoutes,
+                                        accent: '#0ea5e9',
+                                        empty: 'No inbound route summary is available for this stop.',
+                                    },
+                                    {
+                                        title: `Routes Leaving ${toTitleCase(selectedTransferPoint)}`,
+                                        subtitle: 'Outbound GTFS routes whose matched transfer legs begin at this stop.',
+                                        rows: stopRouteDirectionSummary.outboundRoutes,
+                                        accent: '#f97316',
+                                        empty: 'No outbound route summary is available for this stop.',
+                                    },
+                                ] as const).map((section) => (
+                                    <div key={section.title} className="overflow-hidden rounded-lg border border-slate-200">
+                                        <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
+                                            <div className="flex items-center gap-2">
+                                                <div className="h-2.5 w-2.5 rounded-full" style={{ background: section.accent }} />
+                                                <div className="text-sm font-semibold text-slate-900">{section.title}</div>
+                                            </div>
+                                            <div className="mt-1 text-xs text-slate-500">{section.subtitle}</div>
+                                        </div>
+                                        <div className="overflow-hidden">
+                                            <table className="w-full table-fixed text-sm">
+                                                <thead className="bg-white">
+                                                    <tr className="border-b border-slate-200">
+                                                        <th className="w-10 px-2 py-2.5 text-left text-[10px] font-semibold uppercase tracking-wider text-slate-500">Rank</th>
+                                                        <th className="w-[36%] px-2 py-2.5 text-left text-[10px] font-semibold uppercase tracking-wider text-slate-500">Route</th>
+                                                        <th className="w-20 px-2 py-2.5 text-right text-[10px] font-semibold uppercase tracking-wider text-slate-500">Journeys</th>
+                                                        <th className="w-14 px-2 py-2.5 text-right text-[10px] font-semibold uppercase tracking-wider text-slate-500">Pairs</th>
+                                                        <th className="px-2 py-2.5 text-left text-[10px] font-semibold uppercase tracking-wider text-slate-500">Linked Routes</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {section.rows.length === 0 ? (
+                                                        <tr>
+                                                            <td colSpan={5} className="px-3 py-4 text-sm text-slate-500">
+                                                                {section.empty}
+                                                            </td>
+                                                        </tr>
+                                                    ) : section.rows.map((row, index) => (
+                                                        <tr
+                                                            key={stopRouteNodeKey(row)}
+                                                            className={`border-b border-slate-100 ${index % 2 === 1 ? 'bg-slate-25' : 'bg-white'}`}
                                                         >
-                                                            {row.samplePairs.join(', ') || row.routePaths.join(' | ') || '—'}
-                                                        </span>
-                                                    </td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
+                                                            <td className="px-2 py-2 align-top text-xs font-medium tabular-nums text-slate-400">{index + 1}</td>
+                                                            <td className="px-2 py-2 align-top text-xs font-semibold text-slate-800">
+                                                                <span
+                                                                    className="block break-words leading-snug"
+                                                                    title={formatRouteDisplay(row.routeId, row.routeName)}
+                                                                >
+                                                                    {formatRouteDisplay(row.routeId, row.routeName)}
+                                                                </span>
+                                                            </td>
+                                                            <td className="px-2 py-2 align-top text-right text-xs font-bold tabular-nums text-slate-900">{fmt(row.journeys)}</td>
+                                                            <td className="px-2 py-2 align-top text-right text-xs tabular-nums text-slate-500">{row.pairCount}</td>
+                                                            <td className="px-2 py-2 align-top text-xs text-slate-600">
+                                                                <span
+                                                                    className="block break-words leading-snug"
+                                                                    title={row.counterpartRoutes.join(', ') || row.routePaths.join(' | ')}
+                                                                >
+                                                                    {row.counterpartRoutes.join(', ') || row.routePaths.join(' | ') || '—'}
+                                                                </span>
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                ))}
                             </div>
                         )}
 

@@ -83,6 +83,29 @@ function getJourneyTransfers(result: StudentPassResult, mode: 'am' | 'pm') {
     return [];
 }
 
+function getJourneyDisplayWindow(
+    firstLeg: StudentPassResult['morningLegs'][number] | StudentPassResult['afternoonLegs'][number] | undefined,
+    lastLeg: StudentPassResult['morningLegs'][number] | StudentPassResult['afternoonLegs'][number] | undefined,
+    leadingWalkMinutes = 0,
+    trailingWalkMinutes = 0,
+) {
+    if (!firstLeg || !lastLeg) return null;
+
+    return {
+        departureMinutes: firstLeg.departureMinutes - leadingWalkMinutes,
+        arrivalMinutes: lastLeg.arrivalMinutes + trailingWalkMinutes,
+    };
+}
+
+function formatTransferSummary(result: StudentPassResult, mode: 'am' | 'pm'): string | null {
+    const transfers = getJourneyTransfers(result, mode);
+    if (transfers.length === 0) return null;
+
+    const waits = transfers.map((transfer) => `${transfer.waitMinutes} min wait`).join(' / ');
+    const transferLabel = transfers.length === 1 ? '1 transfer' : `${transfers.length} transfers`;
+    return `${transferLabel} · ${waits}`;
+}
+
 export const StudentPassPanel: React.FC<StudentPassPanelProps> = ({
     selectedSchoolId,
     onSchoolChange,
@@ -343,7 +366,7 @@ export const StudentPassPanel: React.FC<StudentPassPanelProps> = ({
                                     }}
                                 />
                                 <p className="text-[11px]" style={{ color: 'var(--student-pass-muted)' }}>
-                                    Auto-search checks the nearest strong candidates; selecting a stop routes that exact stop.
+                                    Every zone stop is evaluated. Selecting a stop forces that exact stop into the trip plan.
                                 </p>
                                 <div className="space-y-2 max-h-56 overflow-y-auto dark-scrollbar pr-1">
                                     {filteredZoneStops.map((stop) => {
@@ -476,6 +499,13 @@ export const StudentPassPanel: React.FC<StudentPassPanelProps> = ({
                                                     const walkToSchoolMin = opt.result.walkToSchool?.walkMinutes ?? 0;
                                                     const transitMin = firstLeg && lastLeg ? lastLeg.arrivalMinutes - firstLeg.departureMinutes : 0;
                                                     const totalMin = (walkMin ?? 0) + transitMin + walkToSchoolMin;
+                                                    const displayWindow = getJourneyDisplayWindow(
+                                                        firstLeg,
+                                                        lastLeg,
+                                                        walkMin ?? 0,
+                                                        walkToSchoolMin
+                                                    );
+                                                    const transferSummary = formatTransferSummary(opt.result, 'am');
                                                     const primaryColor = firstLeg?.routeColor || '#637EB8';
                                                     return (
                                                         <button
@@ -525,9 +555,13 @@ export const StudentPassPanel: React.FC<StudentPassPanelProps> = ({
                                                             {firstLeg && lastLeg && (
                                                                 <div className="flex items-center justify-between">
                                                                     <p className="text-[12px] text-[#E2E8F0]">
-                                                                        {minutesToDisplayTime(firstLeg.departureMinutes)}
+                                                                        {displayWindow
+                                                                            ? minutesToDisplayTime(displayWindow.departureMinutes)
+                                                                            : minutesToDisplayTime(firstLeg.departureMinutes)}
                                                                         {' → '}
-                                                                        {minutesToDisplayTime(lastLeg.arrivalMinutes)}
+                                                                        {displayWindow
+                                                                            ? minutesToDisplayTime(displayWindow.arrivalMinutes)
+                                                                            : minutesToDisplayTime(lastLeg.arrivalMinutes)}
                                                                     </p>
                                                                     <span
                                                                         className="text-[11px] font-semibold text-[#CBD5E1]"
@@ -538,9 +572,9 @@ export const StudentPassPanel: React.FC<StudentPassPanelProps> = ({
                                                                 </div>
                                                             )}
                                                             <p className="text-[11px] text-[#94A3B8] mt-0.5">
-                                                                {opt.result.isDirect ? 'Direct' : 'Transfer'}
+                                                                {opt.result.isDirect ? 'Direct' : 'With transfer'}
                                                                 {walkMin != null && ` · ${walkMin} min walk`}
-                                                                {opt.result.transfer && ` · ${opt.result.transfer.waitMinutes} min wait`}
+                                                                {transferSummary && ` · ${transferSummary}`}
                                                             </p>
                                                         </button>
                                                     );
@@ -558,8 +592,13 @@ export const StudentPassPanel: React.FC<StudentPassPanelProps> = ({
                                                         const walkToZoneMin = opt.result.walkToZone?.walkMinutes ?? 0;
                                                         const transitMin = firstLeg && lastLeg ? lastLeg.arrivalMinutes - firstLeg.departureMinutes : 0;
                                                         const totalMin = (walkMin ?? 0) + transitMin + walkToZoneMin;
-                                                        const transfers = getJourneyTransfers(opt.result, 'pm');
-                                                        const firstTransferWait = transfers[0]?.waitMinutes;
+                                                        const displayWindow = getJourneyDisplayWindow(
+                                                            firstLeg,
+                                                            lastLeg,
+                                                            walkMin ?? 0,
+                                                            walkToZoneMin
+                                                        );
+                                                        const transferSummary = formatTransferSummary(opt.result, 'pm');
                                                         const primaryColor = firstLeg?.routeColor || '#637EB8';
                                                         return (
                                                             <button
@@ -609,9 +648,13 @@ export const StudentPassPanel: React.FC<StudentPassPanelProps> = ({
                                                                 {firstLeg && lastLeg && (
                                                                     <div className="flex items-center justify-between">
                                                                         <p className="text-[12px] text-[#E2E8F0]">
-                                                                            {minutesToDisplayTime(firstLeg.departureMinutes)}
+                                                                            {displayWindow
+                                                                                ? minutesToDisplayTime(displayWindow.departureMinutes)
+                                                                                : minutesToDisplayTime(firstLeg.departureMinutes)}
                                                                             {' → '}
-                                                                            {minutesToDisplayTime(lastLeg.arrivalMinutes)}
+                                                                            {displayWindow
+                                                                                ? minutesToDisplayTime(displayWindow.arrivalMinutes)
+                                                                                : minutesToDisplayTime(lastLeg.arrivalMinutes)}
                                                                         </p>
                                                                         <span
                                                                             className="text-[11px] font-semibold text-[#CBD5E1]"
@@ -622,9 +665,9 @@ export const StudentPassPanel: React.FC<StudentPassPanelProps> = ({
                                                                     </div>
                                                                 )}
                                                                 <p className="text-[11px] text-[#94A3B8] mt-0.5">
-                                                                    {legs.length === 1 ? 'Direct' : 'Transfer'}
+                                                                    {legs.length === 1 ? 'Direct' : 'With transfer'}
                                                                     {walkMin != null && ` · ${walkMin} min walk to stop`}
-                                                                    {firstTransferWait != null && ` · ${firstTransferWait} min transfer wait`}
+                                                                    {transferSummary && ` · ${transferSummary}`}
                                                                 </p>
                                                                 {alightStopName && (
                                                                     <p className="text-[11px] text-[#94A3B8] mt-0.5">

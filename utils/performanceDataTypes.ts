@@ -296,6 +296,7 @@ export interface RouteHourMetrics {
   hour: number;        // 0-23
   avgLoad: number;
   boardings: number;
+  otp?: OTPBreakdown;
 }
 
 export interface StopRouteBreakdown {

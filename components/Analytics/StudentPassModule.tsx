@@ -1,5 +1,5 @@
-import React, { useState, useCallback, useEffect, useMemo } from 'react';
-import { ArrowLeft, GraduationCap } from 'lucide-react';
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { ArrowLeft, GraduationCap, Maximize2, Minimize2 } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import {
@@ -26,6 +26,7 @@ import StudentPassTimeline, {
 } from './StudentPassTimeline';
 import type { TimelineSegment } from './StudentPassTimeline';
 import { getContrastingTextColor } from '../../utils/config/routeColors';
+import type { MapRef } from 'react-map-gl/mapbox';
 import './studentPass.css';
 
 interface StudentPassModuleProps {
@@ -120,10 +121,13 @@ function drawTimelineBar(
             doc.setLineDashPattern([1, 1], 0);
             doc.roundedRect(curX, y, segW, barHeight, radius, radius, 'S');
             doc.setLineDashPattern([], 0);
-            doc.setFontSize(7);
-            doc.setFont('helvetica', 'bold');
             doc.setTextColor(146, 64, 14);
-            doc.text(`${seg.durationMinutes}m`, curX + segW / 2, y + barHeight / 2 + 1, { align: 'center' });
+            doc.setFontSize(6);
+            doc.setFont('helvetica', 'bold');
+            doc.text('Transfer', curX + segW / 2, y + barHeight / 2 - 1, { align: 'center' });
+            doc.setFontSize(6);
+            doc.setFont('helvetica', 'normal');
+            doc.text(`${seg.durationMinutes}m`, curX + segW / 2, y + barHeight / 2 + 3, { align: 'center' });
         }
 
         curX += segW + gap;
@@ -259,6 +263,7 @@ export const StudentPassModule: React.FC<StudentPassModuleProps> = ({ onBack, te
     const [journeyMode, setJourneyMode] = useState<'am' | 'pm'>('am');
     const [isFullscreen, setIsFullscreen] = useState(false);
     const [performanceData, setPerformanceData] = useState<PerformanceDataSummary | null>(null);
+    const mapInstanceRef = useRef<MapRef | null>(null);
 
     const selectedSchool: SchoolConfig =
         BARRIE_SCHOOLS.find((s) => s.id === selectedSchoolId) ?? BARRIE_SCHOOLS[0];
@@ -435,99 +440,331 @@ export const StudentPassModule: React.FC<StudentPassModuleProps> = ({ onBack, te
         [performanceData, serviceDate]
     );
 
+    useEffect(() => {
+        const timer = window.setTimeout(() => {
+            mapInstanceRef.current?.resize();
+        }, 120);
+
+        return () => window.clearTimeout(timer);
+    }, [isFullscreen]);
+
+    // ── PDF export helpers ─────────────────────────────────────────────────────
+
+    function getJourneyGeoPoints(
+        r: StudentPassResult,
+        mode: 'am' | 'pm',
+        school: SchoolConfig,
+        origin: [number, number] | null,
+        poly: [number, number][] | null,
+    ): [number, number][] {
+        const pts: [number, number][] = [];
+        const shapes = mode === 'am' ? r.routeShapes : r.afternoonRouteShapes;
+        shapes?.forEach((s) => pts.push(...s.points));
+        pts.push([school.lat, school.lon]);
+        if (origin) pts.push(origin);
+        else if (r.zoneCentroid) pts.push(r.zoneCentroid);
+        if (poly) pts.push(...poly);
+        return pts;
+    }
+
+    function cropCanvasToContent(
+        fullCanvas: HTMLCanvasElement,
+        mapEl: HTMLElement,
+        map: MapRef,
+        geoPoints: [number, number][],
+    ): HTMLCanvasElement {
+        if (geoPoints.length === 0) return fullCanvas;
+
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        for (const [lat, lng] of geoPoints) {
+            const px = map.project([lng, lat]);
+            minX = Math.min(minX, px.x);
+            maxX = Math.max(maxX, px.x);
+            minY = Math.min(minY, px.y);
+            maxY = Math.max(maxY, px.y);
+        }
+
+        const padX = Math.max(50, (maxX - minX) * 0.15);
+        const padY = Math.max(50, (maxY - minY) * 0.15);
+        const cW = mapEl.clientWidth;
+        const cH = mapEl.clientHeight;
+        minX = Math.max(0, minX - padX);
+        minY = Math.max(0, minY - padY);
+        maxX = Math.min(cW, maxX + padX);
+        maxY = Math.min(cH, maxY + padY);
+
+        const scaleX = fullCanvas.width / cW;
+        const scaleY = fullCanvas.height / cH;
+        const cx = Math.round(minX * scaleX);
+        const cy = Math.round(minY * scaleY);
+        const cropW = Math.round((maxX - minX) * scaleX);
+        const cropH = Math.round((maxY - minY) * scaleY);
+
+        if (cropW <= 0 || cropH <= 0) return fullCanvas;
+
+        const cropped = document.createElement('canvas');
+        cropped.width = cropW;
+        cropped.height = cropH;
+        const ctx = cropped.getContext('2d');
+        if (!ctx) return fullCanvas;
+        ctx.drawImage(fullCanvas, cx, cy, cropW, cropH, 0, 0, cropW, cropH);
+        return cropped;
+    }
+
+    function buildJourneySummary(
+        r: StudentPassResult,
+        mode: 'am' | 'pm',
+        school: SchoolConfig,
+        bellTime: string,
+    ): string[] {
+        const legs = mode === 'am' ? r.morningLegs : (r.afternoonLegs ?? []);
+        if (legs.length === 0) return [];
+
+        const steps: string[] = [];
+
+        if (mode === 'am') {
+            if (r.walkToStop) {
+                steps.push(`Walk ${r.walkToStop.walkMinutes} min to ${legs[0].fromStop}`);
+            }
+            for (let i = 0; i < legs.length; i++) {
+                const leg = legs[i];
+                const dur = leg.arrivalMinutes - leg.departureMinutes;
+                if (i === 0) {
+                    steps.push(`Board Route ${leg.routeShortName} at ${minutesToDisplayTime(leg.departureMinutes)} (${dur} min ride)`);
+                } else {
+                    const wait = leg.departureMinutes - legs[i - 1].arrivalMinutes;
+                    steps.push(`Transfer to Route ${leg.routeShortName} — ${wait} min wait, ${dur} min ride`);
+                }
+            }
+            if (r.walkToSchool) {
+                steps.push(`Walk ${r.walkToSchool.walkMinutes} min to ${school.name}`);
+            }
+            const walkBefore = r.walkToStop?.walkMinutes ?? 0;
+            const walkAfter = r.walkToSchool?.walkMinutes ?? 0;
+            const total = (legs[legs.length - 1].arrivalMinutes - legs[0].departureMinutes) + walkBefore + walkAfter;
+            steps.push(`Total door-to-door: about ${total} min — bell time: ${bellTime}`);
+        } else {
+            steps.push(`Bell rings at ${bellTime}`);
+            if (r.walkFromSchool) {
+                steps.push(`Walk ${r.walkFromSchool.walkMinutes} min from school to ${legs[0].fromStop}`);
+            }
+            for (let i = 0; i < legs.length; i++) {
+                const leg = legs[i];
+                const dur = leg.arrivalMinutes - leg.departureMinutes;
+                if (i === 0) {
+                    steps.push(`Board Route ${leg.routeShortName} at ${minutesToDisplayTime(leg.departureMinutes)} (${dur} min ride)`);
+                } else {
+                    const wait = leg.departureMinutes - legs[i - 1].arrivalMinutes;
+                    steps.push(`Transfer to Route ${leg.routeShortName} — ${wait} min wait, ${dur} min ride`);
+                }
+            }
+            if (r.walkToZone) {
+                steps.push(`Walk ${r.walkToZone.walkMinutes} min home`);
+            }
+            const walkBefore = r.walkFromSchool?.walkMinutes ?? 0;
+            const walkAfter = r.walkToZone?.walkMinutes ?? 0;
+            const total = (legs[legs.length - 1].arrivalMinutes - legs[0].departureMinutes) + walkBefore + walkAfter;
+            steps.push(`Total door-to-door: about ${total} min`);
+        }
+
+        return steps;
+    }
+
     const handleExportPdf = useCallback(async () => {
         if (!result?.found) return;
         setIsExporting(true);
+        const originalMode = journeyMode;
         try {
             const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
             const pageW = doc.internal.pageSize.getWidth();
             const pageH = doc.internal.pageSize.getHeight();
             const margin = 14;
             const contentW = pageW - margin * 2;
+            const displayDate = formatDisplayDate(serviceDate);
+            const today = new Date().toLocaleDateString('en-CA');
 
-            // ── Title Banner ─────────────────────────────────────
-            doc.setFillColor(0, 78, 126);
-            doc.rect(0, 0, pageW, 22, 'F');
-            doc.setTextColor(255, 255, 255);
-            doc.setFontSize(14);
-            doc.setFont('helvetica', 'bold');
-            doc.text(selectedSchool.name, margin, 11);
-            doc.setFontSize(9);
-            doc.setFont('helvetica', 'normal');
-            doc.setTextColor(214, 237, 250);
-            doc.text('Student Transit Pass', margin, 18);
-            doc.text(formatDisplayDate(serviceDate), pageW - margin, 11, { align: 'right' });
+            const morningSegs = buildMorningSegments(result);
+            const afternoonSegs = buildAfternoonSegments(result);
+            const hasAfternoon = afternoonSegs.length > 0;
 
+            // ── Captures (switch mode, capture map + timeline) ──
+            const mapEl = document.querySelector('.student-pass-map') as HTMLElement | null;
+            const map = mapInstanceRef.current;
+            let amMapImg: string | null = null;
+            let pmMapImg: string | null = null;
+            let amTimelineImg: string | null = null;
+            let pmTimelineImg: string | null = null;
+            let amAspect = 4 / 3;
+            let pmAspect = 4 / 3;
+            let amTimelineAspect = 6;
+            let pmTimelineAspect = 6;
+
+            const waitForRender = () => new Promise<void>((resolve) => {
+                requestAnimationFrame(() => setTimeout(resolve, 800));
+            });
+
+            async function captureTimeline(): Promise<{ img: string; aspect: number } | null> {
+                const el = document.getElementById('student-pass-timeline');
+                if (!el) return null;
+                const canvas = await html2canvas(el, {
+                    useCORS: true,
+                    backgroundColor: '#00263e',
+                    scale: 2,
+                });
+                return {
+                    img: canvas.toDataURL('image/png'),
+                    aspect: canvas.width / Math.max(canvas.height, 1),
+                };
+            }
+
+            if (mapEl) {
+                // AM capture
+                try {
+                    setJourneyMode('am');
+                    await waitForRender();
+                    await prepareMapForExport(mapEl);
+                    const fullCanvas = await captureStudentPassMapCanvas(mapEl);
+                    if (map) {
+                        const pts = getJourneyGeoPoints(result, 'am', selectedSchool, zoneOrigin, polygon);
+                        const cropped = cropCanvasToContent(fullCanvas, mapEl, map, pts);
+                        amAspect = cropped.width / Math.max(cropped.height, 1);
+                        amMapImg = cropped.toDataURL('image/png');
+                    } else {
+                        amAspect = fullCanvas.width / Math.max(fullCanvas.height, 1);
+                        amMapImg = fullCanvas.toDataURL('image/png');
+                    }
+                    const tl = await captureTimeline();
+                    if (tl) { amTimelineImg = tl.img; amTimelineAspect = tl.aspect; }
+                } catch { /* skip AM */ }
+
+                // PM capture
+                if (hasAfternoon) {
+                    try {
+                        setJourneyMode('pm');
+                        await waitForRender();
+                        await prepareMapForExport(mapEl);
+                        const fullCanvas = await captureStudentPassMapCanvas(mapEl);
+                        if (map) {
+                            const pts = getJourneyGeoPoints(result, 'pm', selectedSchool, zoneOrigin, polygon);
+                            const cropped = cropCanvasToContent(fullCanvas, mapEl, map, pts);
+                            pmAspect = cropped.width / Math.max(cropped.height, 1);
+                            pmMapImg = cropped.toDataURL('image/png');
+                        } else {
+                            pmAspect = fullCanvas.width / Math.max(fullCanvas.height, 1);
+                            pmMapImg = fullCanvas.toDataURL('image/png');
+                        }
+                        const tl = await captureTimeline();
+                        if (tl) { pmTimelineImg = tl.img; pmTimelineAspect = tl.aspect; }
+                    } catch { /* skip PM */ }
+                }
+
+                setJourneyMode(originalMode);
+            }
+
+            const eBellStart = bellStart || selectedSchool.bellStart;
+            const eBellEnd = bellEnd || selectedSchool.bellEnd;
+
+            // ── Shared helpers ────────────────────────────────────
+            function drawBanner(journeyLabel: string) {
+                doc.setFillColor(0, 78, 126);
+                doc.rect(0, 0, pageW, 22, 'F');
+                doc.setTextColor(255, 255, 255);
+                doc.setFontSize(14);
+                doc.setFont('helvetica', 'bold');
+                doc.text(selectedSchool.name, margin, 11);
+                doc.setFontSize(9);
+                doc.setFont('helvetica', 'normal');
+                doc.setTextColor(214, 237, 250);
+                doc.text('Student Transit Pass Pilot', margin, 18);
+                doc.setTextColor(255, 255, 255);
+                doc.text(displayDate, pageW - margin, 11, { align: 'right' });
+                doc.setFontSize(7);
+                doc.setTextColor(214, 237, 250);
+                doc.text(journeyLabel, pageW - margin, 18, { align: 'right' });
+            }
+
+            function drawFooter() {
+                const footerY = pageH - 10;
+                doc.setDrawColor(0, 78, 126);
+                doc.setLineWidth(0.3);
+                doc.line(margin, footerY - 4, pageW - margin, footerY - 4);
+                doc.setFontSize(7);
+                doc.setTextColor(94, 127, 150);
+                doc.text('Barrie Transit', margin, footerY);
+                doc.text(
+                    `${displayDate} | Exported ${today}`,
+                    pageW - margin,
+                    footerY,
+                    { align: 'right' },
+                );
+            }
+
+            function drawSummary(steps: string[], yPos: number): number {
+                if (steps.length === 0) return yPos;
+                let cy = yPos + 4;
+                for (let i = 0; i < steps.length; i++) {
+                    const num = `${i + 1}.`;
+                    doc.setFontSize(8);
+                    doc.setFont('helvetica', 'bold');
+                    doc.setTextColor(0, 78, 126);
+                    doc.text(num, margin, cy);
+                    doc.setFont('helvetica', 'normal');
+                    doc.setTextColor(60, 60, 60);
+                    const wrapped: string[] = doc.splitTextToSize(steps[i], contentW - 8);
+                    doc.text(wrapped, margin + 8, cy);
+                    cy += wrapped.length * 3.5;
+                }
+                return cy;
+            }
+
+            // ═══ PAGE 1: MORNING JOURNEY ═════════════════════════
+            drawBanner('Morning Journey');
             let y = 28;
 
-            // ── Map Capture ──────────────────────────────────────
-            const mapEl = document.querySelector('.student-pass-map') as HTMLElement | null;
-            const mapH = 120;
-            if (mapEl) {
-                try {
-                    await prepareMapForExport(mapEl);
-                    const canvas = await captureStudentPassMapCanvas(mapEl);
-                    const imgData = canvas.toDataURL('image/png');
+            if (amMapImg) {
+                const maxMapH = pageH - 28 - 60;
+                const amMapH = Math.min(contentW / amAspect, maxMapH);
+                doc.setDrawColor(200, 220, 235);
+                doc.setLineWidth(0.3);
+                doc.rect(margin, y, contentW, amMapH, 'S');
+                doc.addImage(amMapImg, 'PNG', margin, y, contentW, amMapH);
+                y += amMapH + 4;
+            }
+
+            if (amTimelineImg) {
+                const tlH = contentW / amTimelineAspect;
+                doc.addImage(amTimelineImg, 'PNG', margin, y, contentW, tlH);
+                y += tlH + 3;
+            }
+
+            y = drawSummary(buildJourneySummary(result, 'am', selectedSchool, eBellStart), y);
+            drawFooter();
+
+            // ═══ PAGE 2: AFTERNOON JOURNEY ═══════════════════════
+            if (hasAfternoon) {
+                doc.addPage();
+                drawBanner('Afternoon Journey');
+                y = 28;
+
+                if (pmMapImg) {
+                    const maxMapH = pageH - 28 - 60;
+                    const pmMapH = Math.min(contentW / pmAspect, maxMapH);
                     doc.setDrawColor(200, 220, 235);
                     doc.setLineWidth(0.3);
-                    doc.rect(margin, y, contentW, mapH, 'S');
-                    doc.addImage(imgData, 'PNG', margin, y, contentW, mapH);
-                    y += mapH + 6;
-                } catch {
-                    y += 4;
+                    doc.rect(margin, y, contentW, pmMapH, 'S');
+                    doc.addImage(pmMapImg, 'PNG', margin, y, contentW, pmMapH);
+                    y += pmMapH + 4;
                 }
+
+                if (pmTimelineImg) {
+                    const tlH = contentW / pmTimelineAspect;
+                    doc.addImage(pmTimelineImg, 'PNG', margin, y, contentW, tlH);
+                    y += tlH + 3;
+                }
+
+                y = drawSummary(buildJourneySummary(result, 'pm', selectedSchool, eBellEnd), y);
+                drawFooter();
             }
-
-            // ── Morning Timeline ─────────────────────────────────
-            const morningSegs = buildMorningSegments(result);
-            const morningTotal = morningSegs.reduce((sum, s) => sum + s.durationMinutes, 0);
-
-            if (morningSegs.length > 0) {
-                doc.setFontSize(8);
-                doc.setFont('helvetica', 'bold');
-                doc.setTextColor(0, 78, 126);
-                doc.text('MORNING JOURNEY', margin, y);
-                doc.setFont('helvetica', 'normal');
-                doc.setTextColor(100, 116, 139);
-                doc.text(`${morningTotal} min`, pageW - margin, y, { align: 'right' });
-                y += 4;
-
-                y = drawTimelineBar(doc, morningSegs, margin, y, contentW, 12);
-                y += 4;
-            }
-
-            // ── Afternoon Timeline ───────────────────────────────
-            const afternoonSegs = buildAfternoonSegments(result);
-            const afternoonTotal = afternoonSegs.reduce((sum, s) => sum + s.durationMinutes, 0);
-
-            if (afternoonSegs.length > 0) {
-                doc.setFontSize(8);
-                doc.setFont('helvetica', 'bold');
-                doc.setTextColor(0, 78, 126);
-                doc.text('AFTERNOON JOURNEY', margin, y);
-                doc.setFont('helvetica', 'normal');
-                doc.setTextColor(100, 116, 139);
-                doc.text(`${afternoonTotal} min`, pageW - margin, y, { align: 'right' });
-                y += 4;
-
-                y = drawTimelineBar(doc, afternoonSegs, margin, y, contentW, 12);
-            }
-
-            // ── Footer ───────────────────────────────────────────
-            const footerY = pageH - 10;
-            doc.setDrawColor(0, 78, 126);
-            doc.setLineWidth(0.3);
-            doc.line(margin, footerY - 4, pageW - margin, footerY - 4);
-            doc.setFontSize(7);
-            doc.setTextColor(94, 127, 150);
-            doc.text('Barrie Transit', margin, footerY);
-            const today = new Date().toLocaleDateString('en-CA');
-            doc.text(
-                `${formatDisplayDate(serviceDate)} | Exported ${today}`,
-                pageW - margin,
-                footerY,
-                { align: 'right' },
-            );
 
             // ── Save ─────────────────────────────────────────────
             const safeName = selectedSchool.name.replace(/[^a-zA-Z0-9]/g, '-');
@@ -535,7 +772,7 @@ export const StudentPassModule: React.FC<StudentPassModuleProps> = ({ onBack, te
         } finally {
             setIsExporting(false);
         }
-    }, [result, selectedSchool, serviceDate]);
+    }, [result, selectedSchool, serviceDate, journeyMode, bellStart, bellEnd, zoneOrigin]);
 
     return (
         <div className={`student-pass-theme flex flex-col overflow-hidden ${isFullscreen ? 'fixed inset-0 z-50' : 'h-full'}`}>
@@ -560,8 +797,25 @@ export const StudentPassModule: React.FC<StudentPassModuleProps> = ({ onBack, te
 
             {/* Map fills everything */}
             <div className="flex-1 relative overflow-hidden" style={{ background: 'var(--student-pass-blue-ink)' }}>
+                <button
+                    type="button"
+                    onClick={() => setIsFullscreen((current) => !current)}
+                    className="absolute top-4 right-4 z-20 flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition-colors"
+                    style={{
+                        background: 'var(--student-pass-panel)',
+                        border: '1px solid var(--student-pass-border)',
+                        color: 'var(--student-pass-text)',
+                        fontFamily: "'JetBrains Mono', monospace",
+                    }}
+                    title={isFullscreen ? 'Exit fullscreen map' : 'Open fullscreen map'}
+                >
+                    {isFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+                    <span>{isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}</span>
+                </button>
+
                 <div className="absolute inset-0 student-pass-dark">
                     <StudentPassMap
+                        mapRef={mapInstanceRef}
                         school={selectedSchool}
                         result={result}
                         journeyMode={journeyMode}

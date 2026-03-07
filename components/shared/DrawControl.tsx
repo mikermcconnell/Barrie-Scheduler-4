@@ -104,5 +104,31 @@ export const DrawControl: React.FC<DrawControlProps> = ({
         };
     }, [mapRef, handleCreate, handleUpdate, handleDelete]);
 
+    // The default trash button only deletes selected features. After any map
+    // interaction (clicking markers, panning) the polygon gets deselected and
+    // trash does nothing. Override: delete ALL features regardless of selection.
+    useEffect(() => {
+        const map = mapRef?.getMap();
+        if (!map || !draw) return;
+
+        const container = map.getContainer();
+        const trashBtn = container.querySelector('.mapbox-gl-draw_trash') as HTMLElement | null;
+        if (!trashBtn) return;
+
+        const handleTrashClick = (e: MouseEvent) => {
+            const allFeatures = draw.getAll();
+            if (allFeatures.features.length === 0) return;
+            e.stopPropagation();
+            draw.deleteAll();
+            // API calls don't fire draw events, so invoke callback directly
+            if (onDeleteRef.current) onDeleteRef.current();
+        };
+
+        trashBtn.addEventListener('click', handleTrashClick, true);
+        return () => {
+            trashBtn.removeEventListener('click', handleTrashClick, true);
+        };
+    }, [mapRef, draw]);
+
     return null;
 };

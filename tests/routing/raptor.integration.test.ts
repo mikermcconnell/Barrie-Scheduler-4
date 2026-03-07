@@ -1,18 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { loadGtfsData, clearGtfsCache } from '../../utils/routing/gtfsAdapter';
-import { buildServiceCalendar } from '../../utils/routing/calendarService';
 import { planTripLocal } from '../../utils/routing/raptorEngine';
 import { buildItinerary } from '../../utils/routing/itineraryBuilder';
-import {
-  buildStopDeparturesIndex,
-  buildRouteStopSequences,
-  buildTransferGraph,
-  buildTripIndex,
-  buildStopIndex,
-  buildStopRoutesIndex,
-  buildStopTimesIndex,
-  buildTripStopTimesIndex,
-} from '../../utils/routing/routingDataService';
+import { buildRoutingData } from '../../utils/routing/routingDataService';
 import { RoutingError } from '../../utils/routing/types';
 import type { RoutingData } from '../../utils/routing/types';
 
@@ -32,37 +22,9 @@ const MIDDLE_OF_NOWHERE = { lat: 46.5, lon: -81.0 }; // ~250km north of Barrie
 
 let routingData: RoutingData;
 
-/**
- * Build routing data with a reference date within the GTFS validity range.
- */
-function buildRoutingDataWithDate(referenceDate: Date): RoutingData {
+function buildRoutingDataWithDate(_referenceDate: Date): RoutingData {
   const gtfsData = loadGtfsData();
-  const { stops, trips, stopTimes, calendar, calendarDates } = gtfsData;
-
-  const stopDepartures = buildStopDeparturesIndex(stopTimes, trips);
-  const routeStopSequences = buildRouteStopSequences(stopTimes, trips);
-  const transfers = buildTransferGraph(stops);
-  const tripIndex = buildTripIndex(trips);
-  const stopIndex = buildStopIndex(stops);
-  const stopRoutes = buildStopRoutesIndex(stopDepartures);
-  const serviceCalendar = buildServiceCalendar(calendar, calendarDates, 30, referenceDate);
-  const stopTimesIndex = buildStopTimesIndex(stopTimes);
-  const tripStopTimes = buildTripStopTimesIndex(stopTimes);
-
-  return {
-    stopDepartures,
-    routeStopSequences,
-    transfers,
-    tripIndex,
-    stopIndex,
-    stopRoutes,
-    serviceCalendar,
-    stopTimesIndex,
-    tripStopTimes,
-    stops,
-    trips,
-    stopTimes,
-  };
+  return buildRoutingData(gtfsData);
 }
 
 describe('RAPTOR Integration (Real Barrie GTFS)', () => {

@@ -280,23 +280,25 @@ describe('RAPTOR Engine', () => {
   });
 
   describe('too close', () => {
-    it('throws when origin and destination are within 50m', () => {
+    it('returns a walk-only itinerary when origin and destination are within 50m', () => {
       const routingData = buildTestData({
         stops: [STOPS.A],
         trips: [],
         stopTimes: [],
       });
 
-      expect(() =>
-        planTripLocal({
-          fromLat: 44.39,
-          fromLon: -79.700,
-          toLat: 44.39,
-          toLon: -79.7001,  // ~8m apart
-          date: QUERY_DATE,
-          routingData,
-        })
-      ).toThrow('walk instead');
+      const results = planTripLocal({
+        fromLat: 44.39,
+        fromLon: -79.700,
+        toLat: 44.39,
+        toLon: -79.7001,  // ~8m apart
+        date: QUERY_DATE,
+        routingData,
+      });
+
+      expect(results).toHaveLength(1);
+      expect(results[0].path).toEqual([]);
+      expect(results[0].walkToDestSeconds).toBeGreaterThan(0);
     });
   });
 
@@ -370,6 +372,181 @@ describe('RAPTOR Engine', () => {
       expect(trip1?.type === 'TRANSIT' && trip1.tripId).not.toBe(
         trip2?.type === 'TRANSIT' && trip2.tripId
       );
+    });
+
+    it('branches on each transit leg so shared downstream trips still produce alternatives', () => {
+      const trips = [
+        makeTrip('T1', 'R1'),
+        makeTrip('T2', 'R1'),
+        makeTrip('T3', 'R2'),
+        makeTrip('T4', 'R2'),
+      ];
+      const stopTimes = [
+        makeStopTime('T1', 'A', 1, 28800, 28800),
+        makeStopTime('T1', 'B', 2, 29100, 29100),
+        makeStopTime('T2', 'A', 1, 28920, 28920),
+        makeStopTime('T2', 'B', 2, 29220, 29220),
+        makeStopTime('T3', 'B', 1, 29400, 29400),
+        makeStopTime('T3', 'E', 2, 30000, 30000),
+        makeStopTime('T4', 'B', 1, 29520, 29520),
+        makeStopTime('T4', 'E', 2, 30120, 30120),
+      ];
+
+      const routingData = buildTestData({
+        stops: [STOPS.A, STOPS.B, STOPS.E],
+        trips,
+        stopTimes,
+      });
+
+      const results = planTripLocal({
+        fromLat: STOPS.A.lat,
+        fromLon: STOPS.A.lon,
+        toLat: STOPS.E.lat,
+        toLon: STOPS.E.lon,
+        date: QUERY_DATE,
+        time: makeTime(7, 55),
+        routingData,
+      });
+
+      const signatures = results.map((result) =>
+        result.path
+          .filter((segment) => segment.type === 'TRANSIT')
+          .map((segment) => segment.tripId)
+          .join('>')
+      );
+
+      expect(signatures).toContain('T1>T3');
+      expect(signatures).toContain('T2>T3');
+      expect(signatures).toContain('T1>T4');
+    });
+  });
+
+  describe('transfer feasibility', () => {
+    it('keeps a short transfer feasible instead of adding penalty time to reachability', () => {
+      const stopB2 = makeStop('B2', STOPS.B.lat, STOPS.B.lon + 0.0001);
+      const trips = [
+        makeTrip('T1', 'R1'),
+        makeTrip('T2', 'R2'),
+      ];
+      const stopTimes = [
+        makeStopTime('T1', 'A', 1, 28800, 28800),
+        makeStopTime('T1', 'B', 2, 29400, 29400), // 08:10
+        makeStopTime('T2', 'B2', 1, 29520, 29520), // 08:12
+        makeStopTime('T2', 'C', 2, 30120, 30120), // 08:22
+      ];
+
+      const routingData = buildTestData({
+        stops: [STOPS.A, STOPS.B, stopB2, STOPS.C],
+        trips,
+        stopTimes,
+      });
+
+      const results = planTripLocal({
+        fromLat: STOPS.A.lat,
+        fromLon: STOPS.A.lon,
+        toLat: STOPS.C.lat,
+        toLon: STOPS.C.lon,
+        date: QUERY_DATE,
+        time: makeTime(7, 55),
+        routingData,
+      });
+
+      const transitLegs = results[0].path.filter((segment) => segment.type === 'TRANSIT');
+      expect(transitLegs).toHaveLength(2);
+    });
+  });
+
+  describe('GTFS pickup/drop-off restrictions', () => {
+    it('does not board at a stop with pickup_type=1', () => {
+      const restrictedTrip: GtfsTrip = makeTrip('T1', 'R1');
+      const stopTimes = [
+        makeStopTime('T1', 'A', 1, 28800, 28800),
+        { ...makeStopTime('T1', 'B', 2, 29100, 29100), pickupType: 1 },
+        makeStopTime('T1', 'C', 3, 29400, 29400),
+      ];
+
+      const routingData = buildTestData({
+        stops: [STOPS.A, STOPS.B, STOPS.C],
+        trips: [restrictedTrip],
+        stopTimes,
+      });
+
+      expect(() =>
+        planTripLocal({
+          fromLat: STOPS.B.lat,
+          fromLon: STOPS.B.lon,
+          toLat: STOPS.C.lat,
+          toLon: STOPS.C.lon,
+          date: QUERY_DATE,
+          time: makeTime(8, 4),
+          routingData,
+        })
+      ).toThrow(RoutingError);
+    });
+
+    it('does not alight at a stop with drop_off_type=1', () => {
+      const restrictedTrip: GtfsTrip = makeTrip('T1', 'R1');
+      const stopTimes = [
+        makeStopTime('T1', 'A', 1, 28800, 28800),
+        { ...makeStopTime('T1', 'C', 2, 29400, 29400), dropOffType: 1 },
+      ];
+
+      const routingData = buildTestData({
+        stops: [STOPS.A, STOPS.C],
+        trips: [restrictedTrip],
+        stopTimes,
+      });
+
+      expect(() =>
+        planTripLocal({
+          fromLat: STOPS.A.lat,
+          fromLon: STOPS.A.lon,
+          toLat: STOPS.C.lat,
+          toLon: STOPS.C.lon,
+          date: QUERY_DATE,
+          time: makeTime(7, 55),
+          routingData,
+        })
+      ).toThrow(RoutingError);
+    });
+  });
+
+  describe('route variants', () => {
+    it('finds trips on non-canonical patterns of the same route-direction', () => {
+      const trips = [
+        makeTrip('T1', 'R1'),
+        makeTrip('T2', 'R1'),
+      ];
+      const stopC = makeStop('C_VARIANT', 44.39, -79.640);
+      const stopD = makeStop('D_VARIANT', 44.39, -79.620);
+      const stopTimes = [
+        makeStopTime('T1', 'A', 1, 28800, 28800),
+        makeStopTime('T1', 'B', 2, 29100, 29100),
+        makeStopTime('T1', 'D_VARIANT', 3, 29700, 29700),
+        makeStopTime('T2', 'A', 1, 30000, 30000),
+        makeStopTime('T2', 'C_VARIANT', 2, 30300, 30300),
+        makeStopTime('T2', 'D_VARIANT', 3, 30900, 30900),
+      ];
+
+      const routingData = buildTestData({
+        stops: [STOPS.A, STOPS.B, stopC, stopD],
+        trips,
+        stopTimes,
+      });
+
+      const results = planTripLocal({
+        fromLat: stopC.lat,
+        fromLon: stopC.lon,
+        toLat: stopD.lat,
+        toLon: stopD.lon,
+        date: QUERY_DATE,
+        time: makeTime(8, 24),
+        routingData,
+      });
+
+      expect(results).toHaveLength(1);
+      const transitLeg = results[0].path.find((segment) => segment.type === 'TRANSIT');
+      expect(transitLeg?.type === 'TRANSIT' && transitLeg.tripId).toBe('T2');
     });
   });
 });

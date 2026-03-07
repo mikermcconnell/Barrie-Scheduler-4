@@ -54,14 +54,12 @@ function makePlaceFromCoords(name: string, lat: number, lon: number): Place {
  * Get route info for a route ID.
  */
 function getRouteInfo(routeId: string, routingData: RoutingData): RouteInfo {
-  // Look up route from the routing data
-  // Routes aren't indexed in RoutingData — search trips for route info
-  const trip = routingData.trips.find((t) => t.routeId === routeId);
+  const routeEntry = routingData.routeIndex[routeId];
   return {
     id: routeId,
-    shortName: routeId,
-    longName: trip?.headsign ?? routeId,
-    color: '0000FF',
+    shortName: routeEntry?.routeShortName ?? routeId,
+    longName: routeEntry?.routeLongName ?? routeEntry?.routeShortName ?? routeId,
+    color: routeEntry?.routeColor ?? '0000FF',
   };
 }
 
@@ -105,9 +103,12 @@ function buildWalkLeg(
   to: Place,
   startTime: number,
   walkSeconds: number,
-  date: Date
+  date: Date,
+  overrideDistance?: number
 ): WalkLeg {
-  const distance = haversineDistance(from.lat, from.lon, to.lat, to.lon) * ROUTING_CONFIG.WALK_DISTANCE_BUFFER;
+  const distance = overrideDistance ?? (
+    haversineDistance(from.lat, from.lon, to.lat, to.lon) * ROUTING_CONFIG.WALK_DISTANCE_BUFFER
+  );
   return {
     mode: 'WALK',
     startTime: secondsToUnixMs(startTime, date),
@@ -231,6 +232,37 @@ export function buildItinerary(
   destLat?: number,
   destLon?: number
 ): Itinerary {
+  if (result.path.length === 0) {
+    const from = originLat != null && originLon != null
+      ? makePlaceFromCoords('Origin', originLat, originLon)
+      : makePlaceFromCoords('Origin', 0, 0);
+    const to = destLat != null && destLon != null
+      ? makePlaceFromCoords('Destination', destLat, destLon)
+      : makePlaceFromCoords('Destination', from.lat, from.lon);
+    const walkStartTime = result.arrivalTime - result.walkToDestSeconds;
+    const walkLeg = buildWalkLeg(
+      from,
+      to,
+      walkStartTime,
+      result.walkToDestSeconds,
+      date,
+      result.directWalkMeters
+    );
+
+    return {
+      id: nextItineraryId(),
+      duration: result.walkToDestSeconds,
+      startTime: walkLeg.startTime,
+      endTime: walkLeg.endTime,
+      walkTime: walkLeg.duration,
+      transitTime: 0,
+      waitingTime: 0,
+      walkDistance: walkLeg.distance,
+      transfers: 0,
+      legs: [walkLeg],
+    };
+  }
+
   const legs: Leg[] = [];
   let currentTimeSec = 0;
 

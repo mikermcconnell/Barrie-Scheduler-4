@@ -12,6 +12,7 @@ export interface StudentPassRouteLoadMetric {
   observationDays: number;
   source: 'route-hour' | 'route';
   hour?: number;
+  otpOnTimePercent?: number;
 }
 
 export interface StudentPassRouteLoadLookup {
@@ -25,6 +26,8 @@ type LoadAccumulator = {
   totalLoad: number;
   observationDays: number;
   hour?: number;
+  otpTotal: number;
+  otpOnTime: number;
 };
 
 function normalizeRouteId(routeId: string): string {
@@ -47,6 +50,9 @@ function finalizeAccumulator(
     observationDays: accumulator.observationDays,
     source,
     hour: accumulator.hour,
+    otpOnTimePercent: accumulator.otpTotal > 0
+      ? (accumulator.otpOnTime / accumulator.otpTotal) * 100
+      : undefined,
   };
 }
 
@@ -67,31 +73,45 @@ export function buildStudentPassRouteLoadLookup(
     for (const routeHour of day.byRouteHour ?? []) {
       const normalizedRouteId = normalizeRouteId(routeHour.routeId);
       const key = buildRouteHourKey(normalizedRouteId, routeHour.hour);
+      const otp = routeHour.otp;
       const existing = routeHourAccumulators.get(key);
       if (existing) {
         existing.totalLoad += routeHour.avgLoad;
         existing.observationDays += 1;
+        if (otp) {
+          existing.otpTotal += otp.total;
+          existing.otpOnTime += otp.onTime;
+        }
       } else {
         routeHourAccumulators.set(key, {
           routeId: normalizedRouteId,
           totalLoad: routeHour.avgLoad,
           observationDays: 1,
           hour: routeHour.hour,
+          otpTotal: otp?.total ?? 0,
+          otpOnTime: otp?.onTime ?? 0,
         });
       }
     }
 
     for (const route of day.byRoute) {
       const normalizedRouteId = normalizeRouteId(route.routeId);
+      const otp = route.otp;
       const existing = routeAccumulators.get(normalizedRouteId);
       if (existing) {
         existing.totalLoad += route.avgLoad;
         existing.observationDays += 1;
+        if (otp) {
+          existing.otpTotal += otp.total;
+          existing.otpOnTime += otp.onTime;
+        }
       } else {
         routeAccumulators.set(normalizedRouteId, {
           routeId: normalizedRouteId,
           totalLoad: route.avgLoad,
           observationDays: 1,
+          otpTotal: otp?.total ?? 0,
+          otpOnTime: otp?.onTime ?? 0,
         });
       }
     }

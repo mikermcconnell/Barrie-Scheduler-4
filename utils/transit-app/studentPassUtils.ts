@@ -141,48 +141,48 @@ export const BARRIE_SCHOOLS: SchoolConfig[] = [
         name: 'Barrie North Collegiate',
         lat: 44.4012,
         lon: -79.6901,
-        bellStart: '08:45',
-        bellEnd: '15:10',
+        bellStart: '08:00',
+        bellEnd: '14:20',
     },
     {
         id: 'eastview',
         name: 'Eastview Secondary',
         lat: 44.4049,
         lon: -79.6616,
-        bellStart: '08:45',
-        bellEnd: '15:10',
+        bellStart: '08:00',
+        bellEnd: '14:20',
     },
     {
         id: 'innisdale',
         name: 'Innisdale Secondary',
         lat: 44.3594,
         lon: -79.6854,
-        bellStart: '08:45',
-        bellEnd: '15:10',
+        bellStart: '08:00',
+        bellEnd: '14:20',
     },
     {
         id: 'maple-ridge',
         name: 'Maple Ridge Secondary',
         lat: 44.3509,
         lon: -79.6086,
-        bellStart: '08:45',
-        bellEnd: '15:10',
+        bellStart: '08:00',
+        bellEnd: '14:20',
     },
     {
         id: 'st-josephs',
         name: "St. Joseph's High",
         lat: 44.4125,
         lon: -79.6837,
-        bellStart: '08:30',
-        bellEnd: '15:00',
+        bellStart: '08:00',
+        bellEnd: '14:20',
     },
     {
         id: 'bear-creek',
         name: 'Bear Creek Secondary',
         lat: 44.3319,
         lon: -79.7337,
-        bellStart: '08:45',
-        bellEnd: '15:10',
+        bellStart: '08:00',
+        bellEnd: '14:20',
     },
     {
         id: 'georgian-college',
@@ -190,7 +190,7 @@ export const BARRIE_SCHOOLS: SchoolConfig[] = [
         lat: 44.4098,
         lon: -79.6634,
         bellStart: '08:00',
-        bellEnd: '17:00',
+        bellEnd: '14:20',
     },
 ];
 
@@ -285,6 +285,18 @@ export function findStopsInZone(
         }
         return false;
     });
+}
+
+/**
+ * Find all GTFS stops within a radius of a given point.
+ */
+export function findStopsNearPoint(
+    lat: number,
+    lon: number,
+    radiusKm: number
+): GtfsStopWithCoords[] {
+    const stops = getAllStopsWithCoords();
+    return stops.filter((stop) => haversineKm(lat, lon, stop.lat, stop.lon) <= radiusKm);
 }
 
 /**

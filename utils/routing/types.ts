@@ -26,6 +26,7 @@ export interface GtfsStopTime {
   departureTime: number;
   stopSequence: number;
   pickupType?: number;
+  dropOffType?: number;
 }
 
 export interface GtfsRoute {
@@ -79,11 +80,20 @@ export interface Departure {
   routeId: string;
   serviceId: string;
   directionId: number;
+  patternId: string;
   headsign: string;
   departureTime: number;  // seconds since midnight
   arrivalTime: number;
   stopSequence: number;
   pickupType?: number;
+}
+
+export interface RoutePattern {
+  patternId: string;
+  routeId: string;
+  directionId: number;
+  stopSequence: string[];
+  tripIds: string[];
 }
 
 export interface Transfer {
@@ -100,9 +110,11 @@ export interface NearbyStop {
 
 export interface RoutingData {
   stopDepartures: Record<string, Departure[]>;
-  routeStopSequences: Record<string, Record<string, string[]>>;
+  routePatterns: Record<string, Record<string, RoutePattern[]>>;
   transfers: Record<string, Transfer[]>;
   tripIndex: Record<string, GtfsTrip>;
+  routeIndex: Record<string, GtfsRoute>;
+  tripPatternIndex: Record<string, string>;
   stopIndex: Record<string, GtfsStop>;
   stopRoutes: Record<string, Set<string>>;
   stopTimesIndex: Record<string, GtfsStopTime>;  // compound key "tripId_stopId" (last visit wins for loop routes)
@@ -110,6 +122,7 @@ export interface RoutingData {
   serviceCalendar: ServiceCalendar;
   stops: GtfsStop[];
   trips: GtfsTrip[];
+  routes: GtfsRoute[];
   stopTimes: GtfsStopTime[];
 }
 
@@ -148,6 +161,7 @@ export interface RaptorResult {
   walkToDestSeconds: number;
   arrivalTime: number;
   path: PathSegment[];
+  directWalkMeters?: number;
 }
 
 // ─── RAPTOR Label (internal to algorithm) ───────────────────────────

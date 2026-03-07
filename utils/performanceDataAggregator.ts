@@ -391,11 +391,13 @@ function buildRouteHourMetrics(records: STREETSRecord[]): RouteHourMetrics[] {
       }
     }
 
+    const otp = computeOTP(recs);
     results.push({
       routeId,
       hour,
       avgLoad: safeDivide(loadSum, loadCount),
       boardings,
+      ...(otp.total > 0 ? { otp } : {}),
     });
   }
 

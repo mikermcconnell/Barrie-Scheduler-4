@@ -34,6 +34,42 @@ export interface TimelineSegment {
   loadMetric?: StudentPassRouteLoadMetric | null;
 }
 
+function applyBoundaryTimes(segments: TimelineSegment[]): TimelineSegment[] {
+  const timedSegments = segments.map((segment) => ({ ...segment }));
+
+  for (let i = 0; i < timedSegments.length; i++) {
+    const segment = timedSegments[i];
+
+    if (segment.startMinutes !== undefined && segment.endMinutes === undefined) {
+      segment.endMinutes = segment.startMinutes + segment.durationMinutes;
+    }
+
+    if (segment.endMinutes !== undefined && segment.startMinutes === undefined) {
+      segment.startMinutes = segment.endMinutes - segment.durationMinutes;
+    }
+  }
+
+  for (let i = 1; i < timedSegments.length; i++) {
+    const previous = timedSegments[i - 1];
+    const segment = timedSegments[i];
+    if (segment.startMinutes === undefined && previous.endMinutes !== undefined) {
+      segment.startMinutes = previous.endMinutes;
+      segment.endMinutes = previous.endMinutes + segment.durationMinutes;
+    }
+  }
+
+  for (let i = timedSegments.length - 2; i >= 0; i--) {
+    const next = timedSegments[i + 1];
+    const segment = timedSegments[i];
+    if (segment.endMinutes === undefined && next.startMinutes !== undefined) {
+      segment.endMinutes = next.startMinutes;
+      segment.startMinutes = next.startMinutes - segment.durationMinutes;
+    }
+  }
+
+  return timedSegments;
+}
+
 export function buildMorningSegments(
   result: StudentPassResult,
   routeLoadLookup?: StudentPassRouteLoadLookup | null
@@ -41,10 +77,15 @@ export function buildMorningSegments(
   const segments: TimelineSegment[] = [];
 
   if (result.walkToStop) {
+    const firstDepartureMinutes = result.morningLegs[0]?.departureMinutes;
     segments.push({
       type: 'walk',
       durationMinutes: result.walkToStop.walkMinutes,
       label: 'Walk',
+      startMinutes: firstDepartureMinutes !== undefined
+        ? firstDepartureMinutes - result.walkToStop.walkMinutes
+        : undefined,
+      endMinutes: firstDepartureMinutes,
       index: 0,
     });
   }
@@ -69,6 +110,8 @@ export function buildMorningSegments(
           type: 'transfer',
           durationMinutes: transferInfo.waitMinutes,
           label: `${transferInfo.waitMinutes}m wait`,
+          startMinutes: leg.arrivalMinutes,
+          endMinutes: leg.arrivalMinutes + transferInfo.waitMinutes,
           index: i,
         });
       }
@@ -76,15 +119,20 @@ export function buildMorningSegments(
   });
 
   if (result.walkToSchool) {
+    const finalArrivalMinutes = result.morningLegs[result.morningLegs.length - 1]?.arrivalMinutes;
     segments.push({
       type: 'walk',
       durationMinutes: result.walkToSchool.walkMinutes,
       label: 'Walk',
+      startMinutes: finalArrivalMinutes,
+      endMinutes: finalArrivalMinutes !== undefined
+        ? finalArrivalMinutes + result.walkToSchool.walkMinutes
+        : undefined,
       index: segments.length,
     });
   }
 
-  return segments;
+  return applyBoundaryTimes(segments);
 }
 
 export function buildAfternoonSegments(
@@ -99,10 +147,15 @@ export function buildAfternoonSegments(
       : [];
 
   if (result.walkFromSchool) {
+    const firstDepartureMinutes = result.afternoonLegs[0]?.departureMinutes;
     segments.push({
       type: 'walk',
       durationMinutes: result.walkFromSchool.walkMinutes,
       label: 'Walk',
+      startMinutes: firstDepartureMinutes !== undefined
+        ? firstDepartureMinutes - result.walkFromSchool.walkMinutes
+        : undefined,
+      endMinutes: firstDepartureMinutes,
       index: 0,
     });
   }
@@ -127,6 +180,8 @@ export function buildAfternoonSegments(
           type: 'transfer',
           durationMinutes: transferInfo.waitMinutes,
           label: `${transferInfo.waitMinutes}m wait`,
+          startMinutes: leg.arrivalMinutes,
+          endMinutes: leg.arrivalMinutes + transferInfo.waitMinutes,
           index: i,
         });
       }
@@ -134,15 +189,20 @@ export function buildAfternoonSegments(
   });
 
   if (result.walkToZone) {
+    const finalArrivalMinutes = result.afternoonLegs[result.afternoonLegs.length - 1]?.arrivalMinutes;
     segments.push({
       type: 'walk',
       durationMinutes: result.walkToZone.walkMinutes,
       label: 'Walk',
+      startMinutes: finalArrivalMinutes,
+      endMinutes: finalArrivalMinutes !== undefined
+        ? finalArrivalMinutes + result.walkToZone.walkMinutes
+        : undefined,
       index: segments.length,
     });
   }
 
-  return segments;
+  return applyBoundaryTimes(segments);
 }
 
 export function resolveColor(raw: string | undefined): string {
@@ -169,9 +229,12 @@ export default function StudentPassTimeline({
   const segments = journeyMode === 'am' ? morningSegments : afternoonSegments;
   const totalMinutes = segments.reduce((sum, s) => sum + s.durationMinutes, 0);
   const modeLabel = journeyMode === 'am' ? 'Morning Journey' : 'Afternoon Journey';
+  const departureMinutes = segments.find((segment) => segment.startMinutes !== undefined)?.startMinutes;
+  const arrivalMinutes = [...segments].reverse().find((segment) => segment.endMinutes !== undefined)?.endMinutes;
 
   return (
     <div
+      id="student-pass-timeline"
       className="absolute bottom-0 rounded-t-lg z-10 timeline-enter"
       style={{
         left: TIMELINE_LEFT_OFFSET,
@@ -201,6 +264,26 @@ export default function StudentPassTimeline({
           {totalMinutes} min total
         </span>
       </div>
+
+      {(departureMinutes !== undefined || arrivalMinutes !== undefined) && (
+        <div
+          className="flex items-center justify-between px-4 py-2"
+          style={{ borderBottom: '1px solid var(--student-pass-border-subtle)' }}
+        >
+          <span
+            className="text-[13px]"
+            style={{ color: 'var(--student-pass-text)', fontFamily: "'JetBrains Mono', monospace" }}
+          >
+            {departureMinutes !== undefined ? `Leave ${minutesToDisplayTime(departureMinutes)}` : ''}
+          </span>
+          <span
+            className="text-[13px]"
+            style={{ color: 'var(--student-pass-text)', fontFamily: "'JetBrains Mono', monospace" }}
+          >
+            {arrivalMinutes !== undefined ? `Arrive ${minutesToDisplayTime(arrivalMinutes)}` : ''}
+          </span>
+        </div>
+      )}
 
       {/* Segments bar */}
       <div className="flex items-stretch px-3 pt-3 pb-1 gap-0.5" style={{ minHeight: 64 }}>
@@ -240,14 +323,17 @@ export default function StudentPassTimeline({
               const backgroundColor = resolveColor(seg.routeColor);
               const foregroundColor = getContrastingTextColor(backgroundColor);
               const secondaryColor = foregroundColor === 'black' ? 'rgba(0,0,0,0.72)' : 'rgba(255,255,255,0.8)';
-              const tertiaryColor = foregroundColor === 'black' ? 'rgba(0,0,0,0.58)' : 'rgba(255,255,255,0.65)';
-              const loadLabel = seg.loadMetric ? `Load ${Math.round(seg.loadMetric.avgLoad)}` : 'Load n/a';
-              const sampleLabel = seg.loadMetric ? `${seg.loadMetric.observationDays}d obs` : '';
+              const loadLabel = seg.loadMetric ? `Load ${Math.round(seg.loadMetric.avgLoad)}` : null;
+              const otpLabel = seg.loadMetric?.otpOnTimePercent != null
+                ? `OTP ${Math.round(seg.loadMetric.otpOnTimePercent)}%`
+                : null;
+              const sampleLabel = seg.loadMetric ? `${seg.loadMetric.observationDays}d obs` : null;
+              const tooltipLines = [loadLabel, otpLabel, sampleLabel].filter(Boolean).join(' · ');
 
               return (
                 <div
                   key={idx}
-                  className="rounded flex flex-col items-center justify-center cursor-default"
+                  className="group relative rounded flex flex-col items-center justify-center cursor-default"
                   style={{
                     flex: flexValue,
                     minWidth: 40,
@@ -255,36 +341,34 @@ export default function StudentPassTimeline({
                     boxShadow: hasSmallSample ? 'inset 0 0 0 1px rgba(245, 158, 11, 0.9)' : undefined,
                   }}
                 >
-                  <div
-                    className="flex items-center justify-center gap-1.5 leading-none"
-                    style={{ fontFamily: "'JetBrains Mono', monospace" }}
+                  <span
+                    className="text-[14px] font-bold leading-none"
+                    style={{ color: foregroundColor, fontFamily: "'JetBrains Mono', monospace" }}
                   >
-                    <span className="text-[14px] font-bold" style={{ color: foregroundColor }}>
-                      Rt {seg.routeShortName}
-                    </span>
-                    <span className="text-[13px] font-semibold" style={{ color: secondaryColor }}>
-                      {seg.durationMinutes}m
-                    </span>
-                  </div>
-                  <div
-                    className="flex items-center justify-center gap-1.5 leading-none mt-1"
-                    style={{ fontFamily: "'JetBrains Mono', monospace" }}
+                    Rt {seg.routeShortName}
+                  </span>
+                  <span
+                    className="text-[13px] font-semibold leading-none mt-0.5"
+                    style={{ color: secondaryColor, fontFamily: "'JetBrains Mono', monospace" }}
                   >
-                    <span
-                      className="text-[12px]"
-                      style={{ color: hasSmallSample ? '#92400E' : secondaryColor }}
+                    {seg.durationMinutes}m
+                  </span>
+                  {tooltipLines && (
+                    <div
+                      className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2.5 py-1.5 rounded-md whitespace-nowrap
+                        opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity duration-150 z-30"
+                      style={{
+                        background: 'var(--student-pass-panel-strong)',
+                        border: '1px solid var(--student-pass-border)',
+                        fontFamily: "'JetBrains Mono', monospace",
+                        boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+                      }}
                     >
-                      {loadLabel}
-                    </span>
-                    {sampleLabel && (
-                      <span
-                        className="text-[12px]"
-                        style={{ color: hasSmallSample ? '#92400E' : tertiaryColor }}
-                      >
-                        {sampleLabel}
+                      <span className="text-[12px]" style={{ color: hasSmallSample ? '#FBBF24' : 'var(--student-pass-text)' }}>
+                        {tooltipLines}
                       </span>
-                    )}
-                  </div>
+                    </div>
+                  )}
                 </div>
               );
             }
@@ -313,20 +397,31 @@ export default function StudentPassTimeline({
         <div className="flex px-3 pb-2 gap-0.5">
           {segments.map((seg, idx) => {
             const flexValue = Math.max(seg.durationMinutes, 1);
-            const timeLabel =
+            const isLastSegment = idx === segments.length - 1;
+            const startLabel =
               seg.startMinutes !== undefined ? minutesToDisplayTime(seg.startMinutes) : '';
+            const endLabel =
+              isLastSegment && seg.endMinutes !== undefined ? minutesToDisplayTime(seg.endMinutes) : '';
             return (
               <div
                 key={idx}
-                className="flex justify-start"
+                className="flex justify-between gap-2"
                 style={{ flex: flexValue, minWidth: 40 }}
               >
-                {timeLabel && (
+                {startLabel && (
                   <span
                     className="text-[14px]"
                     style={{ color: 'var(--student-pass-muted)', fontFamily: "'JetBrains Mono', monospace" }}
                   >
-                    {timeLabel}
+                    {startLabel}
+                  </span>
+                )}
+                {endLabel && (
+                  <span
+                    className="text-[14px]"
+                    style={{ color: 'var(--student-pass-muted)', fontFamily: "'JetBrains Mono', monospace" }}
+                  >
+                    {endLabel}
                   </span>
                 )}
               </div>

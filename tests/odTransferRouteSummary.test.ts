@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildTransferRouteSummaryRows } from '../utils/od-matrix/odTransferRouteSummary';
+import { buildStopRouteDirectionSummary, buildTransferRouteSummaryRows } from '../utils/od-matrix/odTransferRouteSummary';
 import type { ODPairRouteMatch } from '../utils/od-matrix/odRouteEstimation';
 
 const matches: ODPairRouteMatch[] = [
@@ -124,6 +124,57 @@ const matches: ODPairRouteMatch[] = [
 ];
 
 describe('odTransferRouteSummary', () => {
+    it('builds inbound and outbound route ridership lists for the selected stop', () => {
+        const summary = buildStopRouteDirectionSummary(matches, 'North Bay');
+
+        expect(summary.inboundRoutes).toHaveLength(2);
+        expect(summary.inboundRoutes[0]).toMatchObject({
+            direction: 'inbound',
+            routeName: 'Barrie Connector',
+            endpointStopName: 'Barrie',
+            endpointBreakdown: [
+                { stopName: 'Barrie', journeys: 30 },
+                { stopName: 'Wasaga Beach', journeys: 12 },
+            ],
+            journeys: 42,
+            pairCount: 2,
+            samplePairs: ['Barrie → Timmins', 'Wasaga Beach → Timmins'],
+            counterpartRoutes: ['Timmins Connector'],
+        });
+
+        expect(summary.outboundRoutes).toHaveLength(2);
+        expect(summary.outboundRoutes[0]).toMatchObject({
+            direction: 'outbound',
+            routeName: 'Timmins Connector',
+            endpointStopName: 'Timmins',
+            endpointBreakdown: [
+                { stopName: 'Timmins', journeys: 42 },
+            ],
+            journeys: 42,
+            pairCount: 2,
+            samplePairs: ['Barrie → Timmins', 'Wasaga Beach → Timmins'],
+            counterpartRoutes: ['Barrie Connector'],
+        });
+    });
+
+    it('uses the stop-local inbound and outbound legs for earlier transfer stops', () => {
+        const summary = buildStopRouteDirectionSummary(matches, 'Sudbury');
+
+        expect(summary.inboundRoutes).toHaveLength(1);
+        expect(summary.inboundRoutes[0]).toMatchObject({
+            routeName: 'Toronto Connector',
+            journeys: 18,
+            pairCount: 1,
+        });
+
+        expect(summary.outboundRoutes).toHaveLength(1);
+        expect(summary.outboundRoutes[0]).toMatchObject({
+            routeName: 'Cochrane Connector',
+            journeys: 18,
+            pairCount: 1,
+        });
+    });
+
     it('aggregates local route-to-route transfers at the selected stop', () => {
         const rows = buildTransferRouteSummaryRows(matches, 'North Bay');
 
@@ -163,5 +214,9 @@ describe('odTransferRouteSummary', () => {
 
     it('returns no rows when no transfer uses the selected stop', () => {
         expect(buildTransferRouteSummaryRows(matches, 'Thunder Bay')).toEqual([]);
+        expect(buildStopRouteDirectionSummary(matches, 'Thunder Bay')).toEqual({
+            inboundRoutes: [],
+            outboundRoutes: [],
+        });
     });
 });

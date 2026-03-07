@@ -6,7 +6,7 @@ export const ROUTING_CONFIG = {
   MAX_TRANSFERS: 2,
 
   /** Maximum walking distance to reach a transit stop from origin (meters) */
-  MAX_WALK_TO_TRANSIT: 800,
+  MAX_WALK_TO_TRANSIT: 1200,
 
   /** Maximum walking distance for transfers between stops (meters) */
   MAX_WALK_FOR_TRANSFER: 400,

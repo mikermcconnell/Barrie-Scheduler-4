@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
     BARRIE_SCHOOLS,
     findBestTrip,
+    findStopsNearPoint,
     isPointInPolygon,
     getTransferQuality,
     getClusterStopIds,
@@ -79,6 +80,16 @@ describe('isPointInPolygon', () => {
 
     it('returns false for a point north of the Barrie-scale polygon', () => {
         expect(isPointInPolygon([44.400, -79.675], barrieBlock)).toBe(false);
+    });
+});
+
+describe('findStopsNearPoint', () => {
+    it('returns walkable nearby stops around Ford Street', () => {
+        const nearbyStops = findStopsNearPoint(44.4058, -79.7194, 0.8);
+        const nearbyStopNames = nearbyStops.map((stop) => stop.stop_name);
+
+        expect(nearbyStops.length).toBeGreaterThan(0);
+        expect(nearbyStopNames).toContain('Ford Street');
     });
 });
 

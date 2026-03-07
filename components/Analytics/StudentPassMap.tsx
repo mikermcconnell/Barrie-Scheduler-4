@@ -24,6 +24,7 @@ export interface StudentPassMapProps {
     onPolygonClear: () => void;
     onZoneStopSelect: (stopId: string) => void;
     onZoneOriginChange: (coords: [number, number]) => void;
+    mapRef?: React.MutableRefObject<MapRef | null>;
 }
 
 // ── Layer style constants ─────────────────────────────────────────────────────
@@ -242,10 +243,13 @@ export const StudentPassMap: React.FC<StudentPassMapProps> = ({
     onPolygonClear,
     onZoneStopSelect,
     onZoneOriginChange,
+    mapRef: externalMapRef,
 }) => {
-    const mapRef = useRef<MapRef>(null);
+    const internalMapRef = useRef<MapRef>(null);
+    const mapRef = externalMapRef ?? internalMapRef;
     const [mapStyle, setMapStyle] = useState('mapbox://styles/mapbox/dark-v11');
     const [dragOrigin, setDragOrigin] = useState<[number, number] | null>(null);
+    const [stopSelectionEnabled, setStopSelectionEnabled] = useState(true);
     const isDark = mapStyle.includes('dark');
     const stopLookup = useMemo(
         () => new Map(getAllStopsWithCoords().map((stop) => [stop.stop_id, stop])),
@@ -271,14 +275,30 @@ export const StudentPassMap: React.FC<StudentPassMapProps> = ({
         setDragOrigin(null);
     }, [zoneOrigin]);
 
+    useEffect(() => {
+        if (!selectedZoneStopId || zoneStops.length === 0) {
+            setStopSelectionEnabled(true);
+            return;
+        }
+
+        setStopSelectionEnabled(false);
+    }, [selectedZoneStopId, zoneStops.length]);
+
+    const visibleZoneStops = useMemo(() => {
+        if (stopSelectionEnabled || !selectedZoneStopId) {
+            return zoneStops;
+        }
+        return zoneStops.filter((stop) => stop.stopId === selectedZoneStopId);
+    }, [selectedZoneStopId, stopSelectionEnabled, zoneStops]);
+
     // Zone stops layer — empty until result is present (see comment in original)
     const zoneStopsGeoJSON = useMemo((): GeoJSON.FeatureCollection => {
-        if (zoneStops.length === 0) {
+        if (visibleZoneStops.length === 0) {
             return { type: 'FeatureCollection', features: [] };
         }
         return {
             type: 'FeatureCollection',
-            features: zoneStops.map((stop) => ({
+            features: visibleZoneStops.map((stop) => ({
                 type: 'Feature',
                 geometry: {
                     type: 'Point',
@@ -289,7 +309,7 @@ export const StudentPassMap: React.FC<StudentPassMapProps> = ({
                 },
             })),
         };
-    }, [zoneStops]);
+    }, [visibleZoneStops]);
 
     // ── GeoJSON data derived from result ──────────────────────────────────────
 
@@ -499,6 +519,7 @@ export const StudentPassMap: React.FC<StudentPassMapProps> = ({
         return null;
     }, [journeyMode, result, stopLookup]);
     const showSelectedZoneStop = journeyMode === 'am';
+    const canToggleStopSelection = Boolean(selectedZoneStop && zoneStops.length > 1);
 
     return (
         <div className="relative w-full h-full student-pass-dark student-pass-map">
@@ -525,28 +546,47 @@ export const StudentPassMap: React.FC<StudentPassMapProps> = ({
 
             {zoneStops.length > 0 && (
                 <div
-                    className="absolute top-16 z-20 rounded-lg px-2.5 py-1.5 flex items-center gap-3 text-[10px] text-[#CBD5E1]"
-                    style={{
-                        left: 344,
-                        background: 'var(--student-pass-panel)',
-                        border: '1px solid var(--student-pass-border)',
-                        fontFamily: "'JetBrains Mono', monospace",
-                    }}
+                    className="absolute top-16 z-20 flex flex-col gap-2"
+                    style={{ left: 344 }}
                 >
-                    <span className="flex items-center gap-1.5">
-                        <LegendDot fill="#56A6D5" size={8} />
-                        Has trips
-                    </span>
-                    {showSelectedZoneStop && (
-                        <span className="flex items-center gap-1.5">
-                            <LegendDot fill="#8FD0F6" size={8} />
-                            Selected
-                        </span>
+                    {canToggleStopSelection && (
+                        <button
+                            type="button"
+                            onClick={() => setStopSelectionEnabled((enabled) => !enabled)}
+                            className="rounded-lg px-3 py-2 text-[11px] font-semibold transition-colors text-left"
+                            style={{
+                                background: stopSelectionEnabled ? 'var(--student-pass-accent-soft)' : 'var(--student-pass-panel)',
+                                border: '1px solid var(--student-pass-border)',
+                                color: stopSelectionEnabled ? 'var(--student-pass-accent-strong)' : 'var(--student-pass-text)',
+                                fontFamily: "'JetBrains Mono', monospace",
+                            }}
+                        >
+                            {stopSelectionEnabled ? 'Hide stop picker' : 'Select a stop'}
+                        </button>
                     )}
-                    <span className="flex items-center gap-1.5">
-                        <LegendDot fill="#475569" size={8} />
-                        No trips
-                    </span>
+                    <div
+                        className="rounded-lg px-2.5 py-1.5 flex items-center gap-3 text-[10px] text-[#CBD5E1]"
+                        style={{
+                            background: 'var(--student-pass-panel)',
+                            border: '1px solid var(--student-pass-border)',
+                            fontFamily: "'JetBrains Mono', monospace",
+                        }}
+                    >
+                        <span className="flex items-center gap-1.5">
+                            <LegendDot fill="#56A6D5" size={8} />
+                            Has trips
+                        </span>
+                        {showSelectedZoneStop && (
+                            <span className="flex items-center gap-1.5">
+                                <LegendDot fill="#8FD0F6" size={8} />
+                                Selected
+                            </span>
+                        )}
+                        <span className="flex items-center gap-1.5">
+                            <LegendDot fill="#475569" size={8} />
+                            No trips
+                        </span>
+                    </div>
                 </div>
             )}
 
@@ -602,8 +642,8 @@ export const StudentPassMap: React.FC<StudentPassMapProps> = ({
                 <Source id="zone-stops" type="geojson" data={zoneStopsGeoJSON}>
                     <Layer {...ZONE_STOPS_LAYER} />
                 </Source>
-                {zoneStops.map((stop) => {
-                    const isSelected = showSelectedZoneStop && stop.stopId === selectedZoneStopId;
+                {visibleZoneStops.map((stop) => {
+                    const isSelected = stop.stopId === selectedZoneStopId;
                     const hasAnyService = stop.morningOptionCount > 0 || stop.afternoonOptionCount > 0;
                     const fillColor = isSelected ? '#8FD0F6' : hasAnyService ? '#56A6D5' : '#4E6B82';
                     return (

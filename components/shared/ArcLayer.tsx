@@ -11,6 +11,7 @@ export interface ArcData {
     opacity?: number;
     curveDirection?: 1 | -1;
     segments?: number;
+    showArrowhead?: boolean;
     properties?: Record<string, unknown>;
 }
 
@@ -51,15 +52,22 @@ export const ArcLayer: React.FC<ArcLayerProps> = ({
 
         let arrowGJ: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
         if (showArrowheads) {
-            const allBarbs = arcFeatures.flatMap((f) =>
-                arrowheadPoints(f.points, arrowheadSize)
-            );
-            arrowGJ = toArrowheadGeoJSON(allBarbs);
-            arrowGJ.features.forEach((f, i) => {
-                if (i < arcs.length) {
-                    f.properties = { color: arcs[i].color, width: (arcs[i].width ?? defaultWidth) + 1 };
-                }
+            const arrowFeatures: { points: [number, number][]; properties: Record<string, unknown> }[] = [];
+            arcFeatures.forEach((feature, i) => {
+                if (arcs[i].showArrowhead === false) return;
+                const barbs = arrowheadPoints(feature.points, arrowheadSize);
+                barbs.forEach((points) => {
+                    arrowFeatures.push({
+                        points,
+                        properties: {
+                            ...feature.properties,
+                            color: arcs[i].color,
+                            width: (arcs[i].width ?? defaultWidth) + 1,
+                        },
+                    });
+                });
             });
+            arrowGJ = toArcGeoJSON(arrowFeatures);
         }
 
         return { arcGeoJSON: arcGJ, arrowGeoJSON: arrowGJ };

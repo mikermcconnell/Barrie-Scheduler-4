@@ -70,4 +70,78 @@ describe('StudentPassTimeline', () => {
     expect(text).toContain('Load 12');
     expect(text).toContain('8d obs');
   });
+
+  it('shows leave and arrive times including the final walk-home arrival in the afternoon timeline', () => {
+    const result: StudentPassResult = {
+      found: true,
+      isDirect: false,
+      morningLegs: [],
+      afternoonLegs: [
+        {
+          routeShortName: '100',
+          routeColor: '#FF0000',
+          tripId: 'trip-pm-100',
+          fromStopId: 'school-stop',
+          toStopId: 'transfer-stop',
+          departureMinutes: 14 * 60 + 34,
+          arrivalMinutes: 14 * 60 + 46,
+          fromStop: 'School Stop',
+          toStop: 'Transfer Stop',
+        },
+        {
+          routeShortName: '11',
+          routeColor: '#A3C82D',
+          tripId: 'trip-pm-11',
+          fromStopId: 'transfer-stop',
+          toStopId: 'ford-stop',
+          departureMinutes: 14 * 60 + 52,
+          arrivalMinutes: 15 * 60,
+          fromStop: 'Transfer Stop',
+          toStop: 'Ford Street',
+        },
+      ],
+      afternoonTransfer: {
+        quality: 'good',
+        color: '#22C55E',
+        label: 'Good connection',
+        waitMinutes: 6,
+      },
+      walkFromSchool: {
+        fromLat: 44.40,
+        fromLon: -79.69,
+        toLat: 44.401,
+        toLon: -79.691,
+        distanceKm: 0.3,
+        walkMinutes: 11,
+        label: 'Walk to stop',
+      },
+      walkToZone: {
+        fromLat: 44.406,
+        fromLon: -79.719,
+        toLat: 44.405,
+        toLon: -79.718,
+        distanceKm: 0.45,
+        walkMinutes: 6,
+        label: 'Walk home',
+      },
+    };
+
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    flushSync(() => {
+      root?.render(
+        <StudentPassTimeline
+          result={result}
+          journeyMode="pm"
+          onJourneyModeChange={() => {}}
+        />
+      );
+    });
+
+    const text = container.textContent || '';
+    expect(text).toContain('Leave 2:23 PM');
+    expect(text).toContain('Arrive 3:06 PM');
+  });
 });
