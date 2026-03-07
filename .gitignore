@@ -35,6 +35,11 @@ data/samples/
 data/images/
 data/analysis/
 data/gtfs/
+!data/gtfs/ontario-northland/
+!data/gtfs/ontario-northland/routes.txt
+!data/gtfs/ontario-northland/trips.txt
+!data/gtfs/ontario-northland/stop_times.txt
+!data/gtfs/ontario-northland/stops.txt
 *.xlsx
 *.JPG
 

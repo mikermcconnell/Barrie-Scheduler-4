@@ -1,0 +1,19 @@
+﻿route_id,route_short_name,route_long_name,route_type,route_color,route_text_color
+95,ONTC,Cochrane - Moosonee,3,00214D,E6B012
+96,ONTC,Moosonee - Cochrane,3,00214D,E6B012
+101,ONTC,Toronto - North Bay,3,00214D,E6B012
+102,ONTC,North Bay - Toronto,3,00214D,E6B012
+201,ONTC,Toronto - Sudbury,3,00214D,E6B012
+202,ONTC,Sudbury - Toronto,3,00214D,E6B012
+301,ONTC,North Bay - Timmins,3,00214D,E6B012
+302,ONTC,Timmins - North Bay,3,00214D,E6B012
+401,ONTC,Sudbury - Hearst,3,00214D,E6B012
+402,ONTC,Hearst - Sudbury,3,00214D,E6B012
+501,ONTC,Ottawa - Sudbury,3,00214D,E6B012
+502,ONTC,Sudbury - Ottawa,3,00214D,E6B012
+503,ONTC,Sudbury - Sault Ste Marie,3,00214D,E6B012
+504,ONTC,Sault Ste Marie - Sudbury,3,00214D,E6B012
+601,ONTC,Sault Ste Marie to Thunder Bay,3,00214D,E6B012
+602,ONTC,Thunder Bay to Sault Ste Marie,3,00214D,E6B012
+603,ONTC,Thunder Bay to Winnipeg,3,00214D,E6B012
+604,ONTC,Winnipeg to Thunder Bay,3,00214D,E6B012
