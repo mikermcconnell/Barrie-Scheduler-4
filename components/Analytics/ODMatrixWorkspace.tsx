@@ -29,7 +29,13 @@ import { ODHeatmapGridModule } from './ODHeatmapGridModule';
 import { ODRouteEstimationModule } from './ODRouteEstimationModule';
 import { ODDataConfidencePanel } from './ODDataConfidencePanel';
 import { ODImportFileManager } from './ODImportFileManager';
-import { exportODExcel, exportODPdf, exportStopReportExcel, exportStopReportPdf } from '../../utils/od-matrix/odReportExporter';
+import {
+    exportODExcel,
+    exportODPdf,
+    exportStopReportExcel,
+    exportStopReportPdf,
+    type StopReportPdfMapOptions,
+} from '../../utils/od-matrix/odReportExporter';
 import { computeODConfidenceReport } from '../../utils/od-matrix/odDataConfidence';
 
 interface ODMatrixWorkspaceProps {
@@ -179,8 +185,19 @@ export const ODMatrixWorkspace: React.FC<ODMatrixWorkspaceProps> = ({
         await exportStopReportExcel(data, stopName, routeEstimation);
     }, [data, routeEstimation]);
 
-    const handleHeatmapStopPdf = useCallback(async (stopName: string) => {
-        await exportStopReportPdf(data, stopName, mapElRef.current, routeEstimation, heatmapElRef.current);
+    const handleHeatmapStopPdf = useCallback(async (
+        stopName: string,
+        sourceMapEl?: HTMLDivElement | null,
+        mapOptions?: StopReportPdfMapOptions,
+    ) => {
+        await exportStopReportPdf(
+            data,
+            stopName,
+            sourceMapEl ?? mapElRef.current,
+            routeEstimation,
+            heatmapElRef.current,
+            mapOptions,
+        );
     }, [data, routeEstimation]);
 
     const tabs = useMemo(() => TAB_CONFIG, []);

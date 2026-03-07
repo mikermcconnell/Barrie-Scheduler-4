@@ -39,6 +39,7 @@ import { Marker } from 'react-map-gl/mapbox';
 import type { MapRef } from 'react-map-gl/mapbox';
 import { fmt } from './AnalyticsShared';
 import type { ODMatrixDataSummary, GeocodeCache, GeocodedLocation } from '../../utils/od-matrix/odMatrixTypes';
+import type { StopReportPdfMapOptions } from '../../utils/od-matrix/odReportExporter';
 import {
     estimateRoutes,
     type ODRouteEstimationResult,
@@ -64,7 +65,11 @@ interface ODRouteEstimationModuleProps {
     routeEstimationFileName?: string;
     onResultReady?: (result: ODRouteEstimationResult, fileName: string) => void;
     onExportStopExcel?: (stopName: string) => void;
-    onExportStopPdf?: (stopName: string) => void;
+    onExportStopPdf?: (
+        stopName: string,
+        mapEl?: HTMLDivElement | null,
+        mapOptions?: StopReportPdfMapOptions,
+    ) => void;
 }
 
 const CONFIDENCE_COLORS: Record<MatchConfidence, string> = {
@@ -1038,6 +1043,7 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
     );
 
     const transferMapRef = useRef<MapRef | null>(null);
+    const transferExportRef = useRef<HTMLDivElement | null>(null);
     const [transferMapReady, setTransferMapReady] = useState(false);
     const selectedTransferKey = selectedTransferPoint?.toLowerCase() ?? null;
     const transferCentroid = useMemo(() => {
@@ -1125,6 +1131,19 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
         }));
     }, [routeModeNodes, selectedRouteTransferKey, selectedTransferDetails, transferDrilldownMode]);
     const routeModeActive = Boolean(selectedTransferDetails && transferDrilldownMode === 'routes');
+    const stopPdfMapOptions = useMemo<StopReportPdfMapOptions | undefined>(() => {
+        if (!selectedTransferPoint) return undefined;
+        if (transferDrilldownMode === 'routes') {
+            return {
+                sectionTitle: 'Route Transfer Map',
+                sectionCaption: 'GTFS route-transfer view captured from the Routes & Transfers tab, including inbound and outbound route context at the selected stop.',
+            };
+        }
+        return {
+            sectionTitle: 'Transfer Flow Map',
+            sectionCaption: 'Transfer flow view captured from the Routes & Transfers tab. Arc thickness reflects matched journey volume through the selected stop.',
+        };
+    }, [selectedTransferPoint, transferDrilldownMode]);
     const transferPointsForMap = useMemo(
         () => (routeModeActive && selectedTransferDetails ? [selectedTransferDetails] : displayedTransferPoints),
         [displayedTransferPoints, routeModeActive, selectedTransferDetails]
@@ -1567,7 +1586,7 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
                             </div>
                         }
                     >
-                        <div className="relative">
+                        <div className="relative" ref={transferExportRef}>
                             {selectedTransferPoint && (
                                 <div className="mb-2 flex flex-wrap items-center gap-2">
                                     <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-slate-900 text-white text-xs font-medium rounded-full shadow-sm">
@@ -1619,7 +1638,11 @@ export const ODRouteEstimationModule: React.FC<ODRouteEstimationModuleProps> = (
                                     )}
                                     {onExportStopPdf && (
                                         <button
-                                            onClick={() => onExportStopPdf(toTitleCase(selectedTransferPoint))}
+                                            onClick={() => onExportStopPdf(
+                                                toTitleCase(selectedTransferPoint),
+                                                transferExportRef.current,
+                                                stopPdfMapOptions,
+                                            )}
                                             title={`Export stop PDF: ${toTitleCase(selectedTransferPoint)}`}
                                             className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-white hover:text-gray-800 transition-colors"
                                         >

@@ -1337,12 +1337,18 @@ export async function exportODPdf(
 
 // ─── Stop Focus PDF Export ────────────────────────────────────────
 
+export interface StopReportPdfMapOptions {
+    sectionTitle?: string;
+    sectionCaption?: string;
+}
+
 export async function exportStopReportPdf(
     data: ODMatrixDataSummary,
     stopName: string,
     mapEl?: HTMLDivElement | null,
     routeEstimation?: ODRouteEstimationResult | null,
     heatmapEl?: HTMLDivElement | null,
+    mapOptions?: StopReportPdfMapOptions,
 ): Promise<void> {
     const station = data.stations.find(s => s.name === stopName);
     if (!station) return;
@@ -1574,13 +1580,16 @@ export async function exportStopReportPdf(
         try {
             const canvas = await html2canvas(mapEl, { useCORS: true, scale: 1.5 });
             const imgData = canvas.toDataURL('image/png');
+            const mapSectionTitle = mapOptions?.sectionTitle?.trim() || 'Flow Map';
+            const mapSectionCaption = mapOptions?.sectionCaption?.trim()
+                || 'Connections visible at time of export. Line thickness = journey volume.';
             doc.addPage();
-            tocEntries.push({ title: 'Flow Map', page: doc.getNumberOfPages() });
-            drawSectionHeader(`Flow Map — ${stopName}`, 25, 110);
+            tocEntries.push({ title: mapSectionTitle, page: doc.getNumberOfPages() });
+            drawSectionHeader(`${mapSectionTitle} — ${stopName}`, 25, 110);
 
             doc.setFontSize(8);
             doc.setTextColor(...MID_GRAY);
-            doc.text(`Connections visible at time of export. Line thickness = journey volume.`, margin, 33);
+            doc.text(mapSectionCaption, margin, 33);
 
             const imgW = pageW - 2 * margin;
             const imgH = (canvas.height / canvas.width) * imgW;
