@@ -191,6 +191,7 @@ function traceCascade(
 
     const timepoints: CascadeTimepointObs[] = [];
     let lateCount = 0;
+    let observedTimepointCount = 0;
     let tripRecoveredAtStop: string | null = null;
 
     for (const rec of timepointRecords) {
@@ -199,6 +200,7 @@ function traceCascade(
       let isLate = false;
 
       if (rec.observedDepartureTime) {
+        observedTimepointCount++;
         const observedSec = timeToSeconds(rec.observedDepartureTime);
         let dev = observedSec - scheduledSec;
         // Post-midnight guard
@@ -242,6 +244,11 @@ function traceCascade(
         isLate,
         boardings: rec.boardings,
       });
+    }
+
+    // Missing AVL on an entire downstream trip is unknown, not recovery.
+    if (observedTimepointCount === 0) {
+      continue;
     }
 
     // Compute per-trip lateSeconds: sum of positive deviations at late timepoints

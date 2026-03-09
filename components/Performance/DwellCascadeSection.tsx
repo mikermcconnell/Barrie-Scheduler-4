@@ -3,15 +3,14 @@ import { Zap, Target, Activity, AlertTriangle, ChevronDown, ChevronRight, Shield
 import type {
     PerformanceDataSummary,
     DwellCascade,
-    CascadeAffectedTrip,
     CascadeStopImpact,
     TerminalRecoveryStats,
     DailyCascadeMetrics,
-    DwellSeverity,
 } from '../../utils/performanceDataTypes';
 import { MetricCard, ChartCard, fmt } from '../Analytics/AnalyticsShared';
 import { aggregateCascadeAcrossDays } from '../../utils/schedule/operatorDwellUtils';
 import { buildStopLoadLookup } from '../../utils/schedule/cascadeStoryUtils';
+import { buildCascadeLateTripsByRoute } from '../../utils/schedule/cascadeImpactUtils';
 import CascadeStorySlideOver from './CascadeStorySlideOver';
 
 interface DwellCascadeSectionProps {
@@ -35,16 +34,6 @@ const RecoveryBadge: React.FC<{ sufficient: boolean }> = ({ sufficient }) => (
             : 'bg-amber-100 text-amber-700'
     }`}>
         {sufficient ? 'Sufficient' : 'Needs More Recovery'}
-    </span>
-);
-
-const SeverityBadge: React.FC<{ severity: DwellSeverity }> = ({ severity }) => (
-    <span className={`inline-flex items-center px-2 py-0.5 text-xs font-semibold rounded-full ${
-        severity === 'high'
-            ? 'bg-red-100 text-red-700'
-            : 'bg-amber-100 text-amber-700'
-    }`}>
-        {severity.toUpperCase()}
     </span>
 );
 
@@ -79,12 +68,6 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
         [data.dailySummaries],
     );
 
-    // Banner: total trips operated
-    const totalTripsOperated = useMemo(
-        () => data.dailySummaries.reduce((sum, d) => sum + (d.system?.tripCount ?? 0), 0),
-        [data.dailySummaries],
-    );
-
     const cascadedOnly = useMemo(
         () => metrics.cascades.filter(c => c.blastRadius > 0),
         [metrics.cascades],
@@ -98,7 +81,7 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
         const actualPct = (totalOnTime / totalAssessed) * 100;
         const penaltyPp = (metrics.totalBlastRadius / totalAssessed) * 100;
         const whatIfPct = Math.min(100, actualPct + penaltyPp);
-        return { actualPct, penaltyPp, whatIfPct };
+        return { actualPct, penaltyPp, totalAssessed, whatIfPct };
     }, [data.dailySummaries, metrics.totalBlastRadius]);
 
     // Worst incident by blast radius
@@ -109,47 +92,10 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
         [cascadedOnly],
     );
 
-    // Route attribution: total trips and cascade-caused late per route
-    const routeRows = useMemo(() => {
-        // Build routeId → { routeId, routeName, totalTrips } from dailySummaries
-        const routeMap = new Map<string, { routeId: string; routeName: string; totalTrips: number }>();
-        for (const day of data.dailySummaries) {
-            for (const r of (day.byRoute ?? [])) {
-                const existing = routeMap.get(r.routeId);
-                if (existing) {
-                    existing.totalTrips += r.tripCount;
-                } else {
-                    routeMap.set(r.routeId, {
-                        routeId: r.routeId,
-                        routeName: r.routeName,
-                        totalTrips: r.tripCount,
-                    });
-                }
-            }
-        }
-
-        // Count cascade-caused late trips per route
-        const cascadeLateByRoute = new Map<string, number>();
-        for (const c of cascadedOnly) {
-            for (const ct of c.cascadedTrips) {
-                if (ct.otpStatus === 'late') {
-                    cascadeLateByRoute.set(ct.routeId, (cascadeLateByRoute.get(ct.routeId) ?? 0) + 1);
-                }
-            }
-        }
-
-        // Join and filter: only routes with cascade-caused > 0
-        const rows: { routeId: string; routeName: string; totalTrips: number; cascadeCaused: number; otpPenaltyPp: number }[] = [];
-        for (const [routeId, count] of cascadeLateByRoute.entries()) {
-            const routeInfo = routeMap.get(routeId);
-            if (routeInfo && count > 0) {
-                const otpPenaltyPp = routeInfo.totalTrips > 0 ? (count / routeInfo.totalTrips) * 100 : 0;
-                rows.push({ ...routeInfo, cascadeCaused: count, otpPenaltyPp });
-            }
-        }
-
-        return rows.sort((a, b) => b.otpPenaltyPp - a.otpPenaltyPp);
-    }, [data.dailySummaries, cascadedOnly]);
+    const routeRows = useMemo(
+        () => buildCascadeLateTripsByRoute(cascadedOnly, data.dailySummaries),
+        [cascadedOnly, data.dailySummaries],
+    );
 
     // Unique route IDs for incident filter dropdown
     const incidentRouteIds = useMemo(() => {
@@ -232,8 +178,8 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                                 Dwell cascades impacted an estimated{' '}
                                 <span className="font-bold">{fmt(metrics.totalBlastRadius)}</span>
                                 {' '}of{' '}
-                                <span className="font-bold">{fmt(totalTripsOperated)}</span>
-                                {' '}operated trips ({fmtPct(metrics.totalBlastRadius, totalTripsOperated)})
+                                <span className="font-bold">{fmt(otpImpact?.totalAssessed ?? 0)}</span>
+                                {' '}OTP-assessed departures ({fmtPct(metrics.totalBlastRadius, otpImpact?.totalAssessed ?? 0)})
                                 {isMultiDay ? ' across the selected period' : ' today'}.
                             </p>
                             {otpImpact && (
@@ -269,10 +215,10 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                 <div className="grid grid-cols-1 lg:grid-cols-[40%_1fr] gap-4 items-start">
 
                     {/* B: Route Attribution Table */}
-                    <ChartCard
-                        title="Route Attribution"
-                        subtitle="Cascade-caused late trips by route"
-                    >
+                        <ChartCard
+                            title="Route Attribution"
+                            subtitle="Unique downstream trips made late by cascades"
+                        >
                         {routeRows.length === 0 ? (
                             <p className="text-sm text-gray-400 py-8 text-center">No route attribution data</p>
                         ) : (
@@ -282,7 +228,7 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                                         <tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wider">
                                             <th className="pb-2 pr-3 font-medium">Route</th>
                                             <th className="pb-2 pr-2 font-medium text-right">Trips</th>
-                                            <th className="pb-2 pr-2 font-medium text-right">Cascade Late</th>
+                                            <th className="pb-2 pr-2 font-medium text-right">Late Trips</th>
                                             <th className="pb-2 pr-2 font-medium text-right">OTP Penalty</th>
                                             <th className="pb-2 font-medium w-20"></th>
                                         </tr>
@@ -299,7 +245,7 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                                                     </td>
                                                     <td className="py-2 pr-2 text-right text-gray-500 tabular-nums">{fmt(row.totalTrips)}</td>
                                                     <td className="py-2 pr-2 text-right font-semibold text-red-600 tabular-nums">
-                                                        {row.cascadeCaused}
+                                                        {row.cascadeCausedTrips}
                                                     </td>
                                                     <td className="py-2 pr-2 text-right tabular-nums text-red-600 font-medium">
                                                         {row.otpPenaltyPp.toFixed(1)} pp
@@ -379,7 +325,7 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                                                     <span className="font-semibold text-gray-700">{incident.affectedTripCount}</span> trips
                                                 </span>
                                                 <span title="Late departures" className="text-gray-500">
-                                                    <span className="font-semibold text-gray-700">{incident.blastRadius}</span> late
+                                                    <span className="font-semibold text-gray-700">{incident.blastRadius}</span> late dep
                                                 </span>
                                             </div>
                                             {/* Recovery status */}
@@ -421,7 +367,7 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                                 label="Avg Blast Radius"
                                 value={metrics.avgBlastRadius.toFixed(1)}
                                 color="amber"
-                                subValue="trips affected per cascade"
+                                subValue="late departures per cascade"
                             />
                             <MetricCard
                                 icon={<Activity size={18} />}

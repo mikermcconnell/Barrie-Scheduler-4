@@ -373,6 +373,29 @@ describe('dwellCascadeComputer.buildDailyCascadeMetrics', () => {
     expect(cascade.blastRadius).toBe(1);
   });
 
+  it('does not treat a fully missing-AVL downstream trip as recovery', () => {
+    const records = buildBlockRecords({
+      block: '10-01',
+      tripCount: 3,
+      baseHour: 8,
+      intervalMin: 25,
+      observedDepartures: {
+        1: { 1: null, 2: null }, // Trip-2 has no usable AVL at any timepoint
+        2: { 1: '08:57:00', 2: '09:06:00' }, // Trip-3 is still late downstream
+      },
+    });
+    const incident = makeIncident({ tripName: 'Trip-1', block: '10-01' });
+
+    const result = buildDailyCascadeMetrics(records, [incident]);
+    const cascade = result.cascades[0];
+
+    expect(cascade.recoveredAtTrip).toBeNull();
+    expect(cascade.cascadedTrips).toHaveLength(1);
+    expect(cascade.cascadedTrips[0].tripName).toBe('Trip-3');
+    expect(cascade.cascadedTrips[0].lateTimepointCount).toBe(2);
+    expect(cascade.blastRadius).toBe(2);
+  });
+
   it('sums totalLateSeconds across all late timepoints', () => {
     // Trip-2: Stop 1 dev=480s (late), Stop 2 dev=360s (late)
     // Trip-3: Stop 1 dev=360s (late), Stop 2 dev=240s (on-time, recovery)

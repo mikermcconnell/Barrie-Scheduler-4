@@ -181,6 +181,7 @@ function traceCascade(
 
     const timepoints: CascadeTimepointObs[] = [];
     let lateCount = 0;
+    let observedTimepointCount = 0;
     let tripRecoveredAtStop: string | null = null;
 
     for (const rec of timepointRecords) {
@@ -189,6 +190,7 @@ function traceCascade(
       let isLate = false;
 
       if (rec.observedDepartureTime) {
+        observedTimepointCount++;
         const observedSec = timeToSeconds(rec.observedDepartureTime);
         let dev = observedSec - scheduledSec;
         // Post-midnight guard
@@ -232,6 +234,10 @@ function traceCascade(
         isLate,
         boardings: rec.boardings,
       });
+    }
+
+    if (observedTimepointCount === 0) {
+      continue;
     }
 
     let tripLateSeconds = 0;

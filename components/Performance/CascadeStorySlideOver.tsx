@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { X } from 'lucide-react';
 import type { DwellCascade, DwellSeverity, DailySummary } from '../../utils/performanceDataTypes';
 import type { StopLoadData } from '../../utils/schedule/cascadeStoryUtils';
-import { buildTimelinePoints } from '../../utils/schedule/cascadeStoryUtils';
+import { buildCascadeLateDepartureImpactByRoute } from '../../utils/schedule/cascadeImpactUtils';
 import CascadeTimelineChart from './CascadeTimelineChart';
 import CascadeTripChain from './CascadeTripChain';
 import CascadeRouteMap from './CascadeRouteMap';
@@ -47,16 +47,9 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
 
     // Per-cascade OTP impact
     const otpImpact = useMemo(() => {
-        if (cascade.blastRadius === 0) return null;
-        let totalRouteTrips = 0;
-        for (const d of dailySummaries) {
-            const routeMetrics = d.byRoute?.find(r => r.routeId === cascade.routeId);
-            if (routeMetrics?.otp?.total) totalRouteTrips += routeMetrics.otp.total;
-        }
-        if (totalRouteTrips === 0) return null;
-        const penaltyPct = (cascade.blastRadius / totalRouteTrips) * 100;
-        return { totalRouteTrips, penaltyPct };
-    }, [cascade.blastRadius, cascade.routeId, dailySummaries]);
+        const rows = buildCascadeLateDepartureImpactByRoute(cascade, dailySummaries);
+        return rows.length > 0 ? rows : null;
+    }, [cascade, dailySummaries]);
 
     // Trigger open animation on mount
     useEffect(() => {
@@ -161,17 +154,23 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
                 {/* OTP Impact mini-card */}
                 {otpImpact && (
                     <div className="flex items-center gap-3 px-5 py-2 border-b border-gray-100 flex-shrink-0">
-                        <div className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-red-50 border border-red-100 text-xs text-red-700">
+                        <div className="flex flex-wrap items-center gap-2 px-3 py-1.5 rounded-md bg-red-50 border border-red-100 text-xs text-red-700">
                             <span className="font-medium">OTP Impact</span>
-                            <span className="text-red-400">·</span>
-                            <span>
-                                Route {cascade.routeId}: <span className="font-semibold">{cascade.blastRadius}</span> late departures
-                                of <span className="font-semibold">{otpImpact.totalRouteTrips}</span> assessed
-                            </span>
-                            <span className="text-red-400">·</span>
-                            <span>
-                                est. <span className="font-semibold">{otpImpact.penaltyPct.toFixed(1)}%</span> OTP penalty
-                            </span>
+                            {otpImpact.map((impact, idx) => (
+                                <React.Fragment key={impact.routeId}>
+                                    <span className="text-red-400">·</span>
+                                    <span>
+                                        Route {impact.routeId}: <span className="font-semibold">{impact.lateDepartures}</span> late departures
+                                        {impact.assessedDepartures > 0 && (
+                                            <>
+                                                {' '}of <span className="font-semibold">{impact.assessedDepartures}</span> assessed
+                                                {' '}({impact.penaltyPct.toFixed(1)}%)
+                                            </>
+                                        )}
+                                        {impact.assessedDepartures === 0 && idx === 0 && ' (no route OTP denominator)'}
+                                    </span>
+                                </React.Fragment>
+                            ))}
                         </div>
                     </div>
                 )}
