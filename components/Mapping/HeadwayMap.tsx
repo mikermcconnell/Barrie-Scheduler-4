@@ -5,7 +5,7 @@
  * on the same road. Shared corridors are colored/weighted by combined headway
  * severity; single-route segments are shown as thin route-colored lines.
  *
- * Phase 3b of Leaflet → Mapbox migration.
+ * Shared Mapbox implementation for corridor-level headway analysis.
  */
 
 import React, { useRef, useMemo, useState, useCallback, useEffect } from 'react';

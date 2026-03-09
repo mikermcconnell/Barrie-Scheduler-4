@@ -143,6 +143,68 @@ function sectionHeader(title: string, subtitle?: string): string {
     </div>`;
 }
 
+function buildDwellKpiCard(latestDay: DailySummary, trendDays: DailySummary[]): string {
+  const dwell = latestDay.byOperatorDwell;
+  const testingNote = '<div style="font-size:10px;color:#9ca3af;margin-top:3px;">Operator dwell metric under testing.</div>';
+
+  if (!dwell) {
+    return `
+      <td style="width:50%;padding:6px;">
+        <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px;text-align:center;border-left:3px solid #0891b2;">
+          <div style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;">Operator Dwell</div>
+          <div style="font-size:24px;font-weight:700;color:#111827;margin:4px 0;">—</div>
+          <div style="font-size:11px;color:#9ca3af;">No dwell data</div>
+          ${testingNote}
+        </div>
+      </td>`;
+  }
+
+  const totalHours = (dwell.totalTrackedDwellMinutes / 60).toFixed(1);
+  const highCount = dwell.byOperator.reduce((sum, operator) => sum + operator.highCount, 0);
+  const moderateCount = dwell.byOperator.reduce((sum, operator) => sum + operator.moderateCount, 0);
+
+  let accentColor = '#0891b2';
+  let valueColor = '#111827';
+  let averageLine = '';
+
+  const sameDayTypeDays = trendDays.filter(day =>
+    day.date !== latestDay.date
+    && day.dayType === latestDay.dayType
+    && typeof day.byOperatorDwell?.totalTrackedDwellMinutes === 'number'
+  );
+
+  if (sameDayTypeDays.length > 0) {
+    const averageMinutes = sameDayTypeDays.reduce(
+      (sum, day) => sum + (day.byOperatorDwell?.totalTrackedDwellMinutes ?? 0),
+      0,
+    ) / sameDayTypeDays.length;
+    const dayTypeLabel = latestDay.dayType === 'weekday'
+      ? 'Weekday'
+      : latestDay.dayType === 'saturday'
+        ? 'Saturday'
+        : 'Sunday';
+
+    if (averageMinutes > 0 && dwell.totalTrackedDwellMinutes > (averageMinutes * 1.5)) {
+      accentColor = '#d97706';
+      valueColor = '#d97706';
+      averageLine = `<div style="font-size:10px;color:#d97706;margin-top:3px;">&#9650; ${dayTypeLabel} avg: ${(averageMinutes / 60).toFixed(1)} hrs</div>`;
+    } else {
+      averageLine = `<div style="font-size:10px;color:#b0b8c4;margin-top:3px;">${dayTypeLabel} avg: ${(averageMinutes / 60).toFixed(1)} hrs</div>`;
+    }
+  }
+
+  return `
+    <td style="width:50%;padding:6px;">
+      <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px;text-align:center;border-left:3px solid ${accentColor};">
+        <div style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;">Operator Dwell</div>
+        <div style="font-size:24px;font-weight:700;color:${valueColor};margin:4px 0;">${totalHours} hrs</div>
+        <div style="font-size:11px;color:#9ca3af;">${highCount} high · ${moderateCount} moderate</div>
+        ${averageLine}
+        ${testingNote}
+      </div>
+    </td>`;
+}
+
 /** Horizontal stacked bar showing early/on-time/late distribution */
 function otpBar(earlyPct: number, onTimePct: number, latePct: number): string {
   return `
@@ -535,7 +597,7 @@ export function buildReportHtml(data: ReportData): string {
         <a href="https://transitscheduler.ca/#operations/performance" style="color:#bfdbfe;text-decoration:underline;">https://transitscheduler.ca/#operations/performance</a>
       </div>
       <div style="font-size:13px;color:#bfdbfe;margin-top:4px;">${dateRangeLabel}${dayTypeLabel ? ` · ${dayTypeLabel}` : ''}</div>
-      <div style="margin-top:10px;display:inline-block;background:#fbbf24;color:#78350f;font-size:10px;font-weight:700;padding:3px 12px;border-radius:10px;letter-spacing:0.5px;">BETA — UNDER TESTING</div>
+      <div style="margin-top:10px;display:inline-block;background:#fbbf24;color:#78350f;font-size:10px;font-weight:700;padding:3px 12px;border-radius:10px;letter-spacing:0.5px;">BETA</div>
     </div>
 
     <div style="padding:20px;">
@@ -560,6 +622,7 @@ export function buildReportHtml(data: ReportData): string {
             }
             return kpiCard('Trips Operated', num(sys.tripCount), `${num(sys.vehicleCount)} vehicles · ${totalServiceHours.toFixed(1)} svc hrs`);
           })()}
+          ${buildDwellKpiCard(latestDay, trendDays)}
         </tr>
       </table>
 

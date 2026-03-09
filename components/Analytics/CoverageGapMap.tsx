@@ -6,7 +6,7 @@
  * - Amber: Partial (one endpoint <1km from route)
  * - Red: Gap (both endpoints >1km from route)
  *
- * Phase 3a of Leaflet → Mapbox migration.
+ * Shared Mapbox implementation for OD coverage analysis.
  * Uses shared MapBase, ArcLayer, RouteOverlay components.
  */
 

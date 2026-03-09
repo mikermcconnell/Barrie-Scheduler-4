@@ -6,9 +6,6 @@ import { AgentWorkspace } from './components/workspaces/AgentWorkspace';
 import { AuthProvider, useAuth } from './components/contexts/AuthContext';
 import { TeamProvider } from './components/contexts/TeamContext';
 import { ToastProvider } from './components/contexts/ToastContext';
-import { installLeafletCanvasGuard } from './utils/leafletCanvasGuard';
-
-installLeafletCanvasGuard();
 import { AuthModal } from './components/modals/AuthModal';
 import { FileManager } from './components/FileManager';
 import { ErrorBoundary } from './components/ErrorBoundary';

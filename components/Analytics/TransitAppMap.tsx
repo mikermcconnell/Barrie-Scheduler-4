@@ -23,7 +23,7 @@
 
 import React, { useRef, useEffect, useState, useMemo, useCallback } from 'react';
 import { Layer, Marker, Popup, Source } from 'react-map-gl/mapbox';
-import type { LayerProps, MapMouseEvent, MapRef } from 'react-map-gl/mapbox';
+import type { MapMouseEvent, MapRef } from 'react-map-gl/mapbox';
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
 import type { LocationGridCell, ODPairData, ODPair, StopCoverageGapCluster } from '../../utils/transit-app/transitAppTypes';
@@ -708,469 +708,321 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
         return odPairs.pairs.some(p => (p.seasonBins?.other || 0) > 0);
     }, [odPairs]);
 
-    // Zone name cache: map coordinate key → nearest GTFS stop name
-    // (moved above zonePanelData useMemo)
-
-    // Initialize map
-    useEffect(() => {
-        if (!containerRef.current || mapRef.current) return;
-
-        const map = L.map(containerRef.current, {
-            center: BARRIE_CENTER,
-            zoom: 13,
-            zoomControl: true,
-            ...SMOOTH_MAP_OPTIONS,
-        });
-
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '&copy; OpenStreetMap contributors',
-            maxZoom: 18,
-        }).addTo(map);
-
-        // Feature 6: Click map background to clear spider mode
-        map.on('click', () => {
-            setIsolatedZone(null);
-        });
-        map.on('zoomend', () => {
-            setMapZoom(map.getZoom());
-        });
-        setMapZoom(map.getZoom());
-
-        mapRef.current = map;
-
-        const ro = new ResizeObserver(() => {
-            map.invalidateSize();
-        });
-        ro.observe(containerRef.current);
-
-        return () => {
-            ro.disconnect();
-            map.remove();
-            mapRef.current = null;
-        };
-    }, []);
-
-    // Build heatmap layer
-    const buildHeatmapLayer = useCallback(() => {
-        const group = L.layerGroup();
+    const heatmapCells = useMemo(() => {
         const filtered = geoFilter === 'barrie'
             ? locationDensity.cells.filter(c => isInBarrie(c.latBin, c.lonBin))
             : locationDensity.cells;
-        if (filtered.length === 0) return group;
+        if (filtered.length === 0) return [];
 
         const maxCount = filtered[0].count;
         const logMax = Math.log(maxCount + 1);
-
-        // Render lowest values first so highest-value bubbles draw on top
-        const ascending = [...filtered].reverse();
-
-        for (const cell of ascending) {
-            // Non-linear boost to improve visual separation in dense downtown cells.
+        return [...filtered].reverse().map((cell, idx) => {
             const normalized = Math.log(cell.count + 1) / Math.max(0.0001, logMax);
             const t = Math.pow(normalized, 0.65);
             const radius = 3 + Math.pow(t, 1.15) * 14;
-            const baseColor = heatColor(t);
-            L.circleMarker([cell.latBin, cell.lonBin], {
+            return {
+                ...cell,
+                idx,
                 radius,
-                fillColor: baseColor,
+                color: heatColor(t),
                 fillOpacity: 0.2 + t * 0.75,
-                color: baseColor,
-                weight: 0.6 + t * 0.8,
-                opacity: 0.85,
-            })
-                .bindTooltip(`${cell.count.toLocaleString()} data points`, { direction: 'top' })
-                .addTo(group);
+                strokeWidth: 0.6 + t * 0.8,
+                hasHotspotRing: t >= 0.9,
+            };
+        });
+    }, [geoFilter, locationDensity.cells]);
 
-            // Extra outline for the hottest cells to make peak clusters pop.
-            if (t >= 0.9) {
-                L.circleMarker([cell.latBin, cell.lonBin], {
-                    radius: radius + 2.5,
-                    fillOpacity: 0,
-                    color: '#111827',
-                    weight: 1.2,
-                    opacity: 0.7,
-                }).addTo(group);
-            }
-        }
+    const heatmapGeoJSON = useMemo<GeoJSON.FeatureCollection>(() => ({
+        type: 'FeatureCollection',
+        features: heatmapCells.map((cell) => ({
+            type: 'Feature',
+            properties: {
+                count: cell.count,
+                radius: cell.radius,
+                color: cell.color,
+                fillOpacity: cell.fillOpacity,
+                strokeWidth: cell.strokeWidth,
+                sortKey: cell.idx,
+            },
+            geometry: {
+                type: 'Point',
+                coordinates: toGeoJSON([cell.latBin, cell.lonBin]),
+            },
+        })),
+    }), [heatmapCells]);
 
-        return group;
-    }, [locationDensity, geoFilter]);
+    const heatmapHotspotGeoJSON = useMemo<GeoJSON.FeatureCollection>(() => ({
+        type: 'FeatureCollection',
+        features: heatmapCells
+            .filter(cell => cell.hasHotspotRing)
+            .map((cell) => ({
+                type: 'Feature',
+                properties: { radius: cell.radius + 2.5 },
+                geometry: {
+                    type: 'Point',
+                    coordinates: toGeoJSON([cell.latBin, cell.lonBin]),
+                },
+            })),
+    }), [heatmapCells]);
 
-    // Build OD layer using pre-filtered displayedPairs
-    const buildODLayer = useCallback(() => {
-        const group = L.layerGroup();
-        odLineGroupsRef.current = [];
-        if (displayedPairs.length === 0) return group;
+    const displayedPairsWithIdx = useMemo(
+        () => displayedPairs.map((pair, pairIndex) => ({ pair, pairIndex })),
+        [displayedPairs]
+    );
 
-        const map = mapRef.current;
-        const bounds = map?.getBounds();
-        const paddedBounds = bounds ? bounds.pad(0.2) : null;
-        const inViewport = (pair: MergedODPair) => {
-            if (!paddedBounds) return true;
-            return paddedBounds.contains([pair.originLat, pair.originLon])
-                || paddedBounds.contains([pair.destLat, pair.destLon]);
-        };
-
-        const resolution = odPairs?.resolution ?? 0.005;
-        const half = resolution / 2;
+    const visibleArcItems = useMemo(() => {
         const showArcs = !(allZonesMode && allZonesRenderMode === 'overview');
+        if (!showArcs) return [] as Array<{ pair: MergedODPair; pairIndex: number }>;
 
-        let arcPairs = displayedPairs;
+        let arcItems = displayedPairsWithIdx;
         if (allZonesMode && (allZonesRenderMode === 'corridor' || allZonesRenderMode === 'detail')) {
-            arcPairs = arcPairs.filter(inViewport);
-            arcPairs = allZonesRenderMode === 'corridor'
-                ? arcPairs.slice(0, CORRIDOR_MAX_ARCS)
-                : arcPairs.slice(0, DETAIL_MAX_ARCS);
+            arcItems = arcItems.filter(({ pair }) =>
+                isInPaddedBounds(pair.originLat, pair.originLon, mapBounds)
+                || isInPaddedBounds(pair.destLat, pair.destLon, mapBounds)
+            );
+            arcItems = allZonesRenderMode === 'corridor'
+                ? arcItems.slice(0, CORRIDOR_MAX_ARCS)
+                : arcItems.slice(0, DETAIL_MAX_ARCS);
         }
+        return arcItems;
+    }, [allZonesMode, allZonesRenderMode, displayedPairsWithIdx, mapBounds]);
 
-        const zoneSourcePairs = allZonesMode ? displayedPairs : arcPairs;
+    const activePairIdx = hoveredPairIdx ?? highlightedPairIdx;
+    const resolution = odPairs?.resolution ?? 0.005;
+    const zoneHalf = resolution / 2;
+
+    const arcData = useMemo<ArcData[]>(() => {
+        const allZonesDetail = allZonesMode && allZonesRenderMode === 'detail';
+        return visibleArcItems.map(({ pair, pairIndex }, arcIndex) => {
+            const color = allZonesMode ? '#334155' : rankColor(arcIndex);
+            const width = allZonesMode ? (allZonesDetail ? 2.2 : 1.5) : rankWeight(arcIndex);
+            const baseOpacity = allZonesMode
+                ? (allZonesDetail ? 0.46 : 0.34)
+                : (arcIndex < TOP_RANK_COLORS.length ? 0.85 : 0.7);
+            const opacity = activePairIdx === null ? baseOpacity : activePairIdx === pairIndex ? 1 : 0.2;
+            let origin: [number, number] = [pair.originLat, pair.originLon];
+            let dest: [number, number] = [pair.destLat, pair.destLon];
+            if (pair.isMerged && pair.netDirection === 'BA') {
+                [origin, dest] = [dest, origin];
+            }
+            return {
+                origin,
+                dest,
+                color,
+                width,
+                opacity,
+                curveDirection: arcIndex % 2 === 0 ? 1 : -1,
+                showArrowhead: !allZonesMode && !(pair.isMerged && pair.netDirection === 'balanced'),
+                properties: { pairIndex },
+            };
+        });
+    }, [activePairIdx, allZonesMode, allZonesRenderMode, visibleArcItems]);
+
+    const zoneSourceItems = useMemo(
+        () => (allZonesMode ? displayedPairsWithIdx : visibleArcItems),
+        [allZonesMode, displayedPairsWithIdx, visibleArcItems]
+    );
+
+    const zoneGeoJSON = useMemo(() => {
         const zoneMap = new Map<string, { lat: number; lon: number; isOrigin: boolean; isDest: boolean; trips: number }>();
-        for (const pair of zoneSourcePairs) {
-            const oKey = coordKey(pair.originLat, pair.originLon);
-            const dKey = coordKey(pair.destLat, pair.destLon);
-            const oZone = zoneMap.get(oKey);
-            if (oZone) {
-                oZone.isOrigin = true;
-                oZone.trips += pair.count;
+        for (const { pair } of zoneSourceItems) {
+            const originKey = coordKey(pair.originLat, pair.originLon);
+            const destKey = coordKey(pair.destLat, pair.destLon);
+            const originZone = zoneMap.get(originKey);
+            if (originZone) {
+                originZone.isOrigin = true;
+                originZone.trips += pair.count;
             } else {
-                zoneMap.set(oKey, { lat: pair.originLat, lon: pair.originLon, isOrigin: true, isDest: false, trips: pair.count });
+                zoneMap.set(originKey, { lat: pair.originLat, lon: pair.originLon, isOrigin: true, isDest: false, trips: pair.count });
             }
-            const dZone = zoneMap.get(dKey);
-            if (dZone) {
-                dZone.isDest = true;
-                dZone.trips += pair.count;
+            const destZone = zoneMap.get(destKey);
+            if (destZone) {
+                destZone.isDest = true;
+                destZone.trips += pair.count;
             } else {
-                zoneMap.set(dKey, { lat: pair.destLat, lon: pair.destLon, isOrigin: false, isDest: true, trips: pair.count });
+                zoneMap.set(destKey, { lat: pair.destLat, lon: pair.destLon, isOrigin: false, isDest: true, trips: pair.count });
             }
         }
 
-        const maxZoneTrips = Math.max(...Array.from(zoneMap.values()).map(z => z.trips), 1);
+        const maxZoneTrips = Math.max(...Array.from(zoneMap.values()).map(zone => zone.trips), 1);
+        const isOverview = allZonesMode && allZonesRenderMode === 'overview';
+        const fillFeatures: GeoJSON.Feature[] = [];
+        const dotFeatures: GeoJSON.Feature[] = [];
+
         for (const [zoneKey, zone] of zoneMap) {
             const isSelected = zoneKey === isolatedZone;
             const fillColor = isSelected ? '#3b82f6'
                 : zone.isOrigin && zone.isDest ? '#8b5cf6'
                 : zone.isOrigin ? '#10b981'
                 : '#ef4444';
-            const zoneName = getZoneName(zone.lat, zone.lon);
             const t = zone.trips / maxZoneTrips;
-            const isOverview = allZonesMode && allZonesRenderMode === 'overview';
-
-            const rect = L.rectangle(
-                [[zone.lat - half, zone.lon - half], [zone.lat + half, zone.lon + half]],
-                {
+            fillFeatures.push({
+                type: 'Feature',
+                properties: {
+                    zoneKey,
                     fillColor,
                     fillOpacity: isSelected ? 0.3 : (isOverview ? 0.14 + t * 0.12 : 0.25),
-                    color: isSelected ? '#1d4ed8' : fillColor,
-                    weight: isSelected ? 2.5 : (isOverview ? 0.8 : 1),
-                    opacity: isSelected ? 0.9 : (isOverview ? 0.35 : 0.5),
-                }
-            )
-                .bindTooltip(`${zoneName} — ${zone.trips.toLocaleString()} trips`, { direction: 'top' })
-                .addTo(group);
-
-            const baseRadius = isSelected ? 11 : (isOverview ? 4 + t * 7 : 8);
-            const zoneDot = L.circleMarker([zone.lat, zone.lon], {
-                radius: baseRadius,
-                fillColor,
-                fillOpacity: isSelected ? 0.7 : (isOverview ? 0.55 : 0.4),
-                color: '#ffffff',
-                weight: isSelected ? 3 : 1.5,
-                opacity: isSelected ? 1 : 0.7,
-            }).addTo(group);
-
-            zoneDot.on('mouseover', function (this: L.CircleMarker) {
-                this.setStyle({ fillOpacity: 0.75, weight: 2.2, radius: baseRadius + 1.8 } as L.CircleMarkerOptions);
+                    outlineColor: isSelected ? '#1d4ed8' : fillColor,
+                    outlineWidth: isSelected ? 2.5 : (isOverview ? 0.8 : 1),
+                    outlineOpacity: isSelected ? 0.9 : (isOverview ? 0.35 : 0.5),
+                },
+                geometry: {
+                    type: 'Polygon',
+                    coordinates: [[
+                        toGeoJSON([zone.lat - zoneHalf, zone.lon - zoneHalf]),
+                        toGeoJSON([zone.lat - zoneHalf, zone.lon + zoneHalf]),
+                        toGeoJSON([zone.lat + zoneHalf, zone.lon + zoneHalf]),
+                        toGeoJSON([zone.lat + zoneHalf, zone.lon - zoneHalf]),
+                        toGeoJSON([zone.lat - zoneHalf, zone.lon - zoneHalf]),
+                    ]],
+                },
             });
-            zoneDot.on('mouseout', function (this: L.CircleMarker) {
-                this.setStyle({ fillOpacity: isOverview ? 0.55 : 0.4, weight: 1.5, radius: baseRadius } as L.CircleMarkerOptions);
-            });
-
-            zoneDot.on('click', (e: L.LeafletMouseEvent) => {
-                L.DomEvent.stopPropagation(e);
-                setIsolatedZone(prev => prev === zoneKey ? null : zoneKey);
-            });
-
-            rect.on('click', (e: L.LeafletMouseEvent) => {
-                L.DomEvent.stopPropagation(e);
-                setIsolatedZone(prev => prev === zoneKey ? null : zoneKey);
+            dotFeatures.push({
+                type: 'Feature',
+                properties: {
+                    zoneKey,
+                    radius: isSelected ? 11 : (isOverview ? 4 + t * 7 : 8),
+                    fillColor,
+                    fillOpacity: isSelected ? 0.7 : (isOverview ? 0.55 : 0.4),
+                    strokeWidth: isSelected ? 3 : 1.5,
+                    strokeOpacity: isSelected ? 1 : 0.7,
+                },
+                geometry: {
+                    type: 'Point',
+                    coordinates: toGeoJSON([zone.lat, zone.lon]),
+                },
             });
         }
 
-        if (!showArcs || arcPairs.length === 0) {
-            return group;
+        return {
+            fills: { type: 'FeatureCollection' as const, features: fillFeatures },
+            dots: { type: 'FeatureCollection' as const, features: dotFeatures },
+        };
+    }, [allZonesMode, allZonesRenderMode, isolatedZone, zoneHalf, zoneSourceItems]);
+
+    const endpointGeoJSON = useMemo<GeoJSON.FeatureCollection>(() => {
+        if (allZonesMode && allZonesRenderMode !== 'detail') {
+            return { type: 'FeatureCollection', features: [] };
         }
+        return {
+            type: 'FeatureCollection',
+            features: visibleArcItems.flatMap(({ pair, pairIndex }, arcIndex) => {
+                const radius = allZonesMode ? 3 : (arcIndex < TOP_RANK_COLORS.length ? 6 : 4);
+                return [
+                    {
+                        type: 'Feature' as const,
+                        properties: { pairIndex, color: '#10b981', radius },
+                        geometry: { type: 'Point' as const, coordinates: toGeoJSON([pair.originLat, pair.originLon]) },
+                    },
+                    {
+                        type: 'Feature' as const,
+                        properties: { pairIndex, color: '#ef4444', radius },
+                        geometry: { type: 'Point' as const, coordinates: toGeoJSON([pair.destLat, pair.destLon]) },
+                    },
+                ];
+            }),
+        };
+    }, [allZonesMode, allZonesRenderMode, visibleArcItems]);
 
-        const allZonesDetail = allZonesMode && allZonesRenderMode === 'detail';
-        for (let i = 0; i < arcPairs.length; i++) {
-            const pair = arcPairs[i];
-            const lineElements: L.Path[] = [];
-
-            const color = allZonesMode ? '#334155' : rankColor(i);
-            const weight = allZonesMode ? (allZonesDetail ? 2.2 : 1.5) : rankWeight(i);
-            const opacity = allZonesMode
-                ? (allZonesDetail ? 0.46 : 0.34)
-                : (i < TOP_RANK_COLORS.length ? 0.85 : 0.7);
-
-            const curveDir: 1 | -1 = i % 2 === 0 ? 1 : -1;
+    const rankBadgeMarkers = useMemo(() => {
+        if (allZonesMode) return [];
+        return visibleArcItems.map(({ pair }, arcIndex) => {
             let origin: [number, number] = [pair.originLat, pair.originLon];
             let dest: [number, number] = [pair.destLat, pair.destLon];
             if (pair.isMerged && pair.netDirection === 'BA') {
                 [origin, dest] = [dest, origin];
             }
-            const arcPoints = quadraticBezierArc(origin, dest, curveDir);
-
-            const polyline = L.polyline(arcPoints, {
-                color,
-                weight,
-                opacity,
-                lineCap: 'round',
-                lineJoin: 'round',
-            });
-
-            const distKm = haversineKm(pair.originLat, pair.originLon, pair.destLat, pair.destLon);
-            polyline.bindTooltip(`${pair.count.toLocaleString()} trips (${distKm.toFixed(1)} km)`, {
-                direction: 'top', sticky: true,
-            });
-
-            const pctStr = odPairs && odPairs.totalTripsProcessed > 0
-                ? ((pair.count / odPairs.totalTripsProcessed) * 100).toFixed(2)
-                : '?';
-            const originName = getZoneName(pair.originLat, pair.originLon);
-            const destName = getZoneName(pair.destLat, pair.destLon);
-            let popupContent = `<div style="font-size:12px;line-height:1.4">
-                <b>${originName} → ${destName}</b><br/>
-                <b>${pair.count.toLocaleString()} trips</b> (${pctStr}% of total)<br/>
-                Distance: ${distKm.toFixed(1)} km`;
-            if (pair.isMerged) {
-                const fwd = pair.count - pair.reverseCount;
-                popupContent += `<br/>A→B: ${fwd.toLocaleString()} | B→A: ${pair.reverseCount.toLocaleString()}`;
-                popupContent += `<br/>Direction: ${pair.netDirection}`;
-            }
-            popupContent += '</div>';
-            polyline.bindPopup(popupContent);
-
-            polyline.addTo(group);
-            lineElements.push(polyline);
-
-            if (!allZonesMode && !(pair.isMerged && pair.netDirection === 'balanced')) {
-                const arrowSize = i < TOP_RANK_COLORS.length ? 0.005 : 0.003;
-                const arrows = arrowheadPoints(arcPoints, arrowSize);
-                for (const pts of arrows) {
-                    const arrow = L.polyline(pts, {
-                        color,
-                        weight: Math.max(weight * 0.7, 1.5),
-                        opacity: Math.min(opacity + 0.15, 1),
-                        lineCap: 'round',
-                        lineJoin: 'round',
-                    }).addTo(group);
-                    lineElements.push(arrow);
-                }
-            }
-
-            if (!allZonesMode || allZonesDetail) {
-                const dotRadius = allZonesMode ? 3 : (i < TOP_RANK_COLORS.length ? 6 : 4);
-                const originDot = L.circleMarker([pair.originLat, pair.originLon], {
-                    radius: dotRadius,
-                    fillColor: '#10b981',
-                    fillOpacity: 0.9,
-                    color: '#ffffff',
-                    weight: allZonesMode ? 1 : 2,
-                }).addTo(group);
-                lineElements.push(originDot);
-
-                const destDot = L.circleMarker([pair.destLat, pair.destLon], {
-                    radius: dotRadius,
-                    fillColor: '#ef4444',
-                    fillOpacity: 0.9,
-                    color: '#ffffff',
-                    weight: allZonesMode ? 1 : 2,
-                }).addTo(group);
-                lineElements.push(destDot);
-            }
-
-            odLineGroupsRef.current.push({ lines: lineElements, pair, origOpacity: opacity });
-
-            if (!allZonesMode) {
-                const midIdx = Math.floor(arcPoints.length / 2);
-                const midPt = arcPoints[midIdx];
-                const badgeSize = i < 5 ? 22 : 18;
-                const fontSize = i < 5 ? 11 : 9;
-                L.marker(midPt, {
-                    icon: L.divIcon({
-                        className: '',
-                        html: `<div style="
-                            background: ${color};
-                            color: white;
-                            width: ${badgeSize}px;
-                            height: ${badgeSize}px;
-                            border-radius: 50%;
-                            display: flex;
-                            align-items: center;
-                            justify-content: center;
-                            font-size: ${fontSize}px;
-                            font-weight: 700;
-                            border: 2px solid white;
-                            box-shadow: 0 1px 4px rgba(0,0,0,0.3);
-                            pointer-events: none;
-                        ">${i + 1}</div>`,
-                        iconSize: [badgeSize, badgeSize],
-                        iconAnchor: [badgeSize / 2, badgeSize / 2],
-                    }),
-                    interactive: false,
-                }).addTo(group);
-            }
-
-            const highlight = () => {
-                for (const g of odLineGroupsRef.current) {
-                    if (g.pair === pair) {
-                        for (const el of g.lines) el.setStyle({ opacity: 1 });
-                    } else {
-                        for (const el of g.lines) el.setStyle({ opacity: 0.2 });
-                    }
-                }
-                setHighlightedPairIdx(i);
+            const points = quadraticBezierArc(origin, dest, arcIndex % 2 === 0 ? 1 : -1);
+            return {
+                key: `${pair.originLat}_${pair.originLon}_${pair.destLat}_${pair.destLon}_${arcIndex}`,
+                point: points[Math.floor(points.length / 2)],
+                color: rankColor(arcIndex),
+                badgeSize: arcIndex < 5 ? 22 : 18,
+                fontSize: arcIndex < 5 ? 11 : 9,
+                label: arcIndex + 1,
             };
-            const unhighlight = () => {
-                for (const g of odLineGroupsRef.current) {
-                    for (const el of g.lines) el.setStyle({ opacity: g.origOpacity });
-                }
-                setHighlightedPairIdx(null);
-            };
+        });
+    }, [allZonesMode, visibleArcItems]);
 
-            for (const el of lineElements) {
-                el.on('mouseover', highlight);
-                el.on('mouseout', unhighlight);
-            }
-        }
-
-        return group;
-    }, [displayedPairs, odPairs, getZoneName, allZonesMode, allZonesRenderMode, isolatedZone]);
-
-    // Feature 10: GTFS route overlay layer
-    const buildRouteLayer = useCallback(() => {
-        const group = L.layerGroup();
+    const routeShapes = useMemo(() => {
+        if (!showRoutes) return [];
         try {
-            const shapes = loadGtfsRouteShapes();
-            for (const shape of shapes) {
-                const color = `#${shape.routeColor}`;
-                L.polyline(shape.points, {
-                    color,
-                    weight: 3,
-                    opacity: 0.6,
-                    dashArray: '6 4',
-                    lineCap: 'round',
-                })
-                    .bindTooltip(`Route ${shape.routeShortName}`, { direction: 'top', sticky: true })
-                    .addTo(group);
-            }
-        } catch (e) {
-            console.warn('Failed to load GTFS shapes:', e);
+            return loadGtfsRouteShapes();
+        } catch (error) {
+            console.warn('Failed to load GTFS shapes:', error);
+            return [];
         }
-        return group;
-    }, []);
+    }, [showRoutes]);
 
-    const buildStopLayer = useCallback(() => {
-        const group = L.layerGroup();
+    const stopPoints = useMemo(() => {
+        if (!showStops) return [];
         try {
-            const stops = getAllStopsWithCoords();
-            for (const stop of stops) {
-                L.circleMarker([stop.lat, stop.lon], {
-                    radius: 2,
-                    fillColor: '#111827',
-                    fillOpacity: 0.65,
-                    color: '#ffffff',
-                    weight: 0.5,
-                })
-                    .bindTooltip(stop.stop_name, { direction: 'top', sticky: true, opacity: 0.95 })
-                    .addTo(group);
-            }
-        } catch (e) {
-            console.warn('Failed to load GTFS stops:', e);
+            return getAllStopsWithCoords().map((stop) => ({
+                id: stop.stop_id,
+                lat: stop.lat,
+                lon: stop.lon,
+                name: stop.stop_name,
+            }));
+        } catch (error) {
+            console.warn('Failed to load GTFS stops:', error);
+            return [];
         }
-        return group;
-    }, []);
+    }, [showStops]);
 
-    const buildCoverageLayer = useCallback(() => {
-        const group = L.layerGroup();
-        if (!coverageGapClusters || coverageGapClusters.length === 0) return group;
-
+    const coverageGeoJSON = useMemo<GeoJSON.FeatureCollection>(() => {
+        if (!coverageGapClusters || coverageGapClusters.length === 0) {
+            return { type: 'FeatureCollection', features: [] };
+        }
         const maxCount = Math.max(...coverageGapClusters.map(cluster => cluster.tripCount), 1);
-        for (const cluster of coverageGapClusters) {
-            const t = cluster.tripCount / maxCount;
-            const radius = 5 + t * 8;
-            const marker = L.circleMarker([cluster.lat, cluster.lon], {
-                radius,
-                fillColor: '#dc2626',
-                fillOpacity: 0.45,
-                color: '#7f1d1d',
-                weight: 1.5,
-            });
-            marker.bindPopup(
-                `<div style="font-size:12px;line-height:1.4;">
-                    <div style="font-weight:700;margin-bottom:4px;">Coverage Gap Cluster</div>
-                    <div><strong>Trips:</strong> ${cluster.tripCount.toLocaleString()}</div>
-                    <div><strong>Nearest Stop:</strong> ${cluster.nearestStopName ?? 'Unknown'}</div>
-                    <div><strong>Distance:</strong> ${cluster.avgNearestStopDistanceKm.toFixed(2)} km avg</div>
-                    <div><strong>Time:</strong> ${formatTimeBand(cluster.dominantTimeBand)}</div>
-                    <div><strong>Day:</strong> ${formatDayType(cluster.dominantDayType)}</div>
-                    <div><strong>Season:</strong> ${formatSeason(cluster.dominantSeason)}</div>
-                </div>`
-            );
-            marker.addTo(group);
-        }
-
-        return group;
+        return {
+            type: 'FeatureCollection',
+            features: coverageGapClusters.map((cluster) => ({
+                type: 'Feature',
+                properties: {
+                    clusterId: cluster.clusterId,
+                    tripCount: cluster.tripCount,
+                    radius: 5 + (cluster.tripCount / maxCount) * 8,
+                },
+                geometry: {
+                    type: 'Point',
+                    coordinates: toGeoJSON([cluster.lat, cluster.lon]),
+                },
+            })),
+        };
     }, [coverageGapClusters]);
 
-    // Sync layers
     useEffect(() => {
-        const map = mapRef.current;
+        if (!mapReady) return;
+        const map = mapRef.current?.getMap();
         if (!map) return;
 
-        if (heatmapLayerRef.current) {
-            map.removeLayer(heatmapLayerRef.current);
-            heatmapLayerRef.current = null;
-        }
-        if (odLayerRef.current) {
-            map.removeLayer(odLayerRef.current);
-            odLayerRef.current = null;
-        }
-
-        const barrieFit: L.LatLngBoundsLiteral = [
-            [BARRIE_VIEW_BOUNDS.minLat, BARRIE_VIEW_BOUNDS.minLon],
-            [BARRIE_VIEW_BOUNDS.maxLat, BARRIE_VIEW_BOUNDS.maxLon],
-        ];
         const prev = lastFitTriggerRef.current;
         const shouldRefit = !prev
             || prev.activeLayer !== activeLayer
             || prev.geoFilter !== geoFilter
             || prev.odPairsRef !== odPairs
             || prev.locationBoundsRef !== locationDensity.bounds;
+        if (!shouldRefit) return;
+
+        const barrieFit: [[number, number], [number, number]] = [
+            [BARRIE_VIEW_BOUNDS.minLon, BARRIE_VIEW_BOUNDS.minLat],
+            [BARRIE_VIEW_BOUNDS.maxLon, BARRIE_VIEW_BOUNDS.maxLat],
+        ];
 
         if (activeLayer === 'heatmap') {
-            const layer = buildHeatmapLayer();
-            layer.addTo(map);
-            heatmapLayerRef.current = layer;
-
-            if (shouldRefit && geoFilter === 'barrie') {
-                map.fitBounds(barrieFit, { padding: [20, 20] });
-            } else if (shouldRefit) {
+            if (geoFilter === 'barrie') {
+                map.fitBounds(barrieFit, { padding: 20 });
+            } else {
                 const b = locationDensity.bounds;
                 if (b.minLat !== 0 || b.maxLat !== 0) {
-                    map.fitBounds([[b.minLat, b.minLon], [b.maxLat, b.maxLon]], { padding: [20, 20] });
+                    map.fitBounds([[b.minLon, b.minLat], [b.maxLon, b.maxLat]], { padding: 20 });
                 }
             }
-        } else {
-            const layer = buildODLayer();
-            layer.addTo(map);
-            odLayerRef.current = layer;
-
-            if (shouldRefit && geoFilter === 'barrie') {
-                map.fitBounds(barrieFit, { padding: [20, 20] });
-            } else if (shouldRefit && odPairs && odPairs.bounds.minLat !== 0) {
-                const b = odPairs.bounds;
-                map.fitBounds([[b.minLat, b.minLon], [b.maxLat, b.maxLon]], { padding: [20, 20] });
-            }
+        } else if (geoFilter === 'barrie') {
+            map.fitBounds(barrieFit, { padding: 20 });
+        } else if (odPairs && odPairs.bounds.minLat !== 0) {
+            const b = odPairs.bounds;
+            map.fitBounds([[b.minLon, b.minLat], [b.maxLon, b.maxLat]], { padding: 20 });
         }
 
         lastFitTriggerRef.current = {
@@ -1179,56 +1031,7 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
             odPairsRef: odPairs,
             locationBoundsRef: locationDensity.bounds,
         };
-    }, [activeLayer, geoFilter, buildHeatmapLayer, buildODLayer, locationDensity.bounds, odPairs]);
-
-    // Feature 10: GTFS route overlay toggle
-    useEffect(() => {
-        const map = mapRef.current;
-        if (!map) return;
-
-        if (routeLayerRef.current) {
-            map.removeLayer(routeLayerRef.current);
-            routeLayerRef.current = null;
-        }
-
-        if (showRoutes) {
-            const layer = buildRouteLayer();
-            layer.addTo(map);
-            routeLayerRef.current = layer;
-        }
-    }, [showRoutes, buildRouteLayer]);
-
-    useEffect(() => {
-        const map = mapRef.current;
-        if (!map) return;
-
-        if (stopLayerRef.current) {
-            map.removeLayer(stopLayerRef.current);
-            stopLayerRef.current = null;
-        }
-
-        if (showStops) {
-            const layer = buildStopLayer();
-            layer.addTo(map);
-            stopLayerRef.current = layer;
-        }
-    }, [showStops, buildStopLayer]);
-
-    useEffect(() => {
-        const map = mapRef.current;
-        if (!map) return;
-
-        if (coverageLayerRef.current) {
-            map.removeLayer(coverageLayerRef.current);
-            coverageLayerRef.current = null;
-        }
-
-        if (coverageGapClusters && coverageGapClusters.length > 0) {
-            const layer = buildCoverageLayer();
-            layer.addTo(map);
-            coverageLayerRef.current = layer;
-        }
-    }, [coverageGapClusters, buildCoverageLayer]);
+    }, [activeLayer, geoFilter, locationDensity.bounds, mapReady, odPairs]);
 
     // Auto-enable GTFS overlay when corridor is selected
     useEffect(() => {
@@ -1240,6 +1043,106 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
             setShowStops(true);
         }
     }, [coverageGapClusters, showStops]);
+
+    const interactiveLayerIds = useMemo(() => {
+        const ids: string[] = [];
+        if (activeLayer === 'heatmap') {
+            ids.push(HEATMAP_LAYER_ID);
+        } else {
+            ids.push(OD_ZONE_FILL_LAYER_ID, OD_ZONE_DOT_LAYER_ID, OD_ARC_LAYER_ID, OD_ENDPOINT_LAYER_ID);
+        }
+        if (coverageGeoJSON.features.length > 0) {
+            ids.push(COVERAGE_LAYER_ID);
+        }
+        return ids;
+    }, [activeLayer, coverageGeoJSON.features.length]);
+
+    const handleMapMouseMove = useCallback((event: MapMouseEvent) => {
+        const map = mapRef.current?.getMap();
+        if (!map) return;
+
+        const feature = event.features?.[0];
+        if (!feature) {
+            map.getCanvas().style.cursor = '';
+            setHoveredPairIdx(null);
+            return;
+        }
+
+        map.getCanvas().style.cursor = 'pointer';
+        if (feature.layer.id === OD_ARC_LAYER_ID || feature.layer.id === OD_ENDPOINT_LAYER_ID) {
+            const props = (feature.properties ?? {}) as Record<string, unknown>;
+            setHoveredPairIdx(toNumberProperty(props.pairIndex));
+            return;
+        }
+        setHoveredPairIdx(null);
+    }, []);
+
+    const handleMapMouseLeave = useCallback(() => {
+        const map = mapRef.current?.getMap();
+        if (map) {
+            map.getCanvas().style.cursor = '';
+        }
+        setHoveredPairIdx(null);
+    }, []);
+
+    const handleMapClick = useCallback((event: MapMouseEvent) => {
+        const feature = event.features?.[0];
+        if (!feature) {
+            setPopupState(null);
+            setIsolatedZone(null);
+            return;
+        }
+
+        const props = (feature.properties ?? {}) as Record<string, unknown>;
+        if (feature.layer.id === OD_ZONE_FILL_LAYER_ID || feature.layer.id === OD_ZONE_DOT_LAYER_ID) {
+            const zoneKey = typeof props.zoneKey === 'string' ? props.zoneKey : null;
+            if (zoneKey) {
+                setPopupState(null);
+                setIsolatedZone(prev => prev === zoneKey ? null : zoneKey);
+            }
+            return;
+        }
+
+        if (feature.layer.id === OD_ARC_LAYER_ID || feature.layer.id === OD_ENDPOINT_LAYER_ID) {
+            const pairIndex = toNumberProperty(props.pairIndex);
+            if (pairIndex !== null && displayedPairs[pairIndex]) {
+                setHighlightedPairIdx(pairIndex);
+                setPopupState({
+                    type: 'pair',
+                    latitude: event.lngLat.lat,
+                    longitude: event.lngLat.lng,
+                    pair: displayedPairs[pairIndex],
+                });
+            }
+            return;
+        }
+
+        if (feature.layer.id === HEATMAP_LAYER_ID) {
+            const count = toNumberProperty(props.count);
+            if (count !== null) {
+                setPopupState({
+                    type: 'heatmap',
+                    latitude: event.lngLat.lat,
+                    longitude: event.lngLat.lng,
+                    count,
+                });
+            }
+            return;
+        }
+
+        if (feature.layer.id === COVERAGE_LAYER_ID) {
+            const clusterId = typeof props.clusterId === 'string' ? props.clusterId : null;
+            const cluster = coverageGapClusters?.find(item => item.clusterId === clusterId);
+            if (cluster) {
+                setPopupState({
+                    type: 'coverage',
+                    latitude: event.lngLat.lat,
+                    longitude: event.lngLat.lng,
+                    cluster,
+                });
+            }
+        }
+    }, [coverageGapClusters, displayedPairs]);
 
     // Export OD summary as PDF
     const exportPDF = useCallback(() => {
@@ -1433,21 +1336,11 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
 
     // Table row → map arc highlight helpers
     const highlightArc = useCallback((pair: MergedODPair) => {
-        for (const g of odLineGroupsRef.current) {
-            for (const el of g.lines) el.setStyle({ opacity: 0.2 });
-        }
-        const group = odLineGroupsRef.current.find(g => g.pair === pair);
-        if (group) {
-            for (const el of group.lines) el.setStyle({ opacity: 1 });
-        }
         const idx = displayedPairs.indexOf(pair);
         setHighlightedPairIdx(idx >= 0 ? idx : null);
     }, [displayedPairs]);
 
     const unhighlightArcs = useCallback(() => {
-        for (const g of odLineGroupsRef.current) {
-            for (const el of g.lines) el.setStyle({ opacity: g.origOpacity });
-        }
         setHighlightedPairIdx(null);
     }, []);
 
@@ -1472,18 +1365,17 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
     useEffect(() => {
         const handler = () => {
             setIsFullscreen(!!document.fullscreenElement);
-            // Invalidate map size after fullscreen transition
-            setTimeout(() => mapRef.current?.invalidateSize(), 100);
+            resizeMap(100);
         };
         document.addEventListener('fullscreenchange', handler);
         return () => document.removeEventListener('fullscreenchange', handler);
-    }, []);
+    }, [resizeMap]);
 
     useEffect(() => {
         if (plannerView === 'map') {
-            setTimeout(() => mapRef.current?.invalidateSize(), 80);
+            resizeMap(80);
         }
-    }, [plannerView]);
+    }, [plannerView, resizeMap]);
 
     const showMatrixPlanner = activeLayer === 'od' && hasOD && plannerView === 'matrix';
     const matrixCurrentPage = Math.min(matrixPage, matrixPages);
@@ -1763,12 +1655,251 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
                  style={{ height: isFullscreen ? 'calc(100vh - 200px)' : height }}>
                 {/* Map container */}
                 <div
-                    ref={containerRef}
                     className={`flex-1 overflow-hidden border border-gray-200 ${
                         isolatedZone && zonePanelData && activeLayer === 'od' ? 'rounded-l-lg' : 'rounded-lg'
                     }`}
                     style={{ minHeight: 0 }}
-                />
+                >
+                    <MapBase
+                        mapRef={mapRef}
+                        latitude={BARRIE_CENTER[0]}
+                        longitude={BARRIE_CENTER[1]}
+                        zoom={13}
+                        mapStyle={MAP_STYLE}
+                        className="h-full w-full"
+                        showNavigation
+                        showScale
+                        interactiveLayerIds={interactiveLayerIds}
+                        onLoad={() => {
+                            setMapReady(true);
+                            updateMapViewState();
+                        }}
+                        onMouseMove={handleMapMouseMove}
+                        onMouseLeave={handleMapMouseLeave}
+                        onClick={handleMapClick}
+                    >
+                        {activeLayer === 'heatmap' && (
+                            <>
+                                <Source id="transit-app-heatmap-src" type="geojson" data={heatmapGeoJSON}>
+                                    <Layer
+                                        id={HEATMAP_LAYER_ID}
+                                        type="circle"
+                                        paint={{
+                                            'circle-radius': ['get', 'radius'],
+                                            'circle-color': ['get', 'color'],
+                                            'circle-opacity': ['get', 'fillOpacity'],
+                                            'circle-stroke-color': ['get', 'color'],
+                                            'circle-stroke-width': ['get', 'strokeWidth'],
+                                            'circle-stroke-opacity': 0.85,
+                                        }}
+                                        layout={{ 'circle-sort-key': ['get', 'sortKey'] }}
+                                    />
+                                </Source>
+                                {heatmapHotspotGeoJSON.features.length > 0 && (
+                                    <Source id="transit-app-heatmap-hotspots-src" type="geojson" data={heatmapHotspotGeoJSON}>
+                                        <Layer
+                                            id={HEATMAP_HOTSPOT_LAYER_ID}
+                                            type="circle"
+                                            paint={{
+                                                'circle-radius': ['get', 'radius'],
+                                                'circle-color': 'rgba(0,0,0,0)',
+                                                'circle-stroke-color': '#111827',
+                                                'circle-stroke-width': 1.2,
+                                                'circle-stroke-opacity': 0.7,
+                                            }}
+                                        />
+                                    </Source>
+                                )}
+                            </>
+                        )}
+
+                        {activeLayer === 'od' && (
+                            <>
+                                <Source id="transit-app-zone-fills-src" type="geojson" data={zoneGeoJSON.fills}>
+                                    <Layer
+                                        id={OD_ZONE_FILL_LAYER_ID}
+                                        type="fill"
+                                        paint={{
+                                            'fill-color': ['get', 'fillColor'],
+                                            'fill-opacity': ['get', 'fillOpacity'],
+                                        }}
+                                    />
+                                    <Layer
+                                        id={OD_ZONE_OUTLINE_LAYER_ID}
+                                        type="line"
+                                        paint={{
+                                            'line-color': ['get', 'outlineColor'],
+                                            'line-width': ['get', 'outlineWidth'],
+                                            'line-opacity': ['get', 'outlineOpacity'],
+                                        }}
+                                    />
+                                </Source>
+                                <Source id="transit-app-zone-dots-src" type="geojson" data={zoneGeoJSON.dots}>
+                                    <Layer
+                                        id={OD_ZONE_DOT_LAYER_ID}
+                                        type="circle"
+                                        paint={{
+                                            'circle-radius': ['get', 'radius'],
+                                            'circle-color': ['get', 'fillColor'],
+                                            'circle-opacity': ['get', 'fillOpacity'],
+                                            'circle-stroke-color': '#ffffff',
+                                            'circle-stroke-width': ['get', 'strokeWidth'],
+                                            'circle-stroke-opacity': ['get', 'strokeOpacity'],
+                                        }}
+                                    />
+                                </Source>
+                                <ArcLayer arcs={arcData} showArrowheads idPrefix="transit-app-arcs" />
+                                {endpointGeoJSON.features.length > 0 && (
+                                    <Source id="transit-app-endpoints-src" type="geojson" data={endpointGeoJSON}>
+                                        <Layer
+                                            id={OD_ENDPOINT_LAYER_ID}
+                                            type="circle"
+                                            paint={{
+                                                'circle-radius': ['get', 'radius'],
+                                                'circle-color': ['get', 'color'],
+                                                'circle-opacity': 0.9,
+                                                'circle-stroke-color': '#ffffff',
+                                                'circle-stroke-width': allZonesMode ? 1 : 2,
+                                            }}
+                                        />
+                                    </Source>
+                                )}
+                                {rankBadgeMarkers.map((badge) => (
+                                    <Marker
+                                        key={badge.key}
+                                        latitude={badge.point[0]}
+                                        longitude={badge.point[1]}
+                                        anchor="center"
+                                    >
+                                        <div
+                                            style={{
+                                                background: badge.color,
+                                                color: '#ffffff',
+                                                width: `${badge.badgeSize}px`,
+                                                height: `${badge.badgeSize}px`,
+                                                borderRadius: '9999px',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                fontSize: `${badge.fontSize}px`,
+                                                fontWeight: 700,
+                                                border: '2px solid white',
+                                                boxShadow: '0 1px 4px rgba(0,0,0,0.3)',
+                                                pointerEvents: 'none',
+                                            }}
+                                        >
+                                            {badge.label}
+                                        </div>
+                                    </Marker>
+                                ))}
+                            </>
+                        )}
+
+                        {routeShapes.length > 0 && (
+                            <RouteOverlay shapes={routeShapes} opacity={0.6} weight={3} idPrefix="transit-app-routes" />
+                        )}
+                        {stopPoints.length > 0 && (
+                            <StopDotLayer
+                                stops={stopPoints}
+                                radius={2}
+                                color="#111827"
+                                opacity={0.65}
+                                outlineColor="#ffffff"
+                                outlineWidth={0.5}
+                                idPrefix="transit-app-stops"
+                            />
+                        )}
+                        {coverageGeoJSON.features.length > 0 && (
+                            <Source id="transit-app-coverage-src" type="geojson" data={coverageGeoJSON}>
+                                <Layer
+                                    id={COVERAGE_LAYER_ID}
+                                    type="circle"
+                                    paint={{
+                                        'circle-radius': ['get', 'radius'],
+                                        'circle-color': '#dc2626',
+                                        'circle-opacity': 0.45,
+                                        'circle-stroke-color': '#7f1d1d',
+                                        'circle-stroke-width': 1.5,
+                                    }}
+                                />
+                            </Source>
+                        )}
+
+                        {popupState && popupState.type === 'heatmap' && (
+                            <Popup
+                                latitude={popupState.latitude}
+                                longitude={popupState.longitude}
+                                anchor="top"
+                                closeOnClick={false}
+                                onClose={() => setPopupState(null)}
+                            >
+                                <div className="text-xs text-gray-700">
+                                    {popupState.count.toLocaleString()} data points
+                                </div>
+                            </Popup>
+                        )}
+                        {popupState && popupState.type === 'pair' && (
+                            <Popup
+                                latitude={popupState.latitude}
+                                longitude={popupState.longitude}
+                                anchor="top"
+                                closeOnClick={false}
+                                maxWidth="280px"
+                                onClose={() => setPopupState(null)}
+                            >
+                                <div className="text-xs leading-5 text-gray-700">
+                                    <div className="font-semibold text-gray-900">
+                                        {getZoneName(popupState.pair.originLat, popupState.pair.originLon)} to {getZoneName(popupState.pair.destLat, popupState.pair.destLon)}
+                                    </div>
+                                    <div>
+                                        <span className="font-semibold">{popupState.pair.count.toLocaleString()} trips</span>
+                                        {' '}
+                                        ({odPairs && odPairs.totalTripsProcessed > 0
+                                            ? `${((popupState.pair.count / odPairs.totalTripsProcessed) * 100).toFixed(2)}% of total`
+                                            : '?% of total'})
+                                    </div>
+                                    <div>
+                                        Distance: {haversineKm(
+                                            popupState.pair.originLat,
+                                            popupState.pair.originLon,
+                                            popupState.pair.destLat,
+                                            popupState.pair.destLon,
+                                        ).toFixed(1)} km
+                                    </div>
+                                    {popupState.pair.isMerged && (
+                                        <>
+                                            <div>
+                                                A to B: {(popupState.pair.count - popupState.pair.reverseCount).toLocaleString()}
+                                                {' '}| B to A: {popupState.pair.reverseCount.toLocaleString()}
+                                            </div>
+                                            <div>Direction: {popupState.pair.netDirection}</div>
+                                        </>
+                                    )}
+                                </div>
+                            </Popup>
+                        )}
+                        {popupState && popupState.type === 'coverage' && (
+                            <Popup
+                                latitude={popupState.latitude}
+                                longitude={popupState.longitude}
+                                anchor="top"
+                                closeOnClick={false}
+                                maxWidth="280px"
+                                onClose={() => setPopupState(null)}
+                            >
+                                <div className="text-xs leading-5 text-gray-700">
+                                    <div className="font-semibold text-gray-900 mb-1">Coverage Gap Cluster</div>
+                                    <div><span className="font-medium">Trips:</span> {popupState.cluster.tripCount.toLocaleString()}</div>
+                                    <div><span className="font-medium">Nearest Stop:</span> {popupState.cluster.nearestStopName ?? 'Unknown'}</div>
+                                    <div><span className="font-medium">Distance:</span> {popupState.cluster.avgNearestStopDistanceKm.toFixed(2)} km avg</div>
+                                    <div><span className="font-medium">Time:</span> {formatTimeBand(popupState.cluster.dominantTimeBand)}</div>
+                                    <div><span className="font-medium">Day:</span> {formatDayType(popupState.cluster.dominantDayType)}</div>
+                                    <div><span className="font-medium">Season:</span> {formatSeason(popupState.cluster.dominantSeason)}</div>
+                                </div>
+                            </Popup>
+                        )}
+                    </MapBase>
+                </div>
 
                 {/* Zone Detail Panel */}
                 {isolatedZone && zonePanelData && activeLayer === 'od' && (
@@ -1854,11 +1985,11 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
                                         }}
                                         onMouseLeave={unhighlightArcs}
                                         onClick={() => {
-                                            const map = mapRef.current;
+                                            const map = mapRef.current?.getMap();
                                             if (map) {
                                                 map.fitBounds(
-                                                    [[zonePanelData.zoneLat, zonePanelData.zoneLon], [flow.lat, flow.lon]],
-                                                    { paddingTopLeft: [50, 50], paddingBottomRight: [340, 50], maxZoom: 15 }
+                                                    [[zonePanelData.zoneLon, zonePanelData.zoneLat], [flow.lon, flow.lat]],
+                                                    { padding: { top: 50, left: 50, right: 340, bottom: 50 }, maxZoom: 15 }
                                                 );
                                             }
                                         }}
@@ -2113,12 +2244,12 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
                                             onClick={() => {
                                                 setPlannerView('map');
                                                 setTimeout(() => {
-                                                    const map = mapRef.current;
+                                                    const map = mapRef.current?.getMap();
                                                     if (map) {
-                                                        map.invalidateSize();
+                                                        map.resize();
                                                         map.fitBounds(
-                                                            [[row.pair.originLat, row.pair.originLon], [row.pair.destLat, row.pair.destLon]],
-                                                            { padding: [32, 32], maxZoom: 14 }
+                                                            [[row.pair.originLon, row.pair.originLat], [row.pair.destLon, row.pair.destLat]],
+                                                            { padding: 32, maxZoom: 14 }
                                                         );
                                                     }
                                                     highlightArc(row.pair);
