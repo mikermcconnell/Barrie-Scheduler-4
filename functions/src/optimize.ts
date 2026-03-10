@@ -91,6 +91,23 @@ async function callGemini(
     return JSON.parse(text || (schema.type === SchemaType.ARRAY ? "[]" : "{}"));
 }
 
+function normalizeShiftForPrompt(shift: any) {
+    const startSlot = Number(shift.startSlot) || 0;
+    const rawDuration = Number(shift.durationSlots);
+    const derivedDuration = Number.isFinite(rawDuration) && rawDuration > 0
+        ? rawDuration
+        : Math.max(0, (Number(shift.endSlot) || startSlot) - startSlot);
+
+    return {
+        id: typeof shift.id === 'string' ? shift.id : undefined,
+        driverName: shift.driverName,
+        zone: shift.zone,
+        startSlot,
+        durationSlots: derivedDuration,
+        breakStartSlot: Number(shift.breakStartSlot) || 0,
+    };
+}
+
 function optimizeImplementation(
     requirements: any[],
     apiKey: string,
@@ -120,16 +137,31 @@ function optimizeImplementation(
     `;
 
     const commonRules = `
-    Union Rules:
+    PRIMARY OBJECTIVE:
+    Match the master schedule demand curve as closely as possible in every 15-minute slot.
+
+    UNION RULES:
     - Shift Length: 5-11 hours (20-44 slots).
     - Breaks: 45min (3 slots) if shift > 7.5h.
     - Breaks must occur between hour 4 and 6 of the shift.
     - STRICT ZONE LOGIC: North covers North, South covers South, Floater covers Gaps/Breaks.
 
-    EFFICIENCY RULES (Follow these STRICTLY):
-    1. **KILL SURPLUS**: Over-supply is WORSE than a small gap.
-       - A gap of -1 driver for 15-30 minutes (1-2 slots) is ACCEPTABLE if it prevents a long surplus.
-    2. **HUG THE CURVE**: Do not schedule 8 hours of work for a 2-hour peak. Use split shifts or short 5h shifts.
+    SERVICE PRIORITIES (Follow these STRICTLY):
+    1. Avoid coverage gaps.
+    2. A single-bus gap for 1-2 consecutive 15-minute slots is tolerable but discouraged ONLY if it clearly improves the overall schedule.
+    3. A gap of 2+ buses is NOT acceptable.
+    4. A gap lasting more than 2 consecutive slots is NOT acceptable.
+    5. Peak-period gaps are much worse than off-peak surplus.
+    6. Do not create repeated short gaps across the day to save hours.
+    7. Prefer a small surplus over recurring service gaps.
+
+    OPTIMIZATION ORDER:
+    1. Minimize peak gaps.
+    2. Minimize total deficit slots.
+    3. Minimize repeated short gaps.
+    4. Minimize surplus slots.
+    5. Minimize payable hours.
+    6. Keep breaks compliant and staggered.
     `;
 
     return runPipeline(apiKey, demandContext, commonRules, mode, currentShifts, focusInstruction, isExtendedPipelineEnabled(), requestId);
@@ -152,17 +184,26 @@ async function runPipeline(
     const draftSystemInstruction = `You are an expert Transit Scheduler. Generate a draft schedule.
     ${commonRules}
     STRATEGIES:
-    1. Minimize total hours while covering demand.
-    2. Use short shifts (5-6h) for peaks.
-    3. Stagger breaks (don't overlap them in the same zone).
+    1. Match the demand curve first. Cost reduction is secondary.
+    2. Use shorter shifts where they reduce mismatch without creating repeated short gaps.
+    3. Stagger breaks so the same zone does not lose multiple drivers at once.
+    4. Preserve continuous coverage through the strongest peaks.
     `;
 
     let draftPrompt = `DEMAND CURVES:\n${demandContext}\n`;
     if (mode === 'refine' && currentShifts.length > 0) {
-        draftPrompt += `\nREFINE EXISTING SHIFTS:\n${JSON.stringify(currentShifts.map(s => ({ ...s, uuid: undefined })))}`;
+        draftPrompt += `\nREFINE EXISTING SHIFTS:\n${JSON.stringify(currentShifts.map(normalizeShiftForPrompt))}`;
     } else {
         draftPrompt += `\nGENERATE NEW SCHEDULE FROM SCRATCH based on demand.`;
     }
+    if (focusInstruction) {
+        draftPrompt += `\nUSER PRIORITY INSTRUCTION:\n"${focusInstruction}"\nApply this only if it does not violate the service priorities above.`;
+    }
+    draftPrompt += `\nOUTPUT REQUIREMENTS:
+    - Return shifts that minimize slot-by-slot mismatch to the demand curves.
+    - Preserve shift IDs when refining unless a shift must be removed or a new shift must be added.
+    - Do not accept any 2+ bus gap or any 1-bus gap longer than 2 consecutive slots.
+    `;
 
     let draftShifts = [];
     try {
@@ -187,11 +228,11 @@ async function runPipeline(
     ${commonRules}
 
     CRITIQUE RULES:
-    1. **Over-Supply**: If there are more drivers than demand in a slot, CUT the shift duration or REMOVE the shift.
-       - IMPORTANT: It is better to leave a small gap (-1 driver for < 30mins) than to have 4+ hours of surplus.
-    2. **Under-Supply**: Only EXTEND shifts if the gap is > 30 mins or deep (-2 drivers). Small gaps are fine.
-    3. **Break Conflicts**: If two "North" drivers are on break at the same time, MOVE one break.
-    4. **Floater Logic**: Ensure Floaters are actually working during the times North/South drivers are on break.
+    1. **Gap Severity**: Reject any 2+ bus gap immediately.
+    2. **Short-Gap Tolerance**: A 1-bus gap for 1-2 consecutive slots is allowed only if it clearly improves the full-day schedule and does not repeat across many periods.
+    3. **Over-Supply**: Trim surplus only after gap control is acceptable.
+    4. **Break Conflicts**: If two drivers from the same zone are on break at the same time, MOVE one break.
+    5. **Floater Logic**: Ensure Floaters are actually working during gaps or break relief periods.
 
     OUTPUT FORMAT:
     - First, write a "critique": identifying 2-3 biggest issues in the draft.
@@ -212,7 +253,7 @@ async function runPipeline(
     ` : ''}
 
     TASK:
-    1. Critique the draft. Find surpluses, unnecessary shifts, or breaks at wrong times.
+    1. Critique the draft. Focus first on gaps, repeated shortfalls, peak coverage, and break conflicts.
     2. Output a REVISED list of shifts that solves these problems.
     `;
 
@@ -237,8 +278,9 @@ async function runPipeline(
 
     POLISHING TASKS:
     1. **Strict Break Windows**: ENSURE every break is between the 4th and 6th hour (Slots: Start+16 to Start+24). MOVE them if they are off by even 1 slot.
-    3. **Trim Surpluses**: If a zone has +2 surplus for 30 mins, cut a shift earlier or start it later.
-    4. **Floater Efficiency**: If a Floater is covering a time where NO breaks or gaps exist, move them to a gap.
+    2. **Gap Guardrail**: Do not leave any 2+ bus gap or any 1-bus gap longer than 2 consecutive slots.
+    3. **Trim Surpluses**: If a zone has sustained surplus and coverage remains acceptable, cut a shift earlier or start it later.
+    4. **Floater Efficiency**: If a Floater is covering a time where no breaks or gaps exist, move them to a more valuable period.
 
     OUTPUT:
     - Return the FINAL list of shifts.
@@ -253,7 +295,7 @@ async function runPipeline(
 
     TASK:
     - Review every single shift for break compliance.
-    - Check every 15-min slot for inefficient surpluses.
+    - Check every 15-min slot for unacceptable gaps, repeated shortfalls, and inefficient surpluses.
     - Output the polished list.
     `;
 

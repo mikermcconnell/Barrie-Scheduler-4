@@ -45,7 +45,7 @@ export const FocusPromptModal: React.FC<Props> = ({ onCancel, onOptimize, initia
                     <textarea
                         value={instruction}
                         onChange={(e) => setInstruction(e.target.value)}
-                        placeholder="e.g. 'Minimize overtime', 'Fix 8am gaps', 'Reduce total drivers by 2'..."
+                        placeholder="e.g. 'Match the master schedule closely', 'Eliminate peak gaps', 'Allow only rare 30-minute single-bus gaps if they improve the full-day schedule'..."
                         rows={4}
                         autoFocus
                         className="w-full text-sm p-3 rounded-xl border-2 border-indigo-100 bg-white focus:border-indigo-400 focus:ring-4 focus:ring-indigo-50 outline-none resize-none shadow-sm transition-all placeholder:text-gray-300 mb-4"
@@ -56,10 +56,10 @@ export const FocusPromptModal: React.FC<Props> = ({ onCancel, onOptimize, initia
                         <span className="text-[10px] font-bold text-gray-400 uppercase mb-2 block">Quick Prompts</span>
                         <div className="flex flex-wrap gap-2">
                             {[
-                                { label: 'Cut Overtime', text: 'Minimize overtime hours' },
-                                { label: 'Fix Gaps', text: 'Prioritize filling all coverage gaps' },
-                                { label: 'Smooth Breaks', text: 'Ensure breaks are evenly staggered' },
-                                { label: 'Reduce Supply', text: 'Reduce excess driver hours' }
+                                { label: 'Match Master', text: 'Match the master schedule as closely as possible in every 15-minute slot.' },
+                                { label: 'Peak Coverage', text: 'Eliminate peak-period gaps first, even if it means accepting small off-peak surplus.' },
+                                { label: 'Minor Gaps Only', text: 'Allow only rare 1-bus gaps for a maximum of 2 consecutive 15-minute slots, and only if the overall schedule is clearly better.' },
+                                { label: 'Break Coverage', text: 'Keep breaks compliant and staggered without creating same-zone service gaps.' }
                             ].map((prompt) => (
                                 <button
                                     key={prompt.label}
