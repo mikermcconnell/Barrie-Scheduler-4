@@ -283,7 +283,7 @@ function traceCascade(
     let tripLateSeconds = 0;
     for (const tp of timepoints) {
       if ((tp.deviationSeconds ?? 0) > 0) {
-        tripLateSeconds += tp.deviationSeconds;
+        tripLateSeconds += tp.deviationSeconds ?? 0;
       }
     }
 

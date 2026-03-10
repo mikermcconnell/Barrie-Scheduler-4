@@ -11,6 +11,16 @@ const isExtendedPipelineEnabled = () => !process.env.VERCEL && isTruthy(process.
 const createServerRequestId = () => `srv-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const inferErrorCode = (message: string) => {
     const text = message.toLowerCase();
+    if (
+        text.includes('api key expired')
+        || text.includes('api_key_invalid')
+        || text.includes('missing api key')
+        || text.includes('server configuration')
+        || text.includes('server config')
+    ) {
+        return 'SERVER_CONFIG';
+    }
+    if (text.includes('invalid requirements') || text.includes('invalid request')) return 'INVALID_REQUEST';
     if (text.includes('timeout') || text.includes('timed out') || text.includes('deadline')) return 'TIMEOUT';
     if (text.includes('auth')) return 'AUTH_REQUIRED';
     return 'UPSTREAM';

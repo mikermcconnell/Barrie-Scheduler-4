@@ -39,6 +39,7 @@ const CLOUD_RUN_OPTIMIZE_URL = 'https://optimizeschedule-ieeja7khcq-uc.a.run.app
 const REQUEST_TIMEOUT_MS = Number(import.meta.env.VITE_OPTIMIZE_TIMEOUT_MS || 300000);
 const MAX_RETRIES_PER_ENDPOINT = Math.max(0, Number(import.meta.env.VITE_OPTIMIZE_MAX_RETRIES || 1));
 const ENDPOINT_OVERRIDE = (import.meta.env.VITE_OPTIMIZE_API_URL || '').trim();
+const isTruthy = (value?: string) => ['1', 'true', 'yes', 'on'].includes((value || '').toLowerCase());
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -54,12 +55,17 @@ const isLocalOptimizeHost = (): boolean => {
   return ['localhost', '127.0.0.1'].includes(window.location.hostname);
 };
 
+const isProductionVercelFallbackEnabled = (): boolean =>
+  isTruthy(import.meta.env.VITE_ENABLE_VERCEL_OPTIMIZE_FALLBACK);
+
 const getEndpointCandidates = (): string[] => {
   const urls = ENDPOINT_OVERRIDE
     ? [ENDPOINT_OVERRIDE]
     : isLocalOptimizeHost()
       ? ['/api/optimize', CLOUD_RUN_OPTIMIZE_URL]
-      : [CLOUD_RUN_OPTIMIZE_URL, '/api/optimize'];
+      : isProductionVercelFallbackEnabled()
+        ? [CLOUD_RUN_OPTIMIZE_URL, '/api/optimize']
+        : [CLOUD_RUN_OPTIMIZE_URL];
 
   return Array.from(new Set(urls));
 };
@@ -81,6 +87,9 @@ const parseErrorPayload = async (response: Response): Promise<ParsedApiError> =>
 };
 
 const isRetryableFailure = (status?: number, code?: string): boolean => {
+  if (code === 'SERVER_CONFIG' || code === 'AUTH_REQUIRED' || code === 'INVALID_REQUEST') {
+    return false;
+  }
   if (!status) return true;
   if (status === 404 || status === 408 || status === 429) return true;
   if (status >= 500) return true;
