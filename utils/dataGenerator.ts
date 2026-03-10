@@ -228,19 +228,20 @@ export const calculateSchedule = (shifts: Shift[], requirements: Requirement[]):
 
     // Calculate Floater Relief Logic
     const floaterDemand = req.floater || 0;
+    const northDemand = req.north;
+    const southDemand = req.south;
+    const northDeficit = Math.max(0, northDemand - northCount);
+    const southDeficit = Math.max(0, southDemand - southCount);
+    const floaterEffectiveRequirement = floaterDemand + northDeficit + southDeficit;
     const floaterSurplus = Math.max(0, floaterCount - floaterDemand);
 
     // North Relief
-    const northDemand = req.north;
-    const northDeficit = Math.max(0, northDemand - northCount);
     const northRelief = Math.min(northDeficit, floaterSurplus);
 
     // Remaining available for South
     const remainingFloaterSurplus = floaterSurplus - northRelief;
 
     // South Relief
-    const southDemand = req.south;
-    const southDeficit = Math.max(0, southDemand - southCount);
     const southRelief = Math.min(southDeficit, remainingFloaterSurplus);
 
     slots.push({
@@ -249,6 +250,7 @@ export const calculateSchedule = (shifts: Shift[], requirements: Requirement[]):
       northRequirement: req.north,
       southRequirement: req.south,
       floaterRequirement: req.floater || 0,
+      floaterEffectiveRequirement,
       totalRequirement: req.total,
       northCoverage: northCount,
       southCoverage: southCount,

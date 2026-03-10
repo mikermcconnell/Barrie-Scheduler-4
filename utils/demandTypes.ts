@@ -7,6 +7,7 @@ export interface TimeSlot {
   northRequirement: number;
   southRequirement: number;
   floaterRequirement: number;
+  floaterEffectiveRequirement: number;
   totalRequirement: number;
 
   // Supply (Drivers)

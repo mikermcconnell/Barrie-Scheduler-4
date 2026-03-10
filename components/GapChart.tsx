@@ -79,7 +79,7 @@ const CustomTooltip = ({ active, payload, label, viewMode }: any) => {
       net = cover - req;
       title = "South Zone (Exclusive)";
     } else if (viewMode === 'Floater') {
-      req = data.floaterRequirement || 0;
+      req = data.floaterEffectiveRequirement || 0;
       cover = data.floaterCoverage;
       net = cover - req;
       title = "Floater Zone (Exclusive)";
@@ -126,7 +126,7 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
     ...d,
     currentReq: zoneFilter === 'North' ? d.northRequirement :
       (zoneFilter === 'South' ? d.southRequirement :
-        (zoneFilter === 'Floater' ? d.floaterRequirement : d.totalRequirement)),
+        (zoneFilter === 'Floater' ? d.floaterEffectiveRequirement : d.totalRequirement)),
 
     currentCover: zoneFilter === 'North' ? d.northCoverage :
       (zoneFilter === 'South' ? d.southCoverage :
@@ -134,7 +134,7 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
 
     currentNet: zoneFilter === 'North' ? ((d.northCoverage + (d.northRelief || 0)) - d.northRequirement) :
       (zoneFilter === 'South' ? ((d.southCoverage + (d.southRelief || 0)) - d.southRequirement) :
-        (zoneFilter === 'Floater' ? (d.floaterCoverage - d.floaterRequirement) : d.netDifference)),
+        (zoneFilter === 'Floater' ? (d.floaterCoverage - d.floaterEffectiveRequirement) : d.netDifference)),
 
     currentBreak: zoneFilter === 'North' ? d.northBreaks :
       (zoneFilter === 'South' ? d.southBreaks :
@@ -149,7 +149,7 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
     return Math.max(...displayData.map(d => {
       const req = zoneFilter === 'North' ? d.northRequirement :
         (zoneFilter === 'South' ? d.southRequirement :
-          (zoneFilter === 'Floater' ? d.floaterRequirement || 0 : d.totalRequirement));
+          (zoneFilter === 'Floater' ? d.floaterEffectiveRequirement || 0 : d.totalRequirement));
 
       const cov = zoneFilter === 'North' ? d.northCoverage :
         (zoneFilter === 'South' ? d.southCoverage :
@@ -323,7 +323,7 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
 
               {/* Coverage Line - Detailed Line on top */}
               <Line
-                type="monotone"
+                type="stepAfter"
                 dataKey="currentCover"
                 stroke="#58CC02"
                 strokeWidth={3}
@@ -350,7 +350,7 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
               {/* Original Coverage Ghost Line - Only in combined */}
               {zoneFilter === 'All' && (
                 <Line
-                  type="monotone"
+                  type="stepAfter"
                   dataKey="originalActiveCoverage"
                   stroke="#9CA3AF"
                   strokeWidth={2}
