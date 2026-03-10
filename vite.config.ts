@@ -401,6 +401,8 @@ export default defineConfig(({ mode }) => {
       globals: true,
       environment: 'jsdom',
       setupFiles: [],
+      include: ['tests/**/*.test.ts', 'tests/**/*.test.tsx', 'tests/**/*.spec.ts', 'tests/**/*.spec.tsx'],
+      exclude: ['**/node_modules/**', '**/dist/**', '.worktrees/**'],
     },
     resolve: {
       alias: {

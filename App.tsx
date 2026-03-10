@@ -1,8 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
-import { OnDemandWorkspace } from './components/workspaces/OnDemandWorkspace';
-import { FixedRouteWorkspace } from './components/workspaces/FixedRouteWorkspace';
-import { OperationsWorkspace } from './components/workspaces/OperationsWorkspace';
-import { AgentWorkspace } from './components/workspaces/AgentWorkspace';
+import React, { Suspense, lazy, useState, useCallback, useEffect } from 'react';
 import { AuthProvider, useAuth } from './components/contexts/AuthContext';
 import { TeamProvider } from './components/contexts/TeamContext';
 import { ToastProvider } from './components/contexts/ToastContext';
@@ -16,6 +12,10 @@ import { Header, View } from './components/layout/Header';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const queryClient = new QueryClient();
+const OnDemandWorkspace = lazy(() => import('./components/workspaces/OnDemandWorkspace').then(module => ({ default: module.OnDemandWorkspace })));
+const FixedRouteWorkspace = lazy(() => import('./components/workspaces/FixedRouteWorkspace').then(module => ({ default: module.FixedRouteWorkspace })));
+const OperationsWorkspace = lazy(() => import('./components/workspaces/OperationsWorkspace').then(module => ({ default: module.OperationsWorkspace })));
+const AgentWorkspace = lazy(() => import('./components/workspaces/AgentWorkspace').then(module => ({ default: module.AgentWorkspace })));
 
 function parseHashView(): View {
   const hash = window.location.hash.slice(1);
@@ -50,14 +50,7 @@ const AppContent: React.FC = () => {
 
   // Show loading state while checking auth
   if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-[#F7F7F7]">
-        <div className="flex flex-col items-center gap-4">
-          <Loader2 className="animate-spin text-brand-green" size={48} />
-          <p className="text-gray-500 font-bold">Loading...</p>
-        </div>
-      </div>
-    );
+    return <WorkspaceLoadingState label="Loading..." />;
   }
   return (
     <div className="flex flex-col h-screen font-sans text-gray-800 bg-[#F7F7F7] overflow-hidden">
@@ -198,32 +191,43 @@ const AppContent: React.FC = () => {
         )}
 
         {/* Dynamic Workspace Rendering */}
-        {currentView === 'ondemand' && (
-          <ErrorBoundary fallbackTitle="Workspace Error">
-            <OnDemandWorkspace />
-          </ErrorBoundary>
-        )}
-        {currentView === 'fixed' && (
-          <ErrorBoundary fallbackTitle="Workspace Error">
-            <FixedRouteWorkspace />
-          </ErrorBoundary>
-        )}
-        {currentView === 'operations' && (
-          <ErrorBoundary fallbackTitle="Workspace Error">
-            <OperationsWorkspace />
-          </ErrorBoundary>
-        )}
-        {currentView === 'agents' && (
-          <ErrorBoundary fallbackTitle="Workspace Error">
-            <AgentWorkspace />
-          </ErrorBoundary>
-        )}
+        <Suspense fallback={<WorkspaceLoadingState label="Loading workspace..." />}>
+          {currentView === 'ondemand' && (
+            <ErrorBoundary fallbackTitle="Workspace Error">
+              <OnDemandWorkspace />
+            </ErrorBoundary>
+          )}
+          {currentView === 'fixed' && (
+            <ErrorBoundary fallbackTitle="Workspace Error">
+              <FixedRouteWorkspace />
+            </ErrorBoundary>
+          )}
+          {currentView === 'operations' && (
+            <ErrorBoundary fallbackTitle="Workspace Error">
+              <OperationsWorkspace />
+            </ErrorBoundary>
+          )}
+          {currentView === 'agents' && (
+            <ErrorBoundary fallbackTitle="Workspace Error">
+              <AgentWorkspace />
+            </ErrorBoundary>
+          )}
+        </Suspense>
 
 
       </main>
     </div>
   );
 };
+
+const WorkspaceLoadingState: React.FC<{ label: string }> = ({ label }) => (
+  <div className="min-h-screen flex items-center justify-center bg-[#F7F7F7]">
+    <div className="flex flex-col items-center gap-4">
+      <Loader2 className="animate-spin text-brand-green" size={48} />
+      <p className="text-gray-500 font-bold">{label}</p>
+    </div>
+  </div>
+);
 
 // Main App component with providers
 const App: React.FC = () => {

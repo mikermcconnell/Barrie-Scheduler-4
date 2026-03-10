@@ -49,12 +49,17 @@ const createRequestId = (): string => {
   return `opt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 };
 
+const isLocalOptimizeHost = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  return ['localhost', '127.0.0.1'].includes(window.location.hostname);
+};
+
 const getEndpointCandidates = (): string[] => {
-  const urls = [
-    ENDPOINT_OVERRIDE,
-    '/api/optimize',
-    CLOUD_RUN_OPTIMIZE_URL
-  ].filter(Boolean);
+  const urls = ENDPOINT_OVERRIDE
+    ? [ENDPOINT_OVERRIDE]
+    : isLocalOptimizeHost()
+      ? ['/api/optimize', CLOUD_RUN_OPTIMIZE_URL]
+      : [CLOUD_RUN_OPTIMIZE_URL, '/api/optimize'];
 
   return Array.from(new Set(urls));
 };

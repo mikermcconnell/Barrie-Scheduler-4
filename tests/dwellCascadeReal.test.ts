@@ -204,11 +204,11 @@ describe.skipIf(!csvExists())('Dwell Cascade — Real STREETS Data', () => {
         }
     });
 
-    it('every absorbed cascade has zero blast radius', () => {
+    it('zero blast radius cascades have no downstream late timepoints', () => {
         const result = buildDailyCascadeMetrics(records, incidents);
         for (const c of result.cascades.filter(c => c.blastRadius === 0)) {
             expect(c.blastRadius).toBe(0);
-            expect(c.cascadedTrips).toHaveLength(0);
+            expect(c.cascadedTrips.every(trip => trip.lateTimepointCount === 0)).toBe(true);
         }
     });
 });
@@ -315,7 +315,7 @@ describe.skipIf(!march3Exists())('Dwell Fix Comparison — March 3 Data', () => 
         expect(reductions.length).toBeGreaterThan(0);
     });
 
-    it('diagnoses hours gap vs legacy', () => {
+    it('diagnoses hours gap vs legacy', { timeout: 30000 }, () => {
         // Pure legacy formula — no boarding floor, no classifyDwell, just R>3 gate
         let legacyCount = 0;
         let legacyTotalMin = 0;

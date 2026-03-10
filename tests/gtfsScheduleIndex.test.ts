@@ -26,6 +26,8 @@ function makeCandidate(matchRatio: number, matched: number, scheduledCount: numb
 }
 
 describe('gtfsScheduleIndex', () => {
+    const feedSaturday = '2026-02-14';
+
     it('matches GTFS 24+ hour departures against 00:xx observed times', () => {
         const observedMidnight = buildObservedKeys([{ routeId: '7A', terminalDepartureTime: '00:23' }]);
         expect(hasRouteTimeMatch('7A', '24:23', observedMidnight)).toBe(true);
@@ -42,7 +44,7 @@ describe('gtfsScheduleIndex', () => {
     });
 
     it('drops unreliable routes with zero route-level matches to reduce false positives', () => {
-        const date = '2025-12-20';
+        const date = feedSaturday;
         const saturday7A = getTripsForDayType(date, 'saturday')
             .filter(t => t.routeId === '7A')
             .map(t => ({ routeId: t.routeId, terminalDepartureTime: t.departure }));
@@ -60,7 +62,7 @@ describe('gtfsScheduleIndex', () => {
     });
 
     it('classifies >15 minute late departures separately from not-performed trips', () => {
-        const date = '2025-12-20';
+        const date = feedSaturday;
         const toMinutes = (hhmm: string): number => {
             const [h, m] = hhmm.split(':').map(Number);
             return (h * 60) + m;

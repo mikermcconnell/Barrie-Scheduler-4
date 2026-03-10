@@ -47,6 +47,27 @@ function safeDivide(n: number, d: number): number {
   return d === 0 ? 0 : n / d;
 }
 
+function computeObservedDeviationSeconds(
+  scheduledTime: string,
+  observedTime: string | null | undefined,
+): number | null {
+  if (!observedTime) return null;
+  const scheduledSec = timeToSeconds(scheduledTime);
+  const observedSec = timeToSeconds(observedTime);
+  let dev = observedSec - scheduledSec;
+  if (dev < -43200) dev += 86400;
+  if (dev > 43200) dev -= 86400;
+  return dev;
+}
+
+function computeAttributedDelaySeconds(
+  rawDeviationSeconds: number | null,
+  baselineLateSeconds: number,
+): number | null {
+  if (rawDeviationSeconds === null) return null;
+  return Math.max(0, rawDeviationSeconds - baselineLateSeconds);
+}
+
 /** Pick a canonical row when STREETS emits duplicates for the same stop pass. */
 function chooseCanonicalStopRecord(records: STREETSRecord[]): STREETSRecord {
   let chosen = records[0];
@@ -83,6 +104,17 @@ function dedupeTripRecords(tripRecs: STREETSRecord[]): STREETSRecord[] {
     deduped.push(group.length === 1 ? group[0] : chooseCanonicalStopRecord(group));
   }
   return deduped;
+}
+
+function findIncidentRecord(incidentTrip: BlockTrip, incident: DwellIncident): STREETSRecord | null {
+  const exact = incidentTrip.records.find((rec) =>
+    rec.stopId === incident.stopId
+    && rec.observedDepartureTime === incident.observedDepartureTime,
+  );
+  if (exact) return exact;
+
+  const byStop = incidentTrip.records.find(rec => rec.stopId === incident.stopId);
+  return byStop ?? null;
 }
 
 // ─── Block Trip Sequencing ────────────────────────────────────────────
@@ -161,6 +193,11 @@ function traceCascade(
   let chainBroken = false;
   let recoveredAtTrip: string | null = null;
   let recoveredAtStop: string | null = null;
+  const incidentRecord = findIncidentRecord(incidentTrip, incident);
+  const baselineArrivalDeviation = incidentRecord
+    ? computeObservedDeviationSeconds(incidentRecord.arrivalTime, incidentRecord.observedArrivalTime)
+    : null;
+  const baselineLateSeconds = Math.max(0, baselineArrivalDeviation ?? 0);
   // Recovery between the incident trip and the first subsequent trip
   const topRecovery = subsequentTrips.length > 0
     ? computeRecoveryTime(incidentTrip, subsequentTrips[0])
@@ -181,28 +218,29 @@ function traceCascade(
 
     const timepoints: CascadeTimepointObs[] = [];
     let lateCount = 0;
+    let affectedCount = 0;
     let observedTimepointCount = 0;
     let tripRecoveredAtStop: string | null = null;
 
     for (const rec of timepointRecords) {
-      const scheduledSec = timeToSeconds(rec.stopTime);
       let deviationSeconds: number | null = null;
+      let rawDeviationSeconds: number | null = null;
       let isLate = false;
 
       if (rec.observedDepartureTime) {
         observedTimepointCount++;
-        const observedSec = timeToSeconds(rec.observedDepartureTime);
-        let dev = observedSec - scheduledSec;
-        // Post-midnight guard
-        if (dev < -43200) dev += 86400;
-        if (dev > 43200) dev -= 86400;
-        deviationSeconds = dev;
+        rawDeviationSeconds = computeObservedDeviationSeconds(rec.stopTime, rec.observedDepartureTime);
+        deviationSeconds = computeAttributedDelaySeconds(rawDeviationSeconds, baselineLateSeconds);
 
-        if (dev > OTP_THRESHOLDS.lateSeconds) {
+        if ((deviationSeconds ?? 0) > 0) {
+          affectedCount++;
+        }
+
+        if ((deviationSeconds ?? 0) > OTP_THRESHOLDS.lateSeconds) {
           isLate = true;
           lateCount++;
         } else {
-          // First on-time departure → chain absorbed here
+          // First zero attributed delay → dwell impact absorbed here.
           {
             tripRecoveredAtStop = rec.stopName;
             timepoints.push({
@@ -212,6 +250,7 @@ function traceCascade(
               scheduledDeparture: rec.stopTime,
               observedDeparture: rec.observedDepartureTime,
               deviationSeconds,
+              rawDeviationSeconds,
               isLate,
               boardings: rec.boardings,
             });
@@ -231,6 +270,7 @@ function traceCascade(
         scheduledDeparture: rec.stopTime,
         observedDeparture: rec.observedDepartureTime ?? null,
         deviationSeconds,
+        rawDeviationSeconds,
         isLate,
         boardings: rec.boardings,
       });
@@ -242,7 +282,7 @@ function traceCascade(
 
     let tripLateSeconds = 0;
     for (const tp of timepoints) {
-      if (tp.isLate && tp.deviationSeconds !== null) {
+      if ((tp.deviationSeconds ?? 0) > 0) {
         tripLateSeconds += tp.deviationSeconds;
       }
     }
@@ -257,22 +297,23 @@ function traceCascade(
       observedRecoverySeconds: recoveryResult.observed,
       timepoints,
       lateTimepointCount: lateCount,
+      affectedTimepointCount: affectedCount,
       recoveredAtStop: tripRecoveredAtStop,
       otpStatus: lateCount > 0 ? 'late' : 'on-time',
       recoveredHere: tripRecoveredAtStop !== null,
       lateSeconds: tripLateSeconds,
     });
 
-    if (lateCount === 0 && !chainBroken) {
+    if (affectedCount === 0 && !chainBroken) {
       chainBroken = true;
       recoveredAtTrip = nextTrip.tripName;
     }
   }
 
-  // Remove trailing trips with 0 late timepoints (they weren't affected)
+  // Remove trailing trips with no attributable delay.
   while (cascadedTrips.length > 0) {
     const last = cascadedTrips[cascadedTrips.length - 1];
-    if (last.lateTimepointCount === 0) {
+    if (last.affectedTimepointCount === 0) {
       cascadedTrips.pop();
     } else {
       break;
@@ -284,11 +325,7 @@ function traceCascade(
   let totalLateSeconds = 0;
   for (const trip of cascadedTrips) {
     blastRadius += trip.lateTimepointCount;
-    for (const tp of trip.timepoints) {
-      if (tp.isLate && tp.deviationSeconds !== null) {
-        totalLateSeconds += tp.deviationSeconds;
-      }
-    }
+    totalLateSeconds += trip.lateSeconds;
   }
 
   return {

@@ -106,7 +106,7 @@ export type TripNodeColor = 'red' | 'amber' | 'green';
  * Determine trip node color based on how many timepoints were late.
  */
 export function getTripNodeColor(trip: CascadeAffectedTrip): TripNodeColor {
-  if (trip.lateTimepointCount === 0) return 'green';
+  if (trip.affectedTimepointCount === 0) return 'green';
   if (trip.lateTimepointCount >= trip.timepoints.length) return 'red';
   return 'amber';
 }

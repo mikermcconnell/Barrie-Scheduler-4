@@ -259,9 +259,22 @@ async function runPipeline(
 }
 
 function processShifts(shifts: any[]) {
+    const seenIds = new Set<string>();
+
     return shifts.map((s: any, index: number) => {
         const duration = Number(s.durationSlots) || 32;
         const start = Number(s.startSlot);
+        const baseId = typeof s.id === 'string' && s.id.trim()
+            ? s.id.trim()
+            : `ai-shift-${index}-${Date.now()}`;
+        let uniqueId = baseId;
+        let duplicateIndex = 1;
+
+        while (seenIds.has(uniqueId)) {
+            uniqueId = `${baseId}-${duplicateIndex++}`;
+        }
+
+        seenIds.add(uniqueId);
 
         let breakStart = Number(s.breakStartSlot);
         let breakDuration = 0;
@@ -280,7 +293,7 @@ function processShifts(shifts: any[]) {
         }
 
         return {
-            id: s.id || `ai-shift-${index}-${Date.now()}`,
+            id: uniqueId,
             driverName: s.driverName || `Driver ${index + 1}`,
             zone: s.zone,
             startSlot: start,

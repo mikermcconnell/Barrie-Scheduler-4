@@ -145,9 +145,13 @@ const CascadeTripChain: React.FC<CascadeTripChainProps> = ({
                                 <div className="text-gray-500 text-xs leading-tight truncate mt-0.5">
                                     Route {trip.routeId} · {trip.terminalDepartureTime}
                                 </div>
-                                {/* Row 3: late timepoint count */}
+                                {/* Row 3: downstream impact summary */}
                                 <div className={`text-xs leading-tight mt-0.5 ${colors.text}`}>
-                                    {trip.lateTimepointCount}/{trip.timepoints.length} late
+                                    {trip.lateTimepointCount > 0
+                                        ? `${trip.lateTimepointCount}/${trip.timepoints.length} OTP-late`
+                                        : trip.affectedTimepointCount > 0
+                                            ? `${trip.affectedTimepointCount}/${trip.timepoints.length} delayed`
+                                            : 'Recovered in trip'}
                                 </div>
                             </button>
                         </React.Fragment>

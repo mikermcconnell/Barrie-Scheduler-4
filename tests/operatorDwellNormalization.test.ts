@@ -55,7 +55,7 @@ describe('Operator Dwell Normalization', () => {
         makeRecord({ operatorId: 'OP001', tripId: 'trip-1', routeStopIndex: 2, stopId: 'S2' }),
         makeRecord({
           operatorId: 'OP001', tripId: 'trip-1', routeStopIndex: 3, stopId: 'S3',
-          observedArrivalTime: '10:30:00', observedDepartureTime: '10:33:00', // dwell incident
+          observedArrivalTime: '10:30:00', observedDepartureTime: '10:34:00', // dwell incident
           stopTime: '10:30',
         }),
         // OP001: 1 inBetween (excluded)
@@ -105,7 +105,7 @@ describe('Operator Dwell Normalization', () => {
       // 1 dwell incident record
       records.push(makeRecord({
         operatorId: 'OP001', tripId: 'trip-dwell', routeStopIndex: 1, stopId: 'S-dwell',
-        observedArrivalTime: '10:00:00', observedDepartureTime: '10:03:00',
+        observedArrivalTime: '10:00:00', observedDepartureTime: '10:04:00',
         stopTime: '10:00',
       }));
       // 99 normal records across different stops (no dwell)
@@ -139,7 +139,7 @@ describe('Operator Dwell Normalization', () => {
       const records = [
         makeRecord({
           operatorId: 'OP001', tripId: 'trip-1', routeStopIndex: 1, stopId: 'S1',
-          observedArrivalTime: '10:00:00', observedDepartureTime: '10:03:00',
+          observedArrivalTime: '10:00:00', observedDepartureTime: '10:04:00',
           stopTime: '10:00',
         }),
         makeRecord({
@@ -157,11 +157,11 @@ describe('Operator Dwell Normalization', () => {
       // Service hours: 11:01 - 10:00 = 61 min = 1.02 hours (rounded to 2 dp)
       // Using observed departure times: max=11:01:00=39660, min=10:00:00=36000 → 3660s
       // But the computation uses observedDepartureTime for all records (even non-dwell)
-      // So max observed departure = 11:01:00, min = 10:03:00 → 3480s
+      // So max observed departure = 11:01:00, min = 10:04:00 → 3420s
       // Actually wait — the computation looks at observedDepartureTime ?? observedArrivalTime
-      // For first record: obsDep = 10:03:00 = 36180
+      // For first record: obsDep = 10:04:00 = 36240
       // For second record: obsDep = 11:01:00 = 39660
-      // Range for trip-1: 39660 - 36180 = 3480s = 0.97 hrs
+      // Range for trip-1: 39660 - 36240 = 3420s = 0.95 hrs
       expect(op1.serviceHours).toBeGreaterThan(0);
       // 1 / serviceHours * 100
       expect(op1.incidentsPer100ServiceHours).toBeDefined();
@@ -173,7 +173,7 @@ describe('Operator Dwell Normalization', () => {
       const records = [
         makeRecord({
           operatorId: 'OP001', tripId: 'trip-1', routeStopIndex: 1, stopId: 'S1',
-          observedArrivalTime: '10:00:00', observedDepartureTime: '10:03:00',
+          observedArrivalTime: '10:00:00', observedDepartureTime: '10:04:00',
           stopTime: '10:00',
           // Only 1 record in the trip, so max == min → 0 service hours
         }),
@@ -202,10 +202,10 @@ describe('Operator Dwell Normalization', () => {
         schemaVersion: 3,
         byOperatorDwell: {
           incidents: [
-            { operatorId: 'OP001', date: '2025-01-06', routeId: '10', routeName: 'NORTH', stopName: 'Hub', stopId: 'S1', tripName: 'T1', block: 'B1', observedArrivalTime: '10:00:00', observedDepartureTime: '10:03:00', rawDwellSeconds: 180, trackedDwellSeconds: 60, severity: 'moderate' },
+            { operatorId: 'OP001', date: '2025-01-06', routeId: '10', routeName: 'NORTH', stopName: 'Hub', stopId: 'S1', tripName: 'T1', block: 'B1', observedArrivalTime: '10:00:00', observedDepartureTime: '10:04:00', rawDwellSeconds: 240, trackedDwellSeconds: 240, severity: 'moderate' },
           ],
           byOperator: [
-            { operatorId: 'OP001', moderateCount: 1, highCount: 0, totalIncidents: 1, totalTrackedDwellSeconds: 60, avgTrackedDwellSeconds: 60, stopVisitCount: 50, serviceHours: 2 },
+            { operatorId: 'OP001', moderateCount: 1, highCount: 0, totalIncidents: 1, totalTrackedDwellSeconds: 240, avgTrackedDwellSeconds: 240, stopVisitCount: 50, serviceHours: 2 },
           ],
           totalIncidents: 1,
           totalTrackedDwellMinutes: 1,
@@ -219,10 +219,10 @@ describe('Operator Dwell Normalization', () => {
         date: '2025-01-07',
         byOperatorDwell: {
           incidents: [
-            { operatorId: 'OP001', date: '2025-01-07', routeId: '10', routeName: 'NORTH', stopName: 'Hub', stopId: 'S1', tripName: 'T2', block: 'B1', observedArrivalTime: '11:00:00', observedDepartureTime: '11:03:00', rawDwellSeconds: 180, trackedDwellSeconds: 60, severity: 'moderate' },
+            { operatorId: 'OP001', date: '2025-01-07', routeId: '10', routeName: 'NORTH', stopName: 'Hub', stopId: 'S1', tripName: 'T2', block: 'B1', observedArrivalTime: '11:00:00', observedDepartureTime: '11:04:00', rawDwellSeconds: 240, trackedDwellSeconds: 240, severity: 'moderate' },
           ],
           byOperator: [
-            { operatorId: 'OP001', moderateCount: 1, highCount: 0, totalIncidents: 1, totalTrackedDwellSeconds: 60, avgTrackedDwellSeconds: 60, stopVisitCount: 50, serviceHours: 3 },
+            { operatorId: 'OP001', moderateCount: 1, highCount: 0, totalIncidents: 1, totalTrackedDwellSeconds: 240, avgTrackedDwellSeconds: 240, stopVisitCount: 50, serviceHours: 3 },
           ],
           totalIncidents: 1,
           totalTrackedDwellMinutes: 1,
@@ -259,11 +259,11 @@ describe('Operator Dwell Normalization', () => {
         schemaVersion: 3,
         byOperatorDwell: {
           incidents: [
-            { operatorId: 'OP001', date: '2025-01-06', routeId: '10', routeName: 'NORTH', stopName: 'Hub', stopId: 'S1', tripName: 'T1', block: 'B1', observedArrivalTime: '10:00:00', observedDepartureTime: '10:03:00', rawDwellSeconds: 180, trackedDwellSeconds: 60, severity: 'moderate' },
+            { operatorId: 'OP001', date: '2025-01-06', routeId: '10', routeName: 'NORTH', stopName: 'Hub', stopId: 'S1', tripName: 'T1', block: 'B1', observedArrivalTime: '10:00:00', observedDepartureTime: '10:04:00', rawDwellSeconds: 240, trackedDwellSeconds: 240, severity: 'moderate' },
           ],
           byOperator: [
             // Old format: no stopVisitCount, serviceHours, etc.
-            { operatorId: 'OP001', moderateCount: 1, highCount: 0, totalIncidents: 1, totalTrackedDwellSeconds: 60, avgTrackedDwellSeconds: 60 },
+            { operatorId: 'OP001', moderateCount: 1, highCount: 0, totalIncidents: 1, totalTrackedDwellSeconds: 240, avgTrackedDwellSeconds: 240 },
           ],
           totalIncidents: 1,
           totalTrackedDwellMinutes: 1,

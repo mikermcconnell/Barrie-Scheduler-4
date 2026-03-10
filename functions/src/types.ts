@@ -132,8 +132,9 @@ export interface CascadeTimepointObs {
   routeStopIndex: number;
   scheduledDeparture: string;       // HH:MM
   observedDeparture: string | null; // HH:MM:SS from AVL
-  deviationSeconds: number | null;  // positive = late, null = no AVL
-  isLate: boolean;                  // deviation > OTP late threshold (300s)
+  deviationSeconds: number | null;  // attributed delay after subtracting pre-existing lateness
+  rawDeviationSeconds?: number | null; // raw observed departure deviation vs schedule
+  isLate: boolean;                  // attributed delay > OTP late threshold (300s)
   boardings: number;                // APC-observed boardings at this stop
 }
 
@@ -147,11 +148,12 @@ export interface CascadeAffectedTrip {
   scheduledRecoverySeconds: number;   // recovery before this trip (context only)
   observedRecoverySeconds?: number;   // actual recovery (uses AVL departure from prior trip)
   timepoints: CascadeTimepointObs[];  // every timepoint in the trip
-  lateTimepointCount: number;         // count of late timepoint departures
-  recoveredAtStop: string | null;     // stop where first on-time observed (chain-ender)
-  otpStatus: OTPStatus;               // derived: 'late' if any late timepoints, else 'on-time'
-  recoveredHere: boolean;             // derived: true if chain recovered during this trip
-  lateSeconds: number;                // sum of positive deviation across late timepoints
+  lateTimepointCount: number;         // count of attributed late departures (>5 min)
+  affectedTimepointCount: number;     // count of timepoints with any attributable delay (>0)
+  recoveredAtStop: string | null;     // stop where attributed delay fully reached zero
+  otpStatus: OTPStatus;               // derived from attributed delay
+  recoveredHere: boolean;             // true if attributed delay reached zero during this trip
+  lateSeconds: number;                // legacy field: sum of attributed delay seconds across affected timepoints
 }
 
 /** A dwell incident annotated with its downstream cascade through the block. */
@@ -171,11 +173,11 @@ export interface DwellCascade {
 
   // Cascade results
   cascadedTrips: CascadeAffectedTrip[];
-  blastRadius: number;
-  affectedTripCount: number;
+  blastRadius: number;            // total attributed late departures across all trips
+  affectedTripCount: number;      // number of trips touched before attributed recovery
   recoveredAtTrip: string | null;
-  recoveredAtStop: string | null;
-  totalLateSeconds: number;
+  recoveredAtStop: string | null; // specific stop where attributed delay reached zero
+  totalLateSeconds: number;       // legacy field: sum of attributed delay across all affected timepoints
   recoveryTimeAvailableSeconds: number;
   observedRecoverySeconds?: number;
 }
@@ -212,7 +214,7 @@ export interface DailyCascadeMetrics {
   byTerminal: TerminalRecoveryStats[];
   totalCascaded: number;          // incidents that produced cascade
   totalNonCascaded: number;       // incidents with no downstream impact
-  avgBlastRadius: number;         // avg late-timepoint-departures per cascading incident
+  avgBlastRadius: number;         // avg attributed-late departures per cascading incident
   totalBlastRadius: number;       // sum of all blast radii
 }
 

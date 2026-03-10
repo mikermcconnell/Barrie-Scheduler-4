@@ -7,7 +7,7 @@ import {
 } from '../lib/apiSecurity.js';
 
 const isTruthy = (value?: string) => ['1', 'true', 'yes', 'on'].includes((value || '').toLowerCase());
-const isExtendedPipelineEnabled = () => isTruthy(process.env.OPTIMIZE_MULTI_PHASE);
+const isExtendedPipelineEnabled = () => !process.env.VERCEL && isTruthy(process.env.OPTIMIZE_MULTI_PHASE);
 const createServerRequestId = () => `srv-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const inferErrorCode = (message: string) => {
     const text = message.toLowerCase();
@@ -277,9 +277,22 @@ export async function optimizeImplementation(
  * Helper to normalize shift data (ensure types, add proper IDs)
  */
 function processShifts(shifts: any[]) {
+    const seenIds = new Set<string>();
+
     return shifts.map((s: any, index: number) => {
         const duration = Number(s.durationSlots) || 32;
         const start = Number(s.startSlot);
+        const baseId = typeof s.id === 'string' && s.id.trim()
+            ? s.id.trim()
+            : `ai-shift-${index}-${Date.now()}`;
+        let uniqueId = baseId;
+        let duplicateIndex = 1;
+
+        while (seenIds.has(uniqueId)) {
+            uniqueId = `${baseId}-${duplicateIndex++}`;
+        }
+
+        seenIds.add(uniqueId);
 
         // Auto-fix breaks if missing/invalid but shift is long
         let breakStart = Number(s.breakStartSlot);
@@ -300,7 +313,7 @@ function processShifts(shifts: any[]) {
         }
 
         return {
-            id: s.id || `ai-shift-${index}-${Date.now()}`,
+            id: uniqueId,
             driverName: s.driverName || `Driver ${index + 1}`,
             zone: s.zone,
             startSlot: start,

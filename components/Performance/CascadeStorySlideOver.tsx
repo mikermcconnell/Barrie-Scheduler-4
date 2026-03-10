@@ -130,7 +130,8 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
                 {/* Quick stats row */}
                 <div className="flex items-center gap-4 px-5 py-2 bg-gray-50/50 border-b border-gray-100 text-xs text-gray-600 flex-shrink-0">
                     <span><span className="font-semibold text-red-600">{cascade.affectedTripCount}</span> trips affected</span>
-                    <span><span className="font-semibold text-gray-800">{cascade.blastRadius}</span> late departures</span>
+                    <span><span className="font-semibold text-gray-800">{fmtMin(cascade.totalLateSeconds)}</span> min attributed delay</span>
+                    <span><span className="font-semibold text-gray-800">{cascade.blastRadius}</span> OTP-late departures</span>
                     {Number.isFinite(cascade.recoveryTimeAvailableSeconds) && (
                         <span><span className="font-semibold text-gray-800">{fmtMin(cascade.recoveryTimeAvailableSeconds)}</span> min recovery available</span>
                     )}
@@ -139,6 +140,9 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
                     )}
                     {!cascade.recoveredAtTrip && cascade.cascadedTrips.length > 0 && (
                         <span className="text-red-600 font-medium">✗ Never recovered</span>
+                    )}
+                    {cascade.blastRadius === 0 && cascade.affectedTripCount > 0 && (
+                        <span className="text-amber-600 font-medium">Delay stayed below the OTP late threshold</span>
                     )}
                     {customerImpact && (
                         <>
@@ -160,7 +164,7 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
                                 <React.Fragment key={impact.routeId}>
                                     <span className="text-red-400">·</span>
                                     <span>
-                                        Route {impact.routeId}: <span className="font-semibold">{impact.lateDepartures}</span> late departures
+                                        Route {impact.routeId}: <span className="font-semibold">{impact.lateDepartures}</span> OTP-late departures
                                         {impact.assessedDepartures > 0 && (
                                             <>
                                                 {' '}of <span className="font-semibold">{impact.assessedDepartures}</span> assessed

@@ -17,13 +17,17 @@ interface DwellCascadeSectionProps {
     data: PerformanceDataSummary;
 }
 
-const CascadeBadge: React.FC<{ cascaded: boolean }> = ({ cascaded }) => (
+type CascadeImpactState = 'otp-impact' | 'delay-only' | 'absorbed';
+
+const CascadeBadge: React.FC<{ state: CascadeImpactState }> = ({ state }) => (
     <span className={`inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full ${
-        cascaded
+        state === 'otp-impact'
             ? 'bg-red-100 text-red-700'
-            : 'bg-emerald-100 text-emerald-700'
+            : state === 'delay-only'
+                ? 'bg-amber-100 text-amber-700'
+                : 'bg-emerald-100 text-emerald-700'
     }`}>
-        {cascaded ? 'Cascaded' : 'Absorbed'}
+        {state === 'otp-impact' ? 'OTP Impact' : state === 'delay-only' ? 'Delay Only' : 'Absorbed'}
     </span>
 );
 
@@ -48,6 +52,12 @@ const fmtTime = (hhmm: string): string => hhmm.length >= 5 ? hhmm.slice(0, 5) : 
 
 const CASCADES_PER_PAGE = 50;
 
+const getCascadeImpactState = (cascade: DwellCascade): CascadeImpactState => {
+    if (cascade.blastRadius > 0) return 'otp-impact';
+    if (cascade.affectedTripCount > 0) return 'delay-only';
+    return 'absorbed';
+};
+
 export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }) => {
     const [expandedCascade, setExpandedCascade] = useState<number | null>(null);
     const [stopFilter, setStopFilter] = useState<string | null>(null);
@@ -68,9 +78,24 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
         [data.dailySummaries],
     );
 
-    const cascadedOnly = useMemo(
+    const otpImpactedCascades = useMemo(
         () => metrics.cascades.filter(c => c.blastRadius > 0),
         [metrics.cascades],
+    );
+
+    const downstreamImpactedCascades = useMemo(
+        () => metrics.cascades.filter(c => c.affectedTripCount > 0),
+        [metrics.cascades],
+    );
+
+    const downstreamAffectedTrips = useMemo(
+        () => downstreamImpactedCascades.reduce((sum, cascade) => sum + cascade.affectedTripCount, 0),
+        [downstreamImpactedCascades],
+    );
+
+    const delayOnlyIncidentCount = useMemo(
+        () => downstreamImpactedCascades.filter(c => c.blastRadius === 0).length,
+        [downstreamImpactedCascades],
     );
 
     // OTP impact: actual vs estimated without cascades
@@ -86,22 +111,22 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
 
     // Worst incident by blast radius
     const worstIncident = useMemo(
-        () => cascadedOnly.length > 0
-            ? [...cascadedOnly].sort((a, b) => b.blastRadius - a.blastRadius)[0]
+        () => otpImpactedCascades.length > 0
+            ? [...otpImpactedCascades].sort((a, b) => b.blastRadius - a.blastRadius)[0]
             : null,
-        [cascadedOnly],
+        [otpImpactedCascades],
     );
 
     const routeRows = useMemo(
-        () => buildCascadeLateTripsByRoute(cascadedOnly, data.dailySummaries),
-        [cascadedOnly, data.dailySummaries],
+        () => buildCascadeLateTripsByRoute(otpImpactedCascades, data.dailySummaries),
+        [otpImpactedCascades, data.dailySummaries],
     );
 
     // Unique route IDs for incident filter dropdown
     const incidentRouteIds = useMemo(() => {
-        const ids = new Set(cascadedOnly.filter(c => c.severity === 'high').map(c => c.routeId));
+        const ids = new Set(otpImpactedCascades.filter(c => c.severity === 'high').map(c => c.routeId));
         return Array.from(ids).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-    }, [cascadedOnly]);
+    }, [otpImpactedCascades]);
 
     // All high-severity incidents, sorted by customer impact (boardings at late stops)
     const topIncidents = useMemo(() => {
@@ -110,7 +135,7 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                 sum + trip.timepoints.reduce((s, tp) =>
                     s + (tp.isLate ? (tp.boardings ?? 0) : 0), 0), 0);
 
-        const filtered = cascadedOnly
+        const filtered = otpImpactedCascades
             .filter(c => c.severity === 'high')
             .filter(c => incidentRouteFilter === 'all' || c.routeId === incidentRouteFilter);
 
@@ -118,7 +143,7 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
         return filtered.sort(
             (a, b) => (boardingsMap.get(b)! - boardingsMap.get(a)!) || b.blastRadius - a.blastRadius,
         );
-    }, [cascadedOnly, incidentRouteFilter]);
+    }, [otpImpactedCascades, incidentRouteFilter]);
 
     const isMultiDay = data.dailySummaries.length > 1;
 
@@ -160,18 +185,37 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
 
             {/* ── A: Impact Attribution Banner ── */}
             <div className={`flex items-start gap-3 px-4 py-4 rounded-lg border ${
-                metrics.totalBlastRadius > 0
+                downstreamImpactedCascades.length === 0
+                    ? 'bg-emerald-50 border-emerald-200'
+                    : metrics.totalBlastRadius > 0
                     ? 'bg-red-50 border-red-200'
-                    : 'bg-emerald-50 border-emerald-200'
+                    : 'bg-amber-50 border-amber-200'
             }`}>
                 <Zap size={18} className={`mt-0.5 shrink-0 ${
-                    metrics.totalBlastRadius > 0 ? 'text-red-500' : 'text-emerald-500'
+                    downstreamImpactedCascades.length === 0
+                        ? 'text-emerald-500'
+                        : metrics.totalBlastRadius > 0
+                            ? 'text-red-500'
+                            : 'text-amber-500'
                 }`} />
                 <div className="min-w-0">
-                    {metrics.totalBlastRadius === 0 ? (
+                    {downstreamImpactedCascades.length === 0 ? (
                         <p className="text-sm font-medium text-emerald-800">
-                            All dwell incidents absorbed by recovery — no OTP impact detected.
+                            All dwell incidents absorbed before affecting downstream trips.
                         </p>
+                    ) : metrics.totalBlastRadius === 0 ? (
+                        <>
+                            <p className="text-sm font-semibold text-amber-800">
+                                Dwell created downstream delay on{' '}
+                                <span className="font-bold">{fmt(downstreamImpactedCascades.length)}</span>
+                                {' '}incidents across{' '}
+                                <span className="font-bold">{fmt(downstreamAffectedTrips)}</span>
+                                {' '}downstream trips, but none crossed the 5-minute OTP late threshold.
+                            </p>
+                            <p className="text-sm text-amber-700 mt-1">
+                                Recovery reduced the impact below OTP-failure levels before those trips became officially late.
+                            </p>
+                        </>
                     ) : (
                         <>
                             <p className="text-sm font-semibold text-red-800">
@@ -195,6 +239,12 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                                         className="ml-1.5 text-red-400 cursor-help"
                                         title="Upper-bound estimate. Assumes cascade-affected trips would otherwise be on time. Trips late for multiple reasons may be counted once."
                                     >(?)</span>
+                                </p>
+                            )}
+                            {delayOnlyIncidentCount > 0 && (
+                                <p className="text-xs text-red-600 mt-1.5">
+                                    {fmt(delayOnlyIncidentCount)} additional incident{delayOnlyIncidentCount === 1 ? '' : 's'}
+                                    {' '}created downstream delay that stayed below the OTP late threshold.
                                 </p>
                             )}
                             {worstIncident && (
@@ -272,7 +322,7 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                         <div className="flex items-center justify-between">
                             <div>
                                 <h3 className="text-sm font-semibold text-gray-800">Top Incidents</h3>
-                                <p className="text-xs text-gray-500">All high-severity cascade events</p>
+                                <p className="text-xs text-gray-500">High-severity events that produced OTP-late departures</p>
                             </div>
                             <select
                                 value={incidentRouteFilter}
@@ -286,7 +336,7 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                             </select>
                         </div>
                         {topIncidents.length === 0 ? (
-                            <p className="text-sm text-gray-400 py-4 text-center">No cascaded incidents</p>
+                            <p className="text-sm text-gray-400 py-4 text-center">No high-severity OTP impacts</p>
                         ) : (
                             <div className="space-y-1.5">
                                 {topIncidents.map((incident, i) => {
@@ -324,8 +374,8 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                                                 <span title="Trips affected" className="text-gray-500">
                                                     <span className="font-semibold text-gray-700">{incident.affectedTripCount}</span> trips
                                                 </span>
-                                                <span title="Late departures" className="text-gray-500">
-                                                    <span className="font-semibold text-gray-700">{incident.blastRadius}</span> late dep
+                                                <span title="OTP-late departures" className="text-gray-500">
+                                                    <span className="font-semibold text-gray-700">{incident.blastRadius}</span> OTP late dep
                                                 </span>
                                             </div>
                                             {/* Recovery status */}
@@ -357,24 +407,24 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                             <MetricCard
                                 icon={<Zap size={18} />}
-                                label="Cascaded Incidents"
-                                value={`${fmt(metrics.totalCascaded)} / ${fmt(metrics.cascades.length)}`}
+                                label="Downstream Impact"
+                                value={`${fmt(downstreamImpactedCascades.length)} / ${fmt(metrics.cascades.length)}`}
                                 color="red"
-                                subValue={`${fmtPct(metrics.totalCascaded, metrics.cascades.length)} escaped recovery`}
+                                subValue={`${fmtPct(downstreamImpactedCascades.length, metrics.cascades.length)} affected a following trip`}
                             />
                             <MetricCard
                                 icon={<Target size={18} />}
-                                label="Avg Blast Radius"
-                                value={metrics.avgBlastRadius.toFixed(1)}
+                                label="OTP-Impacting Incidents"
+                                value={`${fmt(metrics.totalCascaded)} / ${fmt(metrics.cascades.length)}`}
                                 color="amber"
-                                subValue="late departures per cascade"
+                                subValue={`${fmtPct(metrics.totalCascaded, metrics.cascades.length)} crossed the 5-minute OTP threshold`}
                             />
                             <MetricCard
                                 icon={<Activity size={18} />}
-                                label="Total OTP Damage"
-                                value={fmt(metrics.totalBlastRadius)}
+                                label="Avg Blast Radius"
+                                value={metrics.avgBlastRadius.toFixed(1)}
                                 color="cyan"
-                                subValue="trip-observations made late by dwell"
+                                subValue="OTP-late departures per incident with OTP impact"
                             />
                             <MetricCard
                                 icon={<Shield size={18} />}
@@ -469,12 +519,13 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                                                     <th className="pb-2 pr-3 font-medium">Stop</th>
                                                     <th className="pb-2 pr-2 font-medium text-right">Dwell</th>
                                                     <th className="pb-2 pr-2 font-medium text-right">Recovery</th>
-                                                    <th className="pb-2 pr-2 font-medium text-right">BR</th>
+                                                    <th className="pb-2 pr-2 font-medium text-right">OTP dep</th>
                                                     <th className="pb-2 font-medium">Status</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
                                                 {pagedCascades.map((cascade: DwellCascade, idx: number) => {
+                                                    const impactState = getCascadeImpactState(cascade);
                                                     const globalIdx = (currentPage - 1) * CASCADES_PER_PAGE + idx;
                                                     const isExpanded = expandedCascade === globalIdx;
                                                     return (
@@ -504,10 +555,10 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                                                                     {cascade.blastRadius > 0 ? (
                                                                         <span className="text-red-600">{cascade.blastRadius}</span>
                                                                     ) : (
-                                                                        <span className="text-gray-400">0</span>
+                                                                                <span className="text-gray-400">0</span>
                                                                     )}
                                                                 </td>
-                                                                <td className="py-2"><CascadeBadge cascaded={cascade.blastRadius > 0} /></td>
+                                                                <td className="py-2"><CascadeBadge state={impactState} /></td>
                                                             </tr>
                                                             {isExpanded && cascade.cascadedTrips.length > 0 && (
                                                                 <tr>
@@ -522,7 +573,7 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                                                                                         <th className="pb-1 pr-3 text-left font-medium">Trip</th>
                                                                                         <th className="pb-1 pr-3 text-left font-medium">Route</th>
                                                                                         <th className="pb-1 pr-3 text-left font-medium">Sched. Dep</th>
-                                                                                        <th className="pb-1 pr-2 text-right font-medium">Late (min)</th>
+                                                                                        <th className="pb-1 pr-2 text-right font-medium">Delay (min)</th>
                                                                                         <th className="pb-1 pr-2 text-left font-medium">OTP</th>
                                                                                         <th className="pb-1 font-medium">Recovery</th>
                                                                                     </tr>
@@ -534,7 +585,7 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                                                                                             <td className="py-1.5 pr-3 text-gray-500">{ct.routeId}</td>
                                                                                             <td className="py-1.5 pr-3 text-gray-500 tabular-nums">{ct.terminalDepartureTime}</td>
                                                                                             <td className={`py-1.5 pr-2 text-right tabular-nums font-medium ${
-                                                                                                ct.lateSeconds > 300 ? 'text-red-600' : 'text-amber-600'
+                                                                                                ct.lateTimepointCount > 0 ? 'text-red-600' : 'text-amber-600'
                                                                                             }`}>
                                                                                                 {fmtMin(ct.lateSeconds)}
                                                                                             </td>
@@ -551,7 +602,7 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                                                                                                 {ct.recoveredHere ? (
                                                                                                     <span className="text-emerald-600 font-medium">Recovered here</span>
                                                                                                 ) : (
-                                                                                                    <span className="text-red-500">Still late</span>
+                                                                                                    <span className="text-red-500">Delay carried forward</span>
                                                                                                 )}
                                                                                             </td>
                                                                                         </tr>

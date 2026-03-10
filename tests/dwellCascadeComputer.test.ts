@@ -181,7 +181,7 @@ describe('dwellCascadeComputer.buildDailyCascadeMetrics', () => {
     //   lateTimepointCount = 1
     //
     // blastRadius = 2 + 1 = 3
-    // totalLateSeconds = 480 + 360 + 360 = 1200
+    // totalLateSeconds = 480 + 360 + 360 + 240 = 1440
     const records = buildBlockRecords({
       block: '10-01',
       tripCount: 3,
@@ -201,7 +201,7 @@ describe('dwellCascadeComputer.buildDailyCascadeMetrics', () => {
 
     expect(cascade.cascadedTrips).toHaveLength(2);
     expect(cascade.blastRadius).toBe(3);
-    expect(cascade.totalLateSeconds).toBe(1200);
+    expect(cascade.totalLateSeconds).toBe(1440);
 
     // Trip-2: both timepoints late
     const trip2 = cascade.cascadedTrips[0];
@@ -220,6 +220,7 @@ describe('dwellCascadeComputer.buildDailyCascadeMetrics', () => {
     const trip3 = cascade.cascadedTrips[1];
     expect(trip3.tripName).toBe('Trip-3');
     expect(trip3.lateTimepointCount).toBe(1);
+    expect(trip3.affectedTimepointCount).toBe(2);
     expect(trip3.recoveredAtStop).toBe('Stop B');
     // Trip-3 has 2 timepoints in output (late one + the on-time recovery point)
     expect(trip3.timepoints).toHaveLength(2);
@@ -399,7 +400,7 @@ describe('dwellCascadeComputer.buildDailyCascadeMetrics', () => {
   it('sums totalLateSeconds across all late timepoints', () => {
     // Trip-2: Stop 1 dev=480s (late), Stop 2 dev=360s (late)
     // Trip-3: Stop 1 dev=360s (late), Stop 2 dev=240s (on-time, recovery)
-    // totalLateSeconds = 480 + 360 + 360 = 1200
+    // totalLateSeconds = 480 + 360 + 360 + 240 = 1440
     const records = buildBlockRecords({
       block: '10-01',
       tripCount: 3,
@@ -415,7 +416,7 @@ describe('dwellCascadeComputer.buildDailyCascadeMetrics', () => {
     const result = buildDailyCascadeMetrics(records, [incident]);
     const cascade = result.cascades[0];
 
-    expect(cascade.totalLateSeconds).toBe(1200);
+    expect(cascade.totalLateSeconds).toBe(1440);
   });
 
   it('ranks byStop by totalBlastRadius descending', () => {

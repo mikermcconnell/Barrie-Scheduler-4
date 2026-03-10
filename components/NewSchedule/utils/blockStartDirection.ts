@@ -69,8 +69,6 @@ export const inferBlockStartDirection = (
 
 export const shouldShowStartDirectionForRoute = (routeNumber: string): boolean => {
     const normalized = routeNumber.trim().toUpperCase();
-    const config = getRouteConfig(normalized);
-    if (config && config.segments.length === 2) return true;
     return isRoute8Family(normalized);
 };
 

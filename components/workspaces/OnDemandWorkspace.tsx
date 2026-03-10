@@ -28,14 +28,25 @@ import { generateRideCoCSV, downloadCSV } from '../../utils/services/exportServi
 import { exportTODPaddlesPDF } from '../../utils/services/paddleExportService';
 import { SummaryMetrics, Shift, Requirement, Zone, ZoneFilterType } from '../../utils/demandTypes';
 import {
+    createScopedShiftId,
+    filterShiftsByDay,
+    normalizeOnDemandShifts,
+    OnDemandDayType,
+    removeShiftFromDay,
+    updateShiftInDay
+} from '../../utils/onDemandShiftUtils';
+import {
     Wand2, Users, BarChart3, Sparkles, AlertTriangle, Loader2,
     FolderOpen, Save, CloudDownload, Check, Edit3, RotateCcw, ArrowLeft, Star, X
 } from 'lucide-react';
 import { SHIFT_DURATION_SLOTS, BREAK_DURATION_SLOTS } from '../../utils/demandConstants';
 
 // Valid day types for shifts
-type DayType = 'Weekday' | 'Saturday' | 'Sunday';
+type DayType = OnDemandDayType;
 const VALID_DAY_TYPES: DayType[] = ['Weekday', 'Saturday', 'Sunday'];
+
+const INITIAL_REQUIREMENTS = generateRequirements();
+const INITIAL_ALL_SHIFTS = normalizeOnDemandShifts(generateShifts(INITIAL_REQUIREMENTS, false), 'Weekday');
 
 // Helper to validate and return a safe day type
 const toValidDayType = (day: string): DayType => {
@@ -50,9 +61,9 @@ export const OnDemandWorkspace: React.FC = () => {
     const [selectedDayType, setSelectedDayType] = useState<DayType>('Weekday');
     // Core State
     // Initialize synchronously to ensure data is present for first render calculation
-    const [requirements, setRequirements] = useState<Requirement[]>(() => generateRequirements());
-    const [allShifts, setAllShifts] = useState<Shift[]>(() => generateShifts(generateRequirements(), false));
-    const [shifts, setShifts] = useState<Shift[]>(() => generateShifts(generateRequirements(), false));
+    const [requirements, setRequirements] = useState<Requirement[]>(() => INITIAL_REQUIREMENTS);
+    const [allShifts, setAllShifts] = useState<Shift[]>(() => INITIAL_ALL_SHIFTS);
+    const [shifts, setShifts] = useState<Shift[]>(() => filterShiftsByDay(INITIAL_ALL_SHIFTS, 'Weekday'));
 
     const [activeTab, setActiveTab] = useState<'overview' | 'editor'>('overview');
     const [editingShiftId, setEditingShiftId] = useState<string | null>(null);
@@ -119,12 +130,12 @@ export const OnDemandWorkspace: React.FC = () => {
     // Helper to parse RideCo content (string or ArrayBuffer)
     const parseRideCoContent = (content: string | ArrayBuffer): Shift[] => {
         if (typeof content === 'string') {
-            return parseRideCo(content);
+            return normalizeOnDemandShifts(parseRideCo(content), 'Weekday');
         } else {
             const workbook = XLSX.read(content, { type: 'array' });
             const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
             const data = XLSX.utils.sheet_to_json<(string | number)[]>(firstSheet, { header: 1, defval: '' });
-            return parseRideCo(data as string[][]);
+            return normalizeOnDemandShifts(parseRideCo(data as string[][]), 'Weekday');
         }
     };
 
@@ -173,7 +184,10 @@ export const OnDemandWorkspace: React.FC = () => {
             }
 
             if (result.shifts.length > 0) {
-                const taggedShifts = result.shifts.map(s => ({ ...s, dayType: selectedDayType }));
+                const taggedShifts = normalizeOnDemandShifts(
+                    result.shifts.map(s => ({ ...s, dayType: selectedDayType })),
+                    selectedDayType
+                );
 
                 setShifts(taggedShifts);
                 setAllShifts(prev => {
@@ -254,8 +268,10 @@ export const OnDemandWorkspace: React.FC = () => {
     };
 
     const applyRefinements = (finalShifts: Shift[]) => {
-        // Fix: State Persistence Bug
-        const taggedShifts = finalShifts.map(s => ({ ...s, dayType: selectedDayType }));
+        const taggedShifts = normalizeOnDemandShifts(
+            finalShifts.map(s => ({ ...s, dayType: selectedDayType })),
+            selectedDayType
+        );
 
         setShifts(taggedShifts);
 
@@ -269,8 +285,8 @@ export const OnDemandWorkspace: React.FC = () => {
     };
 
     const handleShiftUpdate = (updatedShift: Shift) => {
-        setShifts(prev => prev.map(s => s.id === updatedShift.id ? updatedShift : s));
-        setAllShifts(prev => prev.map(s => s.id === updatedShift.id ? updatedShift : s));
+        setShifts(prev => updateShiftInDay(prev, updatedShift, selectedDayType));
+        setAllShifts(prev => updateShiftInDay(prev, updatedShift, selectedDayType));
     };
 
     const handleDayTypeChange = (dayType: string) => {
@@ -281,14 +297,13 @@ export const OnDemandWorkspace: React.FC = () => {
 
             // Filter shifts - only show shifts that explicitly match this day type
             // Shifts without dayType are assigned to 'Weekday' by default
-            const filtered = allShifts.filter(s => (s.dayType || 'Weekday') === validDayType);
-            setShifts(filtered);
+            setShifts(filterShiftsByDay(allShifts, validDayType));
         }
     };
 
     const handleDeleteShift = (id: string) => {
-        setShifts(prev => prev.filter(s => s.id !== id));
-        setAllShifts(prev => prev.filter(s => s.id !== id));
+        setShifts(prev => removeShiftFromDay(prev, id, selectedDayType));
+        setAllShifts(prev => removeShiftFromDay(prev, id, selectedDayType));
     };
 
     const handleAddShift = (zone: ZoneFilterType = 'All') => {
@@ -324,7 +339,7 @@ export const OnDemandWorkspace: React.FC = () => {
         // Default shift: 8am - 4pm
         // Default shift: 8am - 4pm
         const newShift: Shift = {
-            id: `shift-${Math.random().toString(36).substring(2, 11)}`,
+            id: createScopedShiftId(selectedDayType),
             driverName: newName,
             zone: startZone,
             startSlot: 32, // 08:00
@@ -394,8 +409,7 @@ export const OnDemandWorkspace: React.FC = () => {
 
                 if (newShifts.length > 0) {
                     setAllShifts(newShifts);
-                    const filtered = newShifts.filter(s => (s.dayType || 'Weekday') === dayForShiftFiltering);
-                    setShifts(filtered);
+                    setShifts(filterShiftsByDay(newShifts, dayForShiftFiltering));
                 }
             }
         } catch (e) {
@@ -429,8 +443,7 @@ export const OnDemandWorkspace: React.FC = () => {
 
                 if (newShifts.length > 0) {
                     setAllShifts(newShifts);
-                    const filtered = newShifts.filter(s => (s.dayType || 'Weekday') === dayForShiftFiltering);
-                    setShifts(filtered);
+                    setShifts(filterShiftsByDay(newShifts, dayForShiftFiltering));
                 }
             }
             setIsOptimized(false);
@@ -558,8 +571,7 @@ export const OnDemandWorkspace: React.FC = () => {
                     setAllShifts(newShifts);
                     setLoadedCloudFiles(prev => ({ ...prev, rideco: file }));
                     const currentDay = selectedDayType || 'Weekday';
-                    const filtered = newShifts.filter(s => (s.dayType || 'Weekday') === currentDay);
-                    setShifts(filtered);
+                    setShifts(filterShiftsByDay(newShifts, currentDay));
                 } else {
                     alert('No shifts found in the file. Make sure it\'s a valid RideCo shift template.');
                 }
@@ -579,9 +591,13 @@ export const OnDemandWorkspace: React.FC = () => {
 
     // Handle loading a saved draft/schedule
     const handleScheduleSelect = (schedule: SavedSchedule) => {
+        const normalizedShiftData = schedule.shiftData
+            ? normalizeOnDemandShifts(schedule.shiftData, 'Weekday')
+            : [];
+
         // Restore the workspace state from the saved schedule
-        if (schedule.shiftData) {
-            setAllShifts(schedule.shiftData);
+        if (normalizedShiftData.length > 0) {
+            setAllShifts(normalizedShiftData);
         }
 
         // Restore multi-day schedules if available
@@ -604,9 +620,8 @@ export const OnDemandWorkspace: React.FC = () => {
                 setRequirements(schedule.schedulesData[dayToSelectKey]);
 
                 // Filter shifts for this day (default to Weekday if no dayType)
-                if (schedule.shiftData) {
-                    const filtered = schedule.shiftData.filter(s => (s.dayType || 'Weekday') === validDay);
-                    setShifts(filtered);
+                if (normalizedShiftData.length > 0) {
+                    setShifts(filterShiftsByDay(normalizedShiftData, validDay));
                 }
             } else if (schedule.masterScheduleData) {
                 // Fallback to legacy master data if no specific day matched
@@ -617,8 +632,8 @@ export const OnDemandWorkspace: React.FC = () => {
             if (schedule.masterScheduleData) {
                 setRequirements(schedule.masterScheduleData);
             }
-            if (schedule.shiftData) {
-                setShifts(schedule.shiftData); // Just show what was saved
+            if (normalizedShiftData.length > 0) {
+                setShifts(filterShiftsByDay(normalizedShiftData, selectedDayType));
             }
         }
 

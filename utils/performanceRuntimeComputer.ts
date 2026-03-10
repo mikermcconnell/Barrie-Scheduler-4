@@ -195,8 +195,8 @@ export function getAvailableRuntimeRoutes(
       }
     }
 
-    // Collect directions from byTrip (always present)
-    for (const tm of day.byTrip) {
+    // Collect directions from byTrip when available
+    for (const tm of day.byTrip ?? []) {
       const canonicalRouteId = getCanonicalRouteId(tm.routeId);
       const existing = routeMap.get(canonicalRouteId);
       if (existing && tm.direction) {

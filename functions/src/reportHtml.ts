@@ -6,6 +6,10 @@ export interface ReportData {
   teamName: string;
 }
 
+// Reset dwell comparison baselines from the current report rollout onward.
+// The morning report currently uses 2026-03-09 as its latest service day.
+const DWELL_AVG_BASELINE_START_DATE = '2026-03-09';
+
 /** Hub definitions — stops at the same hub get merged in stop rankings */
 const HUBS: { name: string; stopCodes: string[] }[] = [
   { name: 'Park Place', stopCodes: ['777'] },
@@ -168,7 +172,7 @@ function buildDwellKpiCard(latestDay: DailySummary, trendDays: DailySummary[]): 
   let averageLine = '';
 
   const sameDayTypeDays = trendDays.filter(day =>
-    day.date !== latestDay.date
+    day.date >= DWELL_AVG_BASELINE_START_DATE
     && day.dayType === latestDay.dayType
     && typeof day.byOperatorDwell?.totalTrackedDwellMinutes === 'number'
   );
@@ -505,7 +509,7 @@ function buildTopStops(stops: StopMetrics[]): string {
 
   const hubMerged = mergeHubStops(stops);
 
-  const busiestStops = [...hubMerged].sort((a, b) => b.boardings - a.boardings).slice(0, 8);
+  const busiestStops = [...hubMerged].sort((a, b) => b.boardings - a.boardings).slice(0, 10);
   const worstOtpStops = [...hubMerged]
     .filter(s => s.otp.total >= 10)
     .sort((a, b) => a.otp.onTimePercent - b.otp.onTimePercent)
@@ -618,7 +622,7 @@ export function buildReportHtml(data: ReportData): string {
               const subtitle = mt.totalMissed === 0
                 ? '✓ All trips operated'
                 : `${mt.totalMissed} missed (${mt.missedPct.toFixed(1)}%)`;
-              return kpiCard('Trips Operated', mt.totalMissed === 0 ? `${num(mt.totalScheduled)} / ${num(mt.totalScheduled)}` : `${num(mt.totalMatched)} / ${num(mt.totalScheduled)}`, subtitle, color, color);
+              return kpiCard('Trips Operated', mt.totalMissed === 0 ? `${num(mt.totalScheduled)}/${num(mt.totalScheduled)}` : `${num(mt.totalMatched)}/${num(mt.totalScheduled)}`, subtitle, color, color);
             }
             return kpiCard('Trips Operated', num(sys.tripCount), `${num(sys.vehicleCount)} vehicles · ${totalServiceHours.toFixed(1)} svc hrs`);
           })()}

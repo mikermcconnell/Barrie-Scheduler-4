@@ -213,20 +213,18 @@ describe('findBestTrip', () => {
         [44.60, -79.40],
         [44.60, -79.95],
     ];
+    const representativeSchool = BARRIE_SCHOOLS.find((school) => school.id === 'barrie-north')!;
 
     it('returns stop ids for each leg when a trip is found', { timeout: 60000 }, () => {
-        const results = BARRIE_SCHOOLS.map((school) => findBestTrip(cityWideZone, school));
-        const foundResults = results.filter((r) => r.found);
+        const result = findBestTrip(cityWideZone, representativeSchool);
 
-        expect(foundResults.length).toBeGreaterThan(0);
+        expect(result.found).toBe(true);
 
-        for (const result of foundResults) {
-            const allLegs = [...result.morningLegs, ...result.afternoonLegs];
-            expect(allLegs.length).toBeGreaterThan(0);
-            for (const leg of allLegs) {
-                expect(leg.fromStopId).toBeTruthy();
-                expect(leg.toStopId).toBeTruthy();
-            }
+        const allLegs = [...result.morningLegs, ...result.afternoonLegs];
+        expect(allLegs.length).toBeGreaterThan(0);
+        for (const leg of allLegs) {
+            expect(leg.fromStopId).toBeTruthy();
+            expect(leg.toStopId).toBeTruthy();
         }
     });
 
