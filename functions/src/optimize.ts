@@ -151,8 +151,9 @@ function optimizeImplementation(
     Match the master schedule demand curve as closely as possible in every 15-minute slot.
 
     UNION RULES:
-    - Shift Length: 5-11 hours (20-44 slots).
-    - Breaks: 45min (3 slots) if shift > 7.5h.
+    - Shift length rules apply to actual drive time between drive start and drive end.
+    - Shift Length: 5-11 hours (20-44 slots) of actual drive time.
+    - Breaks: 45min (3 slots) if actual drive time > 7.5h.
     - Breaks must occur between hour 4 and 6 of the shift.
     - STRICT ZONE LOGIC: North covers North, South covers South, Floater covers Gaps/Breaks.
     ${fleetConstraintRules}

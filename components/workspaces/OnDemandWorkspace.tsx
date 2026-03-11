@@ -25,7 +25,7 @@ import {
     getSchedule
 } from '../../utils/services/dataService';
 import { generateRideCoCSV, downloadCSV } from '../../utils/services/exportService';
-import { exportTODPaddlesPDF } from '../../utils/services/paddleExportService';
+import { exportTODPaddlesExcel, exportTODPaddlesPDF } from '../../utils/services/paddleExportService';
 import { SummaryMetrics, Shift, Requirement, Zone, ZoneFilterType } from '../../utils/demandTypes';
 import {
     createScopedShiftId,
@@ -809,6 +809,21 @@ export const OnDemandWorkspace: React.FC = () => {
                             </button>
                             <div className="w-px h-4 bg-gray-200"></div>
                             <button
+                                onClick={async () => {
+                                    await exportTODPaddlesExcel(allShifts);
+                                }}
+                                disabled={allShifts.length === 0}
+                                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${allShifts.length === 0
+                                    ? 'text-gray-300 cursor-not-allowed'
+                                    : 'text-gray-500 hover:text-gray-900 hover:bg-white hover:shadow-sm'
+                                    }`}
+                                title={`Export ${allShifts.length} paddles as Excel`}
+                            >
+                                <CloudDownload size={14} />
+                                Paddles Excel
+                            </button>
+                            <div className="w-px h-4 bg-gray-200"></div>
+                            <button
                                 onClick={() => setShowFileManager(true)}
                                 disabled={isLoadingFromCloud}
                                 className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-gray-500 hover:text-gray-900 hover:bg-white hover:shadow-sm rounded-md transition-all"
@@ -1191,14 +1206,21 @@ export const OnDemandWorkspace: React.FC = () => {
                                     </div>
                                 </div>
 
+                                <div className="mb-4 p-4 rounded-2xl bg-blue-50 border-2 border-blue-100">
+                                    <div className="text-xs font-extrabold uppercase tracking-wider text-brand-blue mb-2">Drive Time Note</div>
+                                    <p className="text-sm font-semibold text-blue-900/80">
+                                        These rules are based on actual drive time only. Yard report, sign-on, pre-trip, and deadhead are outside the drive-time rule.
+                                    </p>
+                                </div>
+
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                     <div className="p-4 rounded-2xl bg-gray-50 border-2 border-gray-200">
-                                        <div className="text-xs font-extrabold uppercase tracking-wider text-gray-400 mb-2">Shift Span</div>
-                                        <p className="text-gray-700 font-bold">Each shift must be between 5 and 11 hours.</p>
+                                        <div className="text-xs font-extrabold uppercase tracking-wider text-gray-400 mb-2">Drive Time Span</div>
+                                        <p className="text-gray-700 font-bold">Each shift must provide between 5 and 11 hours of actual drive time.</p>
                                     </div>
                                     <div className="p-4 rounded-2xl bg-gray-50 border-2 border-gray-200">
                                         <div className="text-xs font-extrabold uppercase tracking-wider text-gray-400 mb-2">Break Duration</div>
-                                        <p className="text-gray-700 font-bold">Shifts longer than {BREAK_THRESHOLD_HOURS} hours require a {BREAK_DURATION_SLOTS * 15}-minute break.</p>
+                                        <p className="text-gray-700 font-bold">Shifts longer than {BREAK_THRESHOLD_HOURS} hours of drive time require a {BREAK_DURATION_SLOTS * 15}-minute break.</p>
                                     </div>
                                     <div className="p-4 rounded-2xl bg-gray-50 border-2 border-gray-200">
                                         <div className="text-xs font-extrabold uppercase tracking-wider text-gray-400 mb-2">Break Window</div>
