@@ -39,11 +39,12 @@ import {
     Wand2, Users, BarChart3, Sparkles, AlertTriangle, Loader2,
     FolderOpen, Save, CloudDownload, Check, Edit3, RotateCcw, ArrowLeft, Star, X
 } from 'lucide-react';
-import { SHIFT_DURATION_SLOTS, BREAK_DURATION_SLOTS } from '../../utils/demandConstants';
+import { SHIFT_DURATION_SLOTS, BREAK_DURATION_SLOTS, BREAK_THRESHOLD_HOURS } from '../../utils/demandConstants';
 
 // Valid day types for shifts
 type DayType = OnDemandDayType;
 const VALID_DAY_TYPES: DayType[] = ['Weekday', 'Saturday', 'Sunday'];
+const MAX_FLEET_VEHICLES = 6;
 
 const INITIAL_REQUIREMENTS = generateRequirements();
 const INITIAL_ALL_SHIFTS = normalizeOnDemandShifts(generateShifts(INITIAL_REQUIREMENTS, false), 'Weekday');
@@ -65,7 +66,7 @@ export const OnDemandWorkspace: React.FC = () => {
     const [allShifts, setAllShifts] = useState<Shift[]>(() => INITIAL_ALL_SHIFTS);
     const [shifts, setShifts] = useState<Shift[]>(() => filterShiftsByDay(INITIAL_ALL_SHIFTS, 'Weekday'));
 
-    const [activeTab, setActiveTab] = useState<'overview' | 'editor'>('overview');
+    const [activeTab, setActiveTab] = useState<'overview' | 'editor' | 'rules'>('overview');
     const [editingShiftId, setEditingShiftId] = useState<string | null>(null);
 
     // Shared Zone Filter State (Lifted Up)
@@ -126,6 +127,11 @@ export const OnDemandWorkspace: React.FC = () => {
     // Now guaranteed to have valid inputs on first render
     const timeSlots = useMemo(() => calculateSchedule(shifts, requirements), [shifts, requirements]);
     const metrics = useMemo(() => calculateMetrics(timeSlots), [timeSlots]);
+    const maxConcurrentVehicles = useMemo(
+        () => timeSlots.reduce((peak, slot) => Math.max(peak, slot.totalActiveCoverage), 0),
+        [timeSlots]
+    );
+    const fleetWithinLimit = maxConcurrentVehicles <= MAX_FLEET_VEHICLES;
 
     // Helper to parse RideCo content (string or ArrayBuffer)
     const parseRideCoContent = (content: string | ArrayBuffer): Shift[] => {
@@ -1020,6 +1026,18 @@ export const OnDemandWorkspace: React.FC = () => {
                 >
                     <Users size={20} /> Shift Editor <span className="bg-gray-200 text-gray-600 text-xs px-2 py-0.5 rounded-full ml-1">{shifts.length}</span>
                 </button>
+                <button
+                    onClick={() => setActiveTab('rules')}
+                    className={`
+                    pb-3 px-4 font-extrabold text-lg flex items-center gap-2 transition-all
+                    ${activeTab === 'rules'
+                            ? 'text-brand-blue border-b-4 border-brand-blue translate-y-[2px]'
+                            : 'text-gray-400 hover:text-gray-600'
+                        }
+                `}
+                >
+                    <AlertTriangle size={20} /> Shift Rules <span className="bg-gray-200 text-gray-600 text-xs px-2 py-0.5 rounded-full ml-1">Union + Fleet</span>
+                </button>
             </div>
 
             {/* Tab Content */}
@@ -1105,6 +1123,183 @@ export const OnDemandWorkspace: React.FC = () => {
                         onZoneFilterChange={setZoneFilter}
                         metrics={metrics}
                     />
+                </div>
+            )}
+
+            {activeTab === 'rules' && (
+                <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 space-y-8">
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                        <div className="bg-white rounded-2xl border-2 border-gray-200 p-4 flex items-start gap-4 shadow-sm">
+                            <div className="p-3 rounded-xl bg-brand-blue text-white shadow-inner">
+                                <Users size={24} />
+                            </div>
+                            <div>
+                                <h3 className="text-gray-500 font-bold text-xs uppercase tracking-wider">Fleet Cap</h3>
+                                <div className="text-2xl font-extrabold text-gray-800 mt-1">{MAX_FLEET_VEHICLES} Vehicles</div>
+                                <div className="text-xs text-gray-400 font-semibold mt-1">Maximum active vehicles on the road at once</div>
+                            </div>
+                        </div>
+
+                        <div className="bg-white rounded-2xl border-2 border-gray-200 p-4 flex items-start gap-4 shadow-sm">
+                            <div className="p-3 rounded-xl bg-brand-green text-white shadow-inner">
+                                <Wand2 size={24} />
+                            </div>
+                            <div>
+                                <h3 className="text-gray-500 font-bold text-xs uppercase tracking-wider">Shift Length</h3>
+                                <div className="text-2xl font-extrabold text-gray-800 mt-1">5-11 Hours</div>
+                                <div className="text-xs text-gray-400 font-semibold mt-1">Union minimum and maximum span</div>
+                            </div>
+                        </div>
+
+                        <div className="bg-white rounded-2xl border-2 border-gray-200 p-4 flex items-start gap-4 shadow-sm">
+                            <div className="p-3 rounded-xl bg-brand-yellow text-white shadow-inner">
+                                <Sparkles size={24} />
+                            </div>
+                            <div>
+                                <h3 className="text-gray-500 font-bold text-xs uppercase tracking-wider">Break Rule</h3>
+                                <div className="text-2xl font-extrabold text-gray-800 mt-1">45 Minutes</div>
+                                <div className="text-xs text-gray-400 font-semibold mt-1">Required when shift exceeds {BREAK_THRESHOLD_HOURS} hours</div>
+                            </div>
+                        </div>
+
+                        <div className={`rounded-2xl border-2 p-4 flex items-start gap-4 shadow-sm ${fleetWithinLimit ? 'bg-white border-gray-200' : 'bg-amber-50 border-amber-200'}`}>
+                            <div className={`p-3 rounded-xl text-white shadow-inner ${fleetWithinLimit ? 'bg-purple-500' : 'bg-amber-500'}`}>
+                                <BarChart3 size={24} />
+                            </div>
+                            <div>
+                                <h3 className="text-gray-500 font-bold text-xs uppercase tracking-wider">Current Peak Use</h3>
+                                <div className="text-2xl font-extrabold text-gray-800 mt-1">{maxConcurrentVehicles} Vehicles</div>
+                                <div className={`text-xs font-semibold mt-1 ${fleetWithinLimit ? 'text-gray-400' : 'text-amber-700'}`}>
+                                    {fleetWithinLimit
+                                        ? `Within the ${MAX_FLEET_VEHICLES}-vehicle limit for ${selectedDayType}`
+                                        : `${maxConcurrentVehicles - MAX_FLEET_VEHICLES} over the fleet limit for ${selectedDayType}`}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
+                        <div className="xl:col-span-2 space-y-8">
+                            <div className="bg-white p-6 rounded-3xl border-2 border-gray-200">
+                                <div className="flex items-center gap-3 mb-5">
+                                    <div className="p-3 rounded-2xl bg-blue-50 border-2 border-blue-100 text-brand-blue">
+                                        <Users size={20} />
+                                    </div>
+                                    <div>
+                                        <h3 className="text-xl font-extrabold text-gray-700">Union Rules</h3>
+                                        <p className="text-sm font-semibold text-gray-400">Core labour constraints for every On Demand shift.</p>
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div className="p-4 rounded-2xl bg-gray-50 border-2 border-gray-200">
+                                        <div className="text-xs font-extrabold uppercase tracking-wider text-gray-400 mb-2">Shift Span</div>
+                                        <p className="text-gray-700 font-bold">Each shift must be between 5 and 11 hours.</p>
+                                    </div>
+                                    <div className="p-4 rounded-2xl bg-gray-50 border-2 border-gray-200">
+                                        <div className="text-xs font-extrabold uppercase tracking-wider text-gray-400 mb-2">Break Duration</div>
+                                        <p className="text-gray-700 font-bold">Shifts longer than {BREAK_THRESHOLD_HOURS} hours require a {BREAK_DURATION_SLOTS * 15}-minute break.</p>
+                                    </div>
+                                    <div className="p-4 rounded-2xl bg-gray-50 border-2 border-gray-200">
+                                        <div className="text-xs font-extrabold uppercase tracking-wider text-gray-400 mb-2">Break Window</div>
+                                        <p className="text-gray-700 font-bold">Breaks must start between hour 4 and hour 6 of the shift.</p>
+                                    </div>
+                                    <div className="p-4 rounded-2xl bg-gray-50 border-2 border-gray-200">
+                                        <div className="text-xs font-extrabold uppercase tracking-wider text-gray-400 mb-2">Zone Assignment</div>
+                                        <p className="text-gray-700 font-bold">North covers North, South covers South, and Floaters cover gaps and break relief.</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="bg-white p-6 rounded-3xl border-2 border-gray-200">
+                                <div className="flex items-center gap-3 mb-5">
+                                    <div className="p-3 rounded-2xl bg-amber-50 border-2 border-amber-100 text-amber-600">
+                                        <AlertTriangle size={20} />
+                                    </div>
+                                    <div>
+                                        <h3 className="text-xl font-extrabold text-gray-700">Overall Constraints</h3>
+                                        <p className="text-sm font-semibold text-gray-400">Rules used for AI-generated schedules and manual review.</p>
+                                    </div>
+                                </div>
+
+                                <div className="space-y-3">
+                                    <div className="flex items-start justify-between gap-4 p-4 rounded-2xl bg-blue-50 border-2 border-blue-100">
+                                        <div>
+                                            <div className="text-sm font-extrabold text-brand-blue">Fleet availability</div>
+                                            <p className="text-sm font-semibold text-blue-900/80 mt-1">No more than {MAX_FLEET_VEHICLES} active vehicles can be on the road in the same 15-minute slot. Drivers on break do not count.</p>
+                                        </div>
+                                        <span className="text-xs font-extrabold uppercase tracking-wider px-2.5 py-1 rounded-full bg-white text-brand-blue border border-blue-200">Hard Limit</span>
+                                    </div>
+
+                                    <div className="flex items-start justify-between gap-4 p-4 rounded-2xl bg-gray-50 border-2 border-gray-200">
+                                        <div>
+                                            <div className="text-sm font-extrabold text-gray-700">Coverage gaps</div>
+                                            <p className="text-sm font-semibold text-gray-500 mt-1">Avoid coverage gaps wherever possible. A 2+ vehicle gap is not acceptable.</p>
+                                        </div>
+                                        <span className="text-xs font-extrabold uppercase tracking-wider px-2.5 py-1 rounded-full bg-white text-gray-500 border border-gray-200">Critical</span>
+                                    </div>
+
+                                    <div className="flex items-start justify-between gap-4 p-4 rounded-2xl bg-gray-50 border-2 border-gray-200">
+                                        <div>
+                                            <div className="text-sm font-extrabold text-gray-700">Short-gap tolerance</div>
+                                            <p className="text-sm font-semibold text-gray-500 mt-1">A 1-vehicle gap for 1-2 consecutive slots is tolerable only when it clearly improves the overall schedule.</p>
+                                        </div>
+                                        <span className="text-xs font-extrabold uppercase tracking-wider px-2.5 py-1 rounded-full bg-white text-gray-500 border border-gray-200">Limited</span>
+                                    </div>
+
+                                    <div className="flex items-start justify-between gap-4 p-4 rounded-2xl bg-gray-50 border-2 border-gray-200">
+                                        <div>
+                                            <div className="text-sm font-extrabold text-gray-700">Repeated shortfalls</div>
+                                            <p className="text-sm font-semibold text-gray-500 mt-1">Do not create repeated short gaps across the day to save payable hours.</p>
+                                        </div>
+                                        <span className="text-xs font-extrabold uppercase tracking-wider px-2.5 py-1 rounded-full bg-white text-gray-500 border border-gray-200">Avoid</span>
+                                    </div>
+
+                                    <div className="flex items-start justify-between gap-4 p-4 rounded-2xl bg-gray-50 border-2 border-gray-200">
+                                        <div>
+                                            <div className="text-sm font-extrabold text-gray-700">Break coordination</div>
+                                            <p className="text-sm font-semibold text-gray-500 mt-1">Breaks should be staggered so the same zone does not lose multiple drivers at once, and break coverage must come from another active shift.</p>
+                                        </div>
+                                        <span className="text-xs font-extrabold uppercase tracking-wider px-2.5 py-1 rounded-full bg-white text-gray-500 border border-gray-200">Stagger</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="space-y-8">
+                            <div className="bg-white p-6 rounded-3xl border-2 border-gray-200">
+                                <h3 className="text-xl font-extrabold text-gray-700 mb-4">Current Day Snapshot</h3>
+                                <div className="space-y-3">
+                                    <div className="flex justify-between items-center p-3 bg-blue-50 rounded-xl border-2 border-blue-100">
+                                        <span className="font-bold text-gray-600">North Shifts</span>
+                                        <span className="font-extrabold text-brand-blue">{shifts.filter(s => s.zone === Zone.NORTH).length}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center p-3 bg-green-50 rounded-xl border-2 border-green-100">
+                                        <span className="font-bold text-gray-600">South Shifts</span>
+                                        <span className="font-extrabold text-brand-green">{shifts.filter(s => s.zone === Zone.SOUTH).length}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center p-3 bg-purple-50 rounded-xl border-2 border-purple-100">
+                                        <span className="font-bold text-gray-600">Floater Shifts</span>
+                                        <span className="font-extrabold text-purple-600">{shifts.filter(s => s.zone === Zone.FLOATER).length}</span>
+                                    </div>
+                                    <div className={`flex justify-between items-center p-3 rounded-xl border-2 ${fleetWithinLimit ? 'bg-gray-50 border-gray-200' : 'bg-amber-50 border-amber-200'}`}>
+                                        <span className="font-bold text-gray-600">Peak Vehicles on Road</span>
+                                        <span className={`font-extrabold ${fleetWithinLimit ? 'text-gray-800' : 'text-amber-600'}`}>{maxConcurrentVehicles}</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="bg-white p-6 rounded-3xl border-2 border-gray-200">
+                                <h3 className="text-xl font-extrabold text-gray-700 mb-4">Optimizer Priorities</h3>
+                                <div className="space-y-3 text-sm font-semibold text-gray-500">
+                                    <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">1. Match the demand curve as closely as possible in every 15-minute slot.</p>
+                                    <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">2. Minimize peak gaps first, then total deficit slots, then repeated short gaps.</p>
+                                    <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">3. Trim surplus only after service gaps are under control.</p>
+                                    <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">4. Minimize payable hours without breaking fleet or coverage constraints.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             )}
 

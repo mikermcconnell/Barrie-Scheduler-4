@@ -136,6 +136,16 @@ function optimizeImplementation(
     Floater Zone Demand: ${JSON.stringify(floaterDemandCurve)}
     `;
 
+    const fleetConstraintRules = mode === 'full'
+        ? `
+    FLEET CONSTRAINTS:
+    - Maximum vehicles on the road at any time: 6.
+    - Drivers on break do NOT count as vehicles on the road.
+    - Break periods must be covered by other active shifts if demand requires coverage.
+    - Never return a schedule where more than 6 active, non-break shifts overlap in any 15-minute slot.
+    `
+        : '';
+
     const commonRules = `
     PRIMARY OBJECTIVE:
     Match the master schedule demand curve as closely as possible in every 15-minute slot.
@@ -145,6 +155,7 @@ function optimizeImplementation(
     - Breaks: 45min (3 slots) if shift > 7.5h.
     - Breaks must occur between hour 4 and 6 of the shift.
     - STRICT ZONE LOGIC: North covers North, South covers South, Floater covers Gaps/Breaks.
+    ${fleetConstraintRules}
 
     SERVICE PRIORITIES (Follow these STRICTLY):
     1. Avoid coverage gaps.
@@ -203,6 +214,7 @@ async function runPipeline(
     - Return shifts that minimize slot-by-slot mismatch to the demand curves.
     - Preserve shift IDs when refining unless a shift must be removed or a new shift must be added.
     - Do not accept any 2+ bus gap or any 1-bus gap longer than 2 consecutive slots.
+    ${mode === 'full' ? '- Never schedule more than 6 active drivers on the road in any slot; drivers on break do not count toward that 6.' : ''}
     `;
 
     let draftShifts = [];
