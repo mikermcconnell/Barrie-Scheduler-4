@@ -8,6 +8,8 @@ export type RouteScenarioAccent = 'indigo' | 'emerald' | 'amber' | 'cyan';
 export type RouteScenarioStatus = 'draft' | 'ready_for_review';
 export type RouteRuntimeSourceMode = 'observed_proxy' | 'manual_override' | 'fallback_estimate';
 export type RouteBaseSourceKind = 'blank' | 'existing_route' | 'existing_branch' | 'shuttle_template';
+export type RouteTimingProfile = 'balanced' | 'front_loaded' | 'back_loaded';
+export type RouteCoverageLayerSource = 'none' | 'strategic_markets_seed';
 
 export interface RouteBaseSource {
     kind: RouteBaseSourceKind;
@@ -28,8 +30,17 @@ export interface RouteStop {
 }
 
 export interface RouteCoverageMetrics {
+    source?: RouteCoverageLayerSource | null;
+    walkshedRadiusMeters?: number | null;
     populationWithin400m?: number | null;
     jobsWithin400m?: number | null;
+    servedMarketPoints?: number | null;
+    totalMarketPoints?: number | null;
+    servedSchools?: number | null;
+    totalSchools?: number | null;
+    servedHubs?: number | null;
+    totalHubs?: number | null;
+    servedPointLabels?: string[];
 }
 
 export interface RouteRuntimeInputs {
@@ -59,6 +70,10 @@ export interface RouteScenario {
     lastDeparture: string;
     frequencyMinutes: number;
     layoverMinutes: number;
+    timingProfile: RouteTimingProfile;
+    startTerminalHoldMinutes: number;
+    endTerminalHoldMinutes: number;
+    coverageWalkshedMeters: number;
     warnings: string[];
     departures: string[];
     waypoints: [number, number][];
@@ -155,6 +170,10 @@ export function createRouteScenarioFromShuttleScenario(scenario: ShuttleScenario
         lastDeparture: scenario.lastDeparture,
         frequencyMinutes: scenario.frequencyMinutes,
         layoverMinutes: scenario.layoverMinutes,
+        timingProfile: 'balanced',
+        startTerminalHoldMinutes: 0,
+        endTerminalHoldMinutes: 0,
+        coverageWalkshedMeters: 400,
         warnings: [...scenario.warnings],
         departures: [...scenario.departures],
         waypoints: [...scenario.waypoints],

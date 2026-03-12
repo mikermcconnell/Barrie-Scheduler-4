@@ -22,11 +22,13 @@ export interface TimeSlot {
   floaterBreaks: number;
 
   // Calculated
-  totalActiveCoverage: number; // North + South + Floater
+  totalActiveCoverage: number; // Physical active vehicles on the road
+  totalEffectiveCoverage: number; // Zone-valid coverage after floater relief
+  totalOverlappingShifts: number; // Includes drivers currently on break
   northRelief: number; // Floater contribution to North
   southRelief: number; // Floater contribution to South
-  originalActiveCoverage?: number; // For ghost line comparison
-  netDifference: number; // Active - Required
+  originalEffectiveCoverage?: number; // For ghost line comparison
+  netDifference: number; // Effective coverage - Required
 }
 
 export interface SummaryMetrics {

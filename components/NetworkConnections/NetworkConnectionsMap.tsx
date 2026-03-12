@@ -87,64 +87,66 @@ export const NetworkConnectionsMap: React.FC<NetworkConnectionsMapProps> = ({
     }, [selectedHub]);
 
     return (
-        <MapBase
-            className="h-full min-h-[560px] overflow-hidden rounded-[28px]"
-            showNavigation
-            showScale
-            mapRef={mapRef}
-        >
-            <RouteOverlay
-                shapes={backgroundRouteShapes}
-                opacity={focusRouteShapes.length > 0 ? 0.2 : 0.45}
-                weight={4}
-                dashed={false}
-                idPrefix="network-connections-routes-context"
-            />
-            <RouteOverlay
-                shapes={focusRouteShapes}
-                opacity={0.82}
-                weight={5}
-                dashed={false}
-                idPrefix="network-connections-routes-focus"
-            />
-            <ArcLayer
-                arcs={opportunityArc}
-                showArrowheads
-                idPrefix="network-connections-opportunity"
-            />
+        <div className="h-[560px] overflow-hidden rounded-[28px]">
+            <MapBase
+                className="h-full w-full"
+                showNavigation
+                showScale
+                mapRef={mapRef}
+            >
+                <RouteOverlay
+                    shapes={backgroundRouteShapes}
+                    opacity={focusRouteShapes.length > 0 ? 0.2 : 0.45}
+                    weight={4}
+                    dashed={false}
+                    idPrefix="network-connections-routes-context"
+                />
+                <RouteOverlay
+                    shapes={focusRouteShapes}
+                    opacity={0.82}
+                    weight={5}
+                    dashed={false}
+                    idPrefix="network-connections-routes-focus"
+                />
+                <ArcLayer
+                    arcs={opportunityArc}
+                    showArrowheads
+                    idPrefix="network-connections-opportunity"
+                />
 
-            {hubStops.map((stop) => (
-                <Marker key={stop.stopId} longitude={stop.lon} latitude={stop.lat} anchor="center">
-                    <div
-                        className={`grid h-7 w-7 place-items-center rounded-full border-2 text-[10px] font-extrabold transition-all ${stopTone(stop.stopId, selectedOpportunity)}`}
-                        title={`${stop.stopName}: ${stop.routeNumbers.join(', ')}`}
-                    >
-                        {stop.routeNumbers.length}
-                    </div>
-                </Marker>
-            ))}
-
-            {hubs.map((hub) => {
-                const selected = hub.id === selectedHubId;
-                const size = markerSize(hub.routeNumbers.length);
-                return (
-                    <Marker key={hub.id} longitude={hub.lon} latitude={hub.lat} anchor="center">
-                        <button
-                            type="button"
-                            onClick={() => onSelectHub(hub.id)}
-                            className={`relative grid place-items-center rounded-full font-extrabold shadow-sm ring-4 transition-transform hover:scale-105 ${severityClasses(hub.severity, selected)}`}
-                            style={{ width: size, height: size }}
-                            title={`${hub.name}: ${hub.routeNumbers.join(', ')}`}
+                {hubStops.map((stop) => (
+                    <Marker key={stop.stopId} longitude={stop.lon} latitude={stop.lat} anchor="center">
+                        <div
+                            className={`grid h-7 w-7 place-items-center rounded-full border-2 text-[10px] font-extrabold transition-all ${stopTone(stop.stopId, selectedOpportunity)}`}
+                            title={`${stop.stopName}: ${stop.routeNumbers.join(', ')}`}
                         >
-                            <span className="text-[11px] leading-none">{hub.routeNumbers.length}</span>
-                            {selected && (
-                                <span className="pointer-events-none absolute inset-[-7px] rounded-full border-2 border-brand-blue/50" />
-                            )}
-                        </button>
+                            {stop.routeNumbers.length}
+                        </div>
                     </Marker>
-                );
-            })}
-        </MapBase>
+                ))}
+
+                {hubs.map((hub) => {
+                    const selected = hub.id === selectedHubId;
+                    const size = markerSize(hub.routeNumbers.length);
+                    return (
+                        <Marker key={hub.id} longitude={hub.lon} latitude={hub.lat} anchor="center">
+                            <button
+                                type="button"
+                                onClick={() => onSelectHub(hub.id)}
+                                className={`relative grid place-items-center rounded-full font-extrabold shadow-sm ring-4 transition-transform hover:scale-105 ${severityClasses(hub.severity, selected)}`}
+                                style={{ width: size, height: size }}
+                                title={`${hub.name}: ${hub.routeNumbers.join(', ')}`}
+                            >
+                                <span className="text-[11px] leading-none">{hub.routeNumbers.length}</span>
+                                {selected && (
+                                    <span className="pointer-events-none absolute inset-[-7px] rounded-full border-2 border-brand-blue/50" />
+                                )}
+                            </button>
+                        </Marker>
+                    );
+                })}
+            </MapBase>
+        </div>
     );
 };
 

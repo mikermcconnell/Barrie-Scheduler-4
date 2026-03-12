@@ -244,6 +244,12 @@ export const calculateSchedule = (shifts: Shift[], requirements: Requirement[]):
     // South Relief
     const southRelief = Math.min(southDeficit, remainingFloaterSurplus);
 
+    const northEffectiveCoverage = Math.min(northDemand, northCount + northRelief);
+    const southEffectiveCoverage = Math.min(southDemand, southCount + southRelief);
+    const floaterEffectiveCoverage = Math.min(floaterDemand, floaterCount);
+    const totalEffectiveCoverage = northEffectiveCoverage + southEffectiveCoverage + floaterEffectiveCoverage;
+    const totalOverlappingShifts = activeCount + breakCount;
+
     slots.push({
       timeLabel: formatTime(minutesFromMidnight),
       timestamp: minutesFromMidnight,
@@ -266,7 +272,9 @@ export const calculateSchedule = (shifts: Shift[], requirements: Requirement[]):
       southRelief,
 
       totalActiveCoverage: activeCount,
-      netDifference: activeCount - req.total
+      totalEffectiveCoverage,
+      totalOverlappingShifts,
+      netDifference: totalEffectiveCoverage - req.total
     });
   }
 
@@ -289,7 +297,7 @@ export const calculateMetrics = (data: TimeSlot[], shifts?: Shift[]): SummaryMet
   data.forEach(slot => {
     // 15 min interval = 0.25 hours
     totalReq += slot.totalRequirement * 0.25;
-    totalCov += slot.totalActiveCoverage * 0.25; // Legacy fallback
+    totalCov += slot.totalEffectiveCoverage * 0.25;
     netDiff += slot.netDifference * 0.25;
   });
 

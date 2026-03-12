@@ -3,7 +3,12 @@ import type { MapMouseEvent, MarkerDragEvent } from 'react-map-gl/mapbox';
 import { useToast } from '../contexts/ToastContext';
 import { createDraftRouteProject, syncDraftRouteProjectSource, type DraftRouteBaseSourceKind, type DraftRoutePlannerMode } from '../../utils/route-planner/routePlannerDrafts';
 import { deriveRouteProject } from '../../utils/route-planner/routePlannerPlanning';
-import { loadRoutePlannerDraft, saveRoutePlannerDraft } from '../../utils/route-planner/routePlannerDraftStorage';
+import { clearRoutePlannerDraft, loadRoutePlannerDraft, saveRoutePlannerDraft } from '../../utils/route-planner/routePlannerDraftStorage';
+import {
+    buildRoutePlannerSavePayload,
+    filterRoutePlannerProjectsByTeam,
+    resolveActiveRoutePlannerProject,
+} from '../../utils/route-planner/routePlannerProjectControllerHelpers';
 import {
     deleteRouteScenario,
     duplicateRouteScenario,
@@ -65,6 +70,7 @@ function buildCustomStopName(stops: RouteStop[]): string {
 
 export interface RoutePlannerProjectController {
     project: RouteProject;
+    localDraftProject: RouteProject | null;
     projects: RouteProject[];
     projectError: string | null;
     selectedScenarioId: string | null;
@@ -97,6 +103,10 @@ export interface RoutePlannerProjectController {
     updateSelectedScenarioLastDeparture: (value: string) => void;
     updateSelectedScenarioFrequencyMinutes: (value: number) => void;
     updateSelectedScenarioLayoverMinutes: (value: number) => void;
+    updateSelectedScenarioTimingProfile: (value: RouteScenario['timingProfile']) => void;
+    updateSelectedScenarioStartTerminalHoldMinutes: (value: number) => void;
+    updateSelectedScenarioEndTerminalHoldMinutes: (value: number) => void;
+    updateSelectedScenarioCoverageWalkshedMeters: (value: number) => void;
     updateSelectedScenarioNotes: (value: string) => void;
     updateSelectedStopName: (value: string) => void;
     updateSelectedStopRole: (value: RouteStop['role']) => void;
@@ -136,6 +146,7 @@ export function useRoutePlannerProjectController({
     const [isSavingProject, setIsSavingProject] = useState(false);
     const [isDuplicatingProject, setIsDuplicatingProject] = useState(false);
     const [isDeletingProject, setIsDeletingProject] = useState(false);
+    const [localDraftProject, setLocalDraftProject] = useState<RouteProject | null>(() => loadRoutePlannerDraft(mode, teamId));
     const [draftState, setDraftState] = useState<{ baseSource: DraftRouteBaseSourceKind; routeId: string }>(() => ({
         baseSource: initialBaseSource,
         routeId: initialRouteId,
@@ -152,6 +163,7 @@ export function useRoutePlannerProjectController({
 
     useEffect(() => {
         const loadedProject = loadRoutePlannerDraft(mode, teamId);
+        setLocalDraftProject(loadedProject);
         if (loadedProject) {
             setDraftState(inferDraftState(loadedProject, initialRouteId));
             setProject(deriveRouteProject(loadedProject));
@@ -181,18 +193,30 @@ export function useRoutePlannerProjectController({
         setProjectError(null);
 
         try {
-            const loadedProjects = (await getAllRoutePlannerProjects(userId)).map((entry) => deriveRouteProject(entry));
+            const loadedProjects = filterRoutePlannerProjectsByTeam(
+                (await getAllRoutePlannerProjects(userId)).map((entry) => deriveRouteProject(entry)),
+                teamId,
+            );
+            const currentProjectIsLocalDraft = !loadedProjects.some((entry) => entry.id === project.id);
+            const nextProject = resolveActiveRoutePlannerProject({
+                loadedProjects,
+                preferredProjectId,
+                currentProject: project,
+                currentProjectIsLocalDraft,
+                localDraftProject,
+            });
+
             setProjects(loadedProjects);
 
-            if (loadedProjects.length === 0) return;
+            if (nextProject) {
+                setDraftState(inferDraftState(nextProject, initialRouteId));
+                setProject(nextProject);
+                return;
+            }
 
-            const nextProject =
-                loadedProjects.find((entry) => entry.id === preferredProjectId)
-                ?? loadedProjects.find((entry) => entry.id === project.id)
-                ?? loadedProjects[0];
-
-            setDraftState(inferDraftState(nextProject, initialRouteId));
-            setProject(nextProject);
+            const starterProject = createDraftRouteProject(mode, initialBaseSource, initialRouteId, teamId);
+            setDraftState(inferDraftState(starterProject, initialRouteId));
+            setProject(starterProject);
         } catch (error) {
             console.error('Failed to load route planner projects:', error);
             setProjects([]);
@@ -205,16 +229,12 @@ export function useRoutePlannerProjectController({
     useEffect(() => {
         void loadProjects();
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [userId]);
+    }, [teamId, userId]);
 
     useEffect(() => {
         if (teamId === undefined) return;
         setProject((current) => ({ ...current, teamId: teamId ?? null }));
     }, [teamId]);
-
-    useEffect(() => {
-        saveRoutePlannerDraft(mode, project, teamId);
-    }, [mode, project, teamId]);
 
     useEffect(() => {
         const preferredScenarioId = project.preferredScenarioId ?? project.scenarios[0]?.id ?? null;
@@ -259,6 +279,12 @@ export function useRoutePlannerProjectController({
     }, [canCompare, compareMode]);
 
     const isLocalDraft = !userId || !projects.some((entry) => entry.id === project.id);
+
+    useEffect(() => {
+        if (!isLocalDraft) return;
+        saveRoutePlannerDraft(mode, project, teamId);
+        setLocalDraftProject(project);
+    }, [isLocalDraft, mode, project, teamId]);
 
     const updateDraftState = (next: { baseSource: DraftRouteBaseSourceKind; routeId: string }): void => {
         setDraftState(next);
@@ -332,6 +358,38 @@ export function useRoutePlannerProjectController({
         setProject((current) => updateRouteScenario(current, selectedScenario.id, (scenario) => ({
             ...scenario,
             layoverMinutes: Math.max(0, Math.round(value)),
+        })));
+    };
+
+    const updateSelectedScenarioTimingProfile = (value: RouteScenario['timingProfile']): void => {
+        if (!selectedScenario) return;
+        setProject((current) => updateRouteScenario(current, selectedScenario.id, (scenario) => ({
+            ...scenario,
+            timingProfile: value,
+        })));
+    };
+
+    const updateSelectedScenarioStartTerminalHoldMinutes = (value: number): void => {
+        if (!selectedScenario) return;
+        setProject((current) => updateRouteScenario(current, selectedScenario.id, (scenario) => ({
+            ...scenario,
+            startTerminalHoldMinutes: Math.max(0, Math.round(value)),
+        })));
+    };
+
+    const updateSelectedScenarioEndTerminalHoldMinutes = (value: number): void => {
+        if (!selectedScenario) return;
+        setProject((current) => updateRouteScenario(current, selectedScenario.id, (scenario) => ({
+            ...scenario,
+            endTerminalHoldMinutes: Math.max(0, Math.round(value)),
+        })));
+    };
+
+    const updateSelectedScenarioCoverageWalkshedMeters = (value: number): void => {
+        if (!selectedScenario) return;
+        setProject((current) => updateRouteScenario(current, selectedScenario.id, (scenario) => ({
+            ...scenario,
+            coverageWalkshedMeters: Math.max(200, Math.min(1000, Math.round(value))),
         })));
     };
 
@@ -561,15 +619,6 @@ export function useRoutePlannerProjectController({
         setProject((current) => markPreferredRouteScenario(current, selectedScenario.id));
     };
 
-    const buildSavePayload = (nameOverride?: string) => ({
-        id: isLocalDraft ? undefined : project.id,
-        name: nameOverride ?? project.name,
-        description: project.description,
-        teamId: project.teamId ?? teamId ?? null,
-        preferredScenarioId: project.preferredScenarioId ?? project.scenarios[0]?.id ?? null,
-        scenarios: project.scenarios,
-    });
-
     const handleSaveProject = async (): Promise<void> => {
         if (!userId) {
             toast.warning('Sign In Required', 'Sign in to save route planner projects to Firebase.');
@@ -578,9 +627,17 @@ export function useRoutePlannerProjectController({
 
         setIsSavingProject(true);
         try {
-            const savedProjectId = await saveRoutePlannerProject(userId, buildSavePayload());
+            const wasLocalDraft = isLocalDraft;
+            const savedProjectId = await saveRoutePlannerProject(userId, buildRoutePlannerSavePayload(project, {
+                teamId,
+                preserveProjectId: !isLocalDraft,
+            }));
+            if (wasLocalDraft) {
+                clearRoutePlannerDraft(mode, teamId);
+                setLocalDraftProject(null);
+            }
             await loadProjects(savedProjectId);
-            toast.success('Route Project Saved', isLocalDraft ? 'Local route study is now saved to your account.' : 'Route project changes synced to Firebase.');
+            toast.success('Route Project Saved', wasLocalDraft ? 'Local route study is now saved to your account.' : 'Route project changes synced to Firebase.');
         } catch (error) {
             console.error('Failed to save route project:', error);
             toast.error('Save Failed', getErrorMessage(error));
@@ -597,7 +654,11 @@ export function useRoutePlannerProjectController({
 
         setIsDuplicatingProject(true);
         try {
-            const duplicatedProjectId = await saveRoutePlannerProject(userId, buildSavePayload(`${project.name} (Copy)`));
+            const duplicatedProjectId = await saveRoutePlannerProject(userId, buildRoutePlannerSavePayload(project, {
+                teamId,
+                preserveProjectId: false,
+                nameOverride: `${project.name} (Copy)`,
+            }));
             await loadProjects(duplicatedProjectId);
             toast.success('Project Duplicated', 'A new route planning draft is ready.');
         } catch (error) {
@@ -611,6 +672,7 @@ export function useRoutePlannerProjectController({
     const handleCreateFreshProject = (): void => {
         const freshProject = createDraftRouteProject(mode, draftState.baseSource, draftState.routeId, teamId);
         setProject(freshProject);
+        setLocalDraftProject(freshProject);
         setDraftState(inferDraftState(freshProject, initialRouteId));
         setSelectedScenarioId(freshProject.preferredScenarioId ?? freshProject.scenarios[0]?.id ?? null);
         setCompareMode(false);
@@ -645,6 +707,7 @@ export function useRoutePlannerProjectController({
 
     return {
         project,
+        localDraftProject,
         projects,
         projectError,
         selectedScenarioId,
@@ -677,6 +740,10 @@ export function useRoutePlannerProjectController({
         updateSelectedScenarioLastDeparture,
         updateSelectedScenarioFrequencyMinutes,
         updateSelectedScenarioLayoverMinutes,
+        updateSelectedScenarioTimingProfile,
+        updateSelectedScenarioStartTerminalHoldMinutes,
+        updateSelectedScenarioEndTerminalHoldMinutes,
+        updateSelectedScenarioCoverageWalkshedMeters,
         updateSelectedScenarioNotes,
         updateSelectedStopName,
         updateSelectedStopRole,

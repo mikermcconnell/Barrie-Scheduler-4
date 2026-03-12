@@ -83,3 +83,11 @@ export function saveRoutePlannerDraft(
         serializeRoutePlannerDraft(project)
     );
 }
+
+export function clearRoutePlannerDraft(
+    mode: DraftRoutePlannerMode,
+    teamId?: string | null
+): void {
+    if (typeof window === 'undefined') return;
+    window.localStorage.removeItem(getRoutePlannerDraftStorageKey(mode, teamId));
+}

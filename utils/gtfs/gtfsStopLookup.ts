@@ -15,6 +15,7 @@ interface GtfsStopRecord {
 
 export interface GtfsStopWithCoords {
     stop_id: string;
+    stop_code?: string;
     stop_name: string;
     lat: number;
     lon: number;
@@ -111,6 +112,7 @@ export function getAllStopsWithCoords(): GtfsStopWithCoords[] {
 
     const headers = parseCsvRow(lines[0]).map(h => h.replace(/^\uFEFF/, '').trim());
     const idIdx = headers.indexOf('stop_id');
+    const codeIdx = headers.indexOf('stop_code');
     const nameIdx = headers.indexOf('stop_name');
     const latIdx = headers.indexOf('stop_lat');
     const lonIdx = headers.indexOf('stop_lon');
@@ -127,6 +129,7 @@ export function getAllStopsWithCoords(): GtfsStopWithCoords[] {
         if (!values[nameIdx] || isNaN(lat) || isNaN(lon)) continue;
         results.push({
             stop_id: values[idIdx] || '',
+            stop_code: codeIdx >= 0 ? (values[codeIdx] || '') : '',
             stop_name: values[nameIdx],
             lat,
             lon,

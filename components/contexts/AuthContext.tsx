@@ -11,6 +11,7 @@ import {
 import { doc, setDoc, getDoc } from 'firebase/firestore';
 import { auth, googleProvider } from '../../utils/firebase';
 import { db } from '../../utils/firebase';
+import { getDevAuthConfig } from '../../utils/dev/devAuth';
 
 interface AuthContextType {
     user: User | null;
@@ -20,6 +21,9 @@ interface AuthContextType {
     signInWithGoogle: () => Promise<void>;
     signOut: () => Promise<void>;
     resetPassword: (email: string) => Promise<void>;
+    signInWithDevAccess: () => Promise<void>;
+    hasDevAccess: boolean;
+    devAccessLabel: string | null;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -39,6 +43,7 @@ interface AuthProviderProps {
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     const [user, setUser] = useState<User | null>(null);
     const [loading, setLoading] = useState(true);
+    const devAuth = getDevAuthConfig();
 
     /**
      * Ensure user document exists in Firestore with teamId field
@@ -74,6 +79,14 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         return unsubscribe;
     }, []);
 
+    useEffect(() => {
+        if (!devAuth.enabled || !devAuth.autoLogin || user || loading) return;
+
+        void signInWithEmailAndPassword(auth, devAuth.email!, devAuth.password!).catch((error) => {
+            console.error('Failed to auto sign in with dev access:', error);
+        });
+    }, [devAuth.autoLogin, devAuth.email, devAuth.enabled, devAuth.password, loading, user]);
+
     const signIn = async (email: string, password: string) => {
         await signInWithEmailAndPassword(auth, email, password);
     };
@@ -94,6 +107,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         await sendPasswordResetEmail(auth, email);
     };
 
+    const signInWithDevAccess = async () => {
+        if (!devAuth.enabled || !devAuth.email || !devAuth.password) {
+            throw new Error('Dev access is not configured for this local environment.');
+        }
+        await signInWithEmailAndPassword(auth, devAuth.email, devAuth.password);
+    };
+
     const value: AuthContextType = {
         user,
         loading,
@@ -101,7 +121,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         signUp,
         signInWithGoogle,
         signOut,
-        resetPassword
+        resetPassword,
+        signInWithDevAccess,
+        hasDevAccess: devAuth.enabled,
+        devAccessLabel: devAuth.enabled ? devAuth.label : null,
     };
 
     return (

@@ -66,6 +66,9 @@ Current implementation state:
 - planned route modes now also generate stop-by-stop timetable previews for the first departures and include that structure in the exportable handoff
 - planned route modes now also support interior stop timing anchors so timed stops can shape the timetable instead of relying only on even spacing
 - planned route modes now also surface schedule-structure warnings when timed stops are still interpolated or when manual anchors are applied to regular stops
+- planned route modes now also expose timing profiles plus start/end terminal hold assumptions so schedule structure can be shaped before downstream scheduling
+- planned route modes now also validate terminal stop roles and anchor order when building schedule-ready handoff outputs
+- planned route modes now also expose a first-pass coverage layer using configurable walksheds and a starter Barrie strategic market point set (hubs + schools)
 
 ## 5. Primary Users
 

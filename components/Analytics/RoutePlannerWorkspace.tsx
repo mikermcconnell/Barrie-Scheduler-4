@@ -8,6 +8,7 @@ import { ROUTE_DIRECTIONS } from '../../utils/config/routeDirectionConfig';
 import { buildCorridorSpeedIndex } from '../../utils/gtfs/corridorSpeed';
 import { DAY_TYPES, TIME_PERIODS, type DayType, type TimePeriod } from '../../utils/gtfs/corridorHeadway';
 import { deriveRouteProject } from '../../utils/route-planner/routePlannerPlanning';
+import { compareRouteCoverageMetrics } from '../../utils/route-planner/routePlannerCoverage';
 import {
     applyObservedRuntimeToScenario,
     estimateObservedRuntimeForScenario,
@@ -100,6 +101,12 @@ const stopRoleLabel = {
     regular: 'Stop',
 } as const;
 
+const timingProfileLabel = {
+    balanced: 'Balanced',
+    front_loaded: 'Front-loaded',
+    back_loaded: 'Back-loaded',
+} as const;
+
 function downloadMarkdownFile(filename: string, content: string): void {
     const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -110,6 +117,11 @@ function downloadMarkdownFile(filename: string, content: string): void {
     anchor.click();
     document.body.removeChild(anchor);
     URL.revokeObjectURL(url);
+}
+
+function formatSignedDelta(value: number): string {
+    if (value > 0) return `+${value}`;
+    return `${value}`;
 }
 
 function PlannerModeStrip({
@@ -194,6 +206,7 @@ function PlannedModePanel({
     const requiresExistingRoute = selectedMode === 'existing-route-tweak';
     const {
         projects,
+        localDraftProject,
         projectError,
         project: draftProject,
         draftState,
@@ -225,6 +238,10 @@ function PlannedModePanel({
         updateSelectedScenarioLastDeparture,
         updateSelectedScenarioFrequencyMinutes,
         updateSelectedScenarioLayoverMinutes,
+        updateSelectedScenarioTimingProfile,
+        updateSelectedScenarioStartTerminalHoldMinutes,
+        updateSelectedScenarioEndTerminalHoldMinutes,
+        updateSelectedScenarioCoverageWalkshedMeters,
         updateSelectedScenarioNotes,
         updateSelectedStopName,
         updateSelectedStopRole,
@@ -312,6 +329,10 @@ function PlannedModePanel({
     const preferredTimetablePreview = useMemo(
         () => (preferredDisplayScenario ? buildRouteTimetablePreview(preferredDisplayScenario, 5) : null),
         [preferredDisplayScenario],
+    );
+    const coverageComparisonDelta = useMemo(
+        () => compareRouteCoverageMetrics(displayVisibleScenarios[0]?.coverage, displayVisibleScenarios[1]?.coverage),
+        [displayVisibleScenarios],
     );
     const selectedAccent = selectedScenario ? routeAccentStyles[selectedScenario.accent] : routeAccentStyles.indigo;
     const observedRuntimeStatus = (() => {
@@ -984,11 +1005,57 @@ function PlannedModePanel({
                                                 className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-bold text-gray-900 outline-none focus:border-brand-blue"
                                             />
                                         </label>
+                                        <label className="block">
+                                            <p className="mb-1 text-[11px] font-extrabold uppercase tracking-wider text-gray-400">Timing Profile</p>
+                                            <select
+                                                value={selectedScenario.timingProfile}
+                                                onChange={(event) => updateSelectedScenarioTimingProfile(event.target.value as typeof selectedScenario.timingProfile)}
+                                                className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-bold text-gray-900 outline-none focus:border-brand-blue"
+                                            >
+                                                <option value="balanced">Balanced</option>
+                                                <option value="front_loaded">Front-loaded</option>
+                                                <option value="back_loaded">Back-loaded</option>
+                                            </select>
+                                        </label>
+                                        <label className="block">
+                                            <p className="mb-1 text-[11px] font-extrabold uppercase tracking-wider text-gray-400">Start Terminal Hold (min)</p>
+                                            <input
+                                                type="number"
+                                                min={0}
+                                                step={1}
+                                                value={selectedScenario.startTerminalHoldMinutes}
+                                                onChange={(event) => updateSelectedScenarioStartTerminalHoldMinutes(Number(event.target.value))}
+                                                className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-bold text-gray-900 outline-none focus:border-brand-blue"
+                                            />
+                                        </label>
+                                        <label className="block">
+                                            <p className="mb-1 text-[11px] font-extrabold uppercase tracking-wider text-gray-400">End Terminal Hold (min)</p>
+                                            <input
+                                                type="number"
+                                                min={0}
+                                                step={1}
+                                                value={selectedScenario.endTerminalHoldMinutes}
+                                                onChange={(event) => updateSelectedScenarioEndTerminalHoldMinutes(Number(event.target.value))}
+                                                className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-bold text-gray-900 outline-none focus:border-brand-blue"
+                                            />
+                                        </label>
+                                        <label className="block">
+                                            <p className="mb-1 text-[11px] font-extrabold uppercase tracking-wider text-gray-400">Walkshed (m)</p>
+                                            <input
+                                                type="number"
+                                                min={200}
+                                                max={1000}
+                                                step={50}
+                                                value={selectedScenario.coverageWalkshedMeters}
+                                                onChange={(event) => updateSelectedScenarioCoverageWalkshedMeters(Number(event.target.value))}
+                                                className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-bold text-gray-900 outline-none focus:border-brand-blue"
+                                            />
+                                        </label>
                                     </div>
                                     <div className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
                                         <div className="text-xs font-extrabold uppercase tracking-[0.16em] text-gray-400">Live Output</div>
                                         <div className="mt-2 text-sm font-semibold leading-relaxed text-gray-600">
-                                            Service edits now recalculate runtime-aware departures, cycle, buses required, and handoff exports for the selected scenario.
+                                            Service edits now recalculate runtime-aware departures, timing structure, coverage reach, cycle, buses required, and handoff exports for the selected scenario.
                                         </div>
                                     </div>
                                 </div>
@@ -1012,8 +1079,28 @@ function PlannedModePanel({
                             {displaySelectedScenario ? (
                                 <div className="space-y-3">
                                     <p className="text-sm font-semibold leading-relaxed text-gray-600">
-                                        Timed interior stops should usually carry anchors. Terminal times come from span and runtime; non-anchored interior stops are interpolated between the nearest anchors.
+                                        Timed interior stops should usually carry anchors. Terminal holds and the selected timing profile shape the default interpolation between anchors.
                                     </p>
+                                    <div className="grid gap-3 md:grid-cols-3">
+                                        <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
+                                            <div className="text-xs font-extrabold uppercase tracking-[0.16em] text-gray-400">Timing Profile</div>
+                                            <div className="mt-1 text-sm font-extrabold text-gray-900">
+                                                {timingProfileLabel[displaySelectedScenario.timingProfile]}
+                                            </div>
+                                        </div>
+                                        <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
+                                            <div className="text-xs font-extrabold uppercase tracking-[0.16em] text-gray-400">Start Hold</div>
+                                            <div className="mt-1 text-sm font-extrabold text-gray-900">
+                                                {displaySelectedScenario.startTerminalHoldMinutes} min
+                                            </div>
+                                        </div>
+                                        <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
+                                            <div className="text-xs font-extrabold uppercase tracking-[0.16em] text-gray-400">End Hold</div>
+                                            <div className="mt-1 text-sm font-extrabold text-gray-900">
+                                                {displaySelectedScenario.endTerminalHoldMinutes} min
+                                            </div>
+                                        </div>
+                                    </div>
                                     <div className="space-y-2">
                                         {selectedTimingPlan.map((row) => (
                                             <button
@@ -1110,7 +1197,11 @@ function PlannedModePanel({
                                         <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
                                             <div className="text-xs font-extrabold uppercase tracking-[0.16em] text-gray-400">Runtime Source</div>
                                             <div className="mt-1 text-sm font-extrabold text-gray-900">
-                                                {displaySelectedScenario.runtimeSourceMode === 'observed_proxy' ? 'Observed + fallback mix' : 'Fallback estimate'}
+                                                {displaySelectedScenario.runtimeSourceMode === 'observed_proxy'
+                                                    ? 'Observed + fallback mix'
+                                                    : displaySelectedScenario.runtimeSourceMode === 'manual_override'
+                                                        ? 'Manual override'
+                                                        : 'Fallback estimate'}
                                             </div>
                                         </div>
                                     </div>
@@ -1169,6 +1260,114 @@ function PlannedModePanel({
                         </section>
 
                         <section className="rounded-3xl border-2 border-gray-200 bg-white p-5 shadow-sm">
+                            <div className="mb-4 flex items-center justify-between gap-3">
+                                <div>
+                                    <p className="text-xs font-extrabold uppercase tracking-[0.2em] text-gray-400">Coverage</p>
+                                    <h3 className="mt-2 text-lg font-extrabold text-gray-900">Strategic market reach</h3>
+                                </div>
+                                <div className="rounded-full bg-gray-100 px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-[0.16em] text-gray-500">
+                                    Starter Layer
+                                </div>
+                            </div>
+                            {displaySelectedScenario ? (
+                                <div className="space-y-3">
+                                    <p className="text-sm font-semibold leading-relaxed text-gray-600">
+                                        This first-pass coverage layer checks whether the scenario serves Barrie strategic hubs and schools inside the selected walkshed. Population and employment layers can replace this later without changing the scenario model.
+                                    </p>
+                                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                                        <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
+                                            <div className="text-xs font-extrabold uppercase tracking-[0.16em] text-gray-400">Served Points</div>
+                                            <div className="mt-1 text-sm font-extrabold text-gray-900">
+                                                {displaySelectedScenario.coverage.servedMarketPoints ?? 0} / {displaySelectedScenario.coverage.totalMarketPoints ?? 0}
+                                            </div>
+                                        </div>
+                                        <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
+                                            <div className="text-xs font-extrabold uppercase tracking-[0.16em] text-gray-400">Schools</div>
+                                            <div className="mt-1 text-sm font-extrabold text-gray-900">
+                                                {displaySelectedScenario.coverage.servedSchools ?? 0} / {displaySelectedScenario.coverage.totalSchools ?? 0}
+                                            </div>
+                                        </div>
+                                        <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
+                                            <div className="text-xs font-extrabold uppercase tracking-[0.16em] text-gray-400">Hubs</div>
+                                            <div className="mt-1 text-sm font-extrabold text-gray-900">
+                                                {displaySelectedScenario.coverage.servedHubs ?? 0} / {displaySelectedScenario.coverage.totalHubs ?? 0}
+                                            </div>
+                                        </div>
+                                        <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
+                                            <div className="text-xs font-extrabold uppercase tracking-[0.16em] text-gray-400">Walkshed</div>
+                                            <div className="mt-1 text-sm font-extrabold text-gray-900">
+                                                {displaySelectedScenario.coverage.walkshedRadiusMeters ?? displaySelectedScenario.coverageWalkshedMeters} m
+                                            </div>
+                                        </div>
+                                    </div>
+                                    {compareMode && displayVisibleScenarios.length > 1 && (
+                                        <div className="grid gap-3 md:grid-cols-3">
+                                            <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
+                                                <div className="text-xs font-extrabold uppercase tracking-[0.16em] text-gray-400">Point Delta</div>
+                                                <div className={`mt-1 text-sm font-extrabold ${
+                                                    coverageComparisonDelta.servedMarketPointsDelta > 0
+                                                        ? 'text-emerald-700'
+                                                        : coverageComparisonDelta.servedMarketPointsDelta < 0
+                                                            ? 'text-rose-700'
+                                                            : 'text-gray-900'
+                                                }`}>
+                                                    {formatSignedDelta(coverageComparisonDelta.servedMarketPointsDelta)}
+                                                </div>
+                                            </div>
+                                            <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
+                                                <div className="text-xs font-extrabold uppercase tracking-[0.16em] text-gray-400">School Delta</div>
+                                                <div className={`mt-1 text-sm font-extrabold ${
+                                                    coverageComparisonDelta.servedSchoolsDelta > 0
+                                                        ? 'text-emerald-700'
+                                                        : coverageComparisonDelta.servedSchoolsDelta < 0
+                                                            ? 'text-rose-700'
+                                                            : 'text-gray-900'
+                                                }`}>
+                                                    {formatSignedDelta(coverageComparisonDelta.servedSchoolsDelta)}
+                                                </div>
+                                            </div>
+                                            <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
+                                                <div className="text-xs font-extrabold uppercase tracking-[0.16em] text-gray-400">Hub Delta</div>
+                                                <div className={`mt-1 text-sm font-extrabold ${
+                                                    coverageComparisonDelta.servedHubsDelta > 0
+                                                        ? 'text-emerald-700'
+                                                        : coverageComparisonDelta.servedHubsDelta < 0
+                                                            ? 'text-rose-700'
+                                                            : 'text-gray-900'
+                                                }`}>
+                                                    {formatSignedDelta(coverageComparisonDelta.servedHubsDelta)}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+                                    <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
+                                        <div className="text-xs font-extrabold uppercase tracking-[0.16em] text-gray-400">Served Strategic Points</div>
+                                        {displaySelectedScenario.coverage.servedPointLabels && displaySelectedScenario.coverage.servedPointLabels.length > 0 ? (
+                                            <div className="mt-3 flex flex-wrap gap-2">
+                                                {displaySelectedScenario.coverage.servedPointLabels.map((label) => (
+                                                    <span
+                                                        key={label}
+                                                        className="rounded-full bg-white px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-[0.12em] text-gray-600"
+                                                    >
+                                                        {label}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <p className="mt-2 text-sm font-semibold leading-relaxed text-gray-500">
+                                                Add stops near a strategic hub or school to begin coverage comparison.
+                                            </p>
+                                        )}
+                                    </div>
+                                </div>
+                            ) : (
+                                <p className="text-sm font-semibold leading-relaxed text-gray-500">
+                                    Select a scenario to review coverage reach.
+                                </p>
+                            )}
+                        </section>
+
+                        <section className="rounded-3xl border-2 border-gray-200 bg-white p-5 shadow-sm">
                             <div className="mb-4 flex items-center justify-between">
                                 <div>
                                     <p className="text-xs font-extrabold uppercase tracking-[0.2em] text-gray-400">Projects</p>
@@ -1179,11 +1378,19 @@ function PlannedModePanel({
                                 </div>
                             </div>
                             <div className="space-y-3">
-                                {isLocalDraft && (
-                                    <div className="rounded-2xl border-2 border-dashed border-indigo-200 bg-indigo-50/70 p-4">
-                                        <p className="text-sm font-extrabold text-gray-900">{draftProject.name}</p>
+                                {localDraftProject && (
+                                    <button
+                                        type="button"
+                                        onClick={() => selectProject(localDraftProject)}
+                                        className={`w-full rounded-2xl border-2 border-dashed p-4 text-left transition-all ${
+                                            draftProject.id === localDraftProject.id
+                                                ? 'border-indigo-300 bg-indigo-50/70 shadow-sm'
+                                                : 'border-indigo-200 bg-indigo-50/50 hover:border-indigo-300 hover:bg-indigo-50'
+                                        }`}
+                                    >
+                                        <p className="text-sm font-extrabold text-gray-900">{localDraftProject.name}</p>
                                         <p className="mt-1 text-xs font-semibold text-gray-500">Current local route study. Save it to make it available across sessions and devices.</p>
-                                    </div>
+                                    </button>
                                 )}
                                 {projects.map((project) => {
                                     const isSelectedProject = project.id === draftProject.id;
@@ -1321,6 +1528,7 @@ function PlannedModePanel({
                                     { label: 'Buses', values: displayVisibleScenarios.map((scenario) => `${scenario.busesRequired}`) },
                                     { label: 'Distance', values: displayVisibleScenarios.map((scenario) => `${scenario.distanceKm} km`) },
                                     { label: 'Stops', values: displayVisibleScenarios.map((scenario) => `${scenario.stops.length}`) },
+                                    { label: 'Coverage', values: displayVisibleScenarios.map((scenario) => `${scenario.coverage.servedMarketPoints ?? 0}/${scenario.coverage.totalMarketPoints ?? 0}`) },
                                     { label: 'Warnings', values: displayVisibleScenarios.map((scenario) => `${scenario.warnings.length}`) },
                                 ].map((row) => (
                                     <div key={row.label} className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
@@ -1366,6 +1574,12 @@ function PlannedModePanel({
                                                 <div className="mt-1 text-sm font-extrabold text-gray-900">{preferredDisplayScenario.firstDeparture} to {preferredDisplayScenario.lastDeparture} · every {preferredDisplayScenario.frequencyMinutes} min</div>
                                             </div>
                                             <div className="rounded-xl bg-white px-3 py-2">
+                                                <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-gray-400">Timing Structure</div>
+                                                <div className="mt-1 text-sm font-extrabold text-gray-900">
+                                                    {timingProfileLabel[preferredDisplayScenario.timingProfile]} · {preferredDisplayScenario.startTerminalHoldMinutes}/{preferredDisplayScenario.endTerminalHoldMinutes} min holds
+                                                </div>
+                                            </div>
+                                            <div className="rounded-xl bg-white px-3 py-2">
                                                 <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-gray-400">Runtime Source</div>
                                                 <div className="mt-1 text-sm font-extrabold text-gray-900">
                                                     {preferredDisplayScenario.runtimeSourceMode === 'observed_proxy'
@@ -1373,6 +1587,12 @@ function PlannedModePanel({
                                                         : preferredDisplayScenario.runtimeSourceMode === 'manual_override'
                                                             ? 'Manual override'
                                                             : 'Fallback estimate'}
+                                                </div>
+                                            </div>
+                                            <div className="rounded-xl bg-white px-3 py-2">
+                                                <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-gray-400">Coverage Reach</div>
+                                                <div className="mt-1 text-sm font-extrabold text-gray-900">
+                                                    {preferredDisplayScenario.coverage.servedMarketPoints ?? 0}/{preferredDisplayScenario.coverage.totalMarketPoints ?? 0} strategic points
                                                 </div>
                                             </div>
                                         </div>

@@ -160,6 +160,8 @@ Current status:
 - planned route modes now also expose reusable stop-by-stop timetable preview generation through `utils/route-planner/routePlannerTimetable.ts` and surface that preview in both the workspace and exports
 - planned route modes now also support interior stop timing anchors through `utils/route-planner/routePlannerPlanning.ts`, `components/Analytics/useRoutePlannerProjectController.ts`, and `components/Analytics/RoutePlannerWorkspace.tsx`
 - planned route modes now also expose route-wide timing structure review and schedule-structure warnings through `components/Analytics/RoutePlannerWorkspace.tsx` and `utils/route-planner/routePlannerPlanning.ts`
+- planned route modes now also expose explicit timing-profile selection, start/end terminal hold assumptions, and schedule-ready stop / anchor validation through `utils/route-planner/routePlannerPlanning.ts`, `components/Analytics/useRoutePlannerProjectController.ts`, `components/Analytics/RoutePlannerWorkspace.tsx`, and `utils/route-planner/routePlannerOutputs.ts`
+- planned route modes now also expose a starter coverage workflow with configurable walkshed assumptions and a local strategic market layer for Barrie hubs and schools through `utils/route-planner/routePlannerCoverage.ts`, `utils/route-planner/routePlannerCoverageSeed.ts`, `components/Analytics/useRoutePlannerProjectController.ts`, and `components/Analytics/RoutePlannerWorkspace.tsx`
 
 ### Phase 3: Add real map authoring and stop editing
 
@@ -277,11 +279,11 @@ Definition of done:
 
 The next practical build step is now:
 
-- deepen route-specific timing controls further by supporting richer anchor logic and schedule-ready assumptions such as terminal holds, timed-stop validation, and more explicit timing profiles
+- replace the starter strategic market layer with a real population / employment dataset on top of the now-runtime-aware, service-editable, timing-structured, and exportable route-study workflow
 
 After that, the next architecture step should be:
 
-- start shaping the Phase 2 coverage layer on top of the now-runtime-aware, service-editable, and exportable route-study workflow
+- add first-pass land-use-specific analysis layers after the demographic coverage workflow is stable
 
 ## 8. Documentation Maintenance
 

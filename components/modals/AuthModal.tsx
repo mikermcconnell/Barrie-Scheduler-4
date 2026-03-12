@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { X, Mail, Lock, User, Loader2, AlertCircle } from 'lucide-react';
+import { X, Mail, Lock, User, Loader2, AlertCircle, KeyRound } from 'lucide-react';
 
 interface AuthModalProps {
     isOpen: boolean;
@@ -8,7 +8,15 @@ interface AuthModalProps {
 }
 
 export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
-    const { signIn, signUp, signInWithGoogle, resetPassword } = useAuth();
+    const {
+        signIn,
+        signUp,
+        signInWithGoogle,
+        resetPassword,
+        signInWithDevAccess,
+        hasDevAccess,
+        devAccessLabel,
+    } = useAuth();
     const [mode, setMode] = useState<'signin' | 'signup' | 'reset'>('signin');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
@@ -67,7 +75,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
         }
     };
 
-    const handleGoogleSignIn = async () => {
+    const _handleGoogleSignIn = async () => {
         setError('');
         setLoading(true);
         try {
@@ -75,6 +83,20 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
             onClose();
         } catch (err: any) {
             setError(err.message || 'Failed to sign in with Google');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleDevAccess = async () => {
+        setError('');
+        setSuccessMessage('');
+        setLoading(true);
+        try {
+            await signInWithDevAccess();
+            onClose();
+        } catch (err: any) {
+            setError(err.message || 'Failed to sign in with dev access');
         } finally {
             setLoading(false);
         }
@@ -181,6 +203,23 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
                         {loading && <Loader2 className="animate-spin" size={20} />}
                         {mode === 'signin' ? 'Sign In' : mode === 'signup' ? 'Create Account' : 'Send Reset Link'}
                     </button>
+
+                    {hasDevAccess && mode === 'signin' && (
+                        <div className="rounded-2xl border-2 border-cyan-200 bg-cyan-50 p-3 text-left">
+                            <button
+                                type="button"
+                                onClick={handleDevAccess}
+                                disabled={loading}
+                                className="w-full text-cyan-900 font-bold py-3 rounded-xl transition-colors hover:bg-cyan-100 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                            >
+                                {loading ? <Loader2 className="animate-spin" size={20} /> : <KeyRound size={18} />}
+                                {devAccessLabel || 'Dev Test Access'}
+                            </button>
+                            <p className="mt-2 text-xs font-semibold leading-relaxed text-cyan-900/80">
+                                Localhost only. Use a seeded Firebase account that already has owner or admin access if you want full team visibility.
+                            </p>
+                        </div>
+                    )}
 
                     {/* Mode Switchers */}
                     <div className="text-center pt-2 space-y-2">

@@ -64,23 +64,27 @@ const CustomTooltip = ({ active, payload, label, viewMode }: any) => {
 
     // Dynamic tooltip data based on view
     let req = data.totalRequirement;
-    let cover = data.totalActiveCoverage;
+    let cover = data.totalEffectiveCoverage;
     let net = data.netDifference;
     let title = "Total System";
+    let activeDrivers = data.totalActiveCoverage;
 
     if (viewMode === 'North') {
       req = data.northRequirement;
       cover = data.northCoverage;
+      activeDrivers = cover;
       net = cover - req;
       title = "North Zone (Exclusive)";
     } else if (viewMode === 'South') {
       req = data.southRequirement;
       cover = data.southCoverage;
+      activeDrivers = cover;
       net = cover - req;
       title = "South Zone (Exclusive)";
     } else if (viewMode === 'Floater') {
       req = data.floaterEffectiveRequirement || 0;
       cover = data.floaterCoverage;
+      activeDrivers = cover;
       net = cover - req;
       title = "Floater Zone (Exclusive)";
     }
@@ -94,9 +98,25 @@ const CustomTooltip = ({ active, payload, label, viewMode }: any) => {
             <span>{req}</span>
           </div>
           <div className="flex justify-between gap-4">
-            <span className="text-brand-green">Active {viewMode === 'Floater' ? 'Floaters' : 'Drivers'}:</span>
+            <span className="text-brand-green">
+              {viewMode === 'All'
+                ? 'Effective Coverage:'
+                : `Active ${viewMode === 'Floater' ? 'Floaters' : 'Drivers'}:`}
+            </span>
             <span>{cover}</span>
           </div>
+          {viewMode === 'All' && activeDrivers !== cover && (
+            <div className="flex justify-between gap-4 text-gray-500">
+              <span>Drivers on road:</span>
+              <span>{activeDrivers}</span>
+            </div>
+          )}
+          {viewMode === 'All' && data.totalOverlappingShifts !== activeDrivers && (
+            <div className="flex justify-between gap-4 text-gray-500">
+              <span>Overlapping shifts:</span>
+              <span>{data.totalOverlappingShifts}</span>
+            </div>
+          )}
           <div className={`flex justify-between gap-4 pt-1 border-t ${net < 0 ? 'text-brand-red' : 'text-brand-green'}`}>
             <span>{net < 0 ? 'Gap:' : 'Surplus:'}</span>
             <span>{net > 0 ? '+' : ''}{net}</span>
@@ -130,7 +150,7 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
 
     currentCover: zoneFilter === 'North' ? d.northCoverage :
       (zoneFilter === 'South' ? d.southCoverage :
-        (zoneFilter === 'Floater' ? d.floaterCoverage : d.totalActiveCoverage)),
+        (zoneFilter === 'Floater' ? d.floaterCoverage : d.totalEffectiveCoverage)),
 
     currentNet: zoneFilter === 'North' ? ((d.northCoverage + (d.northRelief || 0)) - d.northRequirement) :
       (zoneFilter === 'South' ? ((d.southCoverage + (d.southRelief || 0)) - d.southRequirement) :
@@ -153,7 +173,7 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
 
       const cov = zoneFilter === 'North' ? d.northCoverage :
         (zoneFilter === 'South' ? d.southCoverage :
-          (zoneFilter === 'Floater' ? d.floaterCoverage : d.totalActiveCoverage));
+          (zoneFilter === 'Floater' ? d.floaterCoverage : d.totalEffectiveCoverage));
 
       return Math.max(req, cov);
     }));
@@ -232,7 +252,13 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
             </div>
             <div className="flex items-center gap-2">
               <div className="w-3 h-3 rounded-full bg-brand-green"></div>
-              <span>{zoneFilter === 'Floater' ? 'Active Floaters' : 'Active Drivers'}</span>
+              <span>
+                {zoneFilter === 'All'
+                  ? 'Effective Coverage'
+                  : zoneFilter === 'Floater'
+                    ? 'Active Floaters'
+                    : 'Active Drivers'}
+              </span>
             </div>
             {(zoneFilter === 'North' || zoneFilter === 'South') && (
               <div className="flex items-center gap-2">
@@ -351,7 +377,7 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
               {zoneFilter === 'All' && (
                 <Line
                   type="stepAfter"
-                  dataKey="originalActiveCoverage"
+                  dataKey="originalEffectiveCoverage"
                   stroke="#9CA3AF"
                   strokeWidth={2}
                   strokeDasharray="3 3"

@@ -4,10 +4,11 @@
  * Provides team state and operations throughout the application.
  */
 
-import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import React, { createContext, useContext, useEffect, useState, ReactNode, useCallback } from 'react';
 import { useAuth } from './AuthContext';
-import { getUserTeam } from '../../utils/services/teamService';
+import { getUserTeam, joinTeamByInviteCode } from '../../utils/services/teamService';
 import type { Team } from '../../utils/masterScheduleTypes';
+import { getDevAuthConfig } from '../../utils/dev/devAuth';
 
 interface TeamContextType {
     team: Team | null;
@@ -37,8 +38,9 @@ export const TeamProvider: React.FC<TeamProviderProps> = ({ children }) => {
     const { user } = useAuth();
     const [team, setTeam] = useState<Team | null>(null);
     const [loading, setLoading] = useState(true);
+    const devAuth = getDevAuthConfig();
 
-    const loadTeam = async () => {
+    const loadTeam = useCallback(async () => {
         if (!user) {
             setTeam(null);
             setLoading(false);
@@ -47,7 +49,18 @@ export const TeamProvider: React.FC<TeamProviderProps> = ({ children }) => {
 
         try {
             setLoading(true);
-            const userTeam = await getUserTeam(user.uid);
+            let userTeam = await getUserTeam(user.uid);
+
+            if (!userTeam && devAuth.enabled && devAuth.teamInviteCode) {
+                await joinTeamByInviteCode(
+                    user.uid,
+                    devAuth.teamInviteCode,
+                    user.displayName || user.email?.split('@')[0] || 'Dev User',
+                    user.email || '',
+                );
+                userTeam = await getUserTeam(user.uid);
+            }
+
             setTeam(userTeam);
         } catch (error) {
             console.error('Error loading team:', error);
@@ -55,15 +68,15 @@ export const TeamProvider: React.FC<TeamProviderProps> = ({ children }) => {
         } finally {
             setLoading(false);
         }
-    };
+    }, [devAuth.enabled, devAuth.teamInviteCode, user]);
 
     const refreshTeam = async () => {
         await loadTeam();
     };
 
     useEffect(() => {
-        loadTeam();
-    }, [user]);
+        void loadTeam();
+    }, [loadTeam]);
 
 
     const value: TeamContextType = {

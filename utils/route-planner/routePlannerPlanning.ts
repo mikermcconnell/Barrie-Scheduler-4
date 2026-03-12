@@ -1,3 +1,4 @@
+import { deriveRouteCoverageMetrics } from './routePlannerCoverage';
 import type { RouteProject, RouteScenario, RouteStop } from './routePlannerTypes';
 
 const EARTH_RADIUS_KM = 6371;
@@ -158,7 +159,57 @@ function buildDepartures(firstDeparture: string, lastDeparture: string, frequenc
     return departures;
 }
 
-function deriveStopTimes(stops: RouteStop[], firstDeparture: string, runtimeMinutes: number): RouteStop[] {
+function normalizeTimingProfile(
+    value: RouteScenario['timingProfile'] | undefined
+): RouteScenario['timingProfile'] {
+    if (value === 'front_loaded' || value === 'back_loaded') return value;
+    return 'balanced';
+}
+
+function applyTimingProfile(position: number, profile: RouteScenario['timingProfile']): number {
+    if (profile === 'front_loaded') return Math.pow(position, 0.8);
+    if (profile === 'back_loaded') return Math.pow(position, 1.25);
+    return position;
+}
+
+function buildDefaultStopOffsets(
+    stopCount: number,
+    runtimeMinutes: number,
+    timingProfile: RouteScenario['timingProfile'],
+    startTerminalHoldMinutes: number,
+    endTerminalHoldMinutes: number
+): number[] {
+    if (stopCount <= 1) return [0];
+    if (stopCount === 2) return [0, runtimeMinutes];
+
+    const availableRuntime = Math.max(0, runtimeMinutes - startTerminalHoldMinutes - endTerminalHoldMinutes);
+    const offsets = Array.from({ length: stopCount }, (_, index) => {
+        if (index === 0) return 0;
+        if (index === stopCount - 1) return runtimeMinutes;
+
+        const position = index / (stopCount - 1);
+        return Math.round(
+            startTerminalHoldMinutes
+            + (applyTimingProfile(position, timingProfile) * availableRuntime)
+        );
+    });
+
+    for (let index = 1; index < offsets.length; index += 1) {
+        offsets[index] = Math.min(runtimeMinutes, Math.max(offsets[index], offsets[index - 1]));
+    }
+
+    offsets[offsets.length - 1] = runtimeMinutes;
+    return offsets;
+}
+
+function deriveStopTimes(
+    stops: RouteStop[],
+    firstDeparture: string,
+    runtimeMinutes: number,
+    timingProfile: RouteScenario['timingProfile'],
+    startTerminalHoldMinutes: number,
+    endTerminalHoldMinutes: number
+): RouteStop[] {
     if (stops.length === 0) return stops;
 
     const departureMinutes = parseClockToMinutes(firstDeparture);
@@ -171,16 +222,25 @@ function deriveStopTimes(stops: RouteStop[], firstDeparture: string, runtimeMinu
         }];
     }
 
+    const defaultOffsets = buildDefaultStopOffsets(
+        stops.length,
+        runtimeMinutes,
+        timingProfile,
+        startTerminalHoldMinutes,
+        endTerminalHoldMinutes
+    );
     const anchorOffsets = new Map<number, number>();
     anchorOffsets.set(0, 0);
     anchorOffsets.set(stops.length - 1, runtimeMinutes);
     let lastAnchorOffset = 0;
+    const latestInteriorOffset = Math.max(1, runtimeMinutes - Math.max(0, endTerminalHoldMinutes) - 1);
 
     for (let index = 1; index < stops.length - 1; index += 1) {
         const rawOffset = stops[index]?.plannedOffsetMinutes;
         if (!Number.isFinite(rawOffset) || rawOffset === null || rawOffset === undefined) continue;
 
-        const sanitizedOffset = Math.max(lastAnchorOffset + 1, Math.min(runtimeMinutes - 1, Math.round(rawOffset)));
+        const earliestOffset = Math.max(lastAnchorOffset + 1, Math.max(1, startTerminalHoldMinutes));
+        const sanitizedOffset = Math.max(earliestOffset, Math.min(latestInteriorOffset, Math.round(rawOffset)));
         anchorOffsets.set(index, sanitizedOffset);
         lastAnchorOffset = sanitizedOffset;
     }
@@ -193,16 +253,21 @@ function deriveStopTimes(stops: RouteStop[], firstDeparture: string, runtimeMinu
         const endIndex = anchorIndices[anchorIndex + 1];
         const startOffset = anchorOffsets.get(startIndex) ?? 0;
         const endOffset = anchorOffsets.get(endIndex) ?? runtimeMinutes;
-        const span = endIndex - startIndex;
+        const defaultStartOffset = defaultOffsets[startIndex] ?? startOffset;
+        const defaultEndOffset = defaultOffsets[endIndex] ?? endOffset;
+        const defaultSpan = defaultEndOffset - defaultStartOffset;
 
         for (let index = startIndex; index <= endIndex; index += 1) {
-            const ratio = span === 0 ? 0 : (index - startIndex) / span;
+            const defaultOffset = defaultOffsets[index] ?? startOffset;
+            const ratio = defaultSpan <= 0
+                ? (endIndex === startIndex ? 0 : (index - startIndex) / (endIndex - startIndex))
+                : (defaultOffset - defaultStartOffset) / defaultSpan;
             offsetsByIndex.set(index, Math.round(startOffset + ((endOffset - startOffset) * ratio)));
         }
     }
 
     return stops.map((stop, index) => {
-        const offsetMinutes = offsetsByIndex.get(index) ?? Math.round((runtimeMinutes * index) / (stops.length - 1));
+        const offsetMinutes = offsetsByIndex.get(index) ?? defaultOffsets[index] ?? Math.round((runtimeMinutes * index) / (stops.length - 1));
         return {
             ...stop,
             timeLabel: formatMinutesToClock(departureMinutes + offsetMinutes),
@@ -279,6 +344,23 @@ function buildWarnings(
         warnings.push('Runtime is zero or invalid. Check route geometry or runtime inputs.');
     }
 
+    if (scenario.stops[0] && scenario.stops[0].role !== 'terminal') {
+        warnings.push('First stop should be marked terminal for schedule-ready timing.');
+    }
+
+    if (scenario.stops.length > 1 && scenario.stops[scenario.stops.length - 1]?.role !== 'terminal') {
+        warnings.push('Last stop should be marked terminal for schedule-ready timing.');
+    }
+
+    if (
+        runtimeMinutes > 0
+        && scenario.stops.length > 2
+        && (scenario.startTerminalHoldMinutes + scenario.endTerminalHoldMinutes) >= runtimeMinutes
+    ) {
+        warnings.push('Terminal hold assumptions leave no runtime for interior movement. Reduce terminal holds or increase runtime.');
+    }
+
+    let previousAnchorOffset = 0;
     scenario.stops.forEach((stop, index) => {
         const isInteriorStop = index > 0 && index < scenario.stops.length - 1;
         if (!isInteriorStop) return;
@@ -289,6 +371,17 @@ function buildWarnings(
 
         if (stop.role === 'regular' && stop.plannedOffsetMinutes !== null && stop.plannedOffsetMinutes !== undefined) {
             warnings.push(`Stop "${stop.name}" has a manual timing anchor but is marked regular. Consider marking it as a timed stop.`);
+        }
+
+        if (stop.plannedOffsetMinutes !== null && stop.plannedOffsetMinutes !== undefined) {
+            const anchorOffset = Math.round(stop.plannedOffsetMinutes);
+            if (anchorOffset <= 0 || anchorOffset >= runtimeMinutes) {
+                warnings.push(`Timing anchor "${stop.name}" falls outside the trip runtime. Adjust it to sit between the terminals.`);
+            }
+            if (anchorOffset <= previousAnchorOffset) {
+                warnings.push(`Timing anchor "${stop.name}" is not later than the previous anchor. Adjust anchor order for a valid timetable.`);
+            }
+            previousAnchorOffset = Math.max(previousAnchorOffset + 1, anchorOffset);
         }
     });
 
@@ -302,18 +395,31 @@ export function deriveRouteScenario(scenario: RouteScenario): RouteScenario {
     const runtimeMinutes = deriveRuntimeMinutes(scenario, distanceKm);
     const layoverMinutes = clampMinutes(scenario.layoverMinutes, 5);
     const frequencyMinutes = clampMinutes(scenario.frequencyMinutes, 15);
+    const timingProfile = normalizeTimingProfile(scenario.timingProfile);
+    const startTerminalHoldMinutes = clampMinutes(scenario.startTerminalHoldMinutes, 0);
+    const endTerminalHoldMinutes = clampMinutes(scenario.endTerminalHoldMinutes, 0);
     const cycleMinutes = scenario.pattern === 'out-and-back'
         ? (runtimeMinutes * 2) + layoverMinutes
         : runtimeMinutes + layoverMinutes;
     const busesRequired = Math.max(1, Math.ceil(cycleMinutes / frequencyMinutes));
     const departures = buildDepartures(scenario.firstDeparture, scenario.lastDeparture, frequencyMinutes);
-    const stops = deriveStopTimes(scenario.stops, scenario.firstDeparture, runtimeMinutes);
+    const stops = deriveStopTimes(
+        scenario.stops,
+        scenario.firstDeparture,
+        runtimeMinutes,
+        timingProfile,
+        startTerminalHoldMinutes,
+        endTerminalHoldMinutes
+    );
     const warnings = buildWarnings(
         {
             ...scenario,
             stops,
             layoverMinutes,
             frequencyMinutes,
+            timingProfile,
+            startTerminalHoldMinutes,
+            endTerminalHoldMinutes,
             runtimeMinutes,
         },
         geometry,
@@ -322,7 +428,30 @@ export function deriveRouteScenario(scenario: RouteScenario): RouteScenario {
         busesRequired,
         departures
     );
-    const status = warnings.length === 0 ? 'ready_for_review' : 'draft';
+    const serviceHours = calculateServiceSpanHours(scenario.firstDeparture, scenario.lastDeparture, frequencyMinutes);
+    const coverage = deriveRouteCoverageMetrics({
+        ...scenario,
+        waypoints,
+        geometry,
+        distanceKm,
+        runtimeMinutes,
+        cycleMinutes,
+        busesRequired,
+        serviceHours,
+        frequencyMinutes,
+        layoverMinutes,
+        timingProfile,
+        startTerminalHoldMinutes,
+        endTerminalHoldMinutes,
+        departures,
+        stops,
+        warnings,
+    });
+    const status = warnings.length > 0
+        ? 'draft'
+        : scenario.status === 'ready_for_review'
+            ? 'ready_for_review'
+            : 'draft';
 
     return {
         ...scenario,
@@ -332,9 +461,13 @@ export function deriveRouteScenario(scenario: RouteScenario): RouteScenario {
         runtimeMinutes,
         cycleMinutes,
         busesRequired,
-        serviceHours: calculateServiceSpanHours(scenario.firstDeparture, scenario.lastDeparture, frequencyMinutes),
+        serviceHours,
         frequencyMinutes,
         layoverMinutes,
+        timingProfile,
+        startTerminalHoldMinutes,
+        endTerminalHoldMinutes,
+        coverage,
         departures,
         stops,
         warnings,

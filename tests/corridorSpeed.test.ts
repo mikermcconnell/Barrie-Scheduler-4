@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { DailySummary } from '../utils/performanceDataTypes';
 import {
     buildCorridorSpeedIndexFromData,
+    buildCorridorSpeedMapIndexFromData,
     calculateCorridorLengthMeters,
     getStatsForPeriod,
     normalizeStopName,
@@ -10,6 +11,7 @@ import {
     type CorridorSpeedSegment,
     type ScheduledStopSegmentSample,
 } from '../utils/gtfs/corridorSpeed';
+import type { CorridorSegment as GtfsCorridorSegment } from '../utils/gtfs/corridorBuilder';
 
 function makeDailySummary(overrides: Partial<DailySummary>): DailySummary {
     return {
@@ -212,5 +214,129 @@ describe('buildCorridorSpeedIndexFromData', () => {
 
         expect(getStatsForPeriod(index, 'weekday', 'am-peak', 'South').has(segment.id)).toBe(true);
         expect(getStatsForPeriod(index, 'weekday', 'am-peak', 'North').has(segment.id)).toBe(false);
+    });
+});
+
+describe('buildCorridorSpeedMapIndexFromData', () => {
+    it('aggregates adjacent stop-pair stats into a merged corridor segment', () => {
+        const rawSegments: CorridorSpeedSegment[] = [
+            {
+                id: 'North|stop-a|stop-b',
+                fromStopId: 'stop-a',
+                toStopId: 'stop-b',
+                fromStopName: 'Stop A',
+                toStopName: 'Stop B',
+                directionId: 'North',
+                routes: ['8A'],
+                geometry: [
+                    [44.38, -79.69],
+                    [44.381, -79.685],
+                ],
+                lengthMeters: 450,
+            },
+            {
+                id: 'North|stop-b|stop-c',
+                fromStopId: 'stop-b',
+                toStopId: 'stop-c',
+                fromStopName: 'Stop B',
+                toStopName: 'Stop C',
+                directionId: 'North',
+                routes: ['8A'],
+                geometry: [
+                    [44.381, -79.685],
+                    [44.382, -79.68],
+                ],
+                lengthMeters: 550,
+            },
+        ];
+
+        const scheduledSamples: ScheduledStopSegmentSample[] = [
+            {
+                segmentId: 'North|stop-a|stop-b',
+                route: '8A',
+                dayType: 'weekday',
+                directionId: 'North',
+                departureMinutes: 450,
+                runtimeMinutes: 5,
+            },
+            {
+                segmentId: 'North|stop-b|stop-c',
+                route: '8A',
+                dayType: 'weekday',
+                directionId: 'North',
+                departureMinutes: 455,
+                runtimeMinutes: 5,
+            },
+        ];
+
+        const dailySummaries: DailySummary[] = [
+            makeDailySummary({
+                stopSegmentRuntimes: {
+                    entries: [
+                        {
+                            routeId: '8A',
+                            direction: 'N',
+                            fromStopId: 'stop-a',
+                            toStopId: 'stop-b',
+                            fromStopName: 'Stop A',
+                            toStopName: 'Stop B',
+                            fromRouteStopIndex: 0,
+                            toRouteStopIndex: 1,
+                            segmentName: 'Stop A to Stop B',
+                            observations: [
+                                { timeBucket: '07:00', runtimeMinutes: 4 },
+                                { timeBucket: '07:00', runtimeMinutes: 4 },
+                            ],
+                        },
+                        {
+                            routeId: '8A',
+                            direction: 'N',
+                            fromStopId: 'stop-b',
+                            toStopId: 'stop-c',
+                            fromStopName: 'Stop B',
+                            toStopName: 'Stop C',
+                            fromRouteStopIndex: 1,
+                            toRouteStopIndex: 2,
+                            segmentName: 'Stop B to Stop C',
+                            observations: [
+                                { timeBucket: '07:00', runtimeMinutes: 5 },
+                                { timeBucket: '07:00', runtimeMinutes: 5 },
+                            ],
+                        },
+                    ],
+                    totalObservations: 4,
+                    tripsWithData: 2,
+                },
+            }),
+        ];
+
+        const rawIndex = buildCorridorSpeedIndexFromData(rawSegments, scheduledSamples, dailySummaries);
+        const corridorSegments: GtfsCorridorSegment[] = [{
+            id: 'corr-1',
+            stops: ['stop-a', 'stop-b', 'stop-c'],
+            stopNames: ['Stop A', 'Stop B', 'Stop C'],
+            routes: ['8A'],
+            routeColors: ['888888'],
+            geometry: [
+                [44.38, -79.69],
+                [44.381, -79.685],
+                [44.382, -79.68],
+            ],
+            isShared: false,
+        }];
+
+        const corridorIndex = buildCorridorSpeedMapIndexFromData(rawIndex, corridorSegments);
+        const stats = getStatsForPeriod(corridorIndex, 'weekday', 'am-peak').get('corr-1|North');
+
+        expect(stats).toBeDefined();
+        expect(stats?.scheduledRuntimeMin).toBe(10);
+        expect(stats?.observedRuntimeMin).toBe(9);
+        expect(stats?.sampleCount).toBe(2);
+        expect(stats?.routeBreakdown[0]).toMatchObject({
+            route: '8A',
+            sampleCount: 2,
+            scheduledRuntimeMin: 10,
+            observedRuntimeMin: 9,
+        });
     });
 });

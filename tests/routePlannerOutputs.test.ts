@@ -31,6 +31,10 @@ function createScenario(): RouteScenario {
         lastDeparture: '20:00',
         frequencyMinutes: 30,
         layoverMinutes: 5,
+        timingProfile: 'front_loaded',
+        startTerminalHoldMinutes: 2,
+        endTerminalHoldMinutes: 3,
+        coverageWalkshedMeters: 400,
         warnings: ['Observed proxy runtime covers 2 of 3 stop segments. Remaining segments use fallback estimates.'],
         departures: ['06:00', '06:30', '07:00'],
         waypoints: [],
@@ -40,7 +44,17 @@ function createScenario(): RouteScenario {
             { id: 'stop-b', name: 'Midpoint', kind: 'existing', sourceStopId: 'B', role: 'timed', latitude: 44.39, longitude: -79.68, timeLabel: '06:12' },
             { id: 'stop-c', name: 'Terminal C', kind: 'custom', role: 'terminal', latitude: 44.4, longitude: -79.67, timeLabel: '06:24' },
         ],
-        coverage: {},
+        coverage: {
+            source: 'strategic_markets_seed',
+            walkshedRadiusMeters: 400,
+            servedMarketPoints: 3,
+            totalMarketPoints: 12,
+            servedSchools: 1,
+            totalSchools: 7,
+            servedHubs: 2,
+            totalHubs: 5,
+            servedPointLabels: ['Georgian College', 'Downtown', 'Park Place'],
+        },
         status: 'draft',
     };
 }
@@ -78,6 +92,9 @@ describe('routePlannerOutputs', () => {
 
         expect(exportText).toContain('# Northwest Route Study');
         expect(exportText).toContain('Runtime Source: Observed proxy (2/3 matched stop segments, minimum 12 samples)');
+        expect(exportText).toContain('Timing Profile: Front-loaded');
+        expect(exportText).toContain('Terminal Holds: 2 min start / 3 min end');
+        expect(exportText).toContain('Coverage: 3/12 strategic market points within 400 m walkshed');
         expect(exportText).toContain('### Stops');
         expect(exportText).toContain('1. Terminal A');
     });
@@ -91,6 +108,8 @@ describe('routePlannerOutputs', () => {
 
         expect(handoffText).toContain('# Northwest Route Study - Scheduling Handoff');
         expect(handoffText).toContain('- Runtime: 24 min');
+        expect(handoffText).toContain('- Timing Profile: Front-loaded');
+        expect(handoffText).toContain('- Coverage: 3/12 strategic market points within 400 m walkshed');
         expect(handoffText).toContain('## Planning Notes');
         expect(handoffText).toContain('Use Dunlop instead of the existing local deviation.');
     });

@@ -169,9 +169,12 @@ Current implementation state:
 - those planned-mode shells now expose an observed runtime proxy card with STREETS-backed stop-to-stop evidence, day-type and time-period selectors, matched-segment counts, and segment-level fallback disclosure
 - those planned-mode shells now expose a first output layer with project-summary export and preferred-scenario scheduling handoff export
 - those planned-mode shells now expose editable service-definition fields for scenario name, pattern, status, span, frequency, and layover
+- those planned-mode shells now also expose timing-profile selection plus start/end terminal hold inputs inside the service-definition card
 - those planned-mode shells now expose a stop-by-stop timetable preview for the first departures of the preferred scenario
 - those planned-mode shells now expose interior stop timing anchors in the selected-stop editor so timed stops can shape the timetable
 - those planned-mode shells now expose a route-wide timing structure card that shows which stops are anchored, interpolated, or missing timed-stop anchors
+- those planned-mode shells now also surface schedule-ready validation for terminal roles and invalid anchor order inside the same warning layer
+- those planned-mode shells now also expose a starter coverage card with walkshed controls, strategic point counts, and compare deltas for Barrie hubs and schools
 
 #### Stop list panel
 

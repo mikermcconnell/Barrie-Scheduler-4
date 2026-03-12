@@ -23,6 +23,10 @@ function createScenario(overrides: Partial<RouteScenario> = {}): RouteScenario {
         lastDeparture: '08:00',
         frequencyMinutes: 15,
         layoverMinutes: 5,
+        timingProfile: 'balanced',
+        startTerminalHoldMinutes: 0,
+        endTerminalHoldMinutes: 0,
+        coverageWalkshedMeters: 400,
         warnings: [],
         departures: [],
         waypoints: [
@@ -129,6 +133,28 @@ describe('deriveRouteScenario', () => {
         expect(derived.stops.map((stop) => stop.timeLabel)).toEqual(['06:00', '06:08', '06:14', '06:20']);
     });
 
+    it('applies terminal holds and timing profile to interpolated stop times', () => {
+        const scenario = createScenario({
+            runtimeSourceMode: 'manual_override',
+            runtimeInputs: {
+                manualRuntimeMinutes: 20,
+            },
+            timingProfile: 'front_loaded',
+            startTerminalHoldMinutes: 3,
+            endTerminalHoldMinutes: 2,
+            stops: [
+                { id: 'stop-1', name: 'Start', kind: 'existing', role: 'terminal', latitude: 44.38, longitude: -79.69, timeLabel: '06:00', plannedOffsetMinutes: null },
+                { id: 'stop-2', name: 'Stop 2', kind: 'existing', role: 'regular', latitude: 44.385, longitude: -79.685, timeLabel: '06:00', plannedOffsetMinutes: null },
+                { id: 'stop-3', name: 'Stop 3', kind: 'existing', role: 'regular', latitude: 44.387, longitude: -79.68, timeLabel: '06:00', plannedOffsetMinutes: null },
+                { id: 'stop-4', name: 'End', kind: 'existing', role: 'terminal', latitude: 44.39, longitude: -79.67, timeLabel: '06:00', plannedOffsetMinutes: null },
+            ],
+        });
+
+        const derived = deriveRouteScenario(scenario);
+
+        expect(derived.stops.map((stop) => stop.timeLabel)).toEqual(['06:00', '06:09', '06:14', '06:20']);
+    });
+
     it('warns when a timed interior stop has no timing anchor', () => {
         const scenario = createScenario({
             runtimeSourceMode: 'manual_override',
@@ -163,6 +189,72 @@ describe('deriveRouteScenario', () => {
         const derived = deriveRouteScenario(scenario);
 
         expect(derived.warnings).toContain('Stop "Anchored Regular Stop" has a manual timing anchor but is marked regular. Consider marking it as a timed stop.');
+    });
+
+    it('warns when timing anchors are out of order', () => {
+        const scenario = createScenario({
+            runtimeSourceMode: 'manual_override',
+            runtimeInputs: {
+                manualRuntimeMinutes: 20,
+            },
+            stops: [
+                { id: 'stop-1', name: 'Start', kind: 'existing', role: 'terminal', latitude: 44.38, longitude: -79.69, timeLabel: '06:00', plannedOffsetMinutes: null },
+                { id: 'stop-2', name: 'Anchor One', kind: 'existing', role: 'timed', latitude: 44.385, longitude: -79.685, timeLabel: '06:00', plannedOffsetMinutes: 12 },
+                { id: 'stop-3', name: 'Anchor Two', kind: 'existing', role: 'timed', latitude: 44.387, longitude: -79.68, timeLabel: '06:00', plannedOffsetMinutes: 10 },
+                { id: 'stop-4', name: 'End', kind: 'existing', role: 'terminal', latitude: 44.39, longitude: -79.67, timeLabel: '06:00', plannedOffsetMinutes: null },
+            ],
+        });
+
+        const derived = deriveRouteScenario(scenario);
+
+        expect(derived.warnings).toContain('Timing anchor "Anchor Two" is not later than the previous anchor. Adjust anchor order for a valid timetable.');
+    });
+
+    it('warns when first and last stops are not terminal stops', () => {
+        const scenario = createScenario({
+            runtimeSourceMode: 'manual_override',
+            runtimeInputs: {
+                manualRuntimeMinutes: 20,
+            },
+            stops: [
+                { id: 'stop-1', name: 'Start', kind: 'existing', role: 'regular', latitude: 44.38, longitude: -79.69, timeLabel: '06:00', plannedOffsetMinutes: null },
+                { id: 'stop-2', name: 'Midpoint', kind: 'existing', role: 'timed', latitude: 44.385, longitude: -79.685, timeLabel: '06:00', plannedOffsetMinutes: 8 },
+                { id: 'stop-3', name: 'End', kind: 'existing', role: 'regular', latitude: 44.39, longitude: -79.67, timeLabel: '06:00', plannedOffsetMinutes: null },
+            ],
+        });
+
+        const derived = deriveRouteScenario(scenario);
+
+        expect(derived.warnings).toContain('First stop should be marked terminal for schedule-ready timing.');
+        expect(derived.warnings).toContain('Last stop should be marked terminal for schedule-ready timing.');
+    });
+
+    it('preserves a manual ready-for-review status when there are no warnings', () => {
+        const scenario = createScenario({
+            runtimeSourceMode: 'manual_override',
+            runtimeInputs: {
+                manualRuntimeMinutes: 20,
+            },
+            frequencyMinutes: 60,
+            status: 'ready_for_review',
+        });
+
+        const derived = deriveRouteScenario(scenario);
+
+        expect(derived.warnings).toHaveLength(0);
+        expect(derived.status).toBe('ready_for_review');
+    });
+
+    it('forces status back to draft when warnings are present', () => {
+        const scenario = createScenario({
+            runtimeSourceMode: 'fallback_estimate',
+            status: 'ready_for_review',
+        });
+
+        const derived = deriveRouteScenario(scenario);
+
+        expect(derived.warnings.length).toBeGreaterThan(0);
+        expect(derived.status).toBe('draft');
     });
 });
 

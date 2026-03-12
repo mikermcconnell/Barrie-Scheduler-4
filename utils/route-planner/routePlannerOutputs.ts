@@ -40,6 +40,23 @@ function formatDepartures(scenario: RouteScenario): string {
     return scenario.departures.slice(0, 10).map((departure) => `- ${departure}`).join('\n');
 }
 
+function formatCoverageSummary(scenario: RouteScenario): string {
+    const served = scenario.coverage.servedMarketPoints;
+    const total = scenario.coverage.totalMarketPoints;
+    if (served === null || served === undefined || total === null || total === undefined) {
+        return 'Coverage layer not configured';
+    }
+
+    const walkshed = scenario.coverage.walkshedRadiusMeters ?? scenario.coverageWalkshedMeters;
+    return `${served}/${total} strategic market points within ${walkshed} m walkshed`;
+}
+
+function formatTimingProfile(profile: RouteScenario['timingProfile']): string {
+    if (profile === 'front_loaded') return 'Front-loaded';
+    if (profile === 'back_loaded') return 'Back-loaded';
+    return 'Balanced';
+}
+
 export function buildRouteStudyExport(
     project: RouteProject,
     scenarios: RouteScenario[],
@@ -61,6 +78,10 @@ export function buildRouteStudyExport(
             `- Service Hours: ${scenario.serviceHours}`,
             `- Span: ${scenario.firstDeparture} to ${scenario.lastDeparture}`,
             `- Frequency: Every ${scenario.frequencyMinutes} min`,
+            `- Layover: ${scenario.layoverMinutes} min`,
+            `- Timing Profile: ${formatTimingProfile(scenario.timingProfile)}`,
+            `- Terminal Holds: ${scenario.startTerminalHoldMinutes} min start / ${scenario.endTerminalHoldMinutes} min end`,
+            `- Coverage: ${formatCoverageSummary(scenario)}`,
             '',
             '### Stops',
             formatStops(scenario),
@@ -108,6 +129,9 @@ export function buildRouteScenarioHandoff(
         `- Span: ${scenario.firstDeparture} to ${scenario.lastDeparture}`,
         `- Frequency: Every ${scenario.frequencyMinutes} min`,
         `- Layover: ${scenario.layoverMinutes} min`,
+        `- Timing Profile: ${formatTimingProfile(scenario.timingProfile)}`,
+        `- Terminal Holds: ${scenario.startTerminalHoldMinutes} min start / ${scenario.endTerminalHoldMinutes} min end`,
+        `- Coverage: ${formatCoverageSummary(scenario)}`,
         '',
         '## Stops',
         '',

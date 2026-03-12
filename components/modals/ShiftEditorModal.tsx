@@ -54,7 +54,7 @@ export const ShiftEditorModal: React.FC<Props> = ({ shift, allShifts, requiremen
 
         return newSlots.map((slot, i) => ({
             ...slot,
-            originalActiveCoverage: originalSlots[i].totalActiveCoverage
+            originalEffectiveCoverage: originalSlots[i].totalEffectiveCoverage
         }));
     }, [currentShift, allShifts, requirements, shift.id]);
 

@@ -46,6 +46,10 @@ Those planned route modes now also support interior stop timing anchors so key t
 
 Those planned route modes now also surface route-wide timing structure review and schedule-structure warnings when timed stops are still interpolated.
 
+Those planned route modes now also support explicit timing profiles, start/end terminal hold assumptions, and schedule-ready terminal / anchor validation in both the planning engine and the workspace shell.
+
+Those planned route modes now also support a first-pass coverage workflow with configurable walkshed assumptions and a local strategic market layer for Barrie hubs and schools.
+
 The Shuttle Planner view now reads its persistence, selection, and editing state through `components/Analytics/useShuttlePlannerController.ts`.
 
 Route Planner now instantiates that controller and passes it into a presentational shuttle workspace view.
@@ -102,6 +106,18 @@ Route Planner state ownership is now consolidated in `components/Analytics/useRo
 - route-wide timing structure review now exists in:
   - `components/Analytics/RoutePlannerWorkspace.tsx`
   - `utils/route-planner/routePlannerPlanning.ts`
+- schedule-ready timing-profile and terminal-hold controls now exist in:
+  - `components/Analytics/useRoutePlannerProjectController.ts`
+  - `components/Analytics/RoutePlannerWorkspace.tsx`
+  - `utils/route-planner/routePlannerPlanning.ts`
+  - `utils/route-planner/routePlannerOutputs.ts`
+- starter coverage analysis now exists in:
+  - `utils/route-planner/routePlannerCoverage.ts`
+  - `utils/route-planner/routePlannerCoverageSeed.ts`
+  - `components/Analytics/useRoutePlannerProjectController.ts`
+  - `components/Analytics/RoutePlannerWorkspace.tsx`
+  - `utils/route-planner/routePlannerPlanning.ts`
+  - `utils/route-planner/routePlannerOutputs.ts`
 - Shuttle domain files exist:
   - `utils/shuttle/shuttleTypes.ts`
   - `utils/shuttle/shuttleSeedData.ts`
@@ -137,13 +153,13 @@ Route Planner state ownership is now consolidated in `components/Analytics/useRo
 
 ## Recommended next step
 
-Deepen timing-anchor support now that the saved-study editor can use shared observed runtime inputs, show a timetable preview, review timing structure, and export a first scheduling handoff.
+Replace the starter strategic market coverage layer with a real population / employment dataset now that the saved-study editor can compare coverage reach, show timing structure, and export a first scheduling handoff.
 
 After that:
 
-1. deepen route-specific timetable structure and stop timing on the neutral Route Planner path
+1. add census / employment-backed coverage metrics and scenario delta reporting on the neutral Route Planner path
 2. keep replacing placeholder metrics and timetable values with more route-aware calculations
-3. start shaping the Phase 2 coverage workflow
+3. start shaping land-use-specific analysis layers after the demographic coverage layer is in place
 
 ## Suggested prompt for next chat
 

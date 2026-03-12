@@ -4,7 +4,7 @@ import type { LayerProps, MapMouseEvent, MapRef } from 'react-map-gl/mapbox';
 import { ArrowLeft, Loader2 } from 'lucide-react';
 import { usePerformanceDataQuery, usePerformanceMetadataQuery } from '../../hooks/usePerformanceData';
 import {
-    buildCorridorSpeedIndex,
+    buildCorridorSpeedMapIndex,
     getCorridorSpeedStyle,
     getMetricDisplayValue,
     getStatsForPeriod,
@@ -83,7 +83,7 @@ export const CorridorSpeedMap: React.FC<CorridorSpeedMapProps> = ({ onBack, team
 
     const speedIndex = useMemo<CorridorSpeedIndex | null>(() => {
         if (!dataQuery.data) return null;
-        return buildCorridorSpeedIndex(dataQuery.data.dailySummaries);
+        return buildCorridorSpeedMapIndex(dataQuery.data.dailySummaries);
     }, [dataQuery.data]);
 
     const segments = useMemo(() => speedIndex?.segments ?? [], [speedIndex]);

@@ -6,6 +6,7 @@ import {
     getRequestIp,
 } from '../lib/apiSecurity.js';
 import { shouldUseExtendedOptimizePipeline } from '../functions/src/optimizePipelinePolicy';
+import { validateOnDemandSchedule } from '../utils/onDemandValidation';
 
 const createServerRequestId = () => `srv-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const inferErrorCode = (message: string) => {
@@ -23,6 +24,28 @@ const inferErrorCode = (message: string) => {
     if (text.includes('timeout') || text.includes('timed out') || text.includes('deadline')) return 'TIMEOUT';
     if (text.includes('auth')) return 'AUTH_REQUIRED';
     return 'UPSTREAM';
+};
+
+const MAX_ACTIVE_VEHICLES = 6;
+
+const scoreSchedule = (shifts: any[], requirements: any[]) => {
+    const validation = validateOnDemandSchedule(shifts, requirements, MAX_ACTIVE_VEHICLES);
+    const coverageShortfall = validation.coverageViolations.reduce((sum, issue) => sum + issue.shortfall, 0);
+    const fleetExcess = validation.fleetViolations.reduce(
+        (sum, issue) => sum + Math.max(0, issue.activeCoverage - MAX_ACTIVE_VEHICLES),
+        0
+    );
+
+    return {
+        validation,
+        score:
+            validation.breakCoverageViolations.length * 1_000_000
+            + validation.fleetViolations.length * 100_000
+            + fleetExcess * 10_000
+            + validation.coverageViolations.length * 1_000
+            + coverageShortfall * 100
+            + validation.maxOverlappingShifts
+    };
 };
 
 /**
@@ -231,7 +254,12 @@ export async function optimizeImplementation(
 
     if (!extendedPipeline) {
         console.log(`[${requestId}] Fast path enabled; skipping critic and polisher phases.`);
-        return processShifts(draftShifts);
+        const processedDraft = processShifts(draftShifts);
+        return chooseBestScheduleCandidate(
+            [{ label: 'phase1-generator', shifts: processedDraft }],
+            requirements,
+            requestId
+        ).shifts;
     }
 
     // ---------------------------------------------------------
@@ -274,17 +302,17 @@ export async function optimizeImplementation(
     2. Output a REVISED list of shifts that solves these problems.
     `;
 
-    let finalShifts = [];
+    let criticShifts = [];
     try {
         const criticOutput = await callGemini(apiKey, criticPrompt, criticSystemInstruction, criticSchema, "gemini-3.1-pro-preview", 0.2, 'phase2-critic', requestId);
 
         console.log(`[${requestId}] 📝 [Phase 2] Critic's Analysis:\n${criticOutput.critique}`);
-        finalShifts = criticOutput.shifts;
-        console.log(`[${requestId}] ✅ [Phase 2] Final Schedule: ${finalShifts.length} shifts.`);
+        criticShifts = criticOutput.shifts;
+        console.log(`[${requestId}] ✅ [Phase 2] Final Schedule: ${criticShifts.length} shifts.`);
 
     } catch (e) {
         console.error(`[${requestId}] ❌ [Phase 2] Failed. Falling back to draft.`, e);
-        finalShifts = draftShifts;
+        criticShifts = draftShifts;
     }
 
     // ---------------------------------------------------------
@@ -312,7 +340,7 @@ export async function optimizeImplementation(
     ${demandContext}
 
     REFINED SCHEDULE (Phase 2 Output):
-    ${JSON.stringify(finalShifts)}
+    ${JSON.stringify(criticShifts)}
 
     TASK:
     - Review every single shift for break compliance.
@@ -320,21 +348,32 @@ export async function optimizeImplementation(
     - Output the polished list.
     `;
 
+    let polishedShifts = criticShifts;
     try {
         // Reuse generator schema since we just need the list
         const polishedOutput = await callGemini(apiKey, polisherPrompt, polisherSystemInstruction, generatorSchema, "gemini-3.1-pro-preview", 0.1, 'phase3-polisher', requestId); // Low temp for strictness
         console.log(`[${requestId}] ✅ [Phase 3] Polished Schedule: ${polishedOutput.length} shifts.`);
-        finalShifts = polishedOutput;
+        polishedShifts = polishedOutput;
     } catch (e) {
         console.error(`[${requestId}] ❌ [Phase 3] Failed. Keeping Phase 2 result.`, e);
-        // Fallback to Phase 2 result (finalShifts)
+        // Fallback to Phase 2 result (criticShifts)
     }
 
     // ---------------------------------------------------------
     // POST-PROCESSING
     // ---------------------------------------------------------
-    const processedShifts = processShifts(finalShifts);
-    return processedShifts;
+    const processedDraft = processShifts(draftShifts);
+    const processedCritic = processShifts(criticShifts);
+    const processedPolished = processShifts(polishedShifts);
+    return chooseBestScheduleCandidate(
+        [
+            { label: 'phase1-generator', shifts: processedDraft },
+            { label: 'phase2-critic', shifts: processedCritic },
+            { label: 'phase3-polisher', shifts: processedPolished },
+        ],
+        requirements,
+        requestId
+    ).shifts;
 }
 
 /**
@@ -386,6 +425,43 @@ function processShifts(shifts: any[]) {
             breakDurationSlots: breakDuration
         };
     });
+}
+
+function chooseBestScheduleCandidate(
+    candidates: Array<{ label: string; shifts: any[] }>,
+    requirements: any[],
+    requestId: string
+) {
+    const ranked = candidates
+        .filter(candidate => candidate.shifts.length > 0)
+        .map((candidate, index) => {
+            const evaluation = scoreSchedule(candidate.shifts, requirements);
+            return {
+                ...candidate,
+                ...evaluation,
+                index,
+            };
+        })
+        .sort((a, b) => {
+            if (a.score !== b.score) return a.score - b.score;
+            return b.index - a.index;
+        });
+
+    const best = ranked[0];
+    if (!best) {
+        return { label: 'empty', shifts: [] as any[] };
+    }
+
+    console.log(`[${requestId}] Selected ${best.label} candidate`, {
+        score: best.score,
+        breakCoverageViolations: best.validation.breakCoverageViolations.length,
+        coverageViolations: best.validation.coverageViolations.length,
+        fleetViolations: best.validation.fleetViolations.length,
+        maxActiveVehicles: best.validation.maxActiveVehicles,
+        maxOverlappingShifts: best.validation.maxOverlappingShifts,
+    });
+
+    return best;
 }
 
 /**
