@@ -15,6 +15,7 @@ import type {
     PerformanceDataSummary,
     STREETSRecord,
 } from '../../utils/performanceDataTypes';
+import { PERFORMANCE_SCHEMA_VERSION } from '../../utils/performanceDataTypes';
 import { compareDateStrings } from '../../utils/performanceDateUtils';
 
 interface PerformanceImportProps {
@@ -151,7 +152,7 @@ export const PerformanceImport: React.FC<PerformanceImportProps> = ({
                     dayCount: dailySummaries.length,
                     totalRecords: records.length,
                 },
-                schemaVersion: 1,
+                schemaVersion: PERFORMANCE_SCHEMA_VERSION,
             };
 
             await savePerformanceData(teamId, userId, summary);

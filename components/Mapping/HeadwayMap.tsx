@@ -35,9 +35,11 @@ interface SegmentFeatureProps {
     color: string;
     weight: number;
     opacity: number;
+    offset: number;
     isShared: boolean;
     routeList: string;
     headwayText: string;
+    directionText: string;
     fromStop: string;
     toStop: string;
 }
@@ -61,6 +63,45 @@ const CORRIDOR_LAYER = 'corridor-lines';
 const CORRIDOR_HOVER_LAYER = 'corridor-lines-hover';
 const HIGHLIGHT_SRC = 'corridor-highlight';
 const HIGHLIGHT_LAYER = 'corridor-highlight-line';
+
+function buildDirectionalOffsetLookup(segments: readonly CorridorSegment[]): Map<string, number> {
+    const byStopKey = new Map<string, CorridorSegment[]>();
+    const offsets = new Map<string, number>();
+    const processedKeys = new Set<string>();
+
+    for (const segment of segments) {
+        const key = segment.stops.join('>');
+        const existing = byStopKey.get(key);
+        if (existing) existing.push(segment);
+        else byStopKey.set(key, [segment]);
+    }
+
+    for (const [key, forwardSegments] of byStopKey.entries()) {
+        if (processedKeys.has(key)) continue;
+
+        const reverseKey = [...key.split('>')].reverse().join('>');
+        if (reverseKey === key || !byStopKey.has(reverseKey)) {
+            forwardSegments.forEach(segment => offsets.set(segment.id, 0));
+            processedKeys.add(key);
+            continue;
+        }
+
+        // Mapbox applies line-offset relative to the line direction.
+        // Reverse geometries naturally land on the opposite side with the same sign.
+        const pairedOffset = 6;
+        for (const segment of forwardSegments) {
+            offsets.set(segment.id, pairedOffset);
+        }
+        for (const segment of byStopKey.get(reverseKey) || []) {
+            offsets.set(segment.id, pairedOffset);
+        }
+
+        processedKeys.add(key);
+        processedKeys.add(reverseKey);
+    }
+
+    return offsets;
+}
 
 // ─── Main Component ──────────────────────────────────────────────────────────
 
@@ -90,6 +131,7 @@ export const HeadwayMap: React.FC<HeadwayMapProps> = ({ onBack }) => {
     }, []);
 
     const junctionStops = useMemo(() => getCorridorJunctionStops(segments), [segments]);
+    const segmentOffsets = useMemo(() => buildDirectionalOffsetLookup(segments), [segments]);
 
     const stopCoords = useMemo(() => {
         const map = new Map<string, { lat: number; lon: number; name: string }>();
@@ -108,6 +150,7 @@ export const HeadwayMap: React.FC<HeadwayMapProps> = ({ onBack }) => {
         () => (selectedSegment ? headways.get(selectedSegment.id) || null : null),
         [selectedSegment, headways],
     );
+    const selectedOffset = selectedSegment ? (segmentOffsets.get(selectedSegment.id) || 0) : 0;
 
     const periodLabel = TIME_PERIODS.find(p => p.id === period)?.label || '';
     const dayTypeLabel = DAY_TYPES.find(d => d.id === dayType)?.label || '';
@@ -143,6 +186,7 @@ export const HeadwayMap: React.FC<HeadwayMapProps> = ({ onBack }) => {
 
             const hw = headways.get(seg.id);
             const headwayMin = hw?.combinedHeadwayMin ?? null;
+            const offset = segmentOffsets.get(seg.id) || 0;
 
             let style: { color: string; weight: number; opacity: number };
             if (seg.isShared) {
@@ -163,9 +207,11 @@ export const HeadwayMap: React.FC<HeadwayMapProps> = ({ onBack }) => {
                 color: style.color,
                 weight: style.weight,
                 opacity: style.opacity,
+                offset,
                 isShared: seg.isShared,
                 routeList: seg.routes.join(', '),
                 headwayText,
+                directionText: `${seg.stopNames[0] ?? ''} → ${seg.stopNames[seg.stopNames.length - 1] ?? ''}`,
                 fromStop: seg.stopNames[0] ?? '',
                 toStop: seg.stopNames[seg.stopNames.length - 1] ?? '',
             };
@@ -182,7 +228,7 @@ export const HeadwayMap: React.FC<HeadwayMapProps> = ({ onBack }) => {
         }
 
         return { type: 'FeatureCollection', features };
-    }, [segments, headways]);
+    }, [segments, headways, segmentOffsets]);
 
     // ─── Highlight GeoJSON for selected segment ───────────────────────────
 
@@ -194,14 +240,14 @@ export const HeadwayMap: React.FC<HeadwayMapProps> = ({ onBack }) => {
             type: 'FeatureCollection',
             features: [{
                 type: 'Feature',
-                properties: {},
+                properties: { offset: selectedOffset },
                 geometry: {
                     type: 'LineString',
                     coordinates: selectedSegment.geometry.map(toGeoJSON),
                 },
             }],
         };
-    }, [selectedSegment]);
+    }, [selectedOffset, selectedSegment]);
 
     // ─── Layer styles ─────────────────────────────────────────────────────
 
@@ -216,6 +262,7 @@ export const HeadwayMap: React.FC<HeadwayMapProps> = ({ onBack }) => {
             'line-color': ['get', 'color'] as unknown as string,
             'line-width': ['get', 'weight'] as unknown as number,
             'line-opacity': ['get', 'opacity'] as unknown as number,
+            'line-offset': ['get', 'offset'] as unknown as number,
         },
     };
 
@@ -234,6 +281,7 @@ export const HeadwayMap: React.FC<HeadwayMapProps> = ({ onBack }) => {
             'line-color': ['get', 'color'] as unknown as string,
             'line-width': ['+', ['get', 'weight'], 3] as unknown as number,
             'line-opacity': ['min', ['+', ['get', 'opacity'], 0.15], 1] as unknown as number,
+            'line-offset': ['get', 'offset'] as unknown as number,
         },
     };
 
@@ -248,6 +296,7 @@ export const HeadwayMap: React.FC<HeadwayMapProps> = ({ onBack }) => {
             'line-color': '#3b82f6',
             'line-width': 12,
             'line-opacity': 0.3,
+            'line-offset': ['coalesce', ['get', 'offset'], 0] as unknown as number,
         },
     };
 
@@ -341,7 +390,7 @@ export const HeadwayMap: React.FC<HeadwayMapProps> = ({ onBack }) => {
 
                 {/* Title */}
                 <div className="bg-white/90 backdrop-blur-sm rounded-md px-2.5 py-1.5 shadow-sm border border-gray-200 pointer-events-auto">
-                    <span className="text-xs font-bold text-gray-700">Corridor Headway</span>
+                    <span className="text-xs font-bold text-gray-700">Directional Corridor Headway</span>
                     <span className="text-[10px] text-gray-400 ml-1.5">{periodLabel} · {dayTypeLabel}</span>
                     {segments.length > 0 && (
                         <span className="text-[10px] text-gray-400 ml-1.5">
@@ -463,7 +512,7 @@ export const HeadwayMap: React.FC<HeadwayMapProps> = ({ onBack }) => {
                                 <strong>Routes: {hoverInfo.props.routeList}</strong><br />
                                 {hoverInfo.props.headwayText}<br />
                                 <span style={{ color: '#9ca3af' }}>
-                                    {hoverInfo.props.fromStop} → {hoverInfo.props.toStop}
+                                    {hoverInfo.props.directionText}
                                 </span>
                             </div>
                         </Popup>

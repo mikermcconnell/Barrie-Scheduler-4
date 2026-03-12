@@ -29,8 +29,11 @@ import { getAllDrafts, getDraft, deleteDraft } from '../../utils/services/draftS
 import { getSystemDraft } from '../../utils/services/systemDraftService';
 import {
     buildOpenDraftEditorState,
+    buildInitialSiblingEditorState,
     getRemainingDraftsAfterBulkDelete,
+    type SiblingDraftCandidate,
 } from '../../utils/workspaces/fixedRouteDraftState';
+import { consumeNetworkConnectionEditorHandoff } from '../../utils/network-connections/networkConnectionHandoff';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 
@@ -121,18 +124,13 @@ export const FixedRouteWorkspace: React.FC = () => {
     // Route switcher state (for bulk GTFS import)
     const [siblingDrafts, setSiblingDrafts] = useState<SiblingDraft[]>([]);
     const [currentEditorDraftId, setCurrentEditorDraftId] = useState<string | null>(null);
+    const [currentEditorDraftName, setCurrentEditorDraftName] = useState<string | undefined>(undefined);
+    const [currentEditorDraftUpdatedAt, setCurrentEditorDraftUpdatedAt] = useState<Date | null>(null);
 
     // System draft state (new model - all routes for a day type)
     const [activeSystemDraft, setActiveSystemDraft] = useState<SystemDraft | null>(null);
 
-    // Fetch drafts when entering drafts view
-    useEffect(() => {
-        if (viewMode === 'drafts' && user) {
-            fetchDrafts();
-        }
-    }, [viewMode, user]);
-
-    const fetchDrafts = async () => {
+    const fetchDrafts = useCallback(async () => {
         if (!user) return;
         setDraftsLoading(true);
         try {
@@ -144,7 +142,14 @@ export const FixedRouteWorkspace: React.FC = () => {
         } finally {
             setDraftsLoading(false);
         }
-    };
+    }, [toast, user]);
+
+    // Fetch drafts when entering drafts view
+    useEffect(() => {
+        if (viewMode === 'drafts' && user) {
+            fetchDrafts();
+        }
+    }, [fetchDrafts, viewMode, user]);
 
     const handleOpenDraft = async (draft: DraftSchedule) => {
         if (!user || !draft.id) return;
@@ -153,12 +158,18 @@ export const FixedRouteWorkspace: React.FC = () => {
             const fullDraft = await getDraft(user.uid, draft.id);
             if (fullDraft?.content) {
                 const nextEditorState = buildOpenDraftEditorState(
-                    fullDraft.id || draft.id,
+                    {
+                        id: fullDraft.id || draft.id,
+                        name: fullDraft.name,
+                        updatedAt: fullDraft.updatedAt,
+                    },
                     fullDraft.content,
                     fullDraft.basedOn
                 );
                 setSiblingDrafts([]);
                 setCurrentEditorDraftId(nextEditorState.currentEditorDraftId);
+                setCurrentEditorDraftName(nextEditorState.currentEditorDraftName);
+                setCurrentEditorDraftUpdatedAt(nextEditorState.currentEditorDraftUpdatedAt || null);
                 setEditorInitialContent(nextEditorState.initialContent);
                 setEditorBasedOn(nextEditorState.basedOn);
                 setViewMode('editor');
@@ -223,6 +234,45 @@ export const FixedRouteWorkspace: React.FC = () => {
 
     const [editorBasedOn, setEditorBasedOn] = useState<DraftBasedOn | undefined>(undefined);
 
+    useEffect(() => {
+        if (viewMode !== 'editor' || !user) return;
+
+        const handoff = consumeNetworkConnectionEditorHandoff();
+        if (!handoff) return;
+
+        (async () => {
+            try {
+                const fullDraft = await getDraft(user.uid, handoff.draftId);
+                if (!fullDraft?.content) {
+                    toast?.error('Error', 'Draft handoff content not found');
+                    setViewMode('drafts');
+                    return;
+                }
+
+                const nextEditorState = buildOpenDraftEditorState(
+                    {
+                        id: fullDraft.id || handoff.draftId,
+                        name: fullDraft.name,
+                        updatedAt: fullDraft.updatedAt,
+                    },
+                    fullDraft.content,
+                    fullDraft.basedOn
+                );
+
+                setSiblingDrafts([]);
+                setCurrentEditorDraftId(nextEditorState.currentEditorDraftId);
+                setCurrentEditorDraftName(nextEditorState.currentEditorDraftName);
+                setCurrentEditorDraftUpdatedAt(nextEditorState.currentEditorDraftUpdatedAt || null);
+                setEditorInitialContent(nextEditorState.initialContent);
+                setEditorBasedOn(nextEditorState.basedOn);
+            } catch (error) {
+                console.error('Failed to open network-connections handoff draft:', error);
+                toast?.error('Error', 'Failed to open copied draft');
+                setViewMode('drafts');
+            }
+        })();
+    }, [user, viewMode, setViewMode, toast]);
+
     // --- Handlers ---
 
     const handleOpenNewSchedule = () => {
@@ -238,6 +288,30 @@ export const FixedRouteWorkspace: React.FC = () => {
         setEditorBasedOn(basedOn);
         setSiblingDrafts([]); // Clear siblings for single-draft editing
         setCurrentEditorDraftId(null);
+        setCurrentEditorDraftName(undefined);
+        setCurrentEditorDraftUpdatedAt(null);
+        setViewMode('editor');
+    };
+
+    const openExistingDraftWorkspace = (draft: DraftSchedule) => {
+        if (!draft.content) return;
+
+        const nextEditorState = buildOpenDraftEditorState(
+            {
+                id: draft.id,
+                name: draft.name,
+                updatedAt: draft.updatedAt,
+            },
+            draft.content,
+            draft.basedOn
+        );
+
+        setSiblingDrafts([]);
+        setCurrentEditorDraftId(nextEditorState.currentEditorDraftId);
+        setCurrentEditorDraftName(nextEditorState.currentEditorDraftName);
+        setCurrentEditorDraftUpdatedAt(nextEditorState.currentEditorDraftUpdatedAt || null);
+        setEditorInitialContent(nextEditorState.initialContent);
+        setEditorBasedOn(nextEditorState.basedOn);
         setViewMode('editor');
     };
 
@@ -247,9 +321,7 @@ export const FixedRouteWorkspace: React.FC = () => {
 
         try {
             // Load all drafts to get their metadata
-            const loadedDrafts: SiblingDraft[] = [];
-            let firstDraftContent: MasterScheduleContent | null = null;
-            let firstDraftBasedOn: DraftBasedOn | undefined;
+            const loadedDrafts: SiblingDraftCandidate[] = [];
 
             for (const draftId of draftIds) {
                 const draft = await getDraft(user.uid, draftId);
@@ -264,29 +336,23 @@ export const FixedRouteWorkspace: React.FC = () => {
                         name: draft.name,
                         routeNumber: draft.routeNumber,
                         dayType: draft.dayType,
-                        tripCount
+                        tripCount,
+                        content: draft.content,
+                        basedOn: draft.basedOn,
+                        updatedAt: draft.updatedAt,
                     });
-                    // Keep first draft's content for initial display
-                    if (!firstDraftContent && draft.content) {
-                        firstDraftContent = draft.content;
-                        firstDraftBasedOn = draft.basedOn;
-                    }
                 }
             }
 
-            // Sort by route number then day type
-            loadedDrafts.sort((a, b) => {
-                const routeCompare = (a.routeNumber || '').localeCompare(b.routeNumber || '', undefined, { numeric: true });
-                if (routeCompare !== 0) return routeCompare;
-                const dayOrder: Record<string, number> = { Weekday: 0, Saturday: 1, Sunday: 2 };
-                return (dayOrder[a.dayType] || 0) - (dayOrder[b.dayType] || 0);
-            });
+            const nextEditorState = buildInitialSiblingEditorState(loadedDrafts);
 
-            if (firstDraftContent && loadedDrafts.length > 0) {
-                setSiblingDrafts(loadedDrafts);
-                setCurrentEditorDraftId(loadedDrafts[0].id);
-                setEditorInitialContent(firstDraftContent);
-                setEditorBasedOn(firstDraftBasedOn);
+            if (nextEditorState) {
+                setSiblingDrafts(nextEditorState.siblingDrafts);
+                setCurrentEditorDraftId(nextEditorState.currentEditorDraftId);
+                setCurrentEditorDraftName(nextEditorState.currentEditorDraftName);
+                setCurrentEditorDraftUpdatedAt(nextEditorState.currentEditorDraftUpdatedAt || null);
+                setEditorInitialContent(nextEditorState.initialContent);
+                setEditorBasedOn(nextEditorState.basedOn);
                 setViewMode('editor');
             } else {
                 toast?.error('Error', 'No drafts could be loaded');
@@ -306,6 +372,8 @@ export const FixedRouteWorkspace: React.FC = () => {
             const draft = await getDraft(user.uid, draftId);
             if (draft?.content) {
                 setCurrentEditorDraftId(draftId);
+                setCurrentEditorDraftName(draft.name);
+                setCurrentEditorDraftUpdatedAt(draft.updatedAt);
                 setEditorInitialContent(draft.content);
                 setEditorBasedOn(draft.basedOn);
             }
@@ -372,7 +440,7 @@ export const FixedRouteWorkspace: React.FC = () => {
                                     try {
                                         const draft = await getDraft(user.uid, result.draftId);
                                         if (draft?.content) {
-                                            openEditorWorkspace(draft.content, draft.basedOn);
+                                            openExistingDraftWorkspace(draft);
                                         } else {
                                             setViewMode('drafts');
                                         }
@@ -459,6 +527,8 @@ export const FixedRouteWorkspace: React.FC = () => {
                             key={currentEditorDraftId || 'single'} // Re-mount when switching drafts
                             initialContent={editorInitialContent}
                             basedOn={editorBasedOn}
+                            currentDraftName={currentEditorDraftName}
+                            currentDraftUpdatedAt={currentEditorDraftUpdatedAt || undefined}
                             onClose={() => setViewMode('dashboard')}
                             siblingDrafts={siblingDrafts}
                             currentDraftId={currentEditorDraftId || undefined}
@@ -675,9 +745,7 @@ export const FixedRouteWorkspace: React.FC = () => {
                                 try {
                                     const draft = await getDraft(user.uid, result.draftId);
                                     if (draft?.content) {
-                                        setEditorInitialContent(draft.content);
-                                        setEditorBasedOn(draft.basedOn);
-                                        setViewMode('editor');
+                                        openExistingDraftWorkspace(draft);
                                     } else {
                                         setViewMode('drafts');
                                         setTimeout(() => fetchDrafts(), 100);

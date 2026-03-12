@@ -279,6 +279,96 @@ describe('aggregateDailySummaries', () => {
         const summaries = aggregateDailySummaries([]);
         expect(summaries).toHaveLength(0);
     });
+
+    it('builds exact stop-to-stop runtime entries with stop ids', () => {
+        const records = [
+            makeRecord({
+                tripId: 'seg-trip',
+                routeId: '8A',
+                direction: 'S',
+                routeStopIndex: 0,
+                stopId: 'stop-a',
+                stopName: 'Stop A',
+                stopTime: '07:00',
+                observedDepartureTime: '07:01:00',
+            }),
+            makeRecord({
+                tripId: 'seg-trip',
+                routeId: '8A',
+                direction: 'S',
+                routeStopIndex: 1,
+                stopId: 'stop-b',
+                stopName: 'Stop B',
+                arrivalTime: '07:05',
+                observedArrivalTime: '07:06:00',
+                stopTime: '07:05',
+                observedDepartureTime: '07:06:30',
+                timePoint: false,
+            }),
+            makeRecord({
+                tripId: 'seg-trip',
+                routeId: '8A',
+                direction: 'S',
+                routeStopIndex: 2,
+                stopId: 'stop-c',
+                stopName: 'Stop C',
+                arrivalTime: '07:10',
+                observedArrivalTime: '07:11:00',
+                stopTime: '07:10',
+            }),
+        ];
+
+        const summaries = aggregateDailySummaries(records);
+        const entry = summaries[0].stopSegmentRuntimes?.entries.find(value =>
+            value.routeId === '8A'
+            && value.direction === 'S'
+            && value.fromStopId === 'stop-a'
+            && value.toStopId === 'stop-b'
+        );
+
+        expect(entry).toBeDefined();
+        expect(entry?.segmentName).toBe('Stop A to Stop B');
+        expect(entry?.fromRouteStopIndex).toBe(0);
+        expect(entry?.toRouteStopIndex).toBe(1);
+        expect(entry?.observations[0]).toEqual({
+            runtimeMinutes: 5,
+            timeBucket: '07:00',
+        });
+    });
+
+    it('handles stop-to-stop runtime midnight rollover', () => {
+        const records = [
+            makeRecord({
+                tripId: 'overnight-seg',
+                routeId: '10',
+                direction: 'N',
+                routeStopIndex: 0,
+                stopId: 'stop-a',
+                stopName: 'Stop A',
+                stopTime: '23:55',
+                observedDepartureTime: '23:58:00',
+            }),
+            makeRecord({
+                tripId: 'overnight-seg',
+                routeId: '10',
+                direction: 'N',
+                routeStopIndex: 1,
+                stopId: 'stop-b',
+                stopName: 'Stop B',
+                arrivalTime: '00:05',
+                observedArrivalTime: '00:08:00',
+                stopTime: '00:05',
+                timePoint: false,
+            }),
+        ];
+
+        const summaries = aggregateDailySummaries(records);
+        const entry = summaries[0].stopSegmentRuntimes?.entries[0];
+
+        expect(entry?.fromStopId).toBe('stop-a');
+        expect(entry?.toStopId).toBe('stop-b');
+        expect(entry?.observations[0].runtimeMinutes).toBe(10);
+    });
 });
 
 // ─── APC Load Sanitization Tests ────────────────────────────────────

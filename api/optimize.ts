@@ -5,9 +5,8 @@ import {
     checkRateLimit,
     getRequestIp,
 } from '../lib/apiSecurity.js';
+import { shouldUseExtendedOptimizePipeline } from '../functions/src/optimizePipelinePolicy';
 
-const isTruthy = (value?: string) => ['1', 'true', 'yes', 'on'].includes((value || '').toLowerCase());
-const isExtendedPipelineEnabled = () => !process.env.VERCEL && isTruthy(process.env.OPTIMIZE_MULTI_PHASE);
 const createServerRequestId = () => `srv-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const inferErrorCode = (message: string) => {
     const text = message.toLowerCase();
@@ -190,7 +189,7 @@ export async function optimizeImplementation(
     6. Keep breaks compliant and staggered.
     `;
 
-    const extendedPipeline = isExtendedPipelineEnabled();
+    const extendedPipeline = shouldUseExtendedOptimizePipeline(mode, process.env.OPTIMIZE_MULTI_PHASE, !process.env.VERCEL);
     console.log(`[${requestId}] Pipeline mode: ${extendedPipeline ? 'multi-phase' : 'fast'}`);
     console.log(`[${requestId}] 🤖 [Phase 1] Generating Draft Schedule (${mode})...`);
 
@@ -432,7 +431,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         const processedShifts = await optimizeImplementation(requirements, apiKey, mode || 'full', currentShifts || [], focusInstruction, requestId);
         const durationMs = Date.now() - requestStartedAt;
-        const pipeline = isExtendedPipelineEnabled() ? 'multi-phase' : 'fast';
+        const pipeline = shouldUseExtendedOptimizePipeline(mode || 'full', process.env.OPTIMIZE_MULTI_PHASE, !process.env.VERCEL) ? 'multi-phase' : 'fast';
         console.log(`[${requestId}] ✅ Optimization complete in ${durationMs}ms (pipeline=${pipeline})`);
 
         return res.status(200).json({ shifts: processedShifts, requestId, durationMs, pipeline });

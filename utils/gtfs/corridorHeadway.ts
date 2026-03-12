@@ -71,17 +71,26 @@ export function formatHeadway(headwayMin: number | null): string {
 interface TripStopPassage {
     tripId: string;
     stopId: string;
+    stopSequence: number;
     departureMinutes: number;
 }
 
-function parseTripStopPassages(): TripStopPassage[] {
-    const passages: TripStopPassage[] = [];
+interface MatchedSegmentTrip {
+    tripId: string;
+    route: string;
+    serviceId: string;
+    departureMinutes: number;
+}
+
+function parseTripStopPassages(): Map<string, TripStopPassage[]> {
+    const passages = new Map<string, TripStopPassage[]>();
     const lines = stopTimesRaw.trim().split(/\r?\n/);
     if (lines.length <= 1) return passages;
 
     const idx = buildHeaderIndex(lines[0]);
     const tripIdIdx = idx.get('trip_id') ?? -1;
     const stopIdIdx = idx.get('stop_id') ?? -1;
+    const stopSequenceIdx = idx.get('stop_sequence') ?? -1;
     const depIdx = idx.get('departure_time') ?? -1;
     const arrIdx = idx.get('arrival_time') ?? -1;
 
@@ -97,20 +106,64 @@ function parseTripStopPassages(): TripStopPassage[] {
             ?? parseGtfsTimeToMinutes(arrIdx >= 0 ? values[arrIdx] : undefined);
         if (depMin === null) continue;
 
-        passages.push({ tripId, stopId, departureMinutes: depMin });
+        const stopSequence = Number.parseInt(stopSequenceIdx >= 0 ? (values[stopSequenceIdx] || '0') : '0', 10);
+        const entry: TripStopPassage = {
+            tripId,
+            stopId,
+            stopSequence: Number.isFinite(stopSequence) ? stopSequence : 0,
+            departureMinutes: depMin,
+        };
+
+        const existing = passages.get(tripId);
+        if (existing) existing.push(entry);
+        else passages.set(tripId, [entry]);
+    }
+
+    for (const tripStops of passages.values()) {
+        tripStops.sort((a, b) => a.stopSequence - b.stopSequence);
     }
 
     return passages;
 }
 
+export function matchSegmentStopsInTrip(
+    segmentStops: readonly string[],
+    tripStops: readonly string[],
+): { startIndex: number; endIndex: number } | null {
+    if (segmentStops.length < 2 || tripStops.length < 2) return null;
+
+    let tripCursor = 0;
+    let startIndex = -1;
+    let endIndex = -1;
+
+    for (let i = 0; i < segmentStops.length; i++) {
+        let foundIndex = -1;
+        for (let j = tripCursor; j < tripStops.length; j++) {
+            if (tripStops[j] === segmentStops[i]) {
+                foundIndex = j;
+                break;
+            }
+        }
+
+        if (foundIndex === -1) return null;
+        if (i === 0) startIndex = foundIndex;
+        if (i === segmentStops.length - 1) endIndex = foundIndex;
+        tripCursor = foundIndex + 1;
+    }
+
+    if (startIndex === -1 || endIndex === -1 || endIndex <= startIndex) return null;
+    return { startIndex, endIndex };
+}
+
 // ─── Main Export ──────────────────────────────────────────────────────────
 
-let cachedPassages: TripStopPassage[] | null = null;
+let cachedPassages: Map<string, TripStopPassage[]> | null = null;
 let cachedTripRoute: Map<string, { route: string; serviceId: string }> | null = null;
 let cachedServiceFlags: Map<string, ServiceFlags> | null = null;
+let cachedMatchedTrips: { signature: string; bySegmentId: Map<string, MatchedSegmentTrip[]> } | null = null;
 
 function ensureCaches(): {
-    passages: TripStopPassage[];
+    passages: Map<string, TripStopPassage[]>;
     tripRoute: Map<string, { route: string; serviceId: string }>;
     serviceFlags: Map<string, ServiceFlags>;
 } {
@@ -127,11 +180,59 @@ function ensureCaches(): {
     };
 }
 
+function serviceMatchesDayType(flags: ServiceFlags, dayType: DayType): boolean {
+    if (dayType === 'weekday') return flags.weekday;
+    if (dayType === 'saturday') return flags.saturday;
+    return flags.sunday;
+}
+
+function getMatchedTripsBySegment(
+    segments: CorridorSegment[],
+    passages: Map<string, TripStopPassage[]>,
+    tripRoute: Map<string, { route: string; serviceId: string }>,
+): Map<string, MatchedSegmentTrip[]> {
+    const signature = segments.map(segment => segment.id).join('|');
+    if (cachedMatchedTrips?.signature === signature) {
+        return cachedMatchedTrips.bySegmentId;
+    }
+
+    const bySegmentId = new Map<string, MatchedSegmentTrip[]>();
+
+    for (const segment of segments) {
+        const routeSet = new Set(segment.routes);
+        const matches: MatchedSegmentTrip[] = [];
+
+        for (const [tripId, tripStops] of passages.entries()) {
+            const info = tripRoute.get(tripId);
+            if (!info || !routeSet.has(info.route)) continue;
+
+            const match = matchSegmentStopsInTrip(
+                segment.stops,
+                tripStops.map(stop => stop.stopId),
+            );
+            if (!match) continue;
+
+            matches.push({
+                tripId,
+                route: info.route,
+                serviceId: info.serviceId,
+                departureMinutes: tripStops[match.startIndex].departureMinutes,
+            });
+        }
+
+        bySegmentId.set(segment.id, matches);
+    }
+
+    cachedMatchedTrips = { signature, bySegmentId };
+    return bySegmentId;
+}
+
 /**
  * Compute headway for all corridor segments for a given time period and day type.
  *
- * A trip "passes through" a segment if it visits the segment's first stop
- * during the specified time window, on a matching day type.
+ * A trip "passes through" a segment only when the trip stop order matches
+ * the segment stop order, preventing opposite-direction trips from being
+ * counted on the same corridor segment.
  */
 export function computeCorridorHeadways(
     segments: CorridorSegment[],
@@ -140,51 +241,22 @@ export function computeCorridorHeadways(
 ): Map<string, SegmentHeadway> {
     const { passages, tripRoute, serviceFlags } = ensureCaches();
     const periodDef = TIME_PERIODS.find(p => p.id === period)!;
+    const matchedTripsBySegment = getMatchedTripsBySegment(segments, passages, tripRoute);
 
-    // Build a lookup: stopId → list of (tripId, departureMinutes)
-    // filtered by day type and time period
-    const stopTrips = new Map<string, { tripId: string; route: string; depMin: number }[]>();
-
-    for (const p of passages) {
-        const info = tripRoute.get(p.tripId);
-        if (!info) continue;
-
-        const flags = serviceFlags.get(info.serviceId);
-        if (!flags) continue;
-
-        // Day type filter
-        if (dayType === 'weekday' && !flags.weekday) continue;
-        if (dayType === 'saturday' && !flags.saturday) continue;
-        if (dayType === 'sunday' && !flags.sunday) continue;
-
-        // Time period filter
-        if (p.departureMinutes < periodDef.startMinute || p.departureMinutes >= periodDef.endMinute) continue;
-
-        const arr = stopTrips.get(p.stopId);
-        const entry = { tripId: p.tripId, route: info.route, depMin: p.departureMinutes };
-        if (arr) arr.push(entry);
-        else stopTrips.set(p.stopId, [entry]);
-    }
-
-    // For each segment, count distinct trips passing through first stop
-    // (using first stop as the entry point for the segment)
     const result = new Map<string, SegmentHeadway>();
 
     for (const seg of segments) {
-        const firstStopId = seg.stops[0];
-        const tripsAtEntry = stopTrips.get(firstStopId) || [];
-
-        // Only count trips from routes that are part of this segment
-        const segRouteSet = new Set(seg.routes);
-        const relevantTrips = tripsAtEntry.filter(t => segRouteSet.has(t.route));
-
-        // Deduplicate by tripId (a trip only counts once per segment)
+        const relevantTrips = matchedTripsBySegment.get(seg.id) || [];
         const seenTrips = new Set<string>();
         const routeCounts = new Map<string, number>();
-        for (const t of relevantTrips) {
-            if (seenTrips.has(t.tripId)) continue;
-            seenTrips.add(t.tripId);
-            routeCounts.set(t.route, (routeCounts.get(t.route) || 0) + 1);
+        for (const trip of relevantTrips) {
+            const flags = serviceFlags.get(trip.serviceId);
+            if (!flags || !serviceMatchesDayType(flags, dayType)) continue;
+            if (trip.departureMinutes < periodDef.startMinute || trip.departureMinutes >= periodDef.endMinute) continue;
+            if (seenTrips.has(trip.tripId)) continue;
+
+            seenTrips.add(trip.tripId);
+            routeCounts.set(trip.route, (routeCounts.get(trip.route) || 0) + 1);
         }
 
         const totalTrips = seenTrips.size;

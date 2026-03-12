@@ -63,6 +63,7 @@ export interface NewScheduleProject {
     // Wizard state
     dayType: 'Weekday' | 'Saturday' | 'Sunday';
     importMode?: 'csv' | 'gtfs' | 'performance';
+    autofillFromMaster?: boolean;
     performanceConfig?: {
         routeId: string;
         dateRange: { start: string; end: string } | null;
@@ -97,6 +98,14 @@ export const saveProject = async (
     const isUpdate = !!project.id;
     const docRef = project.id ? doc(projectsRef, project.id) : doc(projectsRef);
     const projectId = docRef.id;
+    let previousStoragePath: string | undefined;
+
+    if (isUpdate) {
+        const existingSnapshot = await getDoc(docRef);
+        if (existingSnapshot.exists()) {
+            previousStoragePath = existingSnapshot.data().storagePath as string | undefined;
+        }
+    }
 
     const sanitizedConfig = project.config
         ? stripUndefinedDeep(project.config as ScheduleConfig)
@@ -132,6 +141,7 @@ export const saveProject = async (
         name: project.name || 'Untitled Project',
         dayType: project.dayType,
         importMode: project.importMode || 'csv',
+        autofillFromMaster: project.autofillFromMaster ?? true,
         performanceConfig: project.performanceConfig || null,
         routeNumber: project.routeNumber || null,
         isGenerated: project.isGenerated || false,
@@ -154,6 +164,14 @@ export const saveProject = async (
     }
 
     await setDoc(docRef, docData, { merge: true });
+
+    if (storagePath && previousStoragePath && previousStoragePath !== storagePath) {
+        try {
+            await deleteObject(ref(storage, previousStoragePath));
+        } catch (e) {
+            console.warn('Failed to delete prior project storage file:', e);
+        }
+    }
 
     return projectId;
 };
@@ -186,6 +204,7 @@ export const getProject = async (
         name: data.name,
         dayType: data.dayType,
         importMode: data.importMode || 'csv',
+        autofillFromMaster: data.autofillFromMaster ?? true,
         performanceConfig: data.performanceConfig || undefined,
         routeNumber: data.routeNumber,
         isGenerated: data.isGenerated,
@@ -223,6 +242,7 @@ export const getProject = async (
             });
         } catch (e) {
             console.error('Failed to load project data from storage:', e);
+            return null;
         }
     } else {
         console.warn('No storagePath found - project has no saved data in Cloud Storage');
@@ -246,6 +266,7 @@ export const getAllProjects = async (userId: string): Promise<NewScheduleProject
             name: data.name,
             dayType: data.dayType,
             importMode: data.importMode || 'csv',
+            autofillFromMaster: data.autofillFromMaster ?? true,
             performanceConfig: data.performanceConfig || undefined,
             routeNumber: data.routeNumber,
             isGenerated: data.isGenerated,
@@ -308,6 +329,7 @@ export const duplicateProject = async (
         name: newName || `${project.name} (Copy)`,
         dayType: project.dayType,
         importMode: project.importMode,
+        autofillFromMaster: project.autofillFromMaster,
         performanceConfig: project.performanceConfig,
         routeNumber: project.routeNumber,
         analysis: project.analysis,

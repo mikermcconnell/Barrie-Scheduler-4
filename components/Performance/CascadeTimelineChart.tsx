@@ -61,8 +61,8 @@ const CascadeTimelineChart: React.FC<CascadeTimelineChartProps> = ({
 
     if (points.length === 0) {
         return (
-            <div className="flex items-center justify-center h-40 text-gray-400 text-sm">
-                No timepoint data
+            <div className="flex h-40 items-center justify-center rounded-2xl border-2 border-dashed border-gray-200 bg-gray-50 text-sm font-semibold text-gray-400">
+                No downstream timepoint data available for this cascade.
             </div>
         );
     }
@@ -127,16 +127,33 @@ const CascadeTimelineChart: React.FC<CascadeTimelineChartProps> = ({
         });
     }
 
-    // Recovery markers: first non-late point after a late point
-    const recoveryIndices = new Set<number>();
+    // Threshold markers: first point at or below 5 min after any OTP-late point.
+    const thresholdIndices = new Set<number>();
     let wasLate = false;
     for (let i = 0; i < points.length; i++) {
         const p = points[i];
         if (p.deviationMinutes !== null) {
-            if (wasLate && !p.isLate) {
+            const isLateNow = p.deviationMinutes > OTP_LATE_MINUTES;
+            if (wasLate && p.deviationMinutes > 0 && p.deviationMinutes <= OTP_LATE_MINUTES) {
+                thresholdIndices.add(i);
+                wasLate = false;
+                continue;
+            }
+            wasLate = isLateNow;
+        }
+    }
+
+    // Recovery markers: first zero-delay point after any attributable delay.
+    const recoveryIndices = new Set<number>();
+    let wasAffected = false;
+    for (let i = 0; i < points.length; i++) {
+        const p = points[i];
+        if (p.deviationMinutes !== null) {
+            const hasAttributedDelay = p.deviationMinutes > 0;
+            if (wasAffected && !hasAttributedDelay) {
                 recoveryIndices.add(i);
             }
-            wasLate = p.isLate;
+            wasAffected = hasAttributedDelay;
         }
     }
 
@@ -266,7 +283,13 @@ const CascadeTimelineChart: React.FC<CascadeTimelineChartProps> = ({
                                 fill={colors.stroke}
                                 fontWeight={600}
                             >
-                                {seg.tripName} · {seg.lateCount}/{seg.totalCount}
+                                {seg.tripName}
+                                {' · '}
+                                {seg.lateCount > 0
+                                    ? `${seg.lateCount}/${seg.totalCount} OTP-late`
+                                    : seg.affectedCount > 0
+                                        ? `${seg.affectedCount}/${seg.totalCount} delayed`
+                                        : 'recovered'}
                             </text>
                         );
                     }
@@ -289,7 +312,13 @@ const CascadeTimelineChart: React.FC<CascadeTimelineChartProps> = ({
                                 fill={colors.stroke}
                                 fontWeight={600}
                             >
-                                {seg.tripName} · {seg.lateCount}/{seg.totalCount}
+                                {seg.tripName}
+                                {' · '}
+                                {seg.lateCount > 0
+                                    ? `${seg.lateCount}/${seg.totalCount} OTP-late`
+                                    : seg.affectedCount > 0
+                                        ? `${seg.affectedCount}/${seg.totalCount} delayed`
+                                        : 'recovered'}
                             </text>
                         </g>
                     );
@@ -410,7 +439,9 @@ const CascadeTimelineChart: React.FC<CascadeTimelineChartProps> = ({
                     const cy = yOf(Math.max(dev, 0));
                     const fill = p.isLate
                         ? (seg ? TRIP_FILL_COLORS[seg.color].stroke : '#ef4444')
-                        : '#22c55e';
+                        : dev > 0
+                            ? '#f59e0b'
+                            : '#22c55e';
 
                     return (
                         <circle
@@ -425,6 +456,39 @@ const CascadeTimelineChart: React.FC<CascadeTimelineChartProps> = ({
                 })}
 
                 {/* === LAYER 6: Recovery markers === */}
+                {points.map((p, i) => {
+                    if (!thresholdIndices.has(i)) return null;
+                    const cx = xOf(i);
+                    const dev = p.deviationMinutes ?? 0;
+                    const cy = yOf(Math.max(dev, 0));
+                    return (
+                        <g key={`threshold-${i}`}>
+                            <circle
+                                cx={cx}
+                                cy={cy - 10}
+                                r={7}
+                                fill="#2563eb"
+                                opacity={0.92}
+                            />
+                            <path
+                                d={`M${cx - 3},${cy - 10} L${cx + 3},${cy - 10}`}
+                                fill="none"
+                                stroke="white"
+                                strokeWidth={1.6}
+                                strokeLinecap="round"
+                            />
+                            <path
+                                d={`M${cx},${cy - 13} L${cx},${cy - 7}`}
+                                fill="none"
+                                stroke="white"
+                                strokeWidth={1.6}
+                                strokeLinecap="round"
+                            />
+                        </g>
+                    );
+                })}
+
+                {/* === LAYER 6B: Recovery markers === */}
                 {points.map((p, i) => {
                     if (!recoveryIndices.has(i)) return null;
                     const cx = xOf(i);
@@ -532,9 +596,33 @@ const CascadeTimelineChart: React.FC<CascadeTimelineChartProps> = ({
                     )}
                     {tooltip.point.deviationMinutes !== null && (
                         <div className="flex gap-2 mt-1">
-                            <span className="text-gray-400">Dev</span>
-                            <span className={`font-semibold ${tooltip.point.isLate ? 'text-red-600' : 'text-green-600'}`}>
+                            <span className="text-gray-400">Delay</span>
+                            <span className={`font-semibold ${
+                                tooltip.point.isLate
+                                    ? 'text-red-600'
+                                    : (tooltip.point.deviationMinutes ?? 0) > 0
+                                        ? 'text-amber-600'
+                                        : 'text-green-600'
+                            }`}>
                                 {tooltip.point.deviationMinutes > 0 ? '+' : ''}{tooltip.point.deviationMinutes.toFixed(1)} min
+                            </span>
+                        </div>
+                    )}
+                    {tooltip.point.deviationMinutes !== null && (
+                        <div className="flex gap-2 mt-1">
+                            <span className="text-gray-400">Status</span>
+                            <span className={`font-medium ${
+                                tooltip.point.isLate
+                                    ? 'text-red-600'
+                                    : (tooltip.point.deviationMinutes ?? 0) > 0
+                                        ? 'text-amber-600'
+                                        : 'text-emerald-600'
+                            }`}>
+                                {tooltip.point.isLate
+                                    ? 'OTP-late'
+                                    : (tooltip.point.deviationMinutes ?? 0) > 0
+                                        ? 'Delay only'
+                                        : 'Recovered'}
                             </span>
                         </div>
                     )}

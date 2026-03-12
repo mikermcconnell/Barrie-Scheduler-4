@@ -31,6 +31,7 @@ function makeTrip(overrides: Partial<CascadeAffectedTrip> = {}): CascadeAffected
     scheduledRecoverySeconds: 120,
     timepoints: [makeTimepoint()],
     lateTimepointCount: 1,
+    affectedTimepointCount: 1,
     recoveredAtStop: null,
     otpStatus: 'late',
     recoveredHere: false,
@@ -92,7 +93,7 @@ describe('getTripNodeColor', () => {
   });
 
   it('returns green when no timepoints are late', () => {
-    const trip = makeTrip({ lateTimepointCount: 0 });
+    const trip = makeTrip({ lateTimepointCount: 0, affectedTimepointCount: 0 });
     expect(getTripNodeColor(trip)).toBe('green');
   });
 

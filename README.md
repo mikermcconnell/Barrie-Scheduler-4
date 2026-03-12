@@ -27,9 +27,12 @@ Generate, edit, and publish fixed-route bus schedules with:
 npm install
 Copy-Item .env.example .env.local
 # Edit .env.local and set GEMINI_API_KEY
+# Keep VITE_OPTIMIZE_TIMEOUT_MS=300000 and VITE_OPTIMIZE_MAX_RETRIES=0 for TOD optimization
 # Optional: set VITE_MAPBOX_TOKEN for map features
 npm run dev
 ```
+
+Production note: Transit On Demand optimization should use the Firebase/Cloud Run backend. Do not enable `VITE_ENABLE_VERCEL_OPTIMIZE_FALLBACK` for this flow unless the Vercel function timeout is explicitly raised to match the optimizer workload.
 
 ## Project Structure
 

@@ -147,9 +147,9 @@ describe('dwellCascadeComputer.buildDailyCascadeMetrics', () => {
     expect(result.totalBlastRadius).toBe(0);
   });
 
-  it('returns blastRadius 0 when all downstream trips are on-time', () => {
-    // All trips depart on-time. Downstream trips have no late timepoints.
-    // Trailing trim removes Trip-2 (0 late TPs) → cascadedTrips empty.
+  it('records immediate full recovery when all downstream trips are on-time', () => {
+    // All trips depart on-time. The first downstream trip should be retained as the
+    // zero-recovery milestone rather than trimmed away.
     const records = buildBlockRecords({
       block: '10-01', tripCount: 3, baseHour: 8, intervalMin: 30,
     });
@@ -160,13 +160,17 @@ describe('dwellCascadeComputer.buildDailyCascadeMetrics', () => {
     expect(result.cascades).toHaveLength(1);
     const cascade = result.cascades[0];
     expect(cascade.blastRadius).toBe(0);
-    expect(cascade.cascadedTrips).toHaveLength(0);
+    expect(cascade.cascadedTrips).toHaveLength(1);
+    expect(cascade.backUnderThresholdAtTrip).toBe('Trip-2');
+    expect(cascade.backUnderThresholdAtStop).toBe('Terminal North');
+    expect(cascade.recoveredAtTrip).toBe('Trip-2');
+    expect(cascade.recoveredAtStop).toBe('Terminal North');
     expect(cascade.totalLateSeconds).toBe(0);
     expect(result.totalNonCascaded).toBe(1);
     expect(result.totalCascaded).toBe(0);
   });
 
-  it('traces cascade through multiple trips with recovery', () => {
+  it('tracks back-under-threshold separately from full recovery', () => {
     // 3 trips, 25 min apart (5 min recovery between 20 min trips).
     //
     // Trip-2 (i=0, base 08:25):
@@ -176,8 +180,8 @@ describe('dwellCascadeComputer.buildDailyCascadeMetrics', () => {
     //
     // Trip-3 (i=1, base 08:50):
     //   Stop 1 (Terminal North): sched 08:50, obs 08:56 → dev=360s (6min) → LATE
-    //   Stop 2 (Stop B):         sched 09:00, obs 09:04 → dev=240s (4min) → ON-TIME
-    //     → chain breaks here (lateCount=1 > 0), recoveredAtStop = 'Stop B'
+    //   Stop 2 (Stop B):         sched 09:00, obs 09:04 → dev=240s (4min) → below OTP threshold
+    //     → threshold milestone recorded here, but the route is still carrying delay
     //   lateTimepointCount = 1
     //
     // blastRadius = 2 + 1 = 3
@@ -189,7 +193,7 @@ describe('dwellCascadeComputer.buildDailyCascadeMetrics', () => {
       intervalMin: 25,
       observedDepartures: {
         1: { 1: '08:33:00', 2: '08:41:00' }, // Trip-2: +8min, +6min
-        2: { 1: '08:56:00', 2: '09:04:00' }, // Trip-3: +6min, +4min (recovery)
+        2: { 1: '08:56:00', 2: '09:04:00' }, // Trip-3: +6min, +4min (below threshold, not zero)
       },
     });
 
@@ -216,32 +220,64 @@ describe('dwellCascadeComputer.buildDailyCascadeMetrics', () => {
     expect(trip2.timepoints[1].deviationSeconds).toBe(360);
     expect(trip2.timepoints[1].boardings).toBe(2);
 
-    // Trip-3: first TP late, second TP on-time → recovery
+    // Trip-3: first TP late, second TP drops below threshold but is still delayed
     const trip3 = cascade.cascadedTrips[1];
     expect(trip3.tripName).toBe('Trip-3');
     expect(trip3.lateTimepointCount).toBe(1);
     expect(trip3.affectedTimepointCount).toBe(2);
-    expect(trip3.recoveredAtStop).toBe('Stop B');
-    // Trip-3 has 2 timepoints in output (late one + the on-time recovery point)
+    expect(trip3.backUnderThresholdAtStop).toBe('Stop B');
+    expect(trip3.recoveredAtStop).toBeNull();
+    // Trip-3 has 2 timepoints in output (late one + the below-threshold point)
     expect(trip3.timepoints).toHaveLength(2);
     expect(trip3.timepoints[0].isLate).toBe(true);
     expect(trip3.timepoints[0].deviationSeconds).toBe(360);
     expect(trip3.timepoints[1].isLate).toBe(false);
     expect(trip3.timepoints[1].deviationSeconds).toBe(240);
 
-    // Top-level recovery fields
-    expect(cascade.recoveredAtTrip).toBe('Trip-3');
-    expect(cascade.recoveredAtStop).toBe('Stop B');
+    // Top-level milestone fields
+    expect(cascade.backUnderThresholdAtTrip).toBe('Trip-3');
+    expect(cascade.backUnderThresholdAtStop).toBe('Stop B');
+    expect(cascade.recoveredAtTrip).toBeNull();
+    expect(cascade.recoveredAtStop).toBeNull();
     expect(cascade.affectedTripCount).toBe(2);
 
     expect(result.totalCascaded).toBe(1);
   });
 
-  it('returns blastRadius 0 when first downstream TP is immediately on-time', () => {
-    // First subsequent trip (i=0): first timepoint on-time, lateCount=0, i=0
-    // → condition (lateCount > 0 || i > 0) = false → not chain-breaking
-    // After walking all TPs with 0 late, lateCount=0 && !chainBroken → chainBroken=true
-    // Trailing trim removes it → cascadedTrips empty
+  it('continues tracing until attributed delay reaches zero', () => {
+    const records = buildBlockRecords({
+      block: '10-01',
+      tripCount: 4,
+      baseHour: 8,
+      intervalMin: 25,
+      observedDepartures: {
+        1: { 1: '08:33:00', 2: '08:41:00' }, // Trip-2: +8min, +6min
+        2: { 1: '08:56:00', 2: '09:04:00' }, // Trip-3: +6min, +4min
+        3: { 1: '09:17:00', 2: '09:25:00' }, // Trip-4: +2min, then zero
+      },
+    });
+    const incident = makeIncident({ tripName: 'Trip-1', block: '10-01' });
+
+    const result = buildDailyCascadeMetrics(records, [incident]);
+    const cascade = result.cascades[0];
+
+    expect(cascade.cascadedTrips).toHaveLength(3);
+    expect(cascade.backUnderThresholdAtTrip).toBe('Trip-3');
+    expect(cascade.backUnderThresholdAtStop).toBe('Stop B');
+    expect(cascade.recoveredAtTrip).toBe('Trip-4');
+    expect(cascade.recoveredAtStop).toBe('Stop B');
+    expect(cascade.affectedTripCount).toBe(3);
+    expect(cascade.totalLateSeconds).toBe(1560);
+
+    const trip4 = cascade.cascadedTrips[2];
+    expect(trip4.backUnderThresholdAtStop).toBeNull();
+    expect(trip4.recoveredAtStop).toBe('Stop B');
+    expect(trip4.recoveredHere).toBe(true);
+    expect(trip4.timepoints[0].deviationSeconds).toBe(120);
+    expect(trip4.timepoints[1].deviationSeconds).toBe(0);
+  });
+
+  it('keeps the first downstream trip when full recovery happens immediately', () => {
     const records = buildBlockRecords({
       block: '10-01', tripCount: 2, baseHour: 8, intervalMin: 30,
     });
@@ -251,7 +287,8 @@ describe('dwellCascadeComputer.buildDailyCascadeMetrics', () => {
 
     expect(result.cascades).toHaveLength(1);
     expect(result.cascades[0].blastRadius).toBe(0);
-    expect(result.cascades[0].cascadedTrips).toHaveLength(0);
+    expect(result.cascades[0].cascadedTrips).toHaveLength(1);
+    expect(result.cascades[0].recoveredAtTrip).toBe('Trip-2');
   });
 
   it('handles dwell on last trip in block (no subsequent trips)', () => {
@@ -325,19 +362,19 @@ describe('dwellCascadeComputer.buildDailyCascadeMetrics', () => {
     const result = buildDailyCascadeMetrics(records, [incident]);
     const cascade = result.cascades[0];
 
-    expect(cascade.cascadedTrips).toHaveLength(1);
+    expect(cascade.cascadedTrips).toHaveLength(2);
     expect(cascade.cascadedTrips[0].tripName).toBe('Trip-2');
     expect(cascade.cascadedTrips[0].routeId).toBe('20');
     expect(cascade.cascadedTrips[0].lateTimepointCount).toBe(2);
+    expect(cascade.cascadedTrips[1].tripName).toBe('Trip-3');
+    expect(cascade.recoveredAtTrip).toBe('Trip-3');
     expect(cascade.blastRadius).toBe(2);
   });
 
   it('skips timepoints with null observed departures without breaking chain', () => {
     // Trip-2 (i=0): Stop 1 null obs → skip, Stop 2 late → lateCount=1
-    // Trip-3 (i=1): Stop 1 on-time → chain breaks (lateCount=0 but i>0)
-    //   Actually: Trip-3 first TP is on-time, i=1 > 0, so condition is true → chain breaks
-    //   Trip-3 lateTimepointCount = 0. Trailing trim removes Trip-3.
-    //   Trip-2 has lateTimepointCount=1 → stays.
+    // Trip-3 (i=1): Stop 1 on-time → full recovery at the first stop.
+    // The recovery trip should now be preserved.
     // blastRadius = 1
     const records = buildBlockRecords({
       block: '10-01',
@@ -372,6 +409,8 @@ describe('dwellCascadeComputer.buildDailyCascadeMetrics', () => {
 
     expect(trip2.lateTimepointCount).toBe(1);
     expect(cascade.blastRadius).toBe(1);
+    expect(cascade.cascadedTrips).toHaveLength(2);
+    expect(cascade.recoveredAtTrip).toBe('Trip-3');
   });
 
   it('does not treat a fully missing-AVL downstream trip as recovery', () => {
@@ -399,7 +438,7 @@ describe('dwellCascadeComputer.buildDailyCascadeMetrics', () => {
 
   it('sums totalLateSeconds across all late timepoints', () => {
     // Trip-2: Stop 1 dev=480s (late), Stop 2 dev=360s (late)
-    // Trip-3: Stop 1 dev=360s (late), Stop 2 dev=240s (on-time, recovery)
+    // Trip-3: Stop 1 dev=360s (late), Stop 2 dev=240s (below threshold, not zero)
     // totalLateSeconds = 480 + 360 + 360 + 240 = 1440
     const records = buildBlockRecords({
       block: '10-01',
@@ -481,10 +520,9 @@ describe('dwellCascadeComputer.buildDailyCascadeMetrics', () => {
     const result = buildDailyCascadeMetrics(records, [incident]);
     const cascade = result.cascades[0];
 
-    // Chain should break at Trip-2 TP1 (on-time) → no late departures count
-    // Trailing trim removes Trip-2 (0 late TPs) → cascadedTrips empty
+    // Chain should break at Trip-2 TP1 (on-time) and preserve the recovery trip
     expect(cascade.blastRadius).toBe(0);
-    expect(cascade.cascadedTrips).toHaveLength(0);
+    expect(cascade.cascadedTrips).toHaveLength(1);
     expect(result.totalNonCascaded).toBe(1);
   });
 
@@ -535,8 +573,8 @@ describe('dwellCascadeComputer.buildDailyCascadeMetrics', () => {
     const result = buildDailyCascadeMetrics(records, [incident]);
     const cascade = result.cascades[0];
 
-    // Canonical row for Trip-2 Stop 1 is on-time → no cascade
+    // Canonical row for Trip-2 Stop 1 is on-time → immediate recovery
     expect(cascade.blastRadius).toBe(0);
-    expect(cascade.cascadedTrips).toHaveLength(0);
+    expect(cascade.cascadedTrips).toHaveLength(1);
   });
 });

@@ -6,7 +6,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Map, ArrowRight, Loader2, Smartphone, Network, GraduationCap } from 'lucide-react';
+import { Map, ArrowRight, Loader2, Smartphone, Network, GraduationCap, Route, GitBranch } from 'lucide-react';
 import { useTeam } from '../contexts/TeamContext';
 import { useAuth } from '../contexts/AuthContext';
 import { getTransitAppData, getTransitAppMetadata } from '../../utils/transit-app/transitAppService';
@@ -18,7 +18,12 @@ import { ODMatrixWorkspace } from './ODMatrixWorkspace';
 import { ODCoordinateEditor } from './ODCoordinateEditor';
 import { TeamManagement } from '../TeamManagement';
 import { HeadwayMap } from '../Mapping/HeadwayMap';
+import { CorridorSpeedMap } from '../Mapping/CorridorSpeedMap';
 import { StudentPassModule } from './StudentPassModule';
+import { ShuttlePlannerWorkspace } from './ShuttlePlannerWorkspace';
+import { RoutePlannerWorkspace } from './RoutePlannerWorkspace';
+import { NetworkConnectionsWorkspace } from './NetworkConnectionsWorkspace';
+import { usePerformanceMetadataQuery } from '../../hooks/usePerformanceData';
 import type { TransitAppDataSummary } from '../../utils/transit-app/transitAppTypes';
 import type { ODMatrixDataSummary, GeocodeCache } from '../../utils/od-matrix/odMatrixTypes';
 
@@ -92,7 +97,11 @@ type AnalyticsView =
     | 'od-fix-coords'
     | 'od-workspace'
     | 'headway-map'
-    | 'student-pass';
+    | 'corridor-speed'
+    | 'student-pass'
+    | 'route-planner'
+    | 'network-connections'
+    | 'shuttle-planner';
 
 export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose }) => {
     const { team } = useTeam();
@@ -104,6 +113,8 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
     const [loading, setLoading] = useState(true);
     const [hasExistingData, setHasExistingData] = useState(false);
     const [hasODData, setHasODData] = useState(false);
+    const performanceMetadataQuery = usePerformanceMetadataQuery(team?.id);
+    const hasPerformanceData = !!performanceMetadataQuery.data;
 
     // Check for existing data on mount
     useEffect(() => {
@@ -352,6 +363,51 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
         );
     }
 
+    if (view === 'corridor-speed') {
+        return (
+            <div className="h-full overflow-hidden">
+                <CorridorSpeedMap onBack={() => setView('dashboard')} teamId={team.id} />
+            </div>
+        );
+    }
+
+    if (view === 'route-planner') {
+        return (
+            <div className="h-full overflow-hidden">
+                <RoutePlannerWorkspace
+                    onBack={() => setView('dashboard')}
+                    userId={user?.uid ?? null}
+                    teamId={team.id}
+                />
+            </div>
+        );
+    }
+
+    if (view === 'network-connections') {
+        return (
+            <div className="h-full overflow-hidden">
+                <NetworkConnectionsWorkspace
+                    onBack={() => setView('dashboard')}
+                    teamId={team.id}
+                    userId={user?.uid ?? null}
+                    observedTransitData={transitData}
+                />
+            </div>
+        );
+    }
+
+    if (view === 'shuttle-planner') {
+        return (
+            <div className="h-full overflow-hidden">
+                <ShuttlePlannerWorkspace
+                    onBack={() => setView('dashboard')}
+                    userId={user?.uid ?? null}
+                    teamId={team.id}
+                />
+            </div>
+        );
+    }
+
     // Main dashboard with cards
     return (
         <div className="h-full overflow-auto custom-scrollbar p-6">
@@ -381,6 +437,14 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
                     <AnalyticsCard
                         color="teal"
                         icon={<Map size={20} />}
+                        title="Corridor Speed"
+                        description="Compare observed STREETS travel times to GTFS schedule by roadway corridor, period, and direction."
+                        hasData={hasPerformanceData}
+                        onClick={() => setView('corridor-speed')}
+                    />
+                    <AnalyticsCard
+                        color="teal"
+                        icon={<Map size={20} />}
                         title="Corridor Headway"
                         description="Visualize combined service headway where multiple routes share corridors. Identify high-frequency spines and coverage gaps."
                         hasData={false}
@@ -393,6 +457,22 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
                         description="Generate one-page transit flyers for students showing how to reach school by bus from any residential zone."
                         hasData={false}
                         onClick={() => setView('student-pass')}
+                    />
+                    <AnalyticsCard
+                        color="violet"
+                        icon={<GitBranch size={20} />}
+                        title="Network Connections"
+                        description="Map-first transfer hub analysis using published master schedules. See where routes really connect, where they miss, and which hubs deserve protection."
+                        hasData={false}
+                        onClick={() => setView('network-connections')}
+                    />
+                    <AnalyticsCard
+                        color="cyan"
+                        icon={<Route size={20} />}
+                        title="Route Planner"
+                        description="Test route concepts in a Friendly planning workspace. Shuttle Concept mode is live first, with existing-route tweaks and broader route planning to follow."
+                        hasData={false}
+                        onClick={() => setView('route-planner')}
                     />
                 </div>
             </div>

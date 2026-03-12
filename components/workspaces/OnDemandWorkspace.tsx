@@ -155,6 +155,24 @@ export const OnDemandWorkspace: React.FC = () => {
         }
     };
 
+    const buildOptimizationMessage = (result: OptimizationResult, actionLabel: string): string => {
+        const details = [`${actionLabel} completed in ${Math.round(result.durationMs / 1000)}s`];
+        if (result.pipeline) {
+            details.push(`pipeline: ${result.pipeline}`);
+        }
+        details.push(`ref ${result.requestId}`);
+        return details.join(' | ');
+    };
+
+    const buildFallbackMessage = (result: OptimizationResult): string => {
+        const details = [result.warning || 'AI optimization did not finish.'];
+        if (result.failureCode) {
+            details.push(`code: ${result.failureCode}`);
+        }
+        details.push(`ref ${result.requestId}`);
+        return details.join(' ');
+    };
+
     const handleCancelOptimization = () => {
         abortControllerRef.current?.abort();
         setIsAnimating(false);
@@ -186,7 +204,7 @@ export const OnDemandWorkspace: React.FC = () => {
             setOptimizationPhase('Processing results...');
 
             if (result.warning) {
-                toast.warning('Used fallback scheduler', result.warning);
+                toast.warning('Used fallback scheduler', buildFallbackMessage(result));
             }
 
             if (result.shifts.length > 0) {
@@ -203,7 +221,7 @@ export const OnDemandWorkspace: React.FC = () => {
                 setIsOptimized(true);
 
                 if (result.source === 'ai') {
-                    toast.success('Schedule generated', `AI optimization completed in ${Math.round(result.durationMs / 1000)}s`);
+                    toast.success('Schedule generated', buildOptimizationMessage(result, 'AI optimization'));
                 }
             } else {
                 console.warn("Optimization returned no shifts.");
@@ -247,7 +265,7 @@ export const OnDemandWorkspace: React.FC = () => {
             setOptimizationPhase('Processing results...');
 
             if (result.warning) {
-                toast.warning('Used fallback scheduler', result.warning);
+                toast.warning('Used fallback scheduler', buildFallbackMessage(result));
             }
 
             if (result.shifts.length > 0) {
@@ -257,7 +275,7 @@ export const OnDemandWorkspace: React.FC = () => {
                 });
 
                 if (result.source === 'ai') {
-                    toast.success('Refinement complete', `AI optimization completed in ${Math.round(result.durationMs / 1000)}s`);
+                    toast.success('Refinement complete', buildOptimizationMessage(result, 'AI optimization'));
                 }
             } else {
                 toast.error('No refinements found', 'The optimizer returned no changes');

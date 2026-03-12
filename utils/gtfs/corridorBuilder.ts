@@ -147,41 +147,53 @@ function buildTripStopSequences(entries: StopTimeEntry[]): Map<string, { stopId:
     return sequences;
 }
 
-/** For each route+direction, pick the trip with the most stops as canonical. */
-function getCanonicalSequences(
+/** For each route+direction, collect all unique ordered stop sequences. */
+function getRouteDirectionSequences(
     tripSequences: Map<string, { stopId: string; depMin: number | null }[]>,
-    routeMap: Map<string, string>,
     tripDirMap: Map<string, string>,
     tripToRouteService: Map<string, { route: string; serviceId: string }>,
-): Map<string, string[]> {
-    // key: "ROUTE|direction" → longest stop_id list
-    const best = new Map<string, { stops: string[]; count: number }>();
+): Map<string, string[][]> {
+    const sequences = new Map<string, string[][]>();
+    const seen = new Map<string, Set<string>>();
 
     for (const [tripId, stopSeq] of tripSequences) {
         const info = tripToRouteService.get(tripId);
         if (!info) continue;
         const dir = tripDirMap.get(tripId) || '0';
         const key = `${info.route}|${dir}`;
-        const existing = best.get(key);
-        if (!existing || stopSeq.length > existing.count) {
-            best.set(key, { stops: stopSeq.map(s => s.stopId), count: stopSeq.length });
+        const stops = stopSeq.map(s => s.stopId);
+        if (stops.length < 2) continue;
+        const signature = stops.join('>');
+
+        let seqSeen = seen.get(key);
+        if (!seqSeen) {
+            seqSeen = new Set<string>();
+            seen.set(key, seqSeen);
         }
+        if (seqSeen.has(signature)) continue;
+        seqSeen.add(signature);
+
+        const existing = sequences.get(key);
+        if (existing) existing.push(stops);
+        else sequences.set(key, [stops]);
     }
 
-    return new Map(Array.from(best.entries()).map(([k, v]) => [k, v.stops]));
+    return sequences;
 }
 
 /** Build edge index: (stopA, stopB) → set of routes. */
-function buildEdgeIndex(canonicalSequences: Map<string, string[]>): Map<string, Set<string>> {
+function buildEdgeIndex(routeDirectionSequences: Map<string, string[][]>): Map<string, Set<string>> {
     const edgeRoutes = new Map<string, Set<string>>();
 
-    for (const [key, stops] of canonicalSequences) {
+    for (const [key, sequences] of routeDirectionSequences) {
         const route = key.split('|')[0];
-        for (let i = 0; i < stops.length - 1; i++) {
-            const edgeKey = `${stops[i]}→${stops[i + 1]}`;
-            const existing = edgeRoutes.get(edgeKey);
-            if (existing) existing.add(route);
-            else edgeRoutes.set(edgeKey, new Set([route]));
+        for (const stops of sequences) {
+            for (let i = 0; i < stops.length - 1; i++) {
+                const edgeKey = `${stops[i]}→${stops[i + 1]}`;
+                const existing = edgeRoutes.get(edgeKey);
+                if (existing) existing.add(route);
+                else edgeRoutes.set(edgeKey, new Set([route]));
+            }
         }
     }
 
@@ -190,47 +202,47 @@ function buildEdgeIndex(canonicalSequences: Map<string, string[]>): Map<string, 
 
 /** Merge consecutive edges with the same route set into corridor segments. */
 function mergeEdgesIntoSegments(
-    canonicalSequences: Map<string, string[]>,
+    routeDirectionSequences: Map<string, string[][]>,
     edgeRoutes: Map<string, Set<string>>,
 ): { stops: string[]; routes: string[] }[] {
-    const segments: { stops: string[]; routes: string[] }[] = [];
-    const processedEdges = new Set<string>();
+    const segments = new Map<string, { stops: string[]; routes: string[] }>();
 
-    // For each canonical sequence, walk through and group consecutive edges with same route set
-    for (const [_key, stops] of canonicalSequences) {
-        for (let i = 0; i < stops.length - 1; i++) {
-            const edgeKey = `${stops[i]}→${stops[i + 1]}`;
-            if (processedEdges.has(edgeKey)) continue;
+    // For each unique sequence, walk through and group consecutive edges with same route set.
+    // De-duplicate final merged segments by route-set + ordered stop chain.
+    for (const sequences of routeDirectionSequences.values()) {
+        for (const stops of sequences) {
+            for (let i = 0; i < stops.length - 1; i++) {
+                const edgeKey = `${stops[i]}→${stops[i + 1]}`;
+                const routeSet = edgeRoutes.get(edgeKey);
+                if (!routeSet) continue;
 
-            const routeSet = edgeRoutes.get(edgeKey);
-            if (!routeSet) continue;
+                const routeSetKey = Array.from(routeSet).sort().join(',');
+                const segStops = [stops[i]];
 
-            const routeSetKey = Array.from(routeSet).sort().join(',');
-            const segStops = [stops[i]];
-            processedEdges.add(edgeKey);
+                let j = i + 1;
+                while (j < stops.length - 1) {
+                    const nextEdge = `${stops[j]}→${stops[j + 1]}`;
+                    const nextRoutes = edgeRoutes.get(nextEdge);
+                    if (!nextRoutes) break;
+                    const nextKey = Array.from(nextRoutes).sort().join(',');
+                    if (nextKey !== routeSetKey) break;
+                    segStops.push(stops[j]);
+                    j++;
+                }
+                segStops.push(stops[j < stops.length ? j : stops.length - 1]);
 
-            // Extend forward while next edge has same route set
-            let j = i + 1;
-            while (j < stops.length - 1) {
-                const nextEdge = `${stops[j]}→${stops[j + 1]}`;
-                const nextRoutes = edgeRoutes.get(nextEdge);
-                if (!nextRoutes || processedEdges.has(nextEdge)) break;
-                const nextKey = Array.from(nextRoutes).sort().join(',');
-                if (nextKey !== routeSetKey) break;
-                segStops.push(stops[j]);
-                processedEdges.add(nextEdge);
-                j++;
+                const dedupeKey = `${routeSetKey}|${segStops.join('>')}`;
+                if (!segments.has(dedupeKey)) {
+                    segments.set(dedupeKey, {
+                        stops: segStops,
+                        routes: Array.from(routeSet).sort(),
+                    });
+                }
             }
-            segStops.push(stops[j < stops.length ? j : stops.length - 1]);
-
-            segments.push({
-                stops: segStops,
-                routes: Array.from(routeSet).sort(),
-            });
         }
     }
 
-    return segments;
+    return Array.from(segments.values());
 }
 
 /** Extract shape geometry for a segment by snapping stops to the best route polyline. */
@@ -343,11 +355,11 @@ export function buildCorridorSegments(): CorridorSegment[] {
     // Parse stop times and build sequences
     const stopTimeEntries = parseStopTimes();
     const tripSequences = buildTripStopSequences(stopTimeEntries);
-    const canonicalSequences = getCanonicalSequences(tripSequences, routeIdToShortName, tripDirMap, tripToRouteService);
+    const routeDirectionSequences = getRouteDirectionSequences(tripSequences, tripDirMap, tripToRouteService);
 
     // Build edge index and merge into segments
-    const edgeIndex = buildEdgeIndex(canonicalSequences);
-    const rawSegments = mergeEdgesIntoSegments(canonicalSequences, edgeIndex);
+    const edgeIndex = buildEdgeIndex(routeDirectionSequences);
+    const rawSegments = mergeEdgesIntoSegments(routeDirectionSequences, edgeIndex);
 
     // Get stop coordinates and route shapes for geometry
     const stopsWithCoords = getAllStopsWithCoords();

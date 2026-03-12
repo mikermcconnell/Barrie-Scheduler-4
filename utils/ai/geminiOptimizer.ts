@@ -5,14 +5,22 @@ import {
   BREAK_THRESHOLD_HOURS
 } from "../demandConstants";
 import { auth } from "../firebase";
+import {
+  isRetryableOptimizeFailure,
+  parseOptimizeMaxRetries,
+  parseOptimizeTimeoutMs
+} from "./optimizePolicy";
 
 export type OptimizationSource = 'ai' | 'fallback';
+export type OptimizationPipeline = 'fast' | 'multi-phase';
 export interface OptimizationResult {
   shifts: Shift[];
   source: OptimizationSource;
   durationMs: number;
   warning?: string;
   requestId: string;
+  failureCode?: string;
+  pipeline?: OptimizationPipeline;
 }
 
 type OptimizeApiResponse = {
@@ -21,6 +29,8 @@ type OptimizeApiResponse = {
   code?: string;
   message?: string;
   requestId?: string;
+  durationMs?: number;
+  pipeline?: OptimizationPipeline;
 };
 
 type ParsedApiError = {
@@ -36,8 +46,8 @@ type RequestFailure = Error & {
 };
 
 const CLOUD_RUN_OPTIMIZE_URL = 'https://optimizeschedule-ieeja7khcq-uc.a.run.app';
-const REQUEST_TIMEOUT_MS = Number(import.meta.env.VITE_OPTIMIZE_TIMEOUT_MS || 300000);
-const MAX_RETRIES_PER_ENDPOINT = Math.max(0, Number(import.meta.env.VITE_OPTIMIZE_MAX_RETRIES || 1));
+const REQUEST_TIMEOUT_MS = parseOptimizeTimeoutMs(import.meta.env.VITE_OPTIMIZE_TIMEOUT_MS);
+const MAX_RETRIES_PER_ENDPOINT = parseOptimizeMaxRetries(import.meta.env.VITE_OPTIMIZE_MAX_RETRIES);
 const ENDPOINT_OVERRIDE = (import.meta.env.VITE_OPTIMIZE_API_URL || '').trim();
 const isTruthy = (value?: string) => ['1', 'true', 'yes', 'on'].includes((value || '').toLowerCase());
 
@@ -86,17 +96,6 @@ const parseErrorPayload = async (response: Response): Promise<ParsedApiError> =>
   };
 };
 
-const isRetryableFailure = (status?: number, code?: string): boolean => {
-  if (code === 'SERVER_CONFIG' || code === 'AUTH_REQUIRED' || code === 'INVALID_REQUEST') {
-    return false;
-  }
-  if (!status) return true;
-  if (status === 404 || status === 408 || status === 429) return true;
-  if (status >= 500) return true;
-  if (code === 'TIMEOUT' || code === 'UPSTREAM') return true;
-  return false;
-};
-
 const fetchWithTimeout = async (url: string, options: RequestInit, timeoutMs: number, externalSignal?: AbortSignal): Promise<Response> => {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -124,7 +123,7 @@ const requestOptimization = async (
     requestId: string;
   },
   externalSignal?: AbortSignal
-): Promise<Shift[]> => {
+): Promise<OptimizeApiResponse> => {
   let response: Response;
   try {
     response = await fetchWithTimeout(endpoint, {
@@ -140,7 +139,7 @@ const requestOptimization = async (
     const failure = new Error(isTimeout ? `Request timed out after ${REQUEST_TIMEOUT_MS}ms` : 'Network error') as RequestFailure;
     failure.endpoint = endpoint;
     failure.code = isTimeout ? 'CLIENT_TIMEOUT' : 'NETWORK';
-    failure.retryable = true;
+    failure.retryable = !isTimeout;
     throw failure;
   }
 
@@ -150,12 +149,11 @@ const requestOptimization = async (
     failure.endpoint = endpoint;
     failure.status = response.status;
     failure.code = parsed.code;
-    failure.retryable = isRetryableFailure(response.status, parsed.code);
+    failure.retryable = isRetryableOptimizeFailure(response.status, parsed.code);
     throw failure;
   }
 
-  const data = await response.json() as OptimizeApiResponse;
-  return data.shifts || [];
+  return await response.json() as OptimizeApiResponse;
 };
 
 /**
@@ -213,10 +211,17 @@ export const optimizeScheduleWithGemini = async (
 
         try {
           console.log(`[${requestId}] Optimize request attempt ${attempt + 1} to ${endpoint}`);
-          const shifts = await requestOptimization(endpoint, idToken, payload, externalSignal);
+          const responseData = await requestOptimization(endpoint, idToken, payload, externalSignal);
           const durationMs = Date.now() - startedAt;
-          console.log(`[${requestId}] Optimization succeeded via ${endpoint} in ${durationMs}ms`);
-          return { shifts, source: 'ai', durationMs, requestId };
+          const resolvedRequestId = responseData.requestId || requestId;
+          console.log(`[${resolvedRequestId}] Optimization succeeded via ${endpoint} in ${durationMs}ms`);
+          return {
+            shifts: responseData.shifts || [],
+            source: 'ai',
+            durationMs,
+            requestId: resolvedRequestId,
+            pipeline: responseData.pipeline
+          };
         } catch (error) {
           // If externally aborted, return cancelled immediately
           if (externalSignal?.aborted) {
@@ -255,12 +260,14 @@ export const optimizeScheduleWithGemini = async (
     const durationMs = Date.now() - startedAt;
     console.error(`[${requestId}] Optimization failed after ${durationMs}ms:`, error);
     const fallbackShifts = localOptimizationFallback(requirements);
+    const failureCode = (error as RequestFailure | undefined)?.code || 'UNKNOWN';
     return {
       shifts: fallbackShifts,
       source: 'fallback',
       durationMs,
-      warning: `AI optimization failed — used heuristic fallback. ${error instanceof Error ? error.message : ''}`,
-      requestId
+      warning: 'AI optimization did not finish. A heuristic fallback schedule was used.',
+      requestId,
+      failureCode
     };
   }
 };

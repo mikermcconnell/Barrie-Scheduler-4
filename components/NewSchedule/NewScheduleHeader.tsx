@@ -26,7 +26,7 @@ interface NewScheduleHeaderProps {
     onRenameProject?: (newName: string) => void;
     onOpenProjects?: () => void;
     onNewProject?: () => void;
-    onSaveVersion?: (label?: string) => void;
+    onSaveVersion?: (label?: string) => Promise<void> | void;
     onExport?: () => void;
     onClose: () => void;
 
@@ -80,6 +80,7 @@ export const NewScheduleHeader: React.FC<NewScheduleHeaderProps> = ({
     const [isRenaming, setIsRenaming] = useState(false);
     const [renameValue, setRenameValue] = useState(projectName);
     const [showExitModal, setShowExitModal] = useState(false);
+    const [isExitSaving, setIsExitSaving] = useState(false);
 
     // Sync rename value when projectName changes
     useEffect(() => {
@@ -102,12 +103,21 @@ export const NewScheduleHeader: React.FC<NewScheduleHeaderProps> = ({
         setShowExitModal(true);
     };
 
-    const handleSaveAndExit = () => {
-        if (onSaveVersion) {
-            onSaveVersion('Save before exit');
+    const handleSaveAndExit = async () => {
+        if (!onSaveVersion) {
+            setShowExitModal(false);
+            onClose();
+            return;
         }
-        setShowExitModal(false);
-        onClose();
+
+        setIsExitSaving(true);
+        try {
+            await onSaveVersion('Save before exit');
+            setShowExitModal(false);
+            onClose();
+        } finally {
+            setIsExitSaving(false);
+        }
     };
 
     const handleExitWithoutSaving = () => {
@@ -366,19 +376,22 @@ export const NewScheduleHeader: React.FC<NewScheduleHeaderProps> = ({
                             <div className="flex flex-col gap-2">
                                 <button
                                     onClick={handleSaveAndExit}
-                                    className="w-full px-4 py-2.5 rounded-lg bg-blue-600 text-white font-bold text-sm hover:bg-blue-700 transition-colors"
+                                    disabled={isExitSaving}
+                                    className="w-full px-4 py-2.5 rounded-lg bg-blue-600 text-white font-bold text-sm hover:bg-blue-700 transition-colors disabled:cursor-not-allowed disabled:opacity-70"
                                 >
-                                    Save & Exit
+                                    {isExitSaving ? 'Saving...' : 'Save & Exit'}
                                 </button>
                                 <button
                                     onClick={handleExitWithoutSaving}
-                                    className="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-gray-600 font-bold text-sm hover:bg-gray-50 transition-colors"
+                                    disabled={isExitSaving}
+                                    className="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-gray-600 font-bold text-sm hover:bg-gray-50 transition-colors disabled:cursor-not-allowed disabled:opacity-70"
                                 >
                                     Exit Without Saving
                                 </button>
                                 <button
                                     onClick={() => setShowExitModal(false)}
-                                    className="w-full px-4 py-2.5 rounded-lg text-gray-500 font-medium text-sm hover:text-gray-700 transition-colors"
+                                    disabled={isExitSaving}
+                                    className="w-full px-4 py-2.5 rounded-lg text-gray-500 font-medium text-sm hover:text-gray-700 transition-colors disabled:cursor-not-allowed disabled:opacity-70"
                                 >
                                     Cancel
                                 </button>

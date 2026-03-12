@@ -63,7 +63,7 @@ export const CorridorDetailPanel: React.FC<CorridorDetailPanelProps> = ({
                             {formatHeadway(headway.combinedHeadwayMin)}
                         </div>
                         <div className="text-[10px] text-gray-400">
-                            combined headway · {headway.combinedTripsPerHour} trips/hr · {headway.totalTrips} total trips
+                            directional combined headway · {headway.combinedTripsPerHour} trips/hr · {headway.totalTrips} total trips
                         </div>
                     </div>
                 </div>

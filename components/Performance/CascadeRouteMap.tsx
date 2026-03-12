@@ -33,6 +33,7 @@ interface StopEntry {
     worstDevSec: number | null;
     tripIndex: number;
     tripColor: string;
+    isBackUnderThreshold: boolean;
     isRecovery: boolean;
     lat: number;
     lon: number;
@@ -46,7 +47,7 @@ interface PopupInfo {
 
 const CascadeRouteMap: React.FC<CascadeRouteMapProps> = ({
     cascade,
-    selectedPointIndex: _selectedPointIndex,
+    selectedPointIndex,
     selectedTripIndex,
     stopLoadLookup,
 }) => {
@@ -79,6 +80,8 @@ const CascadeRouteMap: React.FC<CascadeRouteMapProps> = ({
         () => buildTripSegments(cascade.cascadedTrips, timelinePoints),
         [cascade.cascadedTrips, timelinePoints],
     );
+    const selectedPoint = selectedPointIndex !== null ? timelinePoints[selectedPointIndex] ?? null : null;
+    const thresholdStopName = (cascade.backUnderThresholdAtStop ?? cascade.recoveredAtStop ?? '').toLowerCase();
 
     // Check if any coords are available for a fallback message
     const hasAnyCoords = useMemo(() => {
@@ -174,6 +177,7 @@ const CascadeRouteMap: React.FC<CascadeRouteMapProps> = ({
                     worstDevSec: devSec,
                     tripIndex: pt.tripIndex,
                     tripColor: TRIP_FILL_COLORS[color].stroke,
+                    isBackUnderThreshold: false,
                     isRecovery: false,
                     lat: coords.lat,
                     lon: coords.lon,
@@ -189,6 +193,14 @@ const CascadeRouteMap: React.FC<CascadeRouteMapProps> = ({
             }
         }
 
+        if (thresholdStopName) {
+            for (const entry of stopMap.values()) {
+                if (entry.stopName.toLowerCase() === thresholdStopName) {
+                    entry.isBackUnderThreshold = true;
+                }
+            }
+        }
+
         // Mark recovery stop
         if (cascade.recoveredAtStop) {
             const recoveryName = cascade.recoveredAtStop.toLowerCase();
@@ -200,7 +212,7 @@ const CascadeRouteMap: React.FC<CascadeRouteMapProps> = ({
         }
 
         return Array.from(stopMap.values());
-    }, [timelinePoints, cascade, gtfsCoords]);
+    }, [timelinePoints, cascade, gtfsCoords, thresholdStopName]);
 
     // ── Fit bounds after map loads ────────────────────────────────────────────
     const handleMapLoad = useCallback(() => {
@@ -244,7 +256,9 @@ const CascadeRouteMap: React.FC<CascadeRouteMapProps> = ({
         }
         let text = entry.isRecovery
             ? `${entry.stopName}\nRecovery stop\n${devLabel}`
-            : `${entry.stopName}\n${devLabel}`;
+            : entry.isBackUnderThreshold
+                ? `${entry.stopName}\nBack under 5 min\n${devLabel}`
+                : `${entry.stopName}\n${devLabel}`;
         const loadData = stopLoadLookup.get(`${cascade.routeId}_${entry.stopId}`);
         if (loadData) {
             text += `\n${loadData.avgBoardings.toFixed(0)} boarding · load: ${loadData.avgLoad.toFixed(0)}`;
@@ -270,7 +284,7 @@ const CascadeRouteMap: React.FC<CascadeRouteMapProps> = ({
     if (!hasAnyCoords) {
         return (
             <div
-                className="w-full rounded-lg flex items-center justify-center text-gray-400 text-sm bg-gray-50"
+                className="flex w-full items-center justify-center rounded-2xl border-2 border-dashed border-gray-200 bg-gray-50 text-sm font-semibold text-gray-400"
                 style={{ height: 300 }}
             >
                 No stop coordinates available for this cascade
@@ -322,6 +336,7 @@ const CascadeRouteMap: React.FC<CascadeRouteMapProps> = ({
                         .filter(entry => entry.stopId !== cascade.stopId)
                         .map(entry => {
                             const isDimmed = selectedTripIndex !== null && entry.tripIndex !== selectedTripIndex;
+                            const isSelectedPoint = selectedPoint?.stopId === entry.stopId;
                             const fillColor = devColor(entry.worstDevSec);
                             const tooltipText = buildStopTooltip(entry);
 
@@ -344,6 +359,7 @@ const CascadeRouteMap: React.FC<CascadeRouteMapProps> = ({
                                                 display: 'flex',
                                                 alignItems: 'center',
                                                 justifyContent: 'center',
+                                                boxShadow: isSelectedPoint ? '0 0 0 4px rgba(16,185,129,0.22)' : undefined,
                                                 opacity: isDimmed ? 0.2 : 1,
                                                 cursor: 'pointer',
                                             }}
@@ -361,6 +377,33 @@ const CascadeRouteMap: React.FC<CascadeRouteMapProps> = ({
                                                 />
                                             </svg>
                                         </div>
+                                    ) : entry.isBackUnderThreshold ? (
+                                        <div
+                                            style={{
+                                                width: 18,
+                                                height: 18,
+                                                borderRadius: '50%',
+                                                background: '#ffffff',
+                                                border: '2.5px solid #2563eb',
+                                                boxShadow: isSelectedPoint ? '0 0 0 4px rgba(37,99,235,0.18)' : undefined,
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                opacity: isDimmed ? 0.25 : 1,
+                                                cursor: 'pointer',
+                                            }}
+                                            title={tooltipText}
+                                            onClick={() => setPopup({ lat: entry.lat, lon: entry.lon, content: tooltipText })}
+                                        >
+                                            <div
+                                                style={{
+                                                    width: 8,
+                                                    height: 8,
+                                                    borderRadius: '50%',
+                                                    background: fillColor,
+                                                }}
+                                            />
+                                        </div>
                                     ) : (
                                         // Standard timepoint marker with trip-colored border
                                         <div
@@ -370,6 +413,7 @@ const CascadeRouteMap: React.FC<CascadeRouteMapProps> = ({
                                                 borderRadius: '50%',
                                                 background: fillColor,
                                                 border: `2px solid ${entry.tripColor}`,
+                                                boxShadow: isSelectedPoint ? '0 0 0 4px rgba(15,23,42,0.12)' : undefined,
                                                 opacity: isDimmed ? 0.3 : 0.85,
                                                 cursor: 'pointer',
                                             }}
@@ -461,13 +505,17 @@ const CascadeRouteMap: React.FC<CascadeRouteMapProps> = ({
                     {([
                         { color: '#ef4444', label: 'All late' },
                         { color: '#f59e0b', label: 'Some late' },
-                        { color: '#10b981', label: 'Recovered' },
+                        { color: '#10b981', label: 'Recovered to zero' },
                     ] as const).map(({ color, label }) => (
                         <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                             <span style={{ color, fontWeight: 600, fontSize: 11 }}>━━</span>
                             <span>{label}</span>
                         </div>
                     ))}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <span style={{ fontSize: 11, color: '#2563eb' }}>◉</span>
+                        <span>Back under 5 min</span>
+                    </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                         <span style={{ fontSize: 11, color: '#dc2626' }}>⚡</span>
                         <span>Dwell origin</span>

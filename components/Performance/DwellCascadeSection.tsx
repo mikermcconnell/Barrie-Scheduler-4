@@ -58,6 +58,15 @@ const getCascadeImpactState = (cascade: DwellCascade): CascadeImpactState => {
     return 'absorbed';
 };
 
+const hasExplicitThresholdMilestone = (cascade: DwellCascade): boolean =>
+    cascade.backUnderThresholdAtTrip !== undefined || cascade.backUnderThresholdAtStop !== undefined;
+
+const tripRecoveredToZero = (cascade: DwellCascade, trip: DwellCascade['cascadedTrips'][number]): boolean =>
+    hasExplicitThresholdMilestone(cascade) ? trip.recoveredHere : false;
+
+const tripBackUnderThreshold = (cascade: DwellCascade, trip: DwellCascade['cascadedTrips'][number]): boolean =>
+    hasExplicitThresholdMilestone(cascade) ? !!trip.backUnderThresholdHere : !!trip.recoveredHere;
+
 export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }) => {
     const [expandedCascade, setExpandedCascade] = useState<number | null>(null);
     const [stopFilter, setStopFilter] = useState<string | null>(null);
@@ -267,7 +276,7 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                     {/* B: Route Attribution Table */}
                         <ChartCard
                             title="Route Attribution"
-                            subtitle="Unique downstream trips made late by cascades"
+                            subtitle="Unique downstream trips pushed into OTP-late status by dwell"
                         >
                         {routeRows.length === 0 ? (
                             <p className="text-sm text-gray-400 py-8 text-center">No route attribution data</p>
@@ -278,7 +287,7 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                                         <tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wider">
                                             <th className="pb-2 pr-3 font-medium">Route</th>
                                             <th className="pb-2 pr-2 font-medium text-right">Trips</th>
-                                            <th className="pb-2 pr-2 font-medium text-right">Late Trips</th>
+                                            <th className="pb-2 pr-2 font-medium text-right">OTP-Late Trips</th>
                                             <th className="pb-2 pr-2 font-medium text-right">OTP Penalty</th>
                                             <th className="pb-2 font-medium w-20"></th>
                                         </tr>
@@ -340,7 +349,7 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                         ) : (
                             <div className="space-y-1.5">
                                 {topIncidents.map((incident, i) => {
-                                    const recoveryTrip = incident.cascadedTrips.find(ct => ct.recoveredHere);
+                                    const recoveryTrip = incident.cascadedTrips.find(ct => tripRecoveredToZero(incident, ct));
                                     const recovered = !!recoveryTrip;
                                     return (
                                         <div
@@ -599,8 +608,10 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                                                                                                 </span>
                                                                                             </td>
                                                                                             <td className="py-1.5">
-                                                                                                {ct.recoveredHere ? (
-                                                                                                    <span className="text-emerald-600 font-medium">Recovered here</span>
+                                                                                                {tripRecoveredToZero(cascade, ct) ? (
+                                                                                                    <span className="text-emerald-600 font-medium">Recovered to zero</span>
+                                                                                                ) : tripBackUnderThreshold(cascade, ct) ? (
+                                                                                                    <span className="text-blue-600 font-medium">Back under 5 min</span>
                                                                                                 ) : (
                                                                                                     <span className="text-red-500">Delay carried forward</span>
                                                                                                 )}
@@ -654,7 +665,7 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                         {metrics.byTerminal.length > 0 && (
                             <ChartCard
                                 title="Terminal Recovery Analysis"
-                                subtitle="Is scheduled recovery time sufficient to absorb dwell at each turnpoint?"
+                                subtitle="Does scheduled recovery keep dwell from creating OTP-late downstream impact at each turnpoint?"
                             >
                                 <div className="overflow-x-auto">
                                     <table className="w-full text-sm">
@@ -663,9 +674,9 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                                                 <th className="pb-2 pr-3 font-medium">Terminal Stop</th>
                                                 <th className="pb-2 pr-3 font-medium">Route</th>
                                                 <th className="pb-2 pr-2 font-medium text-right">Incidents</th>
-                                                <th className="pb-2 pr-2 font-medium text-right">Absorbed</th>
+                                                <th className="pb-2 pr-2 font-medium text-right">No OTP Impact</th>
                                                 <th className="pb-2 pr-2 font-medium text-right">Avg Recovery</th>
-                                                <th className="pb-2 pr-2 font-medium text-right">Avg Late Exit</th>
+                                                <th className="pb-2 pr-2 font-medium text-right">Avg Attrib Delay</th>
                                                 <th className="pb-2 font-medium">Status</th>
                                             </tr>
                                         </thead>

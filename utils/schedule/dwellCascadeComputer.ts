@@ -198,6 +198,8 @@ function traceCascade(
 ): DwellCascade {
   const cascadedTrips: CascadeAffectedTrip[] = [];
   let chainBroken = false;
+  let backUnderThresholdAtTrip: string | null = null;
+  let backUnderThresholdAtStop: string | null = null;
   let recoveredAtTrip: string | null = null;
   let recoveredAtStop: string | null = null;
   const incidentRecord = findIncidentRecord(incidentTrip, incident);
@@ -230,6 +232,7 @@ function traceCascade(
     let lateCount = 0;
     let affectedCount = 0;
     let observedTimepointCount = 0;
+    let tripBackUnderThresholdStop: string | null = null;
     let tripRecoveredAtStop: string | null = null;
 
     for (const rec of timepointRecords) {
@@ -249,26 +252,17 @@ function traceCascade(
         if ((deviationSeconds ?? 0) > OTP_THRESHOLDS.lateSeconds) {
           isLate = true;
           lateCount++;
-        } else {
-          // First zero attributed delay → dwell impact absorbed here.
-          {
-            tripRecoveredAtStop = rec.stopName;
-            timepoints.push({
-              stopName: rec.stopName,
-              stopId: rec.stopId,
-              routeStopIndex: rec.routeStopIndex,
-              scheduledDeparture: rec.stopTime,
-              observedDeparture: rec.observedDepartureTime,
-              deviationSeconds,
-              rawDeviationSeconds,
-              isLate,
-              boardings: rec.boardings,
-            });
-            chainBroken = true;
-            recoveredAtTrip = nextTrip.tripName;
-            recoveredAtStop = rec.stopName;
-            break;
-          }
+        } else if (backUnderThresholdAtTrip === null) {
+          tripBackUnderThresholdStop = rec.stopName;
+          backUnderThresholdAtTrip = nextTrip.tripName;
+          backUnderThresholdAtStop = rec.stopName;
+        }
+
+        if ((deviationSeconds ?? 0) === 0) {
+          tripRecoveredAtStop = rec.stopName;
+          recoveredAtTrip = nextTrip.tripName;
+          recoveredAtStop = rec.stopName;
+          chainBroken = true;
         }
       }
       // null observedDeparture → skip (don't count, don't break chain)
@@ -284,6 +278,8 @@ function traceCascade(
         isLate,
         boardings: rec.boardings,
       });
+
+      if (chainBroken) break;
     }
 
     // Missing AVL on an entire downstream trip is unknown, not recovery.
@@ -310,8 +306,10 @@ function traceCascade(
       timepoints,
       lateTimepointCount: lateCount,
       affectedTimepointCount: affectedCount,
+      backUnderThresholdAtStop: tripBackUnderThresholdStop,
       recoveredAtStop: tripRecoveredAtStop,
       otpStatus: lateCount > 0 ? 'late' : 'on-time',
+      backUnderThresholdHere: tripBackUnderThresholdStop !== null,
       recoveredHere: tripRecoveredAtStop !== null,
       lateSeconds: tripLateSeconds,
     });
@@ -325,7 +323,7 @@ function traceCascade(
   // Remove trailing trips with no attributable delay.
   while (cascadedTrips.length > 0) {
     const last = cascadedTrips[cascadedTrips.length - 1];
-    if (last.affectedTimepointCount === 0) {
+    if (last.affectedTimepointCount === 0 && !last.backUnderThresholdHere && !last.recoveredHere) {
       cascadedTrips.pop();
     } else {
       break;
@@ -355,6 +353,8 @@ function traceCascade(
     cascadedTrips,
     blastRadius,
     affectedTripCount: cascadedTrips.length,
+    backUnderThresholdAtTrip,
+    backUnderThresholdAtStop,
     recoveredAtTrip,
     recoveredAtStop,
     totalLateSeconds,

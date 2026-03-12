@@ -126,7 +126,21 @@ export const ShiftEditor: React.FC<Props> = ({
                 {/* Zone Background Accent */}
                 <div className={`absolute top-0 left-0 w-full h-1 ${styles.bg}`} />
 
-                <div className="flex items-start gap-3">
+                <button
+                  type="button"
+                  aria-label={`Delete ${shift.driverName} shift`}
+                  title={`Delete ${shift.driverName} shift`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDeleteShift(shift.id);
+                  }}
+                  className="absolute top-3 right-3 inline-flex items-center gap-1 rounded-xl border border-red-200 bg-white/95 px-2.5 py-1.5 text-xs font-bold text-red-600 shadow-sm transition-colors hover:bg-red-50"
+                >
+                  <Trash2 size={14} />
+                  <span>Delete</span>
+                </button>
+
+                <div className="flex items-start gap-3 pr-20">
                   {/* Driver Avatar */}
                   <div className={`w-12 h-12 rounded-xl ${styles.bg} flex items-center justify-center text-white font-extrabold text-lg shadow-md`}>
                     {shift.driverName.charAt(0)}
@@ -160,14 +174,6 @@ export const ShiftEditor: React.FC<Props> = ({
                   {/* Edit Arrow */}
                   <ChevronRight size={20} className="text-gray-300 group-hover:text-gray-500 group-hover:translate-x-1 transition-all" />
                 </div>
-
-                {/* Delete Button - appears on hover */}
-                <button
-                  onClick={(e) => { e.stopPropagation(); onDeleteShift(shift.id); }}
-                  className="absolute top-2 left-2 p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all opacity-0 group-hover:opacity-100 z-20"
-                >
-                  <Trash2 size={16} />
-                </button>
               </div>
             );
           })}

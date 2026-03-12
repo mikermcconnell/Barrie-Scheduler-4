@@ -125,6 +125,7 @@ export interface TripSegment {
   startPointIndex: number;
   endPointIndex: number;
   lateCount: number;
+  affectedCount: number;
   totalCount: number;
 }
 
@@ -147,6 +148,7 @@ export function buildTripSegments(
       startPointIndex: tripPoints[0].index,
       endPointIndex: tripPoints[tripPoints.length - 1].index,
       lateCount: trip.lateTimepointCount,
+      affectedCount: trip.affectedTimepointCount,
       totalCount: trip.timepoints.length,
     });
   }

@@ -10,6 +10,7 @@ import type { TripBucketAnalysis, TimeBand } from '../utils/ai/runtimeAnalysis';
 import type { ScheduleConfig } from '../components/NewSchedule/steps/Step3Build';
 import type { RuntimeData } from '../components/NewSchedule/utils/csvParser';
 import type { MasterRouteTable } from '../utils/parsers/masterScheduleParser';
+import { hasRestorableWizardProgress } from '../components/NewSchedule/utils/wizardState';
 
 const WIZARD_PROGRESS_KEY = 'newScheduleWizard_progress';
 
@@ -25,6 +26,7 @@ export interface WizardProgress {
     dayType: 'Weekday' | 'Saturday' | 'Sunday';
     importMode?: WizardImportMode;
     performanceConfig?: WizardPerformanceConfig;
+    autofillFromMaster?: boolean;
     projectName?: string; // Draft/project name
     fileNames: string[]; // Store names only (files can't be serialized)
     analysis?: TripBucketAnalysis[];
@@ -69,13 +71,7 @@ export function useWizardProgress() {
     }, []);
 
     const hasProgress = useCallback((): boolean => {
-        const progress = load();
-        // Consider progress valid if we're past step 1 OR step 1 with any import context
-        return progress !== null && (
-            progress.step > 1 ||
-            progress.fileNames.length > 0 ||
-            !!progress.performanceConfig?.routeId
-        );
+        return hasRestorableWizardProgress(load());
     }, [load]);
 
     return {

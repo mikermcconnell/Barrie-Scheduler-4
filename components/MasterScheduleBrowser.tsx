@@ -39,6 +39,7 @@ import { buildRoundTripView } from '../utils/parsers/masterScheduleParser';
 import { getRouteColor, getRouteTextColor } from '../utils/config/routeColors';
 import { PlatformTimeline } from './PlatformTimeline';
 import { ScheduleEditor } from './ScheduleEditor';
+import { consumeNetworkConnectionMasterHandoff } from '../utils/network-connections/networkConnectionHandoff';
 
 // Constants
 const ROUTE_ORDER = ['400', '100', '101', '2', '7', '8A', '8B', '10', '11', '12'] as const;
@@ -220,6 +221,7 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
     const [showVersionHistory, setShowVersionHistory] = useState(false);
     const [selectedRouteIdentity, setSelectedRouteIdentity] = useState<RouteIdentity | null>(null);
     const [selectedCurrentVersion, setSelectedCurrentVersion] = useState<number>(1);
+    const [hasAppliedExternalHandoff, setHasAppliedExternalHandoff] = useState(false);
 
     const loadSchedules = useCallback(async () => {
         if (!team) return;
@@ -268,6 +270,21 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
             loadContentIfNeeded(routeIdentity);
         }
     }, [selectedRoute, selectedDayType, team, loadContentIfNeeded]);
+
+    useEffect(() => {
+        if (hasAppliedExternalHandoff || schedules.length === 0) return;
+
+        const handoff = consumeNetworkConnectionMasterHandoff();
+        setHasAppliedExternalHandoff(true);
+        if (!handoff) return;
+
+        const matchingEntry = schedules.find((entry) =>
+            entry.routeNumber === handoff.routeNumber && entry.dayType === handoff.dayType,
+        );
+
+        setSelectedDayType(handoff.dayType);
+        setSelectedRoute(matchingEntry?.routeNumber ?? handoff.routeNumber);
+    }, [hasAppliedExternalHandoff, schedules]);
 
     // Preload all content for overview tab to show accurate service hours
     useEffect(() => {

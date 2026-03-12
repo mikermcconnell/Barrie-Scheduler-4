@@ -70,6 +70,7 @@ function makeTrip(overrides: Partial<CascadeAffectedTrip> = {}): CascadeAffected
     observedRecoverySeconds: 300,
     timepoints: [],
     lateTimepointCount: 1,
+    affectedTimepointCount: 1,
     recoveredAtStop: null,
     otpStatus: 'late',
     recoveredHere: false,

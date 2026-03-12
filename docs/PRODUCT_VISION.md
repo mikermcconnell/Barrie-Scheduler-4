@@ -74,7 +74,7 @@ AI-assisted but planner-controlled.
 
 ### 5. AI as Assistant, Not Authority
 - Gemini provides suggestions for schedule optimization
-- Two-phase approach: Generator → Critic → Human review
+- Transit On Demand uses fast full regenerate and a richer multi-phase refine path before human review
 - Planner always has final say
 
 ---

@@ -6,6 +6,7 @@ import {
   classifyOTP, PERFORMANCE_SCHEMA_VERSION, DEFAULT_LOAD_CAP,
   OperatorDwellMetrics, DwellIncident, OperatorDwellSummary,
   classifyDwell, DWELL_THRESHOLDS,
+  DailySegmentRuntimes, DailySegmentRuntimeEntry, DailyStopSegmentRuntimes, DailyStopSegmentRuntimeEntry, SegmentRuntimeObservation,
   RouteHourMetrics,
 } from './types';
 import { buildDailyCascadeMetrics } from './dwellCascadeComputer';
@@ -737,6 +738,153 @@ function buildDataQuality(
   };
 }
 
+function buildSegmentRuntimes(records: STREETSRecord[]): DailySegmentRuntimes {
+  const byTrip = groupBy(records, r => r.tripId);
+  const tripsWithData = new Set<string>();
+  const segMap = new Map<string, SegmentRuntimeObservation[]>();
+
+  for (const [tripId, tripRecs] of byTrip) {
+    const sorted = [...tripRecs].sort((a, b) => a.routeStopIndex - b.routeStopIndex);
+    const timepoints = sorted.filter(r => r.timePoint && !r.isTripper && !r.isDetour && !r.inBetween);
+    if (timepoints.length < 2) continue;
+
+    let tripHasData = false;
+
+    for (let i = 0; i < timepoints.length - 1; i++) {
+      const from = timepoints[i];
+      const to = timepoints[i + 1];
+      if (!from.observedDepartureTime || !to.observedArrivalTime) continue;
+
+      const depSec = timeToSeconds(from.observedDepartureTime);
+      let arrSec = timeToSeconds(to.observedArrivalTime);
+      if (arrSec < depSec) arrSec += 86400;
+
+      const runtimeSec = arrSec - depSec;
+      if (runtimeSec <= 0 || runtimeSec > 7200) continue;
+
+      const runtimeMinutes = Math.round(runtimeSec / 60 * 100) / 100;
+      const schedSec = timeToSeconds(from.stopTime);
+      const totalMin = Math.floor(schedSec / 60);
+      const bucketMin = Math.floor(totalMin / 30) * 30;
+      const bucketH = Math.floor(bucketMin / 60);
+      const bucketM = bucketMin % 60;
+      const timeBucket = `${String(bucketH).padStart(2, '0')}:${String(bucketM).padStart(2, '0')}`;
+
+      const segmentName = `${from.stopName} to ${to.stopName}`;
+      const key = `${from.routeId}||${from.direction}||${segmentName}`;
+      const arr = segMap.get(key);
+      const obs: SegmentRuntimeObservation = { runtimeMinutes, timeBucket };
+      if (arr) arr.push(obs);
+      else segMap.set(key, [obs]);
+      tripHasData = true;
+    }
+
+    if (tripHasData) tripsWithData.add(tripId);
+  }
+
+  const entries: DailySegmentRuntimeEntry[] = [];
+  let totalObservations = 0;
+  for (const [key, observations] of segMap) {
+    const [routeId, direction, segmentName] = key.split('||');
+    entries.push({ routeId, direction, segmentName, observations });
+    totalObservations += observations.length;
+  }
+
+  return { entries, totalObservations, tripsWithData: tripsWithData.size };
+}
+
+function buildStopSegmentRuntimes(records: STREETSRecord[]): DailyStopSegmentRuntimes {
+  const byTrip = groupBy(records, r => r.tripId);
+  const tripsWithData = new Set<string>();
+  const segMap = new Map<string, {
+    routeId: string;
+    direction: string;
+    fromStopId: string;
+    toStopId: string;
+    fromStopName: string;
+    toStopName: string;
+    fromRouteStopIndex: number;
+    toRouteStopIndex: number;
+    observations: SegmentRuntimeObservation[];
+  }>();
+
+  for (const [tripId, tripRecs] of byTrip) {
+    const sorted = [...tripRecs]
+      .filter(r => !r.inBetween && !r.isTripper && !r.isDetour)
+      .sort((a, b) => a.routeStopIndex - b.routeStopIndex);
+
+    if (sorted.length < 2) continue;
+    let tripHasData = false;
+
+    for (let i = 0; i < sorted.length - 1; i++) {
+      const from = sorted[i];
+      const to = sorted[i + 1];
+      if (!from.observedDepartureTime || !to.observedArrivalTime) continue;
+      if (!from.stopId || !to.stopId || from.stopId === to.stopId) continue;
+      if (to.routeStopIndex <= from.routeStopIndex) continue;
+
+      const depSec = timeToSeconds(from.observedDepartureTime);
+      let arrSec = timeToSeconds(to.observedArrivalTime);
+      if (arrSec < depSec) arrSec += 86400;
+
+      const runtimeSec = arrSec - depSec;
+      if (runtimeSec <= 0 || runtimeSec > 3600) continue;
+
+      const runtimeMinutes = Math.round(runtimeSec / 60 * 100) / 100;
+      const schedSec = timeToSeconds(from.stopTime);
+      const totalMin = Math.floor(schedSec / 60);
+      const bucketMin = Math.floor(totalMin / 30) * 30;
+      const bucketH = Math.floor(bucketMin / 60);
+      const bucketM = bucketMin % 60;
+      const timeBucket = `${String(bucketH).padStart(2, '0')}:${String(bucketM).padStart(2, '0')}`;
+
+      const key = `${from.routeId}||${from.direction}||${from.stopId}||${to.stopId}`;
+      const existing = segMap.get(key);
+      const obs: SegmentRuntimeObservation = { runtimeMinutes, timeBucket };
+
+      if (existing) {
+        existing.observations.push(obs);
+      } else {
+        segMap.set(key, {
+          routeId: from.routeId,
+          direction: from.direction,
+          fromStopId: from.stopId,
+          toStopId: to.stopId,
+          fromStopName: from.stopName,
+          toStopName: to.stopName,
+          fromRouteStopIndex: from.routeStopIndex,
+          toRouteStopIndex: to.routeStopIndex,
+          observations: [obs],
+        });
+      }
+
+      tripHasData = true;
+    }
+
+    if (tripHasData) tripsWithData.add(tripId);
+  }
+
+  const entries: DailyStopSegmentRuntimeEntry[] = [];
+  let totalObservations = 0;
+  for (const entry of segMap.values()) {
+    entries.push({
+      routeId: entry.routeId,
+      direction: entry.direction,
+      fromStopId: entry.fromStopId,
+      toStopId: entry.toStopId,
+      fromStopName: entry.fromStopName,
+      toStopName: entry.toStopName,
+      fromRouteStopIndex: entry.fromRouteStopIndex,
+      toRouteStopIndex: entry.toRouteStopIndex,
+      segmentName: `${entry.fromStopName} to ${entry.toStopName}`,
+      observations: entry.observations,
+    });
+    totalObservations += entry.observations.length;
+  }
+
+  return { entries, totalObservations, tripsWithData: tripsWithData.size };
+}
+
 function aggregateSingleDay(date: string, records: STREETSRecord[]): DailySummary {
   const rawDay = records[0].day;
   const dayType = (rawDay === 'SATURDAY' || rawDay === 'SUNDAY' || rawDay === 'MONDAY' ||
@@ -758,6 +906,8 @@ function aggregateSingleDay(date: string, records: STREETSRecord[]): DailySummar
     loadProfiles: buildLoadProfiles(records),
     byOperatorDwell: dwellMetrics,
     byCascade: buildDailyCascadeMetrics(records, dwellMetrics.incidents.filter(i => i.severity !== 'minor')),
+    segmentRuntimes: buildSegmentRuntimes(records),
+    stopSegmentRuntimes: buildStopSegmentRuntimes(records),
     byRouteHour: buildRouteHourMetrics(records),
     dataQuality: buildDataQuality(records, sanitization),
     schemaVersion: PERFORMANCE_SCHEMA_VERSION,

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import Map, { NavigationControl, ScaleControl, MapRef } from 'react-map-gl/mapbox';
 import type { MapMouseEvent } from 'react-map-gl/mapbox';
 import 'mapbox-gl/dist/mapbox-gl.css';
@@ -48,6 +48,42 @@ export const MapBase: React.FC<MapBaseProps> = ({
     onMouseLeave,
     onClick,
 }) => {
+    const [mapFailed, setMapFailed] = useState(false);
+
+    useEffect(() => {
+        setMapFailed(false);
+    }, [latitude, longitude, mapStyle, zoom]);
+
+    if (!MAPBOX_TOKEN) {
+        return (
+            <div className={className} style={{ width: '100%', height: '100%', minHeight: 300, ...style }}>
+                <div className="grid h-full min-h-[300px] place-items-center border border-dashed border-amber-300 bg-amber-50 p-6 text-center" style={{ borderRadius: 'inherit' }}>
+                    <div className="max-w-sm">
+                        <div className="text-sm font-extrabold uppercase tracking-[0.16em] text-amber-700">Map unavailable</div>
+                        <p className="mt-2 text-sm font-semibold leading-relaxed text-amber-900">
+                            <code>VITE_MAPBOX_TOKEN</code> is missing, so the map cannot load on this local environment.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    if (mapFailed) {
+        return (
+            <div className={className} style={{ width: '100%', height: '100%', minHeight: 300, ...style }}>
+                <div className="grid h-full min-h-[300px] place-items-center border border-dashed border-amber-300 bg-amber-50 p-6 text-center" style={{ borderRadius: 'inherit' }}>
+                    <div className="max-w-sm">
+                        <div className="text-sm font-extrabold uppercase tracking-[0.16em] text-amber-700">Map failed to load</div>
+                        <p className="mt-2 text-sm font-semibold leading-relaxed text-amber-900">
+                            Mapbox could not initialize. Check the token, browser console, and network access.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div className={className} style={{ width: '100%', height: '100%', minHeight: 300 }}>
             <Map
@@ -66,6 +102,7 @@ export const MapBase: React.FC<MapBaseProps> = ({
                 onMouseMove={onMouseMove}
                 onMouseLeave={onMouseLeave}
                 onClick={onClick}
+                onError={() => setMapFailed(true)}
             >
                 {showNavigation && <NavigationControl position="bottom-right" />}
                 {showScale && <ScaleControl position="bottom-left" unit="metric" />}

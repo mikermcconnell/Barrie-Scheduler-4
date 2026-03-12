@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
-export type View = 'home' | 'ondemand' | 'fixed' | 'operations' | 'agents';
+export type View = 'home' | 'ondemand' | 'fixed' | 'operations';
 
 interface HeaderProps {
     currentView: View;

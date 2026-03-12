@@ -49,14 +49,24 @@ interface Step3Props {
     setConfig: (c: ScheduleConfig) => void;
     teamId?: string;
     stopSuggestions?: string[];
+    autofillFromMaster: boolean;
+    onAutofillFromMasterChange: (value: boolean) => void;
 }
 
 const START_STOP_SUGGESTIONS_ID = 'start-stop-suggestions';
 
-export const Step3Build: React.FC<Step3Props> = ({ dayType, bands, config, setConfig, teamId, stopSuggestions = [] }) => {
+export const Step3Build: React.FC<Step3Props> = ({
+    dayType,
+    bands,
+    config,
+    setConfig,
+    teamId,
+    stopSuggestions = [],
+    autofillFromMaster,
+    onAutofillFromMasterChange
+}) => {
 
     // Autofill from Master Schedule state
-    const [autofillFromMaster, setAutofillFromMaster] = React.useState(true);
     const [isLoadingMaster, setIsLoadingMaster] = React.useState(false);
     const [masterStatus, setMasterStatus] = React.useState<'idle' | 'loaded' | 'not-found'>('idle');
     const [usePerBandRecovery, setUsePerBandRecovery] = React.useState(true);
@@ -256,6 +266,11 @@ export const Step3Build: React.FC<Step3Props> = ({ dayType, bands, config, setCo
                 if (cancelled) return;
 
                 if (!result) {
+                    setConfig({
+                        ...configRef.current,
+                        blocks: [],
+                        bandRecoveryDefaults: undefined
+                    });
                     setMasterStatus('not-found');
                     return;
                 }
@@ -716,7 +731,7 @@ export const Step3Build: React.FC<Step3Props> = ({ dayType, bands, config, setCo
                             {/* Autofill from Master Toggle */}
                             {teamId && (
                                 <button
-                                    onClick={() => setAutofillFromMaster(!autofillFromMaster)}
+                                    onClick={() => onAutofillFromMasterChange(!autofillFromMaster)}
                                     className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all border ${
                                         autofillFromMaster
                                             ? 'bg-emerald-50 text-emerald-700 border-emerald-200 shadow-sm'

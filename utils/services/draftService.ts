@@ -43,6 +43,14 @@ export const saveDraft = async (
     const isUpdate = !!draft.id;
     const draftRef = draft.id ? doc(draftsRef, draft.id) : doc(draftsRef);
     const draftId = draftRef.id;
+    let previousStoragePath = draft.storagePath;
+
+    if (isUpdate && !previousStoragePath) {
+        const existingSnapshot = await getDoc(draftRef);
+        if (existingSnapshot.exists()) {
+            previousStoragePath = existingSnapshot.data().storagePath;
+        }
+    }
 
     const timestamp = Date.now();
     const storagePath = draftStoragePath(userId, draftId, timestamp);
@@ -72,9 +80,9 @@ export const saveDraft = async (
 
     await setDoc(draftRef, docData, { merge: true });
 
-    if (isUpdate && draft.storagePath && draft.storagePath !== storagePath) {
+    if (isUpdate && previousStoragePath && previousStoragePath !== storagePath) {
         try {
-            await deleteObject(ref(storage, draft.storagePath));
+            await deleteObject(ref(storage, previousStoragePath));
         } catch (error) {
             console.warn('Failed to delete old draft storage file:', error);
         }

@@ -1,6 +1,16 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { X } from 'lucide-react';
-import type { DwellCascade, DwellSeverity, DailySummary } from '../../utils/performanceDataTypes';
+import {
+    Activity,
+    ArrowRight,
+    CheckCircle2,
+    Clock3,
+    MapPin,
+    Route,
+    TrendingDown,
+    X,
+    Zap,
+} from 'lucide-react';
+import type { CascadeAffectedTrip, DailySummary, DwellCascade, DwellSeverity } from '../../utils/performanceDataTypes';
 import type { StopLoadData } from '../../utils/schedule/cascadeStoryUtils';
 import { buildCascadeLateDepartureImpactByRoute } from '../../utils/schedule/cascadeImpactUtils';
 import CascadeTimelineChart from './CascadeTimelineChart';
@@ -14,50 +24,192 @@ interface CascadeStorySlideOverProps {
     dailySummaries: DailySummary[];
 }
 
+type MilestoneTone = 'blue' | 'emerald' | 'amber' | 'red';
+
 const fmtTime = (hhmm: string): string => hhmm.length >= 5 ? hhmm.slice(0, 5) : hhmm;
 const fmtMin = (sec: number): string => (sec / 60).toFixed(1);
 
+const toneMap: Record<MilestoneTone, { card: string; icon: string; text: string; badge: string }> = {
+    blue: {
+        card: 'border-blue-200 bg-blue-50',
+        icon: 'border-blue-100 bg-white text-brand-blue',
+        text: 'text-blue-900',
+        badge: 'border-blue-200 bg-white text-brand-blue',
+    },
+    emerald: {
+        card: 'border-emerald-200 bg-emerald-50',
+        icon: 'border-emerald-100 bg-white text-emerald-600',
+        text: 'text-emerald-900',
+        badge: 'border-emerald-200 bg-white text-emerald-700',
+    },
+    amber: {
+        card: 'border-amber-200 bg-amber-50',
+        icon: 'border-amber-100 bg-white text-amber-600',
+        text: 'text-amber-900',
+        badge: 'border-amber-200 bg-white text-amber-700',
+    },
+    red: {
+        card: 'border-red-200 bg-red-50',
+        icon: 'border-red-100 bg-white text-red-600',
+        text: 'text-red-900',
+        badge: 'border-red-200 bg-white text-red-700',
+    },
+};
+
 const SeverityBadge: React.FC<{ severity: DwellSeverity }> = ({ severity }) => (
-    <span className={`inline-flex items-center px-2 py-0.5 text-xs font-semibold rounded-full ${
+    <span className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] ${
         severity === 'high'
-            ? 'bg-red-100 text-red-700'
-            : 'bg-amber-100 text-amber-700'
+            ? 'border-red-200 bg-red-50 text-red-700'
+            : severity === 'moderate'
+                ? 'border-amber-200 bg-amber-50 text-amber-700'
+                : 'border-blue-200 bg-blue-50 text-brand-blue'
     }`}>
-        {severity.toUpperCase()}
+        {severity}
     </span>
 );
+
+const WorkspaceCard: React.FC<{ title: string; subtitle?: string; children: React.ReactNode }> = ({ title, subtitle, children }) => (
+    <section className="rounded-3xl border-2 border-gray-200 bg-white p-5 shadow-sm">
+        <div className="mb-4 flex items-start justify-between gap-4">
+            <div>
+                <p className="text-xs font-extrabold uppercase tracking-[0.18em] text-gray-400">{title}</p>
+                {subtitle ? <p className="mt-1 text-sm font-semibold text-gray-500">{subtitle}</p> : null}
+            </div>
+        </div>
+        {children}
+    </section>
+);
+
+const MetricBlock: React.FC<{
+    label: string;
+    value: string;
+    note: string;
+    tone: MilestoneTone;
+}> = ({ label, value, note, tone }) => {
+    const styles = toneMap[tone];
+    return (
+        <div className={`rounded-2xl border-2 p-4 ${styles.card}`}>
+            <div className="text-xs font-extrabold uppercase tracking-[0.18em] text-gray-500">{label}</div>
+            <div className={`mt-2 text-2xl font-extrabold ${styles.text}`}>{value}</div>
+            <div className="mt-1 text-sm font-semibold text-gray-600">{note}</div>
+        </div>
+    );
+};
+
+const StoryStep: React.FC<{
+    tone: MilestoneTone;
+    icon: React.ReactNode;
+    label: string;
+    headline: string;
+    detail: string;
+    badge?: string;
+}> = ({ tone, icon, label, headline, detail, badge }) => {
+    const styles = toneMap[tone];
+    return (
+        <div className={`rounded-2xl border-2 p-4 ${styles.card}`}>
+            <div className="flex items-start gap-3">
+                <div className={`flex h-11 w-11 items-center justify-center rounded-2xl border-2 ${styles.icon}`}>
+                    {icon}
+                </div>
+                <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-xs font-extrabold uppercase tracking-[0.18em] text-gray-500">{label}</p>
+                        {badge ? (
+                            <span className={`rounded-full border px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-[0.16em] ${styles.badge}`}>
+                                {badge}
+                            </span>
+                        ) : null}
+                    </div>
+                    <p className={`mt-1 text-sm font-extrabold ${styles.text}`}>{headline}</p>
+                    <p className="mt-1 text-sm font-semibold text-gray-600">{detail}</p>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+function hasExplicitThresholdMilestone(cascade: DwellCascade): boolean {
+    return cascade.backUnderThresholdAtTrip !== undefined || cascade.backUnderThresholdAtStop !== undefined;
+}
+
+function getThresholdMilestone(cascade: DwellCascade): { trip: string | null; stop: string | null } {
+    if (hasExplicitThresholdMilestone(cascade)) {
+        return {
+            trip: cascade.backUnderThresholdAtTrip ?? null,
+            stop: cascade.backUnderThresholdAtStop ?? null,
+        };
+    }
+    return {
+        trip: cascade.recoveredAtTrip,
+        stop: cascade.recoveredAtStop,
+    };
+}
+
+function getFullRecoveryMilestone(cascade: DwellCascade): { trip: string | null; stop: string | null } {
+    if (!hasExplicitThresholdMilestone(cascade)) {
+        return { trip: null, stop: null };
+    }
+    return {
+        trip: cascade.recoveredAtTrip,
+        stop: cascade.recoveredAtStop,
+    };
+}
+
+function hasExplicitTripThresholdMilestone(trip: CascadeAffectedTrip): boolean {
+    return trip.backUnderThresholdHere !== undefined || trip.backUnderThresholdAtStop !== undefined;
+}
+
+function tripBackUnderThresholdHere(trip: CascadeAffectedTrip): boolean {
+    return hasExplicitTripThresholdMilestone(trip) ? !!trip.backUnderThresholdHere : !!trip.recoveredHere;
+}
+
+function tripRecoveredHere(trip: CascadeAffectedTrip): boolean {
+    return hasExplicitTripThresholdMilestone(trip) ? !!trip.recoveredHere : false;
+}
 
 const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, onClose, stopLoadLookup, dailySummaries }) => {
     const [selectedTripIndex, setSelectedTripIndex] = useState<number | null>(null);
     const [selectedPointIndex, setSelectedPointIndex] = useState<number | null>(null);
     const [visible, setVisible] = useState(false);
 
-    // Customer impact: actual APC boardings at late stops
     const customerImpact = useMemo(() => {
-        let totalBoardings = 0;
+        let affectedBoardings = 0;
+        let lateBoardings = 0;
         for (const trip of cascade.cascadedTrips) {
             for (const tp of trip.timepoints) {
-                if (!tp.isLate) continue;
-                totalBoardings += tp.boardings ?? 0;
+                const boardings = tp.boardings ?? 0;
+                if ((tp.deviationSeconds ?? 0) > 0) affectedBoardings += boardings;
+                if (tp.isLate) lateBoardings += boardings;
             }
         }
-        if (totalBoardings === 0) return null;
-        return { totalBoardings };
+        if (affectedBoardings === 0 && lateBoardings === 0) return null;
+        return { affectedBoardings, lateBoardings };
     }, [cascade.cascadedTrips]);
 
-    // Per-cascade OTP impact
     const otpImpact = useMemo(() => {
         const rows = buildCascadeLateDepartureImpactByRoute(cascade, dailySummaries);
         return rows.length > 0 ? rows : null;
     }, [cascade, dailySummaries]);
 
-    // Trigger open animation on mount
+    const thresholdMilestone = useMemo(() => getThresholdMilestone(cascade), [cascade]);
+    const fullRecoveryMilestone = useMemo(() => getFullRecoveryMilestone(cascade), [cascade]);
+
+    const focusTripIndex = useMemo(() => {
+        if (selectedTripIndex !== null) return selectedTripIndex;
+        const recoveredIdx = cascade.cascadedTrips.findIndex(trip => tripRecoveredHere(trip));
+        if (recoveredIdx >= 0) return recoveredIdx;
+        const thresholdIdx = cascade.cascadedTrips.findIndex(trip => tripBackUnderThresholdHere(trip));
+        if (thresholdIdx >= 0) return thresholdIdx;
+        return cascade.cascadedTrips.length > 0 ? cascade.cascadedTrips.length - 1 : null;
+    }, [cascade.cascadedTrips, selectedTripIndex]);
+
+    const focusTrip = focusTripIndex !== null ? cascade.cascadedTrips[focusTripIndex] ?? null : null;
+
     useEffect(() => {
         const frame = requestAnimationFrame(() => setVisible(true));
         return () => cancelAnimationFrame(frame);
     }, []);
 
-    // Close on Escape key
     useEffect(() => {
         const handler = (e: KeyboardEvent) => {
             if (e.key === 'Escape') onClose();
@@ -68,9 +220,8 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
 
     return (
         <>
-            {/* Backdrop */}
             <div
-                className="fixed inset-0 bg-black/30 backdrop-blur-sm z-40"
+                className="fixed inset-0 z-40 bg-slate-900/35 backdrop-blur-sm"
                 onClick={onClose}
                 style={{
                     opacity: visible ? 1 : 0,
@@ -78,48 +229,45 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
                 }}
             />
 
-            {/* Slide-over panel */}
             <div
-                className="fixed top-0 right-0 h-full w-[70vw] max-w-[1100px] min-w-[600px] bg-white shadow-2xl z-50 flex flex-col"
+                className="fixed inset-3 z-50 flex flex-col overflow-hidden rounded-[32px] border-2 border-gray-200 bg-[#F7F7F7] shadow-2xl md:inset-6"
                 style={{
-                    transform: visible ? 'translateX(0)' : 'translateX(100%)',
-                    transition: 'transform 300ms ease-out',
+                    transform: visible ? 'translateY(0)' : 'translateY(16px)',
+                    opacity: visible ? 1 : 0,
+                    transition: 'transform 260ms ease-out, opacity 260ms ease-out',
                 }}
             >
-                {/* Header */}
-                <div className="flex-none border-b border-gray-200 px-6 py-4">
+                <div className="border-b-2 border-gray-200 bg-white px-5 py-5 md:px-7">
                     <div className="flex items-start justify-between gap-4">
                         <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2 mb-1">
-                                <h2 className="text-base font-semibold text-gray-900">Cascade Story</h2>
+                            <div className="flex flex-wrap items-center gap-3">
+                                <div className="flex h-12 w-12 items-center justify-center rounded-2xl border-2 border-red-100 bg-red-50 text-red-600">
+                                    <Zap size={22} />
+                                </div>
+                                <div className="min-w-0">
+                                    <h2 className="text-2xl font-extrabold text-gray-900">Cascade Story</h2>
+                                    <p className="text-sm font-semibold text-gray-500">
+                                        Trace where the dwell started, where the route came back under five minutes, and where it fully recovered to zero.
+                                    </p>
+                                </div>
                                 <SeverityBadge severity={cascade.severity} />
                             </div>
-                            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-gray-600">
-                                <span>
-                                    <span className="text-gray-400 text-xs mr-1">Route</span>
-                                    <span className="font-medium">{cascade.routeId}</span>
-                                </span>
-                                <span className="text-gray-300">·</span>
-                                <span>
-                                    <span className="text-gray-400 text-xs mr-1">Block</span>
-                                    <span className="font-mono font-medium">{cascade.block}</span>
-                                </span>
-                                <span className="text-gray-300">·</span>
-                                <span className="truncate max-w-[200px]" title={cascade.stopName}>
-                                    {cascade.stopName}
-                                </span>
-                                <span className="text-gray-300">·</span>
-                                <span>{fmtTime(cascade.observedDepartureTime)}</span>
-                                <span className="text-gray-300">·</span>
-                                <span>
-                                    <span className="font-medium text-red-600">{fmtMin(cascade.trackedDwellSeconds)} min</span>
-                                    <span className="text-gray-400 ml-1">excess dwell</span>
+
+                            <div className="mt-4 flex flex-wrap items-center gap-2 text-sm font-semibold text-gray-600">
+                                <span className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1">Route {cascade.routeId}</span>
+                                <span className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1 font-mono">Block {cascade.block}</span>
+                                <span className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1">{cascade.date}</span>
+                                <span className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1">{cascade.stopName}</span>
+                                <span className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1">{fmtTime(cascade.observedDepartureTime)}</span>
+                                <span className="rounded-full border border-red-200 bg-red-50 px-3 py-1 text-red-700">
+                                    +{fmtMin(cascade.trackedDwellSeconds)} min dwell
                                 </span>
                             </div>
                         </div>
+
                         <button
                             onClick={onClose}
-                            className="flex-none p-1.5 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                            className="flex h-11 w-11 items-center justify-center rounded-2xl border-2 border-gray-200 bg-gray-50 text-gray-500 transition-colors hover:bg-white hover:text-gray-700"
                             aria-label="Close"
                         >
                             <X size={18} />
@@ -127,98 +275,244 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
                     </div>
                 </div>
 
-                {/* Quick stats row */}
-                <div className="flex items-center gap-4 px-5 py-2 bg-gray-50/50 border-b border-gray-100 text-xs text-gray-600 flex-shrink-0">
-                    <span><span className="font-semibold text-red-600">{cascade.affectedTripCount}</span> trips affected</span>
-                    <span><span className="font-semibold text-gray-800">{fmtMin(cascade.totalLateSeconds)}</span> min attributed delay</span>
-                    <span><span className="font-semibold text-gray-800">{cascade.blastRadius}</span> OTP-late departures</span>
-                    {Number.isFinite(cascade.recoveryTimeAvailableSeconds) && (
-                        <span><span className="font-semibold text-gray-800">{fmtMin(cascade.recoveryTimeAvailableSeconds)}</span> min recovery available</span>
-                    )}
-                    {cascade.recoveredAtTrip && (
-                        <span className="text-emerald-600 font-medium">✓ Recovered at {cascade.recoveredAtTrip}</span>
-                    )}
-                    {!cascade.recoveredAtTrip && cascade.cascadedTrips.length > 0 && (
-                        <span className="text-red-600 font-medium">✗ Never recovered</span>
-                    )}
-                    {cascade.blastRadius === 0 && cascade.affectedTripCount > 0 && (
-                        <span className="text-amber-600 font-medium">Delay stayed below the OTP late threshold</span>
-                    )}
-                    {customerImpact && (
-                        <>
-                            <span className="text-gray-300">|</span>
-                            <span>
-                                <span className="font-semibold text-gray-800">{customerImpact.totalBoardings}</span>
-                                {' '}boardings at late stops
-                            </span>
-                        </>
-                    )}
-                </div>
+                <div className="flex-1 overflow-y-auto p-4 md:p-6">
+                    <div className="grid grid-cols-1 gap-5 xl:grid-cols-[290px_minmax(0,1fr)_320px]">
+                        <div className="space-y-5">
+                            <WorkspaceCard
+                                title="Story Path"
+                                subtitle="Planner-facing milestones for this dwell incident."
+                            >
+                                <div className="space-y-3">
+                                    <StoryStep
+                                        tone="red"
+                                        icon={<MapPin size={18} />}
+                                        label="Started"
+                                        badge={cascade.tripName}
+                                        headline={`${cascade.stopName} at ${fmtTime(cascade.observedDepartureTime)}`}
+                                        detail={`${fmtMin(cascade.trackedDwellSeconds)} minutes of excess dwell created the cascade.`}
+                                    />
+                                    <StoryStep
+                                        tone="amber"
+                                        icon={<Route size={18} />}
+                                        label="Propagated"
+                                        headline={`${cascade.affectedTripCount} downstream trips carried delay`}
+                                        detail={`${fmtMin(cascade.totalLateSeconds)} total minutes of attributed delay across the traced chain.`}
+                                        badge={`${cascade.blastRadius} OTP-late dep`}
+                                    />
+                                    <StoryStep
+                                        tone={thresholdMilestone.trip ? 'blue' : 'amber'}
+                                        icon={<TrendingDown size={18} />}
+                                        label="Back Under 5 Min"
+                                        headline={thresholdMilestone.trip && thresholdMilestone.stop
+                                            ? `${thresholdMilestone.trip} at ${thresholdMilestone.stop}`
+                                            : 'Route never came back under the OTP threshold'}
+                                        detail={thresholdMilestone.trip
+                                            ? 'This is the first point where the dwell-attributed delay dropped to five minutes or less.'
+                                            : 'Every observed downstream timepoint stayed above the OTP-late threshold.'}
+                                    />
+                                    <StoryStep
+                                        tone={fullRecoveryMilestone.trip ? 'emerald' : 'amber'}
+                                        icon={<CheckCircle2 size={18} />}
+                                        label="Recovered To Zero"
+                                        headline={fullRecoveryMilestone.trip && fullRecoveryMilestone.stop
+                                            ? `${fullRecoveryMilestone.trip} at ${fullRecoveryMilestone.stop}`
+                                            : 'Full recovery was not observed'}
+                                        detail={fullRecoveryMilestone.trip
+                                            ? 'At this point, no dwell-attributed delay remained on the block.'
+                                            : 'The route still carried some dwell-attributed delay by the end of the traced chain.'}
+                                    />
+                                </div>
+                            </WorkspaceCard>
 
-                {/* OTP Impact mini-card */}
-                {otpImpact && (
-                    <div className="flex items-center gap-3 px-5 py-2 border-b border-gray-100 flex-shrink-0">
-                        <div className="flex flex-wrap items-center gap-2 px-3 py-1.5 rounded-md bg-red-50 border border-red-100 text-xs text-red-700">
-                            <span className="font-medium">OTP Impact</span>
-                            {otpImpact.map((impact, idx) => (
-                                <React.Fragment key={impact.routeId}>
-                                    <span className="text-red-400">·</span>
-                                    <span>
-                                        Route {impact.routeId}: <span className="font-semibold">{impact.lateDepartures}</span> OTP-late departures
-                                        {impact.assessedDepartures > 0 && (
-                                            <>
-                                                {' '}of <span className="font-semibold">{impact.assessedDepartures}</span> assessed
-                                                {' '}({impact.penaltyPct.toFixed(1)}%)
-                                            </>
-                                        )}
-                                        {impact.assessedDepartures === 0 && idx === 0 && ' (no route OTP denominator)'}
-                                    </span>
-                                </React.Fragment>
-                            ))}
+                            <WorkspaceCard
+                                title="Chain Of Impact"
+                                subtitle="Select a trip to inspect its share of the cascade."
+                            >
+                                <CascadeTripChain
+                                    cascade={cascade}
+                                    selectedTripIndex={selectedTripIndex}
+                                    onSelectTrip={setSelectedTripIndex}
+                                />
+                            </WorkspaceCard>
                         </div>
-                    </div>
-                )}
 
-                {/* Body — scrollable, 3 panels */}
-                <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
-                    {/* Panel 1: Timeline chart */}
-                    <div className="border border-gray-200 rounded-xl p-4 bg-white" style={{ minHeight: 200 }}>
-                        <div className="flex items-center gap-2 mb-2">
-                            <h3 className="text-xs font-medium text-gray-400 uppercase tracking-wide">Delay Timeline</h3>
-                            <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-gray-100 text-gray-600">
-                                {cascade.cascadedTrips.length} trips traced
-                            </span>
+                        <div className="space-y-5">
+                            <WorkspaceCard
+                                title="Route Map"
+                                subtitle="Origin, threshold milestone, recovery, and downstream path on the route."
+                            >
+                                <CascadeRouteMap
+                                    cascade={cascade}
+                                    selectedPointIndex={selectedPointIndex}
+                                    selectedTripIndex={selectedTripIndex}
+                                    stopLoadLookup={stopLoadLookup}
+                                />
+                            </WorkspaceCard>
+
+                            <WorkspaceCard
+                                title="Delay Timeline"
+                                subtitle="Attributed delay by downstream timepoint, with threshold and zero-recovery milestones."
+                            >
+                                <CascadeTimelineChart
+                                    trips={cascade.cascadedTrips}
+                                    routeId={cascade.routeId}
+                                    selectedTripIndex={selectedTripIndex}
+                                    onSelectPoint={setSelectedPointIndex}
+                                    stopLoadLookup={stopLoadLookup}
+                                    dwellOriginStopId={cascade.stopId}
+                                    dwellExcessMinutes={cascade.trackedDwellSeconds / 60}
+                                />
+                            </WorkspaceCard>
                         </div>
-                        <CascadeTimelineChart
-                            trips={cascade.cascadedTrips}
-                            routeId={cascade.routeId}
-                            selectedTripIndex={selectedTripIndex}
-                            onSelectPoint={setSelectedPointIndex}
-                            stopLoadLookup={stopLoadLookup}
-                            dwellOriginStopId={cascade.stopId}
-                            dwellExcessMinutes={cascade.trackedDwellSeconds / 60}
-                        />
-                    </div>
 
-                    {/* Panel 2: Trip chain */}
-                    <div className="border border-gray-200 rounded-xl p-4 bg-white" style={{ minHeight: 120 }}>
-                        <h3 className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">Trip Chain</h3>
-                        <CascadeTripChain
-                            cascade={cascade}
-                            selectedTripIndex={selectedTripIndex}
-                            onSelectTrip={setSelectedTripIndex}
-                        />
-                    </div>
+                        <div className="space-y-5">
+                            <WorkspaceCard
+                                title="Total Route Impact"
+                                subtitle="Operational effect attributed to this dwell incident."
+                            >
+                                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-1">
+                                    <MetricBlock
+                                        label="Trips Touched"
+                                        value={`${cascade.affectedTripCount}`}
+                                        note="Trips that still carried some dwell-attributed delay."
+                                        tone="amber"
+                                    />
+                                    <MetricBlock
+                                        label="Attributed Delay"
+                                        value={`${fmtMin(cascade.totalLateSeconds)} min`}
+                                        note="Total dwell-attributed minutes carried across downstream timepoints."
+                                        tone="red"
+                                    />
+                                    <MetricBlock
+                                        label="OTP-Late Departures"
+                                        value={`${cascade.blastRadius}`}
+                                        note="Downstream timepoints pushed beyond the 5-minute OTP threshold."
+                                        tone={cascade.blastRadius > 0 ? 'red' : 'blue'}
+                                    />
+                                    <MetricBlock
+                                        label="Recovery Window"
+                                        value={`${fmtMin(cascade.recoveryTimeAvailableSeconds)} min`}
+                                        note={cascade.observedRecoverySeconds !== undefined
+                                            ? `${fmtMin(cascade.observedRecoverySeconds)} minutes observed between the incident trip and the next trip.`
+                                            : 'Scheduled recovery between the incident trip and the next trip.'}
+                                        tone="blue"
+                                    />
+                                </div>
+                            </WorkspaceCard>
 
-                    {/* Panel 3: Route map */}
-                    <div className="border border-gray-200 rounded-xl p-4 bg-white" style={{ minHeight: 300 }}>
-                        <h3 className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">Route Map</h3>
-                        <CascadeRouteMap
-                            cascade={cascade}
-                            selectedPointIndex={selectedPointIndex}
-                            selectedTripIndex={selectedTripIndex}
-                            stopLoadLookup={stopLoadLookup}
-                        />
+                            {customerImpact ? (
+                                <WorkspaceCard
+                                    title="Customer Exposure"
+                                    subtitle="APC-derived boardings at affected downstream stops."
+                                >
+                                    <div className="space-y-3">
+                                        <MetricBlock
+                                            label="Affected Boardings"
+                                            value={`${customerImpact.affectedBoardings}`}
+                                            note="Boardings at downstream stops where the dwell still had measurable delay impact."
+                                            tone="blue"
+                                        />
+                                        <MetricBlock
+                                            label="Boardings At OTP-Late Stops"
+                                            value={`${customerImpact.lateBoardings}`}
+                                            note="Subset of boardings that occurred while the route was still above the OTP-late threshold."
+                                            tone={customerImpact.lateBoardings > 0 ? 'red' : 'emerald'}
+                                        />
+                                    </div>
+                                </WorkspaceCard>
+                            ) : null}
+
+                            {focusTrip ? (
+                                <WorkspaceCard
+                                    title="Focused Trip"
+                                    subtitle={selectedTripIndex !== null ? 'Selected from the chain.' : 'Auto-focused on the milestone or last affected trip.'}
+                                >
+                                    <div className="space-y-3">
+                                        <div className="rounded-2xl border-2 border-gray-200 bg-gray-50 p-4">
+                                            <div className="flex items-start justify-between gap-3">
+                                                <div>
+                                                    <p className="text-sm font-extrabold text-gray-900">{focusTrip.tripName}</p>
+                                                    <p className="mt-1 text-sm font-semibold text-gray-500">
+                                                        Route {focusTrip.routeId} · {fmtTime(focusTrip.terminalDepartureTime)}
+                                                    </p>
+                                                </div>
+                                                <span className={`rounded-full border px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-[0.16em] ${
+                                                    focusTrip.lateTimepointCount > 0
+                                                        ? 'border-red-200 bg-red-50 text-red-700'
+                                                        : focusTrip.affectedTimepointCount > 0
+                                                            ? 'border-amber-200 bg-amber-50 text-amber-700'
+                                                            : 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                                }`}>
+                                                    {focusTrip.lateTimepointCount > 0 ? 'OTP impact' : focusTrip.affectedTimepointCount > 0 ? 'Delay only' : 'Recovered'}
+                                                </span>
+                                            </div>
+                                        </div>
+
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
+                                                <div className="text-xs font-extrabold uppercase tracking-[0.16em] text-gray-400">Late Points</div>
+                                                <div className="mt-2 text-lg font-extrabold text-gray-900">{focusTrip.lateTimepointCount}</div>
+                                            </div>
+                                            <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
+                                                <div className="text-xs font-extrabold uppercase tracking-[0.16em] text-gray-400">Affected Points</div>
+                                                <div className="mt-2 text-lg font-extrabold text-gray-900">{focusTrip.affectedTimepointCount}</div>
+                                            </div>
+                                        </div>
+
+                                        <div className="rounded-2xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-600">
+                                            <div className="flex items-center gap-2">
+                                                <Clock3 size={15} className="text-gray-400" />
+                                                Scheduled recovery before this trip: <span className="font-extrabold text-gray-900">{fmtMin(focusTrip.scheduledRecoverySeconds)} min</span>
+                                            </div>
+                                            {focusTrip.observedRecoverySeconds !== undefined ? (
+                                                <div className="mt-2 flex items-center gap-2">
+                                                    <Activity size={15} className="text-gray-400" />
+                                                    Observed recovery before this trip: <span className="font-extrabold text-gray-900">{fmtMin(focusTrip.observedRecoverySeconds)} min</span>
+                                                </div>
+                                            ) : null}
+                                            <div className="mt-2 flex items-center gap-2">
+                                                <ArrowRight size={15} className="text-gray-400" />
+                                                {tripRecoveredHere(focusTrip)
+                                                    ? `Fully recovered to zero at ${focusTrip.recoveredAtStop}.`
+                                                    : tripBackUnderThresholdHere(focusTrip)
+                                                        ? `Came back under five minutes at ${focusTrip.backUnderThresholdAtStop}.`
+                                                        : 'Delay carried through this trip without reaching a milestone.'}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </WorkspaceCard>
+                            ) : null}
+
+                            {otpImpact ? (
+                                <WorkspaceCard
+                                    title="Route OTP Penalty"
+                                    subtitle="Per-route downstream OTP effect attributed to this dwell incident."
+                                >
+                                    <div className="space-y-3">
+                                        {otpImpact.map((impact) => (
+                                            <div key={impact.routeId} className="rounded-2xl border-2 border-red-100 bg-red-50 p-4">
+                                                <div className="flex items-start justify-between gap-3">
+                                                    <div>
+                                                        <p className="text-sm font-extrabold text-red-900">Route {impact.routeId}</p>
+                                                        <p className="mt-1 text-sm font-semibold text-red-800/80">
+                                                            {impact.lateDepartures} OTP-late departures attributed to this dwell.
+                                                        </p>
+                                                    </div>
+                                                    <span className="rounded-full border border-red-200 bg-white px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-[0.16em] text-red-700">
+                                                        {impact.penaltyPct.toFixed(1)}%
+                                                    </span>
+                                                </div>
+                                                <p className="mt-3 text-sm font-semibold text-red-800/80">
+                                                    {impact.assessedDepartures > 0
+                                                        ? `${impact.assessedDepartures} assessed departures on this route for the selected period.`
+                                                        : 'No assessed route departures were available for a denominator.'}
+                                                </p>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </WorkspaceCard>
+                            ) : null}
+                        </div>
                     </div>
                 </div>
             </div>

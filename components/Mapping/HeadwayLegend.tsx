@@ -17,7 +17,8 @@ const LEGEND_ITEMS = [
 
 export const HeadwayLegend: React.FC = () => (
     <div className="absolute bottom-6 left-2 z-[1000] bg-white/95 backdrop-blur-sm rounded-lg shadow-md border border-gray-200 px-2.5 py-2 text-[10px] pointer-events-auto">
-        <div className="font-bold text-gray-600 mb-1.5 text-[11px]">Combined Headway</div>
+        <div className="font-bold text-gray-600 text-[11px]">Directional Headway</div>
+        <div className="text-[9px] text-gray-400 mb-1.5">Opposite directions are offset.</div>
         {LEGEND_ITEMS.map((item, i) => (
             <div key={i} className="flex items-center gap-2 py-[2px]">
                 <span

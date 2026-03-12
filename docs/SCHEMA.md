@@ -9,7 +9,6 @@
 ```
 firebase/
 ├── users/{userId}/
-│   ├── agentSessions/{sessionId}         # Tracked AI/chat work sessions
 │   ├── draftSchedules/{draftId}          # Working schedule copies
 │   ├── newScheduleProjects/{projectId}   # Wizard project state
 │   └── files/{fileId}                    # Uploaded file metadata
@@ -95,33 +94,6 @@ interface TeamMember {
   joinedAt: Timestamp;
   displayName: string;
   email: string;
-}
-```
-
----
-
-## Agent Sessions
-
-### AgentSession (`users/{userId}/agentSessions/{sessionId}`)
-
-```typescript
-type AgentSessionStatus = 'active' | 'waiting' | 'blocked' | 'review' | 'done';
-type AgentSessionPriority = 'critical' | 'high' | 'medium' | 'low';
-
-interface AgentSession {
-  id: string;
-  title: string;               // Optional manual override; UI can auto-derive a display title
-  purpose: string;
-  currentTask: string;
-  lastPrompt: string;
-  status: AgentSessionStatus;
-  priority: AgentSessionPriority;
-  lastSummary: string;
-  nextAction: string;
-  blockedBy: string;
-  chatReference: string;
-  createdAt: Timestamp;
-  updatedAt: Timestamp;
 }
 ```
 

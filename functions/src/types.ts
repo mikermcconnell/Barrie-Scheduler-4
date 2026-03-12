@@ -272,6 +272,43 @@ export interface RouteHourMetrics {
   boardings: number;
 }
 
+export interface SegmentRuntimeObservation {
+  runtimeMinutes: number;
+  timeBucket: string;
+}
+
+export interface DailySegmentRuntimeEntry {
+  routeId: string;
+  direction: string;
+  segmentName: string;
+  observations: SegmentRuntimeObservation[];
+}
+
+export interface DailySegmentRuntimes {
+  entries: DailySegmentRuntimeEntry[];
+  totalObservations: number;
+  tripsWithData: number;
+}
+
+export interface DailyStopSegmentRuntimeEntry {
+  routeId: string;
+  direction: string;
+  fromStopId: string;
+  toStopId: string;
+  fromStopName: string;
+  toStopName: string;
+  fromRouteStopIndex: number;
+  toRouteStopIndex: number;
+  segmentName: string;
+  observations: SegmentRuntimeObservation[];
+}
+
+export interface DailyStopSegmentRuntimes {
+  entries: DailyStopSegmentRuntimeEntry[];
+  totalObservations: number;
+  tripsWithData: number;
+}
+
 export interface StopMetrics {
   stopName: string;
   stopId: string;
@@ -373,12 +410,14 @@ export interface DailySummary {
   };
   byOperatorDwell?: OperatorDwellMetrics;
   byCascade?: DailyCascadeMetrics;
+  segmentRuntimes?: DailySegmentRuntimes;
+  stopSegmentRuntimes?: DailyStopSegmentRuntimes;
   byRouteHour?: RouteHourMetrics[];
   dataQuality: DataQuality;
   schemaVersion: number;
 }
 
-export const PERFORMANCE_SCHEMA_VERSION = 5;
+export const PERFORMANCE_SCHEMA_VERSION = 6;
 
 export interface PerformanceDataSummary {
   dailySummaries: DailySummary[];

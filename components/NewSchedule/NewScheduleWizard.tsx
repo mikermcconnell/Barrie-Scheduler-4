@@ -28,6 +28,13 @@ import { extractDirectionFromName } from '../../utils/config/routeDirectionConfi
 import type { UploadConfirmation, DayType as MasterDayType } from '../../utils/masterScheduleTypes';
 import { buildStopNameToIdMap } from '../../utils/gtfs/gtfsStopLookup';
 import { resolveAutoRouteNumber } from './utils/routeInference';
+import {
+    buildSegmentsMapFromParsedData,
+    createDefaultPerformanceConfig,
+    createDefaultScheduleConfig,
+    deriveWizardStepFromProject,
+    shouldShowNextStepAction,
+} from './utils/wizardState';
 
 // Constants - centralized magic numbers
 const DEFAULT_CYCLE_TIME = 60;
@@ -150,6 +157,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
     const [files, setFiles] = useState<File[]>([]);
     const [importMode, setImportMode] = useState<ImportMode>('csv');
     const [performanceConfig, setPerformanceConfig] = useState<PerformanceConfig>({ routeId: '', dateRange: null });
+    const [autofillFromMaster, setAutofillFromMaster] = useState(true);
     const [projectName, setProjectName] = useState(DEFAULT_PROJECT_NAME);
     const [isAutoProjectName, setIsAutoProjectName] = useState(true);
     const [projectId, setProjectId] = useState<string | undefined>();
@@ -381,6 +389,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         dayType,
         importMode,
         performanceConfig,
+        autofillFromMaster,
         projectName,
         fileNames: files.map(f => f.name),
         analysis: step >= 2 ? analysis : undefined,
@@ -389,7 +398,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         generatedSchedules: step >= 4 ? (overrides?.generatedSchedules || generatedSchedules) : undefined,
         parsedData: step >= 1 ? parsedData : undefined,
         updatedAt: new Date().toISOString()
-    }), [step, dayType, importMode, performanceConfig, projectName, files, analysis, bands, config, generatedSchedules, parsedData]);
+    }), [step, dayType, importMode, performanceConfig, autofillFromMaster, projectName, files, analysis, bands, config, generatedSchedules, parsedData]);
 
     // Helper: Build Firebase save data structure
     const buildFirebaseSaveData = useCallback((overrides?: {
@@ -403,6 +412,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         name: overrides?.name || projectName,
         dayType,
         importMode,
+        autofillFromMaster,
         performanceConfig,
         routeNumber: config.routeNumber,
         analysis: step >= 2 ? analysis : undefined,
@@ -413,14 +423,14 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         isGenerated: overrides?.isGenerated ?? (step >= 4),
         ...(effectiveProjectId ? { id: effectiveProjectId } : {})
         });
-    }, [projectName, dayType, importMode, performanceConfig, config, step, analysis, bands, generatedSchedules, parsedData, projectId]);
+    }, [projectName, dayType, importMode, autofillFromMaster, performanceConfig, config, step, analysis, bands, generatedSchedules, parsedData, projectId]);
 
     // Track state version for dirty detection - increment on meaningful changes
     useEffect(() => {
         if (!isLoadingProject) {
             stateVersionRef.current += 1;
         }
-    }, [step, dayType, files.length, analysis, bands, config, generatedSchedules, parsedData, isLoadingProject]);
+    }, [step, dayType, files.length, analysis, bands, config, generatedSchedules, parsedData, autofillFromMaster, isLoadingProject]);
 
     const hasProjectContent = useMemo(() => (
         files.length > 0 ||
@@ -528,12 +538,14 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
             // Set new debounced save
             saveTimerRef.current = setTimeout(() => {
                 save(buildLocalSaveData());
+                saveTimerRef.current = null;
             }, 2000);
         }
         // Cleanup on unmount - save immediately to prevent data loss
         return () => {
             if (saveTimerRef.current) {
                 clearTimeout(saveTimerRef.current);
+                saveTimerRef.current = null;
                 // Save immediately on unmount (debounced save might not have fired)
                 if (step >= 1 && hasProjectContent) {
                     save(buildLocalSaveData());
@@ -570,11 +582,23 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
 
     const handleResume = () => {
         if (savedProgress) {
+            setFiles([]);
+            setProjectId(undefined);
+            projectIdRef.current = undefined;
+            setParsedData([]);
+            setAnalysis([]);
+            setBands([]);
+            setBandSummary({});
+            setSegmentsMap({});
+            setSegmentNames([]);
+            setGeneratedSchedules([]);
+            setConfig(createDefaultScheduleConfig());
             setStep(savedProgress.step);
             setMaxStepReached(Math.max(savedProgress.step, maxStepReached));
             setDayType(savedProgress.dayType);
             setImportMode(savedProgress.importMode || 'csv');
-            setPerformanceConfig(savedProgress.performanceConfig || { routeId: '', dateRange: null });
+            setPerformanceConfig(savedProgress.performanceConfig || createDefaultPerformanceConfig());
+            setAutofillFromMaster(savedProgress.autofillFromMaster ?? true);
             if (savedProgress.projectName) {
                 setProjectName(savedProgress.projectName);
                 setIsAutoProjectName(false);
@@ -590,6 +614,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
             // Restore Raw Data if available
             if (savedProgress.parsedData && savedProgress.parsedData.length > 0) {
                 setParsedData(savedProgress.parsedData);
+                setSegmentsMap(buildSegmentsMapFromParsedData(savedProgress.parsedData));
             }
 
             toast.success('Progress Restored', 'Continuing from where you left off');
@@ -598,14 +623,8 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
     };
 
     const handleStartFresh = () => {
-        clear();
-        setImportMode('csv');
-        setPerformanceConfig({ routeId: '', dateRange: null });
-        setProjectName(DEFAULT_PROJECT_NAME);
-        setIsAutoProjectName(true);
-        setIsMasterCompareActive(false);
-        setMasterBaseline(null);
-        setIsCompareLoading(false);
+        resetWizardState();
+        setSavedProgress(null);
         setShowResumeModal(false);
     };
 
@@ -665,13 +684,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         setBands(generatedBands);
         setSegmentNames(extractSegmentNames(buckets));
 
-        const groupedSegments: Record<string, SegmentRawData[]> = {};
-        results.forEach(pd => {
-            const dir = pd.detectedDirection || 'North';
-            if (!groupedSegments[dir]) groupedSegments[dir] = [];
-            groupedSegments[dir].push(...pd.segments);
-        });
-        setSegmentsMap(groupedSegments);
+        setSegmentsMap(buildSegmentsMapFromParsedData(results));
 
         const autoRouteNumber = resolveAutoRouteNumber(
             results.map(r => r.detectedRouteNumber)
@@ -685,6 +698,10 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
 
     const handleNext = async () => {
         if (step === 1) {
+            if (importMode === 'gtfs') {
+                toast.info('Use GTFS Import', 'Complete the GTFS import panel to continue.');
+                return;
+            }
             if (importMode === 'performance') {
                 // Performance data mode
                 if (!performanceConfig.routeId) {
@@ -794,14 +811,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                 return orderA - orderB;
             });
 
-            // Group data by direction
-            const groupedData: Record<string, SegmentRawData[]> = {};
-            sortedParsedData.forEach(pd => {
-                const dir = pd.detectedDirection || 'North';
-                if (!groupedData[dir]) groupedData[dir] = [];
-                groupedData[dir].push(...pd.segments);
-            });
-
+            const groupedData = buildSegmentsMapFromParsedData(sortedParsedData);
             setSegmentsMap(groupedData);
 
             // Compute bandSummary synchronously at generation time
@@ -897,22 +907,23 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         setParsedData([]);
         setAnalysis([]);
         setBands([]);
+        setBandSummary({});
+        setSegmentsMap({});
         setSegmentNames([]);
-        setConfig({
-            routeNumber: DEFAULT_ROUTE_NUMBER,
-            cycleTime: DEFAULT_CYCLE_TIME,
-            recoveryRatio: DEFAULT_RECOVERY_RATIO,
-            blocks: []
-        });
+        setGeneratedSchedules([]);
+        setConfig(createDefaultScheduleConfig());
         setProjectName(DEFAULT_PROJECT_NAME);
         setIsAutoProjectName(true);
         setProjectId(undefined);
         projectIdRef.current = undefined;
         setImportMode('csv');
-        setPerformanceConfig({ routeId: '', dateRange: null });
+        setPerformanceConfig(createDefaultPerformanceConfig());
+        setAutofillFromMaster(true);
         setIsMasterCompareActive(false);
         setMasterBaseline(null);
         setIsCompareLoading(false);
+        setShowUploadModal(false);
+        setUploadConfirmation(null);
     }, [clear]);
 
     const handleNewProject = () => {
@@ -930,6 +941,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         dayType: 'Weekday' | 'Saturday' | 'Sunday';
         importMode?: ImportMode;
         performanceConfig?: PerformanceConfig;
+        autofillFromMaster?: boolean;
         analysis?: TripBucketAnalysis[];
         bands?: TimeBand[];
         config?: ScheduleConfig;
@@ -946,7 +958,17 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         setIsAutoProjectName(false);
         setDayType(fullProject.dayType);
         setImportMode(fullProject.importMode || 'csv');
-        setPerformanceConfig(fullProject.performanceConfig || { routeId: '', dateRange: null });
+        setPerformanceConfig(fullProject.performanceConfig || createDefaultPerformanceConfig());
+        setAutofillFromMaster(fullProject.autofillFromMaster ?? true);
+        setFiles([]);
+        setParsedData([]);
+        setAnalysis([]);
+        setBands([]);
+        setBandSummary({});
+        setSegmentsMap({});
+        setSegmentNames([]);
+        setGeneratedSchedules([]);
+        setConfig(createDefaultScheduleConfig());
 
         if (fullProject.analysis && fullProject.analysis.length > 0) {
             setAnalysis(fullProject.analysis);
@@ -963,6 +985,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         }
         if (fullProject.parsedData && fullProject.parsedData.length > 0) {
             setParsedData(fullProject.parsedData);
+            setSegmentsMap(buildSegmentsMapFromParsedData(fullProject.parsedData));
         }
     }, []);
 
@@ -1151,6 +1174,8 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                                 setConfig={setConfig}
                                 teamId={team?.id}
                                 stopSuggestions={stopSuggestions}
+                                autofillFromMaster={autofillFromMaster}
+                                onAutofillFromMasterChange={setAutofillFromMaster}
                             />
                         )}
                         {step === 4 && (
@@ -1235,7 +1260,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                             </button>
                         )}
 
-                        {step !== 4 && (
+                        {shouldShowNextStepAction(step, importMode) && (
                             <button
                                 onClick={handleNext}
                                 className="px-6 py-2 rounded-lg bg-brand-blue text-white font-bold hover:brightness-110 shadow-md shadow-blue-500/20 flex items-center gap-2"
@@ -1267,15 +1292,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                                 restoreProjectData(fullProject);
 
                                 // Calculate which step to go to based on what data exists
-                                let nextStep = 1;
-                                if (fullProject.isGenerated && fullProject.generatedSchedules?.length) {
-                                    nextStep = 4;
-                                } else if (fullProject.config?.blocks?.length) {
-                                    nextStep = 3;
-                                } else if (fullProject.analysis?.length || fullProject.parsedData?.length) {
-                                    nextStep = 2;
-                                }
-
+                                const nextStep = deriveWizardStepFromProject(fullProject);
                                 setStep(nextStep);
                                 setMaxStepReached(nextStep);
                                 toast.success('Project Loaded', `${fullProject.name} - Step ${nextStep}`);

@@ -133,13 +133,29 @@ export default defineConfig(({ mode }) => {
             }
 
             console.log('🚀 Processing optimization request for', data.mode);
-            const { requirements, mode, currentShifts } = data;
+            const { requirements, mode, currentShifts, focusInstruction, requestId } = data;
 
-            const shifts = await optimizeImplementation(requirements, apiKey, mode, currentShifts);
+            const startedAt = Date.now();
+            const shifts = await optimizeImplementation(
+              requirements,
+              apiKey,
+              mode,
+              currentShifts,
+              focusInstruction,
+              requestId
+            );
+            const pipeline = mode === 'refine' && ['1', 'true', 'yes', 'on'].includes((env.OPTIMIZE_MULTI_PHASE || '').toLowerCase())
+              ? 'multi-phase'
+              : 'fast';
 
             res.statusCode = 200;
             res.setHeader('Content-Type', 'application/json');
-            res.end(JSON.stringify({ shifts }));
+            res.end(JSON.stringify({
+              shifts,
+              requestId,
+              durationMs: Date.now() - startedAt,
+              pipeline
+            }));
 
           } catch (error: any) {
             console.error('❌ API Error:', error);

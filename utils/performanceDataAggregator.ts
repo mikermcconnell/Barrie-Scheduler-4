@@ -8,6 +8,7 @@ import {
   OperatorDwellMetrics, DwellIncident, OperatorDwellSummary,
   classifyDwell, DWELL_THRESHOLDS,
   DailySegmentRuntimes, DailySegmentRuntimeEntry, SegmentRuntimeObservation,
+  DailyStopSegmentRuntimes, DailyStopSegmentRuntimeEntry,
   RouteStopDeviationProfile, RouteStopDeviationEntry,
   RouteHourMetrics,
 } from './performanceDataTypes';
@@ -1004,6 +1005,105 @@ function buildSegmentRuntimes(records: STREETSRecord[]): DailySegmentRuntimes {
   };
 }
 
+function buildStopSegmentRuntimes(records: STREETSRecord[]): DailyStopSegmentRuntimes {
+  const byTrip = groupBy(records, r => r.tripId);
+  const tripsWithData = new Set<string>();
+  const segMap = new Map<string, {
+    routeId: string;
+    direction: string;
+    fromStopId: string;
+    toStopId: string;
+    fromStopName: string;
+    toStopName: string;
+    fromRouteStopIndex: number;
+    toRouteStopIndex: number;
+    observations: SegmentRuntimeObservation[];
+  }>();
+
+  for (const [tripId, tripRecs] of byTrip) {
+    const sorted = [...tripRecs]
+      .filter(r => !r.inBetween && !r.isTripper && !r.isDetour)
+      .sort((a, b) => a.routeStopIndex - b.routeStopIndex);
+
+    if (sorted.length < 2) continue;
+
+    let tripHasData = false;
+
+    for (let i = 0; i < sorted.length - 1; i++) {
+      const from = sorted[i];
+      const to = sorted[i + 1];
+
+      if (!from.observedDepartureTime || !to.observedArrivalTime) continue;
+      if (!from.stopId || !to.stopId || from.stopId === to.stopId) continue;
+      if (to.routeStopIndex <= from.routeStopIndex) continue;
+
+      const depSec = timeToSeconds(from.observedDepartureTime);
+      let arrSec = timeToSeconds(to.observedArrivalTime);
+      if (arrSec < depSec) arrSec += 86400;
+
+      const runtimeSec = arrSec - depSec;
+      if (runtimeSec <= 0 || runtimeSec > 3600) continue;
+
+      const runtimeMinutes = Math.round(runtimeSec / 60 * 100) / 100;
+      const schedSec = timeToSeconds(from.stopTime);
+      const totalMin = Math.floor(schedSec / 60);
+      const bucketMin = Math.floor(totalMin / 30) * 30;
+      const bucketH = Math.floor(bucketMin / 60);
+      const bucketM = bucketMin % 60;
+      const timeBucket = `${String(bucketH).padStart(2, '0')}:${String(bucketM).padStart(2, '0')}`;
+
+      const key = `${from.routeId}||${from.direction}||${from.stopId}||${to.stopId}`;
+      const existing = segMap.get(key);
+      const obs: SegmentRuntimeObservation = { runtimeMinutes, timeBucket };
+
+      if (existing) {
+        existing.observations.push(obs);
+      } else {
+        segMap.set(key, {
+          routeId: from.routeId,
+          direction: from.direction,
+          fromStopId: from.stopId,
+          toStopId: to.stopId,
+          fromStopName: from.stopName,
+          toStopName: to.stopName,
+          fromRouteStopIndex: from.routeStopIndex,
+          toRouteStopIndex: to.routeStopIndex,
+          observations: [obs],
+        });
+      }
+
+      tripHasData = true;
+    }
+
+    if (tripHasData) tripsWithData.add(tripId);
+  }
+
+  const entries: DailyStopSegmentRuntimeEntry[] = [];
+  let totalObservations = 0;
+
+  for (const entry of segMap.values()) {
+    entries.push({
+      routeId: entry.routeId,
+      direction: entry.direction,
+      fromStopId: entry.fromStopId,
+      toStopId: entry.toStopId,
+      fromStopName: entry.fromStopName,
+      toStopName: entry.toStopName,
+      fromRouteStopIndex: entry.fromRouteStopIndex,
+      toRouteStopIndex: entry.toRouteStopIndex,
+      segmentName: `${entry.fromStopName} to ${entry.toStopName}`,
+      observations: entry.observations,
+    });
+    totalObservations += entry.observations.length;
+  }
+
+  return {
+    entries,
+    totalObservations,
+    tripsWithData: tripsWithData.size,
+  };
+}
+
 function buildRouteStopDeviations(records: STREETSRecord[]): RouteStopDeviationProfile[] {
   const eligible = otpEligible(records);
 
@@ -1102,6 +1202,7 @@ function aggregateSingleDay(date: string, records: STREETSRecord[]): DailySummar
     byOperatorDwell: dwellMetrics,
     byCascade: buildDailyCascadeMetrics(records, dwellMetrics.incidents.filter(i => i.severity !== 'minor')),
     segmentRuntimes: buildSegmentRuntimes(records),
+    stopSegmentRuntimes: buildStopSegmentRuntimes(records),
     routeStopDeviations: buildRouteStopDeviations(records),
     byRouteHour: buildRouteHourMetrics(records),
     dataQuality: buildDataQuality(records, sanitization),

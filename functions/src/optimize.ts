@@ -2,10 +2,9 @@ import * as admin from 'firebase-admin';
 import { onRequest } from 'firebase-functions/v2/https';
 import { defineSecret } from 'firebase-functions/params';
 import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai';
+import { shouldUseExtendedOptimizePipeline } from './optimizePipelinePolicy';
 
 const GEMINI_API_KEY = defineSecret('GEMINI_API_KEY');
-const isTruthy = (value?: string) => ['1', 'true', 'yes', 'on'].includes((value || '').toLowerCase());
-const isExtendedPipelineEnabled = () => isTruthy(process.env.OPTIMIZE_MULTI_PHASE);
 const createServerRequestId = () => `srv-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const inferErrorCode = (message: string) => {
     const text = message.toLowerCase();
@@ -176,14 +175,15 @@ function optimizeImplementation(
     6. Keep breaks compliant and staggered.
     `;
 
-    return runPipeline(apiKey, demandContext, commonRules, mode, currentShifts, focusInstruction, isExtendedPipelineEnabled(), requestId);
+    const extendedPipeline = shouldUseExtendedOptimizePipeline(mode, process.env.OPTIMIZE_MULTI_PHASE);
+    return runPipeline(apiKey, demandContext, commonRules, mode, currentShifts, focusInstruction, extendedPipeline, requestId);
 }
 
 async function runPipeline(
     apiKey: string,
     demandContext: string,
     commonRules: string,
-    mode: string,
+    mode: 'full' | 'refine',
     currentShifts: any[],
     focusInstruction: string | undefined,
     extendedPipeline: boolean,
@@ -431,7 +431,7 @@ export const optimizeSchedule = onRequest(
 
             const processedShifts = await optimizeImplementation(requirements, apiKey, mode || 'full', currentShifts || [], focusInstruction, requestId);
             const durationMs = Date.now() - requestStartedAt;
-            const pipeline = isExtendedPipelineEnabled() ? 'multi-phase' : 'fast';
+            const pipeline = shouldUseExtendedOptimizePipeline(mode || 'full', process.env.OPTIMIZE_MULTI_PHASE) ? 'multi-phase' : 'fast';
             console.log(`[${requestId}] ✅ Optimization complete in ${durationMs}ms (pipeline=${pipeline})`);
 
             res.status(200).json({ shifts: processedShifts, requestId, durationMs, pipeline });

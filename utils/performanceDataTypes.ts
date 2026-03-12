@@ -155,8 +155,10 @@ export interface CascadeAffectedTrip {
   timepoints: CascadeTimepointObs[];  // every timepoint in the trip
   lateTimepointCount: number;         // count of attributed late departures (>5 min)
   affectedTimepointCount: number;     // count of timepoints with any attributable delay (>0)
+  backUnderThresholdAtStop?: string | null; // first stop in this trip where attributed delay is <= 5 min
   recoveredAtStop: string | null;     // stop where attributed delay fully reached zero
   otpStatus: OTPStatus;               // derived from attributed delay
+  backUnderThresholdHere?: boolean;   // true if attributed delay dropped to <= 5 min during this trip
   recoveredHere: boolean;             // true if attributed delay reached zero during this trip
   lateSeconds: number;                // legacy field: sum of attributed delay seconds across affected timepoints
 }
@@ -180,6 +182,8 @@ export interface DwellCascade {
   cascadedTrips: CascadeAffectedTrip[];
   blastRadius: number;            // total attributed late departures across all trips
   affectedTripCount: number;      // number of trips touched before attributed recovery
+  backUnderThresholdAtTrip?: string | null; // trip where attributed delay first dropped to <= 5 min
+  backUnderThresholdAtStop?: string | null; // stop where attributed delay first dropped to <= 5 min
   recoveredAtTrip: string | null; // trip name where chain ended
   recoveredAtStop: string | null; // specific stop where attributed delay reached zero
   totalLateSeconds: number;       // legacy field: sum of attributed delay across all affected timepoints
@@ -254,6 +258,25 @@ export interface DailySegmentRuntimeEntry {
 
 export interface DailySegmentRuntimes {
   entries: DailySegmentRuntimeEntry[];
+  totalObservations: number;
+  tripsWithData: number;
+}
+
+export interface DailyStopSegmentRuntimeEntry {
+  routeId: string;
+  direction: string;
+  fromStopId: string;
+  toStopId: string;
+  fromStopName: string;
+  toStopName: string;
+  fromRouteStopIndex: number;
+  toRouteStopIndex: number;
+  segmentName: string;  // display label: "{fromStopName} to {toStopName}"
+  observations: SegmentRuntimeObservation[];
+}
+
+export interface DailyStopSegmentRuntimes {
+  entries: DailyStopSegmentRuntimeEntry[];
   totalObservations: number;
   tripsWithData: number;
 }
@@ -455,13 +478,14 @@ export interface DailySummary {
   byOperatorDwell?: OperatorDwellMetrics;
   byCascade?: DailyCascadeMetrics;
   segmentRuntimes?: DailySegmentRuntimes;
+  stopSegmentRuntimes?: DailyStopSegmentRuntimes;
   routeStopDeviations?: RouteStopDeviationProfile[];
   byRouteHour?: RouteHourMetrics[];
   dataQuality: DataQuality;
   schemaVersion: number;
 }
 
-export const PERFORMANCE_SCHEMA_VERSION = 5;
+export const PERFORMANCE_SCHEMA_VERSION = 6;
 
 // ─── Multi-Day Summary (for trend views) ────────────────────────────
 

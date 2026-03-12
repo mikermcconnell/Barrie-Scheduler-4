@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Bus, Search, X, Check, ChevronRight, ArrowLeft } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useTeam } from '../contexts/TeamContext';
@@ -29,6 +29,8 @@ interface ScheduleEditorWorkspaceProps {
     // Optional: sibling drafts for route switching (bulk import)
     siblingDrafts?: SiblingDraft[];
     currentDraftId?: string;
+    currentDraftName?: string;
+    currentDraftUpdatedAt?: Date;
     onSwitchDraft?: (draftId: string) => void;
 }
 
@@ -38,6 +40,8 @@ export const ScheduleEditorWorkspace: React.FC<ScheduleEditorWorkspaceProps> = (
     onClose,
     siblingDrafts,
     currentDraftId,
+    currentDraftName,
+    currentDraftUpdatedAt,
     onSwitchDraft
 }) => {
     const { user } = useAuth();
@@ -54,10 +58,13 @@ export const ScheduleEditorWorkspace: React.FC<ScheduleEditorWorkspaceProps> = (
         canRedo
     } = useUndoRedo<MasterRouteTable[]>(initialTables, { maxHistory: 50 });
 
-    const [draftId, setDraftId] = useState<string | null>(null);
-    const [draftName, setDraftName] = useState<string>('Untitled Draft');
+    const initialRouteNumber = initialContent.metadata?.routeNumber || '';
+    const initialDraftName = currentDraftName || (initialRouteNumber ? `Draft - Route ${initialRouteNumber}` : 'Untitled Draft');
+
+    const [draftId, setDraftId] = useState<string | null>(currentDraftId || null);
+    const [draftName, setDraftName] = useState<string>(initialDraftName);
     const [autoSaveStatus, setAutoSaveStatus] = useState<AutoSaveStatus>('idle');
-    const [lastSaved, setLastSaved] = useState<Date | null>(null);
+    const [lastSaved, setLastSaved] = useState<Date | null>(currentDraftUpdatedAt || null);
     const [isPublishing, setIsPublishing] = useState(false);
     const [routeSearch, setRouteSearch] = useState('');
     const [dayTypeFilter, setDayTypeFilter] = useState<'all' | 'Weekday' | 'Saturday' | 'Sunday'>('all');
@@ -65,8 +72,31 @@ export const ScheduleEditorWorkspace: React.FC<ScheduleEditorWorkspaceProps> = (
 
     const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const searchInputRef = useRef<HTMLInputElement>(null);
+    const mountedRef = useRef(true);
+    const hasInitializedAutoSaveRef = useRef(false);
+    const hasPendingChangesRef = useRef(false);
+    const userRef = useRef(user);
+    const schedulesRef = useRef(schedules);
+    const draftIdRef = useRef<string | null>(currentDraftId || null);
+    const draftNameRef = useRef(initialDraftName);
 
     const currentSibling = siblingDrafts?.find(d => d.id === currentDraftId);
+
+    useEffect(() => {
+        userRef.current = user;
+    }, [user]);
+
+    useEffect(() => {
+        schedulesRef.current = schedules;
+    }, [schedules]);
+
+    useEffect(() => {
+        draftIdRef.current = draftId;
+    }, [draftId]);
+
+    useEffect(() => {
+        draftNameRef.current = draftName;
+    }, [draftName]);
 
     // Auto-expand the current route's group
     useEffect(() => {
@@ -75,66 +105,92 @@ export const ScheduleEditorWorkspace: React.FC<ScheduleEditorWorkspaceProps> = (
         }
     }, [currentDraftId, currentSibling]);
 
-    useEffect(() => {
-        const routeNumber = initialContent.metadata?.routeNumber || '';
-        if (routeNumber) {
-            setDraftName(`Draft - Route ${routeNumber}`);
-        }
-    }, [initialContent.metadata?.routeNumber]);
-
-    useEffect(() => {
-        return () => {
-            if (saveTimerRef.current) {
-                clearTimeout(saveTimerRef.current);
+    const saveDraftNow = useCallback(async (options?: { suppressStatusUpdates?: boolean }): Promise<string | null> => {
+        const activeUser = userRef.current;
+        if (!activeUser) {
+            if (mountedRef.current && !options?.suppressStatusUpdates) {
+                setAutoSaveStatus('error');
             }
-        };
-    }, []);
-
-    const saveDraftNow = async (): Promise<string | null> => {
-        if (!user) {
-            setAutoSaveStatus('error');
             return null;
         }
 
-        const buildResult = buildMasterContentFromTables(schedules);
+        const buildResult = buildMasterContentFromTables(schedulesRef.current);
         if (!buildResult) {
-            setAutoSaveStatus('error');
+            if (mountedRef.current && !options?.suppressStatusUpdates) {
+                setAutoSaveStatus('error');
+            }
             return null;
+        }
+
+        if (saveTimerRef.current) {
+            clearTimeout(saveTimerRef.current);
+            saveTimerRef.current = null;
         }
 
         try {
-            setAutoSaveStatus('saving');
-            const newDraftId = await saveDraft(user.uid, {
-                id: draftId || undefined,
-                name: draftName,
+            if (mountedRef.current && !options?.suppressStatusUpdates) {
+                setAutoSaveStatus('saving');
+            }
+            const newDraftId = await saveDraft(activeUser.uid, {
+                id: draftIdRef.current || undefined,
+                name: draftNameRef.current,
                 routeNumber: buildResult.routeNumber,
                 dayType: buildResult.dayType,
                 status: 'draft',
-                createdBy: user.uid,
+                createdBy: activeUser.uid,
                 basedOn,
                 content: buildResult.content
             });
-            setDraftId(newDraftId);
-            setLastSaved(new Date());
-            setAutoSaveStatus('saved');
+            draftIdRef.current = newDraftId;
+            hasPendingChangesRef.current = false;
+
+            if (mountedRef.current) {
+                setDraftId(newDraftId);
+                setLastSaved(new Date());
+                if (!options?.suppressStatusUpdates) {
+                    setAutoSaveStatus('saved');
+                }
+            }
+
             return newDraftId;
         } catch (error) {
             console.error('Draft save failed:', error);
-            setAutoSaveStatus('error');
+            if (mountedRef.current && !options?.suppressStatusUpdates) {
+                setAutoSaveStatus('error');
+            }
             return null;
         }
-    };
+    }, [basedOn]);
+
+    useEffect(() => {
+        return () => {
+            mountedRef.current = false;
+
+            if (saveTimerRef.current) {
+                clearTimeout(saveTimerRef.current);
+            }
+
+            if (hasPendingChangesRef.current && userRef.current) {
+                void saveDraftNow({ suppressStatusUpdates: true });
+            }
+        };
+    }, [saveDraftNow]);
 
     useEffect(() => {
         if (!user) return;
+        if (!hasInitializedAutoSaveRef.current) {
+            hasInitializedAutoSaveRef.current = true;
+            return;
+        }
         if (saveTimerRef.current) {
             clearTimeout(saveTimerRef.current);
         }
         setAutoSaveStatus(prev => (prev === 'saved' || prev === 'error') ? 'idle' : prev);
+        hasPendingChangesRef.current = true;
         saveTimerRef.current = setTimeout(() => {
-            saveDraftNow();
+            void saveDraftNow();
         }, 10000);
-    }, [schedules, draftName, user]);
+    }, [draftName, saveDraftNow, schedules, user]);
 
     const handleSaveVersion = async () => {
         await saveDraftNow();
@@ -147,6 +203,11 @@ export const ScheduleEditorWorkspace: React.FC<ScheduleEditorWorkspaceProps> = (
         }
 
         const savedDraftId = await saveDraftNow();
+        if (!savedDraftId) {
+            toast?.error('Publish Failed', 'Save the draft successfully before publishing.');
+            return;
+        }
+
         const buildResult = buildMasterContentFromTables(schedules);
         if (!buildResult) {
             toast?.error('Publish Failed', 'This draft contains multiple routes/day types.');
@@ -160,8 +221,8 @@ export const ScheduleEditorWorkspace: React.FC<ScheduleEditorWorkspaceProps> = (
                 userId: user.uid,
                 publisherName: user.displayName || user.email || 'User',
                 draft: {
-                    id: savedDraftId || draftId || '',
-                    name: draftName,
+                    id: savedDraftId,
+                    name: draftNameRef.current,
                     routeNumber: buildResult.routeNumber,
                     dayType: buildResult.dayType,
                     status: 'ready_for_review',

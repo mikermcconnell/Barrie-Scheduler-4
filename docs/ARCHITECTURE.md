@@ -51,7 +51,6 @@ components/
 ├── FileUpload.tsx                  # Drag-and-drop upload widget
 │
 ├── workspaces/                     # ═══ Top-Level Workspaces ═══
-│   ├── AgentWorkspace.tsx          # Agent session registry workspace
 │   ├── FixedRouteWorkspace.tsx     # Fixed-route scheduling root (719 lines)
 │   ├── OnDemandWorkspace.tsx       # On-demand service analysis (946 lines)
 │   ├── OperationsWorkspace.tsx     # Operations dashboard routing
@@ -135,6 +134,7 @@ components/
 │   ├── OverviewPanel.tsx           # Transit app overview
 │   ├── AppUsageModule.tsx          # Transit app usage stats
 │   ├── StudentPassModule.tsx       # Student transit pass planner + PDF export
+│   ├── ShuttlePlannerWorkspace.tsx # Shuttle planning workspace shell in Planning Data
 │   ├── StudentPassMap.tsx          # Student pass map rendering
 │   ├── StudentPassTimeline.tsx     # Student pass timeline view
 │   └── AnalyticsShared.tsx         # Shared analytics types/helpers
@@ -250,7 +250,7 @@ utils/
 ├── ai/                                 # ═══ AI Integration ═══
 │   ├── runtimeAnalysis.ts             # Time band analysis (274 lines)
 │   ├── performanceQueryService.ts     # AI performance queries
-│   └── geminiOptimizer.ts             # Gemini Generator→Critic optimizer
+│   └── geminiOptimizer.ts             # Gemini optimize client (fast full, multi-phase refine)
 │
 ├── transit-app/                        # ═══ Transit App Data ═══
 │   ├── transitAppAggregator.ts         # Data aggregation engine (1,669 lines)
@@ -294,7 +294,7 @@ hooks/
 
 ```
 api/                                # Vite dev-server API middleware
-├── optimize.ts                    # Gemini two-pass optimization (331 lines)
+├── optimize.ts                    # Gemini optimization endpoint parity for local dev
 ├── gtfs.ts                        # GTFS proxy endpoint (247 lines)
 ├── security.ts                    # API auth/security middleware (196 lines)
 ├── parse-schedule.ts              # Schedule parsing endpoint
@@ -326,7 +326,7 @@ Representative coverage areas in `tests/`:
 | **Performance** | `performanceDataAggregator.test.ts` |
 | **Transit App** | `transitAppAggregator.*.test.ts` (5), `transitAppScoring.test.ts`, `transitAppParsers.test.ts`, `transitAppPipeline.e2e.test.ts` |
 | **Draft/Adapter** | `scheduleDraftAdapter.test.ts`, `fixedRouteDraftState.test.ts` |
-| **Other** | `odMatrixParser.test.ts`, `apiSecurity.test.ts`, `agentSessions.test.ts`, `studentPassTimeline.test.tsx` |
+| **Other** | `odMatrixParser.test.ts`, `apiSecurity.test.ts`, `studentPassTimeline.test.tsx` |
 
 ★ = Critical files with locked logic or high complexity
 
@@ -470,7 +470,7 @@ Day types determined by section order, not merged cells:
 | GTFS import | `utils/gtfs/gtfsImportService.ts` | Full pipeline (1,573 lines) |
 | Schedule display | `components/ScheduleEditor.tsx` | Core editor (1,634 lines) |
 | Round-trip table | `components/schedule/RoundTripTableView.tsx` | 8A/8B custom sort |
-| AI optimization | `api/optimize.ts` | Gemini Generator → Critic |
+| AI optimization | `api/optimize.ts` | Fast full regenerate, multi-phase refine |
 | Connection library | `utils/connections/connectionLibraryService.ts` | Team-shared targets |
 | Draft management | `utils/services/draftService.ts` | Draft CRUD |
 | Publishing | `utils/services/publishService.ts` | Draft → Master |
