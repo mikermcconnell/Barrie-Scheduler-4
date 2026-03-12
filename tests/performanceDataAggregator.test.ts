@@ -210,6 +210,28 @@ describe('aggregateDailySummaries', () => {
         expect(route12A?.ridership).toBe(7);
     });
 
+    it('flags route APC discrepancy for review at 25% gap', () => {
+        const records = [
+            makeRecord({ routeId: '10', tripId: 'T1', routeStopIndex: 0, stopId: 'A', boardings: 100, alightings: 75 }),
+            makeRecord({ routeId: '10', tripId: 'T1', routeStopIndex: 1, stopId: 'B', boardings: 0, alightings: 0 }),
+        ];
+        const summaries = aggregateDailySummaries(records);
+        const route10 = summaries[0].byRoute.find(r => r.routeId === '10');
+        expect(route10?.apcDiscrepancyPct).toBe(25);
+        expect(route10?.apcStatus).toBe('review');
+    });
+
+    it('flags route APC discrepancy as suspect at 50% gap', () => {
+        const records = [
+            makeRecord({ routeId: '10', tripId: 'T1', routeStopIndex: 0, stopId: 'A', boardings: 100, alightings: 50 }),
+            makeRecord({ routeId: '10', tripId: 'T1', routeStopIndex: 1, stopId: 'B', boardings: 0, alightings: 0 }),
+        ];
+        const summaries = aggregateDailySummaries(records);
+        const route10 = summaries[0].byRoute.find(r => r.routeId === '10');
+        expect(route10?.apcDiscrepancyPct).toBe(50);
+        expect(route10?.apcStatus).toBe('suspect');
+    });
+
     it('calculates route service hours correctly across midnight', () => {
         const records = [
             makeRecord({ tripId: 'overnight-trip', routeId: '10', routeStopIndex: 0, arrivalTime: '23:45', stopId: 'A' }),

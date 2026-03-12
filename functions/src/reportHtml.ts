@@ -134,6 +134,44 @@ function bphPill(value: number): string {
   return `<span style="background:${bg};color:${color};padding:2px 8px;border-radius:4px;font-weight:700;font-size:12px;">${value.toFixed(1)}</span>`;
 }
 
+function apcDiscrepancyPctForRoute(route: RouteMetrics): number {
+  if (typeof route.apcDiscrepancyPct === 'number') return route.apcDiscrepancyPct;
+  const baseline = Math.max(route.ridership, route.alightings, 1);
+  return Math.round((Math.abs(route.ridership - route.alightings) * 1000) / baseline) / 10;
+}
+
+function apcStatusForRoute(route: RouteMetrics): 'ok' | 'review' | 'suspect' {
+  if (route.apcStatus === 'review' || route.apcStatus === 'suspect' || route.apcStatus === 'ok') {
+    return route.apcStatus;
+  }
+  const discrepancyPct = apcDiscrepancyPctForRoute(route);
+  if (discrepancyPct >= 50) return 'suspect';
+  if (discrepancyPct >= 25) return 'review';
+  return 'ok';
+}
+
+function apcStatusBg(status: 'ok' | 'review' | 'suspect'): string {
+  if (status === 'suspect') return '#fef2f2';
+  if (status === 'review') return '#fffbeb';
+  return '#f3f4f6';
+}
+
+function apcStatusColor(status: 'ok' | 'review' | 'suspect'): string {
+  if (status === 'suspect') return '#b91c1c';
+  if (status === 'review') return '#b45309';
+  return '#4b5563';
+}
+
+function apcStatusLabel(status: 'ok' | 'review' | 'suspect'): string {
+  if (status === 'suspect') return 'Suspect';
+  if (status === 'review') return 'Review';
+  return 'OK';
+}
+
+function apcPill(status: 'ok' | 'review' | 'suspect'): string {
+  return `<span style="background:${apcStatusBg(status)};color:${apcStatusColor(status)};padding:2px 8px;border-radius:999px;font-weight:700;font-size:11px;">${apcStatusLabel(status)}</span>`;
+}
+
 function stopLabel(name: string, id: string): string {
   if (!id) return name;
   return `${name} <span style="color:#9ca3af;font-weight:400;">(${id})</span>`;
@@ -473,7 +511,13 @@ function buildRouteScorecard(routes: RouteMetrics[]): string {
   const sorted = [...routesWithBph].sort((a, b) => b.bph - a.bph);
 
   const rows = sorted.map((r, i) => {
-    const bg = i % 2 === 0 ? '#ffffff' : '#f9fafb';
+    const discrepancyPct = apcDiscrepancyPctForRoute(r);
+    const apcStatus = apcStatusForRoute(r);
+    const bg = apcStatus === 'suspect'
+      ? '#fff7f7'
+      : apcStatus === 'review'
+        ? '#fffdf5'
+        : (i % 2 === 0 ? '#ffffff' : '#f9fafb');
     return `
       <tr style="background:${bg};">
         <td style="padding:6px 10px;font-size:12px;font-weight:700;color:#374151;border-bottom:1px solid #f3f4f6;">${r.routeId}</td>
@@ -483,12 +527,16 @@ function buildRouteScorecard(routes: RouteMetrics[]): string {
         <td style="padding:6px 10px;font-size:12px;text-align:right;color:#111827;border-bottom:1px solid #f3f4f6;">${pct(r.otp.latePercent)}</td>
         <td style="padding:6px 10px;font-size:12px;text-align:right;color:#374151;border-bottom:1px solid #f3f4f6;">${num(r.ridership)}</td>
         <td style="padding:6px 10px;font-size:12px;text-align:right;color:#374151;border-bottom:1px solid #f3f4f6;">${num(r.alightings)}</td>
+        <td style="padding:6px 10px;font-size:12px;text-align:right;border-bottom:1px solid #f3f4f6;">
+          ${apcPill(apcStatus)}
+          <div style="font-size:10px;color:#9ca3af;margin-top:2px;">${pct(discrepancyPct)} gap</div>
+        </td>
         <td style="padding:6px 10px;font-size:12px;text-align:right;border-bottom:1px solid #f3f4f6;">${bphPill(r.bph)}</td>
       </tr>`;
   }).join('');
 
   return `
-    ${sectionHeader('Route Scorecard', 'Sorted by BPH (highest to lowest) — all routes')}
+    ${sectionHeader('Route Scorecard', 'Sorted by BPH (highest to lowest) — APC review at 25% gap, suspect at 50% gap')}
     <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;">
       <tr style="background:#f9fafb;">
         <th style="padding:6px 10px;text-align:left;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Route</th>
@@ -498,10 +546,12 @@ function buildRouteScorecard(routes: RouteMetrics[]): string {
         <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Late</th>
         <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Boards</th>
         <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Alights</th>
+        <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">APC</th>
         <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">BPH</th>
       </tr>
       ${rows}
-    </table>`;
+    </table>
+    <div style="font-size:11px;color:#9ca3af;margin-top:6px;">APC status is based on the daily difference between route boardings and alightings.</div>`;
 }
 
 function buildTopStops(stops: StopMetrics[]): string {
@@ -572,14 +622,14 @@ export function buildReportHtml(data: ReportData): string {
       const dayDate = new Date(latestDay.date + 'T12:00:00');
       const diffMs = today.getTime() - dayDate.getTime();
       const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
-      if (diffDays === 1) return 'Yesterday';
-      if (diffDays === 0) return 'Today';
-      return formatDateLong(latestDay.date);
+      if (diffDays === 1) return 'Yesterday Service Data';
+      if (diffDays === 0) return 'Today Service Data';
+      return `${formatDateLong(latestDay.date)} Data`;
     }
     // Multi-day ranges
-    if (days <= 7) return `Past Week (${days} days)`;
-    if (days <= 31) return `Past Month (${days} days)`;
-    return `All Data (${days} days)`;
+    if (days <= 7) return 'Past Week of Service Data';
+    if (days <= 31) return 'Past Month of Service Data';
+    return 'Historical Service Data';
   })();
 
   // Day type summary for multi-day

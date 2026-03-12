@@ -90,6 +90,21 @@ function mean(values: number[]): number {
   return safeDivide(values.reduce((a, b) => a + b, 0), values.length);
 }
 
+function roundToOneDecimal(value: number): number {
+  return Math.round(value * 10) / 10;
+}
+
+function computeApcDiscrepancyPct(boardings: number, alightings: number): number {
+  const baseline = Math.max(boardings, alightings, 1);
+  return roundToOneDecimal(safeDivide(Math.abs(boardings - alightings) * 100, baseline));
+}
+
+function classifyRouteApcStatus(discrepancyPct: number): 'ok' | 'review' | 'suspect' {
+  if (discrepancyPct >= 50) return 'suspect';
+  if (discrepancyPct >= 25) return 'review';
+  return 'ok';
+}
+
 /** Group an array by a key function. */
 function groupBy<T>(items: T[], keyFn: (item: T) => string): Map<string, T[]> {
   const map = new Map<string, T[]>();
@@ -311,12 +326,18 @@ function buildRouteMetrics(records: STREETSRecord[]): RouteMetrics[] {
       }
     }
 
+    const apcDiscrepancyCount = Math.abs(ridership - alightings);
+    const apcDiscrepancyPct = computeApcDiscrepancyPct(ridership, alightings);
+
     results.push({
       routeId,
       routeName,
       otp,
       ridership,
       alightings,
+      apcDiscrepancyCount,
+      apcDiscrepancyPct,
+      apcStatus: classifyRouteApcStatus(apcDiscrepancyPct),
       tripCount: trips.size,
       serviceHours: serviceSeconds / 3600,
       avgLoad: safeDivide(loadSum, loadCount),

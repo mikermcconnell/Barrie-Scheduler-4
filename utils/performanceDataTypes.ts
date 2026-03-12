@@ -300,6 +300,9 @@ export interface RouteMetrics {
   otp: OTPBreakdown;
   ridership: number;
   alightings: number;
+  apcDiscrepancyCount?: number;
+  apcDiscrepancyPct?: number;
+  apcStatus?: 'ok' | 'review' | 'suspect';
   tripCount: number;
   serviceHours: number;
   avgLoad: number;
