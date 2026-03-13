@@ -866,7 +866,7 @@ export const OnDemandWorkspace: React.FC = () => {
                 status: 'draft' as const,
                 shiftData: allShifts, // Save ALL shifts from all days
                 masterScheduleData: requirements, // Save current view
-                schedulesData: schedules || undefined, // Save all day requirements
+                ...(schedules ? { schedulesData: schedules } : {}), // Save all day requirements when available
             };
 
             // Logic: "Save As" if the ID exists BUT the name has changed
@@ -884,7 +884,12 @@ export const OnDemandWorkspace: React.FC = () => {
             setSaveSuccess(true);
             setTimeout(() => setSaveSuccess(false), 3000);
         } catch (err) {
-            console.error('Failed to save draft:', err);
+            console.error('Failed to save draft:', {
+                draftName,
+                currentDraftId,
+                hasSchedulesData: !!schedules,
+                error: err,
+            });
             alert('Failed to save. Please try again.');
         } finally {
             setIsSaving(false);

@@ -55,6 +55,12 @@ export interface DraftVersion {
     label?: string;
 }
 
+const omitUndefinedFields = <T extends Record<string, unknown>>(data: T): T => {
+    return Object.fromEntries(
+        Object.entries(data).filter(([, value]) => value !== undefined)
+    ) as T;
+};
+
 // ============ SCHEDULES ============
 
 export const saveSchedule = async (
@@ -65,7 +71,7 @@ export const saveSchedule = async (
     const newDocRef = doc(schedulesRef);
 
     await setDoc(newDocRef, {
-        ...schedule,
+        ...omitUndefinedFields(schedule),
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
     });
@@ -80,7 +86,7 @@ export const updateSchedule = async (
 ): Promise<void> => {
     const scheduleRef = doc(db, 'users', userId, 'schedules', scheduleId);
     await setDoc(scheduleRef, {
-        ...updates,
+        ...omitUndefinedFields(updates),
         updatedAt: serverTimestamp()
     }, { merge: true });
 };
