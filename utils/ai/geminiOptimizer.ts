@@ -10,6 +10,7 @@ import {
   parseOptimizeMaxRetries,
   parseOptimizeTimeoutMs
 } from "./optimizePolicy";
+import type { OptimizeRequestOptions } from "../onDemandOptimizationSettings";
 
 export type OptimizationSource = 'ai' | 'fallback';
 export type OptimizationPipeline = 'fast' | 'multi-phase';
@@ -144,6 +145,7 @@ const requestOptimization = async (
     mode: 'full' | 'refine';
     currentShifts: any[];
     focusInstruction?: string;
+    optimizationOptions?: OptimizeRequestOptions;
     requestId: string;
   },
   externalSignal?: AbortSignal
@@ -198,6 +200,7 @@ export const optimizeScheduleWithGemini = async (
   mode: 'full' | 'refine' = 'full',
   currentShifts: any[] = [],
   focusInstruction?: string,
+  optimizationOptions?: OptimizeRequestOptions,
   externalSignal?: AbortSignal
 ): Promise<OptimizationResult> => {
   const requestId = createRequestId();
@@ -222,6 +225,7 @@ export const optimizeScheduleWithGemini = async (
       mode,
       currentShifts,
       focusInstruction,
+      optimizationOptions,
       requestId
     };
 
@@ -283,7 +287,7 @@ export const optimizeScheduleWithGemini = async (
   } catch (error) {
     const durationMs = Date.now() - startedAt;
     console.error(`[${requestId}] Optimization failed after ${durationMs}ms:`, error);
-    const fallbackShifts = localOptimizationFallback(requirements);
+    const fallbackShifts = localOptimizationFallback(requirements, optimizationOptions);
     const failureCode = (error as RequestFailure | undefined)?.code || 'UNKNOWN';
     return {
       shifts: fallbackShifts,
@@ -300,7 +304,10 @@ export const optimizeScheduleWithGemini = async (
  * Local fallback optimization (used when running on localhost)
  * This is a simple heuristic-based scheduler that doesn't need an API key
  */
-function localOptimizationFallback(requirements: Requirement[]): Shift[] {
+function localOptimizationFallback(
+  requirements: Requirement[],
+  optimizationOptions?: OptimizeRequestOptions,
+): Shift[] {
   const shifts: Shift[] = [];
 
   // Find peak hours (when demand is highest)
@@ -318,7 +325,11 @@ function localOptimizationFallback(requirements: Requirement[]): Shift[] {
 
   // Create shifts to cover demand
   let shiftCount = 0;
-  const maxShifts = Math.min(15, Math.ceil(peakHours.length * 1.2));
+  const configuredCap = optimizationOptions?.maxShiftCount;
+  const maxShifts = Math.min(
+    configuredCap && configuredCap > 0 ? configuredCap : 15,
+    Math.ceil(peakHours.length * 1.2),
+  );
 
   // Start shifts at high-demand hours
   const usedStartHours = new Set<number>();

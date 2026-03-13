@@ -36,6 +36,15 @@ import {
     updateShiftInDay
 } from '../../utils/onDemandShiftUtils';
 import {
+    buildShiftCountCapInstruction,
+    createDefaultShiftCountCaps,
+    getShiftCountCapForDay,
+    normalizeShiftCountCaps,
+    type DayTypeShiftCountCaps,
+    type ShiftCountCapMode,
+    type OptimizeRequestOptions,
+} from '../../utils/onDemandOptimizationSettings';
+import {
     Wand2, Users, BarChart3, Sparkles, Loader2,
     FolderOpen, Save, CloudDownload, Check, Edit3, RotateCcw, ArrowLeft, Star, X
 } from 'lucide-react';
@@ -45,24 +54,22 @@ import { SHIFT_DURATION_SLOTS, BREAK_DURATION_SLOTS, BREAK_THRESHOLD_HOURS } fro
 type DayType = OnDemandDayType;
 const VALID_DAY_TYPES: DayType[] = ['Weekday', 'Saturday', 'Sunday'];
 const MAX_FLEET_VEHICLES = 6;
-const DEFAULT_SHIFT_COUNT_CAP = 18;
 const OPTIMIZATION_SETTINGS_STORAGE_KEY = 'od-optimization-settings';
+const SHIFT_COUNT_CAP_LIMITS = { min: 1, max: 40, step: 1 } as const;
 
 interface OptimizationSettings {
     maxFleetVehicles: number;
-    maxShiftCount: number;
+    shiftCountCaps: DayTypeShiftCountCaps;
     targetCoveragePercent: number;
-    shiftCountCapMode: 'hard' | 'guide';
+    shiftCountCapMode: ShiftCountCapMode;
     minorGapTolerance: 'none' | 'rare';
     breakProtection: 'strict' | 'balanced';
     costPriority: 'service' | 'balanced' | 'efficiency';
 }
 
-type OptimizationSettingKey = keyof OptimizationSettings;
-
 const DEFAULT_OPTIMIZATION_SETTINGS: OptimizationSettings = {
     maxFleetVehicles: MAX_FLEET_VEHICLES,
-    maxShiftCount: DEFAULT_SHIFT_COUNT_CAP,
+    shiftCountCaps: createDefaultShiftCountCaps(),
     targetCoveragePercent: 100,
     shiftCountCapMode: 'hard',
     minorGapTolerance: 'rare',
@@ -70,9 +77,8 @@ const DEFAULT_OPTIMIZATION_SETTINGS: OptimizationSettings = {
     costPriority: 'balanced',
 };
 
-const OPTIMIZATION_NUMBER_LIMITS: Record<'maxFleetVehicles' | 'maxShiftCount' | 'targetCoveragePercent', { min: number; max: number; step: number }> = {
+const OPTIMIZATION_NUMBER_LIMITS: Record<'maxFleetVehicles' | 'targetCoveragePercent', { min: number; max: number; step: number }> = {
     maxFleetVehicles: { min: 1, max: 12, step: 1 },
-    maxShiftCount: { min: 1, max: 40, step: 1 },
     targetCoveragePercent: { min: 90, max: 100, step: 1 },
 };
 
@@ -87,7 +93,7 @@ const readOptimizationSettings = (): OptimizationSettings => {
             return DEFAULT_OPTIMIZATION_SETTINGS;
         }
 
-        const parsed = JSON.parse(raw) as Partial<OptimizationSettings>;
+        const parsed = JSON.parse(raw) as Partial<OptimizationSettings> & { maxShiftCount?: number };
         const normalized = { ...DEFAULT_OPTIMIZATION_SETTINGS };
 
         (Object.keys(OPTIMIZATION_NUMBER_LIMITS) as Array<keyof typeof OPTIMIZATION_NUMBER_LIMITS>).forEach((key) => {
@@ -97,6 +103,12 @@ const readOptimizationSettings = (): OptimizationSettings => {
                 normalized[key] = Math.min(max, Math.max(min, value));
             }
         });
+
+        normalized.shiftCountCaps = normalizeShiftCountCaps(
+            parsed.shiftCountCaps ?? parsed.maxShiftCount,
+            SHIFT_COUNT_CAP_LIMITS.min,
+            SHIFT_COUNT_CAP_LIMITS.max,
+        );
 
         if (parsed.minorGapTolerance === 'none' || parsed.minorGapTolerance === 'rare') {
             normalized.minorGapTolerance = parsed.minorGapTolerance;
@@ -117,10 +129,10 @@ const readOptimizationSettings = (): OptimizationSettings => {
     }
 };
 
-const buildOptimizerSettingsInstruction = (settings: OptimizationSettings): string => {
-    const shiftCountRule = settings.shiftCountCapMode === 'hard'
-        ? `Do not produce more than ${settings.maxShiftCount} total shifts for the day.`
-        : `Treat ${settings.maxShiftCount} total shifts as a guide and only go over that if coverage or break relief clearly requires it.`;
+const buildOptimizerSettingsInstruction = (settings: OptimizationSettings, dayType: DayType): string => {
+    const activeShiftCountCap = getShiftCountCapForDay(settings.shiftCountCaps, dayType);
+    const shiftCountRule = buildShiftCountCapInstruction(activeShiftCountCap, settings.shiftCountCapMode, dayType)
+        || 'Do not apply a shift count cap.';
     const gapToleranceRule = settings.minorGapTolerance === 'none'
         ? 'Do not allow minor gaps.'
         : 'Allow only rare one-vehicle gaps for at most one consecutive 15-minute slot, and only if the overall schedule is clearly better.';
@@ -135,6 +147,7 @@ const buildOptimizerSettingsInstruction = (settings: OptimizationSettings): stri
 
     return [
         'OPTIMIZATION SETTINGS:',
+        `- Apply these settings to the ${dayType} schedule currently being optimized.`,
         `- Treat ${settings.maxFleetVehicles} active vehicles as the fleet cap.`,
         `- ${shiftCountRule}`,
         `- Target at least ${settings.targetCoveragePercent}% effective coverage.`,
@@ -237,12 +250,24 @@ export const OnDemandWorkspace: React.FC = () => {
         () => timeSlots.reduce((peak, slot) => Math.max(peak, slot.totalActiveCoverage), 0),
         [timeSlots]
     );
-    const shiftCountWithinHardCap = shifts.length <= optimizationSettings.maxShiftCount;
+    const activeMaxShiftCount = useMemo(
+        () => getShiftCountCapForDay(optimizationSettings.shiftCountCaps, selectedDayType),
+        [optimizationSettings.shiftCountCaps, selectedDayType]
+    );
+    const shiftCountWithinHardCap = shifts.length <= activeMaxShiftCount;
     const fleetWithinLimit = maxConcurrentVehicles <= optimizationSettings.maxFleetVehicles;
     const isWorkspaceBusy = isAnimating || isProcessingFiles;
     const settingsInstruction = useMemo(
-        () => buildOptimizerSettingsInstruction(optimizationSettings),
-        [optimizationSettings]
+        () => buildOptimizerSettingsInstruction(optimizationSettings, selectedDayType),
+        [optimizationSettings, selectedDayType]
+    );
+    const optimizationRequestOptions = useMemo<OptimizeRequestOptions>(
+        () => ({
+            dayType: selectedDayType,
+            maxShiftCount: activeMaxShiftCount,
+            shiftCountCapMode: optimizationSettings.shiftCountCapMode,
+        }),
+        [activeMaxShiftCount, optimizationSettings.shiftCountCapMode, selectedDayType]
     );
 
     const updateOptimizationNumberSetting = (key: keyof typeof OPTIMIZATION_NUMBER_LIMITS, value: number) => {
@@ -250,6 +275,22 @@ export const OnDemandWorkspace: React.FC = () => {
         setOptimizationSettings(prev => ({
             ...prev,
             [key]: Math.min(max, Math.max(min, Number.isFinite(value) ? value : prev[key]))
+        }));
+    };
+
+    const updateShiftCountCap = (dayType: DayType, value: number) => {
+        setOptimizationSettings(prev => ({
+            ...prev,
+            shiftCountCaps: {
+                ...prev.shiftCountCaps,
+                [dayType]: Math.min(
+                    SHIFT_COUNT_CAP_LIMITS.max,
+                    Math.max(
+                        SHIFT_COUNT_CAP_LIMITS.min,
+                        Number.isFinite(value) ? value : prev.shiftCountCaps[dayType]
+                    )
+                ),
+            },
         }));
     };
 
@@ -344,7 +385,14 @@ export const OnDemandWorkspace: React.FC = () => {
 
         try {
             setOptimizationPhase('Generating schedule...');
-            const result = await optimizeScheduleWithGemini(requestRequirements, 'full', [], settingsInstruction, controller.signal);
+            const result = await optimizeScheduleWithGemini(
+                requestRequirements,
+                'full',
+                [],
+                settingsInstruction,
+                optimizationRequestOptions,
+                controller.signal
+            );
 
             if (controller.signal.aborted || runId !== optimizationRunIdRef.current) return;
 
@@ -430,7 +478,14 @@ export const OnDemandWorkspace: React.FC = () => {
             const combinedInstruction = [settingsInstruction, instruction.trim()]
                 .filter(Boolean)
                 .join('\n\n');
-            const result = await optimizeScheduleWithGemini(requestRequirements, 'refine', requestShifts, combinedInstruction, controller.signal);
+            const result = await optimizeScheduleWithGemini(
+                requestRequirements,
+                'refine',
+                requestShifts,
+                combinedInstruction,
+                optimizationRequestOptions,
+                controller.signal
+            );
 
             if (controller.signal.aborted || runId !== optimizationRunIdRef.current) return;
 
@@ -1456,17 +1511,33 @@ export const OnDemandWorkspace: React.FC = () => {
                                 </div>
                                 <div className="flex-1 min-w-0">
                                     <h3 className="text-gray-500 font-bold text-xs uppercase tracking-wider">Number of Shifts Cap</h3>
-                                    <div className="mt-3 flex items-end gap-3">
-                                        <input
-                                            type="number"
-                                            min={OPTIMIZATION_NUMBER_LIMITS.maxShiftCount.min}
-                                            max={OPTIMIZATION_NUMBER_LIMITS.maxShiftCount.max}
-                                            step={OPTIMIZATION_NUMBER_LIMITS.maxShiftCount.step}
-                                            value={optimizationSettings.maxShiftCount}
-                                            onChange={(e) => updateOptimizationNumberSetting('maxShiftCount', Number(e.target.value))}
-                                            className="w-24 rounded-xl border-2 border-gray-200 bg-gray-50 px-3 py-2 text-2xl font-extrabold text-gray-800 focus:border-brand-blue focus:bg-white focus:outline-none"
-                                        />
-                                        <span className="pb-2 text-sm font-bold text-gray-400">shifts</span>
+                                    <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                                        {VALID_DAY_TYPES.map((dayType) => {
+                                            const isActiveDay = selectedDayType === dayType;
+                                            return (
+                                                <label
+                                                    key={dayType}
+                                                    className={`rounded-2xl border-2 p-3 transition-colors ${isActiveDay
+                                                        ? 'border-amber-300 bg-amber-50'
+                                                        : 'border-gray-200 bg-gray-50'
+                                                        }`}
+                                                >
+                                                    <div className="text-[11px] font-extrabold uppercase tracking-wider text-gray-500">{dayType}</div>
+                                                    <div className="mt-2 flex items-end gap-2">
+                                                        <input
+                                                            type="number"
+                                                            min={SHIFT_COUNT_CAP_LIMITS.min}
+                                                            max={SHIFT_COUNT_CAP_LIMITS.max}
+                                                            step={SHIFT_COUNT_CAP_LIMITS.step}
+                                                            value={optimizationSettings.shiftCountCaps[dayType]}
+                                                            onChange={(e) => updateShiftCountCap(dayType, Number(e.target.value))}
+                                                            className="w-20 rounded-xl border-2 border-gray-200 bg-white px-3 py-2 text-xl font-extrabold text-gray-800 focus:border-brand-blue focus:outline-none"
+                                                        />
+                                                        <span className="pb-2 text-xs font-bold text-gray-400">shifts</span>
+                                                    </div>
+                                                </label>
+                                            );
+                                        })}
                                     </div>
                                     <div className="mt-3 inline-flex rounded-xl border-2 border-gray-200 bg-gray-50 p-1">
                                         {[
@@ -1491,8 +1562,8 @@ export const OnDemandWorkspace: React.FC = () => {
                                     </div>
                                     <div className="text-xs text-gray-400 font-semibold mt-2">
                                         {optimizationSettings.shiftCountCapMode === 'hard'
-                                            ? 'Hard ceiling for total shifts the optimizer should produce for the day.'
-                                            : 'Soft target for total shifts. The optimizer can exceed it when service quality or break relief needs it.'}
+                                            ? `Hard ceiling for total shifts on the selected ${selectedDayType.toLowerCase()} schedule.`
+                                            : `Soft target for the selected ${selectedDayType.toLowerCase()} schedule. The optimizer can exceed it when service quality or break relief needs it.`}
                                     </div>
                                 </div>
                             </div>
@@ -1603,7 +1674,7 @@ export const OnDemandWorkspace: React.FC = () => {
                                                     : 'text-amber-600'
                                                 : 'text-brand-blue'
                                             }`}>
-                                            {shifts.length} / {optimizationSettings.maxShiftCount} {optimizationSettings.shiftCountCapMode}
+                                            {shifts.length} / {activeMaxShiftCount} {optimizationSettings.shiftCountCapMode} ({selectedDayType})
                                         </span>
                                     </div>
                                     <div className={`flex justify-between items-center p-3 rounded-xl border-2 ${fleetWithinLimit ? 'bg-gray-50 border-gray-200' : 'bg-amber-50 border-amber-200'}`}>

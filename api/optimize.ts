@@ -7,6 +7,10 @@ import {
 } from '../lib/apiSecurity.js';
 import { shouldUseExtendedOptimizePipeline } from '../functions/src/optimizePipelinePolicy';
 import { validateOnDemandSchedule } from '../utils/onDemandValidation';
+import {
+    buildShiftCountCapInstruction,
+    type OptimizeRequestOptions,
+} from '../utils/onDemandOptimizationSettings';
 
 const createServerRequestId = () => `srv-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const inferErrorCode = (message: string) => {
@@ -28,19 +32,46 @@ const inferErrorCode = (message: string) => {
 
 const MAX_ACTIVE_VEHICLES = 6;
 
-const scoreSchedule = (shifts: any[], requirements: any[]) => {
+const getShiftCountPenalty = (
+    shifts: any[],
+    optimizationOptions?: OptimizeRequestOptions,
+) => {
+    const maxShiftCount = optimizationOptions?.maxShiftCount;
+    if (!maxShiftCount || maxShiftCount < 1) {
+        return 0;
+    }
+
+    const excessShiftCount = Math.max(0, shifts.length - maxShiftCount);
+    if (excessShiftCount === 0) {
+        return 0;
+    }
+
+    if (optimizationOptions?.shiftCountCapMode === 'guide') {
+        return excessShiftCount * 500;
+    }
+
+    return 250_000 + excessShiftCount * 25_000;
+};
+
+const scoreSchedule = (
+    shifts: any[],
+    requirements: any[],
+    optimizationOptions?: OptimizeRequestOptions,
+) => {
     const validation = validateOnDemandSchedule(shifts, requirements, MAX_ACTIVE_VEHICLES);
     const coverageShortfall = validation.coverageViolations.reduce((sum, issue) => sum + issue.shortfall, 0);
     const fleetExcess = validation.fleetViolations.reduce(
         (sum, issue) => sum + Math.max(0, issue.activeCoverage - MAX_ACTIVE_VEHICLES),
         0
     );
+    const shiftCountPenalty = getShiftCountPenalty(shifts, optimizationOptions);
 
     return {
         validation,
         score:
             validation.breakCoverageViolations.length * 1_000_000
             + validation.fleetViolations.length * 100_000
+            + shiftCountPenalty
             + fleetExcess * 10_000
             + validation.coverageViolations.length * 1_000
             + coverageShortfall * 100
@@ -143,6 +174,7 @@ export async function optimizeImplementation(
     mode: 'full' | 'refine' = 'full',
     currentShifts: any[] = [],
     focusInstruction?: string,
+    optimizationOptions?: OptimizeRequestOptions,
     requestId: string = 'unknown'
 ) {
 
@@ -181,6 +213,11 @@ export async function optimizeImplementation(
     - Never return a schedule where more than 6 active, non-break shifts overlap in any 15-minute slot.
     `
         : '';
+    const shiftCountConstraintRules = buildShiftCountCapInstruction(
+        optimizationOptions?.maxShiftCount,
+        optimizationOptions?.shiftCountCapMode,
+        optimizationOptions?.dayType,
+    );
 
     const commonRules = `
     PRIMARY OBJECTIVE:
@@ -193,6 +230,7 @@ export async function optimizeImplementation(
     - Breaks must occur between hour 4 and 6 of the shift.
     - STRICT ZONE LOGIC: North covers North, South covers South, Floater covers Gaps/Breaks.
     ${fleetConstraintRules}
+    ${shiftCountConstraintRules ? `- SHIFT COUNT CAP: ${shiftCountConstraintRules}` : ''}
 
     SERVICE PRIORITIES (Follow these STRICTLY):
     1. Avoid coverage gaps.
@@ -258,6 +296,7 @@ export async function optimizeImplementation(
         return chooseBestScheduleCandidate(
             [{ label: 'phase1-generator', shifts: processedDraft }],
             requirements,
+            optimizationOptions,
             requestId
         ).shifts;
     }
@@ -372,6 +411,7 @@ export async function optimizeImplementation(
             { label: 'phase3-polisher', shifts: processedPolished },
         ],
         requirements,
+        optimizationOptions,
         requestId
     ).shifts;
 }
@@ -430,12 +470,13 @@ function processShifts(shifts: any[]) {
 function chooseBestScheduleCandidate(
     candidates: Array<{ label: string; shifts: any[] }>,
     requirements: any[],
+    optimizationOptions: OptimizeRequestOptions | undefined,
     requestId: string
 ) {
     const ranked = candidates
         .filter(candidate => candidate.shifts.length > 0)
         .map((candidate, index) => {
-            const evaluation = scoreSchedule(candidate.shifts, requirements);
+            const evaluation = scoreSchedule(candidate.shifts, requirements, optimizationOptions);
             return {
                 ...candidate,
                 ...evaluation,
@@ -497,6 +538,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         const { requirements, mode, currentShifts, focusInstruction } = req.body;
+        const optimizationOptions = req.body?.optimizationOptions as OptimizeRequestOptions | undefined;
 
         if (!requirements || !Array.isArray(requirements)) {
             console.error(`[${requestId}] ❌ Invalid requirements payload`);
@@ -505,7 +547,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         console.log(`[${requestId}] 📦 Processing ${requirements.length} requirements...`);
 
-        const processedShifts = await optimizeImplementation(requirements, apiKey, mode || 'full', currentShifts || [], focusInstruction, requestId);
+        const processedShifts = await optimizeImplementation(
+            requirements,
+            apiKey,
+            mode || 'full',
+            currentShifts || [],
+            focusInstruction,
+            optimizationOptions,
+            requestId
+        );
         const durationMs = Date.now() - requestStartedAt;
         const pipeline = shouldUseExtendedOptimizePipeline(mode || 'full', process.env.OPTIMIZE_MULTI_PHASE, !process.env.VERCEL) ? 'multi-phase' : 'fast';
         console.log(`[${requestId}] ✅ Optimization complete in ${durationMs}ms (pipeline=${pipeline})`);

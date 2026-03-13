@@ -3,6 +3,10 @@ import { onRequest } from 'firebase-functions/v2/https';
 import { defineSecret } from 'firebase-functions/params';
 import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai';
 import { shouldUseExtendedOptimizePipeline } from './optimizePipelinePolicy';
+import {
+    buildShiftCountCapInstruction,
+    type OptimizeRequestOptions,
+} from '../../utils/onDemandOptimizationSettings';
 
 const GEMINI_API_KEY = defineSecret('GEMINI_API_KEY');
 const createServerRequestId = () => `srv-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -113,6 +117,7 @@ function optimizeImplementation(
     mode: 'full' | 'refine' = 'full',
     currentShifts: any[] = [],
     focusInstruction?: string,
+    optimizationOptions?: OptimizeRequestOptions,
     requestId: string = 'unknown'
 ) {
     const totalDemandCurve = new Array(96).fill(0);
@@ -144,6 +149,11 @@ function optimizeImplementation(
     - Never return a schedule where more than 6 active, non-break shifts overlap in any 15-minute slot.
     `
         : '';
+    const shiftCountConstraintRules = buildShiftCountCapInstruction(
+        optimizationOptions?.maxShiftCount,
+        optimizationOptions?.shiftCountCapMode,
+        optimizationOptions?.dayType,
+    );
 
     const commonRules = `
     PRIMARY OBJECTIVE:
@@ -156,6 +166,7 @@ function optimizeImplementation(
     - Breaks must occur between hour 4 and 6 of the shift.
     - STRICT ZONE LOGIC: North covers North, South covers South, Floater covers Gaps/Breaks.
     ${fleetConstraintRules}
+    ${shiftCountConstraintRules ? `- SHIFT COUNT CAP: ${shiftCountConstraintRules}` : ''}
 
     SERVICE PRIORITIES (Follow these STRICTLY):
     1. Avoid coverage gaps.
@@ -420,6 +431,7 @@ export const optimizeSchedule = onRequest(
             }
 
             const { requirements, mode, currentShifts, focusInstruction } = req.body;
+            const optimizationOptions = req.body?.optimizationOptions as OptimizeRequestOptions | undefined;
 
             if (!requirements || !Array.isArray(requirements)) {
                 console.error(`[${requestId}] ❌ Invalid requirements payload`);
@@ -429,7 +441,15 @@ export const optimizeSchedule = onRequest(
 
             console.log(`[${requestId}] 📦 Processing ${requirements.length} requirements...`);
 
-            const processedShifts = await optimizeImplementation(requirements, apiKey, mode || 'full', currentShifts || [], focusInstruction, requestId);
+            const processedShifts = await optimizeImplementation(
+                requirements,
+                apiKey,
+                mode || 'full',
+                currentShifts || [],
+                focusInstruction,
+                optimizationOptions,
+                requestId
+            );
             const durationMs = Date.now() - requestStartedAt;
             const pipeline = shouldUseExtendedOptimizePipeline(mode || 'full', process.env.OPTIMIZE_MULTI_PHASE) ? 'multi-phase' : 'fast';
             console.log(`[${requestId}] ✅ Optimization complete in ${durationMs}ms (pipeline=${pipeline})`);
