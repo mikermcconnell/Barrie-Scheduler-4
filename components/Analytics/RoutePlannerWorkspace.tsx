@@ -508,32 +508,58 @@ function PlannedModePanel({
                     <section className="rounded-3xl border-2 border-gray-200 bg-white p-6 shadow-sm">
                         <div className="mb-4 flex items-center justify-between gap-3">
                             <div>
-                                <p className="text-xs font-extrabold uppercase tracking-[0.2em] text-gray-400">Mode Preview</p>
+                                <p className="text-xs font-extrabold uppercase tracking-[0.2em] text-gray-400">Map-First Workspace</p>
                                 <h3 className="text-xl font-extrabold text-gray-900">{title}</h3>
                             </div>
                             <div className="rounded-full bg-gray-100 px-3 py-1 text-[11px] font-extrabold uppercase tracking-[0.16em] text-gray-500">
-                                Friendly Theme
+                                Planned Mode
                             </div>
                         </div>
                         <p className="max-w-3xl text-sm font-semibold leading-relaxed text-gray-600">
-                            This mode now supports saved route studies, map authoring, stop editing, scenario comparison, and observed stop-to-stop runtime proxy analysis. Coverage and land-use analysis remain future phases on the same shared planning engine.
+                            {summary}
                         </p>
-                        <div className="mt-6 grid gap-4 md:grid-cols-2">
-                            <div className="rounded-2xl border-2 border-gray-200 bg-gray-50 p-4">
-                                <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-gray-400">Planned Inputs</p>
-                                <ul className="mt-3 space-y-2 text-sm font-semibold text-gray-700">
-                                    <li>Load existing route or start from blank concept</li>
-                                    <li>Edit alignment and stop pattern on the map</li>
-                                    <li>Review before and after scenario deltas</li>
-                                </ul>
+                        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                            <div className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
+                                <div className="text-xs font-extrabold uppercase tracking-[0.16em] text-gray-400">Active Scenario</div>
+                                <div className="mt-1 text-sm font-extrabold text-gray-900">{selectedScenario?.name ?? 'No scenario selected'}</div>
+                                <div className="mt-1 text-xs font-semibold text-gray-500">
+                                    {selectedScenario ? `${selectedScenario.status} · ${selectedScenario.pattern}` : 'Select a scenario to edit'}
+                                </div>
                             </div>
-                            <div className="rounded-2xl border-2 border-gray-200 bg-gray-50 p-4">
-                                <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-gray-400">Planned Outputs</p>
-                                <ul className="mt-3 space-y-2 text-sm font-semibold text-gray-700">
-                                    <li>Runtime and cycle impacts</li>
-                                    <li>Bus requirement changes</li>
-                                    <li>Coverage and land-use analysis in later phases</li>
-                                </ul>
+                            <div className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
+                                <div className="text-xs font-extrabold uppercase tracking-[0.16em] text-gray-400">Base Source</div>
+                                <div className="mt-1 text-sm font-extrabold text-gray-900">
+                                    {draftState.baseSource === 'existing-route' ? `Route ${draftState.routeId}` : 'Blank concept'}
+                                </div>
+                                <div className="mt-1 text-xs font-semibold text-gray-500">
+                                    {draftState.baseSource === 'existing-route'
+                                        ? 'Starting from an existing Barrie route template.'
+                                        : 'Authoring a new route concept from scratch.'}
+                                </div>
+                            </div>
+                            <div className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
+                                <div className="text-xs font-extrabold uppercase tracking-[0.16em] text-gray-400">Runtime Snapshot</div>
+                                <div className="mt-1 text-sm font-extrabold text-gray-900">
+                                    {displaySelectedScenario ? `${displaySelectedScenario.runtimeMinutes} min` : 'Not ready'}
+                                </div>
+                                <div className="mt-1 text-xs font-semibold text-gray-500">
+                                    {displaySelectedScenario
+                                        ? `${displaySelectedScenario.busesRequired} buses · ${displaySelectedScenario.stops.length} stops`
+                                        : 'Add alignment and stops to generate service metrics'}
+                                </div>
+                            </div>
+                            <div className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
+                                <div className="text-xs font-extrabold uppercase tracking-[0.16em] text-gray-400">Observed Evidence</div>
+                                <div className="mt-1 text-sm font-extrabold text-gray-900">
+                                    {selectedObservedSummary
+                                        ? `${selectedObservedSummary.matchedSegmentCount}/${selectedObservedSummary.totalSegmentCount} matched`
+                                        : 'Fallback only'}
+                                </div>
+                                <div className="mt-1 text-xs font-semibold text-gray-500">
+                                    {selectedObservedSummary
+                                        ? `${selectedObservedSummary.minimumSampleCount} minimum samples`
+                                        : 'Add Barrie stop pairs to unlock segment evidence'}
+                                </div>
                             </div>
                         </div>
                         <div className="mt-4 rounded-2xl border-2 border-cyan-200 bg-cyan-50 p-4">
@@ -596,6 +622,9 @@ function PlannedModePanel({
                                 <div>
                                     <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-gray-400">Map Authoring</p>
                                     <h4 className="mt-1 text-base font-extrabold text-gray-900">Route alignment draft</h4>
+                                    <p className="mt-1 text-xs font-semibold text-gray-500">
+                                        Mapping is the primary planning surface for these modes. Build the geometry here first, then refine stops, timing, and scenario comparison around it.
+                                    </p>
                                 </div>
                                 <div className="flex items-center gap-2 rounded-lg border border-gray-100 bg-gray-50 p-1">
                                     <button
@@ -649,13 +678,19 @@ function PlannedModePanel({
                                 <span className={`rounded-full px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-[0.16em] ${selectedAccent.pill}`}>
                                     {selectedScenario?.waypoints.length ?? 0} route points
                                 </span>
+                                <span className="rounded-full bg-gray-100 px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-[0.16em] text-gray-600">
+                                    {selectedScenario?.stops.length ?? 0} stops
+                                </span>
+                                <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-[0.16em] text-gray-600">
+                                    {displaySelectedScenario ? `${displaySelectedScenario.runtimeMinutes} min runtime` : 'runtime pending'}
+                                </span>
                             </div>
                             <p className="mb-4 text-sm font-semibold leading-relaxed text-gray-500">
                                 {mapEditMode === 'route' && 'Edit Alignment mode: click the map to add ordered route points, then drag the numbered handles to refine the concept.'}
                                 {mapEditMode === 'stop' && 'Edit Stops mode: click teal Barrie stop dots to add existing stops, or click anywhere else to add a custom stop. Drag stop markers to refine placement.'}
                                 {mapEditMode === 'inspect' && 'Inspect mode: review the current route geometry, stop pattern, and compare scenario alignments before switching back into edit mode.'}
                             </p>
-                            <div className="h-[420px] overflow-hidden rounded-3xl border-2 border-gray-200 bg-gray-50">
+                            <div className="h-[520px] overflow-hidden rounded-3xl border-2 border-gray-200 bg-gray-50 xl:h-[620px]">
                                 <MapBase
                                     longitude={-79.69}
                                     latitude={44.38}

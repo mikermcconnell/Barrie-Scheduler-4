@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Bus, Copy, Download, GitBranch, Loader2, MapPinned, Share2, Star, Trash2, TriangleAlert } from 'lucide-react';
+import { ArrowLeft, Bus, Copy, Download, GitBranch, Loader2, MapPinned, Share2, Star, Trash2, TriangleAlert, X } from 'lucide-react';
 import { loadGtfsRouteShapes } from '../../utils/gtfs/gtfsShapesLoader';
 import { saveDraft } from '../../utils/services/draftService';
 import { downloadCSV } from '../../utils/services/exportService';
@@ -188,6 +188,9 @@ async function copyRouteToDraftAndOpenEditor(
 }
 
 function HubCard({ hub, selected, onClick }: { hub: NetworkConnectionHub; selected: boolean; onClick: () => void }): React.ReactElement {
+    const visibleRoutes = hub.routeNumbers.slice(0, 4);
+    const extraRoutes = hub.routeNumbers.length - visibleRoutes.length;
+
     return (
         <button
             type="button"
@@ -199,7 +202,18 @@ function HubCard({ hub, selected, onClick }: { hub: NetworkConnectionHub; select
             <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                     <div className="text-sm font-extrabold text-gray-900">{hub.name}</div>
-                    <div className="mt-1 text-xs font-semibold text-gray-500">{hub.routeNumbers.join(', ')}</div>
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] font-extrabold uppercase tracking-[0.16em]">
+                        {visibleRoutes.map((routeNumber) => (
+                            <span key={routeNumber} className="rounded-full bg-white px-2 py-1 text-gray-500">
+                                {routeNumber}
+                            </span>
+                        ))}
+                        {extraRoutes > 0 && (
+                            <span className="rounded-full bg-white px-2 py-1 text-gray-500">
+                                +{extraRoutes}
+                            </span>
+                        )}
+                    </div>
                 </div>
                 <span className={`rounded-full px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-[0.16em] ${severityPillClass(hub.severity)}`}>{hub.severity}</span>
             </div>
@@ -213,9 +227,26 @@ function HubCard({ hub, selected, onClick }: { hub: NetworkConnectionHub; select
                     <div className="mt-1 text-sm font-extrabold text-gray-900">{hub.issueScore}</div>
                 </div>
             </div>
-            <p className="mt-3 text-xs font-semibold leading-relaxed text-gray-500">{hub.topRecommendationSummary}</p>
+            <p
+                className="mt-3 text-xs font-semibold leading-relaxed text-gray-500"
+                style={{
+                    display: '-webkit-box',
+                    WebkitLineClamp: 2,
+                    WebkitBoxOrient: 'vertical',
+                    overflow: 'hidden',
+                }}
+            >
+                {hub.topRecommendationSummary}
+            </p>
         </button>
     );
+}
+
+type TabletDetailTab = 'summary' | 'decision' | 'timing';
+
+function isTabletDetailViewport(): boolean {
+    if (typeof window === 'undefined') return false;
+    return window.innerWidth >= 768 && window.innerWidth < 1280;
 }
 
 export const NetworkConnectionsWorkspace: React.FC<NetworkConnectionsWorkspaceProps> = ({
@@ -238,10 +269,48 @@ export const NetworkConnectionsWorkspace: React.FC<NetworkConnectionsWorkspacePr
     const [savedStatusFilter, setSavedStatusFilter] = useState<'all' | SavedNetworkConnectionRecommendationStatus>('all');
     const [localTransitData, setLocalTransitData] = useState<TransitAppDataSummary | null>(observedTransitData ?? null);
     const [loadingObservedData, setLoadingObservedData] = useState(false);
+    const [tabletDetailMode, setTabletDetailMode] = useState<boolean>(isTabletDetailViewport);
+    const [tabletDetailOpen, setTabletDetailOpen] = useState(false);
+    const [tabletDetailTab, setTabletDetailTab] = useState<TabletDetailTab>('decision');
 
     useEffect(() => {
         setSavedRecommendations(loadSavedNetworkConnectionRecommendations(teamId));
     }, [teamId]);
+
+    useEffect(() => {
+        const handleResize = () => {
+            setTabletDetailMode(isTabletDetailViewport());
+        };
+
+        handleResize();
+        window.addEventListener('resize', handleResize);
+        return () => window.removeEventListener('resize', handleResize);
+    }, []);
+
+    useEffect(() => {
+        if (!tabletDetailMode) {
+            setTabletDetailOpen(false);
+        }
+    }, [tabletDetailMode]);
+
+    useEffect(() => {
+        if (!tabletDetailOpen) return undefined;
+
+        const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') {
+                setTabletDetailOpen(false);
+            }
+        };
+
+        const previousOverflow = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+        document.addEventListener('keydown', handleKeyDown);
+
+        return () => {
+            document.body.style.overflow = previousOverflow;
+            document.removeEventListener('keydown', handleKeyDown);
+        };
+    }, [tabletDetailOpen]);
 
     useEffect(() => {
         if (observedTransitData) {
@@ -418,6 +487,12 @@ export const NetworkConnectionsWorkspace: React.FC<NetworkConnectionsWorkspacePr
         accepted: savedRecommendations.filter((item) => item.status === 'accepted').length,
         implemented: savedRecommendations.filter((item) => item.status === 'implemented').length,
     }), [savedRecommendations]);
+    const selectedTimeBandLabel = TIME_BANDS.find((band) => band.id === timeBand)?.label ?? 'Full Day';
+    const hasSavedActions = savedRecommendations.length > 0;
+    const selectedHubStopPreview = useMemo(() => (selectedHub?.stops ?? []).slice(0, 5), [selectedHub]);
+    const selectedHubStopOverflow = Math.max(0, (selectedHub?.stops.length ?? 0) - selectedHubStopPreview.length);
+    const primaryRecommendation = selectedPattern?.recommendations[0] ?? null;
+    const secondaryRecommendations = selectedPattern?.recommendations.slice(1) ?? [];
 
     const handleExportSavedActions = () => {
         if (savedActionRows.length === 0) return;
@@ -505,63 +580,450 @@ export const NetworkConnectionsWorkspace: React.FC<NetworkConnectionsWorkspacePr
         toast?.success('Saved Action Updated', `Recommendation marked as ${status}.`);
     };
 
+    const openTabletDetailTab = (tab: TabletDetailTab) => {
+        setTabletDetailTab(tab);
+        setTabletDetailOpen(true);
+    };
+
+    const renderSelectedHubPanel = () => (
+        <section className="rounded-[28px] border-2 border-gray-200 bg-white p-5 shadow-sm">
+            <div className="flex items-start justify-between gap-3">
+                <div>
+                    <p className="text-xs font-extrabold uppercase tracking-[0.18em] text-gray-400">Selected Hub</p>
+                    <h3 className="mt-1 text-xl font-extrabold text-gray-900">{selectedHub?.name ?? 'No hub selected'}</h3>
+                </div>
+                {selectedHub && (
+                    <span className={`rounded-full px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-[0.16em] ${severityPillClass(selectedHub.severity)}`}>
+                        {selectedHub.severity}
+                    </span>
+                )}
+            </div>
+
+            {selectedHub ? (
+                <>
+                    <div className="mt-4 grid grid-cols-2 gap-3">
+                        <div className="rounded-2xl border-2 border-cyan-200 bg-cyan-50 p-3">
+                            <div className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-cyan-700">Routes</div>
+                            <div className="mt-1 text-lg font-extrabold text-cyan-950">{selectedHub.routeNumbers.length}</div>
+                            <div className="mt-1 text-xs font-semibold text-cyan-900/80">{selectedHub.routeNumbers.join(', ')}</div>
+                        </div>
+                        <div className="rounded-2xl border-2 border-violet-200 bg-violet-50 p-3">
+                            <div className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-violet-700">Hub Type</div>
+                            <div className="mt-1 text-lg font-extrabold capitalize text-violet-950">{selectedHub.hubType.replace('_', ' ')}</div>
+                            <div className="mt-1 text-xs font-semibold text-violet-900/80">{selectedHub.issueScore} issue score</div>
+                        </div>
+                    </div>
+                    <div className="mt-4 rounded-2xl border border-gray-200 bg-gray-50 p-4">
+                        <div className="flex items-center gap-2 text-sm font-extrabold text-gray-900">
+                            <Bus size={16} />
+                            Immediate read
+                        </div>
+                        <p className="mt-2 text-sm font-semibold leading-relaxed text-gray-600">{selectedHub.topRecommendationSummary}</p>
+                    </div>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                        {selectedHubStopPreview.map((stop) => (
+                            <span key={stop.stopId} className="rounded-full border border-gray-200 bg-white px-3 py-1.5 text-[11px] font-extrabold uppercase tracking-[0.16em] text-gray-500">
+                                {stop.stopName}
+                            </span>
+                        ))}
+                        {selectedHubStopOverflow > 0 && (
+                            <span className="rounded-full border border-gray-200 bg-white px-3 py-1.5 text-[11px] font-extrabold uppercase tracking-[0.16em] text-gray-500">
+                                +{selectedHubStopOverflow} more stops
+                            </span>
+                        )}
+                    </div>
+                </>
+            ) : (
+                <p className="mt-3 text-sm font-semibold text-gray-500">
+                    Select a hub from the map or ranking rail to inspect route pairs and recommendations.
+                </p>
+            )}
+        </section>
+    );
+
+    const renderSelectedPairPanel = () => (
+        <section className="rounded-[28px] border-2 border-amber-200 bg-amber-50 p-5 shadow-sm">
+            <div className="flex items-center gap-2">
+                <GitBranch size={16} className="text-amber-700" />
+                <div>
+                    <p className="text-xs font-extrabold uppercase tracking-[0.18em] text-amber-700">Selected Pair</p>
+                    <h3 className="text-lg font-extrabold text-amber-950">Decision panel</h3>
+                </div>
+            </div>
+
+            <div className="mt-4 space-y-3">
+                {selectedPatterns.map((pattern) => (
+                    <button
+                        key={pattern.id}
+                        type="button"
+                        onClick={() => {
+                            setSelectedPatternId(pattern.id);
+                            setSelectedOpportunityId(null);
+                        }}
+                        className={`w-full rounded-2xl border p-4 text-left transition-colors ${pattern.id === selectedPattern?.id ? 'border-amber-400 bg-white shadow-sm' : 'border-amber-200 bg-white/80 hover:border-amber-300'}`}
+                    >
+                        <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                                <div className="text-sm font-extrabold text-gray-900">
+                                    {pattern.fromService.routeNumber} {pattern.fromService.direction} {'->'} {pattern.toService.routeNumber} {pattern.toService.direction}
+                                </div>
+                                <div className="mt-1 text-xs font-semibold text-gray-500">
+                                    {pattern.opportunityCount} opportunities - {pattern.missedCount} missed - median {formatWait(pattern.medianWaitMinutes)}
+                                </div>
+                            </div>
+                            <span className={`rounded-full px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-[0.16em] ${severityPillClass(pattern.severity)}`}>{pattern.severity}</span>
+                        </div>
+                    </button>
+                ))}
+                {!selectedPatterns.length && (
+                    <p className="text-sm font-semibold text-amber-900">
+                        No recurring route-pair patterns were derived for this hub in the selected time band.
+                    </p>
+                )}
+            </div>
+
+            {selectedPattern && (
+                <div className="mt-4 rounded-2xl border-2 border-amber-300 bg-white p-4">
+                    <div className="flex items-start justify-between gap-3">
+                        <div>
+                            <div className="text-sm font-extrabold text-gray-900">
+                                {selectedPattern.fromService.routeNumber} {selectedPattern.fromService.direction} {'->'} {selectedPattern.toService.routeNumber} {selectedPattern.toService.direction}
+                            </div>
+                            <p className="mt-1 text-xs font-semibold leading-relaxed text-gray-500">
+                                This is the live map focus. Selecting a trip below will trace the exact transfer path between stops.
+                            </p>
+                        </div>
+                        <span className={`rounded-full px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-[0.16em] ${severityPillClass(selectedPattern.severity)}`}>{selectedPattern.severity}</span>
+                    </div>
+
+                    <div className="mt-4 grid grid-cols-3 gap-2">
+                        <div className="rounded-2xl border border-red-200 bg-red-50 px-3 py-3">
+                            <div className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-red-700">Missed</div>
+                            <div className="mt-1 text-lg font-extrabold text-red-950">{selectedPattern.missedCount}</div>
+                        </div>
+                        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-3">
+                            <div className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-emerald-700">Good or Tight</div>
+                            <div className="mt-1 text-lg font-extrabold text-emerald-950">{selectedPattern.goodCount + selectedPattern.tightCount}</div>
+                        </div>
+                        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
+                            <div className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-slate-700">Median Wait</div>
+                            <div className="mt-1 text-lg font-extrabold text-slate-950">{formatWait(selectedPattern.medianWaitMinutes)}</div>
+                        </div>
+                    </div>
+
+                    <div className="mt-3 rounded-2xl border border-cyan-200 bg-cyan-50 p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                                <div className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-cyan-700">Observed Transfer Weight</div>
+                                <div className="mt-1 text-sm font-extrabold text-cyan-950">
+                                    {selectedPatternObserved?.hasObservedMatch
+                                        ? `${selectedPatternObserved.totalObservedTransfers} observed transfers`
+                                        : loadingObservedData
+                                            ? 'Loading observed transfer data...'
+                                            : 'No observed transfer match'}
+                                </div>
+                            </div>
+                            {selectedPatternObserved && (
+                                <span className={`rounded-full px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-[0.16em] ${observedDemandClass(selectedPatternObserved.demandLevel)}`}>
+                                    {selectedPatternObserved.hasObservedMatch ? `${selectedPatternObserved.demandLevel} demand` : 'schedule only'}
+                                </span>
+                            )}
+                        </div>
+                        {selectedPatternObserved?.hasObservedMatch && (
+                            <div className="mt-3 grid grid-cols-3 gap-2 text-xs font-semibold">
+                                <div className="rounded-xl border border-cyan-200 bg-white px-3 py-2 text-gray-600">
+                                    <div className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-cyan-700">Observed Wait</div>
+                                    <div className="mt-1 text-sm font-extrabold text-cyan-950">
+                                        {selectedPatternObserved.avgObservedWaitMinutes == null ? '-' : `${selectedPatternObserved.avgObservedWaitMinutes} min`}
+                                    </div>
+                                </div>
+                                <div className="rounded-xl border border-cyan-200 bg-white px-3 py-2 text-gray-600">
+                                    <div className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-cyan-700">Priority</div>
+                                    <div className="mt-1 text-sm font-extrabold text-cyan-950">{selectedPatternObserved.priorityTier}</div>
+                                </div>
+                                <div className="rounded-xl border border-cyan-200 bg-white px-3 py-2 text-gray-600">
+                                    <div className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-cyan-700">Observed Bands</div>
+                                    <div className="mt-1 text-sm font-extrabold text-cyan-950">{formatObservedTimeBands(selectedPatternObserved.dominantTimeBands)}</div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {primaryRecommendation && (
+                        <div className="mt-4 rounded-[24px] border-2 border-amber-300 bg-gradient-to-br from-amber-100 via-white to-amber-50 p-4">
+                            <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                    <div className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-amber-700">Best next move</div>
+                                    <div className="mt-2 text-base font-extrabold text-amber-950">{primaryRecommendation.title}</div>
+                                    <p className="mt-1 text-sm font-semibold leading-relaxed text-amber-900">
+                                        {primaryRecommendation.summary}
+                                    </p>
+                                </div>
+                                {(() => {
+                                    const savedId = buildSavedRecommendationId(dayType, timeBand, selectedPattern.id, primaryRecommendation.id);
+                                    const isSaved = savedRecommendations.some((item) => item.id === savedId);
+
+                                    return (
+                                        <button
+                                            type="button"
+                                            onClick={() => handleSaveRecommendation(primaryRecommendation)}
+                                            className={`inline-flex items-center gap-1 rounded-xl border px-3 py-2 text-xs font-extrabold transition-colors ${
+                                                isSaved
+                                                    ? 'border-emerald-300 bg-emerald-100 text-emerald-900 hover:bg-emerald-200'
+                                                    : 'border-amber-300 bg-white text-amber-900 hover:bg-amber-100'
+                                            }`}
+                                        >
+                                            <Star size={12} className={isSaved ? 'fill-current' : ''} />
+                                            {isSaved ? 'Saved' : 'Save'}
+                                        </button>
+                                    );
+                                })()}
+                            </div>
+                            <div className="mt-3 text-xs font-semibold leading-relaxed text-gray-600">
+                                {primaryRecommendation.rationale}
+                            </div>
+                        </div>
+                    )}
+
+                    {secondaryRecommendations.length > 0 && (
+                        <div className="mt-4 space-y-3">
+                            <div className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-amber-700">Other options</div>
+                            {secondaryRecommendations.map((recommendation) => {
+                                const savedId = buildSavedRecommendationId(dayType, timeBand, selectedPattern.id, recommendation.id);
+                                const isSaved = savedRecommendations.some((item) => item.id === savedId);
+
+                                return (
+                                    <div key={recommendation.id} className="rounded-2xl border border-amber-200 bg-amber-50/60 p-3">
+                                        <div className="flex items-start justify-between gap-3">
+                                            <div className="min-w-0">
+                                                <div className="text-sm font-extrabold text-amber-950">{recommendation.title}</div>
+                                                <p className="mt-1 text-xs font-semibold leading-relaxed text-amber-900">
+                                                    {recommendation.summary}
+                                                </p>
+                                            </div>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleSaveRecommendation(recommendation)}
+                                                className={`inline-flex items-center gap-1 rounded-xl border px-3 py-2 text-xs font-extrabold transition-colors ${
+                                                    isSaved
+                                                        ? 'border-emerald-300 bg-emerald-100 text-emerald-900 hover:bg-emerald-200'
+                                                        : 'border-amber-300 bg-white text-amber-900 hover:bg-amber-100'
+                                                }`}
+                                            >
+                                                <Star size={12} className={isSaved ? 'fill-current' : ''} />
+                                                {isSaved ? 'Saved' : 'Save'}
+                                            </button>
+                                        </div>
+                                        <div className="mt-2 text-xs font-semibold leading-relaxed text-gray-600">
+                                            {recommendation.rationale}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+
+                    <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                            type="button"
+                            onClick={() => openPublishedRoute(selectedPattern.fromService.routeNumber, selectedPattern.fromService.dayType)}
+                            className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-xs font-extrabold text-gray-700 transition-colors hover:bg-white"
+                        >
+                            Open Route {selectedPattern.fromService.routeNumber}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => openPublishedRoute(selectedPattern.toService.routeNumber, selectedPattern.toService.dayType)}
+                            className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-xs font-extrabold text-gray-700 transition-colors hover:bg-white"
+                        >
+                            Open Route {selectedPattern.toService.routeNumber}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                if (!teamId || !userId) {
+                                    toast?.warning('Sign In Required', 'Sign in and join a team to copy a route into the editor.');
+                                    return;
+                                }
+                                void copyRouteToDraftAndOpenEditor(selectedPattern, 'from', teamId, userId, setDraftHandoffKey, toast);
+                            }}
+                            disabled={!userId || draftHandoffKey === `${selectedPattern.id}-from`}
+                            className="inline-flex items-center gap-1 rounded-xl border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs font-extrabold text-cyan-800 transition-colors hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                            {draftHandoffKey === `${selectedPattern.id}-from` ? <Loader2 size={12} className="animate-spin" /> : <Copy size={12} />}
+                            Draft {selectedPattern.fromService.routeNumber}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                if (!teamId || !userId) {
+                                    toast?.warning('Sign In Required', 'Sign in and join a team to copy a route into the editor.');
+                                    return;
+                                }
+                                void copyRouteToDraftAndOpenEditor(selectedPattern, 'to', teamId, userId, setDraftHandoffKey, toast);
+                            }}
+                            disabled={!userId || draftHandoffKey === `${selectedPattern.id}-to`}
+                            className="inline-flex items-center gap-1 rounded-xl border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs font-extrabold text-cyan-800 transition-colors hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                            {draftHandoffKey === `${selectedPattern.id}-to` ? <Loader2 size={12} className="animate-spin" /> : <Copy size={12} />}
+                            Draft {selectedPattern.toService.routeNumber}
+                        </button>
+                    </div>
+                </div>
+            )}
+        </section>
+    );
+
+    const renderTripOpportunitiesPanel = () => (
+        <section className="rounded-[28px] border-2 border-gray-200 bg-white p-5 shadow-sm">
+            <div className="flex items-start justify-between gap-3">
+                <div>
+                    <p className="text-xs font-extrabold uppercase tracking-[0.18em] text-gray-400">Trip Opportunities</p>
+                    <h3 className="mt-1 text-lg font-extrabold text-gray-900">Map-linked timing details</h3>
+                </div>
+                {selectedOpportunity && (
+                    <span className={`rounded-full px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-[0.16em] ${opportunityPillClass(selectedOpportunity.classification)}`}>
+                        {formatOpportunityClass(selectedOpportunity.classification)}
+                    </span>
+                )}
+            </div>
+            {displayedOpportunities.length > 0 ? (
+                <div className="mt-4 max-h-[360px] space-y-3 overflow-auto pr-1 custom-scrollbar">
+                    {displayedOpportunities.map((opportunity) => {
+                        const id = opportunityKey(opportunity);
+                        const selected = selectedOpportunityId === id;
+
+                        return (
+                            <button
+                                key={id}
+                                type="button"
+                                onClick={() => setSelectedOpportunityId(id)}
+                                className={`w-full rounded-2xl border p-4 text-left transition-colors ${selected ? 'border-brand-blue bg-cyan-50 shadow-sm' : 'border-gray-200 bg-gray-50 hover:border-gray-300 hover:bg-white'}`}
+                            >
+                                <div className="flex items-start justify-between gap-3">
+                                    <div>
+                                        <div className="text-sm font-extrabold text-gray-900">
+                                            {formatTime(opportunity.fromTime)} from {opportunity.fromStopName}
+                                        </div>
+                                        <div className="mt-1 text-xs font-semibold text-gray-500">
+                                            {opportunity.toTime == null ? 'No departure was found inside the connection window.' : `${formatTime(opportunity.toTime)} to ${opportunity.toStopName}`}
+                                        </div>
+                                    </div>
+                                    <span className={`rounded-full px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-[0.16em] ${opportunityPillClass(opportunity.classification)}`}>
+                                        {formatOpportunityClass(opportunity.classification)}
+                                    </span>
+                                </div>
+                                <div className="mt-3 flex items-center justify-between gap-3 text-xs font-semibold">
+                                    <span className="text-gray-500">Wait {formatWait(opportunity.waitMinutes)}</span>
+                                    <span className="text-gray-400">{selected ? 'Highlighted on map' : 'Select to trace on map'}</span>
+                                </div>
+                            </button>
+                        );
+                    })}
+                </div>
+            ) : (
+                <p className="mt-3 text-sm font-semibold text-gray-500">
+                    Select a route pair with recurring opportunities to inspect stop-level timing.
+                </p>
+            )}
+        </section>
+    );
+
     return (
         <div className="h-full overflow-auto bg-[#f6f7f8] custom-scrollbar">
-            <div className="mx-auto max-w-[1820px] p-6">
-                <div className="mb-6 rounded-[30px] border-2 border-gray-200 bg-white p-5 shadow-sm">
-                    <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-                        <div className="min-w-0">
-                            <button onClick={onBack} className="mb-3 flex items-center gap-1.5 text-sm font-medium text-gray-400 transition-colors hover:text-gray-600">
-                                <ArrowLeft size={14} /> Back to Planning Data
-                            </button>
-                            <div className="flex items-center gap-3">
-                                <div className="rounded-2xl bg-cyan-100 p-3 text-cyan-700 shadow-sm">
-                                    <MapPinned size={24} />
-                                </div>
-                                <div className="min-w-0">
-                                    <div className="flex flex-wrap items-center gap-2">
-                                        <h2 className="text-3xl font-extrabold tracking-tight text-gray-900">Network Connections</h2>
-                                        <span className="rounded-full bg-violet-100 px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-[0.16em] text-violet-700">Map First</span>
-                                        <span className="rounded-full bg-gray-100 px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-[0.16em] text-gray-500">Friendly Theme</span>
+            <div className="mx-auto flex max-w-[1820px] flex-col gap-6 p-4 md:p-6">
+                <div className="rounded-[30px] border-2 border-gray-200 bg-white p-4 shadow-sm md:p-5">
+                    <div className="flex flex-col gap-4">
+                        <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+                            <div className="min-w-0">
+                                <button onClick={onBack} className="mb-3 flex items-center gap-1.5 text-sm font-medium text-gray-400 transition-colors hover:text-gray-600">
+                                    <ArrowLeft size={14} /> Back to Planning Data
+                                </button>
+                                <div className="flex items-start gap-3">
+                                    <div className="rounded-2xl bg-cyan-100 p-3 text-cyan-700 shadow-sm">
+                                        <MapPinned size={22} />
                                     </div>
-                                    <p className="mt-2 max-w-4xl text-sm font-semibold leading-relaxed text-gray-500">
-                                        Scan the published network as a transfer system instead of route-by-route tables. Hubs are discovered from shared and nearby stops, then ranked by repeated connection quality.
-                                    </p>
+                                    <div className="min-w-0">
+                                        <div className="flex flex-wrap items-center gap-2">
+                                            <h2 className="text-[28px] font-extrabold tracking-tight text-gray-900">Network Connections</h2>
+                                            <span className="rounded-full bg-cyan-100 px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-[0.16em] text-cyan-700">Map First</span>
+                                            <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-[0.16em] text-amber-700">{dayType}</span>
+                                            <span className="rounded-full bg-gray-100 px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-[0.16em] text-gray-500">{selectedTimeBandLabel}</span>
+                                        </div>
+                                        <p className="mt-1 max-w-3xl text-sm font-semibold leading-relaxed text-gray-500">
+                                            Start with the map, then narrow into the hub, route pair, and next action that will improve the transfer experience.
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="flex flex-col gap-3 xl:items-end">
+                                <div className="rounded-2xl border border-gray-200 bg-gray-50 p-1">
+                                    {DAY_TYPES.map((value) => (
+                                        <button
+                                            key={value}
+                                            type="button"
+                                            onClick={() => setDayType(value)}
+                                            className={`rounded-xl px-3 py-2 text-sm font-extrabold transition-colors ${dayType === value ? 'bg-white text-brand-blue shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                                        >
+                                            {value}
+                                        </button>
+                                    ))}
+                                </div>
+                                <div className="flex flex-wrap gap-2 rounded-2xl border border-gray-200 bg-gray-50 p-1 xl:justify-end">
+                                    {TIME_BANDS.map((band) => (
+                                        <button
+                                            key={band.id}
+                                            type="button"
+                                            onClick={() => setTimeBand(band.id)}
+                                            className={`rounded-xl px-3 py-2 text-sm font-extrabold transition-colors ${timeBand === band.id ? 'bg-white text-brand-blue shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                                        >
+                                            {band.label}
+                                        </button>
+                                    ))}
                                 </div>
                             </div>
                         </div>
 
-                        <div className="flex flex-wrap items-center gap-3">
-                            <div className="rounded-2xl border border-gray-200 bg-gray-50 p-1">
-                                {DAY_TYPES.map((value) => (
-                                    <button
-                                        key={value}
-                                        type="button"
-                                        onClick={() => setDayType(value)}
-                                        className={`rounded-xl px-3 py-2 text-sm font-extrabold transition-colors ${dayType === value ? 'bg-white text-brand-blue shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-                                    >
-                                        {value}
-                                    </button>
-                                ))}
+                        <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-4">
+                            <div className="rounded-[24px] border-2 border-cyan-200 bg-cyan-50 px-4 py-4">
+                                <div className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-cyan-700">Active Hub</div>
+                                <div className="mt-2 text-lg font-extrabold text-cyan-950">{selectedHub?.name ?? 'Select a hub'}</div>
+                                <div className="mt-2 text-sm font-semibold text-cyan-900/80">
+                                    {selectedHub ? `${selectedHub.routeNumbers.length} routes - ${selectedHub.hubType.replace('_', ' ')}` : 'Choose a hub from the map or ranking rail.'}
+                                </div>
                             </div>
-                            <div className="rounded-2xl border border-gray-200 bg-gray-50 p-1">
-                                {TIME_BANDS.map((band) => (
-                                    <button
-                                        key={band.id}
-                                        type="button"
-                                        onClick={() => setTimeBand(band.id)}
-                                        className={`rounded-xl px-3 py-2 text-sm font-extrabold transition-colors ${timeBand === band.id ? 'bg-white text-brand-blue shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-                                    >
-                                        {band.label}
-                                    </button>
-                                ))}
+                            <div className="rounded-[24px] border-2 border-amber-200 bg-amber-50 px-4 py-4">
+                                <div className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-amber-700">Focus Pair</div>
+                                <div className="mt-2 text-lg font-extrabold text-amber-950">
+                                    {selectedPattern
+                                        ? `${selectedPattern.fromService.routeNumber} ${selectedPattern.fromService.direction} -> ${selectedPattern.toService.routeNumber} ${selectedPattern.toService.direction}`
+                                        : 'Select a route pair'}
+                                </div>
+                                <div className="mt-2 text-sm font-semibold text-amber-900/80">
+                                    {selectedPattern ? `${selectedPattern.opportunityCount} opportunities - ${selectedPattern.missedCount} missed` : 'The detail rail will surface the next action.'}
+                                </div>
+                            </div>
+                            <div className="rounded-[24px] border-2 border-violet-200 bg-violet-50 px-4 py-4">
+                                <div className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-violet-700">Network Read</div>
+                                <div className="mt-2 text-lg font-extrabold text-violet-950">{analysis?.summary.hubCount ?? 0} hubs in view</div>
+                                <div className="mt-2 text-sm font-semibold text-violet-900/80">
+                                    {analysis ? `${analysis.summary.weakPatternCount} weak pairs - avg wait ${analysis.summary.avgObservedWaitMinutes == null ? '-' : `${analysis.summary.avgObservedWaitMinutes} min`}` : 'Load published schedules to build the network view.'}
+                                </div>
+                            </div>
+                            <div className="rounded-[24px] border-2 border-emerald-200 bg-emerald-50 px-4 py-4">
+                                <div className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-emerald-700">Saved Actions</div>
+                                <div className="mt-2 text-lg font-extrabold text-emerald-950">{savedRecommendations.length}</div>
+                                <div className="mt-2 text-sm font-semibold text-emerald-900/80">
+                                    {hasSavedActions ? `${savedStatusCounts.reviewing} reviewing - ${savedStatusCounts.accepted} accepted` : 'Save the strongest recommendations to build a backlog.'}
+                                </div>
                             </div>
                         </div>
                     </div>
                 </div>
 
-                <div className="grid gap-6 xl:grid-cols-[340px_minmax(0,1fr)_420px]">
-                    <aside className="space-y-4">
+                <div className="grid gap-6 xl:grid-cols-[280px_minmax(0,1fr)_360px] 2xl:grid-cols-[300px_minmax(0,1fr)_400px]">
+                    <aside className="order-3 space-y-4 xl:order-1">
                         <section className="rounded-[28px] border-2 border-gray-200 bg-white p-4 shadow-sm">
                             <div className="mb-3 flex items-center justify-between gap-3">
                                 <div>
@@ -594,8 +1056,15 @@ export const NetworkConnectionsWorkspace: React.FC<NetworkConnectionsWorkspacePr
                         </section>
 
                         <section className="rounded-[28px] border-2 border-violet-200 bg-violet-50 p-4 shadow-sm">
-                            <p className="text-xs font-extrabold uppercase tracking-[0.18em] text-violet-700">Route Pairs</p>
-                            <h3 className="mt-1 text-lg font-extrabold text-violet-950">Most fragile patterns</h3>
+                            <div className="flex items-start justify-between gap-3">
+                                <div>
+                                    <p className="text-xs font-extrabold uppercase tracking-[0.18em] text-violet-700">Fragile Pairs</p>
+                                    <h3 className="mt-1 text-lg font-extrabold text-violet-950">Network watch list</h3>
+                                </div>
+                                <span className="rounded-full bg-white px-3 py-1 text-[11px] font-extrabold uppercase tracking-[0.16em] text-violet-700">
+                                    Top {displayedPatterns.length}
+                                </span>
+                            </div>
                             <div className="mt-3 space-y-3">
                                 {displayedPatterns.map((pattern) => (
                                     <button
@@ -610,217 +1079,57 @@ export const NetworkConnectionsWorkspace: React.FC<NetworkConnectionsWorkspacePr
                                     >
                                         <div className="flex items-center justify-between gap-3">
                                             <div className="text-sm font-extrabold text-gray-900">
-                                                {pattern.fromService.routeNumber} {pattern.fromService.direction} -&gt; {pattern.toService.routeNumber} {pattern.toService.direction}
+                                                {pattern.fromService.routeNumber} {pattern.fromService.direction} {'->'} {pattern.toService.routeNumber} {pattern.toService.direction}
                                             </div>
                                             <span className={`rounded-full px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-[0.16em] ${severityPillClass(pattern.severity)}`}>{pattern.severity}</span>
                                         </div>
                                         <div className="mt-2 text-xs font-semibold text-gray-500">
-                                            {pattern.opportunityCount} opportunities · {Math.round(pattern.missRate * 100)}% missed · median {formatWait(pattern.medianWaitMinutes)}
+                                            {Math.round(pattern.missRate * 100)}% missed - median {formatWait(pattern.medianWaitMinutes)}
                                         </div>
                                     </button>
                                 ))}
                             </div>
                         </section>
 
-                        <section className="rounded-[28px] border-2 border-emerald-200 bg-emerald-50 p-4 shadow-sm">
-                            <div className="mb-3 flex items-center justify-between gap-3">
-                                <div>
-                                    <p className="text-xs font-extrabold uppercase tracking-[0.18em] text-emerald-700">Saved Actions</p>
-                                    <h3 className="text-lg font-extrabold text-emerald-950">Pinned recommendations</h3>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                    <div className="rounded-full bg-white/80 px-3 py-1 text-[11px] font-extrabold uppercase tracking-[0.16em] text-emerald-700">
-                                        {savedRecommendations.length}
-                                    </div>
-                                    {loadingObservedData && (
-                                        <div className="rounded-full bg-white/80 px-3 py-1 text-[11px] font-extrabold uppercase tracking-[0.16em] text-emerald-700">
-                                            Loading demand
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                            <div className="mb-3 flex flex-wrap gap-2">
-                                <button
-                                    type="button"
-                                    onClick={handleExportSavedActions}
-                                    disabled={savedActionRows.length === 0}
-                                    className="inline-flex items-center gap-1 rounded-xl border border-emerald-200 bg-white px-3 py-2 text-xs font-extrabold text-emerald-800 transition-colors hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
-                                >
-                                    <Download size={12} />
-                                    Export CSV
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => void handleCopySavedActionsBrief()}
-                                    disabled={savedActionRows.length === 0}
-                                    className="inline-flex items-center gap-1 rounded-xl border border-emerald-200 bg-white px-3 py-2 text-xs font-extrabold text-emerald-800 transition-colors hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
-                                >
-                                    <Share2 size={12} />
-                                    Copy Brief
-                                </button>
-                            </div>
-                            <div className="mb-3 flex flex-wrap gap-2">
-                                {([
-                                    ['all', 'All'],
-                                    ['new', 'New'],
-                                    ['reviewing', 'Reviewing'],
-                                    ['accepted', 'Accepted'],
-                                    ['implemented', 'Implemented'],
-                                ] as Array<[typeof savedStatusFilter, string]>).map(([value, label]) => (
-                                    <button
-                                        key={value}
-                                        type="button"
-                                        onClick={() => setSavedStatusFilter(value)}
-                                        className={`rounded-full px-3 py-1.5 text-[11px] font-extrabold uppercase tracking-[0.16em] transition-colors ${
-                                            savedStatusFilter === value
-                                                ? 'bg-emerald-700 text-white'
-                                                : 'bg-white text-emerald-800 hover:bg-emerald-100'
-                                        }`}
-                                    >
-                                        {label} {savedStatusCounts[value]}
-                                    </button>
-                                ))}
-                            </div>
-                            <div className="max-h-[760px] space-y-3 overflow-auto pr-1 custom-scrollbar">
-                                {filteredSavedActionRows.map(({ recommendation: saved, observed }) => {
-                                    const active = saved.patternId === selectedPattern?.id
-                                        && saved.dayType === dayType
-                                        && saved.timeBand === timeBand;
-
-                                    return (
-                                        <div
-                                            key={saved.id}
-                                            className={`rounded-2xl border p-4 transition-colors ${
-                                                active ? 'border-emerald-400 bg-white shadow-sm' : 'border-emerald-200 bg-white/80'
-                                            }`}
-                                        >
-                                            <button
-                                                type="button"
-                                                onClick={() => applySavedRecommendation(saved)}
-                                                className="w-full text-left"
-                                            >
-                                                <div className="flex items-start justify-between gap-3">
-                                                    <div className="min-w-0">
-                                                        <div className="text-sm font-extrabold text-gray-900">{saved.recommendationTitle}</div>
-                                                        <div className="mt-1 text-xs font-semibold text-gray-500">
-                                                            {saved.patternLabel} · {saved.hubName}
-                                                        </div>
-                                                    </div>
-                                                    <div className="flex flex-wrap items-center gap-2">
-                                                        <span className={`rounded-full px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-[0.16em] ${recommendationStatusClass(saved.status)}`}>
-                                                            {saved.status}
-                                                        </span>
-                                                        <span className={`rounded-full px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-[0.16em] ${severityPillClass(saved.patternSeverity)}`}>
-                                                            {saved.recommendationType}
-                                                        </span>
-                                                    </div>
-                                                </div>
-                                                <div className="mt-2 text-xs font-semibold leading-relaxed text-gray-600">
-                                                    {saved.recommendationSummary}
-                                                </div>
-                                                <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-extrabold uppercase tracking-[0.16em]">
-                                                    <span className={`rounded-full px-2.5 py-1 ${observedDemandClass(observed.demandLevel)}`}>
-                                                        {observed.hasObservedMatch ? `${observed.demandLevel} demand` : 'No observed match'}
-                                                    </span>
-                                                    <span className="rounded-full bg-white px-2.5 py-1 text-gray-500">
-                                                        {observed.hasObservedMatch ? `${observed.totalObservedTransfers} transfers` : 'Schedule only'}
-                                                    </span>
-                                                    {observed.priorityTier !== 'none' && (
-                                                        <span className="rounded-full bg-white px-2.5 py-1 text-gray-500">
-                                                            {observed.priorityTier} priority
-                                                        </span>
-                                                    )}
-                                                </div>
-                                                <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-extrabold uppercase tracking-[0.16em] text-emerald-700">
-                                                    <span className="rounded-full bg-emerald-100 px-2.5 py-1">{saved.dayType}</span>
-                                                    <span className="rounded-full bg-emerald-100 px-2.5 py-1">{saved.timeBand.replace('_', ' ')}</span>
-                                                    <span className="rounded-full bg-white px-2.5 py-1 text-gray-500">{formatSavedTimestamp(saved.updatedAt)}</span>
-                                                </div>
-                                            </button>
-                                            <div className="mt-3 flex items-start justify-between gap-3">
-                                                <div className="text-xs font-semibold text-gray-500">
-                                                    {observed.matchedStopName
-                                                        ? `${observed.matchedStopName} · ${saved.opportunityLabel ?? 'No pinned trip opportunity'}`
-                                                        : saved.opportunityLabel ?? 'No pinned trip opportunity'}
-                                                </div>
-                                                <div className="flex flex-wrap items-center justify-end gap-2">
-                                                    {(['new', 'reviewing', 'accepted', 'implemented'] as SavedNetworkConnectionRecommendationStatus[]).map((status) => (
-                                                        <button
-                                                            key={status}
-                                                            type="button"
-                                                            onClick={() => handleUpdateSavedRecommendationStatus(saved.id, status)}
-                                                            className={`rounded-xl border px-2.5 py-1.5 text-[11px] font-extrabold uppercase tracking-[0.16em] transition-colors ${
-                                                                saved.status === status
-                                                                    ? `${recommendationStatusClass(status)} border-transparent`
-                                                                    : 'border-emerald-200 bg-white text-emerald-800 hover:bg-emerald-100'
-                                                            }`}
-                                                        >
-                                                            {status}
-                                                        </button>
-                                                    ))}
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => handleDeleteSavedRecommendation(saved.id)}
-                                                        className="inline-flex items-center gap-1 rounded-xl border border-emerald-200 bg-white px-2.5 py-1.5 text-xs font-extrabold text-emerald-800 transition-colors hover:bg-emerald-100"
-                                                    >
-                                                        <Trash2 size={12} />
-                                                        Remove
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-                                {filteredSavedActionRows.length === 0 && (
-                                    <div className="rounded-2xl border border-dashed border-emerald-200 bg-white/80 px-4 py-6 text-sm font-semibold text-emerald-900">
-                                        {savedRecommendations.length === 0
-                                            ? 'Save a recommendation from the detail rail to build a reusable shortlist of network fixes.'
-                                            : 'No saved actions match the current status filter.'}
-                                    </div>
-                                )}
-                            </div>
-                        </section>
                     </aside>
 
-                    <section className="rounded-[32px] border-2 border-gray-200 bg-white p-4 shadow-sm">
-                        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+                    <section className="order-1 rounded-[32px] border-2 border-gray-200 bg-white p-4 shadow-sm xl:order-2">
+                        <div className="mb-4 flex flex-col gap-4 2xl:flex-row 2xl:items-end 2xl:justify-between">
                             <div>
                                 <p className="text-xs font-extrabold uppercase tracking-[0.18em] text-gray-400">Network Map</p>
-                                <h3 className="text-xl font-extrabold text-gray-900">Transfer hubs and route context</h3>
+                                <h3 className="text-2xl font-extrabold text-gray-900">Transfer hubs and route context</h3>
                                 <p className="mt-1 text-sm font-semibold text-gray-500">
-                                    The map locks onto the selected hub, highlights the chosen route pair, and can trace a specific transfer opportunity between stops.
+                                    Pick a hub, trace the fragile pair, and confirm the exact stop-to-stop opportunity on the map.
                                 </p>
                             </div>
-                            {analysis && (
-                                <div className="grid grid-cols-3 gap-2">
-                                    <div className="rounded-2xl border-2 border-cyan-200 bg-cyan-50 px-4 py-3">
-                                        <div className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-cyan-700">Hubs</div>
-                                        <div className="mt-1 text-2xl font-extrabold text-cyan-950">{analysis.summary.hubCount}</div>
-                                    </div>
-                                    <div className="rounded-2xl border-2 border-amber-200 bg-amber-50 px-4 py-3">
-                                        <div className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-amber-700">Weak Pairs</div>
-                                        <div className="mt-1 text-2xl font-extrabold text-amber-950">{analysis.summary.weakPatternCount}</div>
-                                    </div>
-                                    <div className="rounded-2xl border-2 border-emerald-200 bg-emerald-50 px-4 py-3">
-                                        <div className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-emerald-700">Avg Wait</div>
-                                        <div className="mt-1 text-2xl font-extrabold text-emerald-950">
-                                            {analysis.summary.avgObservedWaitMinutes == null ? '-' : `${analysis.summary.avgObservedWaitMinutes}m`}
-                                        </div>
+                            <div className="grid grid-cols-3 gap-2 2xl:min-w-[300px]">
+                                <div className="rounded-2xl border border-cyan-200 bg-cyan-50 px-3 py-3">
+                                    <div className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-cyan-700">Hubs</div>
+                                    <div className="mt-1 text-xl font-extrabold text-cyan-950">{analysis?.summary.hubCount ?? 0}</div>
+                                </div>
+                                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-3">
+                                    <div className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-amber-700">Weak Pairs</div>
+                                    <div className="mt-1 text-xl font-extrabold text-amber-950">{analysis?.summary.weakPatternCount ?? 0}</div>
+                                </div>
+                                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-3">
+                                    <div className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-emerald-700">Observed Wait</div>
+                                    <div className="mt-1 text-xl font-extrabold text-emerald-950">
+                                        {analysis?.summary.avgObservedWaitMinutes == null ? '-' : `${analysis.summary.avgObservedWaitMinutes}m`}
                                     </div>
                                 </div>
-                            )}
+                            </div>
                         </div>
 
                         <div className="rounded-[28px] border border-gray-200 bg-gray-50 p-3">
                             {loading ? (
-                                <div className="grid min-h-[560px] place-items-center rounded-[24px] bg-white">
+                                <div className="grid min-h-[620px] place-items-center rounded-[24px] bg-white">
                                     <div className="flex items-center gap-3 text-sm font-semibold text-gray-500">
                                         <Loader2 className="h-5 w-5 animate-spin" />
                                         Building network connection view...
                                     </div>
                                 </div>
                             ) : error ? (
-                                <div className="grid min-h-[560px] place-items-center rounded-[24px] border border-dashed border-amber-200 bg-amber-50 p-8 text-center">
+                                <div className="grid min-h-[620px] place-items-center rounded-[24px] border border-dashed border-amber-200 bg-amber-50 p-8 text-center">
                                     <div className="max-w-md">
                                         <TriangleAlert className="mx-auto h-8 w-8 text-amber-600" />
                                         <h4 className="mt-3 text-lg font-extrabold text-amber-950">Connection analysis unavailable</h4>
@@ -829,12 +1138,15 @@ export const NetworkConnectionsWorkspace: React.FC<NetworkConnectionsWorkspacePr
                                 </div>
                             ) : (
                                 <div className="space-y-3">
-                                    <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white bg-white/80 px-3 py-2">
+                                    <div className="flex flex-wrap items-center gap-2 rounded-[22px] border border-gray-200 bg-[#f8fafb] px-3 py-3">
                                         {selectedPattern ? (
                                             <>
-                                                <span className="rounded-full bg-cyan-100 px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-[0.16em] text-cyan-700">Focus Pair</span>
+                                                <span className="rounded-full bg-cyan-100 px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-[0.16em] text-cyan-700">Active hub</span>
+                                                <span className="text-sm font-extrabold text-gray-900">{selectedHub?.name ?? 'Selected hub'}</span>
+                                                <span className="text-sm font-semibold text-gray-400">/</span>
+                                                <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-[0.16em] text-amber-700">Focus Pair</span>
                                                 <span className="text-sm font-extrabold text-gray-900">
-                                                    {selectedPattern.fromService.routeNumber} {selectedPattern.fromService.direction} -&gt; {selectedPattern.toService.routeNumber} {selectedPattern.toService.direction}
+                                                    {selectedPattern.fromService.routeNumber} {selectedPattern.fromService.direction} {'->'} {selectedPattern.toService.routeNumber} {selectedPattern.toService.direction}
                                                 </span>
                                                 {selectedOpportunity && (
                                                     <span className={`rounded-full px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-[0.16em] ${opportunityPillClass(selectedOpportunity.classification)}`}>
@@ -843,7 +1155,7 @@ export const NetworkConnectionsWorkspace: React.FC<NetworkConnectionsWorkspacePr
                                                 )}
                                             </>
                                         ) : (
-                                            <span className="text-sm font-semibold text-gray-500">Select a hub or route pair to focus the map.</span>
+                                            <span className="text-sm font-semibold text-gray-500">Select a hub from the map or ranking rail to start tracing the network.</span>
                                         )}
                                     </div>
                                     <NetworkConnectionsMap
@@ -859,12 +1171,57 @@ export const NetworkConnectionsWorkspace: React.FC<NetworkConnectionsWorkspacePr
                                         hubStops={selectedHub?.stops ?? []}
                                         selectedOpportunity={selectedOpportunity}
                                     />
+                                    <div className="hidden rounded-[24px] border border-gray-200 bg-white p-3 shadow-sm md:block xl:hidden">
+                                        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                                            <div>
+                                                <div className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-gray-400">Tablet Detail Mode</div>
+                                                <div className="mt-1 text-sm font-extrabold text-gray-900">Keep the map in view and open the rail only when you need a deeper read.</div>
+                                            </div>
+                                            <div className="grid gap-2 sm:grid-cols-3">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => openTabletDetailTab('summary')}
+                                                    className={`rounded-2xl border px-3 py-3 text-left transition-colors ${tabletDetailOpen && tabletDetailTab === 'summary' ? 'border-cyan-300 bg-cyan-50' : 'border-gray-200 bg-gray-50 hover:bg-white'}`}
+                                                >
+                                                    <div className="flex items-center gap-2 text-xs font-extrabold uppercase tracking-[0.16em] text-cyan-700">
+                                                        <MapPinned size={13} />
+                                                        Hub brief
+                                                    </div>
+                                                    <div className="mt-1 text-sm font-extrabold text-gray-900">{selectedHub?.name ?? 'Select a hub'}</div>
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => openTabletDetailTab('decision')}
+                                                    className={`rounded-2xl border px-3 py-3 text-left transition-colors ${tabletDetailOpen && tabletDetailTab === 'decision' ? 'border-amber-300 bg-amber-50' : 'border-gray-200 bg-gray-50 hover:bg-white'}`}
+                                                >
+                                                    <div className="flex items-center gap-2 text-xs font-extrabold uppercase tracking-[0.16em] text-amber-700">
+                                                        <GitBranch size={13} />
+                                                        Best move
+                                                    </div>
+                                                    <div className="mt-1 text-sm font-extrabold text-gray-900">{primaryRecommendation?.title ?? 'Select a route pair'}</div>
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => openTabletDetailTab('timing')}
+                                                    className={`rounded-2xl border px-3 py-3 text-left transition-colors ${tabletDetailOpen && tabletDetailTab === 'timing' ? 'border-violet-300 bg-violet-50' : 'border-gray-200 bg-gray-50 hover:bg-white'}`}
+                                                >
+                                                    <div className="flex items-center gap-2 text-xs font-extrabold uppercase tracking-[0.16em] text-violet-700">
+                                                        <Bus size={13} />
+                                                        Trip timing
+                                                    </div>
+                                                    <div className="mt-1 text-sm font-extrabold text-gray-900">
+                                                        {displayedOpportunities.length > 0 ? `${displayedOpportunities.length} linked trips` : 'No trip detail yet'}
+                                                    </div>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
                             )}
                         </div>
                     </section>
 
-                    <aside className="space-y-4">
+                    <aside className="order-2 space-y-4 md:hidden xl:order-3 xl:block">
                         <section className="rounded-[28px] border-2 border-gray-200 bg-white p-5 shadow-sm">
                             <div className="flex items-start justify-between gap-3">
                                 <div>
@@ -883,11 +1240,13 @@ export const NetworkConnectionsWorkspace: React.FC<NetworkConnectionsWorkspacePr
                                     <div className="mt-4 grid grid-cols-2 gap-3">
                                         <div className="rounded-2xl border-2 border-cyan-200 bg-cyan-50 p-3">
                                             <div className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-cyan-700">Routes</div>
-                                            <div className="mt-1 text-lg font-extrabold text-cyan-950">{selectedHub.routeNumbers.join(', ')}</div>
+                                            <div className="mt-1 text-lg font-extrabold text-cyan-950">{selectedHub.routeNumbers.length}</div>
+                                            <div className="mt-1 text-xs font-semibold text-cyan-900/80">{selectedHub.routeNumbers.join(', ')}</div>
                                         </div>
                                         <div className="rounded-2xl border-2 border-violet-200 bg-violet-50 p-3">
                                             <div className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-violet-700">Hub Type</div>
                                             <div className="mt-1 text-lg font-extrabold capitalize text-violet-950">{selectedHub.hubType.replace('_', ' ')}</div>
+                                            <div className="mt-1 text-xs font-semibold text-violet-900/80">{selectedHub.issueScore} issue score</div>
                                         </div>
                                     </div>
                                     <div className="mt-4 rounded-2xl border border-gray-200 bg-gray-50 p-4">
@@ -898,11 +1257,16 @@ export const NetworkConnectionsWorkspace: React.FC<NetworkConnectionsWorkspacePr
                                         <p className="mt-2 text-sm font-semibold leading-relaxed text-gray-600">{selectedHub.topRecommendationSummary}</p>
                                     </div>
                                     <div className="mt-4 flex flex-wrap gap-2">
-                                        {selectedHub.stops.map((stop) => (
+                                        {selectedHubStopPreview.map((stop) => (
                                             <span key={stop.stopId} className="rounded-full border border-gray-200 bg-white px-3 py-1.5 text-[11px] font-extrabold uppercase tracking-[0.16em] text-gray-500">
                                                 {stop.stopName}
                                             </span>
                                         ))}
+                                        {selectedHubStopOverflow > 0 && (
+                                            <span className="rounded-full border border-gray-200 bg-white px-3 py-1.5 text-[11px] font-extrabold uppercase tracking-[0.16em] text-gray-500">
+                                                +{selectedHubStopOverflow} more stops
+                                            </span>
+                                        )}
                                     </div>
                                 </>
                             ) : (
@@ -916,8 +1280,8 @@ export const NetworkConnectionsWorkspace: React.FC<NetworkConnectionsWorkspacePr
                             <div className="flex items-center gap-2">
                                 <GitBranch size={16} className="text-amber-700" />
                                 <div>
-                                    <p className="text-xs font-extrabold uppercase tracking-[0.18em] text-amber-700">Route Pair Detail</p>
-                                    <h3 className="text-lg font-extrabold text-amber-950">Selected connection pattern</h3>
+                                    <p className="text-xs font-extrabold uppercase tracking-[0.18em] text-amber-700">Selected Pair</p>
+                                    <h3 className="text-lg font-extrabold text-amber-950">Decision panel</h3>
                                 </div>
                             </div>
 
@@ -935,10 +1299,10 @@ export const NetworkConnectionsWorkspace: React.FC<NetworkConnectionsWorkspacePr
                                         <div className="flex items-start justify-between gap-3">
                                             <div className="min-w-0">
                                                 <div className="text-sm font-extrabold text-gray-900">
-                                                    {pattern.fromService.routeNumber} {pattern.fromService.direction} -&gt; {pattern.toService.routeNumber} {pattern.toService.direction}
+                                                    {pattern.fromService.routeNumber} {pattern.fromService.direction} {'->'} {pattern.toService.routeNumber} {pattern.toService.direction}
                                                 </div>
                                                 <div className="mt-1 text-xs font-semibold text-gray-500">
-                                                    {pattern.opportunityCount} opportunities · {pattern.missedCount} missed · median {formatWait(pattern.medianWaitMinutes)}
+                                                    {pattern.opportunityCount} opportunities - {pattern.missedCount} missed - median {formatWait(pattern.medianWaitMinutes)}
                                                 </div>
                                             </div>
                                             <span className={`rounded-full px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-[0.16em] ${severityPillClass(pattern.severity)}`}>{pattern.severity}</span>
@@ -957,10 +1321,10 @@ export const NetworkConnectionsWorkspace: React.FC<NetworkConnectionsWorkspacePr
                                     <div className="flex items-start justify-between gap-3">
                                         <div>
                                             <div className="text-sm font-extrabold text-gray-900">
-                                                {selectedPattern.fromService.routeNumber} {selectedPattern.fromService.direction} -&gt; {selectedPattern.toService.routeNumber} {selectedPattern.toService.direction}
+                                                {selectedPattern.fromService.routeNumber} {selectedPattern.fromService.direction} {'->'} {selectedPattern.toService.routeNumber} {selectedPattern.toService.direction}
                                             </div>
                                             <p className="mt-1 text-xs font-semibold leading-relaxed text-gray-500">
-                                                This pair is the active map focus. Selecting a trip below will trace the transfer path between stops.
+                                                This is the live map focus. Selecting a trip below will trace the exact transfer path between stops.
                                             </p>
                                         </div>
                                         <span className={`rounded-full px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-[0.16em] ${severityPillClass(selectedPattern.severity)}`}>{selectedPattern.severity}</span>
@@ -1019,23 +1383,24 @@ export const NetworkConnectionsWorkspace: React.FC<NetworkConnectionsWorkspacePr
                                         )}
                                     </div>
 
-                                    <div className="mt-4 space-y-3">
-                                        {selectedPattern.recommendations.map((recommendation) => {
-                                            const savedId = buildSavedRecommendationId(dayType, timeBand, selectedPattern.id, recommendation.id);
-                                            const isSaved = savedRecommendations.some((item) => item.id === savedId);
+                                    {primaryRecommendation && (
+                                        <div className="mt-4 rounded-[24px] border-2 border-amber-300 bg-gradient-to-br from-amber-100 via-white to-amber-50 p-4">
+                                            <div className="flex items-start justify-between gap-3">
+                                                <div className="min-w-0">
+                                                    <div className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-amber-700">Best next move</div>
+                                                    <div className="mt-2 text-base font-extrabold text-amber-950">{primaryRecommendation.title}</div>
+                                                    <p className="mt-1 text-sm font-semibold leading-relaxed text-amber-900">
+                                                        {primaryRecommendation.summary}
+                                                    </p>
+                                                </div>
+                                                {(() => {
+                                                    const savedId = buildSavedRecommendationId(dayType, timeBand, selectedPattern.id, primaryRecommendation.id);
+                                                    const isSaved = savedRecommendations.some((item) => item.id === savedId);
 
-                                            return (
-                                                <div key={recommendation.id} className="rounded-2xl border border-amber-200 bg-amber-50/60 p-3">
-                                                    <div className="flex items-start justify-between gap-3">
-                                                        <div className="min-w-0">
-                                                            <div className="text-sm font-extrabold text-amber-950">{recommendation.title}</div>
-                                                            <p className="mt-1 text-xs font-semibold leading-relaxed text-amber-900">
-                                                                {recommendation.summary}
-                                                            </p>
-                                                        </div>
+                                                    return (
                                                         <button
                                                             type="button"
-                                                            onClick={() => handleSaveRecommendation(recommendation)}
+                                                            onClick={() => handleSaveRecommendation(primaryRecommendation)}
                                                             className={`inline-flex items-center gap-1 rounded-xl border px-3 py-2 text-xs font-extrabold transition-colors ${
                                                                 isSaved
                                                                     ? 'border-emerald-300 bg-emerald-100 text-emerald-900 hover:bg-emerald-200'
@@ -1045,14 +1410,52 @@ export const NetworkConnectionsWorkspace: React.FC<NetworkConnectionsWorkspacePr
                                                             <Star size={12} className={isSaved ? 'fill-current' : ''} />
                                                             {isSaved ? 'Saved' : 'Save'}
                                                         </button>
+                                                    );
+                                                })()}
+                                            </div>
+                                            <div className="mt-3 text-xs font-semibold leading-relaxed text-gray-600">
+                                                {primaryRecommendation.rationale}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {secondaryRecommendations.length > 0 && (
+                                        <div className="mt-4 space-y-3">
+                                            <div className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-amber-700">Other options</div>
+                                            {secondaryRecommendations.map((recommendation) => {
+                                                const savedId = buildSavedRecommendationId(dayType, timeBand, selectedPattern.id, recommendation.id);
+                                                const isSaved = savedRecommendations.some((item) => item.id === savedId);
+
+                                                return (
+                                                    <div key={recommendation.id} className="rounded-2xl border border-amber-200 bg-amber-50/60 p-3">
+                                                        <div className="flex items-start justify-between gap-3">
+                                                            <div className="min-w-0">
+                                                                <div className="text-sm font-extrabold text-amber-950">{recommendation.title}</div>
+                                                                <p className="mt-1 text-xs font-semibold leading-relaxed text-amber-900">
+                                                                    {recommendation.summary}
+                                                                </p>
+                                                            </div>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleSaveRecommendation(recommendation)}
+                                                                className={`inline-flex items-center gap-1 rounded-xl border px-3 py-2 text-xs font-extrabold transition-colors ${
+                                                                    isSaved
+                                                                        ? 'border-emerald-300 bg-emerald-100 text-emerald-900 hover:bg-emerald-200'
+                                                                        : 'border-amber-300 bg-white text-amber-900 hover:bg-amber-100'
+                                                                }`}
+                                                            >
+                                                                <Star size={12} className={isSaved ? 'fill-current' : ''} />
+                                                                {isSaved ? 'Saved' : 'Save'}
+                                                            </button>
+                                                        </div>
+                                                        <div className="mt-2 text-xs font-semibold leading-relaxed text-gray-600">
+                                                            {recommendation.rationale}
+                                                        </div>
                                                     </div>
-                                                    <div className="mt-2 text-xs font-semibold leading-relaxed text-gray-600">
-                                                        {recommendation.rationale}
-                                                    </div>
-                                                </div>
-                                            );
-                                        })}
-                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
 
                                     <div className="mt-3 flex flex-wrap gap-2">
                                         <button
@@ -1105,10 +1508,19 @@ export const NetworkConnectionsWorkspace: React.FC<NetworkConnectionsWorkspacePr
                         </section>
 
                         <section className="rounded-[28px] border-2 border-gray-200 bg-white p-5 shadow-sm">
-                            <p className="text-xs font-extrabold uppercase tracking-[0.18em] text-gray-400">Trip Opportunities</p>
-                            <h3 className="mt-1 text-lg font-extrabold text-gray-900">Map-linked timing details</h3>
+                            <div className="flex items-start justify-between gap-3">
+                                <div>
+                                    <p className="text-xs font-extrabold uppercase tracking-[0.18em] text-gray-400">Trip Opportunities</p>
+                                    <h3 className="mt-1 text-lg font-extrabold text-gray-900">Map-linked timing details</h3>
+                                </div>
+                                {selectedOpportunity && (
+                                    <span className={`rounded-full px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-[0.16em] ${opportunityPillClass(selectedOpportunity.classification)}`}>
+                                        {formatOpportunityClass(selectedOpportunity.classification)}
+                                    </span>
+                                )}
+                            </div>
                             {displayedOpportunities.length > 0 ? (
-                                <div className="mt-4 space-y-3">
+                                <div className="mt-4 max-h-[360px] space-y-3 overflow-auto pr-1 custom-scrollbar">
                                     {displayedOpportunities.map((opportunity) => {
                                         const id = opportunityKey(opportunity);
                                         const selected = selectedOpportunityId === id;
@@ -1149,6 +1561,246 @@ export const NetworkConnectionsWorkspace: React.FC<NetworkConnectionsWorkspacePr
                         </section>
                     </aside>
                 </div>
+
+                {tabletDetailMode && tabletDetailOpen && (
+                    <div className="fixed inset-0 z-50 hidden md:block xl:hidden" role="dialog" aria-modal="true" aria-label="Network connection details">
+                        <button
+                            type="button"
+                            aria-label="Close details drawer"
+                            className="absolute inset-0 bg-slate-900/35 backdrop-blur-sm"
+                            onClick={() => setTabletDetailOpen(false)}
+                        />
+                        <div className="absolute inset-y-3 right-3 flex w-[520px] max-w-[calc(100vw-1.5rem)] flex-col overflow-hidden rounded-[30px] border-2 border-gray-200 bg-[#f6f7f8] shadow-2xl animate-in slide-in-from-right-6 duration-200">
+                            <div className="border-b-2 border-gray-200 bg-white px-5 py-4">
+                                <div className="flex items-start justify-between gap-4">
+                                    <div className="min-w-0">
+                                        <div className="flex flex-wrap items-center gap-2">
+                                            <span className="rounded-full bg-cyan-100 px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-[0.16em] text-cyan-700">Tablet rail</span>
+                                            <span className="rounded-full bg-gray-100 px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-[0.16em] text-gray-500">{selectedHub?.name ?? 'No hub selected'}</span>
+                                        </div>
+                                        <h3 className="mt-2 text-xl font-extrabold text-gray-900">Network detail drawer</h3>
+                                        <p className="mt-1 text-sm font-semibold text-gray-500">
+                                            Review the hub read, route decision, or trip timing without giving up the map viewport.
+                                        </p>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => setTabletDetailOpen(false)}
+                                        className="rounded-2xl border border-gray-200 bg-gray-50 p-2 text-gray-500 transition-colors hover:bg-white hover:text-gray-700"
+                                    >
+                                        <X size={16} />
+                                    </button>
+                                </div>
+                                <div className="mt-4 grid grid-cols-3 gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => setTabletDetailTab('summary')}
+                                        className={`rounded-2xl px-3 py-2 text-sm font-extrabold transition-colors ${tabletDetailTab === 'summary' ? 'bg-cyan-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                                    >
+                                        Hub
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setTabletDetailTab('decision')}
+                                        className={`rounded-2xl px-3 py-2 text-sm font-extrabold transition-colors ${tabletDetailTab === 'decision' ? 'bg-amber-500 text-amber-950' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                                    >
+                                        Decision
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setTabletDetailTab('timing')}
+                                        className={`rounded-2xl px-3 py-2 text-sm font-extrabold transition-colors ${tabletDetailTab === 'timing' ? 'bg-violet-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                                    >
+                                        Timing
+                                    </button>
+                                </div>
+                            </div>
+                            <div className="flex-1 overflow-auto p-4 custom-scrollbar">
+                                {tabletDetailTab === 'summary' && renderSelectedHubPanel()}
+                                {tabletDetailTab === 'decision' && renderSelectedPairPanel()}
+                                {tabletDetailTab === 'timing' && renderTripOpportunitiesPanel()}
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                <section className={`rounded-[28px] border-2 p-4 shadow-sm ${hasSavedActions ? 'border-emerald-200 bg-emerald-50' : 'border-gray-200 bg-white'}`}>
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                        <div>
+                            <p className={`text-xs font-extrabold uppercase tracking-[0.18em] ${hasSavedActions ? 'text-emerald-700' : 'text-gray-400'}`}>Saved Actions</p>
+                            <h3 className={`mt-1 text-lg font-extrabold ${hasSavedActions ? 'text-emerald-950' : 'text-gray-900'}`}>
+                                {hasSavedActions ? 'Pinned recommendations and backlog' : 'Build a short implementation backlog'}
+                            </h3>
+                            <p className={`mt-1 text-sm font-semibold ${hasSavedActions ? 'text-emerald-900/80' : 'text-gray-500'}`}>
+                                {hasSavedActions
+                                    ? 'Keep the shortlist below the map so it supports decisions instead of crowding the workspace.'
+                                    : 'Nothing is pinned yet. Save a recommendation from the decision panel once you find a strong candidate.'}
+                            </p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                            <button
+                                type="button"
+                                onClick={handleExportSavedActions}
+                                disabled={!hasSavedActions}
+                                className={`inline-flex items-center gap-1 rounded-xl border px-3 py-2 text-xs font-extrabold transition-colors ${
+                                    hasSavedActions
+                                        ? 'border-emerald-200 bg-white text-emerald-800 hover:bg-emerald-100'
+                                        : 'border-gray-200 bg-gray-100 text-gray-400'
+                                } disabled:cursor-not-allowed disabled:opacity-60`}
+                            >
+                                <Download size={12} />
+                                Export CSV
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => void handleCopySavedActionsBrief()}
+                                disabled={!hasSavedActions}
+                                className={`inline-flex items-center gap-1 rounded-xl border px-3 py-2 text-xs font-extrabold transition-colors ${
+                                    hasSavedActions
+                                        ? 'border-emerald-200 bg-white text-emerald-800 hover:bg-emerald-100'
+                                        : 'border-gray-200 bg-gray-100 text-gray-400'
+                                } disabled:cursor-not-allowed disabled:opacity-60`}
+                            >
+                                <Share2 size={12} />
+                                Copy Brief
+                            </button>
+                        </div>
+                    </div>
+
+                    {hasSavedActions ? (
+                        <>
+                            <div className="mt-4 flex flex-wrap gap-2">
+                                {([
+                                    ['all', 'All'],
+                                    ['new', 'New'],
+                                    ['reviewing', 'Reviewing'],
+                                    ['accepted', 'Accepted'],
+                                    ['implemented', 'Implemented'],
+                                ] as Array<[typeof savedStatusFilter, string]>).map(([value, label]) => (
+                                    <button
+                                        key={value}
+                                        type="button"
+                                        onClick={() => setSavedStatusFilter(value)}
+                                        className={`rounded-full px-3 py-1.5 text-[11px] font-extrabold uppercase tracking-[0.16em] transition-colors ${
+                                            savedStatusFilter === value
+                                                ? 'bg-emerald-700 text-white'
+                                                : 'bg-white text-emerald-800 hover:bg-emerald-100'
+                                        }`}
+                                    >
+                                        {label} {savedStatusCounts[value]}
+                                    </button>
+                                ))}
+                                {loadingObservedData && (
+                                    <span className="rounded-full bg-white px-3 py-1.5 text-[11px] font-extrabold uppercase tracking-[0.16em] text-emerald-700">
+                                        Loading demand
+                                    </span>
+                                )}
+                            </div>
+
+                            <div className="mt-4 grid gap-3 xl:grid-cols-2">
+                                {filteredSavedActionRows.map(({ recommendation: saved, observed }) => {
+                                    const active = saved.patternId === selectedPattern?.id
+                                        && saved.dayType === dayType
+                                        && saved.timeBand === timeBand;
+
+                                    return (
+                                        <div
+                                            key={saved.id}
+                                            className={`rounded-2xl border p-4 transition-colors ${
+                                                active ? 'border-emerald-400 bg-white shadow-sm' : 'border-emerald-200 bg-white/80'
+                                            }`}
+                                        >
+                                            <button
+                                                type="button"
+                                                onClick={() => applySavedRecommendation(saved)}
+                                                className="w-full text-left"
+                                            >
+                                                <div className="flex items-start justify-between gap-3">
+                                                    <div className="min-w-0">
+                                                        <div className="text-sm font-extrabold text-gray-900">{saved.recommendationTitle}</div>
+                                                        <div className="mt-1 text-xs font-semibold text-gray-500">
+                                                            {saved.patternLabel} - {saved.hubName}
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex flex-wrap items-center gap-2">
+                                                        <span className={`rounded-full px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-[0.16em] ${recommendationStatusClass(saved.status)}`}>
+                                                            {saved.status}
+                                                        </span>
+                                                        <span className={`rounded-full px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-[0.16em] ${severityPillClass(saved.patternSeverity)}`}>
+                                                            {saved.recommendationType}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                                <div className="mt-2 text-xs font-semibold leading-relaxed text-gray-600">
+                                                    {saved.recommendationSummary}
+                                                </div>
+                                                <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-extrabold uppercase tracking-[0.16em]">
+                                                    <span className={`rounded-full px-2.5 py-1 ${observedDemandClass(observed.demandLevel)}`}>
+                                                        {observed.hasObservedMatch ? `${observed.demandLevel} demand` : 'No observed match'}
+                                                    </span>
+                                                    <span className="rounded-full bg-white px-2.5 py-1 text-gray-500">
+                                                        {observed.hasObservedMatch ? `${observed.totalObservedTransfers} transfers` : 'Schedule only'}
+                                                    </span>
+                                                    {observed.priorityTier !== 'none' && (
+                                                        <span className="rounded-full bg-white px-2.5 py-1 text-gray-500">
+                                                            {observed.priorityTier} priority
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-extrabold uppercase tracking-[0.16em] text-emerald-700">
+                                                    <span className="rounded-full bg-emerald-100 px-2.5 py-1">{saved.dayType}</span>
+                                                    <span className="rounded-full bg-emerald-100 px-2.5 py-1">{saved.timeBand.replace('_', ' ')}</span>
+                                                    <span className="rounded-full bg-white px-2.5 py-1 text-gray-500">{formatSavedTimestamp(saved.updatedAt)}</span>
+                                                </div>
+                                            </button>
+                                            <div className="mt-3 flex items-start justify-between gap-3">
+                                                <div className="text-xs font-semibold text-gray-500">
+                                                    {observed.matchedStopName
+                                                        ? `${observed.matchedStopName} - ${saved.opportunityLabel ?? 'No pinned trip opportunity'}`
+                                                        : saved.opportunityLabel ?? 'No pinned trip opportunity'}
+                                                </div>
+                                                <div className="flex flex-wrap items-center justify-end gap-2">
+                                                    {(['new', 'reviewing', 'accepted', 'implemented'] as SavedNetworkConnectionRecommendationStatus[]).map((status) => (
+                                                        <button
+                                                            key={status}
+                                                            type="button"
+                                                            onClick={() => handleUpdateSavedRecommendationStatus(saved.id, status)}
+                                                            className={`rounded-xl border px-2.5 py-1.5 text-[11px] font-extrabold uppercase tracking-[0.16em] transition-colors ${
+                                                                saved.status === status
+                                                                    ? `${recommendationStatusClass(status)} border-transparent`
+                                                                    : 'border-emerald-200 bg-white text-emerald-800 hover:bg-emerald-100'
+                                                            }`}
+                                                        >
+                                                            {status}
+                                                        </button>
+                                                    ))}
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleDeleteSavedRecommendation(saved.id)}
+                                                        className="inline-flex items-center gap-1 rounded-xl border border-emerald-200 bg-white px-2.5 py-1.5 text-xs font-extrabold text-emerald-800 transition-colors hover:bg-emerald-100"
+                                                    >
+                                                        <Trash2 size={12} />
+                                                        Remove
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+
+                            {filteredSavedActionRows.length === 0 && (
+                                <div className="mt-4 rounded-2xl border border-dashed border-emerald-200 bg-white/80 px-4 py-6 text-sm font-semibold text-emerald-900">
+                                    No saved actions match the current status filter.
+                                </div>
+                            )}
+                        </>
+                    ) : (
+                        <div className="mt-4 rounded-2xl border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-sm font-semibold text-gray-500">
+                            Save a recommendation from the decision panel to keep a reusable shortlist of transfer fixes here.
+                        </div>
+                    )}
+                </section>
             </div>
         </div>
     );

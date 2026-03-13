@@ -28,9 +28,9 @@ function severityClasses(severity: NetworkConnectionSeverity, selected: boolean)
 }
 
 function markerSize(routeCount: number): number {
-    if (routeCount >= 5) return 34;
-    if (routeCount >= 3) return 28;
-    return 22;
+    if (routeCount >= 5) return 38;
+    if (routeCount >= 3) return 31;
+    return 24;
 }
 
 function stopTone(stopId: string, selectedOpportunity: NetworkConnectionOpportunity | null): string {
@@ -87,7 +87,7 @@ export const NetworkConnectionsMap: React.FC<NetworkConnectionsMapProps> = ({
     }, [selectedHub]);
 
     return (
-        <div className="h-[560px] overflow-hidden rounded-[28px]">
+        <div className="relative h-[620px] overflow-hidden rounded-[28px] xl:h-[680px]">
             <MapBase
                 className="h-full w-full"
                 showNavigation
@@ -139,13 +139,34 @@ export const NetworkConnectionsMap: React.FC<NetworkConnectionsMapProps> = ({
                             >
                                 <span className="text-[11px] leading-none">{hub.routeNumbers.length}</span>
                                 {selected && (
-                                    <span className="pointer-events-none absolute inset-[-7px] rounded-full border-2 border-brand-blue/50" />
+                                    <span className="pointer-events-none absolute inset-[-8px] rounded-full border-2 border-brand-blue/60 shadow-[0_0_0_6px_rgba(14,165,233,0.14)]" />
                                 )}
                             </button>
                         </Marker>
                     );
                 })}
             </MapBase>
+
+            <div className="pointer-events-none absolute left-4 top-4 max-w-[280px] rounded-[22px] border border-white/80 bg-white/92 p-3 shadow-sm backdrop-blur">
+                <div className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-gray-400">Map Guide</div>
+                <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-extrabold uppercase tracking-[0.14em] text-gray-600">
+                    <span className="inline-flex items-center gap-2 rounded-full bg-gray-100 px-2.5 py-1">
+                        <span className="h-2.5 w-2.5 rounded-full bg-red-500" />
+                        hub risk
+                    </span>
+                    <span className="inline-flex items-center gap-2 rounded-full bg-gray-100 px-2.5 py-1">
+                        <span className="h-2.5 w-2.5 rounded-full bg-brand-blue" />
+                        selected hub
+                    </span>
+                    <span className="inline-flex items-center gap-2 rounded-full bg-gray-100 px-2.5 py-1">
+                        <span className="h-2 w-5 rounded-full bg-violet-500" />
+                        transfer arc
+                    </span>
+                </div>
+                <p className="mt-2 text-xs font-semibold leading-relaxed text-gray-500">
+                    Hub bubbles show how many routes meet here. Stop dots brighten when the selected transfer uses them.
+                </p>
+            </div>
         </div>
     );
 };
