@@ -82,7 +82,7 @@ const CustomTooltip = ({ active, payload, label, viewMode }: any) => {
       net = cover - req;
       title = "South Zone (Exclusive)";
     } else if (viewMode === 'Floater') {
-      req = data.floaterEffectiveRequirement || 0;
+      req = data.floaterRequirement || 0;
       cover = data.floaterCoverage;
       activeDrivers = cover;
       net = cover - req;
@@ -146,7 +146,7 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
     ...d,
     currentReq: zoneFilter === 'North' ? d.northRequirement :
       (zoneFilter === 'South' ? d.southRequirement :
-        (zoneFilter === 'Floater' ? d.floaterEffectiveRequirement : d.totalRequirement)),
+        (zoneFilter === 'Floater' ? d.floaterRequirement : d.totalRequirement)),
 
     currentCover: zoneFilter === 'North' ? d.northCoverage :
       (zoneFilter === 'South' ? d.southCoverage :
@@ -154,7 +154,7 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
 
     currentNet: zoneFilter === 'North' ? ((d.northCoverage + (d.northRelief || 0)) - d.northRequirement) :
       (zoneFilter === 'South' ? ((d.southCoverage + (d.southRelief || 0)) - d.southRequirement) :
-        (zoneFilter === 'Floater' ? (d.floaterCoverage - d.floaterEffectiveRequirement) : d.netDifference)),
+        (zoneFilter === 'Floater' ? (d.floaterCoverage - d.floaterRequirement) : d.netDifference)),
 
     currentBreak: zoneFilter === 'North' ? d.northBreaks :
       (zoneFilter === 'South' ? d.southBreaks :
@@ -169,7 +169,7 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
     return Math.max(...displayData.map(d => {
       const req = zoneFilter === 'North' ? d.northRequirement :
         (zoneFilter === 'South' ? d.southRequirement :
-          (zoneFilter === 'Floater' ? d.floaterEffectiveRequirement || 0 : d.totalRequirement));
+          (zoneFilter === 'Floater' ? d.floaterRequirement || 0 : d.totalRequirement));
 
       const cov = zoneFilter === 'North' ? d.northCoverage :
         (zoneFilter === 'South' ? d.southCoverage :
