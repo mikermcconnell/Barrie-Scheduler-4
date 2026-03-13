@@ -196,12 +196,15 @@ export const OnDemandWorkspace: React.FC = () => {
     // UI State
     const [isOptimized, setIsOptimized] = useState(false);
     const [isAnimating, setIsAnimating] = useState(false);
+    const [isProcessingFiles, setIsProcessingFiles] = useState(false);
     const [optimizationMode, setOptimizationMode] = useState<'full' | 'refine' | null>(null);
     const [reviewModalData, setReviewModalData] = useState<{ current: Shift[], optimized: Shift[] } | null>(null);
     const [elapsedSeconds, setElapsedSeconds] = useState(0);
     const elapsedRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const [optimizationPhase, setOptimizationPhase] = useState('');
     const abortControllerRef = useRef<AbortController | null>(null);
+    const optimizationRunIdRef = useRef(0);
+    const optimizationInFlightRef = useRef(false);
     const [optimizationSettings, setOptimizationSettings] = useState<OptimizationSettings>(() => readOptimizationSettings());
 
     useEffect(() => {
@@ -236,6 +239,7 @@ export const OnDemandWorkspace: React.FC = () => {
     );
     const shiftCountWithinHardCap = shifts.length <= optimizationSettings.maxShiftCount;
     const fleetWithinLimit = maxConcurrentVehicles <= optimizationSettings.maxFleetVehicles;
+    const isWorkspaceBusy = isAnimating || isProcessingFiles;
     const settingsInstruction = useMemo(
         () => buildOptimizerSettingsInstruction(optimizationSettings),
         [optimizationSettings]
@@ -301,6 +305,8 @@ export const OnDemandWorkspace: React.FC = () => {
     };
 
     const handleCancelOptimization = () => {
+        optimizationRunIdRef.current += 1;
+        optimizationInFlightRef.current = false;
         abortControllerRef.current?.abort();
         setIsAnimating(false);
         setOptimizationMode(null);
@@ -310,13 +316,27 @@ export const OnDemandWorkspace: React.FC = () => {
     };
 
     const handleRegenerate = async () => {
+        if (isProcessingFiles) {
+            toast.info('Workspace busy', 'Finish file processing before starting a new generate run.');
+            return;
+        }
+        if (optimizationInFlightRef.current) {
+            toast.info('Optimization already running', 'Wait for the current regenerate or refine job to finish.');
+            return;
+        }
+
         if (shifts.length > 0) {
             if (!confirm('This will replace your current schedule with a brand new one generated from scratch. All custom changes will be lost. Continue?')) {
                 return;
             }
         }
 
+        const requestDayType = selectedDayType;
+        const requestRequirements = requirements;
+        const runId = optimizationRunIdRef.current + 1;
         const controller = new AbortController();
+        optimizationRunIdRef.current = runId;
+        optimizationInFlightRef.current = true;
         abortControllerRef.current = controller;
         setOptimizationMode('full');
         setIsAnimating(true);
@@ -324,9 +344,9 @@ export const OnDemandWorkspace: React.FC = () => {
 
         try {
             setOptimizationPhase('Generating schedule...');
-            const result = await optimizeScheduleWithGemini(requirements, 'full', [], settingsInstruction, controller.signal);
+            const result = await optimizeScheduleWithGemini(requestRequirements, 'full', [], settingsInstruction, controller.signal);
 
-            if (controller.signal.aborted) return;
+            if (controller.signal.aborted || runId !== optimizationRunIdRef.current) return;
 
             setOptimizationPhase('Processing results...');
 
@@ -336,13 +356,13 @@ export const OnDemandWorkspace: React.FC = () => {
 
             if (result.shifts.length > 0) {
                 const taggedShifts = normalizeOnDemandShifts(
-                    result.shifts.map(s => ({ ...s, dayType: selectedDayType })),
-                    selectedDayType
+                    result.shifts.map(s => ({ ...s, dayType: requestDayType })),
+                    requestDayType
                 );
 
                 setShifts(taggedShifts);
                 setAllShifts(prev => {
-                    const others = prev.filter(s => (s.dayType || 'Weekday') !== selectedDayType);
+                    const others = prev.filter(s => (s.dayType || 'Weekday') !== requestDayType);
                     return [...others, ...taggedShifts];
                 });
                 setIsOptimized(true);
@@ -355,13 +375,19 @@ export const OnDemandWorkspace: React.FC = () => {
                 toast.error('Generation failed', 'No shifts were returned');
             }
         } catch (e) {
-            console.error("Optimization error", e);
+            console.error('Regenerate optimization error', {
+                dayType: requestDayType,
+                error: e,
+            });
             toast.error('Generation failed', e instanceof Error ? e.message : 'Unknown error');
         } finally {
-            setIsAnimating(false);
-            setOptimizationMode(null);
-            setOptimizationPhase('');
-            abortControllerRef.current = null;
+            if (runId === optimizationRunIdRef.current) {
+                optimizationInFlightRef.current = false;
+                setIsAnimating(false);
+                setOptimizationMode(null);
+                setOptimizationPhase('');
+                abortControllerRef.current = null;
+            }
         }
     };
 
@@ -370,14 +396,30 @@ export const OnDemandWorkspace: React.FC = () => {
     const [showFocusPrompt, setShowFocusPrompt] = useState(false);
 
     const handleRefineClick = () => {
+        if (isWorkspaceBusy) return;
         setShowFocusPrompt(true);
     };
 
     const handleStartOptimization = async (instruction: string) => {
+        if (isProcessingFiles) {
+            toast.info('Workspace busy', 'Finish file processing before starting a refine run.');
+            return;
+        }
+        if (optimizationInFlightRef.current) {
+            toast.info('Optimization already running', 'Wait for the current regenerate or refine job to finish.');
+            return;
+        }
+
         setShowFocusPrompt(false);
         setFocusInstruction(instruction);
 
+        const requestDayType = selectedDayType;
+        const requestRequirements = requirements;
+        const requestShifts = shifts;
+        const runId = optimizationRunIdRef.current + 1;
         const controller = new AbortController();
+        optimizationRunIdRef.current = runId;
+        optimizationInFlightRef.current = true;
         abortControllerRef.current = controller;
         setOptimizationMode('refine');
         setIsAnimating(true);
@@ -388,9 +430,9 @@ export const OnDemandWorkspace: React.FC = () => {
             const combinedInstruction = [settingsInstruction, instruction.trim()]
                 .filter(Boolean)
                 .join('\n\n');
-            const result = await optimizeScheduleWithGemini(requirements, 'refine', shifts, combinedInstruction, controller.signal);
+            const result = await optimizeScheduleWithGemini(requestRequirements, 'refine', requestShifts, combinedInstruction, controller.signal);
 
-            if (controller.signal.aborted) return;
+            if (controller.signal.aborted || runId !== optimizationRunIdRef.current) return;
 
             setOptimizationPhase('Processing results...');
 
@@ -400,7 +442,7 @@ export const OnDemandWorkspace: React.FC = () => {
 
             if (result.shifts.length > 0) {
                 setReviewModalData({
-                    current: shifts,
+                    current: requestShifts,
                     optimized: result.shifts
                 });
 
@@ -411,13 +453,19 @@ export const OnDemandWorkspace: React.FC = () => {
                 toast.error('No refinements found', 'The optimizer returned no changes');
             }
         } catch (e) {
-            console.error("Refinement error", e);
+            console.error('Refinement optimization error', {
+                dayType: requestDayType,
+                error: e,
+            });
             toast.error('Refinement failed', e instanceof Error ? e.message : 'Unknown error');
         } finally {
-            setIsAnimating(false);
-            setOptimizationMode(null);
-            setOptimizationPhase('');
-            abortControllerRef.current = null;
+            if (runId === optimizationRunIdRef.current) {
+                optimizationInFlightRef.current = false;
+                setIsAnimating(false);
+                setOptimizationMode(null);
+                setOptimizationPhase('');
+                abortControllerRef.current = null;
+            }
         }
     };
 
@@ -444,6 +492,7 @@ export const OnDemandWorkspace: React.FC = () => {
     };
 
     const handleDayTypeChange = (dayType: string) => {
+        if (isWorkspaceBusy) return;
         if (schedules && schedules[dayType]) {
             const validDayType = toValidDayType(dayType);
             setSelectedDayType(validDayType);
@@ -509,6 +558,7 @@ export const OnDemandWorkspace: React.FC = () => {
     };
 
     const handleFileUpload = (files: File[]) => {
+        if (isWorkspaceBusy) return;
         setUploadedFiles(prev => {
             const newFiles = { ...prev };
             files.forEach(file => {
@@ -523,7 +573,8 @@ export const OnDemandWorkspace: React.FC = () => {
     };
 
     const processFiles = async () => {
-        setIsAnimating(true);
+        if (isWorkspaceBusy) return;
+        setIsProcessingFiles(true);
 
         // Capture current files before clearing (fix race condition)
         const filesToProcess = { ...uploadedFiles };
@@ -570,7 +621,7 @@ export const OnDemandWorkspace: React.FC = () => {
             console.error(e);
             alert('Error processing files.');
         } finally {
-            setIsAnimating(false);
+            setIsProcessingFiles(false);
         }
     };
 
@@ -578,7 +629,7 @@ export const OnDemandWorkspace: React.FC = () => {
     const handleResetToUpload = async () => {
         if (!cachedFiles.rideco && !cachedFiles.master) return;
 
-        setIsAnimating(true);
+        setIsProcessingFiles(true);
         try {
             let dayForShiftFiltering = selectedDayType;
             if (cachedFiles.master) {
@@ -604,7 +655,7 @@ export const OnDemandWorkspace: React.FC = () => {
         } catch (e) {
             console.error('Reset failed:', e);
         } finally {
-            setIsAnimating(false);
+            setIsProcessingFiles(false);
         }
     };
 
@@ -618,7 +669,7 @@ export const OnDemandWorkspace: React.FC = () => {
 
     React.useEffect(() => {
         if (uploadedFiles.master && uploadedFiles.rideco) {
-            if (!isAnimating) {
+            if (!isWorkspaceBusy) {
                 processFilesRef.current();
                 pendingProcessRef.current = false;
             } else {
@@ -626,15 +677,15 @@ export const OnDemandWorkspace: React.FC = () => {
                 pendingProcessRef.current = true;
             }
         }
-    }, [uploadedFiles.master, uploadedFiles.rideco]);
+    }, [uploadedFiles.master, uploadedFiles.rideco, isWorkspaceBusy]);
 
     // Process pending files when animation ends
     React.useEffect(() => {
-        if (!isAnimating && pendingProcessRef.current && uploadedFiles.master && uploadedFiles.rideco) {
+        if (!isWorkspaceBusy && pendingProcessRef.current && uploadedFiles.master && uploadedFiles.rideco) {
             processFilesRef.current();
             pendingProcessRef.current = false;
         }
-    }, [isAnimating, uploadedFiles.master, uploadedFiles.rideco]);
+    }, [isWorkspaceBusy, uploadedFiles.master, uploadedFiles.rideco]);
 
     // Get the shift being edited (with safety check to prevent crashes)
     const shiftToEdit = editingShiftId ? shifts.find(s => s.id === editingShiftId) : null;
@@ -1032,8 +1083,11 @@ export const OnDemandWorkspace: React.FC = () => {
                             <div className="w-px h-4 bg-gray-200"></div>
                             <button
                                 onClick={() => setShowFileManager(true)}
-                                disabled={isLoadingFromCloud}
-                                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-gray-500 hover:text-gray-900 hover:bg-white hover:shadow-sm rounded-md transition-all"
+                                disabled={isLoadingFromCloud || isWorkspaceBusy}
+                                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${isLoadingFromCloud || isWorkspaceBusy
+                                    ? 'text-gray-300 cursor-not-allowed'
+                                    : 'text-gray-500 hover:text-gray-900 hover:bg-white hover:shadow-sm'
+                                    }`}
                             >
                                 {isLoadingFromCloud ? (
                                     <Loader2 className="animate-spin" size={14} />
@@ -1069,9 +1123,12 @@ export const OnDemandWorkspace: React.FC = () => {
                                 <button
                                     key={day}
                                     onClick={() => handleDayTypeChange(day)}
+                                    disabled={isWorkspaceBusy}
                                     className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all ${selectedDayType === day
                                         ? 'bg-white text-brand-blue shadow-sm'
-                                        : 'text-gray-500 hover:text-gray-700'
+                                        : isWorkspaceBusy
+                                            ? 'text-gray-300 cursor-not-allowed'
+                                            : 'text-gray-500 hover:text-gray-700'
                                         }`}
                                 >
                                     {day}
@@ -1086,8 +1143,11 @@ export const OnDemandWorkspace: React.FC = () => {
                             {(cachedFiles.rideco || cachedFiles.master) && (
                                 <button
                                     onClick={handleResetToUpload}
-                                    disabled={isAnimating}
-                                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-gray-500 bg-gray-100 hover:bg-gray-200 hover:text-gray-700 active:scale-95 transition-all"
+                                    disabled={isWorkspaceBusy}
+                                    className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold transition-all ${isWorkspaceBusy
+                                        ? 'text-gray-300 bg-gray-100 cursor-not-allowed'
+                                        : 'text-gray-500 bg-gray-100 hover:bg-gray-200 hover:text-gray-700 active:scale-95'
+                                        }`}
                                     title="Reset to uploaded files"
                                 >
                                     <RotateCcw size={18} />
@@ -1097,12 +1157,12 @@ export const OnDemandWorkspace: React.FC = () => {
                             {/* Refine Button - Primary Action */}
                             <button
                                 onClick={handleRefineClick}
-                                disabled={isAnimating || shifts.length === 0}
+                                disabled={isWorkspaceBusy || shifts.length === 0}
                                 className={`
                                 flex items-center gap-2 px-5 py-2 rounded-xl font-bold text-white shadow-md hover:shadow-lg active:scale-95 whitespace-nowrap
                                 ${isAnimating && optimizationMode === 'refine'
                                         ? 'bg-indigo-400 cursor-wait'
-                                        : shifts.length === 0
+                                        : isWorkspaceBusy || shifts.length === 0
                                             ? 'bg-gray-300 cursor-not-allowed shadow-none'
                                             : 'bg-indigo-600 hover:bg-indigo-700'
                                     }
@@ -1126,11 +1186,13 @@ export const OnDemandWorkspace: React.FC = () => {
                             {/* Regenerate Button - Distinct but Secondary */}
                             <button
                                 onClick={handleRegenerate}
-                                disabled={isAnimating}
+                                disabled={isWorkspaceBusy}
                                 className={`
                                 flex items-center gap-2 px-5 py-2 rounded-xl font-bold shadow-sm border active:scale-95 whitespace-nowrap
                                 ${isAnimating && optimizationMode === 'full'
                                         ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-wait'
+                                        : isWorkspaceBusy
+                                            ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
                                         : 'bg-green-500 text-white border-green-600 hover:bg-green-600 hover:border-green-700'
                                     }
                                 transition-all duration-200
@@ -1206,7 +1268,11 @@ export const OnDemandWorkspace: React.FC = () => {
                     </div>
                     <button
                         onClick={processFiles}
-                        className="px-8 py-3 bg-green-600 text-white font-bold rounded-xl hover:bg-green-700 shadow-lg shadow-green-200 transition-all"
+                        disabled={isWorkspaceBusy}
+                        className={`px-8 py-3 font-bold rounded-xl transition-all ${isWorkspaceBusy
+                            ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                            : 'bg-green-600 text-white hover:bg-green-700 shadow-lg shadow-green-200'
+                            }`}
                     >
                         Process Files
                     </button>
@@ -1274,6 +1340,7 @@ export const OnDemandWorkspace: React.FC = () => {
                                 subtitle="Supports Master Schedule (.xlsx) & RideCo/MVT (.csv)"
                                 accept=".xlsx, .csv"
                                 allowMultiple={true}
+                                disabled={isWorkspaceBusy}
                             />
                         </div>
                         <div className="lg:col-span-1">

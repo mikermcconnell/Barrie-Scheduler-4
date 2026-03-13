@@ -1,5 +1,5 @@
 export const DEFAULT_OPTIMIZE_TIMEOUT_MS = 300000;
-export const DEFAULT_OPTIMIZE_MAX_RETRIES = 0;
+export const DEFAULT_OPTIMIZE_MAX_RETRIES = 1;
 
 export function parseOptimizeTimeoutMs(rawValue?: string): number {
   const parsed = Number(rawValue);

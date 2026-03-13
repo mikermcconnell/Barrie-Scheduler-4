@@ -96,6 +96,30 @@ const parseErrorPayload = async (response: Response): Promise<ParsedApiError> =>
   };
 };
 
+const parseSuccessPayload = async (response: Response, endpoint: string): Promise<OptimizeApiResponse> => {
+  let data: OptimizeApiResponse;
+
+  try {
+    data = await response.json() as OptimizeApiResponse;
+  } catch {
+    const failure = new Error('Optimizer returned invalid JSON') as RequestFailure;
+    failure.endpoint = endpoint;
+    failure.code = 'INVALID_RESPONSE';
+    failure.retryable = true;
+    throw failure;
+  }
+
+  if (!Array.isArray(data.shifts)) {
+    const failure = new Error('Optimizer returned an invalid response') as RequestFailure;
+    failure.endpoint = endpoint;
+    failure.code = 'INVALID_RESPONSE';
+    failure.retryable = true;
+    throw failure;
+  }
+
+  return data;
+};
+
 const fetchWithTimeout = async (url: string, options: RequestInit, timeoutMs: number, externalSignal?: AbortSignal): Promise<Response> => {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -153,7 +177,7 @@ const requestOptimization = async (
     throw failure;
   }
 
-  return await response.json() as OptimizeApiResponse;
+  return await parseSuccessPayload(response, endpoint);
 };
 
 /**
