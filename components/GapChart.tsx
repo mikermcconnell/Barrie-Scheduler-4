@@ -8,7 +8,6 @@ import {
   CartesianGrid,
   Tooltip,
   ReferenceLine,
-  Cell,
   Line
 } from 'recharts';
 import { TimeSlot, ZoneFilterType } from '../utils/demandTypes';
@@ -83,7 +82,7 @@ const CustomTooltip = ({ active, payload, label, viewMode }: any) => {
       title = "South Zone (Exclusive)";
     } else if (viewMode === 'Floater') {
       req = data.floaterRequirement || 0;
-      cover = data.floaterCoverage;
+      cover = data.floaterAvailableCoverage;
       activeDrivers = cover;
       net = cover - req;
       title = "Floater Zone (Exclusive)";
@@ -101,12 +100,18 @@ const CustomTooltip = ({ active, payload, label, viewMode }: any) => {
             <span className="text-brand-green">
               {viewMode === 'All'
                 ? 'Effective Coverage:'
-                : `Active ${viewMode === 'Floater' ? 'Floaters' : 'Drivers'}:`}
+                : `${viewMode === 'Floater' ? 'Available Floaters' : 'Active Drivers'}:`}
             </span>
             <span>{cover}</span>
           </div>
-          {viewMode === 'All' && activeDrivers !== cover && (
+          {viewMode === 'Floater' && data.floaterAssignedRelief > 0 && (
             <div className="flex justify-between gap-4 text-gray-500">
+              <span>Assigned To Other Zones:</span>
+              <span>{data.floaterAssignedRelief}</span>
+            </div>
+          )}
+          {viewMode === 'All' && activeDrivers !== cover && (
+            <div className="flex justify-between gap-4 text-gray-600">
               <span>Drivers on road:</span>
               <span>{activeDrivers}</span>
             </div>
@@ -150,11 +155,11 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
 
     currentCover: zoneFilter === 'North' ? d.northCoverage :
       (zoneFilter === 'South' ? d.southCoverage :
-        (zoneFilter === 'Floater' ? d.floaterCoverage : d.totalEffectiveCoverage)),
+        (zoneFilter === 'Floater' ? d.floaterAvailableCoverage : d.totalEffectiveCoverage)),
 
     currentNet: zoneFilter === 'North' ? ((d.northCoverage + (d.northRelief || 0)) - d.northRequirement) :
       (zoneFilter === 'South' ? ((d.southCoverage + (d.southRelief || 0)) - d.southRequirement) :
-        (zoneFilter === 'Floater' ? (d.floaterCoverage - d.floaterRequirement) : d.netDifference)),
+        (zoneFilter === 'Floater' ? (d.floaterAvailableCoverage - d.floaterRequirement) : d.netDifference)),
 
     currentBreak: zoneFilter === 'North' ? d.northBreaks :
       (zoneFilter === 'South' ? d.southBreaks :
@@ -162,6 +167,14 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
 
     currentRelief: zoneFilter === 'North' ? (d.northRelief || 0) :
       (zoneFilter === 'South' ? (d.southRelief || 0) : 0),
+
+    surplusBar: Math.max(0, zoneFilter === 'North' ? ((d.northCoverage + (d.northRelief || 0)) - d.northRequirement) :
+      (zoneFilter === 'South' ? ((d.southCoverage + (d.southRelief || 0)) - d.southRequirement) :
+        (zoneFilter === 'Floater' ? (d.floaterAvailableCoverage - d.floaterRequirement) : d.netDifference))),
+
+    gapBar: Math.min(0, zoneFilter === 'North' ? ((d.northCoverage + (d.northRelief || 0)) - d.northRequirement) :
+      (zoneFilter === 'South' ? ((d.southCoverage + (d.southRelief || 0)) - d.southRequirement) :
+        (zoneFilter === 'Floater' ? (d.floaterAvailableCoverage - d.floaterRequirement) : d.netDifference))),
   }));
 
   // Calculate stable Y-Axis max (round up to nearest 5)
@@ -173,7 +186,7 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
 
       const cov = zoneFilter === 'North' ? d.northCoverage :
         (zoneFilter === 'South' ? d.southCoverage :
-          (zoneFilter === 'Floater' ? d.floaterCoverage : d.totalEffectiveCoverage));
+          (zoneFilter === 'Floater' ? d.floaterAvailableCoverage : d.totalEffectiveCoverage));
 
       return Math.max(req, cov);
     }));
@@ -247,17 +260,17 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
         <>
           <div className="flex gap-4 text-xs font-bold text-gray-500 mb-2 justify-end">
             <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded-full bg-brand-blue"></div>
-              <span>Demand</span>
+              <div className="w-4 h-0.5 border-t-2 border-dashed border-brand-blue"></div>
+              <span>Demand Line</span>
             </div>
             <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded-full bg-brand-green"></div>
+              <div className="w-4 h-0.5 bg-brand-green"></div>
               <span>
                 {zoneFilter === 'All'
-                  ? 'Effective Coverage'
+                  ? 'Effective Coverage Line'
                   : zoneFilter === 'Floater'
-                    ? 'Active Floaters'
-                    : 'Active Drivers'}
+                    ? 'Available Floaters Line'
+                    : 'Active Drivers Line'}
               </span>
             </div>
             {(zoneFilter === 'North' || zoneFilter === 'South') && (
@@ -268,27 +281,33 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
             )}
             <div className="flex items-center gap-2">
               <div className="w-3 h-3 rounded bg-brand-red"></div>
-              <span>Gap</span>
+              <span>Gap Bars</span>
             </div>
             <div className="flex items-center gap-2">
               <div className="w-3 h-3 rounded bg-brand-green"></div>
-              <span>Surplus</span>
+              <span>Surplus Bars</span>
             </div>
             <div className="flex items-center gap-2">
               <div className="w-4 h-0.5 border-t-2 border-dashed border-orange-400"></div>
-              <span>On Break</span>
+              <span>On Break Line</span>
             </div>
           </div>
+          {zoneFilter === 'All' && (
+            <div className="mb-4 text-xs font-semibold text-gray-500 text-right">
+              System-wide green line shows effective coverage, not raw buses on the road. Hover a point to see both values.
+            </div>
+          )}
 
           <ResponsiveContainer width="100%" height="85%">
             <ComposedChart
               data={chartData}
-              margin={{ top: 20, right: 30, left: 0, bottom: 20 }}
+              margin={{ top: 20, right: 30, left: 0, bottom: 30 }}
               barGap={0}
             >
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
               <XAxis
                 dataKey="timeLabel"
+                height={44}
                 axisLine={false}
                 tickLine={false}
                 interval={0}
@@ -307,20 +326,23 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
 
               {/* Net Difference Bars (Gap/Surplus) */}
               <Bar
-                dataKey="currentNet"
-                barSize={8}
+                dataKey="surplusBar"
+                barSize={6}
                 radius={[4, 4, 4, 4]}
-                name="Net Coverage"
+                name="Surplus"
+                fill="#A3E635"
+                fillOpacity={1}
                 animationDuration={500}
-              >
-                {chartData.map((entry, index) => (
-                  <Cell
-                    key={`cell-${index}`}
-                    fill={entry.currentNet < 0 ? '#FF4B4B' : '#58CC02'}
-                    fillOpacity={0.8}
-                  />
-                ))}
-              </Bar>
+              />
+              <Bar
+                dataKey="gapBar"
+                barSize={6}
+                radius={[4, 4, 4, 4]}
+                name="Gap"
+                fill="#F87171"
+                fillOpacity={1}
+                animationDuration={500}
+              />
 
               {/* Floater Relief Bars - Purple, only in North/South views */}
               {(zoneFilter === 'North' || zoneFilter === 'South') && (
@@ -335,29 +357,33 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
                 />
               )}
 
+              {/* Keep coverage solid and demand dashed so both remain visible when values overlap exactly. */}
+              <Line
+                type="stepAfter"
+                dataKey="currentCover"
+                stroke="#2F7D12"
+                strokeWidth={5}
+                dot={false}
+                activeDot={{ r: 6, stroke: '#ffffff', strokeWidth: 2, fill: '#2F7D12' }}
+                name={zoneFilter === 'All'
+                  ? 'Effective Coverage Line'
+                  : zoneFilter === 'Floater'
+                    ? 'Available Floaters Line'
+                    : 'Active Drivers Line'}
+                isAnimationActive={false}
+              />
+
               {/* Demand/Requirement Line - Blue stepped line */}
               <Line
                 type="stepAfter"
                 dataKey="currentReq"
                 stroke="#1CB0F6"
-                strokeWidth={2}
+                strokeWidth={2.5}
+                strokeDasharray="7 4"
                 dot={false}
-                activeDot={{ r: 4 }}
-                name="Demand"
-                animationDuration={500}
-              />
-
-              {/* Coverage Line - Detailed Line on top */}
-              <Line
-                type="stepAfter"
-                dataKey="currentCover"
-                stroke="#58CC02"
-                strokeWidth={3}
-                dot={false}
-                activeDot={{ r: 6 }}
-                name="Active Drivers"
-                animationDuration={500}
-                zIndex={20}
+                activeDot={{ r: 5, stroke: '#ffffff', strokeWidth: 2, fill: '#1CB0F6' }}
+                name="Demand Line"
+                isAnimationActive={false}
               />
 
               {/* Drivers On Break - Dashed orange line */}
@@ -370,7 +396,7 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
                 dot={false}
                 activeDot={{ r: 4 }}
                 name="On Break"
-                animationDuration={500}
+                isAnimationActive={false}
               />
 
               {/* Original Coverage Ghost Line - Only in combined */}
@@ -384,6 +410,7 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
                   dot={false}
                   activeDot={false}
                   name="Original"
+                  isAnimationActive={false}
                 />
               )}
 

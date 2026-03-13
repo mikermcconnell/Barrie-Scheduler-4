@@ -243,10 +243,12 @@ export const calculateSchedule = (shifts: Shift[], requirements: Requirement[]):
 
     // South Relief
     const southRelief = Math.min(southDeficit, remainingFloaterSurplus);
+    const floaterAssignedRelief = northRelief + southRelief;
+    const floaterAvailableCoverage = Math.max(0, floaterCount - floaterAssignedRelief);
 
     const northEffectiveCoverage = Math.min(northDemand, northCount + northRelief);
     const southEffectiveCoverage = Math.min(southDemand, southCount + southRelief);
-    const floaterEffectiveCoverage = Math.min(floaterDemand, floaterCount);
+    const floaterEffectiveCoverage = Math.min(floaterDemand, floaterAvailableCoverage);
     const totalEffectiveCoverage = northEffectiveCoverage + southEffectiveCoverage + floaterEffectiveCoverage;
     const totalOverlappingShifts = activeCount + breakCount;
 
@@ -257,6 +259,7 @@ export const calculateSchedule = (shifts: Shift[], requirements: Requirement[]):
       southRequirement: req.south,
       floaterRequirement: req.floater || 0,
       floaterEffectiveRequirement,
+      floaterEffectiveCoverage,
       totalRequirement: req.total,
       northCoverage: northCount,
       southCoverage: southCount,
@@ -270,6 +273,8 @@ export const calculateSchedule = (shifts: Shift[], requirements: Requirement[]):
       // Relief Data
       northRelief,
       southRelief,
+      floaterAssignedRelief,
+      floaterAvailableCoverage,
 
       totalActiveCoverage: activeCount,
       totalEffectiveCoverage,

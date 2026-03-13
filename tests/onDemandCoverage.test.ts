@@ -47,7 +47,35 @@ describe('on-demand coverage', () => {
     expect(slot.floaterCoverage).toBe(2);
     expect(slot.floaterRequirement).toBe(1);
     expect(slot.floaterEffectiveRequirement).toBe(2);
+    expect(slot.floaterAssignedRelief).toBe(1);
+    expect(slot.floaterAvailableCoverage).toBe(1);
     expect(slot.netDifference).toBe(0);
+  });
+
+  it('removes relief-assigned floaters from floater availability', () => {
+    const slots = calculateSchedule([
+      makeShift('south-1', Zone.SOUTH),
+      makeShift('south-2', Zone.SOUTH),
+      makeShift('south-3', Zone.SOUTH),
+      makeShift('floater-1', Zone.FLOATER),
+      makeShift('floater-2', Zone.FLOATER),
+    ], Array.from({ length: 96 }, (_, slotIndex): Requirement => ({
+      slotIndex,
+      north: 0,
+      south: 4,
+      floater: 1,
+      total: 5,
+    })));
+
+    const slot = slots[77];
+    expect(slot.timeLabel).toBe('19:15');
+    expect(slot.southCoverage).toBe(3);
+    expect(slot.floaterCoverage).toBe(2);
+    expect(slot.southRelief).toBe(1);
+    expect(slot.floaterAssignedRelief).toBe(1);
+    expect(slot.floaterAvailableCoverage).toBe(1);
+    expect(slot.floaterEffectiveCoverage).toBe(1);
+    expect(slot.totalEffectiveCoverage).toBe(5);
   });
 
   it('shows the floater gap starting at the exact break slot', () => {

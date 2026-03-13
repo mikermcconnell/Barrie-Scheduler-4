@@ -8,6 +8,7 @@ export interface TimeSlot {
   southRequirement: number;
   floaterRequirement: number;
   floaterEffectiveRequirement: number;
+  floaterEffectiveCoverage: number;
   totalRequirement: number;
 
   // Supply (Drivers)
@@ -27,6 +28,8 @@ export interface TimeSlot {
   totalOverlappingShifts: number; // Includes drivers currently on break
   northRelief: number; // Floater contribution to North
   southRelief: number; // Floater contribution to South
+  floaterAssignedRelief: number; // Floaters temporarily covering North/South demand
+  floaterAvailableCoverage: number; // Floaters still available to cover floater demand after relief
   originalEffectiveCoverage?: number; // For ghost line comparison
   netDifference: number; // Effective coverage - Required
 }
