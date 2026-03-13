@@ -45,11 +45,14 @@ import { SHIFT_DURATION_SLOTS, BREAK_DURATION_SLOTS, BREAK_THRESHOLD_HOURS } fro
 type DayType = OnDemandDayType;
 const VALID_DAY_TYPES: DayType[] = ['Weekday', 'Saturday', 'Sunday'];
 const MAX_FLEET_VEHICLES = 6;
+const DEFAULT_SHIFT_COUNT_CAP = 18;
 const OPTIMIZATION_SETTINGS_STORAGE_KEY = 'od-optimization-settings';
 
 interface OptimizationSettings {
     maxFleetVehicles: number;
+    maxShiftCount: number;
     targetCoveragePercent: number;
+    shiftCountCapMode: 'hard' | 'guide';
     minorGapTolerance: 'none' | 'rare';
     breakProtection: 'strict' | 'balanced';
     costPriority: 'service' | 'balanced' | 'efficiency';
@@ -59,14 +62,17 @@ type OptimizationSettingKey = keyof OptimizationSettings;
 
 const DEFAULT_OPTIMIZATION_SETTINGS: OptimizationSettings = {
     maxFleetVehicles: MAX_FLEET_VEHICLES,
+    maxShiftCount: DEFAULT_SHIFT_COUNT_CAP,
     targetCoveragePercent: 100,
+    shiftCountCapMode: 'hard',
     minorGapTolerance: 'rare',
     breakProtection: 'strict',
     costPriority: 'balanced',
 };
 
-const OPTIMIZATION_NUMBER_LIMITS: Record<'maxFleetVehicles' | 'targetCoveragePercent', { min: number; max: number; step: number }> = {
+const OPTIMIZATION_NUMBER_LIMITS: Record<'maxFleetVehicles' | 'maxShiftCount' | 'targetCoveragePercent', { min: number; max: number; step: number }> = {
     maxFleetVehicles: { min: 1, max: 12, step: 1 },
+    maxShiftCount: { min: 1, max: 40, step: 1 },
     targetCoveragePercent: { min: 90, max: 100, step: 1 },
 };
 
@@ -98,6 +104,9 @@ const readOptimizationSettings = (): OptimizationSettings => {
         if (parsed.breakProtection === 'strict' || parsed.breakProtection === 'balanced') {
             normalized.breakProtection = parsed.breakProtection;
         }
+        if (parsed.shiftCountCapMode === 'hard' || parsed.shiftCountCapMode === 'guide') {
+            normalized.shiftCountCapMode = parsed.shiftCountCapMode;
+        }
         if (parsed.costPriority === 'service' || parsed.costPriority === 'balanced' || parsed.costPriority === 'efficiency') {
             normalized.costPriority = parsed.costPriority;
         }
@@ -109,6 +118,9 @@ const readOptimizationSettings = (): OptimizationSettings => {
 };
 
 const buildOptimizerSettingsInstruction = (settings: OptimizationSettings): string => {
+    const shiftCountRule = settings.shiftCountCapMode === 'hard'
+        ? `Do not produce more than ${settings.maxShiftCount} total shifts for the day.`
+        : `Treat ${settings.maxShiftCount} total shifts as a guide and only go over that if coverage or break relief clearly requires it.`;
     const gapToleranceRule = settings.minorGapTolerance === 'none'
         ? 'Do not allow minor gaps.'
         : 'Allow only rare one-vehicle gaps for at most one consecutive 15-minute slot, and only if the overall schedule is clearly better.';
@@ -124,6 +136,7 @@ const buildOptimizerSettingsInstruction = (settings: OptimizationSettings): stri
     return [
         'OPTIMIZATION SETTINGS:',
         `- Treat ${settings.maxFleetVehicles} active vehicles as the fleet cap.`,
+        `- ${shiftCountRule}`,
         `- Target at least ${settings.targetCoveragePercent}% effective coverage.`,
         `- ${gapToleranceRule}`,
         `- ${breakRule}`,
@@ -221,6 +234,7 @@ export const OnDemandWorkspace: React.FC = () => {
         () => timeSlots.reduce((peak, slot) => Math.max(peak, slot.totalActiveCoverage), 0),
         [timeSlots]
     );
+    const shiftCountWithinHardCap = shifts.length <= optimizationSettings.maxShiftCount;
     const fleetWithinLimit = maxConcurrentVehicles <= optimizationSettings.maxFleetVehicles;
     const settingsInstruction = useMemo(
         () => buildOptimizerSettingsInstruction(optimizationSettings),
@@ -236,7 +250,7 @@ export const OnDemandWorkspace: React.FC = () => {
     };
 
     const updateOptimizationChoice = (
-        key: 'minorGapTolerance' | 'breakProtection' | 'costPriority',
+        key: 'shiftCountCapMode' | 'minorGapTolerance' | 'breakProtection' | 'costPriority',
         value: OptimizationSettings[typeof key]
     ) => {
         setOptimizationSettings(prev => ({ ...prev, [key]: value }));
@@ -1336,7 +1350,7 @@ export const OnDemandWorkspace: React.FC = () => {
 
             {activeTab === 'rules' && (
                 <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 space-y-8">
-                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                         {featuredOptimizationMetrics.map(metric => (
                             <div key={metric.key} className="bg-white rounded-2xl border-2 border-gray-200 p-4 shadow-sm">
                                 <div className="flex items-start gap-4">
@@ -1362,6 +1376,55 @@ export const OnDemandWorkspace: React.FC = () => {
                                 </div>
                             </div>
                         ))}
+
+                        <div className="bg-white rounded-2xl border-2 border-gray-200 p-4 shadow-sm">
+                            <div className="flex items-start gap-4">
+                                <div className="p-3 rounded-xl shadow-inner bg-amber-500 text-white">
+                                    <Users size={24} />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <h3 className="text-gray-500 font-bold text-xs uppercase tracking-wider">Number of Shifts Cap</h3>
+                                    <div className="mt-3 flex items-end gap-3">
+                                        <input
+                                            type="number"
+                                            min={OPTIMIZATION_NUMBER_LIMITS.maxShiftCount.min}
+                                            max={OPTIMIZATION_NUMBER_LIMITS.maxShiftCount.max}
+                                            step={OPTIMIZATION_NUMBER_LIMITS.maxShiftCount.step}
+                                            value={optimizationSettings.maxShiftCount}
+                                            onChange={(e) => updateOptimizationNumberSetting('maxShiftCount', Number(e.target.value))}
+                                            className="w-24 rounded-xl border-2 border-gray-200 bg-gray-50 px-3 py-2 text-2xl font-extrabold text-gray-800 focus:border-brand-blue focus:bg-white focus:outline-none"
+                                        />
+                                        <span className="pb-2 text-sm font-bold text-gray-400">shifts</span>
+                                    </div>
+                                    <div className="mt-3 inline-flex rounded-xl border-2 border-gray-200 bg-gray-50 p-1">
+                                        {[
+                                            { value: 'hard' as const, label: 'Hard cap' },
+                                            { value: 'guide' as const, label: 'Guide' },
+                                        ].map(option => {
+                                            const isActive = optimizationSettings.shiftCountCapMode === option.value;
+                                            return (
+                                                <button
+                                                    key={option.value}
+                                                    type="button"
+                                                    onClick={() => updateOptimizationChoice('shiftCountCapMode', option.value)}
+                                                    className={`rounded-lg px-3 py-1.5 text-xs font-extrabold uppercase tracking-wider transition-colors ${isActive
+                                                            ? 'bg-white text-amber-700 shadow-sm'
+                                                            : 'text-gray-500 hover:text-gray-700'
+                                                        }`}
+                                                >
+                                                    {option.label}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                    <div className="text-xs text-gray-400 font-semibold mt-2">
+                                        {optimizationSettings.shiftCountCapMode === 'hard'
+                                            ? 'Hard ceiling for total shifts the optimizer should produce for the day.'
+                                            : 'Soft target for total shifts. The optimizer can exceed it when service quality or break relief needs it.'}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
                     <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
@@ -1393,7 +1456,7 @@ export const OnDemandWorkspace: React.FC = () => {
                                 <div className="mb-5 p-4 rounded-2xl bg-purple-50 border-2 border-purple-100">
                                     <div className="text-xs font-extrabold uppercase tracking-wider text-purple-600 mb-2">Why These Metrics</div>
                                     <p className="text-sm font-semibold text-purple-900/80">
-                                        These are the highest-leverage knobs for this scheduler: fleet cap, effective coverage target, minor gap tolerance, break handoff quality, recurring gap severity, surplus trimming, and payable-hour pressure.
+                                        These are the highest-leverage knobs for this scheduler: fleet cap, shift count cap, effective coverage target, minor gap tolerance, break handoff quality, and payable-hour pressure.
                                     </p>
                                 </div>
 
@@ -1430,7 +1493,8 @@ export const OnDemandWorkspace: React.FC = () => {
                                 </div>
 
                                 <div className="space-y-3 text-sm font-semibold text-gray-500">
-                                    <p className="p-3 rounded-xl bg-blue-50 border-2 border-blue-100 text-blue-900/80">Coverage target and fleet cap always stay explicit because those are the clearest operating limits for staff to reason about.</p>
+                                    <p className="p-3 rounded-xl bg-blue-50 border-2 border-blue-100 text-blue-900/80">Coverage target, fleet cap, and shift count cap stay explicit because those are the clearest operating limits for staff to reason about.</p>
+                                    <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Use a hard shift cap when the number of pieces is fixed. Switch it to guide when you want the optimizer to prefer fewer shifts without blocking extra relief work that meaningfully improves the day.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Minor gap tolerance decides whether the optimizer can accept a very small shortfall in exchange for a meaningfully better full-day schedule.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Break protection controls how hard the optimizer should push for clean break relief and overlap coverage.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Cost pressure controls how strongly the optimizer trims extra payable hours and surplus once service quality is acceptable.</p>
@@ -1453,6 +1517,22 @@ export const OnDemandWorkspace: React.FC = () => {
                                     <div className="flex justify-between items-center p-3 bg-purple-50 rounded-xl border-2 border-purple-100">
                                         <span className="font-bold text-gray-600">Floater Shifts</span>
                                         <span className="font-extrabold text-purple-600">{shifts.filter(s => s.zone === Zone.FLOATER).length}</span>
+                                    </div>
+                                    <div className={`flex justify-between items-center p-3 rounded-xl border-2 ${optimizationSettings.shiftCountCapMode === 'hard'
+                                            ? shiftCountWithinHardCap
+                                                ? 'bg-gray-50 border-gray-200'
+                                                : 'bg-amber-50 border-amber-200'
+                                            : 'bg-blue-50 border-blue-100'
+                                        }`}>
+                                        <span className="font-bold text-gray-600">Total Shifts vs Cap</span>
+                                        <span className={`font-extrabold ${optimizationSettings.shiftCountCapMode === 'hard'
+                                                ? shiftCountWithinHardCap
+                                                    ? 'text-gray-800'
+                                                    : 'text-amber-600'
+                                                : 'text-brand-blue'
+                                            }`}>
+                                            {shifts.length} / {optimizationSettings.maxShiftCount} {optimizationSettings.shiftCountCapMode}
+                                        </span>
                                     </div>
                                     <div className={`flex justify-between items-center p-3 rounded-xl border-2 ${fleetWithinLimit ? 'bg-gray-50 border-gray-200' : 'bg-amber-50 border-amber-200'}`}>
                                         <span className="font-bold text-gray-600">Peak Vehicles on Road</span>
@@ -1480,7 +1560,8 @@ export const OnDemandWorkspace: React.FC = () => {
                             <div className="bg-white p-6 rounded-3xl border-2 border-gray-200">
                                 <h3 className="text-xl font-extrabold text-gray-700 mb-4">Suggested Starting Setup</h3>
                                 <div className="space-y-3 text-sm font-semibold text-gray-500">
-                                    <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Use a strict fleet cap, a 100% coverage target, rare short gaps, and strict break protection when service reliability matters most.</p>
+                                    <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Use a strict fleet cap, a hard shift cap, a 100% coverage target, rare short gaps, and strict break protection when service reliability matters most.</p>
+                                    <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Switch the shift count cap from hard to guide when you want the optimizer to prefer fewer shifts but still permit one extra relief piece if it materially improves the day.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">If the optimizer keeps producing too much surplus, increase cost pressure before loosening gap tolerance.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Only move from no gaps to rare short gaps when you are intentionally allowing a tiny tradeoff to improve the whole day.</p>
                                 </div>
