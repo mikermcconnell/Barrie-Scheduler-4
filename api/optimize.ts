@@ -9,8 +9,12 @@ import { shouldUseExtendedOptimizePipeline } from '../functions/src/optimizePipe
 import { validateOnDemandSchedule } from '../utils/onDemandValidation';
 import {
     buildShiftCountCapInstruction,
+    breakDurationMinutesToSlots,
+    DEFAULT_BREAK_DURATION_MINUTES,
+    normalizeBreakDurationMinutes,
     type OptimizeRequestOptions,
 } from '../utils/onDemandOptimizationSettings';
+import { BREAK_THRESHOLD_HOURS } from '../utils/demandConstants';
 
 const createServerRequestId = () => `srv-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const inferErrorCode = (message: string) => {
@@ -177,6 +181,11 @@ export async function optimizeImplementation(
     optimizationOptions?: OptimizeRequestOptions,
     requestId: string = 'unknown'
 ) {
+    const configuredBreakDurationMinutes = normalizeBreakDurationMinutes(
+        optimizationOptions?.breakDurationMinutes,
+        DEFAULT_BREAK_DURATION_MINUTES,
+    );
+    const configuredBreakDurationSlots = breakDurationMinutesToSlots(configuredBreakDurationMinutes);
 
     // 1. Prepare Data
     const totalDemandCurve = new Array(96).fill(0);
@@ -226,7 +235,7 @@ export async function optimizeImplementation(
     UNION RULES:
     - Shift length rules apply to actual drive time between drive start and drive end.
     - Shift Length: 5-11 hours (20-44 slots) of actual drive time.
-    - Breaks: 45min (3 slots) if actual drive time > 7.5h.
+    - Breaks: ${configuredBreakDurationMinutes}min (${configuredBreakDurationSlots} slots) if actual drive time > ${BREAK_THRESHOLD_HOURS}h.
     - Breaks must occur between hour 4 and 6 of the shift.
     - STRICT ZONE LOGIC: North covers North, South covers South, Floater covers Gaps/Breaks.
     ${fleetConstraintRules}
@@ -292,7 +301,7 @@ export async function optimizeImplementation(
 
     if (!extendedPipeline) {
         console.log(`[${requestId}] Fast path enabled; skipping critic and polisher phases.`);
-        const processedDraft = processShifts(draftShifts);
+        const processedDraft = processShifts(draftShifts, optimizationOptions);
         return chooseBestScheduleCandidate(
             [{ label: 'phase1-generator', shifts: processedDraft }],
             requirements,
@@ -401,9 +410,9 @@ export async function optimizeImplementation(
     // ---------------------------------------------------------
     // POST-PROCESSING
     // ---------------------------------------------------------
-    const processedDraft = processShifts(draftShifts);
-    const processedCritic = processShifts(criticShifts);
-    const processedPolished = processShifts(polishedShifts);
+    const processedDraft = processShifts(draftShifts, optimizationOptions);
+    const processedCritic = processShifts(criticShifts, optimizationOptions);
+    const processedPolished = processShifts(polishedShifts, optimizationOptions);
     return chooseBestScheduleCandidate(
         [
             { label: 'phase1-generator', shifts: processedDraft },
@@ -419,8 +428,11 @@ export async function optimizeImplementation(
 /**
  * Helper to normalize shift data (ensure types, add proper IDs)
  */
-function processShifts(shifts: any[]) {
+function processShifts(shifts: any[], optimizationOptions?: OptimizeRequestOptions) {
     const seenIds = new Set<string>();
+    const configuredBreakDurationSlots = breakDurationMinutesToSlots(
+        optimizationOptions?.breakDurationMinutes ?? DEFAULT_BREAK_DURATION_MINUTES,
+    );
 
     return shifts.map((s: any, index: number) => {
         const duration = Number(s.durationSlots) || 32;
@@ -442,8 +454,8 @@ function processShifts(shifts: any[]) {
         let breakDuration = 0;
         const hours = duration / 4;
 
-        if (hours > 7.5) {
-            breakDuration = 3; // 45 mins
+        if (hours > BREAK_THRESHOLD_HOURS) {
+            breakDuration = configuredBreakDurationSlots;
             // Enforce window (4th-6th hour)
             const minBreak = start + 16;
             const maxBreak = start + 24;

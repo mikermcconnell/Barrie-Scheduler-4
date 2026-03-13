@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  breakDurationMinutesToSlots,
   buildShiftCountCapInstruction,
+  BREAK_DURATION_MINUTES_LIMITS,
   createDefaultShiftCountCaps,
+  DEFAULT_BREAK_DURATION_MINUTES,
   getShiftCountCapForDay,
+  normalizeBreakDurationMinutes,
   normalizeShiftCountCaps,
 } from '../utils/onDemandOptimizationSettings';
 
@@ -39,5 +43,17 @@ describe('on-demand optimization settings', () => {
       Saturday: 18,
       Sunday: 18,
     });
+  });
+
+  it('normalizes break duration to valid 15-minute increments', () => {
+    expect(normalizeBreakDurationMinutes(61)).toBe(60);
+    expect(normalizeBreakDurationMinutes(7)).toBe(BREAK_DURATION_MINUTES_LIMITS.min);
+    expect(normalizeBreakDurationMinutes(120)).toBe(BREAK_DURATION_MINUTES_LIMITS.max);
+    expect(normalizeBreakDurationMinutes(undefined)).toBe(DEFAULT_BREAK_DURATION_MINUTES);
+  });
+
+  it('converts break duration minutes into schedule slots', () => {
+    expect(breakDurationMinutesToSlots(60)).toBe(4);
+    expect(breakDurationMinutesToSlots(45)).toBe(3);
   });
 });

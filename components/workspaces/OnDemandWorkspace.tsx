@@ -37,8 +37,12 @@ import {
 } from '../../utils/onDemandShiftUtils';
 import {
     buildShiftCountCapInstruction,
+    breakDurationMinutesToSlots,
+    BREAK_DURATION_MINUTES_LIMITS,
     createDefaultShiftCountCaps,
+    DEFAULT_BREAK_DURATION_MINUTES,
     getShiftCountCapForDay,
+    normalizeBreakDurationMinutes,
     normalizeShiftCountCaps,
     type DayTypeShiftCountCaps,
     type ShiftCountCapMode,
@@ -48,7 +52,7 @@ import {
     Wand2, Users, BarChart3, Sparkles, Loader2,
     FolderOpen, Save, CloudDownload, Check, Edit3, RotateCcw, ArrowLeft, Star, X
 } from 'lucide-react';
-import { SHIFT_DURATION_SLOTS, BREAK_DURATION_SLOTS, BREAK_THRESHOLD_HOURS } from '../../utils/demandConstants';
+import { SHIFT_DURATION_SLOTS, BREAK_THRESHOLD_HOURS } from '../../utils/demandConstants';
 
 // Valid day types for shifts
 type DayType = OnDemandDayType;
@@ -61,6 +65,7 @@ interface OptimizationSettings {
     maxFleetVehicles: number;
     shiftCountCaps: DayTypeShiftCountCaps;
     targetCoveragePercent: number;
+    breakDurationMinutes: number;
     shiftCountCapMode: ShiftCountCapMode;
     minorGapTolerance: 'none' | 'rare';
     breakProtection: 'strict' | 'balanced';
@@ -71,15 +76,17 @@ const DEFAULT_OPTIMIZATION_SETTINGS: OptimizationSettings = {
     maxFleetVehicles: MAX_FLEET_VEHICLES,
     shiftCountCaps: createDefaultShiftCountCaps(),
     targetCoveragePercent: 100,
+    breakDurationMinutes: DEFAULT_BREAK_DURATION_MINUTES,
     shiftCountCapMode: 'hard',
     minorGapTolerance: 'rare',
     breakProtection: 'strict',
     costPriority: 'balanced',
 };
 
-const OPTIMIZATION_NUMBER_LIMITS: Record<'maxFleetVehicles' | 'targetCoveragePercent', { min: number; max: number; step: number }> = {
+const OPTIMIZATION_NUMBER_LIMITS: Record<'maxFleetVehicles' | 'targetCoveragePercent' | 'breakDurationMinutes', { min: number; max: number; step: number }> = {
     maxFleetVehicles: { min: 1, max: 12, step: 1 },
     targetCoveragePercent: { min: 90, max: 100, step: 1 },
+    breakDurationMinutes: { ...BREAK_DURATION_MINUTES_LIMITS },
 };
 
 const readOptimizationSettings = (): OptimizationSettings => {
@@ -103,6 +110,10 @@ const readOptimizationSettings = (): OptimizationSettings => {
                 normalized[key] = Math.min(max, Math.max(min, value));
             }
         });
+        normalized.breakDurationMinutes = normalizeBreakDurationMinutes(
+            parsed.breakDurationMinutes,
+            DEFAULT_BREAK_DURATION_MINUTES,
+        );
 
         normalized.shiftCountCaps = normalizeShiftCountCaps(
             parsed.shiftCountCaps ?? parsed.maxShiftCount,
@@ -151,6 +162,7 @@ const buildOptimizerSettingsInstruction = (settings: OptimizationSettings, dayTy
         `- Treat ${settings.maxFleetVehicles} active vehicles as the fleet cap.`,
         `- ${shiftCountRule}`,
         `- Target at least ${settings.targetCoveragePercent}% effective coverage.`,
+        `- For shifts over ${BREAK_THRESHOLD_HOURS} hours, require a ${settings.breakDurationMinutes}-minute break.`,
         `- ${gapToleranceRule}`,
         `- ${breakRule}`,
         `- ${costRule}`,
@@ -256,6 +268,10 @@ export const OnDemandWorkspace: React.FC = () => {
     );
     const shiftCountWithinHardCap = shifts.length <= activeMaxShiftCount;
     const fleetWithinLimit = maxConcurrentVehicles <= optimizationSettings.maxFleetVehicles;
+    const requiredBreakDurationSlots = useMemo(
+        () => breakDurationMinutesToSlots(optimizationSettings.breakDurationMinutes),
+        [optimizationSettings.breakDurationMinutes]
+    );
     const isWorkspaceBusy = isAnimating || isProcessingFiles;
     const settingsInstruction = useMemo(
         () => buildOptimizerSettingsInstruction(optimizationSettings, selectedDayType),
@@ -266,15 +282,23 @@ export const OnDemandWorkspace: React.FC = () => {
             dayType: selectedDayType,
             maxShiftCount: activeMaxShiftCount,
             shiftCountCapMode: optimizationSettings.shiftCountCapMode,
+            breakDurationMinutes: optimizationSettings.breakDurationMinutes,
         }),
-        [activeMaxShiftCount, optimizationSettings.shiftCountCapMode, selectedDayType]
+        [activeMaxShiftCount, optimizationSettings.breakDurationMinutes, optimizationSettings.shiftCountCapMode, selectedDayType]
     );
 
     const updateOptimizationNumberSetting = (key: keyof typeof OPTIMIZATION_NUMBER_LIMITS, value: number) => {
-        const { min, max } = OPTIMIZATION_NUMBER_LIMITS[key];
         setOptimizationSettings(prev => ({
             ...prev,
-            [key]: Math.min(max, Math.max(min, Number.isFinite(value) ? value : prev[key]))
+            [key]: key === 'breakDurationMinutes'
+                ? normalizeBreakDurationMinutes(value, prev.breakDurationMinutes)
+                : Math.min(
+                    OPTIMIZATION_NUMBER_LIMITS[key].max,
+                    Math.max(
+                        OPTIMIZATION_NUMBER_LIMITS[key].min,
+                        Number.isFinite(value) ? value : prev[key]
+                    )
+                )
         }));
     };
 
@@ -603,7 +627,7 @@ export const OnDemandWorkspace: React.FC = () => {
             startSlot: 32, // 08:00
             endSlot: 32 + SHIFT_DURATION_SLOTS,
             breakStartSlot: 32 + 16, // Break after 4 hours
-            breakDurationSlots: BREAK_DURATION_SLOTS,
+            breakDurationSlots: requiredBreakDurationSlots,
             dayType: selectedDayType
         };
         setShifts(prev => [...prev, newShift]);
@@ -971,6 +995,13 @@ export const OnDemandWorkspace: React.FC = () => {
                 helper: 'Minimum day-level effective coverage the optimizer should chase.',
                 accent: 'bg-emerald-500 text-white',
                 suffix: '%',
+            },
+            {
+                key: 'breakDurationMinutes',
+                label: 'Break Duration',
+                helper: 'Required long-shift break length used by the optimizer and manual edits.',
+                accent: 'bg-amber-500 text-white',
+                suffix: 'mins',
             },
         ];
 
@@ -1599,7 +1630,7 @@ export const OnDemandWorkspace: React.FC = () => {
                                 <div className="mb-5 p-4 rounded-2xl bg-purple-50 border-2 border-purple-100">
                                     <div className="text-xs font-extrabold uppercase tracking-wider text-purple-600 mb-2">Why These Metrics</div>
                                     <p className="text-sm font-semibold text-purple-900/80">
-                                        These are the highest-leverage knobs for this scheduler: fleet cap, shift count cap, effective coverage target, minor gap tolerance, break handoff quality, and payable-hour pressure.
+                                        These are the highest-leverage knobs for this scheduler: fleet cap, shift count cap, effective coverage target, break duration, minor gap tolerance, break handoff quality, and payable-hour pressure.
                                     </p>
                                 </div>
 
@@ -1638,6 +1669,7 @@ export const OnDemandWorkspace: React.FC = () => {
                                 <div className="space-y-3 text-sm font-semibold text-gray-500">
                                     <p className="p-3 rounded-xl bg-blue-50 border-2 border-blue-100 text-blue-900/80">Coverage target, fleet cap, and shift count cap stay explicit because those are the clearest operating limits for staff to reason about.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Use a hard shift cap when the number of pieces is fixed. Switch it to guide when you want the optimizer to prefer fewer shifts without blocking extra relief work that meaningfully improves the day.</p>
+                                    <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Break duration sets the required long-shift break length, and the same value is used when you add or edit a shift manually.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Minor gap tolerance decides whether the optimizer can accept a very small shortfall in exchange for a meaningfully better full-day schedule.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Break protection controls how hard the optimizer should push for clean break relief and overlap coverage.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Cost pressure controls how strongly the optimizer trims extra payable hours and surplus once service quality is acceptable.</p>
@@ -1694,7 +1726,7 @@ export const OnDemandWorkspace: React.FC = () => {
                                 <h3 className="text-xl font-extrabold text-gray-700 mb-4">Hard Guardrails</h3>
                                 <div className="space-y-3 text-sm font-semibold text-gray-500">
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Shift span stays between 5 and 11 hours of drive time.</p>
-                                    <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Shifts over {BREAK_THRESHOLD_HOURS} hours still require a {BREAK_DURATION_SLOTS * 15}-minute break.</p>
+                                    <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Shifts over {BREAK_THRESHOLD_HOURS} hours still require a {optimizationSettings.breakDurationMinutes}-minute break.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Breaks still need to fall between hour 4 and hour 6 of the shift.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">North and South stay zone-bound. Floaters remain the relief layer for coverage and breaks.</p>
                                 </div>
@@ -1720,6 +1752,8 @@ export const OnDemandWorkspace: React.FC = () => {
                     shift={shiftToEdit}
                     allShifts={shifts}
                     requirements={requirements}
+                    requiredBreakDurationMinutes={optimizationSettings.breakDurationMinutes}
+                    requiredBreakDurationSlots={requiredBreakDurationSlots}
                     onSave={(updated) => {
                         handleShiftUpdate(updated);
                         setEditingShiftId(null);

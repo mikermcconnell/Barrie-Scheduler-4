@@ -12,9 +12,47 @@ export interface OptimizeRequestOptions {
   dayType?: OnDemandDayType;
   maxShiftCount?: number;
   shiftCountCapMode?: ShiftCountCapMode;
+  breakDurationMinutes?: number;
 }
 
 export const DEFAULT_SHIFT_COUNT_CAP = 18;
+export const DEFAULT_BREAK_DURATION_MINUTES = 45;
+export const BREAK_DURATION_MINUTES_LIMITS = {
+  min: 15,
+  max: 90,
+  step: 15,
+} as const;
+
+const clampBreakDurationMinutes = (value: number): number =>
+  Math.min(
+    BREAK_DURATION_MINUTES_LIMITS.max,
+    Math.max(BREAK_DURATION_MINUTES_LIMITS.min, value),
+  );
+
+export const normalizeBreakDurationMinutes = (
+  value: unknown,
+  fallback = DEFAULT_BREAK_DURATION_MINUTES,
+): number => {
+  const normalizedFallback = clampBreakDurationMinutes(
+    Number.isFinite(fallback) ? fallback : DEFAULT_BREAK_DURATION_MINUTES,
+  );
+  const numericValue = Number(value);
+
+  if (!Number.isFinite(numericValue)) {
+    return normalizedFallback;
+  }
+
+  const snappedValue = Math.round(
+    numericValue / BREAK_DURATION_MINUTES_LIMITS.step,
+  ) * BREAK_DURATION_MINUTES_LIMITS.step;
+
+  return clampBreakDurationMinutes(snappedValue);
+};
+
+export const breakDurationMinutesToSlots = (minutes: number): number =>
+  Math.round(
+    normalizeBreakDurationMinutes(minutes, DEFAULT_BREAK_DURATION_MINUTES) / 15,
+  );
 
 export const createDefaultShiftCountCaps = (
   fallback = DEFAULT_SHIFT_COUNT_CAP,

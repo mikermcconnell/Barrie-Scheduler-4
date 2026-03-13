@@ -1,7 +1,6 @@
 import { Requirement, Shift, Zone } from "../demandTypes";
 import {
   SHIFT_DURATION_SLOTS,
-  BREAK_DURATION_SLOTS,
   BREAK_THRESHOLD_HOURS
 } from "../demandConstants";
 import { auth } from "../firebase";
@@ -10,7 +9,11 @@ import {
   parseOptimizeMaxRetries,
   parseOptimizeTimeoutMs
 } from "./optimizePolicy";
-import type { OptimizeRequestOptions } from "../onDemandOptimizationSettings";
+import {
+  breakDurationMinutesToSlots,
+  DEFAULT_BREAK_DURATION_MINUTES,
+  type OptimizeRequestOptions,
+} from "../onDemandOptimizationSettings";
 
 export type OptimizationSource = 'ai' | 'fallback';
 export type OptimizationPipeline = 'fast' | 'multi-phase';
@@ -309,6 +312,9 @@ function localOptimizationFallback(
   optimizationOptions?: OptimizeRequestOptions,
 ): Shift[] {
   const shifts: Shift[] = [];
+  const configuredBreakDurationSlots = breakDurationMinutesToSlots(
+    optimizationOptions?.breakDurationMinutes ?? DEFAULT_BREAK_DURATION_MINUTES,
+  );
 
   // Find peak hours (when demand is highest)
   const hourlyDemand: { hour: number; demand: number }[] = [];
@@ -356,7 +362,7 @@ function localOptimizationFallback(
 
     if (hours > BREAK_THRESHOLD_HOURS) {
       breakStart = startSlot + 24; // Break at hour 6
-      breakDuration = BREAK_DURATION_SLOTS;
+      breakDuration = configuredBreakDurationSlots;
     }
 
     shifts.push({

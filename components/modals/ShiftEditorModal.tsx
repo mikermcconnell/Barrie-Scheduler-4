@@ -6,7 +6,6 @@ import {
     MIN_SHIFT_HOURS,
     MAX_SHIFT_HOURS,
     BREAK_THRESHOLD_HOURS,
-    BREAK_DURATION_SLOTS,
     TIME_SLOTS_PER_DAY
 } from '../../utils/demandConstants';
 import { X, Save, AlertTriangle, CheckCircle2, Clock, Coffee, GripHorizontal, ChevronLeft, ChevronRight, GripVertical, Plus, Trash2 } from 'lucide-react';
@@ -15,11 +14,21 @@ interface Props {
     shift: Shift;
     allShifts: Shift[];
     requirements: Requirement[];
+    requiredBreakDurationMinutes: number;
+    requiredBreakDurationSlots: number;
     onSave: (updatedShift: Shift) => void;
     onCancel: () => void;
 }
 
-export const ShiftEditorModal: React.FC<Props> = ({ shift, allShifts, requirements, onSave, onCancel }) => {
+export const ShiftEditorModal: React.FC<Props> = ({
+    shift,
+    allShifts,
+    requirements,
+    requiredBreakDurationMinutes,
+    requiredBreakDurationSlots,
+    onSave,
+    onCancel,
+}) => {
     const [currentShift, setCurrentShift] = useState<Shift>({ ...shift });
     const [validationMsg, setValidationMsg] = useState<string | null>(null);
     const trackRef = useRef<HTMLDivElement>(null);
@@ -74,8 +83,8 @@ export const ShiftEditorModal: React.FC<Props> = ({ shift, allShifts, requiremen
         }
 
         if (durationHours > BREAK_THRESHOLD_HOURS) {
-            if (currentShift.breakDurationSlots < BREAK_DURATION_SLOTS) {
-                setValidationMsg(`Shift > ${BREAK_THRESHOLD_HOURS}h requires a break`);
+            if (currentShift.breakDurationSlots < requiredBreakDurationSlots) {
+                setValidationMsg(`Shift > ${BREAK_THRESHOLD_HOURS}h requires a ${requiredBreakDurationMinutes}-minute break`);
                 return;
             }
             const shiftStart = currentShift.startSlot;
@@ -202,8 +211,8 @@ export const ShiftEditorModal: React.FC<Props> = ({ shift, allShifts, requiremen
             // Remove break
             updated.breakDurationSlots = 0;
         } else {
-            // Add break (default 45 mins, 5th hour)
-            updated.breakDurationSlots = BREAK_DURATION_SLOTS;
+            // Add break using the configured duration at the 5th hour.
+            updated.breakDurationSlots = requiredBreakDurationSlots;
             updated.breakStartSlot = updated.startSlot + 20;
         }
         setCurrentShift(updated);
