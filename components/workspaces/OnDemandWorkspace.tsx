@@ -1139,7 +1139,7 @@ export const OnDemandWorkspace: React.FC = () => {
                                 title={`Export all ${allShifts.length} shifts as RideCo Template`}
                             >
                                 <CloudDownload size={14} className="rotate-180" />
-                                Export CSV
+                                Export RideCo Format
                             </button>
                             <div className="w-px h-4 bg-gray-200"></div>
                             <button

@@ -82,10 +82,10 @@ const CustomTooltip = ({ active, payload, label, viewMode }: any) => {
       title = "South Zone (Exclusive)";
     } else if (viewMode === 'Floater') {
       req = data.floaterRequirement || 0;
-      cover = data.floaterAvailableCoverage;
+      cover = data.floaterCoverage;
       activeDrivers = cover;
       net = cover - req;
-      title = "Floater Zone (Exclusive)";
+      title = "Floater Drivers On Road";
     }
 
     return (
@@ -100,15 +100,25 @@ const CustomTooltip = ({ active, payload, label, viewMode }: any) => {
             <span className="text-brand-green">
               {viewMode === 'All'
                 ? 'Drivers on road:'
-                : `${viewMode === 'Floater' ? 'Available Floaters' : 'Active Drivers'}:`}
+                : `${viewMode === 'Floater' ? 'Floater Drivers' : 'Active Drivers'}:`}
             </span>
             <span>{cover}</span>
           </div>
-          {viewMode === 'Floater' && data.floaterAssignedRelief > 0 && (
-            <div className="flex justify-between gap-4 text-gray-500">
-              <span>Assigned To Other Zones:</span>
-              <span>{data.floaterAssignedRelief}</span>
-            </div>
+          {viewMode === 'Floater' && (
+            <>
+              <div className="flex justify-between gap-4 text-blue-600">
+                <span>Assigned to North:</span>
+                <span>{data.northRelief || 0}</span>
+              </div>
+              <div className="flex justify-between gap-4 text-green-600">
+                <span>Assigned to South:</span>
+                <span>{data.southRelief || 0}</span>
+              </div>
+              <div className="flex justify-between gap-4 text-gray-500">
+                <span>Available After Relief:</span>
+                <span>{data.floaterAvailableCoverage}</span>
+              </div>
+            </>
           )}
           {viewMode === 'All' && activeDrivers !== cover && (
             <div className="flex justify-between gap-4 text-gray-600">
@@ -155,11 +165,11 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
 
     currentCover: zoneFilter === 'North' ? d.northCoverage :
       (zoneFilter === 'South' ? d.southCoverage :
-        (zoneFilter === 'Floater' ? d.floaterAvailableCoverage : d.totalActiveCoverage)),
+        (zoneFilter === 'Floater' ? d.floaterCoverage : d.totalActiveCoverage)),
 
     currentNet: zoneFilter === 'North' ? ((d.northCoverage + (d.northRelief || 0)) - d.northRequirement) :
       (zoneFilter === 'South' ? ((d.southCoverage + (d.southRelief || 0)) - d.southRequirement) :
-        (zoneFilter === 'Floater' ? (d.floaterAvailableCoverage - d.floaterRequirement) : (d.totalActiveCoverage - d.totalRequirement))),
+        (zoneFilter === 'Floater' ? (d.floaterCoverage - d.floaterRequirement) : (d.totalActiveCoverage - d.totalRequirement))),
 
     currentBreak: zoneFilter === 'North' ? d.northBreaks :
       (zoneFilter === 'South' ? d.southBreaks :
@@ -170,11 +180,11 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
 
     surplusBar: Math.max(0, zoneFilter === 'North' ? ((d.northCoverage + (d.northRelief || 0)) - d.northRequirement) :
       (zoneFilter === 'South' ? ((d.southCoverage + (d.southRelief || 0)) - d.southRequirement) :
-        (zoneFilter === 'Floater' ? (d.floaterAvailableCoverage - d.floaterRequirement) : (d.totalActiveCoverage - d.totalRequirement)))),
+        (zoneFilter === 'Floater' ? (d.floaterCoverage - d.floaterRequirement) : (d.totalActiveCoverage - d.totalRequirement)))),
 
     gapBar: Math.min(0, zoneFilter === 'North' ? ((d.northCoverage + (d.northRelief || 0)) - d.northRequirement) :
       (zoneFilter === 'South' ? ((d.southCoverage + (d.southRelief || 0)) - d.southRequirement) :
-        (zoneFilter === 'Floater' ? (d.floaterAvailableCoverage - d.floaterRequirement) : (d.totalActiveCoverage - d.totalRequirement)))),
+        (zoneFilter === 'Floater' ? (d.floaterCoverage - d.floaterRequirement) : (d.totalActiveCoverage - d.totalRequirement)))),
   }));
 
   // Calculate stable Y-Axis max (round up to nearest 5)
@@ -186,7 +196,7 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
 
       const cov = zoneFilter === 'North' ? d.northCoverage :
         (zoneFilter === 'South' ? d.southCoverage :
-          (zoneFilter === 'Floater' ? d.floaterAvailableCoverage : d.totalActiveCoverage));
+          (zoneFilter === 'Floater' ? d.floaterCoverage : d.totalActiveCoverage));
 
       return Math.max(req, cov);
     }));
@@ -269,7 +279,7 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
                 {zoneFilter === 'All'
                   ? 'Drivers On Road Line'
                   : zoneFilter === 'Floater'
-                    ? 'Available Floaters Line'
+                    ? 'Floater Drivers On Road'
                     : 'Active Drivers Line'}
               </span>
             </div>
@@ -295,6 +305,11 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
           {zoneFilter === 'All' && (
             <div className="mb-4 text-xs font-semibold text-gray-500 text-right">
               System-wide green line shows active drivers on the road. Hover a point to compare raw drivers, overlapping shifts, and breaks.
+            </div>
+          )}
+          {zoneFilter === 'Floater' && (
+            <div className="mb-4 text-xs font-semibold text-gray-500 text-right">
+              Floater view shows all active floater drivers on the road. Tooltip rows show North-first relief assignments and remaining floater availability after relief.
             </div>
           )}
 
@@ -368,7 +383,7 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
                 name={zoneFilter === 'All'
                   ? 'Drivers On Road Line'
                   : zoneFilter === 'Floater'
-                    ? 'Available Floaters Line'
+                    ? 'Floater Drivers On Road'
                     : 'Active Drivers Line'}
                 isAnimationActive={false}
               />
