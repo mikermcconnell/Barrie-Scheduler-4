@@ -49,7 +49,7 @@ export const SummaryCards: React.FC<Props> = ({ metrics }) => {
         value={`${metrics.netDiffHours > 0 ? '+' : ''}${metrics.netDiffHours}h`} 
         icon={isDeficit ? <AlertCircle size={24} /> : <CheckCircle2 size={24} />} 
         colorClass={isDeficit ? "bg-brand-red" : "bg-brand-green"}
-        subtext={isDeficit ? "Under Budget / Under Service" : "Over Service"}
+        subtext={isDeficit ? "Under Service" : "Over Service"}
       />
       <Card 
         title="Coverage Score" 

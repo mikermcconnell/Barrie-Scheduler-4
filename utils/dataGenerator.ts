@@ -293,22 +293,37 @@ export const generateMockData = (optimized: boolean = false): TimeSlot[] => {
   return calculateSchedule(shifts, reqs);
 };
 
-export const calculateMetrics = (data: TimeSlot[], shifts?: Shift[]): SummaryMetrics => {
+interface CalculateMetricsOptions {
+  coveragePrecision?: number;
+  netDifferenceMode?: 'effective' | 'raw';
+}
+
+export const calculateMetrics = (
+  data: TimeSlot[],
+  shifts?: Shift[],
+  options?: CalculateMetricsOptions,
+): SummaryMetrics => {
   let totalReq = 0;
-  let totalCov = 0;
+  let totalEffectiveCov = 0;
   let netDiff = 0;
+  const coveragePrecision = options?.coveragePrecision ?? 0;
+  const netDifferenceMode = options?.netDifferenceMode ?? 'effective';
 
   // 1. Calculate Demand (Master Hours)
   data.forEach(slot => {
     // 15 min interval = 0.25 hours
     totalReq += slot.totalRequirement * 0.25;
-    totalCov += slot.totalEffectiveCoverage * 0.25;
-    netDiff += slot.netDifference * 0.25;
+    totalEffectiveCov += slot.totalEffectiveCoverage * 0.25;
+    netDiff += (
+      netDifferenceMode === 'raw'
+        ? (slot.totalActiveCoverage - slot.totalRequirement)
+        : slot.netDifference
+    ) * 0.25;
   });
 
   // 2. Calculate Supply (Payable Hours) - PREFERRED METHOD
   // If shifts are provided, calculate exact payable time (end - start)
-  let payableHours = totalCov;
+  let payableHours = totalEffectiveCov;
   if (shifts) {
     payableHours = shifts.reduce((sum, s) => sum + ((s.endSlot - s.startSlot) * 0.25), 0);
   }
@@ -317,8 +332,10 @@ export const calculateMetrics = (data: TimeSlot[], shifts?: Shift[]): SummaryMet
     totalMasterHours: parseFloat(totalReq.toFixed(1)),
     totalShiftHours: parseFloat(payableHours.toFixed(1)),
     netDiffHours: parseFloat(netDiff.toFixed(1)),
-    // Coverage uses totalCov (active hours excluding breaks) vs requirements
+    // Coverage uses totalEffectiveCov (active hours excluding breaks) vs requirements
     // This is intentional - payableHours includes break time which shouldn't count toward coverage
-    coveragePercent: totalReq > 0 ? Math.round((totalCov / totalReq) * 100) : 100
+    coveragePercent: totalReq > 0
+      ? parseFloat(((totalEffectiveCov / totalReq) * 100).toFixed(coveragePrecision))
+      : 100
   };
 };

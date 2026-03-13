@@ -50,7 +50,7 @@ import {
 } from '../../utils/onDemandOptimizationSettings';
 import {
     Wand2, Users, BarChart3, Sparkles, Loader2,
-    FolderOpen, Save, CloudDownload, Check, Edit3, RotateCcw, ArrowLeft, Star, X
+    FolderOpen, Save, CloudDownload, Check, Edit3, RotateCcw, ArrowLeft, Star, X, Undo2
 } from 'lucide-react';
 import { SHIFT_DURATION_SLOTS, BREAK_THRESHOLD_HOURS } from '../../utils/demandConstants';
 
@@ -177,6 +177,36 @@ const toValidDayType = (day: string): DayType => {
     return VALID_DAY_TYPES.includes(day as DayType) ? (day as DayType) : 'Weekday';
 };
 
+interface WorkspaceUndoSnapshot {
+    label: string;
+    selectedDayType: DayType;
+    requirements: Requirement[];
+    allShifts: Shift[];
+    schedules: Record<string, Requirement[]> | null;
+    isOptimized: boolean;
+    zoneFilter: ZoneFilterType;
+    draftName: string;
+    originalDraftName: string | null;
+    currentDraftId: string | null;
+    loadedCloudFiles: { master: SavedFile | null, rideco: SavedFile | null };
+}
+
+const cloneRequirements = (source: Requirement[]): Requirement[] =>
+    source.map(requirement => ({ ...requirement }));
+
+const cloneShifts = (source: Shift[]): Shift[] =>
+    source.map(shift => ({ ...shift }));
+
+const cloneSchedules = (
+    source: Record<string, Requirement[]> | null
+): Record<string, Requirement[]> | null => {
+    if (!source) return null;
+
+    return Object.fromEntries(
+        Object.entries(source).map(([key, requirements]) => [key, cloneRequirements(requirements)])
+    ) as Record<string, Requirement[]>;
+};
+
 export const OnDemandWorkspace: React.FC = () => {
     const { user } = useAuth();
     const toast = useToast();
@@ -231,6 +261,7 @@ export const OnDemandWorkspace: React.FC = () => {
     const optimizationRunIdRef = useRef(0);
     const optimizationInFlightRef = useRef(false);
     const [optimizationSettings, setOptimizationSettings] = useState<OptimizationSettings>(() => readOptimizationSettings());
+    const [undoSnapshot, setUndoSnapshot] = useState<WorkspaceUndoSnapshot | null>(null);
 
     useEffect(() => {
         localStorage.setItem(OPTIMIZATION_SETTINGS_STORAGE_KEY, JSON.stringify(optimizationSettings));
@@ -257,7 +288,10 @@ export const OnDemandWorkspace: React.FC = () => {
     // Derived State
     // Now guaranteed to have valid inputs on first render
     const timeSlots = useMemo(() => calculateSchedule(shifts, requirements), [shifts, requirements]);
-    const metrics = useMemo(() => calculateMetrics(timeSlots), [timeSlots]);
+    const metrics = useMemo(
+        () => calculateMetrics(timeSlots, shifts, { coveragePrecision: 1, netDifferenceMode: 'raw' }),
+        [shifts, timeSlots]
+    );
     const maxConcurrentVehicles = useMemo(
         () => timeSlots.reduce((peak, slot) => Math.max(peak, slot.totalActiveCoverage), 0),
         [timeSlots]
@@ -351,6 +385,45 @@ export const OnDemandWorkspace: React.FC = () => {
         }
     };
 
+    const captureUndoSnapshot = (label: string) => {
+        setUndoSnapshot({
+            label,
+            selectedDayType,
+            requirements: cloneRequirements(requirements),
+            allShifts: cloneShifts(allShifts),
+            schedules: cloneSchedules(schedules),
+            isOptimized,
+            zoneFilter,
+            draftName,
+            originalDraftName,
+            currentDraftId,
+            loadedCloudFiles,
+        });
+    };
+
+    const handleUndoLastChange = () => {
+        if (!undoSnapshot || isWorkspaceBusy) return;
+
+        const snapshot = undoSnapshot;
+        const restoredShifts = cloneShifts(snapshot.allShifts);
+
+        setSchedules(cloneSchedules(snapshot.schedules));
+        setSelectedDayType(snapshot.selectedDayType);
+        setRequirements(cloneRequirements(snapshot.requirements));
+        setAllShifts(restoredShifts);
+        setShifts(filterShiftsByDay(restoredShifts, snapshot.selectedDayType));
+        setZoneFilter(snapshot.zoneFilter);
+        setIsOptimized(snapshot.isOptimized);
+        setDraftName(snapshot.draftName);
+        setOriginalDraftName(snapshot.originalDraftName);
+        setCurrentDraftId(snapshot.currentDraftId);
+        setLoadedCloudFiles(snapshot.loadedCloudFiles);
+        setReviewModalData(null);
+        setEditingShiftId(null);
+        setUndoSnapshot(null);
+        toast.success('Change undone', `Restored the workspace before ${snapshot.label.toLowerCase()}.`);
+    };
+
     const buildOptimizationMessage = (result: OptimizationResult, actionLabel: string): string => {
         const details = [`${actionLabel} completed in ${Math.round(result.durationMs / 1000)}s`];
         if (result.pipeline) {
@@ -432,6 +505,7 @@ export const OnDemandWorkspace: React.FC = () => {
                     requestDayType
                 );
 
+                captureUndoSnapshot('regeneration');
                 setShifts(taggedShifts);
                 setAllShifts(prev => {
                     const others = prev.filter(s => (s.dayType || 'Weekday') !== requestDayType);
@@ -554,6 +628,7 @@ export const OnDemandWorkspace: React.FC = () => {
             selectedDayType
         );
 
+        captureUndoSnapshot('refinement');
         setShifts(taggedShifts);
 
         setAllShifts(prev => {
@@ -566,6 +641,7 @@ export const OnDemandWorkspace: React.FC = () => {
     };
 
     const handleShiftUpdate = (updatedShift: Shift) => {
+        captureUndoSnapshot('shift edit');
         setShifts(prev => updateShiftInDay(prev, updatedShift, selectedDayType));
         setAllShifts(prev => updateShiftInDay(prev, updatedShift, selectedDayType));
     };
@@ -584,6 +660,7 @@ export const OnDemandWorkspace: React.FC = () => {
     };
 
     const handleDeleteShift = (id: string) => {
+        captureUndoSnapshot('shift deletion');
         setShifts(prev => removeShiftFromDay(prev, id, selectedDayType));
         setAllShifts(prev => removeShiftFromDay(prev, id, selectedDayType));
     };
@@ -630,6 +707,7 @@ export const OnDemandWorkspace: React.FC = () => {
             breakDurationSlots: requiredBreakDurationSlots,
             dayType: selectedDayType
         };
+        captureUndoSnapshot('shift addition');
         setShifts(prev => [...prev, newShift]);
         setAllShifts(prev => [...prev, newShift]);
         // Switch to editor to see the new shift
@@ -673,6 +751,9 @@ export const OnDemandWorkspace: React.FC = () => {
             const ridecoContent = await readFile(filesToProcess.rideco);
             let dayForShiftFiltering = selectedDayType;
 
+            if (masterContent || ridecoContent) {
+                captureUndoSnapshot('file import');
+            }
             setCachedFiles({ master: masterContent, rideco: ridecoContent });
 
             if (masterContent) {
@@ -711,6 +792,7 @@ export const OnDemandWorkspace: React.FC = () => {
         setIsProcessingFiles(true);
         try {
             let dayForShiftFiltering = selectedDayType;
+            captureUndoSnapshot('reset to upload');
             if (cachedFiles.master) {
                 const newSchedules = parseMasterContent(cachedFiles.master);
                 setSchedules(newSchedules);
@@ -834,6 +916,7 @@ export const OnDemandWorkspace: React.FC = () => {
             if (fileType === 'schedule_master') {
                 // Parse as master schedule
                 console.log('Parsing as Master Schedule...');
+                captureUndoSnapshot('cloud file load');
                 setCachedFiles(prev => ({ ...prev, master: content }));
                 const newSchedules = parseMasterContent(content);
                 console.log('Parsed schedules:', Object.keys(newSchedules));
@@ -848,6 +931,7 @@ export const OnDemandWorkspace: React.FC = () => {
             } else if (fileType === 'rideco') {
                 // Parse as RideCo shifts
                 console.log('Parsing as RideCo shifts...');
+                captureUndoSnapshot('cloud file load');
                 setCachedFiles(prev => ({ ...prev, rideco: content }));
                 const newShifts = parseRideCoContent(content);
                 console.log('Parsed shifts count:', newShifts.length);
@@ -879,6 +963,7 @@ export const OnDemandWorkspace: React.FC = () => {
             ? normalizeOnDemandShifts(schedule.shiftData, 'Weekday')
             : [];
 
+        captureUndoSnapshot('schedule load');
         // Restore the workspace state from the saved schedule
         if (normalizedShiftData.length > 0) {
             setAllShifts(normalizedShiftData);
@@ -1245,6 +1330,23 @@ export const OnDemandWorkspace: React.FC = () => {
                                 </button>
                             )}
 
+                            <button
+                                onClick={handleUndoLastChange}
+                                disabled={isWorkspaceBusy || !undoSnapshot}
+                                className={`
+                                flex items-center gap-2 px-5 py-2 rounded-xl font-bold shadow-sm border active:scale-95 whitespace-nowrap
+                                ${isWorkspaceBusy || !undoSnapshot
+                                        ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
+                                        : 'bg-amber-500 text-white border-amber-600 hover:bg-amber-600 hover:border-amber-700 shadow-md'
+                                    }
+                                transition-all duration-200
+                            `}
+                                title={undoSnapshot ? `Undo ${undoSnapshot.label}` : 'Undo last change'}
+                            >
+                                <Undo2 size={18} />
+                                <span>{undoSnapshot ? `Undo ${undoSnapshot.label}` : 'Undo Last Change'}</span>
+                            </button>
+
                             {/* Refine Button - Primary Action */}
                             <button
                                 onClick={handleRefineClick}
@@ -1303,6 +1405,12 @@ export const OnDemandWorkspace: React.FC = () => {
                                 )}
                             </button>
                         </div>
+
+                        {undoSnapshot && !isWorkspaceBusy && (
+                            <div className="text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-xl">
+                                Ready to undo: {undoSnapshot.label}
+                            </div>
+                        )}
 
 
                         {/* Progress bar when optimizing */}
