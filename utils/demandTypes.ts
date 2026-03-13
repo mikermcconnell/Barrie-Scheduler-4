@@ -30,6 +30,7 @@ export interface TimeSlot {
   southRelief: number; // Floater contribution to South
   floaterAssignedRelief: number; // Floaters temporarily covering North/South demand
   floaterAvailableCoverage: number; // Floaters still available to cover floater demand after relief
+  originalActiveCoverage?: number; // For ghost line comparison in All view
   originalEffectiveCoverage?: number; // For ghost line comparison
   netDifference: number; // Effective coverage - Required
 }
