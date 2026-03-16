@@ -13,6 +13,88 @@ import {
 import { TimeSlot, ZoneFilterType } from '../utils/demandTypes';
 import { MapPin, ChevronUp, ChevronDown } from 'lucide-react';
 
+const DISPLAY_START_HOUR = 5;
+const TAIL_BUFFER_MINUTES = 15;
+
+const formatExtendedTime = (totalMinutes: number): string => {
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+};
+
+const getGapChartSignal = (slot: TimeSlot, zoneFilter: ZoneFilterType): number => {
+  if (zoneFilter === 'North') {
+    return slot.northRequirement + slot.northCoverage + slot.northBreaks;
+  }
+  if (zoneFilter === 'South') {
+    return slot.southRequirement + slot.southCoverage + slot.southBreaks;
+  }
+  if (zoneFilter === 'Floater') {
+    return (slot.floaterRequirement || 0) + slot.floaterCoverage + slot.floaterBreaks;
+  }
+
+  return slot.totalRequirement + slot.totalActiveCoverage + slot.driversOnBreak;
+};
+
+const createGapChartTailSlot = (slot: TimeSlot, timestamp: number): TimeSlot => ({
+  ...slot,
+  timeLabel: formatExtendedTime(timestamp),
+  timestamp,
+  northRequirement: 0,
+  southRequirement: 0,
+  floaterRequirement: 0,
+  floaterEffectiveRequirement: 0,
+  floaterEffectiveCoverage: 0,
+  totalRequirement: 0,
+  northCoverage: 0,
+  southCoverage: 0,
+  floaterCoverage: 0,
+  driversOnBreak: 0,
+  northBreaks: 0,
+  southBreaks: 0,
+  floaterBreaks: 0,
+  totalActiveCoverage: 0,
+  totalEffectiveCoverage: 0,
+  totalOverlappingShifts: 0,
+  northRelief: 0,
+  southRelief: 0,
+  floaterAssignedRelief: 0,
+  floaterAvailableCoverage: 0,
+  originalActiveCoverage: 0,
+  originalEffectiveCoverage: 0,
+  netDifference: 0,
+});
+
+export const buildGapChartDisplayData = (
+  data: TimeSlot[],
+  zoneFilter: ZoneFilterType,
+): TimeSlot[] => {
+  const displayWindow = data.filter((slot) => Math.floor(slot.timestamp / 60) >= DISPLAY_START_HOUR);
+  if (displayWindow.length === 0) {
+    return [];
+  }
+
+  const lastRelevantIndex = displayWindow.reduce((lastIndex, slot, index) => (
+    getGapChartSignal(slot, zoneFilter) > 0 ? index : lastIndex
+  ), -1);
+
+  if (lastRelevantIndex === -1) {
+    return displayWindow;
+  }
+
+  const displayData = displayWindow.slice(0, lastRelevantIndex + 1);
+  const lastVisibleSlot = displayData[displayData.length - 1];
+
+  displayData.push(
+    createGapChartTailSlot(
+      lastVisibleSlot,
+      lastVisibleSlot.timestamp + TAIL_BUFFER_MINUTES,
+    ),
+  );
+
+  return displayData;
+};
+
 const CustomXAxisTick = ({ x, y, payload }: any) => {
   // We expect payload.value to be the time label (e.g. "08:00")
   // or we can use the index if needed. 
@@ -150,11 +232,10 @@ const CustomTooltip = ({ active, payload, label, viewMode }: any) => {
 
 export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange, fillHeight = false }) => {
 
-  // Filter data to only show reasonable operating hours (e.g., 5am to 1am) for better visual
-  const displayData = data.filter(d => {
-    const h = Math.floor(d.timestamp / 60);
-    return h >= 5 || h <= 1; // 05:00 to 01:00 (next day)
-  });
+  const displayData = React.useMemo(
+    () => buildGapChartDisplayData(data, zoneFilter),
+    [data, zoneFilter],
+  );
 
   // Calculate dynamic data keys based on mode
   const chartData = displayData.map(d => ({
