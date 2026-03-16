@@ -29,11 +29,14 @@ import type { UploadConfirmation, DayType as MasterDayType } from '../../utils/m
 import { buildStopNameToIdMap } from '../../utils/gtfs/gtfsStopLookup';
 import { resolveAutoRouteNumber } from './utils/routeInference';
 import {
+    buildCanonicalSegmentColumnsFromMasterStops,
     buildSegmentsMapFromParsedData,
     createDefaultPerformanceConfig,
     createDefaultScheduleConfig,
     deriveWizardStepFromProject,
+    getOrderedSegmentNames,
     shouldShowNextStepAction,
+    type OrderedSegmentColumn,
 } from './utils/wizardState';
 
 // Constants - centralized magic numbers
@@ -186,6 +189,8 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
     const [bandSummary, setBandSummary] = useState<DirectionBandSummary>({});
     const [segmentsMap, setSegmentsMap] = useState<Record<string, SegmentRawData[]>>({});
     const [segmentNames, setSegmentNames] = useState<string[]>([]);
+    const [canonicalSegmentColumns, setCanonicalSegmentColumns] = useState<OrderedSegmentColumn[] | undefined>(undefined);
+    const [canonicalDirectionStops, setCanonicalDirectionStops] = useState<Record<string, string[]> | undefined>(undefined);
 
     // State for Step 3 Config
     const [config, setConfig] = useState<ScheduleConfig>({
@@ -246,6 +251,55 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         return [...generatedSchedules, scopeTable];
     }, [generatedSchedules, masterStopCodes]);
 
+    useEffect(() => {
+        let isCancelled = false;
+
+        if (!team?.id || !config.routeNumber?.trim()) {
+            setCanonicalSegmentColumns(undefined);
+            setCanonicalDirectionStops(undefined);
+            return () => {
+                isCancelled = true;
+            };
+        }
+
+        const loadCanonicalSegmentColumns = async () => {
+            try {
+                const routeIdentity = buildRouteIdentity(config.routeNumber.trim(), dayType);
+                const result = await getMasterSchedule(team.id, routeIdentity);
+                if (isCancelled) return;
+
+                if (!result) {
+                    setCanonicalSegmentColumns(undefined);
+                    setCanonicalDirectionStops(undefined);
+                    return;
+                }
+
+                const directionStops: Record<string, string[]> = {
+                    North: result.content.northTable.stops || [],
+                    South: result.content.southTable.stops || [],
+                };
+                const columns = buildCanonicalSegmentColumnsFromMasterStops(
+                    config.routeNumber.trim(),
+                    directionStops.North,
+                    directionStops.South
+                );
+                setCanonicalDirectionStops(directionStops);
+                setCanonicalSegmentColumns(columns.length > 0 ? columns : undefined);
+            } catch (error) {
+                if (isCancelled) return;
+                console.error('Error loading canonical segment columns from master schedule:', error);
+                setCanonicalSegmentColumns(undefined);
+                setCanonicalDirectionStops(undefined);
+            }
+        };
+
+        void loadCanonicalSegmentColumns();
+
+        return () => {
+            isCancelled = true;
+        };
+    }, [team?.id, config.routeNumber, dayType]);
+
     // Backfill old generated schedules that used sequential stop IDs (#1, #2, ...)
     // so existing projects immediately get real stop codes for connections.
     useEffect(() => {
@@ -292,17 +346,6 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         }
     }, [generatedSchedules, masterStopCodes, gtfsStopLookup]);
 
-    // Helper to extract unique segment names from analysis
-    const extractSegmentNames = (analysisData: TripBucketAnalysis[]): string[] => {
-        const names = new Set<string>();
-        analysisData.forEach(bucket => {
-            bucket.details?.forEach(detail => {
-                names.add(detail.segmentName);
-            });
-        });
-        return Array.from(names);
-    };
-
     const stopSuggestions = useMemo(() => {
         const seen = new Set<string>();
         const ordered: string[] = [];
@@ -331,7 +374,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         const { buckets, bands: newBands } = calculateBands(newAnalysis);
         setAnalysis(buckets);
         setBands(newBands);
-        setSegmentNames(extractSegmentNames(buckets));
+        setSegmentNames(getOrderedSegmentNames(segmentsMap, buckets));
     };
 
     // Wizard Progress Persistence
@@ -605,7 +648,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
             }
             if (savedProgress.analysis) {
                 setAnalysis(savedProgress.analysis);
-                setSegmentNames(extractSegmentNames(savedProgress.analysis));
+                setSegmentNames(getOrderedSegmentNames({}, savedProgress.analysis));
             }
             if (savedProgress.bands) setBands(savedProgress.bands);
             if (savedProgress.config) setConfig(savedProgress.config);
@@ -613,8 +656,10 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
 
             // Restore Raw Data if available
             if (savedProgress.parsedData && savedProgress.parsedData.length > 0) {
+                const groupedSegments = buildSegmentsMapFromParsedData(savedProgress.parsedData);
                 setParsedData(savedProgress.parsedData);
-                setSegmentsMap(buildSegmentsMapFromParsedData(savedProgress.parsedData));
+                setSegmentsMap(groupedSegments);
+                setSegmentNames(getOrderedSegmentNames(groupedSegments, savedProgress.analysis));
             }
 
             toast.success('Progress Restored', 'Continuing from where you left off');
@@ -679,12 +724,12 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         const rawAnalysis = calculateTotalTripTimes(results);
         const withOutliers = detectOutliers(rawAnalysis);
         const { buckets, bands: generatedBands } = calculateBands(withOutliers);
+        const groupedSegments = buildSegmentsMapFromParsedData(results);
 
         setAnalysis(buckets);
         setBands(generatedBands);
-        setSegmentNames(extractSegmentNames(buckets));
-
-        setSegmentsMap(buildSegmentsMapFromParsedData(results));
+        setSegmentsMap(groupedSegments);
+        setSegmentNames(getOrderedSegmentNames(groupedSegments, buckets));
 
         const autoRouteNumber = resolveAutoRouteNumber(
             results.map(r => r.detectedRouteNumber)
@@ -814,8 +859,38 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
             const groupedData = buildSegmentsMapFromParsedData(sortedParsedData);
             setSegmentsMap(groupedData);
 
+            let generationCanonicalColumns = canonicalSegmentColumns;
+            let generationCanonicalStops = canonicalDirectionStops;
+
+            if ((!generationCanonicalColumns || !generationCanonicalStops) && team?.id && config.routeNumber?.trim()) {
+                try {
+                    const routeIdentity = buildRouteIdentity(config.routeNumber.trim(), dayType);
+                    const masterResult = await getMasterSchedule(team.id, routeIdentity);
+                    if (masterResult) {
+                        generationCanonicalStops = {
+                            North: masterResult.content.northTable.stops || [],
+                            South: masterResult.content.southTable.stops || [],
+                        };
+                        generationCanonicalColumns = buildCanonicalSegmentColumnsFromMasterStops(
+                            config.routeNumber.trim(),
+                            generationCanonicalStops.North,
+                            generationCanonicalStops.South
+                        );
+                        setCanonicalDirectionStops(generationCanonicalStops);
+                        setCanonicalSegmentColumns(generationCanonicalColumns);
+                    }
+                } catch (error) {
+                    console.error('Failed to refresh canonical master data before generation:', error);
+                }
+            }
+
             // Compute bandSummary synchronously at generation time
-            const freshBandSummary = computeDirectionBandSummary(analysis, bands, groupedData);
+            const freshBandSummary = computeDirectionBandSummary(
+                analysis,
+                bands,
+                groupedData,
+                generationCanonicalColumns ? { canonicalSegmentColumns: generationCanonicalColumns } : undefined
+            );
 
             // Generate schedule
             const generatedTables = generateSchedule(
@@ -826,7 +901,8 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                 groupedData,
                 dayType,
                 gtfsStopLookup,
-                masterStopCodes
+                masterStopCodes,
+                generationCanonicalStops
             );
 
             if (generatedTables.length === 0) {
@@ -972,7 +1048,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
 
         if (fullProject.analysis && fullProject.analysis.length > 0) {
             setAnalysis(fullProject.analysis);
-            setSegmentNames(extractSegmentNames(fullProject.analysis));
+            setSegmentNames(getOrderedSegmentNames({}, fullProject.analysis));
         }
         if (fullProject.bands && fullProject.bands.length > 0) {
             setBands(fullProject.bands);
@@ -984,8 +1060,10 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
             setGeneratedSchedules(fullProject.generatedSchedules);
         }
         if (fullProject.parsedData && fullProject.parsedData.length > 0) {
+            const groupedSegments = buildSegmentsMapFromParsedData(fullProject.parsedData);
             setParsedData(fullProject.parsedData);
-            setSegmentsMap(buildSegmentsMapFromParsedData(fullProject.parsedData));
+            setSegmentsMap(groupedSegments);
+            setSegmentNames(getOrderedSegmentNames(groupedSegments, fullProject.analysis));
         }
     }, []);
 
@@ -1159,10 +1237,12 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                         {step === 2 && (
                             <Step2Analysis
                                 dayType={dayType}
+                                routeNumber={config.routeNumber}
                                 analysis={analysis}
                                 bands={bands}
                                 setAnalysis={handleAnalysisUpdate}
                                 segmentsMap={segmentsMap}
+                                canonicalSegmentColumns={canonicalSegmentColumns}
                                 onBandSummaryChange={setBandSummary}
                             />
                         )}

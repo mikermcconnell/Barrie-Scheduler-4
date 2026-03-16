@@ -1,12 +1,16 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ShuttlePlannerWorkspaceView } from './ShuttlePlannerWorkspace';
-import { ArrowLeft, Cloud, Copy, FileDown, Loader2, MapPinned, Move3D, Plus, Route, Save, Star, Trash2, Undo2 } from 'lucide-react';
+import { ArrowLeft, Cloud, Copy, FileDown, Loader2, Maximize2, Minimize2, Plus, RotateCcw, Route, Save, Star, Trash2, Undo2 } from 'lucide-react';
 import { Layer, Marker, Source } from 'react-map-gl/mapbox';
-import type { LayerProps } from 'react-map-gl/mapbox';
+import type { LayerProps, MapRef } from 'react-map-gl/mapbox';
 import { usePerformanceDataQuery, usePerformanceMetadataQuery } from '../../hooks/usePerformanceData';
 import { ROUTE_DIRECTIONS } from '../../utils/config/routeDirectionConfig';
 import { buildCorridorSpeedIndex } from '../../utils/gtfs/corridorSpeed';
 import { DAY_TYPES, TIME_PERIODS, type DayType, type TimePeriod } from '../../utils/gtfs/corridorHeadway';
+import {
+    buildRouteScenarioImpactSummary,
+    getExistingRouteBaselineScenario,
+} from '../../utils/route-planner/routePlannerComparison';
 import { deriveRouteProject } from '../../utils/route-planner/routePlannerPlanning';
 import { compareRouteCoverageMetrics } from '../../utils/route-planner/routePlannerCoverage';
 import {
@@ -204,6 +208,7 @@ function PlannedModePanel({
     teamId?: string | null;
 }): React.ReactElement {
     const requiresExistingRoute = selectedMode === 'existing-route-tweak';
+    const mapRef = useRef<MapRef | null>(null);
     const {
         projects,
         localDraftProject,
@@ -256,6 +261,7 @@ function PlannedModePanel({
         handleRemoveStop,
         handleUndoWaypoint,
         handleClearRoute,
+        handleResetRouteToGtfs,
         handleSaveProject,
         handleDuplicateProject,
         handleCreateFreshProject,
@@ -263,6 +269,7 @@ function PlannedModePanel({
     } = projectController;
     const [analysisDayType, setAnalysisDayType] = useState<DayType>('weekday');
     const [analysisPeriod, setAnalysisPeriod] = useState<TimePeriod>('full-day');
+    const [isMapFullscreen, setIsMapFullscreen] = useState(false);
     const metadataQuery = usePerformanceMetadataQuery(teamId ?? undefined);
     const hasPerformanceData = Boolean(metadataQuery.data);
     const dataQuery = usePerformanceDataQuery(teamId ?? undefined, hasPerformanceData);
@@ -329,6 +336,18 @@ function PlannedModePanel({
     const preferredTimetablePreview = useMemo(
         () => (preferredDisplayScenario ? buildRouteTimetablePreview(preferredDisplayScenario, 5) : null),
         [preferredDisplayScenario],
+    );
+    const selectedBaselineScenario = useMemo(
+        () => (displaySelectedScenario ? getExistingRouteBaselineScenario(displayProject, displaySelectedScenario) : null),
+        [displayProject, displaySelectedScenario],
+    );
+    const selectedImpactSummary = useMemo(
+        () => (
+            selectedBaselineScenario && displaySelectedScenario
+                ? buildRouteScenarioImpactSummary(selectedBaselineScenario, displaySelectedScenario)
+                : null
+        ),
+        [displaySelectedScenario, selectedBaselineScenario],
     );
     const coverageComparisonDelta = useMemo(
         () => compareRouteCoverageMetrics(displayVisibleScenarios[0]?.coverage, displayVisibleScenarios[1]?.coverage),
@@ -403,6 +422,43 @@ function PlannedModePanel({
             buildRouteScenarioHandoff(displayProject, preferredDisplayScenario, preferredObservedSummary),
         );
     };
+
+    useEffect(() => {
+        if (!isMapFullscreen) return undefined;
+
+        const previousOverflow = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+
+        return () => {
+            document.body.style.overflow = previousOverflow;
+        };
+    }, [isMapFullscreen]);
+
+    useEffect(() => {
+        if (!isMapFullscreen) return undefined;
+
+        const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') {
+                setIsMapFullscreen(false);
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [isMapFullscreen]);
+
+    useEffect(() => {
+        const map = mapRef.current;
+        if (!map) return undefined;
+
+        const frame = requestAnimationFrame(() => map.resize());
+        const timer = window.setTimeout(() => map.resize(), 120);
+
+        return () => {
+            cancelAnimationFrame(frame);
+            window.clearTimeout(timer);
+        };
+    }, [isMapFullscreen]);
 
     return (
         <div className="h-full overflow-auto custom-scrollbar p-6">
@@ -506,118 +562,57 @@ function PlannedModePanel({
 
                 <div className="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_420px]">
                     <section className="rounded-3xl border-2 border-gray-200 bg-white p-6 shadow-sm">
-                        <div className="mb-4 flex items-center justify-between gap-3">
+                        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
                             <div>
-                                <p className="text-xs font-extrabold uppercase tracking-[0.2em] text-gray-400">Map-First Workspace</p>
-                                <h3 className="text-xl font-extrabold text-gray-900">{title}</h3>
+                                <p className="text-xs font-extrabold uppercase tracking-[0.2em] text-gray-400">{title}</p>
+                                <h3 className="text-xl font-extrabold text-gray-900">Route alignment draft</h3>
+                                <p className="mt-1 max-w-3xl text-sm font-semibold leading-relaxed text-gray-500">
+                                    Keep this screen focused on map editing. Service assumptions, comparisons, and exports stay in the side panels.
+                                </p>
                             </div>
                             <div className="rounded-full bg-gray-100 px-3 py-1 text-[11px] font-extrabold uppercase tracking-[0.16em] text-gray-500">
-                                Planned Mode
+                                {selectedScenario ? `${selectedScenario.name} active` : 'No scenario selected'}
                             </div>
                         </div>
-                        <p className="max-w-3xl text-sm font-semibold leading-relaxed text-gray-600">
-                            {summary}
-                        </p>
-                        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                            <div className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
-                                <div className="text-xs font-extrabold uppercase tracking-[0.16em] text-gray-400">Active Scenario</div>
+                        <div className="mb-4 flex flex-wrap items-end gap-3 rounded-2xl border border-cyan-200 bg-cyan-50/70 p-3">
+                            {!requiresExistingRoute && (
+                                <label className="block min-w-[180px]">
+                                    <p className="text-[11px] font-extrabold uppercase tracking-[0.16em] text-cyan-700">Base Source</p>
+                                    <select
+                                        value={draftState.baseSource}
+                                        onChange={(event) => updateDraftState({ ...draftState, baseSource: event.target.value as typeof draftState.baseSource })}
+                                        className="mt-2 w-full rounded-xl border border-cyan-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700 outline-none focus:border-brand-blue"
+                                    >
+                                        <option value="blank">Blank concept</option>
+                                        <option value="existing-route">Existing route</option>
+                                    </select>
+                                </label>
+                            )}
+                            {draftState.baseSource === 'existing-route' && (
+                                <label className="block min-w-[180px]">
+                                    <p className="text-[11px] font-extrabold uppercase tracking-[0.16em] text-cyan-700">Route Template</p>
+                                    <select
+                                        value={draftState.routeId}
+                                        onChange={(event) => updateDraftState({ ...draftState, routeId: event.target.value })}
+                                        className="mt-2 w-full rounded-xl border border-cyan-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700 outline-none focus:border-brand-blue"
+                                    >
+                                        {ROUTE_OPTIONS.map((routeId) => (
+                                            <option key={routeId} value={routeId}>Route {routeId}</option>
+                                        ))}
+                                    </select>
+                                </label>
+                            )}
+                            <div className="min-w-[220px] flex-1 rounded-xl border border-white/80 bg-white px-3 py-2">
+                                <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-gray-400">Current Scenario</div>
                                 <div className="mt-1 text-sm font-extrabold text-gray-900">{selectedScenario?.name ?? 'No scenario selected'}</div>
                                 <div className="mt-1 text-xs font-semibold text-gray-500">
-                                    {selectedScenario ? `${selectedScenario.status} · ${selectedScenario.pattern}` : 'Select a scenario to edit'}
-                                </div>
-                            </div>
-                            <div className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
-                                <div className="text-xs font-extrabold uppercase tracking-[0.16em] text-gray-400">Base Source</div>
-                                <div className="mt-1 text-sm font-extrabold text-gray-900">
-                                    {draftState.baseSource === 'existing-route' ? `Route ${draftState.routeId}` : 'Blank concept'}
-                                </div>
-                                <div className="mt-1 text-xs font-semibold text-gray-500">
-                                    {draftState.baseSource === 'existing-route'
-                                        ? 'Starting from an existing Barrie route template.'
-                                        : 'Authoring a new route concept from scratch.'}
-                                </div>
-                            </div>
-                            <div className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
-                                <div className="text-xs font-extrabold uppercase tracking-[0.16em] text-gray-400">Runtime Snapshot</div>
-                                <div className="mt-1 text-sm font-extrabold text-gray-900">
-                                    {displaySelectedScenario ? `${displaySelectedScenario.runtimeMinutes} min` : 'Not ready'}
-                                </div>
-                                <div className="mt-1 text-xs font-semibold text-gray-500">
-                                    {displaySelectedScenario
-                                        ? `${displaySelectedScenario.busesRequired} buses · ${displaySelectedScenario.stops.length} stops`
-                                        : 'Add alignment and stops to generate service metrics'}
-                                </div>
-                            </div>
-                            <div className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
-                                <div className="text-xs font-extrabold uppercase tracking-[0.16em] text-gray-400">Observed Evidence</div>
-                                <div className="mt-1 text-sm font-extrabold text-gray-900">
-                                    {selectedObservedSummary
-                                        ? `${selectedObservedSummary.matchedSegmentCount}/${selectedObservedSummary.totalSegmentCount} matched`
-                                        : 'Fallback only'}
-                                </div>
-                                <div className="mt-1 text-xs font-semibold text-gray-500">
-                                    {selectedObservedSummary
-                                        ? `${selectedObservedSummary.minimumSampleCount} minimum samples`
-                                        : 'Add Barrie stop pairs to unlock segment evidence'}
+                                    {selectedScenario
+                                        ? `${selectedScenario.status} · ${selectedScenario.pattern}`
+                                        : 'Choose or create a scenario to start editing the route.'}
                                 </div>
                             </div>
                         </div>
-                        <div className="mt-4 rounded-2xl border-2 border-cyan-200 bg-cyan-50 p-4">
-                            <div className="mb-3 flex items-center justify-between gap-3">
-                                <div>
-                                    <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-cyan-700">Shared Route Setup</p>
-                                    <h4 className="mt-1 text-base font-extrabold text-cyan-950">Base Source</h4>
-                                </div>
-                                <div className="rounded-full bg-white px-3 py-1 text-[11px] font-extrabold uppercase tracking-[0.16em] text-cyan-700">
-                                    Parent Shell State
-                                </div>
-                            </div>
-                            <div className="grid gap-3 md:grid-cols-2">
-                                <button
-                                    type="button"
-                                    onClick={() => updateDraftState({ ...draftState, baseSource: 'blank' })}
-                                    disabled={requiresExistingRoute}
-                                    className={`rounded-2xl border-2 p-4 text-left transition-all ${
-                                        draftState.baseSource === 'blank'
-                                            ? 'border-brand-blue bg-white shadow-sm'
-                                            : 'border-cyan-200 bg-white/70 hover:border-cyan-300'
-                                    } disabled:cursor-not-allowed disabled:opacity-50`}
-                                >
-                                    <div className="text-sm font-extrabold text-gray-900">Blank Concept</div>
-                                    <p className="mt-1 text-xs font-semibold leading-relaxed text-gray-500">
-                                        Start from a new concept and add alignment and stops from scratch.
-                                    </p>
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => updateDraftState({ ...draftState, baseSource: 'existing-route' })}
-                                    className={`rounded-2xl border-2 p-4 text-left transition-all ${
-                                        draftState.baseSource === 'existing-route'
-                                            ? 'border-brand-blue bg-white shadow-sm'
-                                            : 'border-cyan-200 bg-white/70 hover:border-cyan-300'
-                                    }`}
-                                >
-                                    <div className="text-sm font-extrabold text-gray-900">Existing Barrie Route</div>
-                                    <p className="mt-1 text-xs font-semibold leading-relaxed text-gray-500">
-                                        Use an existing route or branch as the starting template for analysis.
-                                    </p>
-                                </button>
-                            </div>
-                            <div className="mt-3">
-                                <label className="text-xs font-extrabold uppercase tracking-[0.16em] text-cyan-700">Route Template</label>
-                                <select
-                                    value={draftState.routeId}
-                                    onChange={(event) => updateDraftState({ ...draftState, routeId: event.target.value })}
-                                    disabled={draftState.baseSource !== 'existing-route'}
-                                    className="mt-2 w-full rounded-xl border border-cyan-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700 outline-none focus:border-brand-blue disabled:cursor-not-allowed disabled:bg-cyan-100/50 disabled:text-gray-400"
-                                >
-                                    {ROUTE_OPTIONS.map((routeId) => (
-                                        <option key={routeId} value={routeId}>Route {routeId}</option>
-                                    ))}
-                                </select>
-                            </div>
-                        </div>
-                        <div className="mt-4 rounded-2xl border-2 border-gray-200 bg-white p-4">
+                        <div className={isMapFullscreen ? 'fixed inset-0 z-50 flex flex-col bg-white p-5' : 'mt-4 rounded-2xl border-2 border-gray-200 bg-white p-4'}>
                             <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                                 <div>
                                     <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-gray-400">Map Authoring</p>
@@ -626,33 +621,44 @@ function PlannedModePanel({
                                         Mapping is the primary planning surface for these modes. Build the geometry here first, then refine stops, timing, and scenario comparison around it.
                                     </p>
                                 </div>
-                                <div className="flex items-center gap-2 rounded-lg border border-gray-100 bg-gray-50 p-1">
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <div className="flex items-center gap-2 rounded-lg border border-gray-100 bg-gray-50 p-1">
+                                        <button
+                                            type="button"
+                                            onClick={() => setMapEditMode('inspect')}
+                                            className={`rounded-md px-3 py-1.5 text-xs font-bold transition-all ${
+                                                mapEditMode === 'inspect' ? 'bg-white text-brand-blue shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                                            }`}
+                                        >
+                                            Inspect
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setMapEditMode('route')}
+                                            className={`rounded-md px-3 py-1.5 text-xs font-bold transition-all ${
+                                                mapEditMode === 'route' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                                            }`}
+                                        >
+                                            Edit Alignment
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setMapEditMode('stop')}
+                                            className={`rounded-md px-3 py-1.5 text-xs font-bold transition-all ${
+                                                mapEditMode === 'stop' ? 'bg-white text-emerald-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                                            }`}
+                                        >
+                                            Edit Stops
+                                        </button>
+                                    </div>
                                     <button
                                         type="button"
-                                        onClick={() => setMapEditMode('inspect')}
-                                        className={`rounded-md px-3 py-1.5 text-xs font-bold transition-all ${
-                                            mapEditMode === 'inspect' ? 'bg-white text-brand-blue shadow-sm' : 'text-gray-500 hover:text-gray-700'
-                                        }`}
+                                        onClick={() => setIsMapFullscreen((current) => !current)}
+                                        className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-extrabold uppercase tracking-[0.12em] text-gray-700 transition-colors hover:border-gray-300 hover:text-gray-900"
+                                        title={isMapFullscreen ? 'Exit fullscreen (Esc)' : 'Open fullscreen map'}
                                     >
-                                        Inspect
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => setMapEditMode('route')}
-                                        className={`rounded-md px-3 py-1.5 text-xs font-bold transition-all ${
-                                            mapEditMode === 'route' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-                                        }`}
-                                    >
-                                        Edit Alignment
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => setMapEditMode('stop')}
-                                        className={`rounded-md px-3 py-1.5 text-xs font-bold transition-all ${
-                                            mapEditMode === 'stop' ? 'bg-white text-emerald-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-                                        }`}
-                                    >
-                                        Edit Stops
+                                        {isMapFullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+                                        {isMapFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
                                     </button>
                                 </div>
                             </div>
@@ -675,6 +681,16 @@ function PlannedModePanel({
                                     <Trash2 size={13} />
                                     Clear Route
                                 </button>
+                                <button
+                                    type="button"
+                                    onClick={handleResetRouteToGtfs}
+                                    disabled={selectedScenario?.baseSource.kind !== 'existing_route'}
+                                    className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-extrabold uppercase tracking-[0.12em] text-emerald-700 transition-colors hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+                                    title={selectedScenario?.baseSource.kind === 'existing_route' ? 'Restore the selected route to its GTFS starting shape' : 'Only existing Barrie route templates can be reset to GTFS'}
+                                >
+                                    <RotateCcw size={13} />
+                                    Reset To GTFS
+                                </button>
                                 <span className={`rounded-full px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-[0.16em] ${selectedAccent.pill}`}>
                                     {selectedScenario?.waypoints.length ?? 0} route points
                                 </span>
@@ -690,12 +706,18 @@ function PlannedModePanel({
                                 {mapEditMode === 'stop' && 'Edit Stops mode: click teal Barrie stop dots to add existing stops, or click anywhere else to add a custom stop. Drag stop markers to refine placement.'}
                                 {mapEditMode === 'inspect' && 'Inspect mode: review the current route geometry, stop pattern, and compare scenario alignments before switching back into edit mode.'}
                             </p>
-                            <div className="h-[520px] overflow-hidden rounded-3xl border-2 border-gray-200 bg-gray-50 xl:h-[620px]">
+                            {isMapFullscreen && (
+                                <div className="mb-3 rounded-2xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-bold text-blue-800">
+                                    Press `Esc` to exit fullscreen.
+                                </div>
+                            )}
+                            <div className={isMapFullscreen ? 'min-h-0 flex-1 overflow-hidden rounded-3xl border-2 border-gray-200 bg-gray-50' : 'h-[520px] overflow-hidden rounded-3xl border-2 border-gray-200 bg-gray-50 xl:h-[620px]'}>
                                 <MapBase
                                     longitude={-79.69}
                                     latitude={44.38}
                                     zoom={12}
                                     className="h-full"
+                                    mapRef={mapRef}
                                     showNavigation
                                     showScale
                                     interactiveLayerIds={['route-planner-barrie-stops']}
@@ -704,26 +726,35 @@ function PlannedModePanel({
                                     <Source id="route-planner-barrie-stops-source" type="geojson" data={barrieStopsGeoJson}>
                                         <Layer {...barrieStopLayer} />
                                     </Source>
-                                    {displayVisibleScenarios.map((scenario) => (
-                                        <Source
-                                            key={scenario.id}
-                                            id={`route-planner-${scenario.id}`}
-                                            type="geojson"
-                                            data={{
-                                                type: 'FeatureCollection',
-                                                features: [{
-                                                    type: 'Feature',
-                                                    properties: { color: routeAccentStyles[scenario.accent].route },
-                                                    geometry: scenario.geometry,
-                                                }],
-                                            }}
-                                        >
-                                            {selectedScenario?.id === scenario.id && (
-                                                <Layer {...selectedLineLayer} id={`route-planner-selected-${scenario.id}`} />
-                                            )}
-                                            <Layer {...lineLayer} id={`route-planner-line-${scenario.id}`} />
-                                        </Source>
-                                    ))}
+                                    {displayVisibleScenarios.map((scenario) => {
+                                        const sourceRevision = [
+                                            scenario.baseSource.kind,
+                                            scenario.baseSource.sourceId ?? 'none',
+                                            scenario.pattern,
+                                            scenario.geometry.coordinates.length,
+                                        ].join('-');
+
+                                        return (
+                                            <Source
+                                                key={`${scenario.id}-${sourceRevision}`}
+                                                id={`route-planner-${scenario.id}-${sourceRevision}`}
+                                                type="geojson"
+                                                data={{
+                                                    type: 'FeatureCollection',
+                                                    features: [{
+                                                        type: 'Feature',
+                                                        properties: { color: routeAccentStyles[scenario.accent].route },
+                                                        geometry: scenario.geometry,
+                                                    }],
+                                                }}
+                                            >
+                                                {selectedScenario?.id === scenario.id && (
+                                                    <Layer {...selectedLineLayer} id={`route-planner-selected-${scenario.id}-${sourceRevision}`} />
+                                                )}
+                                                <Layer {...lineLayer} id={`route-planner-line-${scenario.id}-${sourceRevision}`} />
+                                            </Source>
+                                        );
+                                    })}
                                     {selectedScenario?.stops.map((stop, index) => (
                                         <Marker
                                             key={stop.id}
@@ -764,10 +795,6 @@ function PlannedModePanel({
                                         </Marker>
                                     ))}
                                 </MapBase>
-                            </div>
-                            <div className="mt-3 flex items-center gap-2 text-xs font-bold text-gray-500">
-                                <Move3D size={14} />
-                                Planned route studies now support alignment editing, stop editing, and observed runtime evidence using Corridor Speed stop-to-stop proxies.
                             </div>
                         </div>
                         <div className="mt-4 rounded-2xl border-2 border-gray-200 bg-white p-4">
@@ -852,32 +879,20 @@ function PlannedModePanel({
                     </section>
 
                     <aside className="space-y-4">
-                        <section className="rounded-3xl border-2 border-amber-200 bg-amber-50 p-5 shadow-sm">
-                            <p className="text-xs font-extrabold uppercase tracking-[0.2em] text-amber-700">Implementation Status</p>
-                            <h3 className="mt-2 text-lg font-extrabold text-amber-950">Route studies and runtime evidence live</h3>
-                            <p className="mt-2 text-sm font-semibold leading-relaxed text-amber-900">
-                                Shuttle Concept still has the deepest planning workflow, but the planned route modes now support saved multi-scenario studies, map authoring, stop editing, and observed stop-to-stop runtime proxy analysis inside the Route Planner shell.
-                            </p>
-                        </section>
-
-                        <section className="rounded-3xl border-2 border-gray-200 bg-white p-5 shadow-sm">
-                            <div className="mb-4">
-                                <p className="text-xs font-extrabold uppercase tracking-[0.2em] text-gray-400">Selected Stop</p>
-                                <h3 className="mt-2 text-lg font-extrabold text-gray-900">{selectedStop?.name ?? 'No stop selected'}</h3>
-                            </div>
-                            <div className="mb-4 rounded-2xl border-2 border-blue-100 bg-blue-50 p-4">
-                                <div className="mb-2 flex items-center gap-3">
-                                    <div className="rounded-xl bg-white p-3 text-brand-blue shadow-inner"><MapPinned size={20} /></div>
+                        {selectedStop && (
+                            <section className="rounded-3xl border-2 border-gray-200 bg-white p-5 shadow-sm">
+                                <div className="mb-4 flex items-start justify-between gap-3">
                                     <div>
-                                        <p className="text-sm font-extrabold text-gray-900">Stop metadata</p>
-                                        <p className="text-xs font-semibold text-gray-500">Saved route studies now keep stop editing in the same workspace.</p>
+                                        <p className="text-xs font-extrabold uppercase tracking-[0.2em] text-gray-400">Selected Stop</p>
+                                        <h3 className="mt-2 text-lg font-extrabold text-gray-900">{selectedStop.name}</h3>
+                                        <p className="mt-1 text-xs font-semibold text-gray-500">
+                                            {stopRoleLabel[selectedStop.role]} · {selectedStop.kind === 'existing' ? 'Existing Barrie stop' : 'Custom stop'}
+                                        </p>
                                     </div>
+                                    <span className="rounded-full bg-blue-50 px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-[0.16em] text-blue-700">
+                                        Stop editor
+                                    </span>
                                 </div>
-                                <p className="text-sm font-bold text-gray-900">
-                                    {selectedStop ? `${stopRoleLabel[selectedStop.role]} • ${selectedStop.kind === 'existing' ? 'Existing Barrie stop' : 'Custom stop'}` : 'Select a stop marker to edit details.'}
-                                </p>
-                            </div>
-                            {selectedStop && (
                                 <div className="space-y-3">
                                     <label className="block">
                                         <p className="mb-1 text-[11px] font-extrabold uppercase tracking-wider text-gray-400">Stop Name</p>
@@ -953,13 +968,8 @@ function PlannedModePanel({
                                         Remove Stop
                                     </button>
                                 </div>
-                            )}
-                            {!selectedStop && (
-                                <p className="text-sm font-semibold leading-relaxed text-gray-500">
-                                    Use `Edit Stops` to add Barrie stops or custom stops, then select a marker to refine its details.
-                                </p>
-                            )}
-                        </section>
+                            </section>
+                        )}
 
                         <section className="rounded-3xl border-2 border-gray-200 bg-white p-5 shadow-sm">
                             <div className="mb-4">
@@ -1414,10 +1424,17 @@ function PlannedModePanel({
                             </div>
                             <div className="space-y-3">
                                 {localDraftProject && (
-                                    <button
-                                        type="button"
+                                    <div
+                                        role="button"
+                                        tabIndex={0}
                                         onClick={() => selectProject(localDraftProject)}
-                                        className={`w-full rounded-2xl border-2 border-dashed p-4 text-left transition-all ${
+                                        onKeyDown={(event) => {
+                                            if (event.key === 'Enter' || event.key === ' ') {
+                                                event.preventDefault();
+                                                selectProject(localDraftProject);
+                                            }
+                                        }}
+                                        className={`w-full cursor-pointer rounded-2xl border-2 border-dashed p-4 text-left transition-all focus:outline-none focus:ring-2 focus:ring-brand-blue/40 ${
                                             draftProject.id === localDraftProject.id
                                                 ? 'border-indigo-300 bg-indigo-50/70 shadow-sm'
                                                 : 'border-indigo-200 bg-indigo-50/50 hover:border-indigo-300 hover:bg-indigo-50'
@@ -1425,17 +1442,24 @@ function PlannedModePanel({
                                     >
                                         <p className="text-sm font-extrabold text-gray-900">{localDraftProject.name}</p>
                                         <p className="mt-1 text-xs font-semibold text-gray-500">Current local route study. Save it to make it available across sessions and devices.</p>
-                                    </button>
+                                    </div>
                                 )}
                                 {projects.map((project) => {
                                     const isSelectedProject = project.id === draftProject.id;
 
                                     return (
-                                        <button
+                                        <div
                                             key={project.id}
-                                            type="button"
+                                            role="button"
+                                            tabIndex={0}
                                             onClick={() => selectProject(project)}
-                                            className={`w-full rounded-2xl border-2 p-4 text-left transition-all ${
+                                            onKeyDown={(event) => {
+                                                if (event.key === 'Enter' || event.key === ' ') {
+                                                    event.preventDefault();
+                                                    selectProject(project);
+                                                }
+                                            }}
+                                            className={`w-full cursor-pointer rounded-2xl border-2 p-4 text-left transition-all focus:outline-none focus:ring-2 focus:ring-brand-blue/40 ${
                                                 isSelectedProject
                                                     ? 'border-brand-blue bg-cyan-50 shadow-sm'
                                                     : 'border-gray-200 bg-gray-50 hover:border-gray-300 hover:bg-white'
@@ -1445,7 +1469,7 @@ function PlannedModePanel({
                                             <div className="mt-1 text-xs font-semibold text-gray-500">
                                                 {project.scenarios.length} scenarios · {project.description ?? 'No description yet.'}
                                             </div>
-                                        </button>
+                                        </div>
                                     );
                                 })}
                                 {!isLocalDraft && projects.length === 0 && (
@@ -1557,6 +1581,106 @@ function PlannedModePanel({
                             <p className="text-xs font-extrabold uppercase tracking-[0.2em] text-gray-400">Draft Outputs</p>
                             <h3 className="mt-2 text-lg font-extrabold text-gray-900">Scenario metrics</h3>
                             <div className="mt-3 space-y-3 text-sm font-semibold text-gray-700">
+                                {selectedImpactSummary && displaySelectedScenario && selectedBaselineScenario && (
+                                    <div className="rounded-2xl border-2 border-emerald-200 bg-emerald-50 p-4">
+                                        <div className="flex items-start justify-between gap-3">
+                                            <div>
+                                                <div className="text-xs font-extrabold uppercase tracking-[0.16em] text-emerald-700">Schedule Impact</div>
+                                                <div className="mt-1 text-sm font-extrabold text-emerald-950">
+                                                    {selectedBaselineScenario.name} vs {displaySelectedScenario.name}
+                                                </div>
+                                                <p className="mt-2 max-w-xl text-xs font-semibold leading-relaxed text-emerald-900/80">
+                                                    The GTFS baseline stays intact. These deltas show what the selected roadway and stop changes would mean before schedule editing starts.
+                                                </p>
+                                            </div>
+                                            <div className="rounded-full bg-white px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-[0.16em] text-emerald-700">
+                                                Before / After
+                                            </div>
+                                        </div>
+                                        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                                            {[
+                                                {
+                                                    label: 'Runtime',
+                                                    before: `${selectedBaselineScenario.runtimeMinutes} min`,
+                                                    after: `${displaySelectedScenario.runtimeMinutes} min`,
+                                                    delta: `${formatSignedDelta(selectedImpactSummary.runtimeDeltaMinutes)} min`,
+                                                },
+                                                {
+                                                    label: 'Cycle',
+                                                    before: `${selectedBaselineScenario.cycleMinutes} min`,
+                                                    after: `${displaySelectedScenario.cycleMinutes} min`,
+                                                    delta: `${formatSignedDelta(selectedImpactSummary.cycleDeltaMinutes)} min`,
+                                                },
+                                                {
+                                                    label: 'Buses',
+                                                    before: `${selectedBaselineScenario.busesRequired}`,
+                                                    after: `${displaySelectedScenario.busesRequired}`,
+                                                    delta: formatSignedDelta(selectedImpactSummary.busesDelta),
+                                                },
+                                                {
+                                                    label: 'Distance',
+                                                    before: `${selectedBaselineScenario.distanceKm} km`,
+                                                    after: `${displaySelectedScenario.distanceKm} km`,
+                                                    delta: `${formatSignedDelta(selectedImpactSummary.distanceDeltaKm)} km`,
+                                                },
+                                                {
+                                                    label: 'Stops',
+                                                    before: `${selectedBaselineScenario.stops.length}`,
+                                                    after: `${displaySelectedScenario.stops.length}`,
+                                                    delta: formatSignedDelta(selectedImpactSummary.stopDelta),
+                                                },
+                                                {
+                                                    label: 'Coverage',
+                                                    before: `${selectedBaselineScenario.coverage.servedMarketPoints ?? 0}/${selectedBaselineScenario.coverage.totalMarketPoints ?? 0}`,
+                                                    after: `${displaySelectedScenario.coverage.servedMarketPoints ?? 0}/${displaySelectedScenario.coverage.totalMarketPoints ?? 0}`,
+                                                    delta: formatSignedDelta(selectedImpactSummary.coverageDelta.servedMarketPointsDelta),
+                                                },
+                                                {
+                                                    label: 'Warnings',
+                                                    before: `${selectedBaselineScenario.warnings.length}`,
+                                                    after: `${displaySelectedScenario.warnings.length}`,
+                                                    delta: formatSignedDelta(selectedImpactSummary.warningDelta),
+                                                },
+                                                {
+                                                    label: 'Service Hours',
+                                                    before: `${selectedBaselineScenario.serviceHours}`,
+                                                    after: `${displaySelectedScenario.serviceHours}`,
+                                                    delta: formatSignedDelta(selectedImpactSummary.serviceHoursDelta),
+                                                },
+                                            ].map((metric) => (
+                                                <div key={metric.label} className="rounded-2xl border border-emerald-200 bg-white p-3">
+                                                    <div className="text-xs font-extrabold uppercase tracking-[0.16em] text-emerald-700">{metric.label}</div>
+                                                    <div className="mt-2 grid gap-1 text-xs font-bold text-gray-500">
+                                                        <div>Before: <span className="text-sm font-extrabold text-gray-900">{metric.before}</span></div>
+                                                        <div>After: <span className="text-sm font-extrabold text-gray-900">{metric.after}</span></div>
+                                                        <div>Delta: <span className={`text-sm font-extrabold ${
+                                                            metric.delta.startsWith('+')
+                                                                ? 'text-emerald-700'
+                                                                : metric.delta.startsWith('-')
+                                                                    ? 'text-rose-700'
+                                                                    : 'text-gray-900'
+                                                        }`}>{metric.delta}</span></div>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                                {displayVisibleScenarios.length > 1 && (
+                                    <div
+                                        className="grid gap-2"
+                                        style={{ gridTemplateColumns: `repeat(${displayVisibleScenarios.length}, minmax(0, 1fr))` }}
+                                    >
+                                        {displayVisibleScenarios.map((scenario) => (
+                                            <div key={`metric-label-${scenario.id}`} className="rounded-2xl border border-gray-200 bg-white px-3 py-2">
+                                                <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-gray-400">
+                                                    {scenario.id === selectedScenarioId ? 'Selected' : 'Compare'}
+                                                </div>
+                                                <div className="mt-1 text-sm font-extrabold text-gray-900">{scenario.name}</div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
                                 {[
                                     { label: 'Runtime', values: displayVisibleScenarios.map((scenario) => `${scenario.runtimeMinutes} min`) },
                                     { label: 'Cycle', values: displayVisibleScenarios.map((scenario) => `${scenario.cycleMinutes} min`) },

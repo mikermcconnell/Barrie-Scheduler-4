@@ -1,7 +1,12 @@
 // Performance Runtime Computer — converts stored daily segment data into RuntimeData[]
 // Output is identical to parseRuntimeCSV() so the entire downstream pipeline works unchanged.
 
-import type { DailySummary, DayType, DailySegmentRuntimeEntry } from './performanceDataTypes';
+import type {
+  DailySummary,
+  DayType,
+  DailySegmentRuntimeEntry,
+  DailyStopSegmentRuntimeEntry,
+} from './performanceDataTypes';
 import type { RuntimeData, SegmentRawData, RouteDirection } from '../components/NewSchedule/utils/csvParser';
 import { isDirectionVariant, parseRouteInfo } from './config/routeDirectionConfig';
 
@@ -53,6 +58,12 @@ function routeMatchesSelection(entryRouteId: string, selectedRouteId: string): b
   return getCanonicalRouteId(entryNormalized) === getCanonicalRouteId(selectedNormalized);
 }
 
+function parseBucketStartMinutes(bucket: string): number {
+  const match = bucket.trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return Number.POSITIVE_INFINITY;
+  return Number(match[1]) * 60 + Number(match[2]);
+}
+
 // ─── Main: Convert Performance Data → RuntimeData[] ─────────────────
 
 export interface PerformanceRuntimeOptions {
@@ -71,40 +82,92 @@ export function computeRuntimesFromPerformance(
   // 1. Filter summaries by dayType and optional date range
   const filtered = dailySummaries.filter(d => {
     if (d.dayType !== dayType) return false;
-    if (!d.segmentRuntimes) return false;
+    if (!d.segmentRuntimes && !d.stopSegmentRuntimes) return false;
     if (dateRange) {
       if (d.date < dateRange.start || d.date > dateRange.end) return false;
     }
     return true;
   });
 
-  // 2. Collect all segment entries matching routeId
+  // 2. Prefer stop-level runtime entries when available because they preserve stop order.
+  const stopEntries: DailyStopSegmentRuntimeEntry[] = [];
   const allEntries: DailySegmentRuntimeEntry[] = [];
   for (const day of filtered) {
-    for (const entry of day.segmentRuntimes!.entries) {
+    for (const entry of day.stopSegmentRuntimes?.entries ?? []) {
       if (routeMatchesSelection(entry.routeId, routeId)) {
-        allEntries.push(entry);
+        stopEntries.push(entry);
+      }
+    }
+
+    if (day.segmentRuntimes) {
+      for (const entry of day.segmentRuntimes.entries) {
+        if (routeMatchesSelection(entry.routeId, routeId)) {
+          allEntries.push(entry);
+        }
       }
     }
   }
 
-  if (allEntries.length === 0) return [];
+  if (stopEntries.length === 0 && allEntries.length === 0) return [];
 
-  // 3. Group by direction → segmentName → timeBucket → observations
-  // Structure: Map<direction, Map<segmentName, Map<timeBucket, number[]>>>
-  const dirMap = new Map<string, Map<string, Map<string, number[]>>>();
+  const dirMap = new Map<string, Map<string, {
+    segmentName: string;
+    fromRouteStopIndex?: number;
+    toRouteStopIndex?: number;
+    bucketMap: Map<string, number[]>;
+  }>>();
+
+  const ensureSegmentBucket = (
+    direction: string,
+    segmentKey: string,
+    segmentName: string,
+    fromRouteStopIndex?: number,
+    toRouteStopIndex?: number
+  ) => {
+    if (!dirMap.has(direction)) dirMap.set(direction, new Map());
+    const segMap = dirMap.get(direction)!;
+    if (!segMap.has(segmentKey)) {
+      segMap.set(segmentKey, {
+        segmentName,
+        fromRouteStopIndex,
+        toRouteStopIndex,
+        bucketMap: new Map(),
+      });
+    }
+    return segMap.get(segmentKey)!;
+  };
+
+  if (stopEntries.length > 0) {
+    for (const entry of stopEntries) {
+      const dir = mapDirection(entry.direction);
+      const segmentKey = `${entry.fromStopId || entry.fromRouteStopIndex}|${entry.toStopId || entry.toRouteStopIndex}`;
+      const segment = ensureSegmentBucket(
+        dir,
+        segmentKey,
+        entry.segmentName,
+        entry.fromRouteStopIndex,
+        entry.toRouteStopIndex
+      );
+
+      for (const obs of entry.observations) {
+        if (!segment.bucketMap.has(obs.timeBucket)) segment.bucketMap.set(obs.timeBucket, []);
+        segment.bucketMap.get(obs.timeBucket)!.push(obs.runtimeMinutes);
+      }
+    }
+  }
 
   for (const entry of allEntries) {
     const dir = mapDirection(entry.direction);
-    if (!dirMap.has(dir)) dirMap.set(dir, new Map());
-    const segMap = dirMap.get(dir)!;
-
-    if (!segMap.has(entry.segmentName)) segMap.set(entry.segmentName, new Map());
-    const bucketMap = segMap.get(entry.segmentName)!;
+    const existingSegment = Array.from(dirMap.get(dir)?.entries() || []).find(([, segment]) => (
+      segment.segmentName === entry.segmentName
+    ));
+    const segment = existingSegment
+      ? ensureSegmentBucket(dir, existingSegment[0], entry.segmentName, existingSegment[1].fromRouteStopIndex, existingSegment[1].toRouteStopIndex)
+      : ensureSegmentBucket(dir, entry.segmentName, entry.segmentName);
 
     for (const obs of entry.observations) {
-      if (!bucketMap.has(obs.timeBucket)) bucketMap.set(obs.timeBucket, []);
-      bucketMap.get(obs.timeBucket)!.push(obs.runtimeMinutes);
+      if (!segment.bucketMap.has(obs.timeBucket)) segment.bucketMap.set(obs.timeBucket, []);
+      segment.bucketMap.get(obs.timeBucket)!.push(obs.runtimeMinutes);
     }
   }
 
@@ -115,10 +178,22 @@ export function computeRuntimesFromPerformance(
     const allTimeBuckets = new Set<string>();
     const segments: SegmentRawData[] = [];
 
-    for (const [segmentName, bucketMap] of segMap) {
+    const orderedSegments = Array.from(segMap.values()).sort((a, b) => {
+      const aFrom = Number.isFinite(a.fromRouteStopIndex) ? a.fromRouteStopIndex! : Number.POSITIVE_INFINITY;
+      const bFrom = Number.isFinite(b.fromRouteStopIndex) ? b.fromRouteStopIndex! : Number.POSITIVE_INFINITY;
+      if (aFrom !== bFrom) return aFrom - bFrom;
+
+      const aTo = Number.isFinite(a.toRouteStopIndex) ? a.toRouteStopIndex! : Number.POSITIVE_INFINITY;
+      const bTo = Number.isFinite(b.toRouteStopIndex) ? b.toRouteStopIndex! : Number.POSITIVE_INFINITY;
+      if (aTo !== bTo) return aTo - bTo;
+
+      return 0;
+    });
+
+    for (const segment of orderedSegments) {
       const timeBuckets: Record<string, { p50: number; p80: number; n: number }> = {};
 
-      for (const [bucket, values] of bucketMap) {
+      for (const [bucket, values] of segment.bucketMap) {
         allTimeBuckets.add(bucket);
         const sorted = [...values].sort((a, b) => a - b);
         timeBuckets[bucket] = {
@@ -128,10 +203,20 @@ export function computeRuntimesFromPerformance(
         };
       }
 
-      segments.push({ segmentName, timeBuckets });
+      segments.push({
+        segmentName: segment.segmentName,
+        timeBuckets,
+        fromRouteStopIndex: segment.fromRouteStopIndex,
+        toRouteStopIndex: segment.toRouteStopIndex,
+      });
     }
 
-    const sortedBuckets = Array.from(allTimeBuckets).sort();
+    const sortedBuckets = Array.from(allTimeBuckets).sort((a, b) => {
+      const aMinutes = parseBucketStartMinutes(a);
+      const bMinutes = parseBucketStartMinutes(b);
+      if (aMinutes !== bMinutes) return aMinutes - bMinutes;
+      return a.localeCompare(b);
+    });
 
     results.push({
       segments,

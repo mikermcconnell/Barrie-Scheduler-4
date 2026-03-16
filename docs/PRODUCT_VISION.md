@@ -1,6 +1,7 @@
 # Barrie Transit Schedule Builder - Product Vision
 
 > Source of truth for product decisions. Read this before planning significant features.
+> Keep roadmap status and dated delivery history in `docs/IMPLEMENTATION_PLAN.md`, not here.
 
 ---
 
@@ -115,24 +116,24 @@ Team
 ## Feature Priorities
 
 ### Must Have (Core)
-- [x] CSV runtime import and parsing
-- [x] Schedule generation with time bands
-- [x] Schedule editing (ScheduleEditor)
-- [x] Master schedule publishing (Draft → Publish workflow)
-- [x] GTFS import with block assignment (including system-wide import)
-- [x] Connection library and optimization
+- CSV runtime import and parsing
+- Schedule generation with time bands
+- Schedule editing
+- Master schedule publishing through the Draft → Publish workflow
+- GTFS import with block assignment, including system-wide import
+- Connection library and optimization
 
 ### Should Have (Operations)
-- [x] Platform conflict detection
-- [x] Excel/PDF export (CSV shifts + PDF brochure)
-- [x] Version history
-- [ ] Interlining (8A/8B) - removed Feb 2026, pending reimplementation
+- Platform conflict detection
+- Excel/PDF export
+- Version history
+- Interlining for 8A/8B once a safe replacement design is ready
 
 ### Nice to Have (Enhancements)
-- [x] Public timetable brochure generator
-- [ ] Real-time GTFS export
-- [ ] Multi-route scenario comparison
-- [ ] Automated regression testing for schedules
+- Public timetable brochure generator
+- Real-time GTFS export
+- Multi-route scenario comparison
+- Automated regression testing for schedules
 
 ---
 
@@ -150,10 +151,11 @@ Team
 
 ## Technical Constraints
 
-1. **Firebase-only backend** - No custom server. All logic in client + Firestore rules.
-2. **Offline capability limited** - Requires internet for Firebase sync and Gemini API.
-3. **Single-city scope** - Hardcoded for Barrie Transit routes; not multi-agency.
-4. **Browser-based** - No native mobile app. Responsive but desktop-optimized.
+1. **Firebase-backed application** - Firestore, Storage, Auth, and Cloud Functions are the primary platform services.
+2. **Thin server helpers exist** - API routes, Cloud Functions, and Cloud Run helpers are allowed when needed for secure or long-running operations such as optimization, parsing, and reporting.
+3. **Offline capability limited** - Requires internet for Firebase sync and AI-backed workflows.
+4. **Single-city scope** - Optimized for Barrie Transit routes and workflows, not a generic multi-agency platform.
+5. **Browser-based** - Desktop-first web application, with limited mobile expectations.
 
 ---
 
@@ -178,12 +180,3 @@ When planning features, ask:
 3. **Does it keep the planner in control?** (AI suggests, human decides)
 4. **Is it Barrie Transit-specific or generalizable?** (Favor specific)
 5. **Does it touch locked logic?** (If yes, extra scrutiny required)
-
----
-
-## Version History
-
-| Date | Change |
-|------|--------|
-| 2026-01-17 | Initial vision document created |
-| 2026-02-09 | Updated feature status: brochure done, interline removed, draft→publish live |

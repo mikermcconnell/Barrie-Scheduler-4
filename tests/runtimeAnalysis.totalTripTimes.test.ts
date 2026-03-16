@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { calculateTotalTripTimes } from '../utils/ai/runtimeAnalysis';
+import { calculateTotalTripTimes, computeDirectionBandSummary } from '../utils/ai/runtimeAnalysis';
 import type { RuntimeData } from '../components/NewSchedule/utils/csvParser';
 
 describe('runtimeAnalysis.calculateTotalTripTimes', () => {
@@ -64,5 +64,53 @@ describe('runtimeAnalysis.calculateTotalTripTimes', () => {
         expect(analysis[0].totalP50).toBe(15); // 10 + 5
         expect(analysis[0].totalP80).toBe(18); // 13 + 5
         expect(analysis[0].ignored).toBe(false);
+    });
+
+    it('maps observed labels onto canonical segments and weights averages by observation count', () => {
+        const summary = computeDirectionBandSummary(
+            [
+                {
+                    timeBucket: '06:00 - 06:29',
+                    totalP50: 20,
+                    totalP80: 22,
+                    assignedBand: 'A',
+                    isOutlier: false,
+                    ignored: false,
+                    details: [
+                        { segmentName: 'Park Pl to Peggy Hill', p50: 4, p80: 5, n: 1 },
+                    ],
+                },
+                {
+                    timeBucket: '06:30 - 06:59',
+                    totalP50: 20,
+                    totalP80: 22,
+                    assignedBand: 'A',
+                    isOutlier: false,
+                    ignored: false,
+                    details: [
+                        { segmentName: 'Park Place to Peggy Hill', p50: 10, p80: 11, n: 9 },
+                    ],
+                },
+            ],
+            [
+                { id: 'A', label: 'Band A', min: 20, max: 20, avg: 20, color: '#ef4444', count: 2 },
+            ],
+            {
+                North: [
+                    { segmentName: 'Park Pl to Peggy Hill' },
+                ],
+            },
+            {
+                canonicalSegmentColumns: [
+                    { segmentName: 'Park Place to Peggy Hill', direction: 'North' },
+                ],
+            }
+        );
+
+        expect(summary.North).toHaveLength(1);
+        expect(summary.North[0].segments).toHaveLength(1);
+        expect(summary.North[0].segments[0].segmentName).toBe('Park Place to Peggy Hill');
+        expect(summary.North[0].segments[0].avgTime).toBeCloseTo(9.4, 5);
+        expect(summary.North[0].segments[0].totalN).toBe(10);
     });
 });

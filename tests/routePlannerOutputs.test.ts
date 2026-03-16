@@ -60,12 +60,28 @@ function createScenario(): RouteScenario {
 }
 
 function createProject(): RouteProject {
+    const baselineScenario: RouteScenario = {
+        ...createScenario(),
+        id: 'scenario-baseline',
+        name: 'Route 1 Current GTFS',
+        accent: 'indigo',
+        runtimeMinutes: 20,
+        cycleMinutes: 51,
+        busesRequired: 1,
+        distanceKm: 8.9,
+        coverage: {
+            ...createScenario().coverage,
+            servedMarketPoints: 2,
+        },
+        warnings: [],
+    };
+
     return {
         id: 'project-1',
         name: 'Northwest Route Study',
         description: 'Compare direct and local alignments.',
         preferredScenarioId: 'scenario-1',
-        scenarios: [createScenario()],
+        scenarios: [baselineScenario, createScenario()],
         createdAt: new Date('2026-03-11T10:00:00Z'),
         updatedAt: new Date('2026-03-11T11:00:00Z'),
     };
@@ -95,6 +111,8 @@ describe('routePlannerOutputs', () => {
         expect(exportText).toContain('Timing Profile: Front-loaded');
         expect(exportText).toContain('Terminal Holds: 2 min start / 3 min end');
         expect(exportText).toContain('Coverage: 3/12 strategic market points within 400 m walkshed');
+        expect(exportText).toContain('### Impact vs GTFS Baseline');
+        expect(exportText).toContain('Runtime Delta: +4 min');
         expect(exportText).toContain('### Stops');
         expect(exportText).toContain('1. Terminal A');
     });
@@ -110,6 +128,8 @@ describe('routePlannerOutputs', () => {
         expect(handoffText).toContain('- Runtime: 24 min');
         expect(handoffText).toContain('- Timing Profile: Front-loaded');
         expect(handoffText).toContain('- Coverage: 3/12 strategic market points within 400 m walkshed');
+        expect(handoffText).toContain('### Impact vs GTFS Baseline');
+        expect(handoffText).toContain('- Buses Delta: +1');
         expect(handoffText).toContain('## Planning Notes');
         expect(handoffText).toContain('Use Dunlop instead of the existing local deviation.');
     });

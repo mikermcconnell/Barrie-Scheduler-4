@@ -383,10 +383,7 @@ export const ShuttlePlannerWorkspaceView: React.FC<ShuttlePlannerWorkspaceViewPr
                                 </div>
 
                                 {isLocalDraft && (
-                                    <button
-                                        type="button"
-                                        className="mb-3 w-full rounded-2xl border-2 border-dashed border-indigo-200 bg-indigo-50/70 p-4 text-left"
-                                    >
+                                    <div className="mb-3 w-full rounded-2xl border-2 border-dashed border-indigo-200 bg-indigo-50/70 p-4 text-left">
                                         <div className="mb-2 flex items-start justify-between gap-3">
                                             <div>
                                                 <p className="text-sm font-extrabold text-gray-900">{currentProject.name}</p>
@@ -403,7 +400,7 @@ export const ShuttlePlannerWorkspaceView: React.FC<ShuttlePlannerWorkspaceViewPr
                                                 Reset Starter
                                             </button>
                                         </div>
-                                    </button>
+                                    </div>
                                 )}
 
                                 {isLoadingProjects ? (

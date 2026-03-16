@@ -1,5 +1,9 @@
 
 import { RuntimeData, SegmentRawData } from '../../components/NewSchedule/utils/csvParser';
+import {
+    buildNormalizedSegmentNameLookup,
+    resolveCanonicalSegmentName,
+} from '../runtimeSegmentMatching';
 
 export interface SegmentDetail {
     segmentName: string;
@@ -47,6 +51,11 @@ export interface BandSummary {
 
 // Direction-keyed band summaries for separate North/South lookups
 export type DirectionBandSummary = Record<string, BandSummary[]>;
+
+interface CanonicalSegmentColumnLike {
+    segmentName: string;
+    direction?: string;
+}
 
 const COLORS = {
     A: '#ef4444', // Red (Classic implementation often uses Red for longest/slowest)
@@ -230,27 +239,45 @@ export const categorizeTimeBands = (analysis: TripBucketAnalysis[]): { buckets: 
 export const computeDirectionBandSummary = (
     analysis: TripBucketAnalysis[],
     bands: TimeBand[],
-    segmentsMap: Record<string, { segmentName: string }[]>
+    segmentsMap: Record<string, { segmentName: string }[]>,
+    options?: {
+        canonicalSegmentColumns?: CanonicalSegmentColumnLike[];
+    }
 ): DirectionBandSummary => {
-    const directions = Object.keys(segmentsMap);
+    const canonicalSegmentColumns = options?.canonicalSegmentColumns || [];
+    const canonicalSegmentNameLookup = buildNormalizedSegmentNameLookup(
+        canonicalSegmentColumns.map(column => column.segmentName)
+    );
+    const canonicalDirections = canonicalSegmentColumns
+        .map(column => column.direction)
+        .filter((direction): direction is string => !!direction);
+    const directions = canonicalDirections.length > 0
+        ? Array.from(new Set(canonicalDirections))
+        : Object.keys(segmentsMap);
     if (directions.length === 0) directions.push('North'); // Fallback
 
     const result: DirectionBandSummary = {};
 
     directions.forEach(direction => {
+        const canonicalDirectionSegmentNames = canonicalSegmentColumns
+            .filter(column => !column.direction || column.direction === direction)
+            .map(column => column.segmentName);
+
         // Get segment names for this direction only
         const dirSegments = segmentsMap[direction] || [];
         const dirSegmentNames = new Set<string>();
         dirSegments.forEach(seg => dirSegmentNames.add(seg.segmentName));
 
         // Fallback: include all segments from analysis if direction not found
-        if (dirSegmentNames.size === 0) {
+        if (canonicalDirectionSegmentNames.length === 0 && dirSegmentNames.size === 0) {
             analysis.forEach(bucket => {
                 bucket.details?.forEach(detail => dirSegmentNames.add(detail.segmentName));
             });
         }
 
-        const segmentNamesArr = Array.from(dirSegmentNames);
+        const segmentNamesArr = canonicalDirectionSegmentNames.length > 0
+            ? canonicalDirectionSegmentNames
+            : Array.from(dirSegmentNames);
 
         result[direction] = bands.map(band => {
             const bucketsInBand = analysis.filter(a => !a.ignored && a.assignedBand === band.id);
@@ -265,20 +292,25 @@ export const computeDirectionBandSummary = (
 
             // Average each segment for this direction only
             const avgSegments = segmentNamesArr.map(segName => {
-                let sum = 0;
-                let count = 0;
+                let weightedSum = 0;
+                let weight = 0;
                 let totalN = 0;
                 bucketsInBand.forEach(bucket => {
-                    const detail = bucket.details?.find(d => d.segmentName === segName);
-                    if (detail) {
-                        sum += detail.p50;
-                        count++;
-                        totalN += detail.n;
-                    }
+                    bucket.details?.forEach(detail => {
+                        const resolvedSegmentName = canonicalSegmentColumns.length > 0
+                            ? resolveCanonicalSegmentName(detail.segmentName, canonicalSegmentNameLookup)
+                            : detail.segmentName;
+                        if (resolvedSegmentName !== segName) return;
+
+                        const detailWeight = detail.n && detail.n > 0 ? detail.n : 1;
+                        weightedSum += detail.p50 * detailWeight;
+                        weight += detailWeight;
+                        totalN += detailWeight;
+                    });
                 });
                 return {
                     segmentName: segName,
-                    avgTime: count > 0 ? sum / count : 0,
+                    avgTime: weight > 0 ? weightedSum / weight : 0,
                     totalN,
                 };
             }).filter(s => s.avgTime > 0); // Only keep segments with data

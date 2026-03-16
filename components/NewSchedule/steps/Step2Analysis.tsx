@@ -1,7 +1,14 @@
 
 import React, { useMemo, useState, useEffect } from 'react';
-import { TripBucketAnalysis, TimeBand, BandSummary, DirectionBandSummary } from '../../../utils/ai/runtimeAnalysis';
+import { TripBucketAnalysis, TimeBand, BandSummary, DirectionBandSummary, computeDirectionBandSummary } from '../../../utils/ai/runtimeAnalysis';
 import { SegmentRawData } from '../utils/csvParser';
+import {
+    buildNormalizedSegmentNameLookup,
+    getOrderedSegmentColumns,
+    normalizeSegmentNameForMatching,
+    resolveCanonicalSegmentName,
+    type OrderedSegmentColumn,
+} from '../utils/wizardState';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, ReferenceLine } from 'recharts';
 import { AlertTriangle, CheckCircle2, TrendingUp, Clock, BarChart2, ChevronDown, ChevronRight, Eye, EyeOff, Table } from 'lucide-react';
 
@@ -10,15 +17,39 @@ const SegmentBreakdownMatrix: React.FC<{
     analysis: TripBucketAnalysis[];
     bands: TimeBand[];
     viewMetric: 'p50' | 'p80';
-}> = ({ analysis, bands, viewMetric }) => {
-    // Extract unique segment names across all buckets
-    const segmentNames = useMemo(() => {
-        const names = new Set<string>();
-        analysis.forEach(bucket => {
-            bucket.details?.forEach(detail => names.add(detail.segmentName));
+    segmentColumns: OrderedSegmentColumn[];
+}> = ({ analysis, bands, viewMetric, segmentColumns }) => {
+    const segmentNames = segmentColumns.map(column => column.segmentName);
+    const canonicalSegmentNameLookup = useMemo(
+        () => buildNormalizedSegmentNameLookup(segmentNames),
+        [segmentNames]
+    );
+    const segmentGroups = useMemo(() => {
+        const groups: Array<{ label: string; count: number }> = [];
+        segmentColumns.forEach((column) => {
+            const label = column.groupLabel?.trim();
+            if (!label) return;
+            const previous = groups[groups.length - 1];
+            if (previous?.label === label) {
+                previous.count += 1;
+            } else {
+                groups.push({ label, count: 1 });
+            }
         });
-        return Array.from(names);
-    }, [analysis]);
+        return groups;
+    }, [segmentColumns]);
+    const groupStartIndexes = useMemo(() => {
+        const starts = new Set<number>();
+        let previousLabel: string | undefined;
+        segmentColumns.forEach((column, index) => {
+            const currentLabel = column.groupLabel;
+            if (currentLabel && currentLabel !== previousLabel) {
+                starts.add(index);
+            }
+            previousLabel = currentLabel;
+        });
+        return starts;
+    }, [segmentColumns]);
 
     // Aggregate segment times by band
     const bandSummary = useMemo(() => {
@@ -56,10 +87,11 @@ const SegmentBreakdownMatrix: React.FC<{
 
             bucket.details?.forEach(detail => {
                 const value = viewMetric === 'p50' ? detail.p50 : detail.p80;
-                if (bandData.segmentTotals[detail.segmentName]) {
-                    bandData.segmentTotals[detail.segmentName].sum += value;
-                    bandData.segmentTotals[detail.segmentName].count += 1;
-                    bandData.segmentTotals[detail.segmentName].totalN += detail.n;
+                const canonicalSegmentName = resolveCanonicalSegmentName(detail.segmentName, canonicalSegmentNameLookup);
+                if (canonicalSegmentName && bandData.segmentTotals[canonicalSegmentName]) {
+                    bandData.segmentTotals[canonicalSegmentName].sum += value;
+                    bandData.segmentTotals[canonicalSegmentName].count += 1;
+                    bandData.segmentTotals[canonicalSegmentName].totalN += detail.n;
                 }
             });
 
@@ -94,28 +126,65 @@ const SegmentBreakdownMatrix: React.FC<{
                 <table className="w-full text-sm">
                     <thead>
                         <tr className="bg-gray-100 border-b border-gray-200">
-                            <th className="px-4 py-3 text-left font-bold text-gray-700 min-w-[100px]">
+                            <th
+                                className="px-4 py-3 text-left font-bold text-gray-700 min-w-[100px]"
+                                rowSpan={segmentGroups.length > 0 ? 2 : 1}
+                            >
                                 Band
                             </th>
-                            <th className="px-4 py-3 text-left font-bold text-gray-700 min-w-[180px]">
+                            <th
+                                className="px-4 py-3 text-left font-bold text-gray-700 min-w-[180px]"
+                                rowSpan={segmentGroups.length > 0 ? 2 : 1}
+                            >
                                 Time Slots
                             </th>
-                            {segmentNames.map(seg => (
-                                <th key={seg} className="px-3 py-3 text-center font-medium text-gray-600 min-w-[90px]">
-                                    <div className="flex flex-col items-center">
-                                        {seg.split(' to ').map((s, i) => (
-                                            <span key={i} className={`text-xs ${i === 1 ? 'text-gray-400' : 'font-semibold'}`}>
-                                                {i === 1 && '↓ '}
-                                                {s.length > 15 ? s.substring(0, 12) + '...' : s}
-                                            </span>
-                                        ))}
-                                    </div>
-                                </th>
-                            ))}
-                            <th className="px-4 py-3 text-center font-bold text-gray-700 min-w-[80px] bg-gray-200">
+                            {segmentGroups.length > 0 ? (
+                                segmentGroups.map(group => (
+                                    <th
+                                        key={group.label}
+                                        colSpan={group.count}
+                                        className="px-3 py-2 text-center text-xs font-bold uppercase tracking-wide text-gray-700 bg-gray-50 border-x border-gray-200"
+                                    >
+                                        {group.label}
+                                    </th>
+                                ))
+                            ) : (
+                                segmentColumns.map((column) => (
+                                    <th key={column.segmentName} className="px-3 py-3 text-center font-medium text-gray-600 min-w-[90px]">
+                                        <div className="flex flex-col items-center">
+                                            {column.segmentName.split(' to ').map((s, i) => (
+                                                <span key={i} className={`text-xs ${i === 1 ? 'text-gray-400' : 'font-semibold'}`}>
+                                                    {i === 1 && '↓ '}
+                                                    {s.length > 15 ? s.substring(0, 12) + '...' : s}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    </th>
+                                ))
+                            )}
+                            <th
+                                className="px-4 py-3 text-center font-bold text-gray-700 min-w-[80px] bg-gray-200"
+                                rowSpan={segmentGroups.length > 0 ? 2 : 1}
+                            >
                                 Total
                             </th>
                         </tr>
+                        {segmentGroups.length > 0 && (
+                            <tr className="bg-gray-100 border-b border-gray-200">
+                                {segmentColumns.map((column) => (
+                                    <th key={column.segmentName} className="px-3 py-3 text-center font-medium text-gray-600 min-w-[90px]">
+                                        <div className="flex flex-col items-center">
+                                            {column.segmentName.split(' to ').map((s, i) => (
+                                                <span key={i} className={`text-xs ${i === 1 ? 'text-gray-400' : 'font-semibold'}`}>
+                                                    {i === 1 && '↓ '}
+                                                    {s.length > 15 ? s.substring(0, 12) + '...' : s}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    </th>
+                                ))}
+                            </tr>
+                        )}
                     </thead>
                     <tbody className="divide-y divide-gray-100">
                         {bands.map(band => {
@@ -155,7 +224,8 @@ const SegmentBreakdownMatrix: React.FC<{
                                             ))}
                                         </div>
                                     </td>
-                                    {segmentNames.map(segName => {
+                                    {segmentColumns.map((column, columnIndex) => {
+                                        const segName = column.segmentName;
                                         const segData = data.segmentTotals[segName];
                                         const avgValue = segData && segData.count > 0
                                             ? segData.sum / segData.count
@@ -167,7 +237,7 @@ const SegmentBreakdownMatrix: React.FC<{
                                                 className="px-3 py-3 text-center font-mono"
                                                 style={{
                                                     backgroundColor: band.color + '15',
-                                                    borderLeft: `3px solid ${band.color}`
+                                                    borderLeft: `${groupStartIndexes.has(columnIndex) ? 4 : 3}px solid ${band.color}`
                                                 }}
                                             >
                                                 {avgValue !== null ? (
@@ -198,14 +268,25 @@ const SegmentBreakdownMatrix: React.FC<{
 
 interface Step2Props {
     dayType: string;
+    routeNumber?: string;
     analysis: TripBucketAnalysis[];
     bands: TimeBand[];
     setAnalysis: (data: TripBucketAnalysis[]) => void;
     segmentsMap?: Record<string, SegmentRawData[]>; // Direction -> segments
+    canonicalSegmentColumns?: OrderedSegmentColumn[];
     onBandSummaryChange?: (summary: DirectionBandSummary) => void;
 }
 
-export const Step2Analysis: React.FC<Step2Props> = ({ dayType, analysis, bands, setAnalysis, segmentsMap, onBandSummaryChange }) => {
+export const Step2Analysis: React.FC<Step2Props> = ({
+    dayType,
+    routeNumber,
+    analysis,
+    bands,
+    setAnalysis,
+    segmentsMap,
+    canonicalSegmentColumns,
+    onBandSummaryChange,
+}) => {
     // Toggle for View Mode
     const [viewMetric, setViewMetric] = useState<'p50' | 'p80'>('p50');
 
@@ -219,72 +300,36 @@ export const Step2Analysis: React.FC<Step2Props> = ({ dayType, analysis, bands, 
         setExpandedBuckets(newSet);
     };
 
-    // Compute band summary for export to schedule generator - KEYED BY DIRECTION
-    const computedBandSummary = useMemo((): DirectionBandSummary => {
-        // Get all directions from segmentsMap or default to single direction
-        const directions = segmentsMap ? Object.keys(segmentsMap) : ['North'];
-        const result: DirectionBandSummary = {};
-
-        directions.forEach(direction => {
-            // Get segment names for this direction only
-            const dirSegments = segmentsMap?.[direction] || [];
-            const dirSegmentNames = new Set<string>();
-            dirSegments.forEach(seg => dirSegmentNames.add(seg.segmentName));
-
-            // Also include any segments from analysis that might match this direction
-            // (This handles the case where segmentsMap might not be passed)
-            if (dirSegmentNames.size === 0) {
-                analysis.forEach(bucket => {
-                    bucket.details?.forEach(detail => dirSegmentNames.add(detail.segmentName));
-                });
-            }
-
-            const segmentNamesArr = Array.from(dirSegmentNames);
-
-            result[direction] = bands.map(band => {
-                const bucketsInBand = analysis.filter(a => !a.ignored && a.assignedBand === band.id);
-
-                // Collect time slots
-                const timeSlots = bucketsInBand.map(b => b.timeBucket.split(' - ')[0]);
-
-                // Average total for this band (use full band average as one-way target)
-                // The band average represents the target travel time for each trip
-                const avgTotal = bucketsInBand.length > 0
-                    ? bucketsInBand.reduce((sum, b) => sum + b.totalP50, 0) / bucketsInBand.length
-                    : band.avg;
-
-                // Average each segment for this direction only
-                const avgSegments = segmentNamesArr.map(segName => {
-                    let sum = 0;
-                    let count = 0;
-                    let totalN = 0;
-                    bucketsInBand.forEach(bucket => {
-                        const detail = bucket.details?.find(d => d.segmentName === segName);
-                        if (detail) {
-                            sum += detail.p50;
-                            count++;
-                            totalN += detail.n;
-                        }
-                    });
-                    return {
-                        segmentName: segName,
-                        avgTime: count > 0 ? sum / count : 0,
-                        totalN,
-                    };
-                }).filter(s => s.avgTime > 0); // Only keep segments with data
-
-                return {
-                    bandId: band.id,
-                    color: band.color,
-                    avgTotal,
-                    segments: avgSegments,
-                    timeSlots
-                };
-            });
+    const runtimeOrderedSegmentColumns = useMemo(
+        () => getOrderedSegmentColumns(segmentsMap || {}, routeNumber, analysis),
+        [analysis, routeNumber, segmentsMap]
+    );
+    const displaySegmentColumns = useMemo(
+        () => (canonicalSegmentColumns && canonicalSegmentColumns.length > 0 ? canonicalSegmentColumns : runtimeOrderedSegmentColumns),
+        [canonicalSegmentColumns, runtimeOrderedSegmentColumns]
+    );
+    const displaySegmentNames = useMemo(
+        () => displaySegmentColumns.map(column => column.segmentName),
+        [displaySegmentColumns]
+    );
+    const orderedSegmentIndex = useMemo(() => {
+        const index = new Map<string, number>();
+        displaySegmentColumns.forEach((column, position) => {
+            index.set(normalizeSegmentNameForMatching(column.segmentName), position);
         });
+        return index;
+    }, [displaySegmentColumns]);
 
-        return result;
-    }, [analysis, bands, segmentsMap]);
+    // Compute band summary for export to schedule generator - KEYED BY DIRECTION
+    const computedBandSummary = useMemo(
+        (): DirectionBandSummary => computeDirectionBandSummary(
+            analysis,
+            bands,
+            segmentsMap || {},
+            { canonicalSegmentColumns: displaySegmentColumns }
+        ),
+        [analysis, bands, displaySegmentColumns, segmentsMap]
+    );
 
     // Export band summary to parent when it changes
     useEffect(() => {
@@ -337,6 +382,11 @@ export const Step2Analysis: React.FC<Step2Props> = ({ dayType, analysis, bands, 
                     <p className="text-gray-500">
                         Review the total summed runtime for all segments.
                     </p>
+                    {displaySegmentColumns.some(column => column.groupLabel) && (
+                        <p className="text-xs text-gray-400 mt-1">
+                            Segment columns run left to right as the full out-and-back chain.
+                        </p>
+                    )}
                 </div>
 
                 {/* Metric Toggle */}
@@ -458,7 +508,12 @@ export const Step2Analysis: React.FC<Step2Props> = ({ dayType, analysis, bands, 
             </div>
 
             {/* NEW: Segment Breakdown Matrix Table */}
-            <SegmentBreakdownMatrix analysis={analysis} bands={bands} viewMetric={viewMetric} />
+            <SegmentBreakdownMatrix
+                analysis={analysis}
+                bands={bands}
+                viewMetric={viewMetric}
+                segmentColumns={displaySegmentColumns}
+            />
 
             {/* Detailed Breakdown Table */}
             <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
@@ -525,7 +580,12 @@ export const Step2Analysis: React.FC<Step2Props> = ({ dayType, analysis, bands, 
                                                     <h4 className="text-xs font-bold text-gray-500 uppercase mb-3">Segment Breakdown</h4>
                                                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
                                                         {row.details && row.details.length > 0 ? (
-                                                            row.details.map((detail, idx) => (
+                                                            [...row.details]
+                                                                .sort((a, b) => (
+                                                                    (orderedSegmentIndex.get(normalizeSegmentNameForMatching(a.segmentName)) ?? Number.MAX_SAFE_INTEGER)
+                                                                    - (orderedSegmentIndex.get(normalizeSegmentNameForMatching(b.segmentName)) ?? Number.MAX_SAFE_INTEGER)
+                                                                ))
+                                                                .map((detail, idx) => (
                                                                 <div key={idx} className="bg-white p-2 rounded border border-gray-100 flex justify-between items-center text-xs">
                                                                     <span className="font-medium truncate mr-2" title={detail.segmentName}>{detail.segmentName}</span>
                                                                     <div className="text-right whitespace-nowrap">

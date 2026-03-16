@@ -2,6 +2,8 @@
 export interface SegmentRawData {
     segmentName: string;
     timeBuckets: Record<string, { p50: number, p80: number, n: number }>;
+    fromRouteStopIndex?: number;
+    toRouteStopIndex?: number;
 }
 
 export type RouteDirection = 'North' | 'South' | 'A' | 'B' | 'Loop';

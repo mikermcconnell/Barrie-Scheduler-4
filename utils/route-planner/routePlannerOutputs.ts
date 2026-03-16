@@ -1,3 +1,4 @@
+import { buildRouteScenarioImpactSummary, getExistingRouteBaselineScenario } from './routePlannerComparison';
 import type { RouteObservedRuntimeSummary } from './routePlannerObservedRuntime';
 import { buildRouteTimetableMarkdown } from './routePlannerTimetable';
 import type { RouteProject, RouteScenario } from './routePlannerTypes';
@@ -57,6 +58,31 @@ function formatTimingProfile(profile: RouteScenario['timingProfile']): string {
     return 'Balanced';
 }
 
+function formatSignedNumber(value: number, suffix = ''): string {
+    const prefix = value > 0 ? '+' : '';
+    return `${prefix}${value}${suffix}`;
+}
+
+function buildImpactSummaryLines(project: RouteProject, scenario: RouteScenario): string[] {
+    const baseline = getExistingRouteBaselineScenario(project, scenario);
+    if (!baseline) return [];
+
+    const impact = buildRouteScenarioImpactSummary(baseline, scenario);
+
+    return [
+        '### Impact vs GTFS Baseline',
+        `- Baseline: ${baseline.name}`,
+        `- Runtime Delta: ${formatSignedNumber(impact.runtimeDeltaMinutes, ' min')}`,
+        `- Cycle Delta: ${formatSignedNumber(impact.cycleDeltaMinutes, ' min')}`,
+        `- Buses Delta: ${formatSignedNumber(impact.busesDelta)}`,
+        `- Distance Delta: ${formatSignedNumber(impact.distanceDeltaKm, ' km')}`,
+        `- Stop Delta: ${formatSignedNumber(impact.stopDelta)}`,
+        `- Coverage Delta: ${formatSignedNumber(impact.coverageDelta.servedMarketPointsDelta)} strategic points`,
+        `- Warning Delta: ${formatSignedNumber(impact.warningDelta)}`,
+        '',
+    ];
+}
+
 export function buildRouteStudyExport(
     project: RouteProject,
     scenarios: RouteScenario[],
@@ -89,6 +115,7 @@ export function buildRouteStudyExport(
             '### Warnings',
             formatWarnings(scenario),
             '',
+            ...buildImpactSummaryLines(project, scenario),
             '### Sample Departures',
             formatDepartures(scenario),
             '',
@@ -114,6 +141,8 @@ export function buildRouteScenarioHandoff(
     scenario: RouteScenario,
     observedSummary?: RouteObservedRuntimeSummary | null
 ): string {
+    const impactSummaryLines = buildImpactSummaryLines(project, scenario);
+
     return [
         `# ${project.name} - Scheduling Handoff`,
         '',
@@ -145,6 +174,7 @@ export function buildRouteScenarioHandoff(
         '',
         formatWarnings(scenario),
         '',
+        ...impactSummaryLines,
         '## First Departures',
         '',
         formatDepartures(scenario),

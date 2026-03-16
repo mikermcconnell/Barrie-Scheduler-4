@@ -6,6 +6,7 @@ import {
   createDefaultShiftCountCaps,
   DEFAULT_BREAK_DURATION_MINUTES,
   getShiftCountCapForDay,
+  normalizeOnDemandOptimizationSettings,
   normalizeBreakDurationMinutes,
   normalizeShiftCountCaps,
 } from '../utils/onDemandOptimizationSettings';
@@ -55,5 +56,52 @@ describe('on-demand optimization settings', () => {
   it('converts break duration minutes into schedule slots', () => {
     expect(breakDurationMinutesToSlots(60)).toBe(4);
     expect(breakDurationMinutesToSlots(45)).toBe(3);
+  });
+
+  it('normalizes saved optimization settings snapshots', () => {
+    const settings = normalizeOnDemandOptimizationSettings(
+      {
+        maxFleetVehicles: 9,
+        shiftCountCaps: {
+          Weekday: 12,
+          Saturday: 11,
+          Sunday: 10,
+        },
+        targetCoveragePercent: 97,
+        breakDurationMinutes: 60,
+        shiftCountCapMode: 'guide',
+        minorGapTolerance: 'none',
+        breakProtection: 'balanced',
+        costPriority: 'efficiency',
+      },
+      {
+        maxFleetVehicles: 6,
+        shiftCountCaps: createDefaultShiftCountCaps(),
+        targetCoveragePercent: 100,
+        breakDurationMinutes: 45,
+        shiftCountCapMode: 'hard',
+        minorGapTolerance: 'rare',
+        breakProtection: 'strict',
+        costPriority: 'balanced',
+      },
+      {
+        maxFleetVehicles: { min: 1, max: 12 },
+        targetCoveragePercent: { min: 90, max: 100 },
+        shiftCountCaps: { min: 1, max: 40 },
+      },
+    );
+
+    expect(settings.maxFleetVehicles).toBe(9);
+    expect(settings.shiftCountCaps).toEqual({
+      Weekday: 12,
+      Saturday: 11,
+      Sunday: 10,
+    });
+    expect(settings.targetCoveragePercent).toBe(97);
+    expect(settings.breakDurationMinutes).toBe(60);
+    expect(settings.shiftCountCapMode).toBe('guide');
+    expect(settings.minorGapTolerance).toBe('none');
+    expect(settings.breakProtection).toBe('balanced');
+    expect(settings.costPriority).toBe('efficiency');
   });
 });

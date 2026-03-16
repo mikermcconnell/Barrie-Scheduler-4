@@ -1,14 +1,21 @@
 import { describe, it, expect } from 'vitest';
-import type { DailySummary, DailySegmentRuntimeEntry, DayType } from '../utils/performanceDataTypes';
+import type {
+    DailySummary,
+    DailySegmentRuntimeEntry,
+    DailyStopSegmentRuntimeEntry,
+    DayType,
+} from '../utils/performanceDataTypes';
 import { computeRuntimesFromPerformance, getAvailableRuntimeRoutes } from '../utils/performanceRuntimeComputer';
 
 function makeSummary(params: {
     date: string;
     dayType: DayType;
     entries?: DailySegmentRuntimeEntry[];
+    stopEntries?: DailyStopSegmentRuntimeEntry[];
     routeNames?: Record<string, string>;
 }): DailySummary {
     const entries = params.entries || [];
+    const stopEntries = params.stopEntries || [];
     const routeNames = params.routeNames || {};
 
     return {
@@ -22,6 +29,11 @@ function makeSummary(params: {
             entries,
             totalObservations: entries.reduce((sum, entry) => sum + entry.observations.length, 0),
             tripsWithData: entries.length > 0 ? 1 : 0,
+        },
+        stopSegmentRuntimes: {
+            entries: stopEntries,
+            totalObservations: stopEntries.reduce((sum, entry) => sum + entry.observations.length, 0),
+            tripsWithData: stopEntries.length > 0 ? 1 : 0,
         },
     } as DailySummary;
 }
@@ -150,6 +162,67 @@ describe('performanceRuntimeComputer.computeRuntimesFromPerformance', () => {
         expect(result).toHaveLength(2);
         expect(new Set(result.map(r => r.detectedDirection))).toEqual(new Set(['North', 'South']));
         expect(new Set(result.map(r => r.detectedRouteNumber))).toEqual(new Set(['7']));
+    });
+
+    it('preserves ordered stop segments when stop-level runtime entries are available', () => {
+        const summaries: DailySummary[] = [
+            makeSummary({
+                date: '2026-01-06',
+                dayType: 'weekday',
+                routeNames: { '7': 'Route Seven' },
+                stopEntries: [
+                    {
+                        routeId: '7',
+                        direction: 'N',
+                        fromStopId: 'gc',
+                        toStopId: 'rose',
+                        fromStopName: 'Georgian College',
+                        toStopName: 'Rose Street',
+                        fromRouteStopIndex: 4,
+                        toRouteStopIndex: 5,
+                        segmentName: 'Georgian College to Rose Street',
+                        observations: [{ timeBucket: '06:00', runtimeMinutes: 4 }],
+                    },
+                    {
+                        routeId: '7',
+                        direction: 'N',
+                        fromStopId: 'park',
+                        toStopId: 'peggy',
+                        fromStopName: 'Park Place',
+                        toStopName: 'Peggy Hill',
+                        fromRouteStopIndex: 1,
+                        toRouteStopIndex: 2,
+                        segmentName: 'Park Place to Peggy Hill',
+                        observations: [{ timeBucket: '06:00', runtimeMinutes: 8 }],
+                    },
+                    {
+                        routeId: '7',
+                        direction: 'N',
+                        fromStopId: 'peggy',
+                        toStopId: 'allandale',
+                        fromStopName: 'Peggy Hill',
+                        toStopName: 'Allandale Terminal',
+                        fromRouteStopIndex: 2,
+                        toRouteStopIndex: 3,
+                        segmentName: 'Peggy Hill to Allandale Terminal',
+                        observations: [{ timeBucket: '06:00', runtimeMinutes: 7 }],
+                    },
+                ],
+            }),
+        ];
+
+        const result = computeRuntimesFromPerformance(summaries, {
+            routeId: '7',
+            dayType: 'weekday',
+        });
+
+        expect(result).toHaveLength(1);
+        expect(result[0].segments.map(segment => segment.segmentName)).toEqual([
+            'Park Place to Peggy Hill',
+            'Peggy Hill to Allandale Terminal',
+            'Georgian College to Rose Street',
+        ]);
+        expect(result[0].segments.map(segment => segment.fromRouteStopIndex)).toEqual([1, 2, 4]);
     });
 });
 

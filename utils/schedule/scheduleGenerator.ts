@@ -4,6 +4,7 @@ import { ScheduleConfig } from '../../components/NewSchedule/steps/Step3Build';
 import { TimeBand, TripBucketAnalysis, BandSummary, DirectionBandSummary, MIN_RELIABLE_OBSERVATIONS } from '../ai/runtimeAnalysis';
 import { SegmentRawData, extractTimepointsFromSegments } from '../../components/NewSchedule/utils/csvParser';
 import { getOperationalSortTime, reassignBlocksForTables } from '../blocks/blockAssignmentCore';
+import { normalizeSegmentStopKey } from '../runtimeSegmentMatching';
 
 const normalizeStopLookupKey = (value: string): string => {
     return value
@@ -130,7 +131,8 @@ export const generateSchedule = (
     segmentsMap: Record<string, SegmentRawData[]>,
     dayType: string = 'Weekday',
     gtfsStopLookup?: Record<string, string>,
-    fallbackStopLookup?: Record<string, string>
+    fallbackStopLookup?: Record<string, string>,
+    canonicalTimepointsMap?: Record<string, string[]>
 ): MasterRouteTable[] => {
     // 1. Validation
     const isFloatingMode = config.cycleMode === 'Floating';
@@ -138,7 +140,15 @@ export const generateSchedule = (
     if (!isFloatingMode && (!cycleTimeMinutes || cycleTimeMinutes <= 0)) return [];
 
     // 2. Identify available directions
-    const directions = Object.keys(segmentsMap).filter(d => segmentsMap[d].length > 0);
+    const directionKeys = new Set([
+        ...Object.keys(segmentsMap),
+        ...Object.keys(canonicalTimepointsMap || {}),
+    ]);
+    const directions = Array.from(directionKeys).filter(direction => {
+        const hasSegments = (segmentsMap[direction]?.length || 0) > 0;
+        const hasCanonicalStops = (canonicalTimepointsMap?.[direction]?.length || 0) > 1;
+        return hasSegments || hasCanonicalStops;
+    });
     if (directions.length === 0) return [];
 
     // Determine if Round Trip (North & South)
@@ -152,7 +162,10 @@ export const generateSchedule = (
     const normalizedStopLookup = buildNormalizedLookup(gtfsStopLookup, fallbackStopLookup);
 
     directions.forEach(dir => {
-        timepointsMap[dir] = extractTimepointsFromSegments(segmentsMap[dir]);
+        const canonicalStops = canonicalTimepointsMap?.[dir];
+        timepointsMap[dir] = canonicalStops && canonicalStops.length > 1
+            ? [...canonicalStops]
+            : extractTimepointsFromSegments(segmentsMap[dir] || []);
         stopIdsMap[dir] = {};
         timepointsMap[dir].forEach((tp, i) => {
             const exactCode = gtfsStopLookup?.[tp] || fallbackStopLookup?.[tp];
@@ -219,15 +232,6 @@ export const generateSchedule = (
     };
 
     // Helper: Get band travel time for a given time slot
-    const getBandTargetTime = (timeMinutes: number): number | null => {
-        const bucket = findBucketForTime(timeMinutes);
-        if (bucket && bucket.assignedBand) {
-            const band = bands.find(b => b.id === bucket.assignedBand);
-            if (band) return band.avg;
-        }
-        return null;
-    };
-
     // Helper: Find which band a time slot falls into for a specific direction
     const getBandForTime = (timeMinutes: number, direction: string): BandSummary | null => {
         const bucket = findBucketForTime(timeMinutes);
@@ -241,9 +245,13 @@ export const generateSchedule = (
 
     // Helper: Segment Runtime (Legacy / Fallback)
     const getRawSegmentRuntime = (segments: SegmentRawData[], fromStop: string, toStop: string, timeMinutes: number): number => {
+        const normalizedFromStop = normalizeSegmentStopKey(fromStop);
+        const normalizedToStop = normalizeSegmentStopKey(toStop);
         const segment = segments.find(seg => {
             const parts = seg.segmentName.split(' to ');
-            return parts.length === 2 && parts[0].trim() === fromStop && parts[1].trim() === toStop;
+            return parts.length === 2
+                && normalizeSegmentStopKey(parts[0].trim()) === normalizedFromStop
+                && normalizeSegmentStopKey(parts[1].trim()) === normalizedToStop;
         });
 
         if (!segment) return 5; // Default fallback
@@ -312,34 +320,13 @@ export const generateSchedule = (
             }
         }
 
-        // For round-trip routes, track the band determined at the START of the round trip
-        // This ensures North and South legs use the same band based on initial departure
-        let roundTripBandId: string | null = null;
-        let roundTripNorthTravelTime: number = 0;
-
         // Loop until we exceed the block end time
         while (currentTime < endMins) {
-            const dirSegments = segmentsMap[currentDir];
+            const dirSegments = segmentsMap[currentDir] || [];
             const dirTimepoints = timepointsMap[currentDir];
 
-            // For round-trip routes: determine band at the START of each round trip (North leg)
-            // and reuse it for the South leg
-            let currentBand: BandSummary | null = null;
-
-            if (isRoundTrip) {
-                if (currentDir === 'North' || !roundTripBandId) {
-                    // Starting a new round trip - determine band from initial departure
-                    currentBand = getBandForTime(currentTime, currentDir);
-                    roundTripBandId = currentBand?.bandId || null;
-                } else {
-                    // South leg - reuse the band from the North leg
-                    const dirBands = bandSummary[currentDir];
-                    currentBand = dirBands?.find(b => b.bandId === roundTripBandId) || null;
-                }
-            } else {
-                // Not a round trip - lookup band normally for each trip
-                currentBand = getBandForTime(currentTime, currentDir);
-            }
+            // Use the trip's own departure time to select the runtime band for that direction.
+            const currentBand: BandSummary | null = getBandForTime(currentTime, currentDir);
 
             // Hardened segment time lookup with adjacent-band fallback
             const getReliableSegmentTime = (fromStop: string, toStop: string): { time: number; source: string } => {
@@ -398,7 +385,6 @@ export const generateSchedule = (
             // First pass: collect raw segment times and sum
             const rawSegmentTimes: number[] = [];
             let rawSum = 0;
-            let usedBandData = true;
 
             for (let i = 0; i < dirTimepoints.length - 1; i++) {
                 const fromStop = dirTimepoints[i];
@@ -406,9 +392,6 @@ export const generateSchedule = (
 
                 const reliable = getReliableSegmentTime(fromStop, toStop);
                 let segTime: number | null = reliable.time;
-                if (reliable.source !== 'band') {
-                    usedBandData = false;
-                }
 
                 rawSegmentTimes.push(segTime);
                 // Only count active segments toward raw sum
@@ -418,31 +401,8 @@ export const generateSchedule = (
             }
 
             // Calculate direction target to ensure North + South = band's avgTotal exactly
-            let directionTarget: number;
             const isPartialTrip = activeStartIdx > 0;
-
-            if (isPartialTrip) {
-                // Partial pullout trip: use actual segment sum, no band target forcing
-                directionTarget = Math.round(rawSum);
-            } else {
-                const bandTotal = Math.round(currentBand?.avgTotal || rawSum);
-
-                if (isRoundTrip) {
-                    if (currentDir === 'North') {
-                        // North leg: use floor of half to leave room for South
-                        directionTarget = Math.floor(bandTotal / 2);
-                    } else {
-                        // South leg: use remainder to hit exact total
-                        // For pullout blocks starting South (no preceding North trip), use ceil of half
-                        directionTarget = roundTripNorthTravelTime > 0
-                            ? bandTotal - roundTripNorthTravelTime
-                            : Math.ceil(bandTotal / 2);
-                    }
-                } else {
-                    // Single direction: use full target
-                    directionTarget = bandTotal;
-                }
-            }
+            const directionTarget = Math.max(1, Math.round(rawSum));
 
             // Second pass: round each segment, then adjust last active segment to hit target exactly
             // LOCKED LOGIC: Round BEFORE summing
@@ -475,7 +435,7 @@ export const generateSchedule = (
             if (config.cycleMode === 'Floating') {
                 // Floating: Cycle = Travel + (Travel * Ratio)
                 // Per-band lookup > global config > default 15%
-                const bandId = roundTripBandId || currentBand?.bandId;
+                const bandId = currentBand?.bandId;
                 const bandDefault = bandId ? config.bandRecoveryDefaults?.find(bd => bd.bandId === bandId) : undefined;
                 const ratio = (bandDefault?.avgRecoveryRatio ?? config.recoveryRatio ?? 15) / 100;
                 totalRecovery = Math.round(pureTravelTime * ratio);
@@ -484,7 +444,7 @@ export const generateSchedule = (
             } else {
                 // Strict: Cycle is Fixed. Recovery fills the gap.
                 // Per-band lookup > global config > default 60m
-                const bandId = roundTripBandId || currentBand?.bandId;
+                const bandId = currentBand?.bandId;
                 const bandDefault = bandId ? config.bandRecoveryDefaults?.find(bd => bd.bandId === bandId) : undefined;
                 const totalCycle = bandDefault?.avgCycleTime ?? config.cycleTime;
                 const allocated = isRoundTrip ? totalCycle / 2 : totalCycle;
@@ -498,7 +458,7 @@ export const generateSchedule = (
             // Without this, Strict mode assigns (halfCycle - tinyTravel) = inflated
             // recovery (e.g., 59 min at Rose St for a 1-min Georgian Coll → Rose pullout).
             if (isPartialTrip) {
-                const bandId = roundTripBandId || currentBand?.bandId;
+                const bandId = currentBand?.bandId;
                 const bandDefault = bandId ? config.bandRecoveryDefaults?.find(bd => bd.bandId === bandId) : undefined;
                 const ratio = (bandDefault?.avgRecoveryRatio ?? config.recoveryRatio ?? 15) / 100;
                 totalRecovery = Math.round(pureTravelTime * ratio);
@@ -569,16 +529,11 @@ export const generateSchedule = (
                 recoveryTimes: recoveryTimes,
                 recoveryTime: totalRecovery,
                 cycleTime: tripCycleAllocated,
-                assignedBand: roundTripBandId || currentBand?.bandId || undefined,
+                assignedBand: currentBand?.bandId || undefined,
                 startStopIndex: activeStartIdx > 0 ? activeStartIdx : undefined
             };
 
             resultTrips[currentDir].push(newTrip);
-
-            // Track North travel time for computing South target
-            if (isRoundTrip && currentDir === 'North') {
-                roundTripNorthTravelTime = pureTravelTime;
-            }
 
             // 6. Advance
             currentTime = nextTripStart;
@@ -590,12 +545,6 @@ export const generateSchedule = (
             if (isRoundTrip) {
                 const wasNorth = currentDir === 'North';
                 currentDir = wasNorth ? 'South' : 'North';
-
-                // After completing South leg, reset for next round trip
-                if (!wasNorth) {
-                    roundTripBandId = null;
-                    roundTripNorthTravelTime = 0;
-                }
             }
         }
     });

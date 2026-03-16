@@ -1,6 +1,9 @@
 import type { OnDemandDayType } from './onDemandShiftUtils';
 
 export type ShiftCountCapMode = 'hard' | 'guide';
+export type MinorGapTolerance = 'none' | 'rare';
+export type BreakProtectionMode = 'strict' | 'balanced';
+export type CostPriority = 'service' | 'balanced' | 'efficiency';
 
 export interface DayTypeShiftCountCaps {
   Weekday: number;
@@ -13,6 +16,21 @@ export interface OptimizeRequestOptions {
   maxShiftCount?: number;
   shiftCountCapMode?: ShiftCountCapMode;
   breakDurationMinutes?: number;
+}
+
+export interface OnDemandOptimizationSettingsState {
+  maxFleetVehicles: number;
+  shiftCountCaps: DayTypeShiftCountCaps;
+  targetCoveragePercent: number;
+  breakDurationMinutes: number;
+  shiftCountCapMode: ShiftCountCapMode;
+  minorGapTolerance: MinorGapTolerance;
+  breakProtection: BreakProtectionMode;
+  costPriority: CostPriority;
+}
+
+export interface OnDemandOptimizationSettingsSnapshot extends Partial<OnDemandOptimizationSettingsState> {
+  maxShiftCount?: number;
 }
 
 export const DEFAULT_SHIFT_COUNT_CAP = 18;
@@ -114,4 +132,66 @@ export const buildShiftCountCapInstruction = (
   }
 
   return `Do not produce more than ${maxShiftCount} total shifts${dayContext}.`;
+};
+
+export const normalizeOnDemandOptimizationSettings = (
+  value: OnDemandOptimizationSettingsSnapshot | null | undefined,
+  defaults: OnDemandOptimizationSettingsState,
+  limits: {
+    maxFleetVehicles: { min: number; max: number };
+    targetCoveragePercent: { min: number; max: number };
+    shiftCountCaps: { min: number; max: number };
+  },
+): OnDemandOptimizationSettingsState => {
+  const normalized: OnDemandOptimizationSettingsState = {
+    ...defaults,
+    shiftCountCaps: { ...defaults.shiftCountCaps },
+  };
+
+  if (!value || typeof value !== 'object') {
+    return normalized;
+  }
+
+  const maxFleetVehicles = Number(value.maxFleetVehicles);
+  if (Number.isFinite(maxFleetVehicles)) {
+    normalized.maxFleetVehicles = Math.min(
+      limits.maxFleetVehicles.max,
+      Math.max(limits.maxFleetVehicles.min, maxFleetVehicles),
+    );
+  }
+
+  const targetCoveragePercent = Number(value.targetCoveragePercent);
+  if (Number.isFinite(targetCoveragePercent)) {
+    normalized.targetCoveragePercent = Math.min(
+      limits.targetCoveragePercent.max,
+      Math.max(limits.targetCoveragePercent.min, targetCoveragePercent),
+    );
+  }
+
+  normalized.breakDurationMinutes = normalizeBreakDurationMinutes(
+    value.breakDurationMinutes,
+    defaults.breakDurationMinutes,
+  );
+
+  normalized.shiftCountCaps = normalizeShiftCountCaps(
+    value.shiftCountCaps ?? value.maxShiftCount,
+    limits.shiftCountCaps.min,
+    limits.shiftCountCaps.max,
+    defaults.shiftCountCaps.Weekday,
+  );
+
+  if (value.shiftCountCapMode === 'hard' || value.shiftCountCapMode === 'guide') {
+    normalized.shiftCountCapMode = value.shiftCountCapMode;
+  }
+  if (value.minorGapTolerance === 'none' || value.minorGapTolerance === 'rare') {
+    normalized.minorGapTolerance = value.minorGapTolerance;
+  }
+  if (value.breakProtection === 'strict' || value.breakProtection === 'balanced') {
+    normalized.breakProtection = value.breakProtection;
+  }
+  if (value.costPriority === 'service' || value.costPriority === 'balanced' || value.costPriority === 'efficiency') {
+    normalized.costPriority = value.costPriority;
+  }
+
+  return normalized;
 };

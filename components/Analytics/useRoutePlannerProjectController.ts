@@ -1,7 +1,13 @@
-import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react';
+import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import type { MapMouseEvent, MarkerDragEvent } from 'react-map-gl/mapbox';
 import { useToast } from '../contexts/ToastContext';
-import { createDraftRouteProject, syncDraftRouteProjectSource, type DraftRouteBaseSourceKind, type DraftRoutePlannerMode } from '../../utils/route-planner/routePlannerDrafts';
+import {
+    buildRouteScenarioSeed,
+    createDraftRouteProject,
+    syncDraftRouteProjectSource,
+    type DraftRouteBaseSourceKind,
+    type DraftRoutePlannerMode,
+} from '../../utils/route-planner/routePlannerDrafts';
 import { deriveRouteProject } from '../../utils/route-planner/routePlannerPlanning';
 import { clearRoutePlannerDraft, loadRoutePlannerDraft, saveRoutePlannerDraft } from '../../utils/route-planner/routePlannerDraftStorage';
 import {
@@ -17,6 +23,12 @@ import {
 } from '../../utils/route-planner/routePlannerProjectState';
 import { getAllStopsWithCoords, type GtfsStopWithCoords } from '../../utils/gtfs/gtfsStopLookup';
 import type { RouteProject, RouteScenario, RouteStop } from '../../utils/route-planner/routePlannerTypes';
+import {
+    buildRouteStopSignature,
+    buildRouteWaypointSignature,
+    snapRouteStopsToRoad,
+    snapRouteWaypointsToRoad,
+} from '../../utils/route-planner/routePlannerRoadSnap';
 import {
     deleteRoutePlannerProject,
     getAllRoutePlannerProjects,
@@ -120,6 +132,7 @@ export interface RoutePlannerProjectController {
     handleRemoveStop: () => void;
     handleUndoWaypoint: () => void;
     handleClearRoute: () => void;
+    handleResetRouteToGtfs: () => void;
     handleSaveProject: () => Promise<void>;
     handleDuplicateProject: () => Promise<void>;
     handleCreateFreshProject: () => void;
@@ -155,9 +168,11 @@ export function useRoutePlannerProjectController({
         loadRoutePlannerDraft(mode, teamId) ?? createDraftRouteProject(mode, initialBaseSource, initialRouteId, teamId)
     );
     const [selectedScenarioId, setSelectedScenarioId] = useState<string | null>(null);
-    const [compareMode, setCompareMode] = useState(false);
+    const [compareMode, setCompareMode] = useState(mode === 'existing-route-tweak');
     const [selectedStopId, setSelectedStopId] = useState<string | null>(null);
     const [mapEditMode, setMapEditMode] = useState<'inspect' | 'route' | 'stop'>('inspect');
+    const stopRerouteRequestRef = useRef(0);
+    const waypointRerouteRequestRef = useRef(0);
     const barrieStops = useMemo(() => getAllStopsWithCoords(), []);
     const barrieStopsGeoJson = useMemo(() => buildBarrieStopsGeoJson(barrieStops), [barrieStops]);
 
@@ -294,7 +309,7 @@ export function useRoutePlannerProjectController({
         setDraftState(inferDraftState(nextProject, initialRouteId));
         setProject(deriveRouteProject(nextProject));
         setSelectedScenarioId(nextProject.preferredScenarioId ?? nextProject.scenarios[0]?.id ?? null);
-        setCompareMode(false);
+        setCompareMode(mode === 'existing-route-tweak' && nextProject.scenarios.length > 1);
     };
 
     const updateProjectName = (value: string): void => {
@@ -487,14 +502,43 @@ export function useRoutePlannerProjectController({
 
         if (mapEditMode === 'route') {
             const nextCoordinate = [event.lngLat.lng, event.lngLat.lat] as [number, number];
+            const nextWaypoints = [...selectedScenario.waypoints, nextCoordinate];
+            const nextWaypointSignature = buildRouteWaypointSignature(nextWaypoints);
             setProject((current) => updateRouteScenario(current, selectedScenario.id, (scenario) => ({
                 ...scenario,
-                waypoints: [...scenario.waypoints, nextCoordinate],
+                waypoints: nextWaypoints,
                 geometry: {
                     type: 'LineString',
-                    coordinates: [...scenario.waypoints, nextCoordinate],
+                    coordinates: nextWaypoints,
                 },
             })));
+
+            if (nextWaypoints.length < 2) return;
+
+            const requestId = waypointRerouteRequestRef.current + 1;
+            waypointRerouteRequestRef.current = requestId;
+
+            void snapRouteWaypointsToRoad(nextWaypoints, selectedScenario.pattern, nextWaypoints.length - 1)
+                .then((snapResult) => {
+                    if (waypointRerouteRequestRef.current !== requestId) return;
+
+                    setProject((current) => updateRouteScenario(current, selectedScenario.id, (scenario) => {
+                        if (buildRouteWaypointSignature(scenario.waypoints) !== nextWaypointSignature) {
+                            return scenario;
+                        }
+
+                        return {
+                            ...scenario,
+                            geometry: {
+                                type: 'LineString',
+                                coordinates: snapResult.coordinates,
+                            },
+                        };
+                    }));
+                })
+                .catch(() => {
+                    // Fallback geometry is already handled inside the road-snap service.
+                });
             return;
         }
 
@@ -523,13 +567,14 @@ export function useRoutePlannerProjectController({
     const handleWaypointDragEnd = (coordinateIndex: number, event: MarkerDragEvent): void => {
         if (!selectedScenario) return;
 
-        setProject((current) => updateRouteScenario(current, selectedScenario.id, (scenario) => {
-            const nextWaypoints = scenario.waypoints.map((coordinate, index) =>
-                index === coordinateIndex
-                    ? [event.lngLat.lng, event.lngLat.lat] as [number, number]
-                    : coordinate
-            );
+        const nextWaypoints = selectedScenario.waypoints.map((coordinate, index) =>
+            index === coordinateIndex
+                ? [event.lngLat.lng, event.lngLat.lat] as [number, number]
+                : coordinate
+        );
+        const nextWaypointSignature = buildRouteWaypointSignature(nextWaypoints);
 
+        setProject((current) => updateRouteScenario(current, selectedScenario.id, (scenario) => {
             return {
                 ...scenario,
                 waypoints: nextWaypoints,
@@ -539,23 +584,81 @@ export function useRoutePlannerProjectController({
                 },
             };
         }));
+
+        if (nextWaypoints.length < 2) return;
+
+        const requestId = waypointRerouteRequestRef.current + 1;
+        waypointRerouteRequestRef.current = requestId;
+
+        void snapRouteWaypointsToRoad(nextWaypoints, selectedScenario.pattern, coordinateIndex)
+            .then((snapResult) => {
+                if (waypointRerouteRequestRef.current !== requestId) return;
+
+                setProject((current) => updateRouteScenario(current, selectedScenario.id, (scenario) => {
+                    if (buildRouteWaypointSignature(scenario.waypoints) !== nextWaypointSignature) {
+                        return scenario;
+                    }
+
+                    return {
+                        ...scenario,
+                        geometry: {
+                            type: 'LineString',
+                            coordinates: snapResult.coordinates,
+                        },
+                    };
+                }));
+            })
+            .catch(() => {
+                // Fallback geometry is already handled inside the road-snap service.
+            });
     };
 
     const handleStopDragEnd = (stopId: string, event: MarkerDragEvent): void => {
         if (!selectedScenario) return;
 
+        const nextStops = selectedScenario.stops.map((stop) =>
+            stop.id === stopId
+                ? {
+                    ...stop,
+                    latitude: event.lngLat.lat,
+                    longitude: event.lngLat.lng,
+                }
+                : stop
+        );
+        const nextStopSignature = buildRouteStopSignature(nextStops);
+
         setProject((current) => updateRouteScenario(current, selectedScenario.id, (scenario) => ({
             ...scenario,
-            stops: scenario.stops.map((stop) =>
-                stop.id === stopId
-                    ? {
-                        ...stop,
-                        latitude: event.lngLat.lat,
-                        longitude: event.lngLat.lng,
-                    }
-                    : stop
-            ),
+            stops: nextStops,
         })));
+
+        if (nextStops.length < 2) return;
+
+        const requestId = stopRerouteRequestRef.current + 1;
+        stopRerouteRequestRef.current = requestId;
+
+        void snapRouteStopsToRoad(nextStops, selectedScenario.pattern)
+            .then((snapResult) => {
+                if (stopRerouteRequestRef.current !== requestId) return;
+
+                setProject((current) => updateRouteScenario(current, selectedScenario.id, (scenario) => {
+                    if (buildRouteStopSignature(scenario.stops) !== nextStopSignature) {
+                        return scenario;
+                    }
+
+                    return {
+                        ...scenario,
+                        waypoints: snapResult.stopWaypoints,
+                        geometry: {
+                            type: 'LineString',
+                            coordinates: snapResult.coordinates,
+                        },
+                    };
+                }));
+            })
+            .catch(() => {
+                // Fallback geometry is already handled inside the road-snap service.
+            });
     };
 
     const handleRemoveStop = (): void => {
@@ -582,6 +685,27 @@ export function useRoutePlannerProjectController({
                 },
             };
         }));
+    };
+
+    const handleResetRouteToGtfs = (): void => {
+        if (!selectedScenario) return;
+        if (selectedScenario.baseSource.kind !== 'existing_route' || !selectedScenario.baseSource.sourceId) {
+            toast.info('GTFS Reset Unavailable', 'Only existing Barrie route templates can be reset to GTFS geometry.');
+            return;
+        }
+
+        const seed = buildRouteScenarioSeed('existing-route', selectedScenario.baseSource.sourceId, selectedScenario.pattern);
+        if (seed.geometry.coordinates.length < 2) {
+            toast.warning('GTFS Reset Unavailable', 'No GTFS shape was found for this route template.');
+            return;
+        }
+
+        setProject((current) => updateRouteScenario(current, selectedScenario.id, (scenario) => ({
+            ...scenario,
+            waypoints: seed.waypoints,
+            geometry: seed.geometry,
+        })));
+        toast.success('Route Reset', `Restored Route ${selectedScenario.baseSource.sourceId} to its GTFS starting shape.`);
     };
 
     const handleClearRoute = (): void => {
@@ -675,7 +799,7 @@ export function useRoutePlannerProjectController({
         setLocalDraftProject(freshProject);
         setDraftState(inferDraftState(freshProject, initialRouteId));
         setSelectedScenarioId(freshProject.preferredScenarioId ?? freshProject.scenarios[0]?.id ?? null);
-        setCompareMode(false);
+        setCompareMode(mode === 'existing-route-tweak' && freshProject.scenarios.length > 1);
         toast.success('Fresh Project Ready', 'Started a clean route planning draft.');
     };
 
@@ -757,6 +881,7 @@ export function useRoutePlannerProjectController({
         handleRemoveStop,
         handleUndoWaypoint,
         handleClearRoute,
+        handleResetRouteToGtfs,
         handleSaveProject,
         handleDuplicateProject,
         handleCreateFreshProject,

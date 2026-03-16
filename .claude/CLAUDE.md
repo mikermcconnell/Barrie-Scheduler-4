@@ -1,5 +1,8 @@
 # Claude Code Instructions
 
+This file is a Claude-specific workflow supplement.
+Read `AGENTS.md` first for the repo's top-level agent contract.
+
 > **READ docs/CONTEXT_INDEX.md** for context load order.
 > **READ docs/rules/LOCKED_LOGIC.md** before modifying core schedule files.
 > **READ docs/PRODUCT_VISION.md** for product goals when planning features.

@@ -1,7 +1,7 @@
 # Architecture
 
-> Last reviewed: March 6, 2026
-> Load order: start with `docs/CONTEXT_INDEX.md` before using this file as agent context.
+> Last reviewed: March 14, 2026
+> Load order: start with `AGENTS.md`, then `docs/CONTEXT_INDEX.md`, before using this file as agent context.
 
 ## Overview
 

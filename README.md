@@ -49,6 +49,7 @@ Detailed file ownership lives in `docs/ARCHITECTURE.md`. Use the summary above o
 
 ## Documentation
 
+- [AGENTS.md](AGENTS.md) - Primary agent entrypoint and repo instruction contract
 - [Context Index](docs/CONTEXT_INDEX.md) - Start here for repository context and load order
 - [Locked Logic](docs/rules/LOCKED_LOGIC.md) - Durable behavioral constraints
 - [.claude/CLAUDE.md](.claude/CLAUDE.md) - Repo workflow, verification expectations, and danger zones

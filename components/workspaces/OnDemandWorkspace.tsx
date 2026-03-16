@@ -35,6 +35,7 @@ import {
     removeShiftFromDay,
     updateShiftInDay
 } from '../../utils/onDemandShiftUtils';
+import { validateOnDemandSchedule } from '../../utils/onDemandValidation';
 import {
     buildShiftCountCapInstruction,
     breakDurationMinutesToSlots,
@@ -42,12 +43,21 @@ import {
     createDefaultShiftCountCaps,
     DEFAULT_BREAK_DURATION_MINUTES,
     getShiftCountCapForDay,
+    normalizeOnDemandOptimizationSettings,
     normalizeBreakDurationMinutes,
     normalizeShiftCountCaps,
+    type OnDemandOptimizationSettingsSnapshot,
+    type OnDemandOptimizationSettingsState,
     type DayTypeShiftCountCaps,
     type ShiftCountCapMode,
     type OptimizeRequestOptions,
 } from '../../utils/onDemandOptimizationSettings';
+import {
+    normalizeRideCoImport,
+    resolveOnDemandDay,
+    resolveOnDemandScheduleState,
+    summarizeOnDemandValidation,
+} from '../../utils/onDemandWorkspaceState';
 import {
     Wand2, Users, BarChart3, Sparkles, Loader2,
     FolderOpen, Save, CloudDownload, Check, Edit3, RotateCcw, ArrowLeft, Star, X, Undo2
@@ -61,16 +71,7 @@ const MAX_FLEET_VEHICLES = 6;
 const OPTIMIZATION_SETTINGS_STORAGE_KEY = 'od-optimization-settings';
 const SHIFT_COUNT_CAP_LIMITS = { min: 1, max: 40, step: 1 } as const;
 
-interface OptimizationSettings {
-    maxFleetVehicles: number;
-    shiftCountCaps: DayTypeShiftCountCaps;
-    targetCoveragePercent: number;
-    breakDurationMinutes: number;
-    shiftCountCapMode: ShiftCountCapMode;
-    minorGapTolerance: 'none' | 'rare';
-    breakProtection: 'strict' | 'balanced';
-    costPriority: 'service' | 'balanced' | 'efficiency';
-}
+type OptimizationSettings = OnDemandOptimizationSettingsState;
 
 const DEFAULT_OPTIMIZATION_SETTINGS: OptimizationSettings = {
     maxFleetVehicles: MAX_FLEET_VEHICLES,
@@ -89,6 +90,12 @@ const OPTIMIZATION_NUMBER_LIMITS: Record<'maxFleetVehicles' | 'targetCoveragePer
     breakDurationMinutes: { ...BREAK_DURATION_MINUTES_LIMITS },
 };
 
+const OPTIMIZATION_SETTINGS_LIMITS = {
+    maxFleetVehicles: OPTIMIZATION_NUMBER_LIMITS.maxFleetVehicles,
+    targetCoveragePercent: OPTIMIZATION_NUMBER_LIMITS.targetCoveragePercent,
+    shiftCountCaps: SHIFT_COUNT_CAP_LIMITS,
+} as const;
+
 const readOptimizationSettings = (): OptimizationSettings => {
     if (typeof window === 'undefined') {
         return DEFAULT_OPTIMIZATION_SETTINGS;
@@ -100,41 +107,11 @@ const readOptimizationSettings = (): OptimizationSettings => {
             return DEFAULT_OPTIMIZATION_SETTINGS;
         }
 
-        const parsed = JSON.parse(raw) as Partial<OptimizationSettings> & { maxShiftCount?: number };
-        const normalized = { ...DEFAULT_OPTIMIZATION_SETTINGS };
-
-        (Object.keys(OPTIMIZATION_NUMBER_LIMITS) as Array<keyof typeof OPTIMIZATION_NUMBER_LIMITS>).forEach((key) => {
-            const value = Number(parsed[key]);
-            const { min, max } = OPTIMIZATION_NUMBER_LIMITS[key];
-            if (Number.isFinite(value)) {
-                normalized[key] = Math.min(max, Math.max(min, value));
-            }
-        });
-        normalized.breakDurationMinutes = normalizeBreakDurationMinutes(
-            parsed.breakDurationMinutes,
-            DEFAULT_BREAK_DURATION_MINUTES,
+        return normalizeOnDemandOptimizationSettings(
+            JSON.parse(raw) as OnDemandOptimizationSettingsSnapshot,
+            DEFAULT_OPTIMIZATION_SETTINGS,
+            OPTIMIZATION_SETTINGS_LIMITS,
         );
-
-        normalized.shiftCountCaps = normalizeShiftCountCaps(
-            parsed.shiftCountCaps ?? parsed.maxShiftCount,
-            SHIFT_COUNT_CAP_LIMITS.min,
-            SHIFT_COUNT_CAP_LIMITS.max,
-        );
-
-        if (parsed.minorGapTolerance === 'none' || parsed.minorGapTolerance === 'rare') {
-            normalized.minorGapTolerance = parsed.minorGapTolerance;
-        }
-        if (parsed.breakProtection === 'strict' || parsed.breakProtection === 'balanced') {
-            normalized.breakProtection = parsed.breakProtection;
-        }
-        if (parsed.shiftCountCapMode === 'hard' || parsed.shiftCountCapMode === 'guide') {
-            normalized.shiftCountCapMode = parsed.shiftCountCapMode;
-        }
-        if (parsed.costPriority === 'service' || parsed.costPriority === 'balanced' || parsed.costPriority === 'efficiency') {
-            normalized.costPriority = parsed.costPriority;
-        }
-
-        return normalized;
     } catch {
         return DEFAULT_OPTIMIZATION_SETTINGS;
     }
@@ -292,6 +269,23 @@ export const OnDemandWorkspace: React.FC = () => {
         () => calculateMetrics(timeSlots, shifts, { coveragePrecision: 1, netDifferenceMode: 'raw' }),
         [shifts, timeSlots]
     );
+    const requiredBreakDurationSlots = useMemo(
+        () => breakDurationMinutesToSlots(optimizationSettings.breakDurationMinutes),
+        [optimizationSettings.breakDurationMinutes]
+    );
+    const scheduleValidation = useMemo(
+        () => validateOnDemandSchedule(
+            shifts,
+            requirements,
+            optimizationSettings.maxFleetVehicles,
+            requiredBreakDurationSlots,
+        ),
+        [optimizationSettings.maxFleetVehicles, requiredBreakDurationSlots, requirements, shifts]
+    );
+    const validationSummary = useMemo(
+        () => summarizeOnDemandValidation(scheduleValidation),
+        [scheduleValidation]
+    );
     const maxConcurrentVehicles = useMemo(
         () => timeSlots.reduce((peak, slot) => Math.max(peak, slot.totalActiveCoverage), 0),
         [timeSlots]
@@ -302,10 +296,6 @@ export const OnDemandWorkspace: React.FC = () => {
     );
     const shiftCountWithinHardCap = shifts.length <= activeMaxShiftCount;
     const fleetWithinLimit = maxConcurrentVehicles <= optimizationSettings.maxFleetVehicles;
-    const requiredBreakDurationSlots = useMemo(
-        () => breakDurationMinutesToSlots(optimizationSettings.breakDurationMinutes),
-        [optimizationSettings.breakDurationMinutes]
-    );
     const isWorkspaceBusy = isAnimating || isProcessingFiles;
     const settingsInstruction = useMemo(
         () => buildOptimizerSettingsInstruction(optimizationSettings, selectedDayType),
@@ -364,14 +354,14 @@ export const OnDemandWorkspace: React.FC = () => {
     };
 
     // Helper to parse RideCo content (string or ArrayBuffer)
-    const parseRideCoContent = (content: string | ArrayBuffer): Shift[] => {
+    const parseRideCoContent = (content: string | ArrayBuffer, fallbackDayType: DayType): Shift[] => {
         if (typeof content === 'string') {
-            return normalizeOnDemandShifts(parseRideCo(content), 'Weekday');
+            return normalizeRideCoImport(parseRideCo(content), fallbackDayType);
         } else {
             const workbook = XLSX.read(content, { type: 'array' });
             const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
             const data = XLSX.utils.sheet_to_json<(string | number)[]>(firstSheet, { header: 1, defval: '' });
-            return normalizeOnDemandShifts(parseRideCo(data as string[][]), 'Weekday');
+            return normalizeRideCoImport(parseRideCo(data as string[][]), fallbackDayType);
         }
     };
 
@@ -440,6 +430,24 @@ export const OnDemandWorkspace: React.FC = () => {
         }
         details.push(`ref ${result.requestId}`);
         return details.join(' ');
+    };
+
+    const warnValidationIssues = (actionLabel: string) => {
+        if (shifts.length === 0 || validationSummary.isValid) return false;
+        toast.warning(`${actionLabel} has validation issues`, validationSummary.message);
+        setActiveTab('overview');
+        return true;
+    };
+
+    const blockInvalidOperationalOutput = (actionLabel: string) => {
+        if (shifts.length === 0) {
+            toast.info(`${actionLabel} unavailable`, 'Load or create shifts before exporting operational outputs.');
+            return true;
+        }
+        if (validationSummary.isValid) return false;
+        toast.warning(`${actionLabel} blocked`, validationSummary.message);
+        setActiveTab('overview');
+        return true;
     };
 
     const handleCancelOptimization = () => {
@@ -760,26 +768,27 @@ export const OnDemandWorkspace: React.FC = () => {
                 const newSchedules = parseMasterContent(masterContent);
                 setSchedules(newSchedules);
 
-                const defaultDayKey = newSchedules['Weekday'] ? 'Weekday' : Object.keys(newSchedules)[0];
-                if (defaultDayKey) {
-                    const validDay = toValidDayType(defaultDayKey);
-                    dayForShiftFiltering = validDay;
-                    setSelectedDayType(validDay);
-                    setRequirements(newSchedules[defaultDayKey]);
+                const resolvedDay = resolveOnDemandDay(newSchedules, selectedDayType);
+                if (resolvedDay) {
+                    dayForShiftFiltering = resolvedDay.selectedDayType;
+                    setSelectedDayType(resolvedDay.selectedDayType);
+                    setRequirements(resolvedDay.requirements);
                 }
             }
 
             if (ridecoContent) {
-                const newShifts = parseRideCoContent(ridecoContent);
-
-                if (newShifts.length > 0) {
-                    setAllShifts(newShifts);
-                    setShifts(filterShiftsByDay(newShifts, dayForShiftFiltering));
+                const newShifts = parseRideCoContent(ridecoContent, dayForShiftFiltering);
+                setAllShifts(newShifts);
+                setShifts(filterShiftsByDay(newShifts, dayForShiftFiltering));
+                if (newShifts.length === 0) {
+                    toast.warning('No shifts loaded', 'The RideCo file did not contain any usable shifts.');
                 }
+            } else if (masterContent) {
+                setShifts(filterShiftsByDay(allShifts, dayForShiftFiltering));
             }
         } catch (e) {
             console.error(e);
-            alert('Error processing files.');
+            toast.error('File processing failed', 'Check the uploaded files and try again.');
         } finally {
             setIsProcessingFiles(false);
         }
@@ -796,25 +805,27 @@ export const OnDemandWorkspace: React.FC = () => {
             if (cachedFiles.master) {
                 const newSchedules = parseMasterContent(cachedFiles.master);
                 setSchedules(newSchedules);
-                const defaultDayKey = newSchedules['Weekday'] ? 'Weekday' : Object.keys(newSchedules)[0];
-                if (defaultDayKey) {
-                    const validDay = toValidDayType(defaultDayKey);
-                    dayForShiftFiltering = validDay;
-                    setSelectedDayType(validDay);
-                    setRequirements(newSchedules[defaultDayKey]);
+                const resolvedDay = resolveOnDemandDay(newSchedules, selectedDayType);
+                if (resolvedDay) {
+                    dayForShiftFiltering = resolvedDay.selectedDayType;
+                    setSelectedDayType(resolvedDay.selectedDayType);
+                    setRequirements(resolvedDay.requirements);
                 }
             }
             if (cachedFiles.rideco) {
-                const newShifts = parseRideCoContent(cachedFiles.rideco);
-
-                if (newShifts.length > 0) {
-                    setAllShifts(newShifts);
-                    setShifts(filterShiftsByDay(newShifts, dayForShiftFiltering));
+                const newShifts = parseRideCoContent(cachedFiles.rideco, dayForShiftFiltering);
+                setAllShifts(newShifts);
+                setShifts(filterShiftsByDay(newShifts, dayForShiftFiltering));
+                if (newShifts.length === 0) {
+                    toast.warning('No shifts loaded', 'The cached RideCo file did not contain any usable shifts.');
                 }
+            } else if (cachedFiles.master) {
+                setShifts(filterShiftsByDay(allShifts, dayForShiftFiltering));
             }
             setIsOptimized(false);
         } catch (e) {
             console.error('Reset failed:', e);
+            toast.error('Reset failed', 'The workspace could not be restored from the cached upload.');
         } finally {
             setIsProcessingFiles(false);
         }
@@ -923,35 +934,35 @@ export const OnDemandWorkspace: React.FC = () => {
                 setSchedules(newSchedules);
                 setLoadedCloudFiles(prev => ({ ...prev, master: file }));
 
-                const defaultDayKey = newSchedules['Weekday'] ? 'Weekday' : Object.keys(newSchedules)[0];
-                if (defaultDayKey) {
-                    setSelectedDayType(toValidDayType(defaultDayKey));
-                    setRequirements(newSchedules[defaultDayKey]);
+                const resolvedDay = resolveOnDemandDay(newSchedules, selectedDayType);
+                if (resolvedDay) {
+                    setSelectedDayType(resolvedDay.selectedDayType);
+                    setRequirements(resolvedDay.requirements);
+                    setShifts(filterShiftsByDay(allShifts, resolvedDay.selectedDayType));
                 }
             } else if (fileType === 'rideco') {
                 // Parse as RideCo shifts
                 console.log('Parsing as RideCo shifts...');
                 captureUndoSnapshot('cloud file load');
                 setCachedFiles(prev => ({ ...prev, rideco: content }));
-                const newShifts = parseRideCoContent(content);
+                const currentDay = selectedDayType || 'Weekday';
+                const newShifts = parseRideCoContent(content, currentDay);
                 console.log('Parsed shifts count:', newShifts.length);
-                if (newShifts.length > 0) {
-                    setAllShifts(newShifts);
-                    setLoadedCloudFiles(prev => ({ ...prev, rideco: file }));
-                    const currentDay = selectedDayType || 'Weekday';
-                    setShifts(filterShiftsByDay(newShifts, currentDay));
-                } else {
-                    alert('No shifts found in the file. Make sure it\'s a valid RideCo shift template.');
+                setAllShifts(newShifts);
+                setLoadedCloudFiles(prev => ({ ...prev, rideco: file }));
+                setShifts(filterShiftsByDay(newShifts, currentDay));
+                if (newShifts.length === 0) {
+                    toast.warning('No shifts found', 'Make sure the selected file is a valid RideCo shift template.');
                 }
             } else {
                 // Unknown type - let user know
-                alert(`Unknown file type: "${file.type}". Please ensure the file is either a RideCo Shift Template or a Master Schedule.`);
+                toast.error('Unknown file type', `Unsupported file type "${file.type}". Load a RideCo shift template or a master schedule.`);
             }
 
             setShowFileManager(false);
         } catch (err) {
             console.error('Failed to load file from cloud:', err);
-            alert('Failed to load file. Please try again.');
+            toast.error('Load failed', 'The selected cloud file could not be loaded.');
         } finally {
             setIsLoadingFromCloud(false);
         }
@@ -959,51 +970,21 @@ export const OnDemandWorkspace: React.FC = () => {
 
     // Handle loading a saved draft/schedule
     const handleScheduleSelect = (schedule: SavedSchedule) => {
-        const normalizedShiftData = schedule.shiftData
-            ? normalizeOnDemandShifts(schedule.shiftData, 'Weekday')
-            : [];
-
         captureUndoSnapshot('schedule load');
-        // Restore the workspace state from the saved schedule
-        if (normalizedShiftData.length > 0) {
-            setAllShifts(normalizedShiftData);
-        }
-
-        // Restore multi-day schedules if available
-        if (schedule.schedulesData) {
-            setSchedules(schedule.schedulesData);
-
-            // Smartly select the day to show
-            // If currently selected day is available in the loaded schedule, keep it
-            // Otherwise default to Weekday or first available
-            const availableDays = Object.keys(schedule.schedulesData);
-            let dayToSelectKey: string = selectedDayType;
-
-            if (!availableDays.includes(dayToSelectKey)) {
-                dayToSelectKey = availableDays.includes('Weekday') ? 'Weekday' : availableDays[0];
-            }
-
-            if (dayToSelectKey && schedule.schedulesData[dayToSelectKey]) {
-                const validDay = toValidDayType(dayToSelectKey);
-                setSelectedDayType(validDay);
-                setRequirements(schedule.schedulesData[dayToSelectKey]);
-
-                // Filter shifts for this day (default to Weekday if no dayType)
-                if (normalizedShiftData.length > 0) {
-                    setShifts(filterShiftsByDay(normalizedShiftData, validDay));
-                }
-            } else if (schedule.masterScheduleData) {
-                // Fallback to legacy master data if no specific day matched
-                setRequirements(schedule.masterScheduleData);
-            }
-        } else {
-            // Legacy load handling (older saves without schedulesData)
-            if (schedule.masterScheduleData) {
-                setRequirements(schedule.masterScheduleData);
-            }
-            if (normalizedShiftData.length > 0) {
-                setShifts(filterShiftsByDay(normalizedShiftData, selectedDayType));
-            }
+        const resolvedScheduleState = resolveOnDemandScheduleState(schedule, selectedDayType);
+        setAllShifts(resolvedScheduleState.allShifts);
+        setShifts(resolvedScheduleState.shifts);
+        setSchedules(resolvedScheduleState.schedules);
+        setSelectedDayType(resolvedScheduleState.selectedDayType);
+        setRequirements(resolvedScheduleState.requirements);
+        if (resolvedScheduleState.optimizationSettings) {
+            setOptimizationSettings(
+                normalizeOnDemandOptimizationSettings(
+                    resolvedScheduleState.optimizationSettings,
+                    DEFAULT_OPTIMIZATION_SETTINGS,
+                    OPTIMIZATION_SETTINGS_LIMITS,
+                ),
+            );
         }
 
         setDraftName(schedule.name);
@@ -1024,6 +1005,9 @@ export const OnDemandWorkspace: React.FC = () => {
         setSaveSuccess(false);
 
         try {
+            if (warnValidationIssues('This draft')) {
+                toast.info('Draft save continuing', 'The draft will be saved, but the current schedule still has blocking issues.');
+            }
             const scheduleData = {
                 name: draftName,
                 description: `${allShifts.length} shifts, Active Day: ${selectedDayType}`,
@@ -1031,6 +1015,7 @@ export const OnDemandWorkspace: React.FC = () => {
                 shiftData: allShifts, // Save ALL shifts from all days
                 masterScheduleData: requirements, // Save current view
                 ...(schedules ? { schedulesData: schedules } : {}), // Save all day requirements when available
+                optimizationSettings,
             };
 
             // Logic: "Save As" if the ID exists BUT the name has changed
@@ -1216,6 +1201,7 @@ export const OnDemandWorkspace: React.FC = () => {
                         <div className="flex items-center gap-2 mr-4 p-1 bg-gray-50 rounded-lg border border-gray-100">
                             <button
                                 onClick={() => {
+                                    if (blockInvalidOperationalOutput('RideCo export')) return;
                                     // Export all shifts, not just the currently filtered day
                                     const csv = generateRideCoCSV(allShifts);
                                     downloadCSV(csv, `RideCo_Shifts_All_${new Date().toISOString().split('T')[0]}.csv`);
@@ -1229,6 +1215,7 @@ export const OnDemandWorkspace: React.FC = () => {
                             <div className="w-px h-4 bg-gray-200"></div>
                             <button
                                 onClick={async () => {
+                                    if (blockInvalidOperationalOutput('Paddles PDF export')) return;
                                     await exportTODPaddlesPDF(allShifts);
                                 }}
                                 disabled={allShifts.length === 0}
@@ -1244,6 +1231,7 @@ export const OnDemandWorkspace: React.FC = () => {
                             <div className="w-px h-4 bg-gray-200"></div>
                             <button
                                 onClick={async () => {
+                                    if (blockInvalidOperationalOutput('Paddles Excel export')) return;
                                     await exportTODPaddlesExcel(allShifts);
                                 }}
                                 disabled={allShifts.length === 0}
@@ -1409,6 +1397,17 @@ export const OnDemandWorkspace: React.FC = () => {
                         {undoSnapshot && !isWorkspaceBusy && (
                             <div className="text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-xl">
                                 Ready to undo: {undoSnapshot.label}
+                            </div>
+                        )}
+
+                        {shifts.length > 0 && (
+                            <div className={`max-w-md text-xs font-bold px-3 py-2 rounded-xl border ${validationSummary.isValid
+                                ? 'text-emerald-700 bg-emerald-50 border-emerald-200'
+                                : 'text-amber-800 bg-amber-50 border-amber-200'
+                                }`}>
+                                {validationSummary.isValid
+                                    ? `Validation passed for ${selectedDayType}. ${validationSummary.message}`
+                                    : `${selectedDayType} validation issues: ${validationSummary.message}`}
                             </div>
                         )}
 
@@ -1581,12 +1580,34 @@ export const OnDemandWorkspace: React.FC = () => {
                                             {Math.round(metrics.coveragePercent)}%
                                         </span>
                                     </div>
+                                    <div className={`flex justify-between items-center p-3 rounded-xl border-2 ${validationSummary.isValid ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
+                                        <span className="font-bold text-gray-600">Validation</span>
+                                        <span className={`font-extrabold ${validationSummary.isValid ? 'text-emerald-600' : 'text-amber-700'}`}>
+                                            {validationSummary.isValid ? 'Pass' : `${validationSummary.blockingIssueCount} issue${validationSummary.blockingIssueCount === 1 ? '' : 's'}`}
+                                        </span>
+                                    </div>
                                 </div>
 
                                 {/* Status Message */}
-                                <div className={`mt-4 p-3 rounded-xl border-2 ${isOptimized ? 'bg-purple-50 border-purple-100' : 'bg-gray-50 border-gray-200'}`}>
-                                    <p className={`text-sm font-bold ${isOptimized ? 'text-purple-600' : 'text-gray-500'}`}>
-                                        {isOptimized ? '✨ AI Optimized' : shifts.length === 0 ? 'No shifts loaded' : 'Ready for optimization'}
+                                <div className={`mt-4 p-3 rounded-xl border-2 ${!validationSummary.isValid && shifts.length > 0
+                                    ? 'bg-amber-50 border-amber-200'
+                                    : isOptimized
+                                        ? 'bg-purple-50 border-purple-100'
+                                        : 'bg-gray-50 border-gray-200'
+                                    }`}>
+                                    <p className={`text-sm font-bold ${!validationSummary.isValid && shifts.length > 0
+                                        ? 'text-amber-700'
+                                        : isOptimized
+                                            ? 'text-purple-600'
+                                            : 'text-gray-500'
+                                        }`}>
+                                        {!validationSummary.isValid && shifts.length > 0
+                                            ? validationSummary.message
+                                            : isOptimized
+                                                ? '✨ AI Optimized'
+                                                : shifts.length === 0
+                                                    ? 'No shifts loaded'
+                                                    : 'Ready for optimization'}
                                     </p>
                                 </div>
                             </div>

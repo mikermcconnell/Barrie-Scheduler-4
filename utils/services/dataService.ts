@@ -21,6 +21,7 @@ import {
 import { db, storage } from '../firebase';
 import type { Shift, Requirement } from '../demandTypes';
 import type { MasterRouteTable } from '../parsers/masterScheduleParser';
+import type { OnDemandOptimizationSettingsSnapshot } from '../onDemandOptimizationSettings';
 
 // Types for saved data
 export interface SavedSchedule {
@@ -31,6 +32,7 @@ export interface SavedSchedule {
     shiftData: Shift[];
     masterScheduleData: Requirement[];
     schedulesData?: Record<string, Requirement[]>;
+    optimizationSettings?: OnDemandOptimizationSettingsSnapshot;
     createdAt: Date;
     updatedAt: Date;
 }
