@@ -3,14 +3,19 @@ import { onRequest } from 'firebase-functions/v2/https';
 import { defineSecret } from 'firebase-functions/params';
 import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai';
 import { shouldUseExtendedOptimizePipeline } from './optimizePipelinePolicy';
+import { calculateSchedule } from '../../utils/dataGenerator';
+import { validateOnDemandSchedule } from '../../utils/onDemandValidation';
 import {
     buildShiftCountCapInstruction,
+    breakDurationMinutesToSlots,
+    DEFAULT_BREAK_DURATION_MINUTES,
     type OptimizeRequestOptions,
 } from '../../utils/onDemandOptimizationSettings';
 import { sanitizeOptimizerShift } from '../../utils/onDemandShiftRules';
 
 const GEMINI_API_KEY = defineSecret('GEMINI_API_KEY');
 const createServerRequestId = () => `srv-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+const MAX_ACTIVE_VEHICLES = 6;
 const inferErrorCode = (message: string) => {
     const text = message.toLowerCase();
     if (
@@ -26,6 +31,84 @@ const inferErrorCode = (message: string) => {
     if (text.includes('timeout') || text.includes('timed out') || text.includes('deadline')) return 'TIMEOUT';
     if (text.includes('auth')) return 'AUTH_REQUIRED';
     return 'UPSTREAM';
+};
+
+const getShiftCountPenalty = (
+    shifts: any[],
+    optimizationOptions?: OptimizeRequestOptions,
+) => {
+    const maxShiftCount = optimizationOptions?.maxShiftCount;
+    if (!maxShiftCount || maxShiftCount < 1) {
+        return 0;
+    }
+
+    const excessShiftCount = Math.max(0, shifts.length - maxShiftCount);
+    if (excessShiftCount === 0) {
+        return 0;
+    }
+
+    if (optimizationOptions?.shiftCountCapMode === 'guide') {
+        return excessShiftCount * 500;
+    }
+
+    return 250_000 + excessShiftCount * 25_000;
+};
+
+const getSimultaneousChangeoffPenalty = (
+    shifts: any[],
+    requirements: any[],
+    optimizationOptions?: OptimizeRequestOptions,
+) => {
+    const slots = calculateSchedule(shifts, requirements, optimizationOptions);
+
+    return slots.reduce((sum, slot) => {
+        const totalConcurrentPenalty = Math.max(0, slot.driversInChangeoff - 1) * 400;
+        const northConcurrentPenalty = Math.max(0, slot.northChangeoffs - 1) * 700;
+        const southConcurrentPenalty = Math.max(0, slot.southChangeoffs - 1) * 700;
+        return sum + totalConcurrentPenalty + northConcurrentPenalty + southConcurrentPenalty;
+    }, 0);
+};
+
+const scoreSchedule = (
+    shifts: any[],
+    requirements: any[],
+    optimizationOptions?: OptimizeRequestOptions,
+) => {
+    const configuredBreakDurationSlots = breakDurationMinutesToSlots(
+        optimizationOptions?.breakDurationMinutes ?? DEFAULT_BREAK_DURATION_MINUTES,
+    );
+    const validation = validateOnDemandSchedule(
+        shifts,
+        requirements,
+        MAX_ACTIVE_VEHICLES,
+        configuredBreakDurationSlots,
+        optimizationOptions,
+    );
+    const coverageShortfall = validation.coverageViolations.reduce((sum, issue) => sum + issue.shortfall, 0);
+    const fleetExcess = validation.fleetViolations.reduce(
+        (sum, issue) => sum + Math.max(0, issue.activeCoverage - MAX_ACTIVE_VEHICLES),
+        0,
+    );
+    const shiftCountPenalty = getShiftCountPenalty(shifts, optimizationOptions);
+    const simultaneousChangeoffPenalty = getSimultaneousChangeoffPenalty(
+        shifts,
+        requirements,
+        optimizationOptions,
+    );
+
+    return {
+        validation,
+        score:
+            validation.shiftRuleViolations.length * 1_500_000
+            + validation.breakCoverageViolations.length * 1_000_000
+            + validation.fleetViolations.length * 100_000
+            + shiftCountPenalty
+            + simultaneousChangeoffPenalty
+            + fleetExcess * 10_000
+            + validation.coverageViolations.length * 1_000
+            + coverageShortfall * 100
+            + validation.maxOverlappingShifts,
+    };
 };
 
 // ==========================================
@@ -177,16 +260,18 @@ function optimizeImplementation(
     3. A gap of 2+ buses is NOT acceptable.
     4. A gap lasting more than 2 consecutive slots is NOT acceptable.
     5. Peak-period gaps are much worse than off-peak surplus.
-    6. Do not create repeated short gaps across the day to save hours.
-    7. Prefer a small surplus over recurring service gaps.
+    6. Minimize simultaneous driver changeoffs. Avoid stacking multiple changeoffs in the same 15-minute slot when another arrangement is feasible.
+    7. Do not create repeated short gaps across the day to save hours.
+    8. Prefer a small surplus over recurring service gaps.
 
     OPTIMIZATION ORDER:
     1. Minimize peak gaps.
     2. Minimize total deficit slots.
-    3. Minimize repeated short gaps.
-    4. Minimize surplus slots.
-    5. Minimize payable hours.
-    6. Keep breaks compliant and staggered.
+    3. Minimize simultaneous changeoffs and stagger handoffs.
+    4. Minimize repeated short gaps.
+    5. Minimize surplus slots.
+    6. Minimize payable hours.
+    7. Keep breaks compliant and staggered.
     `;
 
     const extendedPipeline = shouldUseExtendedOptimizePipeline(mode, process.env.OPTIMIZE_MULTI_PHASE);
@@ -213,7 +298,8 @@ async function runPipeline(
     1. Match the demand curve first. Cost reduction is secondary.
     2. Use shorter shifts where they reduce mismatch without creating repeated short gaps.
     3. Stagger breaks so the same zone does not lose multiple drivers at once.
-    4. Preserve continuous coverage through the strongest peaks.
+    4. Stagger changeoffs so multiple drivers are not leaving service at the same time unless no better option exists.
+    5. Preserve continuous coverage through the strongest peaks.
     `;
 
     let draftPrompt = `DEMAND CURVES:\n${demandContext}\n`;
@@ -243,7 +329,7 @@ async function runPipeline(
 
     if (!extendedPipeline) {
         console.log(`[${requestId}] Fast path enabled; skipping critic and polisher phases.`);
-        return processShifts(draftShifts);
+        return processShifts(draftShifts, optimizationOptions);
     }
 
     // Phase 2: Critic
@@ -259,7 +345,8 @@ async function runPipeline(
     2. **Short-Gap Tolerance**: A 1-bus gap for 1-2 consecutive slots is allowed only if it clearly improves the full-day schedule and does not repeat across many periods.
     3. **Over-Supply**: Trim surplus only after gap control is acceptable.
     4. **Break Conflicts**: If two drivers from the same zone are on break at the same time, MOVE one break.
-    5. **Floater Logic**: Ensure Floaters are actually working during gaps or break relief periods.
+    5. **Changeoff Clustering**: If multiple drivers are in changeoff at the same time, stagger those handoffs where possible.
+    6. **Floater Logic**: Ensure Floaters are actually working during gaps or break relief periods.
 
     OUTPUT FORMAT:
     - First, write a "critique": identifying 2-3 biggest issues in the draft.
@@ -306,8 +393,9 @@ async function runPipeline(
     POLISHING TASKS:
     1. **Strict Break Windows**: ENSURE every break is between the 4th and 6th hour (Slots: Start+16 to Start+24). MOVE them if they are off by even 1 slot.
     2. **Gap Guardrail**: Do not leave any 2+ bus gap or any 1-bus gap longer than 2 consecutive slots.
-    3. **Trim Surpluses**: If a zone has sustained surplus and coverage remains acceptable, cut a shift earlier or start it later.
-    4. **Floater Efficiency**: If a Floater is covering a time where no breaks or gaps exist, move them to a more valuable period.
+    3. **Stagger Changeoffs**: If multiple changeoffs land in the same slot, spread them apart when coverage remains acceptable.
+    4. **Trim Surpluses**: If a zone has sustained surplus and coverage remains acceptable, cut a shift earlier or start it later.
+    5. **Floater Efficiency**: If a Floater is covering a time where no breaks or gaps exist, move them to a more valuable period.
 
     OUTPUT:
     - Return the FINAL list of shifts.
@@ -326,19 +414,35 @@ async function runPipeline(
     - Output the polished list.
     `;
 
+    let polishedShifts = finalShifts;
     try {
         const polishedOutput = await callGemini(apiKey, polisherPrompt, polisherSystemInstruction, generatorSchema, "gemini-3.1-pro-preview", 0.1, 'phase3-polisher', requestId);
         console.log(`[${requestId}] ✅ [Phase 3] Polished Schedule: ${polishedOutput.length} shifts.`);
-        finalShifts = polishedOutput;
+        polishedShifts = polishedOutput;
     } catch (e) {
         console.error(`[${requestId}] ❌ [Phase 3] Failed. Keeping Phase 2 result.`, e);
     }
 
-    return processShifts(finalShifts);
+    const processedDraft = processShifts(draftShifts, optimizationOptions);
+    const processedCritic = processShifts(finalShifts, optimizationOptions);
+    const processedPolished = processShifts(polishedShifts, optimizationOptions);
+    return chooseBestScheduleCandidate(
+        [
+            { label: 'phase1-generator', shifts: processedDraft },
+            { label: 'phase2-critic', shifts: processedCritic },
+            { label: 'phase3-polisher', shifts: processedPolished },
+        ],
+        requirements,
+        optimizationOptions,
+        requestId,
+    ).shifts;
 }
 
-function processShifts(shifts: any[]) {
+function processShifts(shifts: any[], optimizationOptions?: OptimizeRequestOptions) {
     const seenIds = new Set<string>();
+    const configuredBreakDurationSlots = breakDurationMinutesToSlots(
+        optimizationOptions?.breakDurationMinutes ?? DEFAULT_BREAK_DURATION_MINUTES,
+    );
 
     return shifts.map((s: any, index: number) => {
         const baseId = typeof s.id === 'string' && s.id.trim()
@@ -352,7 +456,10 @@ function processShifts(shifts: any[]) {
         }
 
         seenIds.add(uniqueId);
-        const sanitizedShift = sanitizeOptimizerShift(s, 3);
+        const sanitizedShift = sanitizeOptimizerShift(
+            s,
+            configuredBreakDurationSlots,
+        );
 
         return {
             id: uniqueId,
@@ -364,6 +471,44 @@ function processShifts(shifts: any[]) {
             breakDurationSlots: sanitizedShift.breakDurationSlots
         };
     });
+}
+
+function chooseBestScheduleCandidate(
+    candidates: Array<{ label: string; shifts: any[] }>,
+    requirements: any[],
+    optimizationOptions: OptimizeRequestOptions | undefined,
+    requestId: string,
+) {
+    const ranked = candidates
+        .filter((candidate) => candidate.shifts.length > 0)
+        .map((candidate, index) => {
+            const evaluation = scoreSchedule(candidate.shifts, requirements, optimizationOptions);
+            return {
+                ...candidate,
+                ...evaluation,
+                index,
+            };
+        })
+        .sort((a, b) => {
+            if (a.score !== b.score) return a.score - b.score;
+            return b.index - a.index;
+        });
+
+    const best = ranked[0];
+    if (!best) {
+        return { label: 'empty', shifts: [] as any[] };
+    }
+
+    console.log(`[${requestId}] Selected ${best.label} candidate`, {
+        score: best.score,
+        breakCoverageViolations: best.validation.breakCoverageViolations.length,
+        coverageViolations: best.validation.coverageViolations.length,
+        fleetViolations: best.validation.fleetViolations.length,
+        maxActiveVehicles: best.validation.maxActiveVehicles,
+        maxOverlappingShifts: best.validation.maxOverlappingShifts,
+    });
+
+    return best;
 }
 
 // ==========================================

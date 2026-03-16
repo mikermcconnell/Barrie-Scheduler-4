@@ -6,6 +6,7 @@ import {
     getRequestIp,
 } from '../lib/apiSecurity.js';
 import { shouldUseExtendedOptimizePipeline } from '../functions/src/optimizePipelinePolicy';
+import { calculateSchedule } from '../utils/dataGenerator';
 import { validateOnDemandSchedule } from '../utils/onDemandValidation';
 import {
     buildShiftCountCapInstruction,
@@ -58,6 +59,21 @@ const getShiftCountPenalty = (
     return 250_000 + excessShiftCount * 25_000;
 };
 
+export const getSimultaneousChangeoffPenalty = (
+    shifts: any[],
+    requirements: any[],
+    optimizationOptions?: OptimizeRequestOptions,
+) => {
+    const slots = calculateSchedule(shifts, requirements, optimizationOptions);
+
+    return slots.reduce((sum, slot) => {
+        const totalConcurrentPenalty = Math.max(0, slot.driversInChangeoff - 1) * 400;
+        const northConcurrentPenalty = Math.max(0, slot.northChangeoffs - 1) * 700;
+        const southConcurrentPenalty = Math.max(0, slot.southChangeoffs - 1) * 700;
+        return sum + totalConcurrentPenalty + northConcurrentPenalty + southConcurrentPenalty;
+    }, 0);
+};
+
 const scoreSchedule = (
     shifts: any[],
     requirements: any[],
@@ -79,6 +95,11 @@ const scoreSchedule = (
         0
     );
     const shiftCountPenalty = getShiftCountPenalty(shifts, optimizationOptions);
+    const simultaneousChangeoffPenalty = getSimultaneousChangeoffPenalty(
+        shifts,
+        requirements,
+        optimizationOptions,
+    );
 
     return {
         validation,
@@ -87,6 +108,7 @@ const scoreSchedule = (
             + validation.breakCoverageViolations.length * 1_000_000
             + validation.fleetViolations.length * 100_000
             + shiftCountPenalty
+            + simultaneousChangeoffPenalty
             + fleetExcess * 10_000
             + validation.coverageViolations.length * 1_000
             + coverageShortfall * 100
@@ -260,16 +282,18 @@ export async function optimizeImplementation(
     3. A gap of 2+ buses is NOT acceptable.
     4. A gap lasting more than 2 consecutive slots is NOT acceptable.
     5. Peak-period gaps are much worse than off-peak surplus.
-    6. Do not create repeated short gaps across the day to save hours.
-    7. Prefer a small surplus over recurring service gaps.
+    6. Minimize simultaneous driver changeoffs. Avoid stacking multiple changeoffs in the same 15-minute slot when another arrangement is feasible.
+    7. Do not create repeated short gaps across the day to save hours.
+    8. Prefer a small surplus over recurring service gaps.
 
     OPTIMIZATION ORDER:
     1. Minimize peak gaps.
     2. Minimize total deficit slots.
-    3. Minimize repeated short gaps.
-    4. Minimize surplus slots.
-    5. Minimize payable hours.
-    6. Keep breaks compliant and staggered.
+    3. Minimize simultaneous changeoffs and stagger handoffs.
+    4. Minimize repeated short gaps.
+    5. Minimize surplus slots.
+    6. Minimize payable hours.
+    7. Keep breaks compliant and staggered.
     `;
 
     const extendedPipeline = shouldUseExtendedOptimizePipeline(mode, process.env.OPTIMIZE_MULTI_PHASE, !process.env.VERCEL);
@@ -282,7 +306,8 @@ export async function optimizeImplementation(
     1. Match the demand curve first. Cost reduction is secondary.
     2. Use shorter shifts where they reduce mismatch without creating repeated short gaps.
     3. Stagger breaks so the same zone does not lose multiple drivers at once.
-    4. Preserve continuous coverage through the strongest peaks.
+    4. Stagger changeoffs so multiple drivers are not leaving service at the same time unless no better option exists.
+    5. Preserve continuous coverage through the strongest peaks.
     `;
 
     let draftPrompt = `DEMAND CURVES:\n${demandContext}\n`;
@@ -338,7 +363,8 @@ export async function optimizeImplementation(
     2. **Short-Gap Tolerance**: A 1-bus gap for 1-2 consecutive slots is allowed only if it clearly improves the full-day schedule and does not repeat across many periods.
     3. **Over-Supply**: Trim surplus only after gap control is acceptable.
     4. **Break Conflicts**: If two drivers from the same zone are on break at the same time, MOVE one break.
-    5. **Floater Logic**: Ensure Floaters are actually working during gaps or break relief periods.
+    5. **Changeoff Clustering**: If multiple drivers are in changeoff at the same time, stagger those handoffs where possible.
+    6. **Floater Logic**: Ensure Floaters are actually working during gaps or break relief periods.
     
     OUTPUT FORMAT:
     - First, write a "critique": identifying 2-3 biggest issues in the draft.
@@ -389,8 +415,9 @@ export async function optimizeImplementation(
     POLISHING TASKS:
     1. **Strict Break Windows**: ENSURE every break is between the 4th and 6th hour (Slots: Start+16 to Start+24). MOVE them if they are off by even 1 slot.
     2. **Gap Guardrail**: Do not leave any 2+ bus gap or any 1-bus gap longer than 2 consecutive slots.
-    3. **Trim Surpluses**: If a zone has sustained surplus and coverage remains acceptable, cut a shift earlier or start it later.
-    4. **Floater Efficiency**: If a Floater is covering a time where no breaks or gaps exist, move them to a more valuable period.
+    3. **Stagger Changeoffs**: If multiple changeoffs land in the same slot, spread them apart when coverage remains acceptable.
+    4. **Trim Surpluses**: If a zone has sustained surplus and coverage remains acceptable, cut a shift earlier or start it later.
+    5. **Floater Efficiency**: If a Floater is covering a time where no breaks or gaps exist, move them to a more valuable period.
     
     OUTPUT:
     - Return the FINAL list of shifts.
