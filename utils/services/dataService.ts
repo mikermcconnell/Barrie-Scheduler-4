@@ -63,6 +63,22 @@ const omitUndefinedFields = <T extends Record<string, unknown>>(data: T): T => {
     ) as T;
 };
 
+const buildDownloadError = (error: unknown, context: 'text' | 'binary'): Error => {
+    if (error instanceof Error) {
+        const message = error.message.toLowerCase();
+        if (message.includes('failed to fetch') || message.includes('network')) {
+            return new Error(
+                `Cloud file ${context === 'binary' ? 'download' : 'load'} failed due to a network interruption. Check your connection and try again.`,
+            );
+        }
+        return error;
+    }
+
+    return new Error(
+        `Cloud file ${context === 'binary' ? 'download' : 'load'} failed. Please try again.`,
+    );
+};
+
 // ============ SCHEDULES ============
 
 export const saveSchedule = async (
@@ -212,38 +228,45 @@ export const deleteFile = async (
 export const downloadFileContent = async (downloadUrl: string): Promise<string> => {
     const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
 
-    if (isLocalhost) {
-        // On localhost, use the serverless proxy to bypass CORS
-        console.log('Using proxy for localhost download...');
-        const response = await fetch('/api/download-file', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ downloadUrl })
-        });
+    try {
+        if (isLocalhost) {
+            // On localhost, use the serverless proxy to bypass CORS
+            console.log('Using proxy for localhost download...');
+            const response = await fetch('/api/download-file', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ downloadUrl })
+            });
 
+            if (!response.ok) {
+                throw new Error(`Proxy download failed: ${response.status}`);
+            }
+
+            const data = await response.json();
+            if (!data.success) {
+                throw new Error(data.error || 'Download failed');
+            }
+
+            return data.content;
+        }
+
+        // On deployed version, direct fetch works fine
+        const response = await fetch(downloadUrl);
         if (!response.ok) {
-            throw new Error(`Proxy download failed: ${response.status}`);
+            throw new Error(`Cloud download failed: ${response.status}`);
         }
-
-        const data = await response.json();
-        if (!data.success) {
-            throw new Error(data.error || 'Download failed');
-        }
-
-        return data.content;
+        return response.text();
+    } catch (error) {
+        throw buildDownloadError(error, 'text');
     }
-
-    // On deployed version, direct fetch works fine
-    const response = await fetch(downloadUrl);
-    return response.text();
 };
 
 export const downloadFileArrayBuffer = async (downloadUrl: string): Promise<ArrayBuffer> => {
     const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
 
-    if (isLocalhost) {
-        console.log('Using proxy for localhost binary download...');
-        try {
+    try {
+        if (isLocalhost) {
+            console.log('Using proxy for localhost binary download...');
             const response = await fetch('/api/download-file', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -263,14 +286,17 @@ export const downloadFileArrayBuffer = async (downloadUrl: string): Promise<Arra
                 bytes[i] = binaryString.charCodeAt(i);
             }
             return bytes.buffer;
-        } catch (e) {
-            console.error("Proxy binary download error:", e);
-            throw e;
         }
-    }
 
-    const response = await fetch(downloadUrl);
-    return response.arrayBuffer();
+        const response = await fetch(downloadUrl);
+        if (!response.ok) {
+            throw new Error(`Cloud download failed: ${response.status}`);
+        }
+        return response.arrayBuffer();
+    } catch (error) {
+        console.error("Proxy binary download error:", error);
+        throw buildDownloadError(error, 'binary');
+    }
 };
 
 // ============ SCHEDULE DRAFTS (Tweaker) ============

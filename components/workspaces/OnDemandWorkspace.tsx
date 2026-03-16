@@ -194,6 +194,21 @@ const cloneSchedules = (
     ) as Record<string, Requirement[]>;
 };
 
+const getCloudFileLoadMessage = (error: unknown): string => {
+    if (error instanceof Error) {
+        const message = error.message.toLowerCase();
+        if (message.includes('network interruption') || message.includes('network')) {
+            return 'The cloud file download was interrupted by a network change. Try again once your connection is stable.';
+        }
+        if (message.includes('failed to fetch')) {
+            return 'The cloud file could not be fetched. Check your connection and try again.';
+        }
+        return error.message;
+    }
+
+    return 'The selected cloud file could not be loaded.';
+};
+
 export const OnDemandWorkspace: React.FC = () => {
     const { user } = useAuth();
     const toast = useToast();
@@ -948,6 +963,9 @@ export const OnDemandWorkspace: React.FC = () => {
 
     // Handle loading a file from cloud storage
     const handleCloudFileSelect = async (file: SavedFile) => {
+        if (isLoadingFromCloud) {
+            return;
+        }
         console.log('Loading file from cloud:', file.name, 'Type:', file.type);
         setIsLoadingFromCloud(true);
         try {
@@ -1006,7 +1024,7 @@ export const OnDemandWorkspace: React.FC = () => {
             setShowFileManager(false);
         } catch (err) {
             console.error('Failed to load file from cloud:', err);
-            toast.error('Load failed', 'The selected cloud file could not be loaded.');
+            toast.error('Load failed', getCloudFileLoadMessage(err));
         } finally {
             setIsLoadingFromCloud(false);
         }
@@ -1172,6 +1190,7 @@ export const OnDemandWorkspace: React.FC = () => {
                     onSelectSchedule={handleScheduleSelect}
                     defaultScheduleId={defaultScheduleId}
                     onSetDefaultSchedule={handleSetDefaultSchedule}
+                    isSelectingFile={isLoadingFromCloud}
                 />
             )}
 

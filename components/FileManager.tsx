@@ -37,18 +37,53 @@ interface FileManagerProps {
     onClose: () => void;
     defaultScheduleId?: string | null;
     onSetDefaultSchedule?: (id: string | null) => void;
+    isSelectingFile?: boolean;
 }
 
 type ViewMode = 'grid' | 'list';
 type Tab = 'files' | 'schedules';
 type FileFilter = 'all' | 'schedule_master' | 'rideco' | 'barrie_tod' | 'other';
 
+const getFileManagerErrorMessage = (error: unknown, action: 'load' | 'upload' | 'delete') => {
+    if (error && typeof error === 'object' && 'code' in error && typeof error.code === 'string') {
+        if (error.code === 'storage/quota-exceeded') {
+            return 'Firebase Storage is out of space. Delete older files or try again later.';
+        }
+        if (error.code === 'storage/unauthorized') {
+            return 'You do not have permission to access this cloud file.';
+        }
+        if (error.code === 'storage/retry-limit-exceeded') {
+            return 'The cloud transfer timed out. Try again once your connection is stable.';
+        }
+    }
+
+    if (error instanceof Error) {
+        const message = error.message.toLowerCase();
+        if (message.includes('network') || message.includes('failed to fetch')) {
+            return action === 'upload'
+                ? 'Upload failed because the network changed or dropped. Try again.'
+                : 'Cloud access failed because the network changed or dropped. Try again.';
+        }
+        if (message.includes('quota') || message.includes('no space')) {
+            return 'Cloud storage appears to be full. Delete older files or try again later.';
+        }
+        return error.message;
+    }
+
+    return action === 'upload'
+        ? 'Failed to upload file.'
+        : action === 'delete'
+            ? 'Failed to delete file.'
+            : 'Failed to load cloud data.';
+};
+
 export const FileManager: React.FC<FileManagerProps> = ({
     onSelectFile,
     onSelectSchedule,
     onClose,
     defaultScheduleId,
-    onSetDefaultSchedule
+    onSetDefaultSchedule,
+    isSelectingFile = false,
 }) => {
     const { user } = useAuth();
     const [activeTab, setActiveTab] = useState<Tab>('schedules');
@@ -79,15 +114,15 @@ export const FileManager: React.FC<FileManagerProps> = ({
             ]);
             setFiles(filesData);
             setSchedules(schedulesData);
-        } catch (err: any) {
-            setError(err.message || 'Failed to load data');
+        } catch (err: unknown) {
+            setError(getFileManagerErrorMessage(err, 'load'));
         } finally {
             setLoading(false);
         }
     };
 
     const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        if (!user || !e.target.files?.length) return;
+        if (!user || !e.target.files?.length || isSelectingFile) return;
         const file = e.target.files[0];
 
         // Determine file type from name
@@ -105,8 +140,8 @@ export const FileManager: React.FC<FileManagerProps> = ({
         try {
             const savedFile = await uploadFile(user.uid, file, fileType);
             setFiles(prev => [savedFile, ...prev]);
-        } catch (err: any) {
-            setError(err.message || 'Failed to upload file');
+        } catch (err: unknown) {
+            setError(getFileManagerErrorMessage(err, 'upload'));
         } finally {
             setUploading(false);
             e.target.value = '';
@@ -118,8 +153,8 @@ export const FileManager: React.FC<FileManagerProps> = ({
         try {
             await deleteFile(user.uid, file.id, file.storagePath);
             setFiles(prev => prev.filter(f => f.id !== file.id));
-        } catch (err: any) {
-            setError(err.message || 'Failed to delete file');
+        } catch (err: unknown) {
+            setError(getFileManagerErrorMessage(err, 'delete'));
         }
         setMenuOpen(null);
     };
@@ -132,8 +167,8 @@ export const FileManager: React.FC<FileManagerProps> = ({
             if (defaultScheduleId === schedule.id) {
                 onSetDefaultSchedule?.(null);
             }
-        } catch (err: any) {
-            setError(err.message || 'Failed to delete schedule');
+        } catch (err: unknown) {
+            setError(getFileManagerErrorMessage(err, 'delete'));
         }
         setMenuOpen(null);
     };
@@ -325,7 +360,7 @@ export const FileManager: React.FC<FileManagerProps> = ({
                                     type="file"
                                     accept=".csv,.xlsx,.xls"
                                     onChange={handleFileUpload}
-                                    disabled={uploading}
+                                    disabled={uploading || isSelectingFile}
                                     className="hidden"
                                 />
                             </label>
@@ -511,8 +546,15 @@ export const FileManager: React.FC<FileManagerProps> = ({
                                 {filteredFiles.map(file => (
                                     <div
                                         key={file.id}
-                                        className="bg-white border-2 border-gray-100 rounded-2xl p-5 hover:border-brand-blue hover:shadow-lg transition-all cursor-pointer group relative"
-                                        onClick={() => onSelectFile?.(file)}
+                                        className={`bg-white border-2 border-gray-100 rounded-2xl p-5 transition-all group relative ${
+                                            isSelectingFile
+                                                ? 'opacity-60 cursor-wait'
+                                                : 'hover:border-brand-blue hover:shadow-lg cursor-pointer'
+                                        }`}
+                                        onClick={() => {
+                                            if (isSelectingFile) return;
+                                            onSelectFile?.(file);
+                                        }}
                                     >
                                         <div className="flex items-start justify-between mb-3">
                                             <div className="bg-gray-100 p-3 rounded-xl">
@@ -522,6 +564,7 @@ export const FileManager: React.FC<FileManagerProps> = ({
                                                 <button
                                                     onClick={e => { e.stopPropagation(); setMenuOpen(menuOpen === file.id ? null : file.id); }}
                                                     className="p-2 hover:bg-gray-100 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity"
+                                                    disabled={isSelectingFile}
                                                 >
                                                     <MoreVertical size={16} className="text-gray-400" />
                                                 </button>
@@ -538,6 +581,7 @@ export const FileManager: React.FC<FileManagerProps> = ({
                                                         </a>
                                                         <button
                                                             onClick={e => { e.stopPropagation(); handleDeleteFile(file); }}
+                                                            disabled={isSelectingFile}
                                                             className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
                                                         >
                                                             <Trash2 size={14} /> Delete
@@ -580,8 +624,13 @@ export const FileManager: React.FC<FileManagerProps> = ({
                                         {filteredFiles.map(file => (
                                             <tr
                                                 key={file.id}
-                                                onClick={() => onSelectFile?.(file)}
-                                                className="border-b border-gray-50 hover:bg-gray-50 cursor-pointer"
+                                                onClick={() => {
+                                                    if (isSelectingFile) return;
+                                                    onSelectFile?.(file);
+                                                }}
+                                                className={`border-b border-gray-50 ${
+                                                    isSelectingFile ? 'opacity-60 cursor-wait' : 'hover:bg-gray-50 cursor-pointer'
+                                                }`}
                                             >
                                                 <td className="px-5 py-4">
                                                     <div className="flex items-center gap-3">
@@ -595,6 +644,7 @@ export const FileManager: React.FC<FileManagerProps> = ({
                                                 <td className="px-3">
                                                     <button
                                                         onClick={e => { e.stopPropagation(); handleDeleteFile(file); }}
+                                                        disabled={isSelectingFile}
                                                         className="p-2 hover:bg-red-50 rounded-lg text-gray-400 hover:text-red-500"
                                                     >
                                                         <Trash2 size={16} />
