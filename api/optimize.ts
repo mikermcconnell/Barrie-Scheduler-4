@@ -15,6 +15,7 @@ import {
     type OptimizeRequestOptions,
 } from '../utils/onDemandOptimizationSettings';
 import { BREAK_THRESHOLD_HOURS } from '../utils/demandConstants';
+import { sanitizeOptimizerShift } from '../utils/onDemandShiftRules';
 
 const createServerRequestId = () => `srv-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const inferErrorCode = (message: string) => {
@@ -62,7 +63,15 @@ const scoreSchedule = (
     requirements: any[],
     optimizationOptions?: OptimizeRequestOptions,
 ) => {
-    const validation = validateOnDemandSchedule(shifts, requirements, MAX_ACTIVE_VEHICLES);
+    const configuredBreakDurationSlots = breakDurationMinutesToSlots(
+        optimizationOptions?.breakDurationMinutes ?? DEFAULT_BREAK_DURATION_MINUTES,
+    );
+    const validation = validateOnDemandSchedule(
+        shifts,
+        requirements,
+        MAX_ACTIVE_VEHICLES,
+        configuredBreakDurationSlots,
+    );
     const coverageShortfall = validation.coverageViolations.reduce((sum, issue) => sum + issue.shortfall, 0);
     const fleetExcess = validation.fleetViolations.reduce(
         (sum, issue) => sum + Math.max(0, issue.activeCoverage - MAX_ACTIVE_VEHICLES),
@@ -73,7 +82,8 @@ const scoreSchedule = (
     return {
         validation,
         score:
-            validation.breakCoverageViolations.length * 1_000_000
+            validation.shiftRuleViolations.length * 1_500_000
+            + validation.breakCoverageViolations.length * 1_000_000
             + validation.fleetViolations.length * 100_000
             + shiftCountPenalty
             + fleetExcess * 10_000
@@ -435,8 +445,6 @@ function processShifts(shifts: any[], optimizationOptions?: OptimizeRequestOptio
     );
 
     return shifts.map((s: any, index: number) => {
-        const duration = Number(s.durationSlots) || 32;
-        const start = Number(s.startSlot);
         const baseId = typeof s.id === 'string' && s.id.trim()
             ? s.id.trim()
             : `ai-shift-${index}-${Date.now()}`;
@@ -448,33 +456,19 @@ function processShifts(shifts: any[], optimizationOptions?: OptimizeRequestOptio
         }
 
         seenIds.add(uniqueId);
-
-        // Auto-fix breaks if missing/invalid but shift is long
-        let breakStart = Number(s.breakStartSlot);
-        let breakDuration = 0;
-        const hours = duration / 4;
-
-        if (hours > BREAK_THRESHOLD_HOURS) {
-            breakDuration = configuredBreakDurationSlots;
-            // Enforce window (4th-6th hour)
-            const minBreak = start + 16;
-            const maxBreak = start + 24;
-            if (breakStart < minBreak || breakStart > maxBreak) {
-                breakStart = start + 20; // Default to 5th hour (middle of 4-6 window)
-            }
-        } else {
-            breakStart = 0;
-            breakDuration = 0;
-        }
+        const sanitizedShift = sanitizeOptimizerShift(
+            s,
+            configuredBreakDurationSlots,
+        );
 
         return {
             id: uniqueId,
             driverName: s.driverName || `Driver ${index + 1}`,
-            zone: s.zone,
-            startSlot: start,
-            endSlot: start + duration,
-            breakStartSlot: breakStart,
-            breakDurationSlots: breakDuration
+            zone: sanitizedShift.zone,
+            startSlot: sanitizedShift.startSlot,
+            endSlot: sanitizedShift.endSlot,
+            breakStartSlot: sanitizedShift.breakStartSlot,
+            breakDurationSlots: sanitizedShift.breakDurationSlots
         };
     });
 }

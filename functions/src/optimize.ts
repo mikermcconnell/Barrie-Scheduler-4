@@ -7,6 +7,7 @@ import {
     buildShiftCountCapInstruction,
     type OptimizeRequestOptions,
 } from '../../utils/onDemandOptimizationSettings';
+import { sanitizeOptimizerShift } from '../../utils/onDemandShiftRules';
 
 const GEMINI_API_KEY = defineSecret('GEMINI_API_KEY');
 const createServerRequestId = () => `srv-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -338,8 +339,6 @@ function processShifts(shifts: any[]) {
     const seenIds = new Set<string>();
 
     return shifts.map((s: any, index: number) => {
-        const duration = Number(s.durationSlots) || 32;
-        const start = Number(s.startSlot);
         const baseId = typeof s.id === 'string' && s.id.trim()
             ? s.id.trim()
             : `ai-shift-${index}-${Date.now()}`;
@@ -351,31 +350,16 @@ function processShifts(shifts: any[]) {
         }
 
         seenIds.add(uniqueId);
-
-        let breakStart = Number(s.breakStartSlot);
-        let breakDuration = 0;
-        const hours = duration / 4;
-
-        if (hours > 7.5) {
-            breakDuration = 3;
-            const minBreak = start + 16;
-            const maxBreak = start + 24;
-            if (breakStart < minBreak || breakStart > maxBreak) {
-                breakStart = start + 20;
-            }
-        } else {
-            breakStart = 0;
-            breakDuration = 0;
-        }
+        const sanitizedShift = sanitizeOptimizerShift(s, 3);
 
         return {
             id: uniqueId,
             driverName: s.driverName || `Driver ${index + 1}`,
-            zone: s.zone,
-            startSlot: start,
-            endSlot: start + duration,
-            breakStartSlot: breakStart,
-            breakDurationSlots: breakDuration
+            zone: sanitizedShift.zone,
+            startSlot: sanitizedShift.startSlot,
+            endSlot: sanitizedShift.endSlot,
+            breakStartSlot: sanitizedShift.breakStartSlot,
+            breakDurationSlots: sanitizedShift.breakDurationSlots
         };
     });
 }

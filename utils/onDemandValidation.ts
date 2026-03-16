@@ -1,5 +1,9 @@
 import { calculateSchedule } from './dataGenerator';
 import type { Requirement, Shift } from './demandTypes';
+import {
+  validateOnDemandShiftRules,
+  type OnDemandShiftRuleViolation,
+} from './onDemandShiftRules';
 
 export interface OnDemandValidationIssue {
   slotIndex: number;
@@ -17,17 +21,23 @@ export interface OnDemandScheduleValidation {
   coverageViolations: OnDemandValidationIssue[];
   fleetViolations: OnDemandValidationIssue[];
   breakCoverageViolations: OnDemandValidationIssue[];
+  shiftRuleViolations: OnDemandShiftRuleViolation[];
 }
 
 export function validateOnDemandSchedule(
   shifts: Shift[],
   requirements: Requirement[],
   maxFleetVehicles = 6,
+  requiredBreakDurationSlots?: number,
 ): OnDemandScheduleValidation {
   const slots = calculateSchedule(shifts, requirements);
   const coverageViolations: OnDemandValidationIssue[] = [];
   const fleetViolations: OnDemandValidationIssue[] = [];
   const breakCoverageViolations: OnDemandValidationIssue[] = [];
+  const shiftRuleViolations = validateOnDemandShiftRules(
+    shifts,
+    requiredBreakDurationSlots,
+  );
   let maxActiveVehicles = 0;
   let maxOverlappingShifts = 0;
 
@@ -71,5 +81,6 @@ export function validateOnDemandSchedule(
     coverageViolations,
     fleetViolations,
     breakCoverageViolations,
+    shiftRuleViolations,
   };
 }

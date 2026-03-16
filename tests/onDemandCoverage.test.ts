@@ -206,4 +206,19 @@ describe('on-demand coverage', () => {
       }),
     );
   });
+
+  it('flags a shift that exceeds the 11-hour hard guardrail', () => {
+    const shifts = [
+      makeShift('long-shift', Zone.FLOATER, 24, 3, 0, 47),
+    ];
+
+    const validation = validateOnDemandSchedule(shifts, makeRequirements());
+
+    expect(validation.shiftRuleViolations).toContainEqual(
+      expect.objectContaining({
+        shiftId: 'long-shift',
+        kind: 'duration_too_long',
+      }),
+    );
+  });
 });
