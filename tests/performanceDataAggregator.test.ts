@@ -391,6 +391,77 @@ describe('aggregateDailySummaries', () => {
         expect(entry?.toStopId).toBe('stop-b');
         expect(entry?.observations[0].runtimeMinutes).toBe(10);
     });
+
+    it('preserves trip-linked stop segments for exact corridor traversal matching', () => {
+        const records = [
+            makeRecord({
+                tripId: 'trip-linked',
+                tripName: '8A - 07:00',
+                terminalDepartureTime: '07:00',
+                routeId: '8A',
+                direction: 'S',
+                routeStopIndex: 0,
+                stopId: 'stop-a',
+                stopName: 'Stop A',
+                stopTime: '07:00',
+                observedDepartureTime: '07:01:00',
+            }),
+            makeRecord({
+                tripId: 'trip-linked',
+                tripName: '8A - 07:00',
+                terminalDepartureTime: '07:00',
+                routeId: '8A',
+                direction: 'S',
+                routeStopIndex: 1,
+                stopId: 'stop-b',
+                stopName: 'Stop B',
+                arrivalTime: '07:05',
+                observedArrivalTime: '07:06:00',
+                stopTime: '07:05',
+                observedDepartureTime: '07:06:30',
+                timePoint: false,
+            }),
+            makeRecord({
+                tripId: 'trip-linked',
+                tripName: '8A - 07:00',
+                terminalDepartureTime: '07:00',
+                routeId: '8A',
+                direction: 'S',
+                routeStopIndex: 2,
+                stopId: 'stop-c',
+                stopName: 'Stop C',
+                arrivalTime: '07:10',
+                observedArrivalTime: '07:11:00',
+                stopTime: '07:10',
+            }),
+        ];
+
+        const summaries = aggregateDailySummaries(records);
+        const entry = summaries[0].tripStopSegmentRuntimes?.entries[0];
+
+        expect(entry).toBeDefined();
+        expect(entry?.tripId).toBe('trip-linked');
+        expect(entry?.routeId).toBe('8A');
+        expect(entry?.direction).toBe('S');
+        expect(entry?.segments).toEqual([
+            {
+                fromStopId: 'stop-a',
+                toStopId: 'stop-b',
+                fromRouteStopIndex: 0,
+                toRouteStopIndex: 1,
+                runtimeMinutes: 5,
+                timeBucket: '07:00',
+            },
+            {
+                fromStopId: 'stop-b',
+                toStopId: 'stop-c',
+                fromRouteStopIndex: 1,
+                toRouteStopIndex: 2,
+                runtimeMinutes: 4.5,
+                timeBucket: '07:00',
+            },
+        ]);
+    });
 });
 
 // ─── APC Load Sanitization Tests ────────────────────────────────────

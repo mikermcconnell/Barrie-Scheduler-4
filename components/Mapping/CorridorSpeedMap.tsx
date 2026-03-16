@@ -8,6 +8,7 @@ import {
     getCorridorSpeedStyle,
     getMetricDisplayValue,
     getStatsForPeriod,
+    scopeStatsToRoute,
     type CorridorSpeedIndex,
     type CorridorSpeedMetric,
     type CorridorSpeedSegment,
@@ -64,6 +65,7 @@ export const CorridorSpeedMap: React.FC<CorridorSpeedMapProps> = ({ onBack, team
     const [dayType, setDayType] = useState<DayType>('weekday');
     const [metric, setMetric] = useState<CorridorSpeedMetric>('delay-minutes');
     const [directionFilter, setDirectionFilter] = useState<string>('all');
+    const [routeFilter, setRouteFilter] = useState<string>('all');
     const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null);
     const [hoveredId, setHoveredId] = useState<string | null>(null);
     const [hoverInfo, setHoverInfo] = useState<HoverInfo | null>(null);
@@ -80,11 +82,15 @@ export const CorridorSpeedMap: React.FC<CorridorSpeedMapProps> = ({ onBack, team
         () => dataQuery.data?.dailySummaries.some(day => (day.stopSegmentRuntimes?.entries.length ?? 0) > 0) ?? false,
         [dataQuery.data],
     );
+    const hasTripStopSegmentRuntimeData = useMemo(
+        () => dataQuery.data?.dailySummaries.some(day => (day.tripStopSegmentRuntimes?.entries.length ?? 0) > 0) ?? false,
+        [dataQuery.data],
+    );
 
     const speedIndex = useMemo<CorridorSpeedIndex | null>(() => {
-        if (!dataQuery.data) return null;
+        if (!dataQuery.data || !hasTripStopSegmentRuntimeData) return null;
         return buildCorridorSpeedMapIndex(dataQuery.data.dailySummaries);
-    }, [dataQuery.data]);
+    }, [dataQuery.data, hasTripStopSegmentRuntimeData]);
 
     const segments = useMemo(() => speedIndex?.segments ?? [], [speedIndex]);
     const segmentById = useMemo(() => new Map(segments.map(segment => [segment.id, segment])), [segments]);
@@ -92,6 +98,10 @@ export const CorridorSpeedMap: React.FC<CorridorSpeedMapProps> = ({ onBack, team
     const availableDirections = useMemo(
         () => speedIndex?.availableDirections ?? [],
         [speedIndex],
+    );
+    const availableRoutes = useMemo(
+        () => Array.from(new Set(segments.flatMap(segment => segment.routes))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+        [segments],
     );
 
     useEffect(() => {
@@ -101,10 +111,25 @@ export const CorridorSpeedMap: React.FC<CorridorSpeedMapProps> = ({ onBack, team
         }
     }, [availableDirections, directionFilter]);
 
+    useEffect(() => {
+        if (routeFilter === 'all') return;
+        if (!availableRoutes.includes(routeFilter)) {
+            setRouteFilter('all');
+        }
+    }, [availableRoutes, routeFilter]);
+
     const statsBySegment = useMemo(() => {
         if (!speedIndex) return new Map<string, CorridorSpeedStats>();
-        return getStatsForPeriod(speedIndex, dayType, period, directionFilter);
-    }, [speedIndex, dayType, period, directionFilter]);
+        const baseStats = getStatsForPeriod(speedIndex, dayType, period, directionFilter);
+        if (routeFilter === 'all') return baseStats;
+
+        const scopedStats = new Map<string, CorridorSpeedStats>();
+        for (const [segmentId, stats] of baseStats.entries()) {
+            const routeScopedStats = scopeStatsToRoute(stats, routeFilter);
+            if (routeScopedStats) scopedStats.set(segmentId, routeScopedStats);
+        }
+        return scopedStats;
+    }, [speedIndex, dayType, period, directionFilter, routeFilter]);
 
     const selectedSegment = useMemo(
         () => (selectedSegmentId ? segmentById.get(selectedSegmentId) ?? null : null),
@@ -124,6 +149,7 @@ export const CorridorSpeedMap: React.FC<CorridorSpeedMapProps> = ({ onBack, team
         for (const segment of segments) {
             if (segment.geometry.length < 2) continue;
             if (directionFilter !== 'all' && segment.directionId !== directionFilter) continue;
+            if (routeFilter !== 'all' && !segment.routes.includes(routeFilter)) continue;
 
             const stats = statsBySegment.get(segment.id) ?? null;
             const style = getCorridorSpeedStyle(stats, metric);
@@ -132,7 +158,7 @@ export const CorridorSpeedMap: React.FC<CorridorSpeedMapProps> = ({ onBack, team
                 color: style.color,
                 weight: style.weight,
                 opacity: style.opacity,
-                routeList: segment.routes.join(', '),
+                routeList: routeFilter === 'all' ? segment.routes.join(', ') : routeFilter,
                 metricText: getMetricDisplayValue(stats, metric),
                 fromStop: segment.fromStopName,
                 toStop: segment.toStopName,
@@ -151,7 +177,7 @@ export const CorridorSpeedMap: React.FC<CorridorSpeedMapProps> = ({ onBack, team
         }
 
         return { type: 'FeatureCollection', features };
-    }, [segments, statsBySegment, metric, directionFilter]);
+    }, [segments, statsBySegment, metric, directionFilter, routeFilter]);
 
     const highlightGeoJSON = useMemo((): GeoJSON.FeatureCollection => {
         if (!selectedSegment || selectedSegment.geometry.length < 2) {
@@ -353,6 +379,19 @@ export const CorridorSpeedMap: React.FC<CorridorSpeedMapProps> = ({ onBack, team
                     </select>
                 </div>
 
+                <div className="pointer-events-auto">
+                    <select
+                        value={routeFilter}
+                        onChange={(event) => setRouteFilter(event.target.value)}
+                        className="px-2.5 py-1.5 text-[10px] font-bold uppercase border border-gray-300 rounded-md shadow-sm bg-white text-gray-600"
+                    >
+                        <option value="all">All Routes</option>
+                        {availableRoutes.map(route => (
+                            <option key={route} value={route}>Route {route}</option>
+                        ))}
+                    </select>
+                </div>
+
                 <div className="flex-1" />
 
                 <button
@@ -417,10 +456,21 @@ export const CorridorSpeedMap: React.FC<CorridorSpeedMapProps> = ({ onBack, team
                 </div>
             )}
 
-            {!isLoading && teamId && hasStopSegmentRuntimeData && !hasLegacySegmentRuntimeData && (
+            {!isLoading && teamId && hasPerformanceData && hasStopSegmentRuntimeData && !hasTripStopSegmentRuntimeData && (
+                <div className="absolute inset-0 z-[1001] flex items-center justify-center pointer-events-none">
+                    <div className="bg-white/95 rounded-lg shadow-md border border-gray-200 px-6 py-4 text-center max-w-md">
+                        <div className="text-sm font-medium text-gray-700 mb-1">Re-import STREETS data</div>
+                        <div className="text-xs text-gray-400">
+                            This import has exact stop segments, but not the trip-linked traversal schema required for true corridor observed km/h.
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {!isLoading && teamId && hasTripStopSegmentRuntimeData && !hasLegacySegmentRuntimeData && (
                 <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-[1000] pointer-events-none">
                     <div className="bg-white/92 backdrop-blur-sm rounded-md shadow-sm border border-gray-200 px-3 py-1.5 text-[10px] text-gray-500">
-                        Stop-to-stop observed runtime mode
+                        True corridor traversal mode
                     </div>
                 </div>
             )}

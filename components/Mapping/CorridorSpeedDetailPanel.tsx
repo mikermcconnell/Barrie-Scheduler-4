@@ -39,8 +39,12 @@ export const CorridorSpeedDetailPanel: React.FC<CorridorSpeedDetailPanelProps> =
             sampleCount: 0,
             scheduledRuntimeMin: null,
             observedRuntimeMin: null,
+            runtimeDeltaMin: null,
+            runtimeDeltaPct: null,
+            scheduledSpeedKmh: null,
             observedSpeedKmh: null,
         }));
+    const selectedRoute = routeBreakdown.length === 1 ? routeBreakdown[0]?.route ?? null : null;
 
     return (
     <div className="absolute top-2 left-2 z-[1000] bg-white/95 backdrop-blur-sm rounded-lg shadow-lg border border-gray-200 w-80 pointer-events-auto">
@@ -50,7 +54,7 @@ export const CorridorSpeedDetailPanel: React.FC<CorridorSpeedDetailPanelProps> =
                     Stop-to-Stop Speed
                 </div>
                 <div className="text-[10px] text-gray-400 mt-0.5">
-                    {segment.directionId} · {periodLabel} · {dayTypeLabel}
+                    {segment.directionId} · {selectedRoute ? `Route ${selectedRoute} · ` : ''}{periodLabel} · {dayTypeLabel}
                 </div>
             </div>
             <button onClick={onClose} className="text-gray-400 hover:text-gray-600 -mt-0.5 -mr-1 p-1 flex-shrink-0">
@@ -109,7 +113,9 @@ export const CorridorSpeedDetailPanel: React.FC<CorridorSpeedDetailPanelProps> =
         </div>
 
         <div className="px-3 py-2 border-t border-gray-100">
-            <div className="text-[9px] text-gray-400 uppercase mb-1">Routes Using This Segment</div>
+            <div className="text-[9px] text-gray-400 uppercase mb-1">
+                {selectedRoute ? 'Displayed Route' : 'Routes Using This Segment'}
+            </div>
             <div className="space-y-1.5">
                 {routeBreakdown.map((route) => (
                     <div key={route.route} className="flex items-start justify-between gap-3">

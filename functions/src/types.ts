@@ -312,6 +312,30 @@ export interface DailyStopSegmentRuntimes {
   tripsWithData: number;
 }
 
+export interface TripStopSegmentObservation {
+  fromStopId: string;
+  toStopId: string;
+  fromRouteStopIndex: number;
+  toRouteStopIndex: number;
+  runtimeMinutes: number;
+  timeBucket: string;
+}
+
+export interface DailyTripStopSegmentRuntimeEntry {
+  tripId: string;
+  tripName: string;
+  routeId: string;
+  direction: string;
+  terminalDepartureTime: string;
+  segments: TripStopSegmentObservation[];
+}
+
+export interface DailyTripStopSegmentRuntimes {
+  entries: DailyTripStopSegmentRuntimeEntry[];
+  totalObservations: number;
+  tripsWithData: number;
+}
+
 export interface StopMetrics {
   stopName: string;
   stopId: string;
@@ -415,12 +439,13 @@ export interface DailySummary {
   byCascade?: DailyCascadeMetrics;
   segmentRuntimes?: DailySegmentRuntimes;
   stopSegmentRuntimes?: DailyStopSegmentRuntimes;
+  tripStopSegmentRuntimes?: DailyTripStopSegmentRuntimes;
   byRouteHour?: RouteHourMetrics[];
   dataQuality: DataQuality;
   schemaVersion: number;
 }
 
-export const PERFORMANCE_SCHEMA_VERSION = 6;
+export const PERFORMANCE_SCHEMA_VERSION = 7;
 
 export interface PerformanceDataSummary {
   dailySummaries: DailySummary[];

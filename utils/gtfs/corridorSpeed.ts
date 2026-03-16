@@ -1,9 +1,9 @@
 import stopTimesRaw from '../../gtfs/stop_times.txt?raw';
 import tripsRaw from '../../gtfs/trips.txt?raw';
 import shapesRaw from '../../gtfs/shapes.txt?raw';
-import { DAY_TYPES, TIME_PERIODS, type DayType, type TimePeriod } from './corridorHeadway';
+import { DAY_TYPES, TIME_PERIODS, matchSegmentStopsInTrip, type DayType, type TimePeriod } from './corridorHeadway';
 import { buildCorridorSegments, type CorridorSegment as GtfsCorridorSegment } from './corridorBuilder';
-import type { DailySummary } from '../performanceDataTypes';
+import type { DailySummary, DailyTripStopSegmentRuntimeEntry } from '../performanceDataTypes';
 import { getRouteConfig } from '../config/routeDirectionConfig';
 import {
     buildHeaderIndex,
@@ -22,6 +22,9 @@ export interface CorridorSpeedRouteBreakdown {
     sampleCount: number;
     scheduledRuntimeMin: number | null;
     observedRuntimeMin: number | null;
+    runtimeDeltaMin: number | null;
+    runtimeDeltaPct: number | null;
+    scheduledSpeedKmh: number | null;
     observedSpeedKmh: number | null;
 }
 
@@ -65,6 +68,15 @@ export interface ScheduledStopSegmentSample {
     runtimeMinutes: number;
 }
 
+export interface CorridorTraversalSample {
+    segmentId: string;
+    route: string;
+    dayType: DayType;
+    directionId: string;
+    departureMinutes: number;
+    runtimeMinutes: number;
+}
+
 export interface CorridorSpeedIndex {
     segments: CorridorSpeedSegment[];
     availableDirections: string[];
@@ -99,6 +111,11 @@ interface StaticSpeedModel {
     scheduledSamples: ScheduledStopSegmentSample[];
 }
 
+interface StaticCorridorTraversalModel {
+    segments: CorridorSpeedSegment[];
+    scheduledSamples: CorridorTraversalSample[];
+}
+
 interface RouteAccumulator {
     scheduledRuntimes: number[];
     observedRuntimes: number[];
@@ -112,8 +129,11 @@ interface StatAccumulator {
 
 const ALL_DAY_TYPES = DAY_TYPES.map(day => day.id);
 export const MIN_SAMPLE_COUNT = 8;
+const MAX_SPEED_MAP_STOP_PAIRS = 5;
+const MAX_SPEED_MAP_SEGMENT_LENGTH_METERS = 1200;
 
 let cachedStaticModel: StaticSpeedModel | null = null;
+let cachedStaticCorridorTraversalModel: StaticCorridorTraversalModel | null = null;
 
 function median(values: readonly number[]): number | null {
     if (values.length === 0) return null;
@@ -157,6 +177,47 @@ export function calculateCorridorLengthMeters(geometry: readonly [number, number
         );
     }
     return Math.round(total);
+}
+
+function coordinatesEqual(first: [number, number], second: [number, number]): boolean {
+    return Math.abs(first[0] - second[0]) < 0.000001 && Math.abs(first[1] - second[1]) < 0.000001;
+}
+
+function mergeSegmentGeometries(segments: readonly CorridorSpeedSegment[]): [number, number][] {
+    const merged: [number, number][] = [];
+
+    for (const segment of segments) {
+        for (const coordinate of segment.geometry) {
+            if (merged.length > 0 && coordinatesEqual(merged[merged.length - 1], coordinate)) continue;
+            merged.push(coordinate);
+        }
+    }
+
+    return merged;
+}
+
+function chunkMatchedSegments(matchedSegments: readonly CorridorSpeedSegment[]): CorridorSpeedSegment[][] {
+    const chunks: CorridorSpeedSegment[][] = [];
+    let currentChunk: CorridorSpeedSegment[] = [];
+    let currentLengthMeters = 0;
+
+    for (const segment of matchedSegments) {
+        const wouldExceedStopPairLimit = currentChunk.length >= MAX_SPEED_MAP_STOP_PAIRS;
+        const wouldExceedLengthLimit = currentChunk.length > 0
+            && (currentLengthMeters + segment.lengthMeters) > MAX_SPEED_MAP_SEGMENT_LENGTH_METERS;
+
+        if (wouldExceedStopPairLimit || wouldExceedLengthLimit) {
+            chunks.push(currentChunk);
+            currentChunk = [];
+            currentLengthMeters = 0;
+        }
+
+        currentChunk.push(segment);
+        currentLengthMeters += segment.lengthMeters;
+    }
+
+    if (currentChunk.length > 0) chunks.push(currentChunk);
+    return chunks;
 }
 
 function resolveVariantDirection(routeShortName: string): string | null {
@@ -511,6 +572,169 @@ function getStaticSpeedModel(): StaticSpeedModel {
     return cachedStaticModel;
 }
 
+function buildScheduledCorridorTraversalSamples(
+    segments: readonly CorridorSpeedSegment[],
+): CorridorTraversalSample[] {
+    const tripMeta = parseTripMetadata();
+    const tripStopTimes = parseTripStopTimes();
+    const serviceFlags = getServiceFlagsById();
+    const samples: CorridorTraversalSample[] = [];
+
+    for (const [tripId, meta] of tripMeta.entries()) {
+        const stopTimes = tripStopTimes.get(tripId);
+        if (!stopTimes || stopTimes.length < 2) continue;
+
+        const route = normalizeRouteId(meta.route);
+        const directionId = resolveGtfsDirectionLabel(meta.route, meta.headsign, meta.directionId);
+        const dayTypes = getServiceDayTypes(meta.serviceId, serviceFlags);
+        if (dayTypes.length === 0) continue;
+
+        const tripStopIds = stopTimes.map(stop => stop.stopId);
+
+        for (const segment of segments) {
+            if (segment.directionId !== directionId) continue;
+            if (!segment.routes.includes(route)) continue;
+            if (!segment.stopIds || segment.stopIds.length < 2) continue;
+
+            const match = matchSegmentStopsInTrip(segment.stopIds, tripStopIds);
+            if (!match) continue;
+
+            const fromStop = stopTimes[match.startIndex];
+            const toStop = stopTimes[match.endIndex];
+            const departureMinutes = fromStop.departureMinutes ?? fromStop.arrivalMinutes;
+            let arrivalMinutes = toStop.arrivalMinutes ?? toStop.departureMinutes;
+            if (departureMinutes === null || arrivalMinutes === null) continue;
+            if (arrivalMinutes < departureMinutes) arrivalMinutes += 24 * 60;
+
+            const runtimeMinutes = arrivalMinutes - departureMinutes;
+            if (!Number.isFinite(runtimeMinutes) || runtimeMinutes <= 0 || runtimeMinutes > 120) continue;
+
+            for (const dayType of dayTypes) {
+                samples.push({
+                    segmentId: segment.id,
+                    route,
+                    dayType,
+                    directionId,
+                    departureMinutes,
+                    runtimeMinutes: Math.round(runtimeMinutes * 100) / 100,
+                });
+            }
+        }
+    }
+
+    return samples;
+}
+
+function getStaticCorridorTraversalModel(): StaticCorridorTraversalModel {
+    if (cachedStaticCorridorTraversalModel) return cachedStaticCorridorTraversalModel;
+
+    const staticModel = getStaticSpeedModel();
+    const rawIndex: CorridorSpeedIndex = {
+        segments: staticModel.segments,
+        availableDirections: [],
+        statsBySegmentId: new Map(),
+    };
+    const segments = buildCorridorDirectionSegments(rawIndex, buildCorridorSegments());
+    const scheduledSamples = buildScheduledCorridorTraversalSamples(segments);
+
+    cachedStaticCorridorTraversalModel = {
+        segments,
+        scheduledSamples,
+    };
+    return cachedStaticCorridorTraversalModel;
+}
+
+function matchObservedCorridorTraversal(
+    segment: CorridorSpeedSegment,
+    tripEntry: DailyTripStopSegmentRuntimeEntry,
+): { departureMinutes: number; runtimeMinutes: number } | null {
+    const stopIds = segment.stopIds;
+    if (!stopIds || stopIds.length < 2 || tripEntry.segments.length < (stopIds.length - 1)) return null;
+
+    const expectedPairs = stopIds.slice(0, -1).map((fromStopId, index) => ({
+        fromStopId,
+        toStopId: stopIds[index + 1],
+    }));
+
+    for (let startIndex = 0; startIndex <= (tripEntry.segments.length - expectedPairs.length); startIndex++) {
+        const firstSegment = tripEntry.segments[startIndex];
+        if (firstSegment.fromStopId !== expectedPairs[0]?.fromStopId || firstSegment.toStopId !== expectedPairs[0]?.toStopId) {
+            continue;
+        }
+
+        let runtimeMinutes = firstSegment.runtimeMinutes;
+        let matches = true;
+
+        for (let offset = 1; offset < expectedPairs.length; offset++) {
+            const expectedPair = expectedPairs[offset];
+            const observedSegment = tripEntry.segments[startIndex + offset];
+            if (
+                !observedSegment
+                || observedSegment.fromStopId !== expectedPair?.fromStopId
+                || observedSegment.toStopId !== expectedPair?.toStopId
+            ) {
+                matches = false;
+                break;
+            }
+            runtimeMinutes += observedSegment.runtimeMinutes;
+        }
+
+        if (!matches) continue;
+
+        const departureMinutes = parseGtfsTimeToMinutes(firstSegment.timeBucket);
+        if (departureMinutes === null) continue;
+
+        return {
+            departureMinutes,
+            runtimeMinutes: Math.round(runtimeMinutes * 100) / 100,
+        };
+    }
+
+    return null;
+}
+
+function buildObservedCorridorTraversalSamples(
+    segments: readonly CorridorSpeedSegment[],
+    dailySummaries: readonly DailySummary[],
+): CorridorTraversalSample[] {
+    const segmentsByRouteDirection = new Map<string, CorridorSpeedSegment[]>();
+    for (const segment of segments) {
+        for (const route of segment.routes) {
+            const key = `${normalizeRouteId(route)}|${segment.directionId}`;
+            const existing = segmentsByRouteDirection.get(key);
+            if (existing) existing.push(segment);
+            else segmentsByRouteDirection.set(key, [segment]);
+        }
+    }
+
+    const samples: CorridorTraversalSample[] = [];
+
+    for (const daySummary of dailySummaries) {
+        const tripEntries = daySummary.tripStopSegmentRuntimes?.entries ?? [];
+        for (const tripEntry of tripEntries) {
+            const route = normalizeRouteId(tripEntry.routeId);
+            const directionId = resolveObservedDirectionLabel(route, tripEntry.direction);
+            const candidates = segmentsByRouteDirection.get(`${route}|${directionId}`) ?? [];
+
+            for (const segment of candidates) {
+                const match = matchObservedCorridorTraversal(segment, tripEntry);
+                if (!match) continue;
+
+                samples.push({
+                    segmentId: segment.id,
+                    route,
+                    dayType: daySummary.dayType,
+                    directionId,
+                    departureMinutes: match.departureMinutes,
+                    runtimeMinutes: match.runtimeMinutes,
+                });
+            }
+        }
+    }
+
+    return samples;
+}
+
 function buildRawSegmentPairLookup(index: CorridorSpeedIndex): Map<string, CorridorSpeedSegment[]> {
     const lookup = new Map<string, CorridorSpeedSegment[]>();
 
@@ -563,25 +787,38 @@ function buildCorridorDirectionSegments(
 
             if (!hasFullCoverage || matchedSegments.length === 0) continue;
 
-            const routeSet = new Set<string>();
-            for (const match of matchedSegments) {
-                for (const route of match.routes) {
-                    if (corridor.routes.includes(route)) routeSet.add(route);
-                }
-            }
+            const matchedChunks = chunkMatchedSegments(matchedSegments);
 
-            result.push({
-                id: `${corridor.id}|${directionId}`,
-                fromStopId: corridor.stops[0],
-                toStopId: corridor.stops[corridor.stops.length - 1],
-                fromStopName: corridor.stopNames[0],
-                toStopName: corridor.stopNames[corridor.stopNames.length - 1],
-                directionId,
-                routes: Array.from(routeSet).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
-                geometry: corridor.geometry,
-                lengthMeters: calculateCorridorLengthMeters(corridor.geometry),
-                stopIds: corridor.stops,
-                sourceSegmentIds: matchedSegments.map(segment => segment.id),
+            matchedChunks.forEach((chunk, chunkIndex) => {
+                if (chunk.length === 0) return;
+
+                const routeSet = new Set<string>();
+                for (const match of chunk) {
+                    for (const route of match.routes) {
+                        if (corridor.routes.includes(route)) routeSet.add(route);
+                    }
+                }
+
+                const stopIds = [chunk[0].fromStopId, ...chunk.map(segment => segment.toStopId)];
+                const stopNames = [chunk[0].fromStopName, ...chunk.map(segment => segment.toStopName)];
+                const geometry = mergeSegmentGeometries(chunk);
+                const segmentId = matchedChunks.length === 1
+                    ? `${corridor.id}|${directionId}`
+                    : `${corridor.id}|${directionId}|${chunkIndex + 1}`;
+
+                result.push({
+                    id: segmentId,
+                    fromStopId: stopIds[0],
+                    toStopId: stopIds[stopIds.length - 1],
+                    fromStopName: stopNames[0],
+                    toStopName: stopNames[stopNames.length - 1],
+                    directionId,
+                    routes: Array.from(routeSet).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+                    geometry,
+                    lengthMeters: calculateCorridorLengthMeters(geometry),
+                    stopIds,
+                    sourceSegmentIds: chunk.map(segment => segment.id),
+                });
             });
         }
     }
@@ -647,15 +884,27 @@ export function buildCorridorSpeedMapIndexFromData(
                     .map(route => {
                         const routeStats = sourceStats
                             .map(value => value?.routeBreakdown.find(routeValue => routeValue.route === route) ?? null);
+                        const scheduledRouteRuntime = sumValues(routeStats.map(value => value?.scheduledRuntimeMin ?? null));
                         const observedRouteRuntime = sumValues(routeStats.map(value => value?.observedRuntimeMin ?? null));
+                        const routeRuntimeDeltaMin =
+                            scheduledRouteRuntime !== null && observedRouteRuntime !== null
+                                ? Math.round((observedRouteRuntime - scheduledRouteRuntime) * 100) / 100
+                                : null;
+                        const routeRuntimeDeltaPct =
+                            routeRuntimeDeltaMin !== null && scheduledRouteRuntime !== null && scheduledRouteRuntime > 0
+                                ? Math.round(((routeRuntimeDeltaMin / scheduledRouteRuntime) * 100) * 10) / 10
+                                : null;
 
                         return {
                             route,
                             sampleCount: observedRouteRuntime === null
                                 ? 0
                                 : minPositive(routeStats.map(value => value?.sampleCount ?? 0).filter(value => value > 0)),
-                            scheduledRuntimeMin: sumValues(routeStats.map(value => value?.scheduledRuntimeMin ?? null)),
+                            scheduledRuntimeMin: scheduledRouteRuntime,
                             observedRuntimeMin: observedRouteRuntime,
+                            runtimeDeltaMin: routeRuntimeDeltaMin,
+                            runtimeDeltaPct: routeRuntimeDeltaPct,
+                            scheduledSpeedKmh: toKmh(segment.lengthMeters, scheduledRouteRuntime),
                             observedSpeedKmh: toKmh(segment.lengthMeters, observedRouteRuntime),
                         };
                     })
@@ -790,11 +1039,23 @@ function finalizeStats(
                     .map(route => {
                         const routeAcc = acc.routes.get(route);
                         const routeObservedRuntime = median(routeAcc?.observedRuntimes ?? []);
+                        const routeScheduledRuntime = median(routeAcc?.scheduledRuntimes ?? []);
+                        const routeRuntimeDeltaMin =
+                            routeScheduledRuntime !== null && routeObservedRuntime !== null
+                                ? Math.round((routeObservedRuntime - routeScheduledRuntime) * 100) / 100
+                                : null;
+                        const routeRuntimeDeltaPct =
+                            routeRuntimeDeltaMin !== null && routeScheduledRuntime !== null && routeScheduledRuntime > 0
+                                ? Math.round(((routeRuntimeDeltaMin / routeScheduledRuntime) * 100) * 10) / 10
+                                : null;
                         return {
                             route,
                             sampleCount: routeAcc?.observedRuntimes.length ?? 0,
-                            scheduledRuntimeMin: median(routeAcc?.scheduledRuntimes ?? []),
+                            scheduledRuntimeMin: routeScheduledRuntime,
                             observedRuntimeMin: routeObservedRuntime,
+                            runtimeDeltaMin: routeRuntimeDeltaMin,
+                            runtimeDeltaPct: routeRuntimeDeltaPct,
+                            scheduledSpeedKmh: toKmh(segment.lengthMeters, routeScheduledRuntime),
                             observedSpeedKmh: toKmh(segment.lengthMeters, routeObservedRuntime),
                         };
                     })
@@ -875,6 +1136,36 @@ export function buildCorridorSpeedIndexFromData(
     return finalizeStats(segments, accumulators);
 }
 
+export function buildCorridorSpeedIndexFromTraversalData(
+    segments: readonly CorridorSpeedSegment[],
+    scheduledSamples: readonly CorridorTraversalSample[],
+    observedSamples: readonly CorridorTraversalSample[],
+): CorridorSpeedIndex {
+    const accumulators = new Map<string, Map<DayType, Map<TimePeriod, StatAccumulator>>>();
+
+    for (const sample of scheduledSamples) {
+        const periods = getMatchingPeriods(sample.departureMinutes);
+        for (const period of periods) {
+            const acc = getOrCreateStatAccumulator(accumulators, sample.segmentId, sample.dayType, period);
+            acc.scheduledRuntimes.push(sample.runtimeMinutes);
+            const routeAcc = getOrCreateRouteAccumulator(acc, sample.route);
+            routeAcc.scheduledRuntimes.push(sample.runtimeMinutes);
+        }
+    }
+
+    for (const sample of observedSamples) {
+        const periods = getMatchingPeriods(sample.departureMinutes);
+        for (const period of periods) {
+            const acc = getOrCreateStatAccumulator(accumulators, sample.segmentId, sample.dayType, period);
+            acc.observedRuntimes.push(sample.runtimeMinutes);
+            const routeAcc = getOrCreateRouteAccumulator(acc, sample.route);
+            routeAcc.observedRuntimes.push(sample.runtimeMinutes);
+        }
+    }
+
+    return finalizeStats(segments, accumulators);
+}
+
 export function buildCorridorSpeedIndex(
     dailySummaries: readonly DailySummary[],
 ): CorridorSpeedIndex {
@@ -885,8 +1176,13 @@ export function buildCorridorSpeedIndex(
 export function buildCorridorSpeedMapIndex(
     dailySummaries: readonly DailySummary[],
 ): CorridorSpeedIndex {
-    const rawIndex = buildCorridorSpeedIndex(dailySummaries);
-    return buildCorridorSpeedMapIndexFromData(rawIndex, buildCorridorSegments());
+    const staticCorridorModel = getStaticCorridorTraversalModel();
+    const observedSamples = buildObservedCorridorTraversalSamples(staticCorridorModel.segments, dailySummaries);
+    return buildCorridorSpeedIndexFromTraversalData(
+        staticCorridorModel.segments,
+        staticCorridorModel.scheduledSamples,
+        observedSamples,
+    );
 }
 
 export function getStatsForPeriod(
@@ -903,6 +1199,29 @@ export function getStatsForPeriod(
         result.set(segmentId, stats);
     }
     return result;
+}
+
+export function scopeStatsToRoute(
+    stats: CorridorSpeedStats | null,
+    route: string | 'all',
+): CorridorSpeedStats | null {
+    if (!stats || route === 'all') return stats;
+
+    const routeStats = stats.routeBreakdown.find(value => value.route === route);
+    if (!routeStats) return null;
+
+    return {
+        ...stats,
+        sampleCount: routeStats.sampleCount,
+        lowConfidence: routeStats.sampleCount > 0 && routeStats.sampleCount < MIN_SAMPLE_COUNT,
+        scheduledRuntimeMin: routeStats.scheduledRuntimeMin,
+        observedRuntimeMin: routeStats.observedRuntimeMin,
+        runtimeDeltaMin: routeStats.runtimeDeltaMin,
+        runtimeDeltaPct: routeStats.runtimeDeltaPct,
+        scheduledSpeedKmh: routeStats.scheduledSpeedKmh,
+        observedSpeedKmh: routeStats.observedSpeedKmh,
+        routeBreakdown: [routeStats],
+    };
 }
 
 export function getCorridorSpeedStyle(
