@@ -152,8 +152,8 @@ interface SavedSchedule {
     shiftCountCaps?: DayTypeShiftCountCaps;
     targetCoveragePercent?: number;
     breakDurationMinutes?: number;
-    northChangeoffMinutes?: number;  // one-way garage travel, applied at both shift ends
-    southChangeoffMinutes?: number;  // one-way garage travel, applied at both shift ends
+    northChangeoffMinutes?: number;  // one-way garage travel, applied only at internal North shift handoffs
+    southChangeoffMinutes?: number;  // one-way garage travel, applied only at internal South shift handoffs
     shiftCountCapMode?: 'hard' | 'guide';
     minorGapTolerance?: 'none' | 'rare';
     breakProtection?: 'strict' | 'balanced';

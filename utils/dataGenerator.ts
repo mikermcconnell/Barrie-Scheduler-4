@@ -191,6 +191,22 @@ export const calculateSchedule = (
     return [];
   }
 
+  const zoneBoundaryMap = new Map<string, { hasEarlierShift: boolean; hasLaterShift: boolean }>();
+  [Zone.NORTH, Zone.SOUTH].forEach((zone) => {
+    const zoneShifts = shifts.filter((shift) => shift.zone === zone);
+    if (zoneShifts.length === 0) return;
+
+    const earliestStart = Math.min(...zoneShifts.map((shift) => shift.startSlot));
+    const latestStart = Math.max(...zoneShifts.map((shift) => shift.startSlot));
+
+    zoneShifts.forEach((shift) => {
+      zoneBoundaryMap.set(shift.id, {
+        hasEarlierShift: shift.startSlot > earliestStart,
+        hasLaterShift: shift.startSlot < latestStart,
+      });
+    });
+  });
+
   for (let i = 0; i < TIME_SLOTS_PER_DAY; i++) {
     const minutesFromMidnight = i * 15;
     const req = requirements[i];
@@ -214,13 +230,16 @@ export const calculateSchedule = (
 
     shifts.forEach(shift => {
       if (i >= shift.startSlot && i < shift.endSlot) {
+        const zoneBoundary = zoneBoundaryMap.get(shift.id);
         const changeoffSlots = shift.zone === Zone.NORTH
           ? northChangeoffSlots
           : shift.zone === Zone.SOUTH
             ? southChangeoffSlots
             : 0;
-        const effectiveStartSlot = Math.min(shift.endSlot, shift.startSlot + changeoffSlots);
-        const effectiveEndSlot = Math.max(shift.startSlot, shift.endSlot - changeoffSlots);
+        const startChangeoffSlots = zoneBoundary?.hasEarlierShift ? changeoffSlots : 0;
+        const endChangeoffSlots = zoneBoundary?.hasLaterShift ? changeoffSlots : 0;
+        const effectiveStartSlot = Math.min(shift.endSlot, shift.startSlot + startChangeoffSlots);
+        const effectiveEndSlot = Math.max(shift.startSlot, shift.endSlot - endChangeoffSlots);
         const isInChangeoff = changeoffSlots > 0 && (
           i < effectiveStartSlot || i >= effectiveEndSlot
         );

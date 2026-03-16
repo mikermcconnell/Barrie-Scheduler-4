@@ -166,8 +166,8 @@ function optimizeImplementation(
     - Breaks: 45min (3 slots) if actual drive time > 7.5h.
     - Breaks must occur between hour 4 and 6 of the shift.
     - STRICT ZONE LOGIC: North covers North, South covers South, Floater covers Gaps/Breaks.
-    - NORTH CHANGEOFF: remove ${optimizationOptions?.northChangeoffMinutes ?? 0} minutes from the start and ${optimizationOptions?.northChangeoffMinutes ?? 0} minutes from the end of each North shift for garage travel.
-    - SOUTH CHANGEOFF: remove ${optimizationOptions?.southChangeoffMinutes ?? 0} minutes from the start and ${optimizationOptions?.southChangeoffMinutes ?? 0} minutes from the end of each South shift for garage travel.
+    - NORTH CHANGEOFF: between consecutive North shifts, remove ${optimizationOptions?.northChangeoffMinutes ?? 0} minutes leaving the zone and ${optimizationOptions?.northChangeoffMinutes ?? 0} minutes returning from the garage.
+    - SOUTH CHANGEOFF: between consecutive South shifts, remove ${optimizationOptions?.southChangeoffMinutes ?? 0} minutes leaving the zone and ${optimizationOptions?.southChangeoffMinutes ?? 0} minutes returning from the garage.
     ${fleetConstraintRules}
     ${shiftCountConstraintRules ? `- SHIFT COUNT CAP: ${shiftCountConstraintRules}` : ''}
 

@@ -148,8 +148,8 @@ const buildOptimizerSettingsInstruction = (settings: OptimizationSettings, dayTy
         `- ${shiftCountRule}`,
         `- Target at least ${settings.targetCoveragePercent}% effective coverage.`,
         `- For shifts over ${BREAK_THRESHOLD_HOURS} hours, require a ${settings.breakDurationMinutes}-minute break.`,
-        `- North changeoffs lose ${settings.northChangeoffMinutes} minutes at the start and ${settings.northChangeoffMinutes} minutes at the end of each North shift for garage travel.`,
-        `- South changeoffs lose ${settings.southChangeoffMinutes} minutes at the start and ${settings.southChangeoffMinutes} minutes at the end of each South shift for garage travel.`,
+        `- North mid-service changeoffs lose ${settings.northChangeoffMinutes} minutes leaving the zone and ${settings.northChangeoffMinutes} minutes returning from the garage between consecutive North shifts.`,
+        `- South mid-service changeoffs lose ${settings.southChangeoffMinutes} minutes leaving the zone and ${settings.southChangeoffMinutes} minutes returning from the garage between consecutive South shifts.`,
         `- ${gapToleranceRule}`,
         `- ${breakRule}`,
         `- ${costRule}`,
@@ -1783,8 +1783,8 @@ export const OnDemandWorkspace: React.FC = () => {
                                     <h3 className="text-gray-500 font-bold text-xs uppercase tracking-wider">Changeoff Travel</h3>
                                     <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
                                         {[
-                                            { key: 'northChangeoffMinutes' as const, label: 'North', helper: 'Downtown Barrie to garage and back is modeled as this many minutes each way.' },
-                                            { key: 'southChangeoffMinutes' as const, label: 'South', helper: 'South zone garage travel is applied the same way at both ends of each South shift.' },
+                                            { key: 'northChangeoffMinutes' as const, label: 'North', helper: 'Downtown Barrie to garage and back is modeled as this many minutes each way during a mid-service North handoff.' },
+                                            { key: 'southChangeoffMinutes' as const, label: 'South', helper: 'South zone garage travel is modeled the same way during a mid-service South handoff.' },
                                         ].map(metric => (
                                             <label key={metric.key} className="rounded-2xl border-2 border-gray-200 bg-gray-50 p-3">
                                                 <div className="text-[11px] font-extrabold uppercase tracking-wider text-gray-500">{metric.label}</div>
@@ -1805,7 +1805,7 @@ export const OnDemandWorkspace: React.FC = () => {
                                         ))}
                                     </div>
                                     <div className="text-xs text-gray-400 font-semibold mt-3">
-                                        The workspace removes this travel time from the start and end of each zone-bound shift, so back-to-back pieces create a visible changeoff gap unless you overlap them.
+                                        The workspace only applies this travel time at an internal handoff between consecutive North or South shifts. The first piece of the day starts in-zone, and the last piece ends in-zone.
                                     </div>
                                 </div>
                             </div>
@@ -1881,7 +1881,7 @@ export const OnDemandWorkspace: React.FC = () => {
                                     <p className="p-3 rounded-xl bg-blue-50 border-2 border-blue-100 text-blue-900/80">Coverage target, fleet cap, and shift count cap stay explicit because those are the clearest operating limits for staff to reason about.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Use a hard shift cap when the number of pieces is fixed. Switch it to guide when you want the optimizer to prefer fewer shifts without blocking extra relief work that meaningfully improves the day.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Break duration sets the required long-shift break length, and the same value is used when you add or edit a shift manually.</p>
-                                    <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">North and South changeoff travel is applied at both ends of each zone-bound shift, so equal start and end times still create an operational gap unless another piece overlaps it.</p>
+                                    <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">North and South changeoff travel only applies during an internal mid-service handoff. The first piece of the day starts in-zone and the last piece ends in-zone.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Minor gap tolerance decides whether the optimizer can accept a very small shortfall in exchange for a meaningfully better full-day schedule.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Break protection controls how hard the optimizer should push for clean break relief and overlap coverage.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Cost pressure controls how strongly the optimizer trims extra payable hours and surplus once service quality is acceptable.</p>
@@ -1943,7 +1943,7 @@ export const OnDemandWorkspace: React.FC = () => {
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Shift span stays between 5 and 11 hours of drive time.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Shifts over {BREAK_THRESHOLD_HOURS} hours still require a {optimizationSettings.breakDurationMinutes}-minute break.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Breaks still need to fall between hour 4 and hour 6 of the shift.</p>
-                                    <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">North changeoffs remove {optimizationSettings.northChangeoffMinutes} minutes each way. South changeoffs remove {optimizationSettings.southChangeoffMinutes} minutes each way.</p>
+                                    <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">North changeoffs remove {optimizationSettings.northChangeoffMinutes} minutes each way between consecutive North shifts. South changeoffs remove {optimizationSettings.southChangeoffMinutes} minutes each way between consecutive South shifts.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">North and South stay zone-bound. Floaters remain the relief layer for coverage and breaks.</p>
                                 </div>
                             </div>
