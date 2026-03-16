@@ -191,21 +191,22 @@ export const calculateSchedule = (
     return [];
   }
 
-  const zoneBoundaryMap = new Map<string, { hasEarlierShift: boolean; hasLaterShift: boolean }>();
-  [Zone.NORTH, Zone.SOUTH].forEach((zone) => {
-    const zoneShifts = shifts.filter((shift) => shift.zone === zone);
-    if (zoneShifts.length === 0) return;
+  const serviceShifts = shifts.filter(
+    (shift) => shift.zone === Zone.NORTH || shift.zone === Zone.SOUTH,
+  );
+  const serviceBoundaryMap = new Map<string, { hasEarlierShift: boolean; hasLaterShift: boolean }>();
 
-    const earliestStart = Math.min(...zoneShifts.map((shift) => shift.startSlot));
-    const latestStart = Math.max(...zoneShifts.map((shift) => shift.startSlot));
+  if (serviceShifts.length > 0) {
+    const earliestStart = Math.min(...serviceShifts.map((shift) => shift.startSlot));
+    const latestStart = Math.max(...serviceShifts.map((shift) => shift.startSlot));
 
-    zoneShifts.forEach((shift) => {
-      zoneBoundaryMap.set(shift.id, {
+    serviceShifts.forEach((shift) => {
+      serviceBoundaryMap.set(shift.id, {
         hasEarlierShift: shift.startSlot > earliestStart,
         hasLaterShift: shift.startSlot < latestStart,
       });
     });
-  });
+  }
 
   for (let i = 0; i < TIME_SLOTS_PER_DAY; i++) {
     const minutesFromMidnight = i * 15;
@@ -230,7 +231,7 @@ export const calculateSchedule = (
 
     shifts.forEach(shift => {
       if (i >= shift.startSlot && i < shift.endSlot) {
-        const zoneBoundary = zoneBoundaryMap.get(shift.id);
+        const zoneBoundary = serviceBoundaryMap.get(shift.id);
         const changeoffSlots = shift.zone === Zone.NORTH
           ? northChangeoffSlots
           : shift.zone === Zone.SOUTH

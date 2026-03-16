@@ -99,7 +99,7 @@ describe('on-demand coverage', () => {
     expect(slots[53].netDifference).toBe(-1);
   });
 
-  it('does not apply changeoff time to the first or last zone piece of the day', () => {
+  it('does not apply changeoff time to the first or last service piece of the day', () => {
     const requirements = Array.from({ length: 96 }, (_, slotIndex): Requirement => ({
       slotIndex,
       north: 1,
@@ -127,7 +127,33 @@ describe('on-demand coverage', () => {
     expect(slots[39].totalActiveCoverage).toBe(2);
   });
 
-  it('applies changeoff time only between consecutive zone shifts', () => {
+  it('applies changeoff time to an internal cross-zone handoff', () => {
+    const requirements = Array.from({ length: 96 }, (_, slotIndex): Requirement => ({
+      slotIndex,
+      north: 1,
+      south: 1,
+      floater: 0,
+      total: 2,
+    }));
+
+    const slots = calculateSchedule([
+      makeShift('north-1', Zone.NORTH, 0, 0, 32, 40),
+      makeShift('south-1', Zone.SOUTH, 0, 0, 40, 48),
+      makeShift('north-2', Zone.NORTH, 0, 0, 48, 56),
+    ], requirements, {
+      northChangeoffMinutes: 10,
+      southChangeoffMinutes: 8,
+    });
+
+    expect(slots[32].northChangeoffs).toBe(0);
+    expect(slots[39].northChangeoffs).toBe(1);
+    expect(slots[40].southChangeoffs).toBe(1);
+    expect(slots[47].southChangeoffs).toBe(1);
+    expect(slots[48].northChangeoffs).toBe(1);
+    expect(slots[55].northChangeoffs).toBe(0);
+  });
+
+  it('applies changeoff time only between internal service shifts', () => {
     const requirements = Array.from({ length: 96 }, (_, slotIndex): Requirement => ({
       slotIndex,
       north: 1,
