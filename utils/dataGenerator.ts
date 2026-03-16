@@ -8,6 +8,7 @@ import {
 } from './demandTypes';
 import { TIME_SLOTS_PER_DAY, SHIFT_DURATION_SLOTS, BREAK_DURATION_SLOTS } from './demandConstants';
 import { changeoffMinutesToSlots } from './onDemandOptimizationSettings';
+import { buildShiftHandoffMap } from './onDemandHandoffs';
 
 // Helper to format minutes from midnight to HH:mm
 export const formatTime = (totalMinutes: number): string => {
@@ -191,27 +192,7 @@ export const calculateSchedule = (
     return [];
   }
 
-  const serviceShifts = shifts.filter(
-    (shift) => shift.zone === Zone.NORTH || shift.zone === Zone.SOUTH,
-  );
-  const serviceHandoffMap = new Map<string, { hasInboundHandoff: boolean; hasOutboundHandoff: boolean }>();
-
-  if (serviceShifts.length > 0) {
-    const serviceStarts = new Map<number, number>();
-    const serviceEnds = new Map<number, number>();
-
-    serviceShifts.forEach((shift) => {
-      serviceStarts.set(shift.startSlot, (serviceStarts.get(shift.startSlot) ?? 0) + 1);
-      serviceEnds.set(shift.endSlot, (serviceEnds.get(shift.endSlot) ?? 0) + 1);
-    });
-
-    serviceShifts.forEach((shift) => {
-      serviceHandoffMap.set(shift.id, {
-        hasInboundHandoff: (serviceEnds.get(shift.startSlot) ?? 0) > 0,
-        hasOutboundHandoff: (serviceStarts.get(shift.endSlot) ?? 0) > 0,
-      });
-    });
-  }
+  const serviceHandoffMap = buildShiftHandoffMap(shifts);
 
   for (let i = 0; i < TIME_SLOTS_PER_DAY; i++) {
     const minutesFromMidnight = i * 15;
@@ -242,8 +223,8 @@ export const calculateSchedule = (
           : shift.zone === Zone.SOUTH
             ? southChangeoffSlots
             : 0;
-        const startChangeoffSlots = handoffBoundary?.hasInboundHandoff ? changeoffSlots : 0;
-        const endChangeoffSlots = handoffBoundary?.hasOutboundHandoff ? changeoffSlots : 0;
+        const startChangeoffSlots = (handoffBoundary?.inbound.length ?? 0) > 0 ? changeoffSlots : 0;
+        const endChangeoffSlots = (handoffBoundary?.outbound.length ?? 0) > 0 ? changeoffSlots : 0;
         const effectiveStartSlot = Math.min(shift.endSlot, shift.startSlot + startChangeoffSlots);
         const effectiveEndSlot = Math.max(shift.startSlot, shift.endSlot - endChangeoffSlots);
         const isInChangeoff = changeoffSlots > 0 && (

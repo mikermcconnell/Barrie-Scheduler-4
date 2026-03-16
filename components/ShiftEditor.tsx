@@ -1,9 +1,10 @@
 import React from 'react';
 import { Shift, Zone, SummaryMetrics, ZoneFilterType } from '../utils/demandTypes';
 import { formatSlotToTime } from '../utils/dataGenerator';
-import { Coffee, Trash2, Plus, Clock, ChevronRight, LayoutGrid, List } from 'lucide-react';
+import { Coffee, Trash2, Plus, Clock, ChevronRight, LayoutGrid, List, ArrowRightLeft } from 'lucide-react';
 import { TIME_SLOTS_PER_DAY } from '../utils/demandConstants';
 import { SummaryCards } from './SummaryCards';
+import { buildShiftHandoffMap } from '../utils/onDemandHandoffs';
 
 interface Props {
   shifts: Shift[];
@@ -28,6 +29,9 @@ const getZoneStyles = (zone: Zone) => {
   }
 };
 
+const formatShiftHandoffLabel = (shift: Shift) =>
+  `${shift.driverName} (${shift.zone} ${formatSlotToTime(shift.startSlot)}-${formatSlotToTime(shift.endSlot)})`;
+
 export const ShiftEditor: React.FC<Props> = ({
   shifts,
   onUpdateShift,
@@ -39,6 +43,7 @@ export const ShiftEditor: React.FC<Props> = ({
   metrics
 }) => {
   const [viewMode, setViewMode] = React.useState<'grid' | 'list'>('grid');
+  const handoffMap = React.useMemo(() => buildShiftHandoffMap(shifts), [shifts]);
 
   const filteredShifts = shifts.filter(s => {
     if (zoneFilter === 'All') return true;
@@ -116,6 +121,9 @@ export const ShiftEditor: React.FC<Props> = ({
             const styles = getZoneStyles(shift.zone);
             const hours = ((shift.endSlot - shift.startSlot) / 4).toFixed(1);
             const hasBreak = shift.breakDurationSlots > 0;
+            const handoffLinks = handoffMap.get(shift.id);
+            const inboundHandoffs = handoffLinks?.inbound ?? [];
+            const outboundHandoffs = handoffLinks?.outbound ?? [];
 
             return (
               <div
@@ -169,6 +177,27 @@ export const ShiftEditor: React.FC<Props> = ({
                         <span>Break at {formatSlotToTime(shift.breakStartSlot)}</span>
                       </div>
                     )}
+
+                    {(inboundHandoffs.length > 0 || outboundHandoffs.length > 0) && (
+                      <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] font-semibold text-gray-600">
+                        <div className="mb-1 flex items-center gap-1.5 text-gray-500">
+                          <ArrowRightLeft size={12} />
+                          <span>Shift Handoff</span>
+                        </div>
+                        {inboundHandoffs.length > 0 && (
+                          <div className="mb-1">
+                            <span className="text-gray-400">Receives from:</span>{' '}
+                            <span>{inboundHandoffs.map(formatShiftHandoffLabel).join(', ')}</span>
+                          </div>
+                        )}
+                        {outboundHandoffs.length > 0 && (
+                          <div>
+                            <span className="text-gray-400">Hands off to:</span>{' '}
+                            <span>{outboundHandoffs.map(formatShiftHandoffLabel).join(', ')}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   {/* Edit Arrow */}
@@ -188,6 +217,7 @@ export const ShiftEditor: React.FC<Props> = ({
                 <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Zone</th>
                 <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Shift Time</th>
                 <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Break</th>
+                <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Shift Handoff</th>
                 <th scope="col" className="px-6 py-3 text-right text-xs font-bold text-gray-500 uppercase tracking-wider">Actions</th>
               </tr>
             </thead>
@@ -196,6 +226,13 @@ export const ShiftEditor: React.FC<Props> = ({
                 const styles = getZoneStyles(shift.zone);
                 const hours = ((shift.endSlot - shift.startSlot) / 4).toFixed(1);
                 const hasBreak = shift.breakDurationSlots > 0;
+                const handoffLinks = handoffMap.get(shift.id);
+                const inboundHandoffs = handoffLinks?.inbound ?? [];
+                const outboundHandoffs = handoffLinks?.outbound ?? [];
+                const handoffText = [
+                  inboundHandoffs.length > 0 ? `From ${inboundHandoffs.map(formatShiftHandoffLabel).join(', ')}` : '',
+                  outboundHandoffs.length > 0 ? `To ${outboundHandoffs.map(formatShiftHandoffLabel).join(', ')}` : '',
+                ].filter(Boolean).join(' | ');
 
                 return (
                   <tr key={shift.id} className="hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => onEditShift?.(shift.id)}>
@@ -228,6 +265,15 @@ export const ShiftEditor: React.FC<Props> = ({
                         </div>
                       ) : (
                         <span className="text-gray-400 text-xs">-</span>
+                      )}
+                    </td>
+                    <td className="px-6 py-4">
+                      {handoffText ? (
+                        <div className="max-w-md text-xs font-semibold text-gray-600">
+                          {handoffText}
+                        </div>
+                      ) : (
+                        <span className="text-gray-300 text-xs">No handoff</span>
                       )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
