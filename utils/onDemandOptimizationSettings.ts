@@ -1,3 +1,4 @@
+import type { OnDemandChangeoffSettings } from './demandTypes';
 import type { OnDemandDayType } from './onDemandShiftUtils';
 
 export type ShiftCountCapMode = 'hard' | 'guide';
@@ -16,9 +17,11 @@ export interface OptimizeRequestOptions {
   maxShiftCount?: number;
   shiftCountCapMode?: ShiftCountCapMode;
   breakDurationMinutes?: number;
+  northChangeoffMinutes?: number;
+  southChangeoffMinutes?: number;
 }
 
-export interface OnDemandOptimizationSettingsState {
+export interface OnDemandOptimizationSettingsState extends OnDemandChangeoffSettings {
   maxFleetVehicles: number;
   shiftCountCaps: DayTypeShiftCountCaps;
   targetCoveragePercent: number;
@@ -35,10 +38,17 @@ export interface OnDemandOptimizationSettingsSnapshot extends Partial<OnDemandOp
 
 export const DEFAULT_SHIFT_COUNT_CAP = 18;
 export const DEFAULT_BREAK_DURATION_MINUTES = 45;
+export const DEFAULT_NORTH_CHANGEOFF_MINUTES = 10;
+export const DEFAULT_SOUTH_CHANGEOFF_MINUTES = 8;
 export const BREAK_DURATION_MINUTES_LIMITS = {
   min: 15,
   max: 90,
   step: 15,
+} as const;
+export const CHANGEOFF_MINUTES_LIMITS = {
+  min: 0,
+  max: 30,
+  step: 1,
 } as const;
 
 const clampBreakDurationMinutes = (value: number): number =>
@@ -71,6 +81,29 @@ export const breakDurationMinutesToSlots = (minutes: number): number =>
   Math.round(
     normalizeBreakDurationMinutes(minutes, DEFAULT_BREAK_DURATION_MINUTES) / 15,
   );
+
+export const normalizeChangeoffMinutes = (
+  value: unknown,
+  fallback: number,
+): number => {
+  const normalizedFallback = Math.min(
+    CHANGEOFF_MINUTES_LIMITS.max,
+    Math.max(CHANGEOFF_MINUTES_LIMITS.min, Math.round(Number(fallback) || 0)),
+  );
+  const numericValue = Math.round(Number(value));
+
+  if (!Number.isFinite(numericValue)) {
+    return normalizedFallback;
+  }
+
+  return Math.min(
+    CHANGEOFF_MINUTES_LIMITS.max,
+    Math.max(CHANGEOFF_MINUTES_LIMITS.min, numericValue),
+  );
+};
+
+export const changeoffMinutesToSlots = (minutes: number): number =>
+  Math.ceil(normalizeChangeoffMinutes(minutes, 0) / 15);
 
 export const createDefaultShiftCountCaps = (
   fallback = DEFAULT_SHIFT_COUNT_CAP,
@@ -171,6 +204,14 @@ export const normalizeOnDemandOptimizationSettings = (
   normalized.breakDurationMinutes = normalizeBreakDurationMinutes(
     value.breakDurationMinutes,
     defaults.breakDurationMinutes,
+  );
+  normalized.northChangeoffMinutes = normalizeChangeoffMinutes(
+    value.northChangeoffMinutes,
+    defaults.northChangeoffMinutes,
+  );
+  normalized.southChangeoffMinutes = normalizeChangeoffMinutes(
+    value.southChangeoffMinutes,
+    defaults.southChangeoffMinutes,
   );
 
   normalized.shiftCountCaps = normalizeShiftCountCaps(

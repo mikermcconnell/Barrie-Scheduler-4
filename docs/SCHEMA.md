@@ -134,6 +134,36 @@ interface DraftSchedule {
 
 ---
 
+## On-Demand Saved Schedules
+
+### SavedSchedule (`users/{userId}/schedules/{scheduleId}`)
+
+Transit On Demand workspace drafts are stored separately from fixed-route draft schedules.
+
+```typescript
+interface SavedSchedule {
+  name: string;
+  status: 'draft' | 'published' | 'archived';
+  shiftData: Shift[];
+  masterScheduleData: Requirement[];
+  schedulesData?: Record<string, Requirement[]>;
+  optimizationSettings?: {
+    maxFleetVehicles?: number;
+    shiftCountCaps?: DayTypeShiftCountCaps;
+    targetCoveragePercent?: number;
+    breakDurationMinutes?: number;
+    northChangeoffMinutes?: number;  // one-way garage travel, applied at both shift ends
+    southChangeoffMinutes?: number;  // one-way garage travel, applied at both shift ends
+    shiftCountCapMode?: 'hard' | 'guide';
+    minorGapTolerance?: 'none' | 'rare';
+    breakProtection?: 'strict' | 'balanced';
+    costPriority?: 'service' | 'balanced' | 'efficiency';
+  };
+}
+```
+
+---
+
 ## Master Schedules (Published)
 
 ### MasterScheduleEntry (`teams/{teamId}/masterSchedules/{routeIdentity}`)

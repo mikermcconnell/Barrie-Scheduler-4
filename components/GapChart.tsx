@@ -24,16 +24,16 @@ const formatExtendedTime = (totalMinutes: number): string => {
 
 const getGapChartSignal = (slot: TimeSlot, zoneFilter: ZoneFilterType): number => {
   if (zoneFilter === 'North') {
-    return slot.northRequirement + slot.northCoverage + slot.northBreaks;
+    return slot.northRequirement + slot.northCoverage + slot.northBreaks + slot.northChangeoffs;
   }
   if (zoneFilter === 'South') {
-    return slot.southRequirement + slot.southCoverage + slot.southBreaks;
+    return slot.southRequirement + slot.southCoverage + slot.southBreaks + slot.southChangeoffs;
   }
   if (zoneFilter === 'Floater') {
-    return (slot.floaterRequirement || 0) + slot.floaterCoverage + slot.floaterBreaks;
+    return (slot.floaterRequirement || 0) + slot.floaterCoverage + slot.floaterBreaks + slot.floaterChangeoffs;
   }
 
-  return slot.totalRequirement + slot.totalActiveCoverage + slot.driversOnBreak;
+  return slot.totalRequirement + slot.totalActiveCoverage + slot.driversOnBreak + slot.driversInChangeoff;
 };
 
 const createGapChartTailSlot = (slot: TimeSlot, timestamp: number): TimeSlot => ({
@@ -53,6 +53,10 @@ const createGapChartTailSlot = (slot: TimeSlot, timestamp: number): TimeSlot => 
   northBreaks: 0,
   southBreaks: 0,
   floaterBreaks: 0,
+  driversInChangeoff: 0,
+  northChangeoffs: 0,
+  southChangeoffs: 0,
+  floaterChangeoffs: 0,
   totalActiveCoverage: 0,
   totalEffectiveCoverage: 0,
   totalOverlappingShifts: 0,
@@ -141,32 +145,36 @@ interface Props {
 
 const CustomTooltip = ({ active, payload, label, viewMode }: any) => {
   if (active && payload && payload.length) {
-    const data = payload[0].payload as TimeSlot;
+    const data = payload[0].payload as TimeSlot & {
+      currentBreak?: number;
+      currentChangeoff?: number;
+      currentNet?: number;
+    };
 
     // Dynamic tooltip data based on view
     let req = data.totalRequirement;
     let cover = data.totalActiveCoverage;
-    let net = data.totalActiveCoverage - data.totalRequirement;
+    let net = data.currentNet ?? (data.totalActiveCoverage - data.totalRequirement);
     let title = "Total System";
-    let activeDrivers = data.totalActiveCoverage;
+    let changeoff = data.currentChangeoff ?? data.driversInChangeoff;
 
     if (viewMode === 'North') {
       req = data.northRequirement;
       cover = data.northCoverage;
-      activeDrivers = cover;
-      net = cover - req;
+      net = data.currentNet ?? (cover - req);
+      changeoff = data.currentChangeoff ?? data.northChangeoffs;
       title = "North Zone (Exclusive)";
     } else if (viewMode === 'South') {
       req = data.southRequirement;
       cover = data.southCoverage;
-      activeDrivers = cover;
-      net = cover - req;
+      net = data.currentNet ?? (cover - req);
+      changeoff = data.currentChangeoff ?? data.southChangeoffs;
       title = "South Zone (Exclusive)";
     } else if (viewMode === 'Floater') {
       req = data.floaterRequirement || 0;
       cover = data.floaterCoverage;
-      activeDrivers = cover;
-      net = cover - req;
+      net = data.currentNet ?? (cover - req);
+      changeoff = data.currentChangeoff ?? data.floaterChangeoffs;
       title = "Floater Drivers On Road";
     }
 
@@ -202,16 +210,22 @@ const CustomTooltip = ({ active, payload, label, viewMode }: any) => {
               </div>
             </>
           )}
-          {viewMode === 'All' && activeDrivers !== cover && (
-            <div className="flex justify-between gap-4 text-gray-600">
-              <span>Drivers on road:</span>
-              <span>{activeDrivers}</span>
+          {viewMode === 'All' && data.totalOverlappingShifts !== cover && (
+            <div className="flex justify-between gap-4 text-gray-500">
+              <span>Drivers on shift:</span>
+              <span>{data.totalOverlappingShifts}</span>
             </div>
           )}
-          {viewMode === 'All' && data.totalOverlappingShifts !== activeDrivers && (
-            <div className="flex justify-between gap-4 text-gray-500">
-              <span>Overlapping shifts:</span>
-              <span>{data.totalOverlappingShifts}</span>
+          {changeoff > 0 && (
+            <div className="flex justify-between gap-4 text-orange-500">
+              <span>In Changeoff:</span>
+              <span>{changeoff}</span>
+            </div>
+          )}
+          {(data.currentBreak || 0) > 0 && (
+            <div className="flex justify-between gap-4 text-amber-500">
+              <span>On Break:</span>
+              <span>{data.currentBreak}</span>
             </div>
           )}
           <div className={`flex justify-between gap-4 pt-1 border-t ${net < 0 ? 'text-brand-red' : 'text-brand-green'}`}>
@@ -219,10 +233,6 @@ const CustomTooltip = ({ active, payload, label, viewMode }: any) => {
             <span>{net > 0 ? '+' : ''}{net}</span>
           </div>
 
-        </div>
-        <div className="flex justify-between gap-4 text-orange-400">
-          <span>On Break:</span>
-          <span>{(data as any).currentBreak}</span>
         </div>
       </div>
     );
@@ -238,35 +248,57 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
   );
 
   // Calculate dynamic data keys based on mode
-  const chartData = displayData.map(d => ({
-    ...d,
-    currentReq: zoneFilter === 'North' ? d.northRequirement :
-      (zoneFilter === 'South' ? d.southRequirement :
-        (zoneFilter === 'Floater' ? d.floaterRequirement : d.totalRequirement)),
+  const chartData = displayData.map(d => {
+    const currentReq = zoneFilter === 'North' ? d.northRequirement
+      : zoneFilter === 'South' ? d.southRequirement
+        : zoneFilter === 'Floater' ? d.floaterRequirement
+          : d.totalRequirement;
 
-    currentCover: zoneFilter === 'North' ? d.northCoverage :
-      (zoneFilter === 'South' ? d.southCoverage :
-        (zoneFilter === 'Floater' ? d.floaterCoverage : d.totalActiveCoverage)),
+    const currentCover = zoneFilter === 'North' ? d.northCoverage
+      : zoneFilter === 'South' ? d.southCoverage
+        : zoneFilter === 'Floater' ? d.floaterCoverage
+          : d.totalActiveCoverage;
 
-    currentNet: zoneFilter === 'North' ? ((d.northCoverage + (d.northRelief || 0)) - d.northRequirement) :
-      (zoneFilter === 'South' ? ((d.southCoverage + (d.southRelief || 0)) - d.southRequirement) :
-        (zoneFilter === 'Floater' ? (d.floaterCoverage - d.floaterRequirement) : (d.totalActiveCoverage - d.totalRequirement))),
+    const currentEffectiveCover = zoneFilter === 'North' ? (d.northCoverage + (d.northRelief || 0))
+      : zoneFilter === 'South' ? (d.southCoverage + (d.southRelief || 0))
+        : zoneFilter === 'Floater' ? d.floaterCoverage
+          : d.totalActiveCoverage;
 
-    currentBreak: zoneFilter === 'North' ? d.northBreaks :
-      (zoneFilter === 'South' ? d.southBreaks :
-        (zoneFilter === 'Floater' ? d.floaterBreaks : d.driversOnBreak)),
+    const currentBreak = zoneFilter === 'North' ? d.northBreaks
+      : zoneFilter === 'South' ? d.southBreaks
+        : zoneFilter === 'Floater' ? d.floaterBreaks
+          : d.driversOnBreak;
 
-    currentRelief: zoneFilter === 'North' ? (d.northRelief || 0) :
-      (zoneFilter === 'South' ? (d.southRelief || 0) : 0),
+    const currentChangeoff = zoneFilter === 'North' ? d.northChangeoffs
+      : zoneFilter === 'South' ? d.southChangeoffs
+        : zoneFilter === 'Floater' ? d.floaterChangeoffs
+          : d.driversInChangeoff;
 
-    surplusBar: Math.max(0, zoneFilter === 'North' ? ((d.northCoverage + (d.northRelief || 0)) - d.northRequirement) :
-      (zoneFilter === 'South' ? ((d.southCoverage + (d.southRelief || 0)) - d.southRequirement) :
-        (zoneFilter === 'Floater' ? (d.floaterCoverage - d.floaterRequirement) : (d.totalActiveCoverage - d.totalRequirement)))),
+    const currentNet = currentEffectiveCover - currentReq;
+    const shortfall = Math.max(0, currentReq - currentEffectiveCover);
+    const changeoffGap = Math.min(shortfall, currentChangeoff);
+    const otherGap = Math.max(0, shortfall - changeoffGap);
 
-    gapBar: Math.min(0, zoneFilter === 'North' ? ((d.northCoverage + (d.northRelief || 0)) - d.northRequirement) :
-      (zoneFilter === 'South' ? ((d.southCoverage + (d.southRelief || 0)) - d.southRequirement) :
-        (zoneFilter === 'Floater' ? (d.floaterCoverage - d.floaterRequirement) : (d.totalActiveCoverage - d.totalRequirement)))),
-  }));
+    return {
+      ...d,
+      currentReq,
+      currentCover,
+      currentNet,
+      currentBreak,
+      currentChangeoff,
+      currentRelief: zoneFilter === 'North' ? (d.northRelief || 0)
+        : zoneFilter === 'South' ? (d.southRelief || 0)
+          : 0,
+      surplusBar: Math.max(0, currentNet),
+      changeoffGapBar: -changeoffGap,
+      otherGapBar: -otherGap,
+    };
+  });
+
+  const hasOtherGapBars = React.useMemo(
+    () => chartData.some((slot) => slot.otherGapBar < 0),
+    [chartData],
+  );
 
   // Calculate stable Y-Axis max (round up to nearest 5)
   const maxValue = React.useMemo(() => {
@@ -370,10 +402,18 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
                 <span>Floater Relief (+/-)</span>
               </div>
             )}
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded bg-brand-red"></div>
-              <span>Gap Bars</span>
-            </div>
+            {zoneFilter !== 'Floater' && (
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded bg-orange-400"></div>
+                <span>Changeoff Gap</span>
+              </div>
+            )}
+            {hasOtherGapBars && (
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded bg-brand-red"></div>
+                <span>Other Gap</span>
+              </div>
+            )}
             <div className="flex items-center gap-2">
               <div className="w-3 h-3 rounded bg-brand-green"></div>
               <span>Surplus Bars</span>
@@ -385,7 +425,7 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
           </div>
           {zoneFilter === 'All' && (
             <div className="mb-4 text-xs font-semibold text-gray-500 text-right">
-              System-wide green line shows active drivers on the road. Hover a point to compare raw drivers, overlapping shifts, and breaks.
+              System-wide green line shows active drivers on the road. Hover a point to compare buses actually in service versus drivers still on shift, breaks, and changeoffs.
             </div>
           )}
           {zoneFilter === 'Floater' && (
@@ -431,10 +471,21 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
                 animationDuration={500}
               />
               <Bar
-                dataKey="gapBar"
+                dataKey="changeoffGapBar"
+                stackId="gap"
                 barSize={6}
                 radius={[4, 4, 4, 4]}
-                name="Gap"
+                name="Changeoff Gap"
+                fill="#FB923C"
+                fillOpacity={1}
+                animationDuration={500}
+              />
+              <Bar
+                dataKey="otherGapBar"
+                stackId="gap"
+                barSize={6}
+                radius={[4, 4, 4, 4]}
+                name="Other Gap"
                 fill="#F87171"
                 fillOpacity={1}
                 animationDuration={500}

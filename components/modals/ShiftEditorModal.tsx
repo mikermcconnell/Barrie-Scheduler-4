@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Shift, Requirement, TimeSlot, Zone, ZoneFilterType } from '../../utils/demandTypes';
+import { Shift, Requirement, TimeSlot, Zone, ZoneFilterType, type OnDemandChangeoffSettings } from '../../utils/demandTypes';
 import { GapChart } from '../GapChart';
 import { calculateSchedule, formatSlotToTime } from '../../utils/dataGenerator';
 import {
@@ -14,6 +14,7 @@ interface Props {
     shift: Shift;
     allShifts: Shift[];
     requirements: Requirement[];
+    changeoffSettings?: Partial<OnDemandChangeoffSettings>;
     requiredBreakDurationMinutes: number;
     requiredBreakDurationSlots: number;
     onSave: (updatedShift: Shift) => void;
@@ -24,6 +25,7 @@ export const ShiftEditorModal: React.FC<Props> = ({
     shift,
     allShifts,
     requirements,
+    changeoffSettings,
     requiredBreakDurationMinutes,
     requiredBreakDurationSlots,
     onSave,
@@ -57,16 +59,16 @@ export const ShiftEditorModal: React.FC<Props> = ({
 
     // Calculate chart data with ghost line
     const chartData = useMemo(() => {
-        const originalSlots = calculateSchedule(allShifts, requirements);
+        const originalSlots = calculateSchedule(allShifts, requirements, changeoffSettings);
         const tempShifts = allShifts.map(s => s.id === shift.id ? currentShift : s);
-        const newSlots = calculateSchedule(tempShifts, requirements);
+        const newSlots = calculateSchedule(tempShifts, requirements, changeoffSettings);
 
         return newSlots.map((slot, i) => ({
             ...slot,
             originalActiveCoverage: originalSlots[i].totalActiveCoverage,
             originalEffectiveCoverage: originalSlots[i].totalEffectiveCoverage
         }));
-    }, [currentShift, allShifts, requirements, shift.id]);
+    }, [changeoffSettings, currentShift, allShifts, requirements, shift.id]);
 
     // Validation Logic
     useEffect(() => {

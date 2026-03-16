@@ -40,11 +40,15 @@ import {
     buildShiftCountCapInstruction,
     breakDurationMinutesToSlots,
     BREAK_DURATION_MINUTES_LIMITS,
+    CHANGEOFF_MINUTES_LIMITS,
     createDefaultShiftCountCaps,
     DEFAULT_BREAK_DURATION_MINUTES,
+    DEFAULT_NORTH_CHANGEOFF_MINUTES,
+    DEFAULT_SOUTH_CHANGEOFF_MINUTES,
     getShiftCountCapForDay,
     normalizeOnDemandOptimizationSettings,
     normalizeBreakDurationMinutes,
+    normalizeChangeoffMinutes,
     normalizeShiftCountCaps,
     type OnDemandOptimizationSettingsSnapshot,
     type OnDemandOptimizationSettingsState,
@@ -78,16 +82,20 @@ const DEFAULT_OPTIMIZATION_SETTINGS: OptimizationSettings = {
     shiftCountCaps: createDefaultShiftCountCaps(),
     targetCoveragePercent: 100,
     breakDurationMinutes: DEFAULT_BREAK_DURATION_MINUTES,
+    northChangeoffMinutes: DEFAULT_NORTH_CHANGEOFF_MINUTES,
+    southChangeoffMinutes: DEFAULT_SOUTH_CHANGEOFF_MINUTES,
     shiftCountCapMode: 'hard',
     minorGapTolerance: 'rare',
     breakProtection: 'strict',
     costPriority: 'balanced',
 };
 
-const OPTIMIZATION_NUMBER_LIMITS: Record<'maxFleetVehicles' | 'targetCoveragePercent' | 'breakDurationMinutes', { min: number; max: number; step: number }> = {
+const OPTIMIZATION_NUMBER_LIMITS: Record<'maxFleetVehicles' | 'targetCoveragePercent' | 'breakDurationMinutes' | 'northChangeoffMinutes' | 'southChangeoffMinutes', { min: number; max: number; step: number }> = {
     maxFleetVehicles: { min: 1, max: 12, step: 1 },
     targetCoveragePercent: { min: 90, max: 100, step: 1 },
     breakDurationMinutes: { ...BREAK_DURATION_MINUTES_LIMITS },
+    northChangeoffMinutes: { ...CHANGEOFF_MINUTES_LIMITS },
+    southChangeoffMinutes: { ...CHANGEOFF_MINUTES_LIMITS },
 };
 
 const OPTIMIZATION_SETTINGS_LIMITS = {
@@ -140,6 +148,8 @@ const buildOptimizerSettingsInstruction = (settings: OptimizationSettings, dayTy
         `- ${shiftCountRule}`,
         `- Target at least ${settings.targetCoveragePercent}% effective coverage.`,
         `- For shifts over ${BREAK_THRESHOLD_HOURS} hours, require a ${settings.breakDurationMinutes}-minute break.`,
+        `- North changeoffs lose ${settings.northChangeoffMinutes} minutes at the start and ${settings.northChangeoffMinutes} minutes at the end of each North shift for garage travel.`,
+        `- South changeoffs lose ${settings.southChangeoffMinutes} minutes at the start and ${settings.southChangeoffMinutes} minutes at the end of each South shift for garage travel.`,
         `- ${gapToleranceRule}`,
         `- ${breakRule}`,
         `- ${costRule}`,
@@ -264,7 +274,10 @@ export const OnDemandWorkspace: React.FC = () => {
 
     // Derived State
     // Now guaranteed to have valid inputs on first render
-    const timeSlots = useMemo(() => calculateSchedule(shifts, requirements), [shifts, requirements]);
+    const timeSlots = useMemo(
+        () => calculateSchedule(shifts, requirements, optimizationSettings),
+        [optimizationSettings, requirements, shifts]
+    );
     const metrics = useMemo(
         () => calculateMetrics(timeSlots, shifts, { coveragePrecision: 1, netDifferenceMode: 'raw' }),
         [shifts, timeSlots]
@@ -279,8 +292,9 @@ export const OnDemandWorkspace: React.FC = () => {
             requirements,
             optimizationSettings.maxFleetVehicles,
             requiredBreakDurationSlots,
+            optimizationSettings,
         ),
-        [optimizationSettings.maxFleetVehicles, requiredBreakDurationSlots, requirements, shifts]
+        [optimizationSettings, requiredBreakDurationSlots, requirements, shifts]
     );
     const validationSummary = useMemo(
         () => summarizeOnDemandValidation(scheduleValidation),
@@ -307,8 +321,17 @@ export const OnDemandWorkspace: React.FC = () => {
             maxShiftCount: activeMaxShiftCount,
             shiftCountCapMode: optimizationSettings.shiftCountCapMode,
             breakDurationMinutes: optimizationSettings.breakDurationMinutes,
+            northChangeoffMinutes: optimizationSettings.northChangeoffMinutes,
+            southChangeoffMinutes: optimizationSettings.southChangeoffMinutes,
         }),
-        [activeMaxShiftCount, optimizationSettings.breakDurationMinutes, optimizationSettings.shiftCountCapMode, selectedDayType]
+        [
+            activeMaxShiftCount,
+            optimizationSettings.breakDurationMinutes,
+            optimizationSettings.northChangeoffMinutes,
+            optimizationSettings.shiftCountCapMode,
+            optimizationSettings.southChangeoffMinutes,
+            selectedDayType,
+        ]
     );
 
     const updateOptimizationNumberSetting = (key: keyof typeof OPTIMIZATION_NUMBER_LIMITS, value: number) => {
@@ -316,13 +339,15 @@ export const OnDemandWorkspace: React.FC = () => {
             ...prev,
             [key]: key === 'breakDurationMinutes'
                 ? normalizeBreakDurationMinutes(value, prev.breakDurationMinutes)
-                : Math.min(
-                    OPTIMIZATION_NUMBER_LIMITS[key].max,
-                    Math.max(
-                        OPTIMIZATION_NUMBER_LIMITS[key].min,
-                        Number.isFinite(value) ? value : prev[key]
+                : key === 'northChangeoffMinutes' || key === 'southChangeoffMinutes'
+                    ? normalizeChangeoffMinutes(value, prev[key])
+                    : Math.min(
+                        OPTIMIZATION_NUMBER_LIMITS[key].max,
+                        Math.max(
+                            OPTIMIZATION_NUMBER_LIMITS[key].min,
+                            Number.isFinite(value) ? value : prev[key]
+                        )
                     )
-                )
         }));
     };
 
@@ -479,6 +504,8 @@ export const OnDemandWorkspace: React.FC = () => {
 
         const requestDayType = selectedDayType;
         const requestRequirements = requirements;
+        const requestOptimizationSettings = optimizationSettings;
+        const requestRequiredBreakDurationSlots = requiredBreakDurationSlots;
         const runId = optimizationRunIdRef.current + 1;
         const controller = new AbortController();
         optimizationRunIdRef.current = runId;
@@ -520,6 +547,23 @@ export const OnDemandWorkspace: React.FC = () => {
                     return [...others, ...taggedShifts];
                 });
                 setIsOptimized(true);
+
+                const regeneratedValidation = validateOnDemandSchedule(
+                    taggedShifts,
+                    requestRequirements,
+                    requestOptimizationSettings.maxFleetVehicles,
+                    requestRequiredBreakDurationSlots,
+                    requestOptimizationSettings,
+                );
+                const regeneratedValidationSummary = summarizeOnDemandValidation(regeneratedValidation);
+
+                if (!regeneratedValidationSummary.isValid) {
+                    toast.warning(
+                        'Generated schedule needs review',
+                        regeneratedValidationSummary.message,
+                    );
+                    setActiveTab('overview');
+                }
 
                 if (result.source === 'ai') {
                     toast.success('Schedule generated', buildOptimizationMessage(result, 'AI optimization'));
@@ -1146,6 +1190,7 @@ export const OnDemandWorkspace: React.FC = () => {
                     currentShifts={reviewModalData.current}
                     optimizedShifts={reviewModalData.optimized}
                     requirements={requirements}
+                    changeoffSettings={optimizationSettings}
                     onApply={applyRefinements}
                     onCancel={() => setReviewModalData(null)}
                 />
@@ -1728,6 +1773,43 @@ export const OnDemandWorkspace: React.FC = () => {
                                 </div>
                             </div>
                         </div>
+
+                        <div className="bg-white rounded-2xl border-2 border-gray-200 p-4 shadow-sm">
+                            <div className="flex items-start gap-4">
+                                <div className="p-3 rounded-xl shadow-inner bg-orange-500 text-white">
+                                    <BarChart3 size={24} />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <h3 className="text-gray-500 font-bold text-xs uppercase tracking-wider">Changeoff Travel</h3>
+                                    <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                        {[
+                                            { key: 'northChangeoffMinutes' as const, label: 'North', helper: 'Downtown Barrie to garage and back is modeled as this many minutes each way.' },
+                                            { key: 'southChangeoffMinutes' as const, label: 'South', helper: 'South zone garage travel is applied the same way at both ends of each South shift.' },
+                                        ].map(metric => (
+                                            <label key={metric.key} className="rounded-2xl border-2 border-gray-200 bg-gray-50 p-3">
+                                                <div className="text-[11px] font-extrabold uppercase tracking-wider text-gray-500">{metric.label}</div>
+                                                <div className="mt-2 flex items-end gap-2">
+                                                    <input
+                                                        type="number"
+                                                        min={OPTIMIZATION_NUMBER_LIMITS[metric.key].min}
+                                                        max={OPTIMIZATION_NUMBER_LIMITS[metric.key].max}
+                                                        step={OPTIMIZATION_NUMBER_LIMITS[metric.key].step}
+                                                        value={optimizationSettings[metric.key]}
+                                                        onChange={(e) => updateOptimizationNumberSetting(metric.key, Number(e.target.value))}
+                                                        className="w-20 rounded-xl border-2 border-gray-200 bg-white px-3 py-2 text-xl font-extrabold text-gray-800 focus:border-brand-blue focus:outline-none"
+                                                    />
+                                                    <span className="pb-2 text-xs font-bold text-gray-400">mins each way</span>
+                                                </div>
+                                                <div className="mt-2 text-xs text-gray-400 font-semibold">{metric.helper}</div>
+                                            </label>
+                                        ))}
+                                    </div>
+                                    <div className="text-xs text-gray-400 font-semibold mt-3">
+                                        The workspace removes this travel time from the start and end of each zone-bound shift, so back-to-back pieces create a visible changeoff gap unless you overlap them.
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
                     <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
@@ -1799,6 +1881,7 @@ export const OnDemandWorkspace: React.FC = () => {
                                     <p className="p-3 rounded-xl bg-blue-50 border-2 border-blue-100 text-blue-900/80">Coverage target, fleet cap, and shift count cap stay explicit because those are the clearest operating limits for staff to reason about.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Use a hard shift cap when the number of pieces is fixed. Switch it to guide when you want the optimizer to prefer fewer shifts without blocking extra relief work that meaningfully improves the day.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Break duration sets the required long-shift break length, and the same value is used when you add or edit a shift manually.</p>
+                                    <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">North and South changeoff travel is applied at both ends of each zone-bound shift, so equal start and end times still create an operational gap unless another piece overlaps it.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Minor gap tolerance decides whether the optimizer can accept a very small shortfall in exchange for a meaningfully better full-day schedule.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Break protection controls how hard the optimizer should push for clean break relief and overlap coverage.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Cost pressure controls how strongly the optimizer trims extra payable hours and surplus once service quality is acceptable.</p>
@@ -1842,6 +1925,9 @@ export const OnDemandWorkspace: React.FC = () => {
                                         <span className="font-bold text-gray-600">Peak Vehicles on Road</span>
                                         <span className={`font-extrabold ${fleetWithinLimit ? 'text-gray-800' : 'text-amber-600'}`}>{maxConcurrentVehicles}</span>
                                     </div>
+                                    <p className="px-1 text-xs font-semibold text-gray-400">
+                                        Drivers on shift can be higher than buses on road because breaks and changeoffs still count as paid pieces, but they do not count against the fleet cap.
+                                    </p>
                                     <div className={`flex justify-between items-center p-3 rounded-xl border-2 ${metrics.coveragePercent >= optimizationSettings.targetCoveragePercent ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
                                         <span className="font-bold text-gray-600">Coverage vs Target</span>
                                         <span className={`font-extrabold ${metrics.coveragePercent >= optimizationSettings.targetCoveragePercent ? 'text-emerald-600' : 'text-amber-600'}`}>
@@ -1857,6 +1943,7 @@ export const OnDemandWorkspace: React.FC = () => {
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Shift span stays between 5 and 11 hours of drive time.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Shifts over {BREAK_THRESHOLD_HOURS} hours still require a {optimizationSettings.breakDurationMinutes}-minute break.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Breaks still need to fall between hour 4 and hour 6 of the shift.</p>
+                                    <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">North changeoffs remove {optimizationSettings.northChangeoffMinutes} minutes each way. South changeoffs remove {optimizationSettings.southChangeoffMinutes} minutes each way.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">North and South stay zone-bound. Floaters remain the relief layer for coverage and breaks.</p>
                                 </div>
                             </div>
@@ -1881,6 +1968,7 @@ export const OnDemandWorkspace: React.FC = () => {
                     shift={shiftToEdit}
                     allShifts={shifts}
                     requirements={requirements}
+                    changeoffSettings={optimizationSettings}
                     requiredBreakDurationMinutes={optimizationSettings.breakDurationMinutes}
                     requiredBreakDurationSlots={requiredBreakDurationSlots}
                     onSave={(updated) => {

@@ -71,6 +71,7 @@ const scoreSchedule = (
         requirements,
         MAX_ACTIVE_VEHICLES,
         configuredBreakDurationSlots,
+        optimizationOptions,
     );
     const coverageShortfall = validation.coverageViolations.reduce((sum, issue) => sum + issue.shortfall, 0);
     const fleetExcess = validation.fleetViolations.reduce(
@@ -227,9 +228,9 @@ export async function optimizeImplementation(
         ? `
     FLEET CONSTRAINTS:
     - Maximum vehicles on the road at any time: 6.
-    - Drivers on break do NOT count as vehicles on the road.
+    - Drivers on break or in changeoff do NOT count as vehicles on the road.
     - Break periods must be covered by other active shifts if demand requires coverage.
-    - Never return a schedule where more than 6 active, non-break shifts overlap in any 15-minute slot.
+    - Never return a schedule where more than 6 active, in-zone shifts are on the road in any 15-minute slot.
     `
         : '';
     const shiftCountConstraintRules = buildShiftCountCapInstruction(
@@ -248,6 +249,8 @@ export async function optimizeImplementation(
     - Breaks: ${configuredBreakDurationMinutes}min (${configuredBreakDurationSlots} slots) if actual drive time > ${BREAK_THRESHOLD_HOURS}h.
     - Breaks must occur between hour 4 and 6 of the shift.
     - STRICT ZONE LOGIC: North covers North, South covers South, Floater covers Gaps/Breaks.
+    - NORTH CHANGEOFF: remove ${optimizationOptions?.northChangeoffMinutes ?? 0} minutes from the start and ${optimizationOptions?.northChangeoffMinutes ?? 0} minutes from the end of each North shift for garage travel.
+    - SOUTH CHANGEOFF: remove ${optimizationOptions?.southChangeoffMinutes ?? 0} minutes from the start and ${optimizationOptions?.southChangeoffMinutes ?? 0} minutes from the end of each South shift for garage travel.
     ${fleetConstraintRules}
     ${shiftCountConstraintRules ? `- SHIFT COUNT CAP: ${shiftCountConstraintRules}` : ''}
 
@@ -296,7 +299,7 @@ export async function optimizeImplementation(
     - Return shifts that minimize slot-by-slot mismatch to the demand curves.
     - Preserve shift IDs when refining unless a shift must be removed or a new shift must be added.
     - Do not accept any 2+ bus gap or any 1-bus gap longer than 2 consecutive slots.
-    ${mode === 'full' ? '- Never schedule more than 6 active drivers on the road in any slot; drivers on break do not count toward that 6.' : ''}
+    ${mode === 'full' ? '- Never schedule more than 6 active drivers on the road in any slot; drivers on break or in changeoff do not count toward that 6.' : ''}
     `;
 
     // Call Phase 1

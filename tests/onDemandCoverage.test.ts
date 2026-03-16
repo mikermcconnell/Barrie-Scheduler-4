@@ -99,6 +99,35 @@ describe('on-demand coverage', () => {
     expect(slots[53].netDifference).toBe(-1);
   });
 
+  it('applies configured north and south changeoff windows as off-road time', () => {
+    const requirements = Array.from({ length: 96 }, (_, slotIndex): Requirement => ({
+      slotIndex,
+      north: 1,
+      south: 1,
+      floater: 0,
+      total: 2,
+    }));
+
+    const slots = calculateSchedule([
+      makeShift('north-1', Zone.NORTH, 0, 0, 32, 40),
+      makeShift('south-1', Zone.SOUTH, 0, 0, 32, 40),
+    ], requirements, {
+      northChangeoffMinutes: 10,
+      southChangeoffMinutes: 8,
+    });
+
+    expect(slots[32].northCoverage).toBe(0);
+    expect(slots[32].southCoverage).toBe(0);
+    expect(slots[32].northChangeoffs).toBe(1);
+    expect(slots[32].southChangeoffs).toBe(1);
+    expect(slots[32].driversInChangeoff).toBe(2);
+    expect(slots[32].totalActiveCoverage).toBe(0);
+    expect(slots[32].totalOverlappingShifts).toBe(2);
+    expect(slots[33].totalActiveCoverage).toBe(2);
+    expect(slots[39].driversInChangeoff).toBe(2);
+    expect(slots[39].totalActiveCoverage).toBe(0);
+  });
+
   it('flags a break as removing a bus from service when it is not covered', () => {
     const shifts = [
       makeShift('bus-1', Zone.FLOATER),

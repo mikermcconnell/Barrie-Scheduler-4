@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Shift, Requirement, TimeSlot, Zone, ZoneFilterType } from '../../utils/demandTypes';
+import { Shift, Requirement, TimeSlot, Zone, ZoneFilterType, type OnDemandChangeoffSettings } from '../../utils/demandTypes';
 import { GapChart } from '../GapChart';
 import { calculateSchedule, formatSlotToTime, calculateMetrics } from '../../utils/dataGenerator';
 import { Check, X, ArrowRight, AlertTriangle, Sparkles, CheckSquare, Square, Eye, EyeOff, BarChart } from 'lucide-react';
@@ -9,6 +9,7 @@ interface Props {
     currentShifts: Shift[];
     optimizedShifts: Shift[];
     requirements: Requirement[];
+    changeoffSettings?: Partial<OnDemandChangeoffSettings>;
     onApply: (finalShifts: Shift[]) => void;
     onCancel: () => void;
 }
@@ -31,6 +32,7 @@ export const OptimizationReviewModal: React.FC<Props> = ({
     currentShifts,
     optimizedShifts,
     requirements,
+    changeoffSettings,
     onApply,
     onCancel
 }) => {
@@ -157,7 +159,10 @@ export const OptimizationReviewModal: React.FC<Props> = ({
         }
     }, [viewMode, currentShifts, optimizedShifts, customMixShifts]);
 
-    const displayedSlots = useMemo(() => calculateSchedule(displayedShifts, requirements), [displayedShifts, requirements]);
+    const displayedSlots = useMemo(
+        () => calculateSchedule(displayedShifts, requirements, changeoffSettings),
+        [changeoffSettings, displayedShifts, requirements]
+    );
 
     // Pass displayedShifts to calculateMetrics for accurate "MVT Supply" (Payable Hours)
     const metrics = useMemo(() => calculateMetrics(displayedSlots, displayedShifts), [displayedSlots, displayedShifts]);

@@ -21,11 +21,15 @@ export interface TimeSlot {
   northBreaks: number;
   southBreaks: number;
   floaterBreaks: number;
+  driversInChangeoff: number;
+  northChangeoffs: number;
+  southChangeoffs: number;
+  floaterChangeoffs: number;
 
   // Calculated
   totalActiveCoverage: number; // Physical active vehicles on the road
   totalEffectiveCoverage: number; // Zone-valid coverage after floater relief
-  totalOverlappingShifts: number; // Includes drivers currently on break
+  totalOverlappingShifts: number; // Includes drivers still on shift but unavailable due to break/changeoff
   northRelief: number; // Floater contribution to North
   southRelief: number; // Floater contribution to South
   floaterAssignedRelief: number; // Floaters temporarily covering North/South demand
@@ -40,6 +44,11 @@ export interface SummaryMetrics {
   totalShiftHours: number;
   netDiffHours: number;
   coveragePercent: number;
+}
+
+export interface OnDemandChangeoffSettings {
+  northChangeoffMinutes: number;
+  southChangeoffMinutes: number;
 }
 
 export enum Zone {

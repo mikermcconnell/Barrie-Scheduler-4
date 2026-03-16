@@ -1,5 +1,13 @@
-import { TimeSlot, SummaryMetrics, Shift, Requirement, Zone } from './demandTypes';
+import {
+  TimeSlot,
+  SummaryMetrics,
+  Shift,
+  Requirement,
+  Zone,
+  type OnDemandChangeoffSettings,
+} from './demandTypes';
 import { TIME_SLOTS_PER_DAY, SHIFT_DURATION_SLOTS, BREAK_DURATION_SLOTS } from './demandConstants';
+import { changeoffMinutesToSlots } from './onDemandOptimizationSettings';
 
 // Helper to format minutes from midnight to HH:mm
 export const formatTime = (totalMinutes: number): string => {
@@ -166,7 +174,17 @@ export const generateShifts = (requirements: Requirement[], optimized: boolean =
 };
 
 // 3. Compile Schedule (Combine Supply + Demand)
-export const calculateSchedule = (shifts: Shift[], requirements: Requirement[]): TimeSlot[] => {
+export const calculateSchedule = (
+  shifts: Shift[],
+  requirements: Requirement[],
+  changeoffSettings: Partial<OnDemandChangeoffSettings> = {},
+): TimeSlot[] => {
+  const northChangeoffSlots = changeoffMinutesToSlots(
+    changeoffSettings.northChangeoffMinutes ?? 0,
+  );
+  const southChangeoffSlots = changeoffMinutesToSlots(
+    changeoffSettings.southChangeoffMinutes ?? 0,
+  );
   const slots: TimeSlot[] = [];
 
   if (!requirements || requirements.length === 0) {
@@ -185,6 +203,10 @@ export const calculateSchedule = (shifts: Shift[], requirements: Requirement[]):
     let northBreaks = 0;
     let southBreaks = 0;
     let floaterBreaks = 0;
+    let changeoffCount = 0;
+    let northChangeoffs = 0;
+    let southChangeoffs = 0;
+    let floaterChangeoffs = 0;
 
     let northCount = 0;
     let southCount = 0;
@@ -192,9 +214,32 @@ export const calculateSchedule = (shifts: Shift[], requirements: Requirement[]):
 
     shifts.forEach(shift => {
       if (i >= shift.startSlot && i < shift.endSlot) {
+        const changeoffSlots = shift.zone === Zone.NORTH
+          ? northChangeoffSlots
+          : shift.zone === Zone.SOUTH
+            ? southChangeoffSlots
+            : 0;
+        const effectiveStartSlot = Math.min(shift.endSlot, shift.startSlot + changeoffSlots);
+        const effectiveEndSlot = Math.max(shift.startSlot, shift.endSlot - changeoffSlots);
+        const isInChangeoff = changeoffSlots > 0 && (
+          i < effectiveStartSlot || i >= effectiveEndSlot
+        );
         const isOnBreak = (i >= shift.breakStartSlot && i < shift.breakStartSlot + shift.breakDurationSlots);
 
-        if (isOnBreak) {
+        if (isInChangeoff) {
+          changeoffCount++;
+          switch (shift.zone) {
+            case Zone.NORTH:
+              northChangeoffs++;
+              break;
+            case Zone.SOUTH:
+              southChangeoffs++;
+              break;
+            case Zone.FLOATER:
+              floaterChangeoffs++;
+              break;
+          }
+        } else if (isOnBreak) {
           breakCount++;
           // Track zone specific breaks
           switch (shift.zone) {
@@ -250,7 +295,7 @@ export const calculateSchedule = (shifts: Shift[], requirements: Requirement[]):
     const southEffectiveCoverage = Math.min(southDemand, southCount + southRelief);
     const floaterEffectiveCoverage = Math.min(floaterDemand, floaterAvailableCoverage);
     const totalEffectiveCoverage = northEffectiveCoverage + southEffectiveCoverage + floaterEffectiveCoverage;
-    const totalOverlappingShifts = activeCount + breakCount;
+    const totalOverlappingShifts = activeCount + breakCount + changeoffCount;
 
     slots.push({
       timeLabel: formatTime(minutesFromMidnight),
@@ -269,6 +314,10 @@ export const calculateSchedule = (shifts: Shift[], requirements: Requirement[]):
       northBreaks,
       southBreaks,
       floaterBreaks,
+      driversInChangeoff: changeoffCount,
+      northChangeoffs,
+      southChangeoffs,
+      floaterChangeoffs,
 
       // Relief Data
       northRelief,
