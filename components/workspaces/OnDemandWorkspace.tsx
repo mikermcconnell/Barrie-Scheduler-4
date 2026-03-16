@@ -148,8 +148,9 @@ const buildOptimizerSettingsInstruction = (settings: OptimizationSettings, dayTy
         `- ${shiftCountRule}`,
         `- Target at least ${settings.targetCoveragePercent}% effective coverage.`,
         `- For shifts over ${BREAK_THRESHOLD_HOURS} hours, require a ${settings.breakDurationMinutes}-minute break.`,
-        `- North mid-service changeoffs lose ${settings.northChangeoffMinutes} minutes leaving the zone and ${settings.northChangeoffMinutes} minutes returning from the garage between consecutive North shifts.`,
-        `- South mid-service changeoffs lose ${settings.southChangeoffMinutes} minutes leaving the zone and ${settings.southChangeoffMinutes} minutes returning from the garage between consecutive South shifts.`,
+        `- North changeoff travel applies only at a true mid-service handoff where one North or South revenue shift ends and another begins. Morning pull-outs and final pull-ins do not lose revenue time.`,
+        `- When that handoff is a North piece, lose ${settings.northChangeoffMinutes} minutes leaving the zone and ${settings.northChangeoffMinutes} minutes returning from the garage.`,
+        `- When that handoff is a South piece, lose ${settings.southChangeoffMinutes} minutes leaving the zone and ${settings.southChangeoffMinutes} minutes returning from the garage.`,
         `- ${gapToleranceRule}`,
         `- ${breakRule}`,
         `- ${costRule}`,
@@ -1900,7 +1901,7 @@ export const OnDemandWorkspace: React.FC = () => {
                                     <p className="p-3 rounded-xl bg-blue-50 border-2 border-blue-100 text-blue-900/80">Coverage target, fleet cap, and shift count cap stay explicit because those are the clearest operating limits for staff to reason about.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Use a hard shift cap when the number of pieces is fixed. Switch it to guide when you want the optimizer to prefer fewer shifts without blocking extra relief work that meaningfully improves the day.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Break duration sets the required long-shift break length, and the same value is used when you add or edit a shift manually.</p>
-                                    <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">North and South changeoff travel only applies during an internal mid-service handoff. The first piece of the day starts in-zone and the last piece ends in-zone.</p>
+                                    <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">North and South changeoff travel only applies during a true mid-service handoff where one revenue piece ends and another begins. Morning pull-outs can happen before revenue time and final pull-ins happen after revenue time, so they do not create orange changeoff gaps.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Minor gap tolerance decides whether the optimizer can accept a very small shortfall in exchange for a meaningfully better full-day schedule.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Break protection controls how hard the optimizer should push for clean break relief and overlap coverage.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Cost pressure controls how strongly the optimizer trims extra payable hours and surplus once service quality is acceptable.</p>

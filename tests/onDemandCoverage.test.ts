@@ -99,6 +99,32 @@ describe('on-demand coverage', () => {
     expect(slots[53].netDifference).toBe(-1);
   });
 
+  it('does not apply changeoff time to pull-outs or pull-ins at the service edges', () => {
+    const requirements = Array.from({ length: 96 }, (_, slotIndex): Requirement => ({
+      slotIndex,
+      north: 2,
+      south: 1,
+      floater: 0,
+      total: 3,
+    }));
+
+    const slots = calculateSchedule([
+      makeShift('north-1', Zone.NORTH, 0, 0, 20, 60),
+      makeShift('south-1', Zone.SOUTH, 0, 0, 21, 70),
+      makeShift('north-2', Zone.NORTH, 0, 0, 24, 80),
+    ], requirements, {
+      northChangeoffMinutes: 10,
+      southChangeoffMinutes: 8,
+    });
+
+    expect(slots[20].northChangeoffs).toBe(0);
+    expect(slots[21].southChangeoffs).toBe(0);
+    expect(slots[24].northChangeoffs).toBe(0);
+    expect(slots[59].northChangeoffs).toBe(0);
+    expect(slots[69].southChangeoffs).toBe(0);
+    expect(slots[79].northChangeoffs).toBe(0);
+  });
+
   it('does not apply changeoff time to the first or last service piece of the day', () => {
     const requirements = Array.from({ length: 96 }, (_, slotIndex): Requirement => ({
       slotIndex,
@@ -179,6 +205,27 @@ describe('on-demand coverage', () => {
     expect(slots[41].northCoverage).toBe(1);
     expect(slots[47].northCoverage).toBe(1);
     expect(slots[47].northChangeoffs).toBe(0);
+  });
+
+  it('does not treat a new peak add-in as a changeoff without a matching ending shift', () => {
+    const requirements = Array.from({ length: 96 }, (_, slotIndex): Requirement => ({
+      slotIndex,
+      north: 2,
+      south: 0,
+      floater: 0,
+      total: 2,
+    }));
+
+    const slots = calculateSchedule([
+      makeShift('north-1', Zone.NORTH, 0, 0, 32, 60),
+      makeShift('north-2', Zone.NORTH, 0, 0, 40, 68),
+    ], requirements, {
+      northChangeoffMinutes: 10,
+      southChangeoffMinutes: 8,
+    });
+
+    expect(slots[40].northChangeoffs).toBe(0);
+    expect(slots[59].northChangeoffs).toBe(0);
   });
 
   it('flags a break as removing a bus from service when it is not covered', () => {

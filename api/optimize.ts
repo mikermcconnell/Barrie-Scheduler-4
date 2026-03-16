@@ -271,8 +271,10 @@ export async function optimizeImplementation(
     - Breaks: ${configuredBreakDurationMinutes}min (${configuredBreakDurationSlots} slots) if actual drive time > ${BREAK_THRESHOLD_HOURS}h.
     - Breaks must occur between hour 4 and 6 of the shift.
     - STRICT ZONE LOGIC: North covers North, South covers South, Floater covers Gaps/Breaks.
-    - NORTH CHANGEOFF: between consecutive North shifts, remove ${optimizationOptions?.northChangeoffMinutes ?? 0} minutes leaving the zone and ${optimizationOptions?.northChangeoffMinutes ?? 0} minutes returning from the garage.
-    - SOUTH CHANGEOFF: between consecutive South shifts, remove ${optimizationOptions?.southChangeoffMinutes ?? 0} minutes leaving the zone and ${optimizationOptions?.southChangeoffMinutes ?? 0} minutes returning from the garage.
+    - CHANGEOFFS ONLY APPLY AT TRUE MID-SERVICE HANDOFFS where one North/South revenue shift ends and another begins.
+    - MORNING PULL-OUTS AND FINAL PULL-INS DO NOT LOSE REVENUE TIME TO CHANGEOFF TRAVEL.
+    - NORTH CHANGEOFF: when a North handoff occurs, remove ${optimizationOptions?.northChangeoffMinutes ?? 0} minutes leaving the zone and ${optimizationOptions?.northChangeoffMinutes ?? 0} minutes returning from the garage.
+    - SOUTH CHANGEOFF: when a South handoff occurs, remove ${optimizationOptions?.southChangeoffMinutes ?? 0} minutes leaving the zone and ${optimizationOptions?.southChangeoffMinutes ?? 0} minutes returning from the garage.
     ${fleetConstraintRules}
     ${shiftCountConstraintRules ? `- SHIFT COUNT CAP: ${shiftCountConstraintRules}` : ''}
 

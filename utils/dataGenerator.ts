@@ -194,16 +194,21 @@ export const calculateSchedule = (
   const serviceShifts = shifts.filter(
     (shift) => shift.zone === Zone.NORTH || shift.zone === Zone.SOUTH,
   );
-  const serviceBoundaryMap = new Map<string, { hasEarlierShift: boolean; hasLaterShift: boolean }>();
+  const serviceHandoffMap = new Map<string, { hasInboundHandoff: boolean; hasOutboundHandoff: boolean }>();
 
   if (serviceShifts.length > 0) {
-    const earliestStart = Math.min(...serviceShifts.map((shift) => shift.startSlot));
-    const latestStart = Math.max(...serviceShifts.map((shift) => shift.startSlot));
+    const serviceStarts = new Map<number, number>();
+    const serviceEnds = new Map<number, number>();
 
     serviceShifts.forEach((shift) => {
-      serviceBoundaryMap.set(shift.id, {
-        hasEarlierShift: shift.startSlot > earliestStart,
-        hasLaterShift: shift.startSlot < latestStart,
+      serviceStarts.set(shift.startSlot, (serviceStarts.get(shift.startSlot) ?? 0) + 1);
+      serviceEnds.set(shift.endSlot, (serviceEnds.get(shift.endSlot) ?? 0) + 1);
+    });
+
+    serviceShifts.forEach((shift) => {
+      serviceHandoffMap.set(shift.id, {
+        hasInboundHandoff: (serviceEnds.get(shift.startSlot) ?? 0) > 0,
+        hasOutboundHandoff: (serviceStarts.get(shift.endSlot) ?? 0) > 0,
       });
     });
   }
@@ -231,14 +236,14 @@ export const calculateSchedule = (
 
     shifts.forEach(shift => {
       if (i >= shift.startSlot && i < shift.endSlot) {
-        const zoneBoundary = serviceBoundaryMap.get(shift.id);
+        const handoffBoundary = serviceHandoffMap.get(shift.id);
         const changeoffSlots = shift.zone === Zone.NORTH
           ? northChangeoffSlots
           : shift.zone === Zone.SOUTH
             ? southChangeoffSlots
             : 0;
-        const startChangeoffSlots = zoneBoundary?.hasEarlierShift ? changeoffSlots : 0;
-        const endChangeoffSlots = zoneBoundary?.hasLaterShift ? changeoffSlots : 0;
+        const startChangeoffSlots = handoffBoundary?.hasInboundHandoff ? changeoffSlots : 0;
+        const endChangeoffSlots = handoffBoundary?.hasOutboundHandoff ? changeoffSlots : 0;
         const effectiveStartSlot = Math.min(shift.endSlot, shift.startSlot + startChangeoffSlots);
         const effectiveEndSlot = Math.max(shift.startSlot, shift.endSlot - endChangeoffSlots);
         const isInChangeoff = changeoffSlots > 0 && (
