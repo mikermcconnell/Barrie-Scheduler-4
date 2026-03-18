@@ -1234,7 +1234,7 @@ export const OnDemandWorkspace: React.FC = () => {
 
             {/* Title & Actions */}
             <div className="flex flex-col md:flex-row flex-wrap justify-between items-end mb-8 gap-4">
-                <div className="flex-1">
+                <div className="flex-1 min-w-[320px]">
                     <button
                         onClick={() => { window.location.hash = ''; }}
                         className="flex items-center gap-1.5 text-gray-400 hover:text-gray-600 text-sm font-medium transition-colors mb-3"
@@ -1276,7 +1276,7 @@ export const OnDemandWorkspace: React.FC = () => {
                     )}
                 </div>
 
-                <div className="flex items-center gap-3">
+                <div className="flex w-full flex-wrap items-start justify-between gap-3">
                     {/* Cloud Actions Group */}
                     {user && (
                         <div className="flex items-center gap-2 mr-4 p-1 bg-gray-50 rounded-lg border border-gray-100">
