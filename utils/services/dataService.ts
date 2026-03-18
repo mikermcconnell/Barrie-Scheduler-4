@@ -57,10 +57,31 @@ export interface DraftVersion {
     label?: string;
 }
 
-const omitUndefinedFields = <T extends Record<string, unknown>>(data: T): T => {
-    return Object.fromEntries(
-        Object.entries(data).filter(([, value]) => value !== undefined)
-    ) as T;
+const stripUndefinedDeep = <T>(value: T): T => {
+    if (Array.isArray(value)) {
+        return value
+            .map((item) => stripUndefinedDeep(item))
+            .filter((item) => item !== undefined) as unknown as T;
+    }
+
+    if (value && typeof value === 'object') {
+        const prototype = Object.getPrototypeOf(value);
+        if (prototype !== Object.prototype && prototype !== null) {
+            return value;
+        }
+
+        const input = value as Record<string, unknown>;
+        const output: Record<string, unknown> = {};
+
+        Object.entries(input).forEach(([key, entry]) => {
+            if (entry === undefined) return;
+            output[key] = stripUndefinedDeep(entry);
+        });
+
+        return output as T;
+    }
+
+    return value;
 };
 
 const buildDownloadError = (error: unknown, context: 'text' | 'binary'): Error => {
@@ -87,9 +108,10 @@ export const saveSchedule = async (
 ): Promise<string> => {
     const schedulesRef = collection(db, 'users', userId, 'schedules');
     const newDocRef = doc(schedulesRef);
+    const payload = stripUndefinedDeep(schedule);
 
     await setDoc(newDocRef, {
-        ...omitUndefinedFields(schedule),
+        ...(payload as Record<string, unknown>),
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
     });
@@ -103,8 +125,9 @@ export const updateSchedule = async (
     updates: Partial<Omit<SavedSchedule, 'id' | 'createdAt'>>
 ): Promise<void> => {
     const scheduleRef = doc(db, 'users', userId, 'schedules', scheduleId);
+    const payload = stripUndefinedDeep(updates);
     await setDoc(scheduleRef, {
-        ...omitUndefinedFields(updates),
+        ...(payload as Record<string, unknown>),
         updatedAt: serverTimestamp()
     }, { merge: true });
 };
