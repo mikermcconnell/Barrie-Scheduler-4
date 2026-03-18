@@ -123,6 +123,8 @@ const shiftItemSchema = {
         startSlot: { type: SchemaType.INTEGER, description: "Start time in 15-min slots (0-96)" },
         durationSlots: { type: SchemaType.INTEGER, description: "Total shift length in slots (20-44 slots / 5-11 hours)" },
         breakStartSlot: { type: SchemaType.INTEGER, description: "Break start time (must be within shift). Use 0 if no break." },
+        handoffFromShiftId: { type: SchemaType.STRING, description: "Optional incoming handoff shift ID to preserve when refining." },
+        handoffToShiftId: { type: SchemaType.STRING, description: "Optional outgoing handoff shift ID to preserve when refining." },
         zone: { type: SchemaType.STRING, enum: ["North", "South", "Floater"] }
     },
     required: ["driverName", "startSlot", "durationSlots", "breakStartSlot", "zone"]
@@ -192,6 +194,8 @@ function normalizeShiftForPrompt(shift: any) {
         startSlot,
         durationSlots: derivedDuration,
         breakStartSlot: Number(shift.breakStartSlot) || 0,
+        handoffFromShiftId: typeof shift.handoffFromShiftId === 'string' ? shift.handoffFromShiftId : undefined,
+        handoffToShiftId: typeof shift.handoffToShiftId === 'string' ? shift.handoffToShiftId : undefined,
     };
 }
 
@@ -277,7 +281,7 @@ function optimizeImplementation(
     `;
 
     const extendedPipeline = shouldUseExtendedOptimizePipeline(mode, process.env.OPTIMIZE_MULTI_PHASE);
-    return runPipeline(apiKey, demandContext, commonRules, mode, currentShifts, focusInstruction, extendedPipeline, requestId);
+    return runPipeline(apiKey, demandContext, commonRules, mode, currentShifts, focusInstruction, extendedPipeline, optimizationOptions, requestId);
 }
 
 async function runPipeline(
@@ -288,6 +292,7 @@ async function runPipeline(
     currentShifts: any[],
     focusInstruction: string | undefined,
     extendedPipeline: boolean,
+    optimizationOptions: OptimizeRequestOptions | undefined,
     requestId: string
 ) {
     console.log(`[${requestId}] Pipeline mode: ${extendedPipeline ? 'multi-phase' : 'fast'}`);
@@ -316,6 +321,7 @@ async function runPipeline(
     draftPrompt += `\nOUTPUT REQUIREMENTS:
     - Return shifts that minimize slot-by-slot mismatch to the demand curves.
     - Preserve shift IDs when refining unless a shift must be removed or a new shift must be added.
+    - When refining, keep valid handoffFromShiftId and handoffToShiftId links for surviving shifts whenever the optimized timing still supports them.
     - Do not accept any 2+ bus gap or any 1-bus gap longer than 2 consecutive slots.
     ${mode === 'full' ? '- Never schedule more than 6 active drivers on the road in any slot; drivers on break or in changeoff do not count toward that 6.' : ''}
     `;
@@ -470,7 +476,9 @@ function processShifts(shifts: any[], optimizationOptions?: OptimizeRequestOptio
             startSlot: sanitizedShift.startSlot,
             endSlot: sanitizedShift.endSlot,
             breakStartSlot: sanitizedShift.breakStartSlot,
-            breakDurationSlots: sanitizedShift.breakDurationSlots
+            breakDurationSlots: sanitizedShift.breakDurationSlots,
+            handoffFromShiftId: typeof s.handoffFromShiftId === 'string' ? s.handoffFromShiftId : undefined,
+            handoffToShiftId: typeof s.handoffToShiftId === 'string' ? s.handoffToShiftId : undefined,
         };
     });
 }

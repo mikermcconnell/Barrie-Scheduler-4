@@ -142,12 +142,20 @@ describe('onDemandWorkspaceState', () => {
         kind: 'duration_too_long',
         message: 'Driver 1 exceeds the 11-hour maximum.',
       }],
+      handoffViolations: [{
+        shiftId: 'shift-2',
+        driverName: 'Driver 2',
+        kind: 'handoff_not_reciprocated',
+        message: 'This handoff is missing the matching return link on the paired shift.',
+        linkedShiftId: 'shift-3',
+      }],
     });
 
     expect(summary.isValid).toBe(false);
-    expect(summary.blockingIssueCount).toBe(3);
+    expect(summary.blockingIssueCount).toBe(4);
     expect(summary.message).toContain('coverage gap');
     expect(summary.message).toContain('fleet cap breach');
     expect(summary.message).toContain('shift rule violation');
+    expect(summary.message).toContain('handoff issue');
   });
 });

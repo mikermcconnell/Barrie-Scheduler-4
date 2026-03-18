@@ -179,6 +179,35 @@ describe('on-demand coverage', () => {
     expect(slots[55].northChangeoffs).toBe(0);
   });
 
+  it('applies changeoff time to a valid manual handoff that is one planning slot apart', () => {
+    const requirements = Array.from({ length: 96 }, (_, slotIndex): Requirement => ({
+      slotIndex,
+      north: 1,
+      south: 0,
+      floater: 0,
+      total: 1,
+    }));
+
+    const slots = calculateSchedule([
+      {
+        ...makeShift('north-1', Zone.NORTH, 0, 0, 32, 40),
+        handoffToShiftId: 'north-2',
+      },
+      {
+        ...makeShift('north-2', Zone.NORTH, 0, 0, 41, 49),
+        handoffFromShiftId: 'north-1',
+      },
+    ], requirements, {
+      northChangeoffMinutes: 10,
+      southChangeoffMinutes: 8,
+    });
+
+    expect(slots[39].northChangeoffs).toBe(1);
+    expect(slots[40].northChangeoffs).toBe(0);
+    expect(slots[41].northChangeoffs).toBe(1);
+    expect(slots[42].northCoverage).toBe(1);
+  });
+
   it('applies changeoff time only between internal service shifts', () => {
     const requirements = Array.from({ length: 96 }, (_, slotIndex): Requirement => ({
       slotIndex,

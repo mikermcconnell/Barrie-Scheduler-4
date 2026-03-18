@@ -162,7 +162,7 @@ interface SavedSchedule {
 }
 ```
 
-`shiftData` entries may include optional `handoffFromShiftId` and `handoffToShiftId` fields so TOD drafts can persist explicit driver-to-driver handoff links alongside the core shift timing fields.
+`shiftData` entries may include optional `handoffFromShiftId` and `handoffToShiftId` fields so TOD drafts can persist explicit driver-to-driver handoff links alongside the core shift timing fields. These links are intended to be reciprocal same-day North/South service-shift references; invalid or one-way links are treated as handoff issues during validation.
 
 ---
 

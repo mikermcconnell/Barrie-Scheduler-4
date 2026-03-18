@@ -10,6 +10,7 @@ interface Props {
     optimizedShifts: Shift[];
     requirements: Requirement[];
     changeoffSettings?: Partial<OnDemandChangeoffSettings>;
+    handoffMessage?: string;
     onApply: (finalShifts: Shift[]) => void;
     onCancel: () => void;
 }
@@ -33,6 +34,7 @@ export const OptimizationReviewModal: React.FC<Props> = ({
     optimizedShifts,
     requirements,
     changeoffSettings,
+    handoffMessage,
     onApply,
     onCancel
 }) => {
@@ -64,11 +66,16 @@ export const OptimizationReviewModal: React.FC<Props> = ({
                     curr.startSlot !== opt.startSlot ||
                     curr.endSlot !== opt.endSlot ||
                     curr.breakStartSlot !== opt.breakStartSlot ||
-                    curr.zone !== opt.zone;
+                    curr.zone !== opt.zone ||
+                    curr.handoffFromShiftId !== opt.handoffFromShiftId ||
+                    curr.handoffToShiftId !== opt.handoffToShiftId;
 
                 if (isDiff) {
                     let specificReason = 'Efficiency Update';
                     let impactType = 'Optimization';
+                    const handoffChanged =
+                        curr.handoffFromShiftId !== opt.handoffFromShiftId ||
+                        curr.handoffToShiftId !== opt.handoffToShiftId;
 
                     if (curr.zone !== opt.zone) {
                         specificReason = `Zone Change: ${curr.zone} -> ${opt.zone}`;
@@ -89,6 +96,13 @@ export const OptimizationReviewModal: React.FC<Props> = ({
                     } else if (curr.breakStartSlot !== opt.breakStartSlot) {
                         specificReason = 'Break Rescheduled';
                         impactType = 'Break Compliance';
+                    } else if (handoffChanged) {
+                        specificReason = 'Handoff Updated';
+                        impactType = 'Handoff Review';
+                    }
+
+                    if (handoffChanged && specificReason !== 'Handoff Updated') {
+                        specificReason = `${specificReason} + Handoff Updated`;
                     }
 
                     changesList.push({
@@ -196,6 +210,11 @@ export const OptimizationReviewModal: React.FC<Props> = ({
                             <Sparkles className="text-purple-600" /> Refined Schedule Review
                         </h2>
                         <p className="text-gray-500 font-bold text-sm">Gemini AI proposed {changes.length} optimizations.</p>
+                        {handoffMessage && (
+                            <p className="mt-2 inline-flex max-w-3xl rounded-xl border border-blue-100 bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700">
+                                {handoffMessage}
+                            </p>
+                        )}
                     </div>
 
                     {/* View Toggle (Segmented Control) */}

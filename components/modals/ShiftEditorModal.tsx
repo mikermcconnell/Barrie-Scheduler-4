@@ -2,6 +2,8 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Shift, Requirement, TimeSlot, Zone, ZoneFilterType, type OnDemandChangeoffSettings } from '../../utils/demandTypes';
 import { GapChart } from '../GapChart';
 import { calculateSchedule, formatSlotToTime } from '../../utils/dataGenerator';
+import { validateShiftHandoffs } from '../../utils/onDemandHandoffs';
+import { getShiftDayType, syncShiftHandoffInDay } from '../../utils/onDemandShiftUtils';
 import {
     MIN_SHIFT_HOURS,
     MAX_SHIFT_HOURS,
@@ -56,9 +58,11 @@ export const ShiftEditorModal: React.FC<Props> = ({
         else if (currentShift.zone === Zone.FLOATER) setLocalZoneFilter('Floater');
     }, [currentShift.zone]);
 
+    const canUseShiftHandoffs = currentShift.zone === Zone.NORTH || currentShift.zone === Zone.SOUTH;
     const handoffOptions = useMemo(() => (
         allShifts
             .filter(candidate => candidate.id !== currentShift.id)
+            .filter(candidate => candidate.zone === Zone.NORTH || candidate.zone === Zone.SOUTH)
             .sort((a, b) => {
                 if (a.startSlot !== b.startSlot) {
                     return a.startSlot - b.startSlot;
@@ -72,7 +76,11 @@ export const ShiftEditorModal: React.FC<Props> = ({
     // Calculate chart data with ghost line
     const chartData = useMemo(() => {
         const originalSlots = calculateSchedule(allShifts, requirements, changeoffSettings);
-        const tempShifts = allShifts.map(s => s.id === shift.id ? currentShift : s);
+        const tempShifts = syncShiftHandoffInDay(
+            allShifts,
+            currentShift,
+            getShiftDayType(currentShift),
+        );
         const newSlots = calculateSchedule(tempShifts, requirements, changeoffSettings);
 
         return newSlots.map((slot, i) => ({
@@ -86,6 +94,11 @@ export const ShiftEditorModal: React.FC<Props> = ({
     useEffect(() => {
         const durationSlots = currentShift.endSlot - currentShift.startSlot;
         const durationHours = durationSlots / 4;
+
+        if (!canUseShiftHandoffs && (currentShift.handoffFromShiftId || currentShift.handoffToShiftId)) {
+            setValidationMsg('Floater shifts cannot use shift handoffs.');
+            return;
+        }
 
         if (durationHours < MIN_SHIFT_HOURS) {
             setValidationMsg(`Shift too short (Min ${MIN_SHIFT_HOURS}h)`);
@@ -114,8 +127,20 @@ export const ShiftEditorModal: React.FC<Props> = ({
             }
         }
 
+        const shiftsWithDraftEdit = syncShiftHandoffInDay(
+            allShifts,
+            currentShift,
+            getShiftDayType(currentShift),
+        );
+        const handoffIssue = validateShiftHandoffs(shiftsWithDraftEdit)
+            .find(issue => issue.shiftId === currentShift.id);
+        if (handoffIssue) {
+            setValidationMsg(handoffIssue.message);
+            return;
+        }
+
         setValidationMsg(null);
-    }, [currentShift]);
+    }, [allShifts, canUseShiftHandoffs, currentShift, requiredBreakDurationMinutes, requiredBreakDurationSlots, shift.id]);
 
     // Mouse/Touch Handling for Dragging
     const handleMouseDown = (e: React.MouseEvent, type: 'shift' | 'break' | 'start' | 'end' | 'breakStart' | 'breakEnd') => {
@@ -282,7 +307,8 @@ export const ShiftEditorModal: React.FC<Props> = ({
                                         ...currentShift,
                                         handoffFromShiftId: e.target.value || undefined,
                                     })}
-                                    className="mt-2 w-full rounded-xl border-2 border-gray-200 bg-white px-3 py-2 text-sm font-bold text-gray-800 focus:border-brand-blue focus:outline-none"
+                                    disabled={!canUseShiftHandoffs}
+                                    className="mt-2 w-full rounded-xl border-2 border-gray-200 bg-white px-3 py-2 text-sm font-bold text-gray-800 focus:border-brand-blue focus:outline-none disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
                                 >
                                     <option value="">None</option>
                                     {handoffOptions
@@ -303,7 +329,8 @@ export const ShiftEditorModal: React.FC<Props> = ({
                                         ...currentShift,
                                         handoffToShiftId: e.target.value || undefined,
                                     })}
-                                    className="mt-2 w-full rounded-xl border-2 border-gray-200 bg-white px-3 py-2 text-sm font-bold text-gray-800 focus:border-brand-blue focus:outline-none"
+                                    disabled={!canUseShiftHandoffs}
+                                    className="mt-2 w-full rounded-xl border-2 border-gray-200 bg-white px-3 py-2 text-sm font-bold text-gray-800 focus:border-brand-blue focus:outline-none disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
                                 >
                                     <option value="">None</option>
                                     {handoffOptions
@@ -315,6 +342,11 @@ export const ShiftEditorModal: React.FC<Props> = ({
                                         ))}
                                 </select>
                             </label>
+                        </div>
+                        <div className="mt-3 text-xs font-semibold text-gray-500">
+                            {canUseShiftHandoffs
+                                ? 'Only reciprocal handoffs between consecutive North/South service pieces are valid. Invalid handoffs are blocked before save.'
+                                : 'Shift handoffs are only available for North and South service pieces.'}
                         </div>
                     </div>
                     <button
@@ -494,7 +526,8 @@ export const ShiftEditorModal: React.FC<Props> = ({
                                 </button>
                                 <button
                                     onClick={() => onSave(currentShift)}
-                                    className="px-10 py-4 rounded-xl font-bold text-white bg-brand-blue hover:bg-blue-600 shadow-lg shadow-blue-200/50 flex items-center gap-3 transition-all transform hover:-translate-y-0.5 active:translate-y-0"
+                                    disabled={validationMsg !== null}
+                                    className="px-10 py-4 rounded-xl font-bold text-white bg-brand-blue hover:bg-blue-600 shadow-lg shadow-blue-200/50 flex items-center gap-3 transition-all transform hover:-translate-y-0.5 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-60 disabled:shadow-none disabled:hover:bg-brand-blue disabled:hover:translate-y-0"
                                 >
                                     <Save size={20} /> Save Changes
                                 </button>

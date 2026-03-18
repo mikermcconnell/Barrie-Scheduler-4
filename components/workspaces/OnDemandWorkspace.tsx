@@ -35,12 +35,17 @@ import {
     removeShiftFromDay,
     syncShiftHandoffInDay
 } from '../../utils/onDemandShiftUtils';
+import {
+    carryForwardOptimizationHandoffs,
+    countExplicitShiftHandoffPairs,
+} from '../../utils/onDemandOptimizationHandoffs';
 import { validateOnDemandSchedule } from '../../utils/onDemandValidation';
 import {
     buildShiftCountCapInstruction,
     breakDurationMinutesToSlots,
     BREAK_DURATION_MINUTES_LIMITS,
     CHANGEOFF_MINUTES_LIMITS,
+    changeoffMinutesToSlots,
     createDefaultShiftCountCaps,
     DEFAULT_BREAK_DURATION_MINUTES,
     DEFAULT_NORTH_CHANGEOFF_MINUTES,
@@ -70,9 +75,18 @@ type DayType = OnDemandDayType;
 const VALID_DAY_TYPES: DayType[] = ['Weekday', 'Saturday', 'Sunday'];
 const MAX_FLEET_VEHICLES = 6;
 const OPTIMIZATION_SETTINGS_STORAGE_KEY = 'od-optimization-settings';
+const OPTIMIZATION_DURATION_HISTORY_STORAGE_KEY = 'od-optimization-duration-history';
 const SHIFT_COUNT_CAP_LIMITS = { min: 1, max: 40, step: 1 } as const;
+const MAX_OPTIMIZATION_DURATION_SAMPLES = 12;
 
 type OptimizationSettings = OnDemandOptimizationSettingsState;
+type OptimizationModeType = 'full' | 'refine';
+type OptimizationDurationHistory = Record<OptimizationModeType, number[]>;
+
+const EMPTY_OPTIMIZATION_DURATION_HISTORY: OptimizationDurationHistory = {
+    full: [],
+    refine: [],
+};
 
 const DEFAULT_OPTIMIZATION_SETTINGS: OptimizationSettings = {
     maxFleetVehicles: MAX_FLEET_VEHICLES,
@@ -120,6 +134,50 @@ const readOptimizationSettings = (): OptimizationSettings => {
     } catch {
         return DEFAULT_OPTIMIZATION_SETTINGS;
     }
+};
+
+const readOptimizationDurationHistory = (): OptimizationDurationHistory => {
+    if (typeof window === 'undefined') {
+        return EMPTY_OPTIMIZATION_DURATION_HISTORY;
+    }
+
+    try {
+        const raw = localStorage.getItem(OPTIMIZATION_DURATION_HISTORY_STORAGE_KEY);
+        if (!raw) {
+            return EMPTY_OPTIMIZATION_DURATION_HISTORY;
+        }
+
+        const parsed = JSON.parse(raw) as Partial<OptimizationDurationHistory>;
+        const normalizeSamples = (values: unknown): number[] =>
+            Array.isArray(values)
+                ? values
+                    .map((value) => Number(value))
+                    .filter((value) => Number.isFinite(value) && value > 0)
+                    .slice(-MAX_OPTIMIZATION_DURATION_SAMPLES)
+                : [];
+
+        return {
+            full: normalizeSamples(parsed.full),
+            refine: normalizeSamples(parsed.refine),
+        };
+    } catch {
+        return EMPTY_OPTIMIZATION_DURATION_HISTORY;
+    }
+};
+
+const formatClockDuration = (seconds: number): string =>
+    `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+
+const calculateMedianSeconds = (samplesMs: number[]): number | null => {
+    if (samplesMs.length === 0) return null;
+
+    const sorted = [...samplesMs].sort((a, b) => a - b);
+    const midpoint = Math.floor(sorted.length / 2);
+    const medianMs = sorted.length % 2 === 0
+        ? (sorted[midpoint - 1] + sorted[midpoint]) / 2
+        : sorted[midpoint];
+
+    return Math.max(1, Math.round(medianMs / 1000));
 };
 
 const buildOptimizerSettingsInstruction = (settings: OptimizationSettings, dayType: DayType): string => {
@@ -254,8 +312,8 @@ export const OnDemandWorkspace: React.FC = () => {
     const [isOptimized, setIsOptimized] = useState(false);
     const [isAnimating, setIsAnimating] = useState(false);
     const [isProcessingFiles, setIsProcessingFiles] = useState(false);
-    const [optimizationMode, setOptimizationMode] = useState<'full' | 'refine' | null>(null);
-    const [reviewModalData, setReviewModalData] = useState<{ current: Shift[], optimized: Shift[] } | null>(null);
+    const [optimizationMode, setOptimizationMode] = useState<OptimizationModeType | null>(null);
+    const [reviewModalData, setReviewModalData] = useState<{ current: Shift[], optimized: Shift[], handoffMessage?: string } | null>(null);
     const [elapsedSeconds, setElapsedSeconds] = useState(0);
     const elapsedRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const [optimizationPhase, setOptimizationPhase] = useState('');
@@ -263,29 +321,40 @@ export const OnDemandWorkspace: React.FC = () => {
     const optimizationRunIdRef = useRef(0);
     const optimizationInFlightRef = useRef(false);
     const [optimizationSettings, setOptimizationSettings] = useState<OptimizationSettings>(() => readOptimizationSettings());
+    const [optimizationDurationHistory, setOptimizationDurationHistory] = useState<OptimizationDurationHistory>(() => readOptimizationDurationHistory());
     const [undoSnapshot, setUndoSnapshot] = useState<WorkspaceUndoSnapshot | null>(null);
+    const hasShownMedianOverrunNoticeRef = useRef(false);
 
     useEffect(() => {
         localStorage.setItem(OPTIMIZATION_SETTINGS_STORAGE_KEY, JSON.stringify(optimizationSettings));
     }, [optimizationSettings]);
 
+    useEffect(() => {
+        localStorage.setItem(OPTIMIZATION_DURATION_HISTORY_STORAGE_KEY, JSON.stringify(optimizationDurationHistory));
+    }, [optimizationDurationHistory]);
+
+    const recordOptimizationDuration = React.useCallback((mode: OptimizationModeType, durationMs: number) => {
+        if (!Number.isFinite(durationMs) || durationMs <= 0) return;
+
+        setOptimizationDurationHistory((prev) => ({
+            ...prev,
+            [mode]: [...prev[mode], Math.round(durationMs)].slice(-MAX_OPTIMIZATION_DURATION_SAMPLES),
+        }));
+    }, []);
+
     // Elapsed timer for optimization progress
     useEffect(() => {
         if (isAnimating) {
             setElapsedSeconds(0);
-            elapsedRef.current = setInterval(() => setElapsedSeconds(s => {
-                const next = s + 1;
-                if (next === 60) {
-                    toast.info('Still working...', 'AI optimization can take 2-3 minutes');
-                }
-                return next;
-            }), 1000);
+            hasShownMedianOverrunNoticeRef.current = false;
+            elapsedRef.current = setInterval(() => setElapsedSeconds(s => s + 1), 1000);
         } else {
             if (elapsedRef.current) clearInterval(elapsedRef.current);
             elapsedRef.current = null;
+            hasShownMedianOverrunNoticeRef.current = false;
         }
         return () => { if (elapsedRef.current) clearInterval(elapsedRef.current); };
-    }, [isAnimating, toast]);
+    }, [isAnimating]);
 
     // Derived State
     // Now guaranteed to have valid inputs on first render
@@ -319,6 +388,10 @@ export const OnDemandWorkspace: React.FC = () => {
         () => timeSlots.reduce((peak, slot) => Math.max(peak, slot.totalActiveCoverage), 0),
         [timeSlots]
     );
+    const explicitHandoffPairCount = useMemo(
+        () => countExplicitShiftHandoffPairs(shifts),
+        [shifts]
+    );
     const activeMaxShiftCount = useMemo(
         () => getShiftCountCapForDay(optimizationSettings.shiftCountCaps, selectedDayType),
         [optimizationSettings.shiftCountCaps, selectedDayType]
@@ -338,6 +411,26 @@ export const OnDemandWorkspace: React.FC = () => {
         () => buildOptimizerSettingsInstruction(optimizationSettings, selectedDayType),
         [optimizationSettings, selectedDayType]
     );
+    const optimizationMedianSeconds = useMemo(
+        () => optimizationMode ? calculateMedianSeconds(optimizationDurationHistory[optimizationMode]) : null,
+        [optimizationDurationHistory, optimizationMode]
+    );
+    const optimizationTimerDisplay = useMemo(() => {
+        if (optimizationMedianSeconds === null) {
+            return formatClockDuration(elapsedSeconds);
+        }
+
+        const deltaSeconds = optimizationMedianSeconds - elapsedSeconds;
+        return deltaSeconds >= 0
+            ? formatClockDuration(deltaSeconds)
+            : `+${formatClockDuration(Math.abs(deltaSeconds))}`;
+    }, [elapsedSeconds, optimizationMedianSeconds]);
+    const optimizationTimerLabel = optimizationMedianSeconds === null
+        ? 'Elapsed'
+        : elapsedSeconds <= optimizationMedianSeconds
+            ? 'Median ETA'
+            : 'Over median';
+    const optimizationOverMedian = optimizationMedianSeconds !== null && elapsedSeconds > optimizationMedianSeconds;
     const optimizationRequestOptions = useMemo<OptimizeRequestOptions>(
         () => ({
             dayType: selectedDayType,
@@ -356,6 +449,20 @@ export const OnDemandWorkspace: React.FC = () => {
             selectedDayType,
         ]
     );
+
+    useEffect(() => {
+        if (!isAnimating || !optimizationOverMedian || hasShownMedianOverrunNoticeRef.current) {
+            return;
+        }
+
+        hasShownMedianOverrunNoticeRef.current = true;
+        toast.info(
+            'Still working...',
+            optimizationMedianSeconds === null
+                ? 'This run is still in progress.'
+                : `This run is taking longer than your recent median of ${formatClockDuration(optimizationMedianSeconds)}.`,
+        );
+    }, [isAnimating, optimizationMedianSeconds, optimizationOverMedian, toast]);
 
     const updateOptimizationNumberSetting = (key: keyof typeof OPTIMIZATION_NUMBER_LIMITS, value: number) => {
         setOptimizationSettings(prev => ({
@@ -480,6 +587,22 @@ export const OnDemandWorkspace: React.FC = () => {
         return details.join(' ');
     };
 
+    const buildRefineHandoffMessage = (preservedPairCount: number, droppedPairCount: number): string | null => {
+        if (preservedPairCount === 0 && droppedPairCount === 0) {
+            return null;
+        }
+
+        const messageParts: string[] = [];
+        if (preservedPairCount > 0) {
+            messageParts.push(`${preservedPairCount} handoff pair${preservedPairCount === 1 ? '' : 's'} preserved`);
+        }
+        if (droppedPairCount > 0) {
+            messageParts.push(`${droppedPairCount} dropped because the optimized shifts no longer lined up`);
+        }
+
+        return `${messageParts.join('; ')}.`;
+    };
+
     const warnValidationIssues = (actionLabel: string) => {
         if (shifts.length === 0 || validationSummary.isValid) return false;
         toast.warning(`${actionLabel} has validation issues`, validationSummary.message);
@@ -519,8 +642,12 @@ export const OnDemandWorkspace: React.FC = () => {
             return;
         }
 
+        const existingHandoffPairCount = explicitHandoffPairCount;
         if (shifts.length > 0) {
-            if (!confirm('This will replace your current schedule with a brand new one generated from scratch. All custom changes will be lost. Continue?')) {
+            const regenerateWarning = existingHandoffPairCount > 0
+                ? `This will replace your current schedule with a brand new one generated from scratch. All custom changes will be lost, including ${existingHandoffPairCount} shift handoff pair${existingHandoffPairCount === 1 ? '' : 's'}. Continue?`
+                : 'This will replace your current schedule with a brand new one generated from scratch. All custom changes will be lost. Continue?';
+            if (!confirm(regenerateWarning)) {
                 return;
             }
         }
@@ -551,6 +678,7 @@ export const OnDemandWorkspace: React.FC = () => {
 
             if (controller.signal.aborted || runId !== optimizationRunIdRef.current) return;
 
+            recordOptimizationDuration('full', result.durationMs);
             setOptimizationPhase('Processing results...');
 
             if (result.warning) {
@@ -586,6 +714,13 @@ export const OnDemandWorkspace: React.FC = () => {
                         regeneratedValidationSummary.message,
                     );
                     setActiveTab('overview');
+                }
+
+                if (existingHandoffPairCount > 0) {
+                    toast.info(
+                        'Handoffs reset',
+                        `Regeneration builds a fresh schedule, so ${existingHandoffPairCount} existing handoff pair${existingHandoffPairCount === 1 ? '' : 's'} were cleared.`,
+                    );
                 }
 
                 if (result.source === 'ai') {
@@ -662,6 +797,7 @@ export const OnDemandWorkspace: React.FC = () => {
 
             if (controller.signal.aborted || runId !== optimizationRunIdRef.current) return;
 
+            recordOptimizationDuration('refine', result.durationMs);
             setOptimizationPhase('Processing results...');
 
             if (result.warning) {
@@ -669,10 +805,24 @@ export const OnDemandWorkspace: React.FC = () => {
             }
 
             if (result.shifts.length > 0) {
+                const handoffCarryForward = carryForwardOptimizationHandoffs(
+                    requestShifts,
+                    result.shifts,
+                );
+                const handoffMessage = buildRefineHandoffMessage(
+                    handoffCarryForward.preservedPairCount,
+                    handoffCarryForward.droppedPairCount,
+                );
+
                 setReviewModalData({
                     current: requestShifts,
-                    optimized: result.shifts
+                    optimized: handoffCarryForward.shifts,
+                    handoffMessage: handoffMessage || undefined,
                 });
+
+                if (handoffMessage) {
+                    toast.info('Handoff review', handoffMessage);
+                }
 
                 if (result.source === 'ai') {
                     toast.success('Refinement complete', buildOptimizationMessage(result, 'AI optimization'));
@@ -1227,6 +1377,7 @@ export const OnDemandWorkspace: React.FC = () => {
                     optimizedShifts={reviewModalData.optimized}
                     requirements={requirements}
                     changeoffSettings={optimizationSettings}
+                    handoffMessage={reviewModalData.handoffMessage}
                     onApply={applyRefinements}
                     onCancel={() => setReviewModalData(null)}
                 />
@@ -1496,6 +1647,17 @@ export const OnDemandWorkspace: React.FC = () => {
                         )}
 
                         {shifts.length > 0 && (
+                            <div className={`max-w-xl text-xs font-bold px-3 py-2 rounded-xl border ${explicitHandoffPairCount > 0
+                                ? 'text-blue-800 bg-blue-50 border-blue-200'
+                                : 'text-gray-500 bg-gray-50 border-gray-200'
+                                }`}>
+                                {explicitHandoffPairCount > 0
+                                    ? `This ${selectedDayType.toLowerCase()} schedule currently has ${explicitHandoffPairCount} handoff pair${explicitHandoffPairCount === 1 ? '' : 's'}. Refine will try to keep the valid ones. Regenerate starts fresh and clears them.`
+                                    : `No explicit handoff pairs are set on this ${selectedDayType.toLowerCase()} schedule yet. Refine works from the current pieces. Regenerate starts from scratch.`}
+                            </div>
+                        )}
+
+                        {shifts.length > 0 && (
                             <div className={`max-w-md text-xs font-bold px-3 py-2 rounded-xl border ${validationSummary.isValid
                                 ? 'text-emerald-700 bg-emerald-50 border-emerald-200'
                                 : 'text-amber-800 bg-amber-50 border-amber-200'
@@ -1516,8 +1678,11 @@ export const OnDemandWorkspace: React.FC = () => {
                                         <span>{optimizationPhase || (optimizationMode === 'full' ? 'Generating schedule...' : 'Refining schedule...')}</span>
                                     </div>
                                     <div className="flex items-center gap-3">
+                                        <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                                            {optimizationTimerLabel}
+                                        </span>
                                         <span className="tabular-nums text-gray-400">
-                                            {Math.floor(elapsedSeconds / 60)}:{String(elapsedSeconds % 60).padStart(2, '0')}
+                                            {optimizationTimerDisplay}
                                         </span>
                                         <button
                                             onClick={handleCancelOptimization}
@@ -1540,6 +1705,11 @@ export const OnDemandWorkspace: React.FC = () => {
                                         }}
                                     />
                                 </div>
+                                {optimizationOverMedian && (
+                                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-800">
+                                        Still working. This run is past your recent median of {formatClockDuration(optimizationMedianSeconds ?? 0)}.
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>
@@ -1859,7 +2029,7 @@ export const OnDemandWorkspace: React.FC = () => {
                                 <div className="flex-1 min-w-0">
                                     <h3 className="text-gray-500 font-bold text-xs uppercase tracking-wider">Changeoff Travel</h3>
                                     <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                                        {[
+                                        {[ 
                                             { key: 'northChangeoffMinutes' as const, label: 'North', helper: 'Downtown Barrie to garage and back is modeled as this many minutes each way during a mid-service North handoff.' },
                                             { key: 'southChangeoffMinutes' as const, label: 'South', helper: 'South zone garage travel is modeled the same way during a mid-service South handoff.' },
                                         ].map(metric => (
@@ -1878,11 +2048,14 @@ export const OnDemandWorkspace: React.FC = () => {
                                                     <span className="pb-2 text-xs font-bold text-gray-400">mins each way</span>
                                                 </div>
                                                 <div className="mt-2 text-xs text-gray-400 font-semibold">{metric.helper}</div>
+                                                <div className="mt-2 text-[11px] font-bold text-orange-700 bg-orange-50 border border-orange-100 rounded-lg px-2.5 py-1.5">
+                                                    Current setting uses {changeoffMinutesToSlots(optimizationSettings[metric.key])} planning slot{changeoffMinutesToSlots(optimizationSettings[metric.key]) === 1 ? '' : 's'} of changeoff time per side ({changeoffMinutesToSlots(optimizationSettings[metric.key]) * 15} minutes on the 15-minute grid).
+                                                </div>
                                             </label>
                                         ))}
                                     </div>
                                     <div className="text-xs text-gray-400 font-semibold mt-3">
-                                        The workspace only applies this travel time at an internal handoff between consecutive North or South shifts. The first piece of the day starts in-zone, and the last piece ends in-zone.
+                                        The workspace only applies this travel time at an internal handoff between consecutive North or South shifts. The first piece of the day starts in-zone, and the last piece ends in-zone. Any non-zero value is rounded up onto the 15-minute planning grid.
                                     </div>
                                 </div>
                             </div>
@@ -1959,6 +2132,7 @@ export const OnDemandWorkspace: React.FC = () => {
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Use a hard shift cap when the number of pieces is fixed. Switch it to guide when you want the optimizer to prefer fewer shifts without blocking extra relief work that meaningfully improves the day.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Break duration sets the required long-shift break length, and the same value is used when you add or edit a shift manually.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">North and South changeoff travel only applies during a true mid-service handoff where one revenue piece ends and another begins. Morning pull-outs can happen before revenue time and final pull-ins happen after revenue time, so they do not create orange changeoff gaps.</p>
+                                    <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Changeoff minutes are enforced on the 15-minute planning grid. In practice, 1-15 minutes consumes one slot, 16-30 minutes consumes two slots, and so on.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Minor gap tolerance decides whether the optimizer can accept a very small shortfall in exchange for a meaningfully better full-day schedule.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Break protection controls how hard the optimizer should push for clean break relief and overlap coverage.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Cost pressure controls how strongly the optimizer trims extra payable hours and surplus once service quality is acceptable.</p>

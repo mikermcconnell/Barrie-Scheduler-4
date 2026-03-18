@@ -1,6 +1,10 @@
 import { calculateSchedule } from './dataGenerator';
 import type { OnDemandChangeoffSettings, Requirement, Shift } from './demandTypes';
 import {
+  validateShiftHandoffs,
+  type ShiftHandoffViolation,
+} from './onDemandHandoffs';
+import {
   validateOnDemandShiftRules,
   type OnDemandShiftRuleViolation,
 } from './onDemandShiftRules';
@@ -22,6 +26,7 @@ export interface OnDemandScheduleValidation {
   fleetViolations: OnDemandValidationIssue[];
   breakCoverageViolations: OnDemandValidationIssue[];
   shiftRuleViolations: OnDemandShiftRuleViolation[];
+  handoffViolations: ShiftHandoffViolation[];
 }
 
 export function validateOnDemandSchedule(
@@ -39,6 +44,7 @@ export function validateOnDemandSchedule(
     shifts,
     requiredBreakDurationSlots,
   );
+  const handoffViolations = validateShiftHandoffs(shifts);
   let maxActiveVehicles = 0;
   let maxOverlappingShifts = 0;
 
@@ -83,5 +89,6 @@ export function validateOnDemandSchedule(
     fleetViolations,
     breakCoverageViolations,
     shiftRuleViolations,
+    handoffViolations,
   };
 }

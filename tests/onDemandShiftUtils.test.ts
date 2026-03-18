@@ -5,6 +5,7 @@ import {
   filterShiftsByDay,
   normalizeOnDemandShifts,
   removeShiftFromDay,
+  syncShiftHandoffInDay,
   updateShiftInDay,
 } from '../utils/onDemandShiftUtils';
 
@@ -60,5 +61,27 @@ describe('onDemandShiftUtils', () => {
 
     expect(updated[0].driverName).toBe('Updated Saturday Driver');
     expect(updated[1].driverName).toBe('Driver 1');
+  });
+
+  it('keeps handoff links reciprocal within the selected day', () => {
+    const shifts = normalizeOnDemandShifts([
+      makeShift('north-1', 'Saturday'),
+      makeShift('north-2', 'Saturday'),
+      makeShift('north-3', 'Sunday'),
+    ]);
+
+    const updated = syncShiftHandoffInDay(shifts, {
+      ...shifts[0],
+      handoffToShiftId: shifts[1].id,
+    }, 'Saturday');
+
+    const saturdayFirst = updated.find(shift => shift.id === shifts[0].id);
+    const saturdaySecond = updated.find(shift => shift.id === shifts[1].id);
+    const sundayShift = updated.find(shift => shift.id === shifts[2].id);
+
+    expect(saturdayFirst?.handoffToShiftId).toBe(shifts[1].id);
+    expect(saturdaySecond?.handoffFromShiftId).toBe(shifts[0].id);
+    expect(sundayShift?.handoffFromShiftId).toBeUndefined();
+    expect(sundayShift?.handoffToShiftId).toBeUndefined();
   });
 });

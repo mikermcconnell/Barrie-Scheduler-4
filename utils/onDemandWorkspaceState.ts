@@ -35,6 +35,7 @@ export interface OnDemandValidationSummary {
   fleetViolationCount: number;
   breakCoverageViolationCount: number;
   shiftRuleViolationCount: number;
+  handoffViolationCount: number;
   message: string;
 }
 
@@ -105,12 +106,14 @@ export function summarizeOnDemandValidation(
   const fleetViolationCount = validation.fleetViolations.length;
   const breakCoverageViolationCount = validation.breakCoverageViolations.length;
   const shiftRuleViolationCount = validation.shiftRuleViolations.length;
+  const handoffViolationCount = validation.handoffViolations.length;
   const blockingIssueCount = new Set(
     [
       ...validation.coverageViolations.map((issue) => `coverage:${issue.slotIndex}:${issue.timeLabel}`),
       ...validation.fleetViolations.map((issue) => `fleet:${issue.slotIndex}:${issue.timeLabel}`),
       ...validation.breakCoverageViolations.map((issue) => `break:${issue.slotIndex}:${issue.timeLabel}`),
       ...validation.shiftRuleViolations.map((issue) => `shift:${issue.shiftId}:${issue.kind}`),
+      ...validation.handoffViolations.map((issue) => `handoff:${issue.shiftId}:${issue.kind}:${issue.linkedShiftId ?? 'none'}`),
     ],
   ).size;
 
@@ -122,7 +125,8 @@ export function summarizeOnDemandValidation(
       fleetViolationCount,
       breakCoverageViolationCount,
       shiftRuleViolationCount,
-      message: 'No coverage gaps, fleet breaches, shift-rule violations, or uncovered break shortfalls.',
+      handoffViolationCount,
+      message: 'No coverage gaps, fleet breaches, shift-rule violations, handoff issues, or uncovered break shortfalls.',
     };
   }
 
@@ -139,6 +143,9 @@ export function summarizeOnDemandValidation(
   if (shiftRuleViolationCount > 0) {
     issueParts.push(`${shiftRuleViolationCount} shift rule violation${shiftRuleViolationCount === 1 ? '' : 's'}`);
   }
+  if (handoffViolationCount > 0) {
+    issueParts.push(`${handoffViolationCount} handoff issue${handoffViolationCount === 1 ? '' : 's'}`);
+  }
 
   return {
     isValid: false,
@@ -147,6 +154,7 @@ export function summarizeOnDemandValidation(
     fleetViolationCount,
     breakCoverageViolationCount,
     shiftRuleViolationCount,
+    handoffViolationCount,
     message: `Resolve ${issueParts.join(', ')} before exporting this schedule.`,
   };
 }
