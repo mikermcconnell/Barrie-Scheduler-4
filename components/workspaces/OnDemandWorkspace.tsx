@@ -621,6 +621,34 @@ export const OnDemandWorkspace: React.FC = () => {
         return true;
     };
 
+    const blockCoverageGapTolerantExport = (actionLabel: string, unavailableMessage: string) => {
+        if (shifts.length === 0) {
+            toast.info(`${actionLabel} unavailable`, unavailableMessage);
+            return true;
+        }
+
+        const hasNonCoverageBlockingIssues =
+            validationSummary.fleetViolationCount > 0
+            || validationSummary.breakCoverageViolationCount > 0
+            || validationSummary.shiftRuleViolationCount > 0
+            || validationSummary.handoffViolationCount > 0;
+
+        if (hasNonCoverageBlockingIssues) {
+            toast.warning(`${actionLabel} blocked`, validationSummary.message);
+            setActiveTab('overview');
+            return true;
+        }
+
+        if (validationSummary.coverageViolationCount > 0) {
+            toast.warning(
+                `${actionLabel} includes coverage gaps`,
+                `${validationSummary.coverageViolationCount} coverage gap${validationSummary.coverageViolationCount === 1 ? '' : 's'} remain in this schedule. Export will continue.`,
+            );
+        }
+
+        return false;
+    };
+
     const handleCancelOptimization = () => {
         optimizationRunIdRef.current += 1;
         optimizationInFlightRef.current = false;
@@ -1433,7 +1461,7 @@ export const OnDemandWorkspace: React.FC = () => {
                         <div className="flex items-center gap-2 mr-4 p-1 bg-gray-50 rounded-lg border border-gray-100">
                             <button
                                 onClick={() => {
-                                    if (blockInvalidOperationalOutput('RideCo export')) return;
+                                    if (blockCoverageGapTolerantExport('RideCo export', 'Load or create shifts before exporting RideCo format.')) return;
                                     // Export all shifts, not just the currently filtered day
                                     const csv = generateRideCoCSV(allShifts);
                                     downloadCSV(csv, `RideCo_Shifts_All_${new Date().toISOString().split('T')[0]}.csv`);
@@ -1447,7 +1475,7 @@ export const OnDemandWorkspace: React.FC = () => {
                             <div className="w-px h-4 bg-gray-200"></div>
                             <button
                                 onClick={async () => {
-                                    if (blockInvalidOperationalOutput('Paddles PDF export')) return;
+                                    if (blockCoverageGapTolerantExport('Paddles PDF export', 'Load or create shifts before exporting paddles.')) return;
                                     await exportTODPaddlesPDF(allShifts, {
                                         assignedBreakMinutes: optimizationSettings.breakDurationMinutes,
                                         deadheadMinutesByZone: {
@@ -1470,7 +1498,7 @@ export const OnDemandWorkspace: React.FC = () => {
                             <div className="w-px h-4 bg-gray-200"></div>
                             <button
                                 onClick={async () => {
-                                    if (blockInvalidOperationalOutput('Paddles Excel export')) return;
+                                    if (blockCoverageGapTolerantExport('Paddles Excel export', 'Load or create shifts before exporting paddles.')) return;
                                     await exportTODPaddlesExcel(allShifts, {
                                         assignedBreakMinutes: optimizationSettings.breakDurationMinutes,
                                         deadheadMinutesByZone: {
