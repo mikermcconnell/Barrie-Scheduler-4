@@ -99,6 +99,61 @@ export const buildGapChartDisplayData = (
   return displayData;
 };
 
+export const buildGapChartSeriesData = (
+  displayData: TimeSlot[],
+  zoneFilter: ZoneFilterType,
+) => displayData.map((d) => {
+  const currentReq = zoneFilter === 'North' ? d.northRequirement
+    : zoneFilter === 'South' ? d.southRequirement
+      : zoneFilter === 'Floater' ? d.floaterRequirement
+        : d.totalRequirement;
+
+  const currentCover = zoneFilter === 'North' ? d.northCoverage
+    : zoneFilter === 'South' ? d.southCoverage
+      : zoneFilter === 'Floater' ? d.floaterCoverage
+        : d.totalActiveCoverage;
+
+  const currentEffectiveCover = zoneFilter === 'North' ? (d.northCoverage + (d.northRelief || 0))
+    : zoneFilter === 'South' ? (d.southCoverage + (d.southRelief || 0))
+      : zoneFilter === 'Floater' ? d.floaterCoverage
+        : d.totalActiveCoverage;
+
+  const currentBreak = zoneFilter === 'North' ? d.northBreaks
+    : zoneFilter === 'South' ? d.southBreaks
+      : zoneFilter === 'Floater' ? d.floaterBreaks
+        : d.driversOnBreak;
+
+  const currentChangeoff = zoneFilter === 'North' ? d.northChangeoffs
+    : zoneFilter === 'South' ? d.southChangeoffs
+      : zoneFilter === 'Floater' ? d.floaterChangeoffs
+        : d.driversInChangeoff;
+
+  const currentNet = currentEffectiveCover - currentReq;
+  const shortfall = Math.max(0, currentReq - currentEffectiveCover);
+  const changeoffGap = currentChangeoff;
+  const otherGap = Math.max(0, shortfall - currentChangeoff);
+  const changeoffGapBar = changeoffGap === 0 ? 0 : -changeoffGap;
+  const otherGapBar = otherGap === 0 ? 0 : -otherGap;
+  const totalGapBar = changeoffGapBar + otherGapBar;
+
+  return {
+    ...d,
+    currentReq,
+    currentCover,
+    currentNet,
+    currentBreak,
+    currentChangeoff,
+    currentRelief: zoneFilter === 'North' ? (d.northRelief || 0)
+      : zoneFilter === 'South' ? (d.southRelief || 0)
+        : 0,
+    displayedGap: totalGapBar < 0 ? totalGapBar : currentNet,
+    surplusBar: Math.max(0, currentNet),
+    changeoffGapBar,
+    otherGapBar,
+    totalGapBar,
+  };
+});
+
 const CustomXAxisTick = ({ x, y, payload }: any) => {
   // We expect payload.value to be the time label (e.g. "08:00")
   // or we can use the index if needed. 
@@ -111,7 +166,7 @@ const CustomXAxisTick = ({ x, y, payload }: any) => {
 
   // Check the label format
   const timeLabel = payload.value; // "HH:MM"
-  const [hours, minutes] = timeLabel.split(':').map(Number);
+  const [_hours, minutes] = timeLabel.split(':').map(Number);
 
   if (minutes === 0) {
     // Major Tick (Hour)
@@ -149,31 +204,32 @@ const CustomTooltip = ({ active, payload, label, viewMode }: any) => {
       currentBreak?: number;
       currentChangeoff?: number;
       currentNet?: number;
+      displayedGap?: number;
     };
 
     // Dynamic tooltip data based on view
     let req = data.totalRequirement;
     let cover = data.totalActiveCoverage;
-    let net = data.currentNet ?? (data.totalActiveCoverage - data.totalRequirement);
+    let net = data.displayedGap ?? data.currentNet ?? (data.totalActiveCoverage - data.totalRequirement);
     let title = "Total System";
     let changeoff = data.currentChangeoff ?? data.driversInChangeoff;
 
     if (viewMode === 'North') {
       req = data.northRequirement;
       cover = data.northCoverage;
-      net = data.currentNet ?? (cover - req);
+      net = data.displayedGap ?? data.currentNet ?? (cover - req);
       changeoff = data.currentChangeoff ?? data.northChangeoffs;
       title = "North Zone (Exclusive)";
     } else if (viewMode === 'South') {
       req = data.southRequirement;
       cover = data.southCoverage;
-      net = data.currentNet ?? (cover - req);
+      net = data.displayedGap ?? data.currentNet ?? (cover - req);
       changeoff = data.currentChangeoff ?? data.southChangeoffs;
       title = "South Zone (Exclusive)";
     } else if (viewMode === 'Floater') {
       req = data.floaterRequirement || 0;
       cover = data.floaterCoverage;
-      net = data.currentNet ?? (cover - req);
+      net = data.displayedGap ?? data.currentNet ?? (cover - req);
       changeoff = data.currentChangeoff ?? data.floaterChangeoffs;
       title = "Floater Drivers On Road";
     }
@@ -247,53 +303,10 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
     [data, zoneFilter],
   );
 
-  // Calculate dynamic data keys based on mode
-  const chartData = displayData.map(d => {
-    const currentReq = zoneFilter === 'North' ? d.northRequirement
-      : zoneFilter === 'South' ? d.southRequirement
-        : zoneFilter === 'Floater' ? d.floaterRequirement
-          : d.totalRequirement;
-
-    const currentCover = zoneFilter === 'North' ? d.northCoverage
-      : zoneFilter === 'South' ? d.southCoverage
-        : zoneFilter === 'Floater' ? d.floaterCoverage
-          : d.totalActiveCoverage;
-
-    const currentEffectiveCover = zoneFilter === 'North' ? (d.northCoverage + (d.northRelief || 0))
-      : zoneFilter === 'South' ? (d.southCoverage + (d.southRelief || 0))
-        : zoneFilter === 'Floater' ? d.floaterCoverage
-          : d.totalActiveCoverage;
-
-    const currentBreak = zoneFilter === 'North' ? d.northBreaks
-      : zoneFilter === 'South' ? d.southBreaks
-        : zoneFilter === 'Floater' ? d.floaterBreaks
-          : d.driversOnBreak;
-
-    const currentChangeoff = zoneFilter === 'North' ? d.northChangeoffs
-      : zoneFilter === 'South' ? d.southChangeoffs
-        : zoneFilter === 'Floater' ? d.floaterChangeoffs
-          : d.driversInChangeoff;
-
-    const currentNet = currentEffectiveCover - currentReq;
-    const shortfall = Math.max(0, currentReq - currentEffectiveCover);
-    const changeoffGap = Math.min(shortfall, currentChangeoff);
-    const otherGap = Math.max(0, shortfall - changeoffGap);
-
-    return {
-      ...d,
-      currentReq,
-      currentCover,
-      currentNet,
-      currentBreak,
-      currentChangeoff,
-      currentRelief: zoneFilter === 'North' ? (d.northRelief || 0)
-        : zoneFilter === 'South' ? (d.southRelief || 0)
-          : 0,
-      surplusBar: Math.max(0, currentNet),
-      changeoffGapBar: -changeoffGap,
-      otherGapBar: -otherGap,
-    };
-  });
+  const chartData = React.useMemo(
+    () => buildGapChartSeriesData(displayData, zoneFilter),
+    [displayData, zoneFilter],
+  );
 
   const hasOtherGapBars = React.useMemo(
     () => chartData.some((slot) => slot.otherGapBar < 0),
@@ -319,9 +332,9 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
 
   // Calculate min value for gaps (negative net)
   const minValue = React.useMemo(() => {
-    const minNet = Math.min(...chartData.map(d => d.currentNet));
+    const minGapExtent = Math.min(...chartData.map(d => Math.min(d.currentNet, d.totalGapBar)));
     // Ensure we show at least down to -3 to allow visibility of negative gaps, or deeper if data exists
-    return Math.min(-3, minNet < 0 ? Math.floor(minNet) : 0);
+    return Math.min(-3, minGapExtent < 0 ? Math.floor(minGapExtent) : 0);
   }, [chartData]);
 
   const [isExpanded, setIsExpanded] = React.useState(true);

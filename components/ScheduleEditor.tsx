@@ -105,11 +105,12 @@ import { StackedTimeCell, StackedTimeInput } from './ui/StackedTimeInput';
 import { RoundTripTableView } from './schedule/RoundTripTableView';
 import { getRouteConfig, extractDirectionFromName, parseRouteInfo } from '../utils/config/routeDirectionConfig';
 import { reassignBlocksForTables, MatchConfigPresets } from '../utils/blocks/blockAssignmentCore';
-import { useScheduleEditing, CascadeMode } from '../hooks/useScheduleEditing';
+import type { CascadeMode } from '../hooks/useScheduleEditing';
 import { useUploadToMaster, ConsolidatedRoute } from '../hooks/useUploadToMaster';
 import { useTravelTimeGrid } from '../hooks/useTravelTimeGrid';
 import { ScheduleSidebar } from './layout/ScheduleSidebar';
 import { CascadeModeSelector } from './ui/CascadeModeSelector';
+import { isEditableEventTarget } from '../utils/domUtils';
 // --- Main Editor Component ---
 
 // Time Band type for display
@@ -362,25 +363,6 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         });
     }, [schedules]);
 
-    console.log('ScheduleEditor consolidatedRoutes:', consolidatedRoutes.length, consolidatedRoutes.map(r => ({
-        name: r.name,
-        days: Object.keys(r.days),
-        hasNorth: !!r.days['Weekday']?.north,
-        hasSouth: !!r.days['Weekday']?.south,
-        hasCombined: !!r.days['Weekday']?.combined,
-        northTrips: r.days['Weekday']?.north?.trips?.length || 0,
-        southTrips: r.days['Weekday']?.south?.trips?.length || 0
-    })));
-
-    // --- Extracted Hooks ---
-
-    // Schedule Editing Hook (cell edits, recovery, delete, duplicate, direction)
-    const editing = useScheduleEditing(schedules, onSchedulesChange, {
-        cascadeMode,
-        logAction,
-        showSuccessToast
-    });
-
     // Upload to Master Hook
     const upload = useUploadToMaster(
         consolidatedRoutes as ConsolidatedRoute[],
@@ -418,21 +400,28 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
     // Keyboard shortcuts: Ctrl+S (save), Ctrl+Z (undo), Ctrl+Y (redo), Escape (exit fullscreen)
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
+            const isTypingIntoField = isEditableEventTarget(e.target);
+            const hasShortcutModifier = e.ctrlKey || e.metaKey;
+
             // Ctrl+S: Save version
-            if (e.ctrlKey && e.key === 's') {
+            if (hasShortcutModifier && e.key === 's') {
                 e.preventDefault();
                 if (!readOnly && onSaveVersion) {
                     void onSaveVersion();
                     showSuccessToast?.('Version saved');
                 }
             }
-            // Ctrl+Z: Undo
-            if (e.ctrlKey && e.key === 'z' && !e.shiftKey) {
+            // Don't hijack field-level undo/redo or escape while a user is typing.
+            if (isTypingIntoField) {
+                return;
+            }
+            // Ctrl+Z / Cmd+Z: Undo
+            if (hasShortcutModifier && e.key === 'z' && !e.shiftKey) {
                 e.preventDefault();
                 if (canUndo) undo();
             }
-            // Ctrl+Y or Ctrl+Shift+Z: Redo
-            if ((e.ctrlKey && e.key === 'y') || (e.ctrlKey && e.shiftKey && e.key === 'z')) {
+            // Ctrl+Y / Cmd+Y or Ctrl+Shift+Z / Cmd+Shift+Z: Redo
+            if ((hasShortcutModifier && e.key === 'y') || (hasShortcutModifier && e.shiftKey && e.key === 'z')) {
                 e.preventDefault();
                 if (canRedo) redo();
             }

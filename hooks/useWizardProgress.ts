@@ -33,6 +33,7 @@ export interface WizardProgress {
     bands?: TimeBand[];
     config?: ScheduleConfig;
     generatedSchedules?: MasterRouteTable[]; // Added for persistence
+    originalGeneratedSchedules?: MasterRouteTable[]; // Stable Step 4 delta baseline
     parsedData?: RuntimeData[]; // Added for persistence
     updatedAt: string;
 }

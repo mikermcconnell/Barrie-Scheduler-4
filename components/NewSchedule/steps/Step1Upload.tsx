@@ -248,7 +248,7 @@ export const Step1Upload: React.FC<Step1Props> = ({
 
             {/* Performance Data Mode */}
             {importMode === 'performance' && (
-                <div className="max-w-2xl mx-auto space-y-6">
+                <div className="max-w-4xl mx-auto space-y-6">
                     {/* Day Type Selector */}
                     <div className="grid grid-cols-3 gap-4">
                         {(['Weekday', 'Saturday', 'Sunday'] as const).map((type) => (
@@ -283,23 +283,68 @@ export const Step1Upload: React.FC<Step1Props> = ({
                         <>
                             {/* Route Selector */}
                             <div>
-                                <label className="block text-sm font-bold text-gray-700 mb-2">Route</label>
-                                <select
-                                    value={performanceConfig?.routeId || ''}
-                                    onChange={(e) => onPerformanceConfigChange?.({
-                                        routeId: e.target.value,
-                                        dateRange: performanceConfig?.dateRange ?? null,
+                                <div className="flex items-center justify-between gap-3 mb-3">
+                                    <label className="block text-sm font-bold text-gray-700">Route</label>
+                                    <span className="text-xs font-medium text-gray-500">
+                                        {availableRoutes.length} available
+                                    </span>
+                                </div>
+                                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                                    {availableRoutes.map((route) => {
+                                        const isSelected = performanceConfig?.routeId === route.routeId;
+                                        return (
+                                            <button
+                                                key={route.routeId}
+                                                type="button"
+                                                onClick={() => onPerformanceConfigChange?.({
+                                                    routeId: route.routeId,
+                                                    dateRange: performanceConfig?.dateRange ?? null,
+                                                })}
+                                                className={`rounded-2xl border-2 p-4 text-left transition-all duration-200 ${
+                                                    isSelected
+                                                        ? 'border-teal-500 bg-teal-50 shadow-md shadow-teal-100'
+                                                        : 'border-gray-200 bg-white hover:border-teal-300 hover:bg-teal-50/40'
+                                                }`}
+                                                aria-pressed={isSelected}
+                                            >
+                                                <div className="flex items-start justify-between gap-3">
+                                                    <div className="min-w-0">
+                                                        <p className={`text-base font-bold ${isSelected ? 'text-teal-800' : 'text-gray-900'}`}>
+                                                            Route {route.routeId}
+                                                        </p>
+                                                        <p className={`mt-1 text-sm leading-snug ${isSelected ? 'text-teal-700' : 'text-gray-600'}`}>
+                                                            {route.routeName}
+                                                        </p>
+                                                    </div>
+                                                    <span className={`shrink-0 rounded-full px-2 py-1 text-[11px] font-bold ${
+                                                        isSelected ? 'bg-teal-100 text-teal-700' : 'bg-gray-100 text-gray-600'
+                                                    }`}>
+                                                        {route.dayCount} days
+                                                    </span>
+                                                </div>
+                                                <div className="mt-3 flex flex-wrap gap-2">
+                                                    <span className={`rounded-full px-2 py-1 text-[11px] font-semibold ${
+                                                        isSelected ? 'bg-white text-teal-700' : 'bg-gray-50 text-gray-600'
+                                                    }`}>
+                                                        {route.totalObs.toLocaleString()} obs
+                                                    </span>
+                                                    <span className={`rounded-full px-2 py-1 text-[11px] font-semibold ${
+                                                        isSelected ? 'bg-white text-teal-700' : 'bg-gray-50 text-gray-600'
+                                                    }`}>
+                                                        {route.segmentDayCount} runtime days
+                                                    </span>
+                                                    {route.directions.length > 0 && (
+                                                        <span className={`rounded-full px-2 py-1 text-[11px] font-semibold ${
+                                                            isSelected ? 'bg-white text-teal-700' : 'bg-gray-50 text-gray-600'
+                                                        }`}>
+                                                            {route.directions.join(' • ')}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </button>
+                                        );
                                     })}
-                                    className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl text-gray-800 font-medium focus:border-teal-500 focus:ring-0 focus:outline-none"
-                                >
-                                    <option value="">Select a route...</option>
-                                    {availableRoutes.map((route) => (
-                                        <option key={route.routeId} value={route.routeId}>
-                                            Route {route.routeId} — {route.routeName} ({route.dayCount} days, {route.totalObs.toLocaleString()} obs)
-                                            {route.segmentDayCount < route.dayCount ? ` — ${route.segmentDayCount} with runtimes` : ''}
-                                        </option>
-                                    ))}
-                                </select>
+                                </div>
                             </div>
 
                             {/* Date Range */}

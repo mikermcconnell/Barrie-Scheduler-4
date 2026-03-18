@@ -74,6 +74,8 @@ export interface NewScheduleProject {
     config?: ScheduleConfig;
     // Generated schedule (if completed)
     generatedSchedules?: MasterRouteTable[];
+    // Original Step 4 baseline for reset/delta stability
+    originalGeneratedSchedules?: MasterRouteTable[];
     // Raw Data (Required for re-generation) - Stored in Cloud Storage only, not Firestore
     parsedData?: RuntimeData[];
 
@@ -115,12 +117,14 @@ export const saveProject = async (
     // We should save to storage if we have ANY of these heavy items.
     let storagePath: string | undefined;
     const hasHeavyData = (project.generatedSchedules && project.generatedSchedules.length > 0) ||
+        (project.originalGeneratedSchedules && project.originalGeneratedSchedules.length > 0) ||
         (project.parsedData && project.parsedData.length > 0) ||
         (project.analysis && project.analysis.length > 0);
 
     if (hasHeavyData) {
         const content = JSON.stringify({
             generatedSchedules: project.generatedSchedules,
+            originalGeneratedSchedules: project.originalGeneratedSchedules,
             parsedData: project.parsedData, // Save raw data!
             analysis: project.analysis,
             bands: project.bands,
@@ -212,6 +216,7 @@ export const getProject = async (
         analysis: [],
         bands: [],
         generatedSchedules: [],
+        originalGeneratedSchedules: [],
         parsedData: [], // Default empty
         createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate() : new Date(),
         updatedAt: data.updatedAt instanceof Timestamp ? data.updatedAt.toDate() : new Date()
@@ -228,6 +233,7 @@ export const getProject = async (
             fullData = {
                 ...fullData,
                 generatedSchedules: content.generatedSchedules || [],
+                originalGeneratedSchedules: content.originalGeneratedSchedules || [],
                 parsedData: content.parsedData || [], // Restore raw data
                 analysis: content.analysis || [],
                 bands: content.bands || [],
@@ -274,6 +280,7 @@ export const getAllProjects = async (userId: string): Promise<NewScheduleProject
             analysis: [] as TripBucketAnalysis[],
             bands: [] as TimeBand[],
             generatedSchedules: [] as MasterRouteTable[],
+            originalGeneratedSchedules: [] as MasterRouteTable[],
             storagePath: data.storagePath,
             createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate() : new Date(),
             updatedAt: data.updatedAt instanceof Timestamp ? data.updatedAt.toDate() : new Date()
@@ -336,6 +343,7 @@ export const duplicateProject = async (
         bands: project.bands,
         config: project.config,
         generatedSchedules: project.generatedSchedules,
+        originalGeneratedSchedules: project.originalGeneratedSchedules,
         parsedData: project.parsedData,
         isGenerated: project.isGenerated
     };

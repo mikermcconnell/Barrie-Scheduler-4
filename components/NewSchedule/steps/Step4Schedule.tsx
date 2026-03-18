@@ -1,5 +1,5 @@
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { MasterRouteTable } from '../../../utils/parsers/masterScheduleParser';
 import { ScheduleEditor } from '../../ScheduleEditor';
 import { useUndoRedo } from '../../../hooks/useUndoRedo';
@@ -9,6 +9,7 @@ import { TimeBand, TripBucketAnalysis } from '../../../utils/ai/runtimeAnalysis'
 
 interface Step4ScheduleProps {
     initialSchedules: MasterRouteTable[];
+    originalSchedules?: MasterRouteTable[];
     bands: TimeBand[];
     analysis?: TripBucketAnalysis[];
     segmentNames?: string[];
@@ -26,6 +27,7 @@ interface Step4ScheduleProps {
 
 export const Step4Schedule: React.FC<Step4ScheduleProps> = ({
     initialSchedules,
+    originalSchedules,
     bands,
     analysis,
     segmentNames,
@@ -40,9 +42,13 @@ export const Step4Schedule: React.FC<Step4ScheduleProps> = ({
     masterBaseline,
     connectionScopeSchedules
 }) => {
+    const resolvedOriginalSchedules = originalSchedules && originalSchedules.length > 0
+        ? originalSchedules
+        : initialSchedules;
+
     // Snapshot the original schedules on first mount so deltas remain stable
     // even after edits sync back to the parent via onUpdateSchedules
-    const [originalSnapshot, setOriginalSnapshot] = useState<MasterRouteTable[]>(() => initialSchedules);
+    const [originalSnapshot, setOriginalSnapshot] = useState<MasterRouteTable[]>(() => resolvedOriginalSchedules);
 
     // We use a local Undo/Redo stack for the session in this step
     // syncing changes back to the parent for persistence
@@ -53,13 +59,32 @@ export const Step4Schedule: React.FC<Step4ScheduleProps> = ({
         reset: resetSchedules
     } = useUndoRedo<MasterRouteTable[]>(initialSchedules, { maxHistory: 50 });
 
-    // Keep local editor state in sync when parent loads a different project/schedule.
-    // If refs match, the change came from local edits echoed back up and should not reset history.
+    const schedulesRef = useRef(schedules);
+    const originalSnapshotRef = useRef(originalSnapshot);
+
     useEffect(() => {
-        if (initialSchedules === schedules) return;
-        setOriginalSnapshot(initialSchedules);
+        schedulesRef.current = schedules;
+    }, [schedules]);
+
+    useEffect(() => {
+        originalSnapshotRef.current = originalSnapshot;
+    }, [originalSnapshot]);
+
+    // Keep local editor state in sync when parent loads a different project/schedule.
+    // Local edits also flow back through the parent, so only reset when a truly different
+    // schedule payload arrives from outside this editor session.
+    useEffect(() => {
+        const incomingOriginalSchedules = originalSchedules && originalSchedules.length > 0
+            ? originalSchedules
+            : initialSchedules;
+        const sameCurrentSchedules = initialSchedules === schedulesRef.current;
+        const sameOriginalSchedules = incomingOriginalSchedules === originalSnapshotRef.current;
+
+        if (sameCurrentSchedules && sameOriginalSchedules) return;
+
+        setOriginalSnapshot(incomingOriginalSchedules);
         resetSchedules(initialSchedules);
-    }, [initialSchedules, schedules, resetSchedules]);
+    }, [initialSchedules, originalSchedules, resetSchedules]);
 
     const handleResetOriginals = useCallback(() => {
         setSchedules(originalSnapshot);

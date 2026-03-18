@@ -5,6 +5,7 @@ import {
     TimeBand,
     BandSummary,
     DirectionBandSummary,
+    MIN_RELIABLE_OBSERVATIONS,
     computeDirectionBandSummary,
     computeSegmentBreakdownByBand,
     sumDisplayedSegmentTotals,
@@ -274,6 +275,10 @@ export const Step2Analysis: React.FC<Step2Props> = ({
         () => displaySegmentColumns.map(column => column.segmentName),
         [displaySegmentColumns]
     );
+    const displaySegmentLookup = useMemo(
+        () => buildNormalizedSegmentNameLookup(displaySegmentNames),
+        [displaySegmentNames]
+    );
     const orderedSegmentIndex = useMemo(() => {
         const index = new Map<string, number>();
         displaySegmentColumns.forEach((column, position) => {
@@ -281,14 +286,44 @@ export const Step2Analysis: React.FC<Step2Props> = ({
         });
         return index;
     }, [displaySegmentColumns]);
-    const displaySegmentLookup = useMemo(
-        () => buildNormalizedSegmentNameLookup(displaySegmentNames),
-        [displaySegmentNames]
-    );
     const segmentBreakdownByBand = useMemo(
         () => computeSegmentBreakdownByBand(analysis, bands, displaySegmentNames, viewMetric),
         [analysis, bands, displaySegmentNames, viewMetric]
     );
+    const bucketConfidence = useMemo(() => {
+        const expectedSegments = displaySegmentNames.length;
+
+        return Object.fromEntries(analysis.map((bucket) => {
+            const segmentSamples = new Map<string, number>();
+
+            bucket.details?.forEach((detail) => {
+                const resolvedSegmentName = resolveCanonicalSegmentName(detail.segmentName, displaySegmentLookup);
+                if (!resolvedSegmentName) return;
+                segmentSamples.set(resolvedSegmentName, detail.n && detail.n > 0 ? detail.n : 1);
+            });
+
+            const matchedSegments = segmentSamples.size;
+            const sampleValues = Array.from(segmentSamples.values());
+            const minSegmentSamples = sampleValues.length > 0 ? Math.min(...sampleValues) : 0;
+            const avgSegmentSamples = sampleValues.length > 0
+                ? sampleValues.reduce((sum, value) => sum + value, 0) / sampleValues.length
+                : 0;
+            const missingSegments = Math.max(0, expectedSegments - matchedSegments);
+            const hasLowSamples = minSegmentSamples > 0 && minSegmentSamples < MIN_RELIABLE_OBSERVATIONS;
+            const hasMissingSegments = expectedSegments > 0 && missingSegments > 0;
+
+            return [bucket.timeBucket, {
+                matchedSegments,
+                expectedSegments,
+                missingSegments,
+                minSegmentSamples,
+                avgSegmentSamples,
+                hasLowSamples,
+                hasMissingSegments,
+                isLowConfidence: hasLowSamples || hasMissingSegments,
+            }];
+        }));
+    }, [analysis, displaySegmentLookup, displaySegmentNames]);
 
     // Compute band summary for export to schedule generator - KEYED BY DIRECTION
     const computedBandSummary = useMemo(
@@ -328,39 +363,21 @@ export const Step2Analysis: React.FC<Step2Props> = ({
         return totals;
     }, [displaySegmentNames, segmentBreakdownByBand]);
 
-    // Prepare chart data - use the same per-band totals shown in the matrix.
+    // Prepare chart data using the true per-bucket totals so each 30-minute slot
+    // reflects its own observed runtime instead of repeating the whole-band average.
     const chartData = useMemo(() => {
         return analysis.map(a => ({
             name: a.timeBucket.split(' - ')[0], // Just start time
-            runtime: (a.assignedBand && displayedBandTotals.has(a.assignedBand))
-                ? displayedBandTotals.get(a.assignedBand)!
-                : sumDisplayedSegmentTotals(displaySegmentNames, displaySegmentNames.reduce<Record<string, { weightedSum: number; totalWeight: number; totalN: number }>>((acc, segmentName) => {
-                    let weightedSum = 0;
-                    let totalWeight = 0;
-                    let totalN = 0;
-
-                    a.details?.forEach((detail) => {
-                        const resolvedSegmentName = resolveCanonicalSegmentName(detail.segmentName, displaySegmentLookup);
-                        if (resolvedSegmentName !== segmentName) return;
-
-                        const weight = detail.n && detail.n > 0 ? detail.n : 1;
-                        const value = viewMetric === 'p50' ? detail.p50 : detail.p80;
-                        weightedSum += value * weight;
-                        totalWeight += weight;
-                        totalN += weight;
-                    });
-
-                    acc[segmentName] = { weightedSum, totalWeight, totalN };
-                    return acc;
-                }, {})),
+            runtime: viewMetric === 'p50' ? a.totalP50 : a.totalP80,
             band: a.assignedBand,
             color: bands.find(b => b.id === a.assignedBand)?.color || '#cccccc', // Bands currently calculated on P50.
             ignored: a.ignored,
-            fullBucket: a.timeBucket
+            fullBucket: a.timeBucket,
+            confidence: bucketConfidence[a.timeBucket],
             // Note: If we want Bands for P80, we'd need to re-calc binning for P80. 
             // Assumption: Bands for Schedule Logic are based on "Average" (P50).
         }));
-    }, [analysis, bands, displaySegmentLookup, displaySegmentNames, displayedBandTotals, viewMetric]);
+    }, [analysis, bands, bucketConfidence, viewMetric]);
 
     const toggleIgnore = (bucket: string) => {
         const newData = analysis.map(a => {
@@ -445,6 +462,25 @@ export const Step2Analysis: React.FC<Step2Props> = ({
                                                 )}
                                                 <p className="text-2xl font-bold text-gray-800 mt-2">{data.runtime.toFixed(1)} <span className="text-sm font-normal text-gray-500">min</span></p>
                                                 <p className="text-xs text-gray-400 font-bold uppercase mt-1">{viewMetric.toUpperCase()} Metric</p>
+                                                {data.confidence && (
+                                                    <div className="mt-3 space-y-1 text-xs text-gray-600">
+                                                        <p>
+                                                            Coverage: <span className="font-semibold text-gray-800">{data.confidence.matchedSegments}/{data.confidence.expectedSegments}</span> segments
+                                                        </p>
+                                                        <p>
+                                                            Min samples: <span className="font-semibold text-gray-800">{data.confidence.minSegmentSamples}</span>
+                                                            {' '}• Avg samples: <span className="font-semibold text-gray-800">{data.confidence.avgSegmentSamples.toFixed(1)}</span>
+                                                        </p>
+                                                        {data.confidence.isLowConfidence && (
+                                                            <div className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-amber-700 font-semibold">
+                                                                <AlertTriangle size={12} />
+                                                                {data.confidence.hasMissingSegments
+                                                                    ? `Incomplete coverage (${data.confidence.missingSegments} missing)`
+                                                                    : `Low sample bucket (< ${MIN_RELIABLE_OBSERVATIONS})`}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                )}
                                                 {data.ignored && <span className="text-xs bg-red-100 text-red-600 px-2 py-1 rounded-full mt-2 inline-block">Ignored</span>}
                                             </div>
                                         );
@@ -457,7 +493,9 @@ export const Step2Analysis: React.FC<Step2Props> = ({
                                     <Cell
                                         key={`cell-${index}`}
                                         fill={entry.ignored ? '#E5E7EB' : entry.color}
-                                        stroke={entry.ignored ? '#9CA3AF' : 'none'}
+                                        fillOpacity={entry.ignored ? 1 : entry.confidence?.isLowConfidence ? 0.45 : 1}
+                                        stroke={entry.ignored ? '#9CA3AF' : entry.confidence?.isLowConfidence ? '#F59E0B' : 'none'}
+                                        strokeWidth={entry.confidence?.isLowConfidence ? 2 : 0}
                                         strokeDasharray={entry.ignored ? '4 4' : 'none'}
                                         cursor="pointer"
                                         onClick={() => toggleIgnore(entry.fullBucket)}
@@ -479,8 +517,9 @@ export const Step2Analysis: React.FC<Step2Props> = ({
                         <div>
                             <h3 className="font-bold text-blue-900">Analysis Logic</h3>
                             <p className="text-sm text-blue-700 mt-1">
-                                The graph now shows the same per-band total displayed in the matrix, repeated across each
-                                30-minute slot in that band.
+                                The chart shows the actual observed total for each 30-minute bucket.
+                                The matrix below still summarizes those buckets into broader time bands.
+                                Buckets with thin data or missing segment coverage are dimmed and outlined.
                                 Bands (A-E) are calculated based on the <strong>50th Percentile</strong> (Average) performance.
                             </p>
                         </div>
@@ -504,6 +543,10 @@ export const Step2Analysis: React.FC<Step2Props> = ({
                     <div className="flex items-center gap-2">
                         <div className="w-3 h-3 rounded-full border border-gray-300 border-dashed bg-gray-50" />
                         <span className="text-xs font-bold text-gray-700">Ignored</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <div className="w-3 h-3 rounded-full border-2 border-amber-400 bg-amber-100/60" />
+                        <span className="text-xs font-bold text-gray-700">Low confidence / incomplete</span>
                     </div>
                 </div>
             </div>
@@ -531,12 +574,16 @@ export const Step2Analysis: React.FC<Step2Props> = ({
                                 <th className="px-6 py-3 text-right">Total P50 (Avg)</th>
                                 <th className="px-6 py-3 text-right">Total P80 (Reliable)</th>
                                 <th className="px-6 py-3 text-center">Band</th>
+                                <th className="px-6 py-3 text-center">Confidence</th>
                                 <th className="px-6 py-3 text-center">Status</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100">
                             {analysis.map((row) => (
                                 <React.Fragment key={row.timeBucket}>
+                                    {(() => {
+                                        const confidence = bucketConfidence[row.timeBucket];
+                                        return (
                                     <tr
                                         onClick={() => toggleExpand(row.timeBucket)}
                                         className={`hover:bg-blue-50 cursor-pointer transition-colors ${row.ignored ? 'opacity-50 bg-gray-50' : ''}`}
@@ -564,6 +611,27 @@ export const Step2Analysis: React.FC<Step2Props> = ({
                                             )}
                                         </td>
                                         <td className="px-6 py-4 text-center">
+                                            {confidence?.isLowConfidence ? (
+                                                <div className="inline-flex flex-wrap items-center justify-center gap-1">
+                                                    {confidence.hasLowSamples && (
+                                                        <span className="rounded-full bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-700">
+                                                            Min n {confidence.minSegmentSamples}
+                                                        </span>
+                                                    )}
+                                                    {confidence.hasMissingSegments && (
+                                                        <span className="rounded-full bg-orange-50 px-2 py-1 text-[11px] font-semibold text-orange-700">
+                                                            {confidence.missingSegments} missing
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            ) : (
+                                                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700">
+                                                    <CheckCircle2 size={12} />
+                                                    OK
+                                                </span>
+                                            )}
+                                        </td>
+                                        <td className="px-6 py-4 text-center">
                                             <button
                                                 onClick={(e) => { e.stopPropagation(); toggleIgnore(row.timeBucket); }}
                                                 className={`p-1 rounded hover:bg-gray-200 transition-colors ${row.ignored ? 'text-gray-400' : 'text-blue-600'}`}
@@ -573,10 +641,12 @@ export const Step2Analysis: React.FC<Step2Props> = ({
                                             </button>
                                         </td>
                                     </tr>
+                                        );
+                                    })()}
                                     {/* Expanded Detail Row */}
                                     {expandedBuckets.has(row.timeBucket) && (
                                         <tr>
-                                            <td colSpan={6} className="bg-gray-50 p-4 shadow-inner">
+                                            <td colSpan={7} className="bg-gray-50 p-4 shadow-inner">
                                                 <div className="max-w-4xl mx-auto">
                                                     <h4 className="text-xs font-bold text-gray-500 uppercase mb-3">Segment Breakdown</h4>
                                                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
@@ -591,6 +661,7 @@ export const Step2Analysis: React.FC<Step2Props> = ({
                                                                     <span className="font-medium truncate mr-2" title={detail.segmentName}>{detail.segmentName}</span>
                                                                     <div className="text-right whitespace-nowrap">
                                                                         <div className="text-gray-900 font-mono">{detail.p50.toFixed(1)} <span className="text-gray-400">/</span> {detail.p80.toFixed(1)}</div>
+                                                                        <div className="text-[11px] text-gray-400">n={detail.n ?? 1}</div>
                                                                     </div>
                                                                 </div>
                                                             ))

@@ -53,6 +53,7 @@ import { getConnectionsForStop } from '../../utils/connections/connectionUtils';
 import { ConnectionIndicator } from './ConnectionIndicator';
 import { useGridNavigation, GridColumn, GridRowInfo } from '../../hooks/useGridNavigation';
 import { getRowInsights, type ScheduleInsight } from '../../utils/schedule/scheduleInsights';
+import { buildMasterComparison } from '../../utils/schedule/masterComparison';
 
 // --- Spreadsheet-style column letters ---
 // Converts 0-indexed column number to Excel-style letter (A, B, C... Z, AA, AB...)
@@ -360,126 +361,8 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
     const getOriginalTrip = (routeName: string, tripId: string): MasterTrip | undefined =>
         originalTripLookup.get(`${routeName}::${tripId}`);
 
-    // Time-based trip matching for master comparison mode
-    // Shift-aware greedy 1-to-1 match:
-    // 1) Detect best global shift per direction (e.g. +5 min),
-    // 2) Match nearest unmatched master trip within ±5 min after shift compensation.
     const { masterMatchMap, unmatchedMasterTrips, masterShiftByDir } = useMemo(() => {
-        if (!isMasterMode || !masterBaseline) {
-            return {
-                masterMatchMap: new Map<string, MasterTrip>(),
-                unmatchedMasterTrips: [] as MasterTrip[],
-                masterShiftByDir: {} as Record<string, number>
-            };
-        }
-
-        const THRESHOLD = 5; // minutes
-        const SHIFT_SEARCH_RANGE = 15; // minutes
-        const matchMap = new Map<string, MasterTrip>();
-        const matchedMasterKeys = new Set<string>();
-        const shiftByDir: Record<string, number> = {};
-
-        // Group master trips by direction
-        const masterByDir: Record<string, MasterTrip[]> = { North: [], South: [] };
-        masterBaseline.forEach(table => {
-            const dir = extractDirectionFromName(table.routeName) || 'North';
-            table.trips.forEach(trip => {
-                masterByDir[dir] = masterByDir[dir] || [];
-                masterByDir[dir].push(trip);
-            });
-        });
-
-        // Group current trips by direction
-        const currentByDir: Record<string, MasterTrip[]> = { North: [], South: [] };
-        schedules.forEach(table => {
-            const dir = extractDirectionFromName(table.routeName) || 'North';
-            table.trips.forEach(trip => {
-                currentByDir[dir] = currentByDir[dir] || [];
-                currentByDir[dir].push(trip);
-            });
-        });
-
-        const buildMasterKey = (dir: string, tripId: string): string => `${dir}::${tripId}`;
-
-        // Match within each direction
-        for (const dir of Object.keys(masterByDir)) {
-            const masterTrips = [...(masterByDir[dir] || [])].sort((a, b) => a.startTime - b.startTime);
-            const currentTrips = [...(currentByDir[dir] || [])].sort((a, b) => a.startTime - b.startTime);
-
-            if (masterTrips.length === 0 || currentTrips.length === 0) continue;
-
-            const runGreedyMatch = (shiftMinutes: number) => {
-                const localUsed = new Set<string>();
-                const pairs: Array<{ current: MasterTrip; master: MasterTrip }> = [];
-                let totalDiff = 0;
-
-                for (const current of currentTrips) {
-                    let bestMatch: MasterTrip | null = null;
-                    let bestDiff = Infinity;
-
-                    for (const master of masterTrips) {
-                        const masterKey = buildMasterKey(dir, master.id);
-                        if (localUsed.has(masterKey)) continue;
-                        if (matchedMasterKeys.has(masterKey)) continue;
-
-                        const adjustedStart = current.startTime - shiftMinutes;
-                        const diff = Math.abs(adjustedStart - master.startTime);
-                        if (diff <= THRESHOLD && diff < bestDiff) {
-                            bestDiff = diff;
-                            bestMatch = master;
-                        }
-                    }
-
-                    if (bestMatch) {
-                        const key = buildMasterKey(dir, bestMatch.id);
-                        localUsed.add(key);
-                        pairs.push({ current, master: bestMatch });
-                        totalDiff += bestDiff;
-                    }
-                }
-
-                return { pairs, count: pairs.length, totalDiff };
-            };
-
-            // Detect the best global shift for this direction.
-            let bestShift = 0;
-            let bestCount = -1;
-            let bestTotalDiff = Infinity;
-
-            for (let shift = -SHIFT_SEARCH_RANGE; shift <= SHIFT_SEARCH_RANGE; shift++) {
-                const result = runGreedyMatch(shift);
-                if (
-                    result.count > bestCount ||
-                    (result.count === bestCount && result.totalDiff < bestTotalDiff) ||
-                    (result.count === bestCount && result.totalDiff === bestTotalDiff && Math.abs(shift) < Math.abs(bestShift))
-                ) {
-                    bestShift = shift;
-                    bestCount = result.count;
-                    bestTotalDiff = result.totalDiff;
-                }
-            }
-
-            const finalMatch = runGreedyMatch(bestShift);
-            shiftByDir[dir] = bestShift;
-            for (const pair of finalMatch.pairs) {
-                matchMap.set(pair.current.id, pair.master);
-                matchedMasterKeys.add(buildMasterKey(dir, pair.master.id));
-            }
-        }
-
-        // Collect unmatched master trips
-        const unmatched: MasterTrip[] = [];
-        masterBaseline.forEach(table => {
-            const dir = extractDirectionFromName(table.routeName) || 'North';
-            table.trips.forEach(trip => {
-                if (!matchedMasterKeys.has(buildMasterKey(dir, trip.id))) {
-                    unmatched.push({ ...trip, direction: dir as 'North' | 'South' });
-                }
-            });
-        });
-        unmatched.sort((a, b) => a.startTime - b.startTime);
-
-        return { masterMatchMap: matchMap, unmatchedMasterTrips: unmatched, masterShiftByDir: shiftByDir };
+        return buildMasterComparison(isMasterMode ? schedules : [], isMasterMode ? masterBaseline : null);
     }, [masterBaseline, schedules, isMasterMode]);
 
     const masterShiftLabel = useMemo(() => {
@@ -499,6 +382,10 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
         if (south !== undefined) parts.push(`S ${fmt(south)}`);
         return `Auto-align ${parts.join(' | ')}`;
     }, [isMasterMode, masterShiftByDir]);
+
+    const getMasterMatchedTrip = useCallback((direction: 'North' | 'South', tripId: string): MasterTrip | undefined => (
+        masterMatchMap.get(`${direction}::${tripId}`)
+    ), [masterMatchMap]);
 
     const roundTripData = useMemo(() => {
         const pairs: RoundTripPair[] = [];
@@ -740,14 +627,16 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
         }
     }, [onTimeAdjust, onRecoveryEdit]);
 
+    const gridCallbacks = useMemo(() => ({
+        onNudge: handleGridNudge,
+        onCopy: handleGridCopy,
+        onPaste: handleGridPaste,
+    }), [handleGridNudge, handleGridCopy, handleGridPaste]);
+
     const gridNav = useGridNavigation({
         columns: gridColumns,
         rows: gridRows,
-        callbacks: {
-            onNudge: handleGridNudge,
-            onCopy: handleGridCopy,
-            onPaste: handleGridPaste,
-        },
+        callbacks: gridCallbacks,
         disabled: readOnly,
     });
 
@@ -1338,10 +1227,10 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                         const routeTripNumber = northIndex ?? southIndex ?? rowIdx + 1;
                                         const rowBg = rowIdx % 2 === 0 ? 'bg-white' : 'bg-gray-50/50';
                                         const originalNorthTrip = northTrip
-                                            ? (isMasterMode ? masterMatchMap.get(northTrip.id) : getOriginalTrip(north.routeName, northTrip.id))
+                                            ? (isMasterMode ? getMasterMatchedTrip('North', northTrip.id) : getOriginalTrip(north.routeName, northTrip.id))
                                             : undefined;
                                         const originalSouthTrip = southTrip
-                                            ? (isMasterMode ? masterMatchMap.get(southTrip.id) : getOriginalTrip(south.routeName, southTrip.id))
+                                            ? (isMasterMode ? getMasterMatchedTrip('South', southTrip.id) : getOriginalTrip(south.routeName, southTrip.id))
                                             : undefined;
 
                                         // NEW trip: exists in current schedule but not matched to any master trip

@@ -7,7 +7,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, FolderOpen, Clock, Trash2, Edit3, Check, Plus, CalendarPlus, Loader2, Copy, Search } from 'lucide-react';
 import { getAllProjects, deleteProject, getProject, duplicateProject, NewScheduleProject } from '../../utils/services/newScheduleProjectService';
-import type { MasterRouteTable } from '../../utils/parsers/masterScheduleParser';
 
 interface Props {
     isOpen: boolean;
@@ -15,7 +14,7 @@ interface Props {
     currentProjectId?: string;
     onClose: () => void;
     onLoadProject: (project: NewScheduleProject) => void;
-    onLoadGeneratedSchedule?: (schedules: MasterRouteTable[], projectName: string, projectId: string) => void;
+    onLoadGeneratedSchedule?: (project: NewScheduleProject) => void;
     onNewProject: () => void;
 }
 
@@ -263,7 +262,7 @@ export const ProjectManagerModal: React.FC<Props> = ({
                                                 try {
                                                     const fullProject = await getProject(userId, selectedProject.id);
                                                     if (fullProject?.generatedSchedules && fullProject.generatedSchedules.length > 0) {
-                                                        onLoadGeneratedSchedule(fullProject.generatedSchedules, fullProject.name, fullProject.id);
+                                                        onLoadGeneratedSchedule(fullProject);
                                                         onClose();
                                                         return;
                                                     }

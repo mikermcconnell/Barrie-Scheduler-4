@@ -70,6 +70,7 @@ export const StackedTimeInput = forwardRef<StackedTimeInputHandle, StackedTimeIn
     const [isEditing, setIsEditing] = useState(false);
     const [editValue, setEditValue] = useState(value);
     const inputRef = useRef<HTMLInputElement>(null);
+    const previousExternalEditRef = useRef(false);
     // Suppress blur-on-unmount when keyboard handler already handled save/cancel
     const blurSuppressedRef = useRef(false);
 
@@ -85,7 +86,10 @@ export const StackedTimeInput = forwardRef<StackedTimeInputHandle, StackedTimeIn
 
     // External edit trigger from grid navigation
     useEffect(() => {
-        if (externalEdit && !disabled) {
+        const shouldStartExternalEdit = externalEdit && !previousExternalEditRef.current && !disabled;
+        previousExternalEditRef.current = externalEdit;
+
+        if (shouldStartExternalEdit) {
             setEditValue(value);
             setIsEditing(true);
         }

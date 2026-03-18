@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildGapChartDisplayData } from '../components/GapChart';
+import { buildGapChartDisplayData, buildGapChartSeriesData } from '../components/GapChart';
 import type { TimeSlot } from '../utils/demandTypes';
 
 function makeSlot(timestamp: number, overrides: Partial<TimeSlot> = {}): TimeSlot {
@@ -66,5 +66,35 @@ describe('buildGapChartDisplayData', () => {
     expect(displayData[displayData.length - 1].timestamp).toBe(330);
     expect(displayData[displayData.length - 1].northRequirement).toBe(0);
     expect(displayData[displayData.length - 1].northCoverage).toBe(0);
+  });
+});
+
+describe('buildGapChartSeriesData', () => {
+  it('shows the full concurrent changeoff gap even when shortfall is smaller', () => {
+    const chartData = buildGapChartSeriesData([
+      makeSlot(600, {
+        totalRequirement: 5,
+        totalActiveCoverage: 4,
+        driversInChangeoff: 3,
+      }),
+    ], 'All');
+
+    expect(chartData[0].changeoffGapBar).toBe(-3);
+    expect(chartData[0].otherGapBar).toBe(0);
+    expect(chartData[0].displayedGap).toBe(-3);
+  });
+
+  it('keeps non-changeoff shortage in the other gap bar', () => {
+    const chartData = buildGapChartSeriesData([
+      makeSlot(615, {
+        totalRequirement: 6,
+        totalActiveCoverage: 2,
+        driversInChangeoff: 1,
+      }),
+    ], 'All');
+
+    expect(chartData[0].changeoffGapBar).toBe(-1);
+    expect(chartData[0].otherGapBar).toBe(-3);
+    expect(chartData[0].displayedGap).toBe(-4);
   });
 });
