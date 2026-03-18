@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { Zone, type Shift } from '../utils/demandTypes';
-import { buildShiftHandoffMap } from '../utils/onDemandHandoffs';
+import {
+  buildShiftHandoffMap,
+  buildShiftServiceWindowMap,
+} from '../utils/onDemandHandoffs';
 
 const makeShift = (
   id: string,
@@ -41,5 +44,58 @@ describe('on-demand handoffs', () => {
     expect(handoffs.get('north-1')?.outbound).toEqual([]);
     expect(handoffs.get('north-2')?.inbound).toEqual([]);
     expect(handoffs.get('north-2')?.outbound).toEqual([]);
+  });
+
+  it('derives effective service windows from zone-specific changeoff minutes', () => {
+    const serviceWindows = buildShiftServiceWindowMap([
+      makeShift('north-1', Zone.NORTH, 32, 40),
+      makeShift('south-1', Zone.SOUTH, 40, 48),
+      makeShift('north-2', Zone.NORTH, 48, 56),
+    ], {
+      northChangeoffMinutes: 15,
+      southChangeoffMinutes: 8,
+    });
+
+    expect(serviceWindows.get('north-1')).toEqual({
+      serviceStartSlot: 32,
+      serviceEndSlot: 39,
+      startChangeoffSlots: 0,
+      endChangeoffSlots: 1,
+    });
+    expect(serviceWindows.get('south-1')).toEqual({
+      serviceStartSlot: 41,
+      serviceEndSlot: 47,
+      startChangeoffSlots: 1,
+      endChangeoffSlots: 1,
+    });
+    expect(serviceWindows.get('north-2')).toEqual({
+      serviceStartSlot: 49,
+      serviceEndSlot: 56,
+      startChangeoffSlots: 1,
+      endChangeoffSlots: 0,
+    });
+  });
+
+  it('does not shrink the first or last service piece of the day', () => {
+    const serviceWindows = buildShiftServiceWindowMap([
+      makeShift('north-1', Zone.NORTH, 32, 60),
+      makeShift('north-2', Zone.NORTH, 40, 68),
+    ], {
+      northChangeoffMinutes: 15,
+      southChangeoffMinutes: 8,
+    });
+
+    expect(serviceWindows.get('north-1')).toEqual({
+      serviceStartSlot: 32,
+      serviceEndSlot: 60,
+      startChangeoffSlots: 0,
+      endChangeoffSlots: 0,
+    });
+    expect(serviceWindows.get('north-2')).toEqual({
+      serviceStartSlot: 40,
+      serviceEndSlot: 68,
+      startChangeoffSlots: 0,
+      endChangeoffSlots: 0,
+    });
   });
 });

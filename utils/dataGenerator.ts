@@ -7,8 +7,7 @@ import {
   type OnDemandChangeoffSettings,
 } from './demandTypes';
 import { TIME_SLOTS_PER_DAY, SHIFT_DURATION_SLOTS, BREAK_DURATION_SLOTS } from './demandConstants';
-import { changeoffMinutesToSlots } from './onDemandOptimizationSettings';
-import { buildShiftHandoffMap } from './onDemandHandoffs';
+import { buildShiftServiceWindowMap } from './onDemandHandoffs';
 
 // Helper to format minutes from midnight to HH:mm
 export const formatTime = (totalMinutes: number): string => {
@@ -180,19 +179,13 @@ export const calculateSchedule = (
   requirements: Requirement[],
   changeoffSettings: Partial<OnDemandChangeoffSettings> = {},
 ): TimeSlot[] => {
-  const northChangeoffSlots = changeoffMinutesToSlots(
-    changeoffSettings.northChangeoffMinutes ?? 0,
-  );
-  const southChangeoffSlots = changeoffMinutesToSlots(
-    changeoffSettings.southChangeoffMinutes ?? 0,
-  );
   const slots: TimeSlot[] = [];
 
   if (!requirements || requirements.length === 0) {
     return [];
   }
 
-  const serviceHandoffMap = buildShiftHandoffMap(shifts);
+  const serviceWindowMap = buildShiftServiceWindowMap(shifts, changeoffSettings);
 
   for (let i = 0; i < TIME_SLOTS_PER_DAY; i++) {
     const minutesFromMidnight = i * 15;
@@ -217,18 +210,11 @@ export const calculateSchedule = (
 
     shifts.forEach(shift => {
       if (i >= shift.startSlot && i < shift.endSlot) {
-        const handoffBoundary = serviceHandoffMap.get(shift.id);
-        const changeoffSlots = shift.zone === Zone.NORTH
-          ? northChangeoffSlots
-          : shift.zone === Zone.SOUTH
-            ? southChangeoffSlots
-            : 0;
-        const startChangeoffSlots = (handoffBoundary?.inbound.length ?? 0) > 0 ? changeoffSlots : 0;
-        const endChangeoffSlots = (handoffBoundary?.outbound.length ?? 0) > 0 ? changeoffSlots : 0;
-        const effectiveStartSlot = Math.min(shift.endSlot, shift.startSlot + startChangeoffSlots);
-        const effectiveEndSlot = Math.max(shift.startSlot, shift.endSlot - endChangeoffSlots);
-        const isInChangeoff = changeoffSlots > 0 && (
-          i < effectiveStartSlot || i >= effectiveEndSlot
+        const serviceWindow = serviceWindowMap.get(shift.id);
+        const isInChangeoff = serviceWindow !== undefined && (
+          serviceWindow.startChangeoffSlots > 0 || serviceWindow.endChangeoffSlots > 0
+        ) && (
+          i < serviceWindow.serviceStartSlot || i >= serviceWindow.serviceEndSlot
         );
         const isOnBreak = (i >= shift.breakStartSlot && i < shift.breakStartSlot + shift.breakDurationSlots);
 

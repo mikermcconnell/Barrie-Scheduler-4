@@ -162,6 +162,8 @@ interface SavedSchedule {
 }
 ```
 
+`shiftData` entries may include optional `handoffFromShiftId` and `handoffToShiftId` fields so TOD drafts can persist explicit driver-to-driver handoff links alongside the core shift timing fields.
+
 ---
 
 ## Master Schedules (Published)

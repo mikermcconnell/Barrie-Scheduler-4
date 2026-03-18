@@ -1,10 +1,9 @@
 import React from 'react';
-import { Shift, Zone, SummaryMetrics, ZoneFilterType } from '../utils/demandTypes';
+import { Shift, Zone, SummaryMetrics, ZoneFilterType, type OnDemandChangeoffSettings } from '../utils/demandTypes';
 import { formatSlotToTime } from '../utils/dataGenerator';
 import { Coffee, Trash2, Plus, Clock, ChevronRight, LayoutGrid, List, ArrowRightLeft } from 'lucide-react';
-import { TIME_SLOTS_PER_DAY } from '../utils/demandConstants';
 import { SummaryCards } from './SummaryCards';
-import { buildShiftHandoffMap } from '../utils/onDemandHandoffs';
+import { buildShiftHandoffMap, buildShiftServiceWindowMap, type ShiftHandoffLinks } from '../utils/onDemandHandoffs';
 
 interface Props {
   shifts: Shift[];
@@ -15,6 +14,7 @@ interface Props {
   zoneFilter: ZoneFilterType;
   onZoneFilterChange: (filter: ZoneFilterType) => void;
   metrics: SummaryMetrics;
+  changeoffSettings?: Partial<OnDemandChangeoffSettings>;
 }
 
 // Helper to get zone colors
@@ -29,28 +29,67 @@ const getZoneStyles = (zone: Zone) => {
   }
 };
 
-const formatShiftHandoffLabel = (shift: Shift) =>
-  `${shift.driverName} (${shift.zone} ${formatSlotToTime(shift.startSlot)}-${formatSlotToTime(shift.endSlot)})`;
-
 export const ShiftEditor: React.FC<Props> = ({
   shifts,
-  onUpdateShift,
+  onUpdateShift: _onUpdateShift,
   onDeleteShift,
   onAddShift,
   onEditShift,
   zoneFilter,
   onZoneFilterChange,
-  metrics
+  metrics,
+  changeoffSettings,
 }) => {
   const [viewMode, setViewMode] = React.useState<'grid' | 'list'>('grid');
   const handoffMap = React.useMemo(() => buildShiftHandoffMap(shifts), [shifts]);
+  const shiftNameMap = React.useMemo(
+    () => new Map(shifts.map((shift) => [shift.id, shift.driverName])),
+    [shifts],
+  );
+  const serviceWindowMap = React.useMemo(
+    () => buildShiftServiceWindowMap(shifts, changeoffSettings),
+    [changeoffSettings, shifts],
+  );
 
   const filteredShifts = shifts.filter(s => {
     if (zoneFilter === 'All') return true;
     return s.zone === zoneFilter;
   });
 
-  const sortedShifts = [...filteredShifts].sort((a, b) => a.startSlot - b.startSlot);
+  const sortedShifts = [...filteredShifts].sort((a, b) => {
+    const aServiceWindow = serviceWindowMap.get(a.id);
+    const bServiceWindow = serviceWindowMap.get(b.id);
+    const aStartSlot = aServiceWindow?.serviceStartSlot ?? a.startSlot;
+    const bStartSlot = bServiceWindow?.serviceStartSlot ?? b.startSlot;
+
+    if (aStartSlot !== bStartSlot) {
+      return aStartSlot - bStartSlot;
+    }
+
+    return a.driverName.localeCompare(b.driverName, undefined, { numeric: true, sensitivity: 'base' });
+  });
+
+  const getShiftHandoffSummaries = React.useCallback((shift: Shift, handoffLinks?: ShiftHandoffLinks) => {
+    const summaries: string[] = [];
+    const handoffFromName = shift.handoffFromShiftId ? shiftNameMap.get(shift.handoffFromShiftId) : undefined;
+    const handoffToName = shift.handoffToShiftId ? shiftNameMap.get(shift.handoffToShiftId) : undefined;
+    const inferredInboundNames = (handoffLinks?.inbound ?? []).map((candidate) => candidate.driverName).join(', ');
+    const inferredOutboundNames = (handoffLinks?.outbound ?? []).map((candidate) => candidate.driverName).join(', ');
+
+    if (handoffFromName) {
+      summaries.push(`From ${handoffFromName} at ${formatSlotToTime(shift.startSlot)}`);
+    } else if (inferredInboundNames) {
+      summaries.push(`From ${inferredInboundNames} at ${formatSlotToTime(shift.startSlot)}`);
+    }
+
+    if (handoffToName) {
+      summaries.push(`To ${handoffToName} at ${formatSlotToTime(shift.endSlot)}`);
+    } else if (inferredOutboundNames) {
+      summaries.push(`To ${inferredOutboundNames} at ${formatSlotToTime(shift.endSlot)}`);
+    }
+
+    return summaries;
+  }, [shiftNameMap]);
 
   return (
     <div className="bg-white rounded-3xl border-2 border-gray-200 p-6 shadow-sm">
@@ -119,11 +158,13 @@ export const ShiftEditor: React.FC<Props> = ({
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {sortedShifts.map((shift) => {
             const styles = getZoneStyles(shift.zone);
-            const hours = ((shift.endSlot - shift.startSlot) / 4).toFixed(1);
             const hasBreak = shift.breakDurationSlots > 0;
             const handoffLinks = handoffMap.get(shift.id);
-            const inboundHandoffs = handoffLinks?.inbound ?? [];
-            const outboundHandoffs = handoffLinks?.outbound ?? [];
+            const serviceWindow = serviceWindowMap.get(shift.id);
+            const displayStartSlot = serviceWindow?.serviceStartSlot ?? shift.startSlot;
+            const displayEndSlot = serviceWindow?.serviceEndSlot ?? shift.endSlot;
+            const drivingHours = ((displayEndSlot - displayStartSlot) / 4).toFixed(1);
+            const handoffSummaries = getShiftHandoffSummaries(shift, handoffLinks);
 
             return (
               <div
@@ -166,8 +207,8 @@ export const ShiftEditor: React.FC<Props> = ({
                     {/* Time & Duration */}
                     <div className="flex items-center gap-2 text-sm text-gray-500 font-bold">
                       <Clock size={14} />
-                      <span>{formatSlotToTime(shift.startSlot)} - {formatSlotToTime(shift.endSlot)}</span>
-                      <span className="bg-gray-100 px-2 py-0.5 rounded-lg text-xs">{hours}h</span>
+                      <span>{formatSlotToTime(displayStartSlot)} - {formatSlotToTime(displayEndSlot)}</span>
+                      <span className="bg-gray-100 px-2 py-0.5 rounded-lg text-xs">{drivingHours}h</span>
                     </div>
 
                     {/* Break Indicator */}
@@ -178,24 +219,15 @@ export const ShiftEditor: React.FC<Props> = ({
                       </div>
                     )}
 
-                    {(inboundHandoffs.length > 0 || outboundHandoffs.length > 0) && (
+                    {handoffSummaries.length > 0 && (
                       <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] font-semibold text-gray-600">
                         <div className="mb-1 flex items-center gap-1.5 text-gray-500">
                           <ArrowRightLeft size={12} />
                           <span>Shift Handoff</span>
                         </div>
-                        {inboundHandoffs.length > 0 && (
-                          <div className="mb-1">
-                            <span className="text-gray-400">Receives from:</span>{' '}
-                            <span>{inboundHandoffs.map(formatShiftHandoffLabel).join(', ')}</span>
-                          </div>
-                        )}
-                        {outboundHandoffs.length > 0 && (
-                          <div>
-                            <span className="text-gray-400">Hands off to:</span>{' '}
-                            <span>{outboundHandoffs.map(formatShiftHandoffLabel).join(', ')}</span>
-                          </div>
-                        )}
+                        {handoffSummaries.map((summary) => (
+                          <div key={summary}>{summary}</div>
+                        ))}
                       </div>
                     )}
                   </div>
@@ -224,15 +256,14 @@ export const ShiftEditor: React.FC<Props> = ({
             <tbody className="bg-white divide-y divide-gray-200">
               {sortedShifts.map((shift) => {
                 const styles = getZoneStyles(shift.zone);
-                const hours = ((shift.endSlot - shift.startSlot) / 4).toFixed(1);
                 const hasBreak = shift.breakDurationSlots > 0;
                 const handoffLinks = handoffMap.get(shift.id);
-                const inboundHandoffs = handoffLinks?.inbound ?? [];
-                const outboundHandoffs = handoffLinks?.outbound ?? [];
-                const handoffText = [
-                  inboundHandoffs.length > 0 ? `From ${inboundHandoffs.map(formatShiftHandoffLabel).join(', ')}` : '',
-                  outboundHandoffs.length > 0 ? `To ${outboundHandoffs.map(formatShiftHandoffLabel).join(', ')}` : '',
-                ].filter(Boolean).join(' | ');
+                const serviceWindow = serviceWindowMap.get(shift.id);
+                const displayStartSlot = serviceWindow?.serviceStartSlot ?? shift.startSlot;
+                const displayEndSlot = serviceWindow?.serviceEndSlot ?? shift.endSlot;
+                const drivingHours = ((displayEndSlot - displayStartSlot) / 4).toFixed(1);
+                const handoffSummaries = getShiftHandoffSummaries(shift, handoffLinks);
+                const handoffText = handoffSummaries.join(' | ');
 
                 return (
                   <tr key={shift.id} className="hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => onEditShift?.(shift.id)}>
@@ -253,9 +284,11 @@ export const ShiftEditor: React.FC<Props> = ({
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm text-gray-900 font-medium">
-                        {formatSlotToTime(shift.startSlot)} - {formatSlotToTime(shift.endSlot)}
+                        {formatSlotToTime(displayStartSlot)} - {formatSlotToTime(displayEndSlot)}
                       </div>
-                      <div className="text-xs text-gray-400">{hours} hours</div>
+                      <div className="text-xs text-gray-400">
+                        {drivingHours} driving hours
+                      </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       {hasBreak ? (

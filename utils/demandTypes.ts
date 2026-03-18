@@ -67,6 +67,8 @@ export interface Shift {
   endSlot: number;
   breakStartSlot: number;
   breakDurationSlots: number;
+  handoffFromShiftId?: string;
+  handoffToShiftId?: string;
   dayType?: 'Weekday' | 'Saturday' | 'Sunday';
 }
 

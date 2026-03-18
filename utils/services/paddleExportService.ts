@@ -1,26 +1,59 @@
 import ExcelJS from 'exceljs';
+import { BREAK_THRESHOLD_HOURS } from '../demandConstants';
 import { Shift, Zone } from '../demandTypes';
 
 type PaddleActivityRow = {
     activity: string;
-    start: string;
-    end: string;
-    location: string;
-    note?: string;
+    startPlace: string;
+    startTime: string;
+    endTime: string;
+    endPlace: string;
+    highlight?: boolean;
 };
 
 type PaddleTimeline = {
     serviceLocation: string;
     reportTime: number;
-    shiftStart: number;
+    signOnEnd: number;
     yardDeparture: number;
     driveStart: number;
     driveEnd: number;
-    shiftEnd: number;
+    yardArrival: number;
+    postTripEnd: number;
     paidMinutes: number;
     driveMinutes: number;
     breakMinutes: number;
-    rows: PaddleActivityRow[];
+};
+
+type BlockSeriesMeta = {
+    familyNumber: number;
+    pieceIndex: number;
+    pieceCount: number;
+    reportCode: 'AM' | 'PM';
+    blockLabel: string;
+};
+
+type PaddleSheetModel = {
+    title: string;
+    subtitle: string;
+    busLabel: string;
+    zone: Zone;
+    dayLabel: string;
+    reportCode: 'AM' | 'PM';
+    blockLabel: string;
+    paidTime: string;
+    breakPenalty: string;
+    startPlace: string;
+    reportTime: string;
+    startTime: string;
+    endTime: string;
+    endPlace: string;
+    pullOutTime: string;
+    serviceStartTime: string;
+    pullInTime: string;
+    yardArrivalTime: string;
+    notes: string[];
+    activities: PaddleActivityRow[];
 };
 
 interface PaddleExportConfig {
@@ -29,8 +62,13 @@ interface PaddleExportConfig {
     zoneServiceLocation: Record<Zone, string>;
     reportLeadMinutes: number;
     signOnWindowMinutes: number;
+    postTripMinutes: number;
+    assignedBreakMinutes: number;
+    breakPenaltyMinutes: number;
+    familyGapToleranceMinutes: number;
     deadheadMinutesByZone: Record<Zone, number>;
     footerNote: string;
+    highlightNote: string;
 }
 
 const DEFAULT_CONFIG: PaddleExportConfig = {
@@ -43,12 +81,23 @@ const DEFAULT_CONFIG: PaddleExportConfig = {
     },
     reportLeadMinutes: 15,
     signOnWindowMinutes: 5,
+    postTripMinutes: 5,
+    assignedBreakMinutes: 45,
+    breakPenaltyMinutes: 30,
+    familyGapToleranceMinutes: 75,
     deadheadMinutesByZone: {
         [Zone.NORTH]: 15,
         [Zone.SOUTH]: 8,
         [Zone.FLOATER]: 6,
     },
     footerNote: 'Shift rules are based on actual drive time. Report, pre-trip, and deadhead are outside drive time.',
+    highlightNote: 'The information highlighted in yellow is used while signing in to RideCo.',
+};
+
+const daySortWeight: Record<string, number> = {
+    Weekday: 0,
+    Saturday: 1,
+    Sunday: 2,
 };
 
 const slotToMinutes = (slot: number): number => Math.max(0, Math.round(slot * 15));
@@ -75,8 +124,10 @@ const shiftDayLabel = (shift: Shift): string => {
 
 const sortShifts = (shifts: Shift[]): Shift[] => {
     return [...shifts].sort((a, b) => {
-        if (a.dayType !== b.dayType) return (a.dayType || 'Weekday').localeCompare(b.dayType || 'Weekday');
+        const dayCompare = (daySortWeight[a.dayType || 'Weekday'] ?? 0) - (daySortWeight[b.dayType || 'Weekday'] ?? 0);
+        if (dayCompare !== 0) return dayCompare;
         if (a.startSlot !== b.startSlot) return a.startSlot - b.startSlot;
+        if (a.zone !== b.zone) return a.zone.localeCompare(b.zone);
         return a.driverName.localeCompare(b.driverName, undefined, { numeric: true, sensitivity: 'base' });
     });
 };
@@ -97,86 +148,6 @@ const sanitizeSheetName = (value: string): string => {
     return value.replace(/[\\/*?:[\]]/g, '').slice(0, 31) || 'Paddle';
 };
 
-const buildPaddleTimeline = (shift: Shift, config: PaddleExportConfig): PaddleTimeline => {
-    const driveStart = slotToMinutes(shift.startSlot);
-    const driveEnd = slotToMinutes(shift.endSlot);
-    const breakMinutes = (shift.breakDurationSlots || 0) * 15;
-    const deadheadMinutes = config.deadheadMinutesByZone[shift.zone];
-    const serviceLocation = config.zoneServiceLocation[shift.zone];
-
-    const yardDeparture = Math.max(0, driveStart - deadheadMinutes);
-    const reportTime = Math.max(0, yardDeparture - config.reportLeadMinutes);
-    const shiftStart = reportTime + config.signOnWindowMinutes;
-    const shiftEnd = driveEnd + deadheadMinutes;
-    const paidMinutes = Math.max(0, shiftEnd - reportTime - breakMinutes);
-    const driveMinutes = Math.max(0, driveEnd - driveStart - breakMinutes);
-
-    const rows: PaddleActivityRow[] = [
-        {
-            activity: 'Sign-On',
-            start: formatMinutes(reportTime),
-            end: formatMinutes(shiftStart),
-            location: config.yardName,
-            note: 'Report and sign-on window',
-        },
-        {
-            activity: 'Pre-Trip / Yard Departure',
-            start: formatMinutes(yardDeparture),
-            end: '',
-            location: config.yardName,
-            note: 'Vehicle ready to leave yard',
-        },
-        {
-            activity: 'Deadhead to Service',
-            start: formatMinutes(yardDeparture),
-            end: formatMinutes(driveStart),
-            location: `${config.yardName} -> ${serviceLocation}`,
-            note: 'Travel to actual drive start',
-        },
-        {
-            activity: `Transit On Demand ${shift.zone}`,
-            start: formatMinutes(driveStart),
-            end: formatMinutes(driveEnd),
-            location: serviceLocation,
-            note: 'Actual drive time',
-        },
-    ];
-
-    if (shift.breakDurationSlots > 0) {
-        const breakStart = slotToMinutes(shift.breakStartSlot);
-        const breakEnd = slotToMinutes(shift.breakStartSlot + shift.breakDurationSlots);
-        rows.push({
-            activity: 'Meal Break',
-            start: formatMinutes(breakStart),
-            end: formatMinutes(breakEnd),
-            location: 'As Assigned',
-            note: 'Unpaid break',
-        });
-    }
-
-    rows.push({
-        activity: 'Deadhead to Yard',
-        start: formatMinutes(driveEnd),
-        end: formatMinutes(shiftEnd),
-        location: `${serviceLocation} -> ${config.yardName}`,
-        note: 'End shift on yard arrival',
-    });
-
-    return {
-        serviceLocation,
-        reportTime,
-        shiftStart,
-        yardDeparture,
-        driveStart,
-        driveEnd,
-        shiftEnd,
-        paidMinutes,
-        driveMinutes,
-        breakMinutes,
-        rows,
-    };
-};
-
 const createConfig = (configOverrides: Partial<PaddleExportConfig>): PaddleExportConfig => ({
     ...DEFAULT_CONFIG,
     ...configOverrides,
@@ -190,17 +161,267 @@ const createConfig = (configOverrides: Partial<PaddleExportConfig>): PaddleExpor
     },
 });
 
-const styleHeaderRow = (row: ExcelJS.Row): void => {
-    row.eachCell(cell => {
-        cell.font = { bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F172A' } };
-        cell.alignment = { vertical: 'middle', horizontal: 'center' };
-        cell.border = {
-            top: { style: 'thin', color: { argb: 'FFCBD5E1' } },
-            left: { style: 'thin', color: { argb: 'FFCBD5E1' } },
-            bottom: { style: 'thin', color: { argb: 'FFCBD5E1' } },
-            right: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+const buildPaddleTimeline = (shift: Shift, config: PaddleExportConfig): PaddleTimeline => {
+    const driveStart = slotToMinutes(shift.startSlot);
+    const driveEnd = slotToMinutes(shift.endSlot);
+    const breakMinutes = (shift.breakDurationSlots || 0) * 15;
+    const deadheadMinutes = config.deadheadMinutesByZone[shift.zone];
+    const serviceLocation = config.zoneServiceLocation[shift.zone];
+    const yardDeparture = Math.max(0, driveStart - deadheadMinutes);
+    const reportTime = Math.max(0, yardDeparture - config.reportLeadMinutes);
+    const signOnEnd = reportTime + config.signOnWindowMinutes;
+    const yardArrival = driveEnd + deadheadMinutes;
+    const postTripEnd = yardArrival + config.postTripMinutes;
+    const paidMinutes = Math.max(0, yardArrival - reportTime - breakMinutes);
+    const driveMinutes = Math.max(0, driveEnd - driveStart - breakMinutes);
+
+    return {
+        serviceLocation,
+        reportTime,
+        signOnEnd,
+        yardDeparture,
+        driveStart,
+        driveEnd,
+        yardArrival,
+        postTripEnd,
+        paidMinutes,
+        driveMinutes,
+        breakMinutes,
+    };
+};
+
+const assignBlockSeries = (
+    shifts: Shift[],
+    timelines: PaddleTimeline[],
+    config: PaddleExportConfig,
+): BlockSeriesMeta[] => {
+    const families: Array<{
+        familyNumber: number;
+        zone: Zone;
+        dayType: Shift['dayType'];
+        lastDriveEnd: number;
+        pieceCount: number;
+    }> = [];
+
+    const assignments = shifts.map((shift, index) => {
+        const timeline = timelines[index];
+        const candidates = families
+            .filter(family => family.zone === shift.zone && family.dayType === shift.dayType)
+            .map(family => ({
+                family,
+                gap: Math.abs(family.lastDriveEnd - timeline.driveStart),
+            }))
+            .filter(candidate => candidate.gap <= config.familyGapToleranceMinutes)
+            .sort((a, b) => a.gap - b.gap || a.family.familyNumber - b.family.familyNumber);
+
+        const family = candidates[0]?.family ?? (() => {
+            const newFamily = {
+                familyNumber: families.length + 1,
+                zone: shift.zone,
+                dayType: shift.dayType,
+                lastDriveEnd: timeline.driveEnd,
+                pieceCount: 0,
+            };
+            families.push(newFamily);
+            return newFamily;
+        })();
+
+        family.pieceCount += 1;
+        family.lastDriveEnd = timeline.driveEnd;
+
+        return {
+            familyNumber: family.familyNumber,
+            pieceIndex: family.pieceCount,
         };
+    });
+
+    const pieceCountByFamily = new Map<number, number>();
+    assignments.forEach(assignment => {
+        pieceCountByFamily.set(assignment.familyNumber, assignment.pieceIndex);
+    });
+
+    return assignments.map(assignment => {
+        const pieceLetter = String.fromCharCode(64 + assignment.pieceIndex);
+        return {
+            familyNumber: assignment.familyNumber,
+            pieceIndex: assignment.pieceIndex,
+            pieceCount: pieceCountByFamily.get(assignment.familyNumber) ?? assignment.pieceIndex,
+            reportCode: assignment.familyNumber % 2 === 1 ? 'AM' : 'PM',
+            blockLabel: `BLK${assignment.familyNumber}${pieceLetter}`,
+        };
+    });
+};
+
+const buildPaddleNotes = (
+    shift: Shift,
+    meta: BlockSeriesMeta,
+    config: PaddleExportConfig,
+): string[] => {
+    const notes = [config.highlightNote];
+    const shiftDurationHours = (shift.endSlot - shift.startSlot) / 4;
+
+    if (shift.breakDurationSlots > 0) {
+        notes.unshift('Meal break shown inside the paid piece.');
+    } else if (shiftDurationHours > BREAK_THRESHOLD_HOURS) {
+        notes.unshift(`${config.assignedBreakMinutes} minute break will be assigned within the shift.`);
+    }
+
+    if (meta.pieceCount > 1) {
+        notes.push(`Block family ${meta.familyNumber} includes ${meta.pieceCount} linked pieces.`);
+    }
+
+    notes.push(config.footerNote);
+    return notes;
+};
+
+const buildActivityRows = (
+    shift: Shift,
+    timeline: PaddleTimeline,
+    meta: BlockSeriesMeta,
+    config: PaddleExportConfig,
+): PaddleActivityRow[] => {
+    const rows: PaddleActivityRow[] = [
+        {
+            activity: 'Sign-On',
+            startPlace: config.yardName,
+            startTime: formatMinutes(timeline.reportTime),
+            endTime: formatMinutes(timeline.signOnEnd),
+            endPlace: config.yardName,
+        },
+        {
+            activity: meta.pieceIndex > 1 ? 'Take Over / Board Block' : 'Pre-Trip / Board Block',
+            startPlace: config.yardName,
+            startTime: formatMinutes(timeline.signOnEnd),
+            endTime: formatMinutes(timeline.yardDeparture),
+            endPlace: config.yardName,
+        },
+        {
+            activity: meta.pieceIndex > 1 ? 'Take Over' : 'Depot Pull-Out',
+            startPlace: config.yardName,
+            startTime: formatMinutes(timeline.yardDeparture),
+            endTime: formatMinutes(timeline.driveStart),
+            endPlace: timeline.serviceLocation,
+        },
+        {
+            activity: `Transit On Demand ${shift.zone}`,
+            startPlace: timeline.serviceLocation,
+            startTime: formatMinutes(timeline.driveStart),
+            endTime: formatMinutes(timeline.driveEnd),
+            endPlace: timeline.serviceLocation,
+            highlight: true,
+        },
+    ];
+
+    if (shift.breakDurationSlots > 0) {
+        const breakStart = slotToMinutes(shift.breakStartSlot);
+        const breakEnd = slotToMinutes(shift.breakStartSlot + shift.breakDurationSlots);
+        rows.push({
+            activity: 'Meal Break',
+            startPlace: 'As Assigned',
+            startTime: formatMinutes(breakStart),
+            endTime: formatMinutes(breakEnd),
+            endPlace: 'As Assigned',
+        });
+    }
+
+    rows.push({
+        activity: 'Depot Pull-In',
+        startPlace: timeline.serviceLocation,
+        startTime: formatMinutes(timeline.driveEnd),
+        endTime: formatMinutes(timeline.yardArrival),
+        endPlace: config.yardName,
+    });
+
+    rows.push({
+        activity: 'Post Trip Inspection / Sign-Off',
+        startPlace: config.yardName,
+        startTime: formatMinutes(timeline.yardArrival),
+        endTime: formatMinutes(timeline.postTripEnd),
+        endPlace: config.yardName,
+    });
+
+    return rows;
+};
+
+const buildPaddleModels = (
+    shifts: Shift[],
+    config: PaddleExportConfig,
+): PaddleSheetModel[] => {
+    const ordered = sortShifts(shifts);
+    const timelines = ordered.map(shift => buildPaddleTimeline(shift, config));
+    const blockSeries = assignBlockSeries(ordered, timelines, config);
+
+    return ordered.map((shift, index) => {
+        const timeline = timelines[index];
+        const meta = blockSeries[index];
+        const busLabel = shift.driverName?.trim() || `Bus ${index + 1}`;
+        const notes = buildPaddleNotes(shift, meta, config);
+        const breakPenalty = shift.breakDurationSlots === 0 && (shift.endSlot - shift.startSlot) / 4 > BREAK_THRESHOLD_HOURS
+            ? formatDuration(config.breakPenaltyMinutes)
+            : '';
+
+        return {
+            title: `${busLabel} ${shift.zone} ${shiftDayLabel(shift)} Block Report`,
+            subtitle: `${config.agencyName} | ${meta.blockLabel}`,
+            busLabel,
+            zone: shift.zone,
+            dayLabel: shiftDayLabel(shift),
+            reportCode: meta.reportCode,
+            blockLabel: meta.blockLabel,
+            paidTime: formatDuration(timeline.paidMinutes),
+            breakPenalty,
+            startPlace: 'Yard',
+            reportTime: formatMinutes(timeline.reportTime),
+            startTime: formatMinutes(timeline.signOnEnd),
+            endTime: formatMinutes(timeline.driveEnd),
+            endPlace: shift.zone,
+            pullOutTime: formatMinutes(timeline.yardDeparture),
+            serviceStartTime: formatMinutes(timeline.driveStart),
+            pullInTime: formatMinutes(timeline.driveEnd),
+            yardArrivalTime: formatMinutes(timeline.yardArrival),
+            notes,
+            activities: buildActivityRows(shift, timeline, meta, config),
+        };
+    });
+};
+
+const setAllBorders = (cell: ExcelJS.Cell): void => {
+    cell.border = {
+        top: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+        left: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+        bottom: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+        right: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+    };
+};
+
+const styleLabeledValueBlock = (
+    sheet: ExcelJS.Worksheet,
+    rowNumber: number,
+    values: string[],
+    highlightColumns: number[] = [],
+): void => {
+    const row = sheet.getRow(rowNumber);
+    values.forEach((value, index) => {
+        const cell = row.getCell(index + 1);
+        cell.value = value;
+        cell.font = { size: 10, bold: highlightColumns.includes(index + 1) };
+        cell.alignment = { vertical: 'middle', horizontal: 'center' };
+        if (highlightColumns.includes(index + 1)) {
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFDE68A' } };
+        }
+        setAllBorders(cell);
+    });
+};
+
+const styleLabelRow = (sheet: ExcelJS.Worksheet, rowNumber: number, values: string[]): void => {
+    const row = sheet.getRow(rowNumber);
+    values.forEach((value, index) => {
+        const cell = row.getCell(index + 1);
+        cell.value = value;
+        cell.font = { bold: true, size: 9, color: { argb: 'FF374151' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3F4F6' } };
+        cell.alignment = { vertical: 'middle', horizontal: 'center' };
+        setAllBorders(cell);
     });
 };
 
@@ -213,80 +434,193 @@ const autoWidth = (sheet: ExcelJS.Worksheet): void => {
                 : String(cell.value ?? '');
             maxLen = Math.max(maxLen, cellValue.length);
         });
-        column.width = Math.min(maxLen + 2, 42);
+        column.width = Math.min(maxLen + 2, 24);
     });
+};
+
+const addPaddleWorksheet = (
+    workbook: ExcelJS.Workbook,
+    model: PaddleSheetModel,
+): void => {
+    const sheet = workbook.addWorksheet(sanitizeSheetName(`${model.busLabel} ${model.dayLabel}`));
+    sheet.properties.defaultRowHeight = 18;
+    sheet.columns = [
+        { width: 24 },
+        { width: 18 },
+        { width: 12 },
+        { width: 12 },
+        { width: 18 },
+        { width: 16 },
+        { width: 16 },
+        { width: 16 },
+    ];
+
+    sheet.mergeCells('A1:H1');
+    sheet.getCell('A1').value = model.title;
+    sheet.getCell('A1').font = { bold: true, size: 15 };
+
+    sheet.mergeCells('A2:H2');
+    sheet.getCell('A2').value = model.subtitle;
+    sheet.getCell('A2').font = { italic: true, size: 10, color: { argb: 'FF475569' } };
+
+    styleLabelRow(sheet, 4, ['Report', 'Paid Time', 'B.P.', 'Start Place', 'Report Time', 'Start Time', 'End Time', 'End Place']);
+    styleLabeledValueBlock(
+        sheet,
+        5,
+        [model.reportCode, model.paidTime, model.breakPenalty, model.startPlace, model.reportTime, model.startTime, model.endTime, model.endPlace],
+        [1, 2, 6, 7],
+    );
+
+    styleLabelRow(sheet, 7, ['Block', 'Pull-Out', 'Service Start', 'Pull-In', 'Yard Arrival', 'Zone', 'Day', 'Agency']);
+    styleLabeledValueBlock(
+        sheet,
+        8,
+        [model.blockLabel, model.pullOutTime, model.serviceStartTime, model.pullInTime, model.yardArrivalTime, model.zone, model.dayLabel, 'Transit On Demand'],
+        [1, 3],
+    );
+
+    styleLabelRow(sheet, 10, ['Activity', 'Start Place', 'Start Time', 'End Time', 'End Place']);
+    model.activities.forEach((activity, index) => {
+        const rowNumber = 11 + index;
+        const row = sheet.getRow(rowNumber);
+        const values = [activity.activity, activity.startPlace, activity.startTime, activity.endTime, activity.endPlace];
+        values.forEach((value, columnIndex) => {
+            const cell = row.getCell(columnIndex + 1);
+            cell.value = value;
+            cell.alignment = {
+                vertical: 'middle',
+                horizontal: columnIndex >= 2 && columnIndex <= 3 ? 'center' : 'left',
+                wrapText: true,
+            };
+            if (activity.highlight) {
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFDE68A' } };
+                cell.font = { bold: true };
+            }
+            setAllBorders(cell);
+        });
+    });
+
+    let nextRow = 12 + model.activities.length;
+    model.notes.forEach(note => {
+        sheet.mergeCells(`A${nextRow}:H${nextRow}`);
+        const cell = sheet.getCell(`A${nextRow}`);
+        cell.value = note;
+        cell.font = { size: 9, italic: true, color: { argb: 'FF475569' } };
+        nextRow += 1;
+    });
+
+    sheet.views = [{ state: 'frozen', ySplit: 10 }];
+    sheet.pageSetup = {
+        fitToPage: true,
+        fitToWidth: 1,
+        fitToHeight: 1,
+        orientation: 'portrait',
+    };
+
+    autoWidth(sheet);
 };
 
 export const exportTODPaddlesPDF = async (
     shifts: Shift[],
-    configOverrides: Partial<PaddleExportConfig> = {}
+    configOverrides: Partial<PaddleExportConfig> = {},
 ): Promise<void> => {
     if (!shifts || shifts.length === 0) return;
 
     const config = createConfig(configOverrides);
+    const models = buildPaddleModels(shifts, config);
     const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
         import('jspdf'),
         import('jspdf-autotable'),
     ]);
 
-    const ordered = sortShifts(shifts);
     const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'letter' });
     const pageWidth = doc.internal.pageSize.getWidth();
     const pageHeight = doc.internal.pageSize.getHeight();
 
-    ordered.forEach((shift, index) => {
+    models.forEach((model, index) => {
         if (index > 0) doc.addPage();
-
-        const busLabel = shift.driverName || `Bus ${index + 1}`;
-        const blockLabel = `BLK${index + 1}`;
-        const timeline = buildPaddleTimeline(shift, config);
 
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(16);
-        doc.text(`${busLabel} ${shift.zone} ${shiftDayLabel(shift)} Block Report`, 40, 44);
+        doc.text(model.title, 34, 42);
 
         doc.setFont('helvetica', 'normal');
         doc.setFontSize(10);
-        doc.text(`${config.agencyName} | Block: ${blockLabel}`, 40, 64);
-        doc.text(
-            `Report: ${formatMinutes(timeline.reportTime)} | Shift Start: ${formatMinutes(timeline.shiftStart)} | Drive Start: ${formatMinutes(timeline.driveStart)}`,
-            40,
-            80
-        );
-        doc.text(
-            `Drive End: ${formatMinutes(timeline.driveEnd)} | Shift End: ${formatMinutes(timeline.shiftEnd)} | Paid: ${formatDuration(timeline.paidMinutes)} | Drive: ${formatDuration(timeline.driveMinutes)}`,
-            40,
-            96
-        );
-        doc.text(
-            `Yard: ${config.yardName} | Service Start: ${timeline.serviceLocation} | End Place: ${config.yardName}`,
-            40,
-            112
-        );
+        doc.setTextColor(71, 85, 105);
+        doc.text(model.subtitle, 34, 58);
+        doc.setTextColor(0, 0, 0);
 
         autoTable(doc, {
-            startY: 130,
-            head: [['Activity', 'Start', 'End', 'Location', 'Note']],
-            body: timeline.rows.map(row => [row.activity, row.start, row.end, row.location, row.note || '']),
+            startY: 74,
+            head: [['Report', 'Paid Time', 'B.P.', 'Start Place', 'Report Time', 'Start Time', 'End Time', 'End Place']],
+            body: [[model.reportCode, model.paidTime, model.breakPenalty, model.startPlace, model.reportTime, model.startTime, model.endTime, model.endPlace]],
             theme: 'grid',
-            styles: { fontSize: 9, cellPadding: 5, lineColor: [203, 213, 225], lineWidth: 0.5 },
-            headStyles: { fillColor: [15, 23, 42], textColor: [255, 255, 255] },
-            bodyStyles: { textColor: [31, 41, 55] },
-            alternateRowStyles: { fillColor: [248, 250, 252] },
-            columnStyles: {
-                0: { cellWidth: 150 },
-                1: { cellWidth: 60 },
-                2: { cellWidth: 60 },
-                3: { cellWidth: 145 },
-                4: { cellWidth: 90 },
+            margin: { left: 34, right: 34 },
+            styles: { fontSize: 8.5, cellPadding: 4, lineColor: [209, 213, 219], lineWidth: 0.4 },
+            headStyles: { fillColor: [243, 244, 246], textColor: [55, 65, 81], fontStyle: 'bold' },
+            didParseCell: hook => {
+                if (hook.section === 'body' && [0, 1, 5, 6].includes(hook.column.index)) {
+                    hook.cell.styles.fillColor = [253, 230, 138];
+                    hook.cell.styles.fontStyle = 'bold';
+                }
             },
-            margin: { left: 40, right: 40 },
         });
 
-        const lastY = (doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 160;
+        autoTable(doc, {
+            startY: ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 110) + 10,
+            head: [['Block', 'Pull-Out', 'Service Start', 'Pull-In', 'Yard Arrival', 'Zone', 'Day', 'Agency']],
+            body: [[model.blockLabel, model.pullOutTime, model.serviceStartTime, model.pullInTime, model.yardArrivalTime, model.zone, model.dayLabel, config.agencyName]],
+            theme: 'grid',
+            margin: { left: 34, right: 34 },
+            styles: { fontSize: 8.5, cellPadding: 4, lineColor: [209, 213, 219], lineWidth: 0.4 },
+            headStyles: { fillColor: [243, 244, 246], textColor: [55, 65, 81], fontStyle: 'bold' },
+            didParseCell: hook => {
+                if (hook.section === 'body' && [0, 2].includes(hook.column.index)) {
+                    hook.cell.styles.fillColor = [253, 230, 138];
+                    hook.cell.styles.fontStyle = 'bold';
+                }
+            },
+        });
+
+        autoTable(doc, {
+            startY: ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 160) + 12,
+            head: [['Activity', 'Start Place', 'Start Time', 'End Time', 'End Place']],
+            body: model.activities.map(activity => [
+                activity.activity,
+                activity.startPlace,
+                activity.startTime,
+                activity.endTime,
+                activity.endPlace,
+            ]),
+            theme: 'grid',
+            margin: { left: 34, right: 34 },
+            styles: { fontSize: 9, cellPadding: 5, lineColor: [203, 213, 225], lineWidth: 0.45, textColor: [31, 41, 55] },
+            headStyles: { fillColor: [15, 23, 42], textColor: [255, 255, 255], fontStyle: 'bold' },
+            alternateRowStyles: { fillColor: [248, 250, 252] },
+            didParseCell: hook => {
+                const activity = model.activities[hook.row.index];
+                if (hook.section === 'body' && activity?.highlight) {
+                    hook.cell.styles.fillColor = [253, 230, 138];
+                    hook.cell.styles.fontStyle = 'bold';
+                }
+            },
+            columnStyles: {
+                0: { cellWidth: 190 },
+                1: { cellWidth: 115 },
+                2: { cellWidth: 72, halign: 'center' },
+                3: { cellWidth: 72, halign: 'center' },
+                4: { cellWidth: 115 },
+            },
+        });
+
+        const lastY = (doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 260;
+        let noteY = lastY + 18;
         doc.setFontSize(9);
         doc.setTextColor(71, 85, 105);
-        doc.text(config.footerNote, 40, Math.min(pageHeight - 40, lastY + 24), { maxWidth: pageWidth - 80 });
+        model.notes.forEach(note => {
+            doc.text(note, 34, Math.min(noteY, pageHeight - 34), { maxWidth: pageWidth - 68 });
+            noteY += 14;
+        });
         doc.setTextColor(0, 0, 0);
     });
 
@@ -296,92 +630,56 @@ export const exportTODPaddlesPDF = async (
 
 export const exportTODPaddlesExcel = async (
     shifts: Shift[],
-    configOverrides: Partial<PaddleExportConfig> = {}
+    configOverrides: Partial<PaddleExportConfig> = {},
 ): Promise<void> => {
     if (!shifts || shifts.length === 0) return;
 
     const config = createConfig(configOverrides);
-    const ordered = sortShifts(shifts);
+    const models = buildPaddleModels(shifts, config);
     const workbook = new ExcelJS.Workbook();
     workbook.creator = 'Barrie Transit Scheduler';
     workbook.created = new Date();
 
     const summary = workbook.addWorksheet('Paddles Summary');
-    summary.addRow(['Transit On Demand Paddles']);
+    summary.properties.defaultRowHeight = 18;
+    summary.addRow(['Transit On Demand Paddle Export']);
     summary.getRow(1).font = { bold: true, size: 16 };
+    summary.addRow([config.highlightNote]);
     summary.addRow([config.footerNote]);
     summary.addRow([]);
 
-    const summaryHeader = summary.addRow([
-        'Paddle',
-        'Day',
-        'Zone',
-        'Report Time',
-        'Shift Start',
-        'Drive Start',
-        'Drive End',
-        'Shift End',
-        'Paid Time',
-        'Drive Time',
-        'Break',
-        'Yard',
-        'Service Start',
-    ]);
-    styleHeaderRow(summaryHeader);
+    styleLabelRow(summary, 5, ['Bus', 'Day', 'Report', 'Block', 'Zone', 'Report Time', 'Start Time', 'End Time', 'Paid Time', 'B.P.', 'Service Start', 'Yard Arrival']);
 
-    ordered.forEach((shift, index) => {
-        const timeline = buildPaddleTimeline(shift, config);
-        const busLabel = shift.driverName || `Bus ${index + 1}`;
-
-        summary.addRow([
-            busLabel,
-            shiftDayLabel(shift),
-            shift.zone,
-            formatMinutes(timeline.reportTime),
-            formatMinutes(timeline.shiftStart),
-            formatMinutes(timeline.driveStart),
-            formatMinutes(timeline.driveEnd),
-            formatMinutes(timeline.shiftEnd),
-            formatDuration(timeline.paidMinutes),
-            formatDuration(timeline.driveMinutes),
-            formatDuration(timeline.breakMinutes),
-            config.yardName,
-            timeline.serviceLocation,
+    models.forEach(model => {
+        const row = summary.addRow([
+            model.busLabel,
+            model.dayLabel,
+            model.reportCode,
+            model.blockLabel,
+            model.zone,
+            model.reportTime,
+            model.startTime,
+            model.endTime,
+            model.paidTime,
+            model.breakPenalty,
+            model.serviceStartTime,
+            model.yardArrivalTime,
         ]);
 
-        const sheet = workbook.addWorksheet(sanitizeSheetName(`${busLabel} ${shiftDayLabel(shift)}`));
-        sheet.addRow([`${busLabel} ${shift.zone} ${shiftDayLabel(shift)}`]);
-        sheet.getRow(1).font = { bold: true, size: 15 };
-        sheet.addRow([config.agencyName]);
-        sheet.addRow([]);
-
-        const metaHeader = sheet.addRow(['Field', 'Value', 'Field', 'Value']);
-        styleHeaderRow(metaHeader);
-        sheet.addRow(['Report Time', formatMinutes(timeline.reportTime), 'Shift Start', formatMinutes(timeline.shiftStart)]);
-        sheet.addRow(['Drive Start', formatMinutes(timeline.driveStart), 'Drive End', formatMinutes(timeline.driveEnd)]);
-        sheet.addRow(['Shift End', formatMinutes(timeline.shiftEnd), 'Paid Time', formatDuration(timeline.paidMinutes)]);
-        sheet.addRow(['Drive Time', formatDuration(timeline.driveMinutes), 'Break', formatDuration(timeline.breakMinutes)]);
-        sheet.addRow(['Start Place', config.yardName, 'End Place', config.yardName]);
-        sheet.addRow(['Service Start', timeline.serviceLocation, 'Zone', shift.zone]);
-        sheet.addRow([]);
-
-        const activityHeader = sheet.addRow(['Activity', 'Start', 'End', 'Location', 'Note']);
-        styleHeaderRow(activityHeader);
-        timeline.rows.forEach(row => {
-            const excelRow = sheet.addRow([row.activity, row.start, row.end, row.location, row.note || '']);
-            if (row.note === 'Actual drive time') {
-                excelRow.eachCell(cell => {
-                    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFDE68A' } };
-                });
-            }
+        [3, 4, 7, 8].forEach(columnNumber => {
+            const cell = row.getCell(columnNumber);
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFDE68A' } };
+            cell.font = { bold: true };
         });
 
-        sheet.addRow([]);
-        sheet.addRow([config.footerNote]);
-        autoWidth(sheet);
+        row.eachCell(cell => {
+            cell.alignment = { vertical: 'middle', horizontal: 'center' };
+            setAllBorders(cell);
+        });
     });
 
     autoWidth(summary);
+    models.forEach(model => addPaddleWorksheet(workbook, model));
 
     const fileDate = new Date().toISOString().split('T')[0];
     const buffer = await workbook.xlsx.writeBuffer();

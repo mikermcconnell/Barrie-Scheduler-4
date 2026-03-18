@@ -33,7 +33,7 @@ import {
     normalizeOnDemandShifts,
     OnDemandDayType,
     removeShiftFromDay,
-    updateShiftInDay
+    syncShiftHandoffInDay
 } from '../../utils/onDemandShiftUtils';
 import { validateOnDemandSchedule } from '../../utils/onDemandValidation';
 import {
@@ -49,11 +49,8 @@ import {
     normalizeOnDemandOptimizationSettings,
     normalizeBreakDurationMinutes,
     normalizeChangeoffMinutes,
-    normalizeShiftCountCaps,
     type OnDemandOptimizationSettingsSnapshot,
     type OnDemandOptimizationSettingsState,
-    type DayTypeShiftCountCaps,
-    type ShiftCountCapMode,
     type OptimizeRequestOptions,
 } from '../../utils/onDemandOptimizationSettings';
 import {
@@ -64,7 +61,7 @@ import {
 } from '../../utils/onDemandWorkspaceState';
 import {
     Wand2, Users, BarChart3, Sparkles, Loader2,
-    FolderOpen, Save, CloudDownload, Check, Edit3, RotateCcw, ArrowLeft, Star, X, Undo2
+    Save, CloudDownload, Check, Edit3, RotateCcw, ArrowLeft, Star, X, Undo2, TriangleAlert
 } from 'lucide-react';
 import { SHIFT_DURATION_SLOTS, BREAK_THRESHOLD_HOURS } from '../../utils/demandConstants';
 
@@ -246,6 +243,8 @@ export const OnDemandWorkspace: React.FC = () => {
     const [defaultScheduleId, setDefaultScheduleId] = useState<string | null>(
         () => localStorage.getItem('od-default-schedule-id')
     );
+    const [hasResolvedInitialDataSource, setHasResolvedInitialDataSource] = useState(() => !localStorage.getItem('od-default-schedule-id'));
+    const [dismissedSampleBanner, setDismissedSampleBanner] = useState(false);
 
     // Draft Name State (Supporting "Save As" via Rename)
     const [draftName, setDraftName] = useState<string>(`On-Demand Schedule - ${new Date().toLocaleDateString()}`);
@@ -327,6 +326,14 @@ export const OnDemandWorkspace: React.FC = () => {
     const shiftCountWithinHardCap = shifts.length <= activeMaxShiftCount;
     const fleetWithinLimit = maxConcurrentVehicles <= optimizationSettings.maxFleetVehicles;
     const isWorkspaceBusy = isAnimating || isProcessingFiles;
+    const usingStarterSampleData = !currentDraftId
+        && !loadedCloudFiles.master
+        && !loadedCloudFiles.rideco
+        && !cachedFiles.master
+        && !cachedFiles.rideco
+        && !uploadedFiles.master
+        && !uploadedFiles.rideco;
+    const showStarterSampleBanner = hasResolvedInitialDataSource && usingStarterSampleData && !dismissedSampleBanner;
     const settingsInstruction = useMemo(
         () => buildOptimizerSettingsInstruction(optimizationSettings, selectedDayType),
         [optimizationSettings, selectedDayType]
@@ -710,8 +717,8 @@ export const OnDemandWorkspace: React.FC = () => {
 
     const handleShiftUpdate = (updatedShift: Shift) => {
         captureUndoSnapshot('shift edit');
-        setShifts(prev => updateShiftInDay(prev, updatedShift, selectedDayType));
-        setAllShifts(prev => updateShiftInDay(prev, updatedShift, selectedDayType));
+        setShifts(prev => syncShiftHandoffInDay(prev, updatedShift, selectedDayType));
+        setAllShifts(prev => syncShiftHandoffInDay(prev, updatedShift, selectedDayType));
     };
 
     const handleDayTypeChange = (dayType: string) => {
@@ -932,8 +939,13 @@ export const OnDemandWorkspace: React.FC = () => {
 
     // Auto-load default schedule once auth/default id is available
     React.useEffect(() => {
-        if (!user || !defaultScheduleId) return;
+        if (!user || !defaultScheduleId) {
+            setHasResolvedInitialDataSource(true);
+            return;
+        }
+
         let cancelled = false;
+        setHasResolvedInitialDataSource(false);
         (async () => {
             try {
                 const schedule = await getSchedule(user.uid, defaultScheduleId);
@@ -948,6 +960,10 @@ export const OnDemandWorkspace: React.FC = () => {
             } catch (err) {
                 console.warn('Failed to auto-load default schedule:', err);
                 // Don't clear preference on network error — retry next visit
+            } finally {
+                if (!cancelled) {
+                    setHasResolvedInitialDataSource(true);
+                }
             }
         })();
         return () => { cancelled = true; };
@@ -1281,7 +1297,14 @@ export const OnDemandWorkspace: React.FC = () => {
                             <button
                                 onClick={async () => {
                                     if (blockInvalidOperationalOutput('Paddles PDF export')) return;
-                                    await exportTODPaddlesPDF(allShifts);
+                                    await exportTODPaddlesPDF(allShifts, {
+                                        assignedBreakMinutes: optimizationSettings.breakDurationMinutes,
+                                        deadheadMinutesByZone: {
+                                            [Zone.NORTH]: optimizationSettings.northChangeoffMinutes,
+                                            [Zone.SOUTH]: optimizationSettings.southChangeoffMinutes,
+                                            [Zone.FLOATER]: 6,
+                                        },
+                                    });
                                 }}
                                 disabled={allShifts.length === 0}
                                 className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${allShifts.length === 0
@@ -1297,7 +1320,14 @@ export const OnDemandWorkspace: React.FC = () => {
                             <button
                                 onClick={async () => {
                                     if (blockInvalidOperationalOutput('Paddles Excel export')) return;
-                                    await exportTODPaddlesExcel(allShifts);
+                                    await exportTODPaddlesExcel(allShifts, {
+                                        assignedBreakMinutes: optimizationSettings.breakDurationMinutes,
+                                        deadheadMinutesByZone: {
+                                            [Zone.NORTH]: optimizationSettings.northChangeoffMinutes,
+                                            [Zone.SOUTH]: optimizationSettings.southChangeoffMinutes,
+                                            [Zone.FLOATER]: 6,
+                                        },
+                                    });
                                 }}
                                 disabled={allShifts.length === 0}
                                 className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${allShifts.length === 0
@@ -1516,6 +1546,32 @@ export const OnDemandWorkspace: React.FC = () => {
                 </div>
             </div>
 
+            {showStarterSampleBanner && (
+                <div className="mb-8 flex items-start justify-between gap-4 rounded-3xl border-2 border-amber-300 bg-gradient-to-r from-amber-50 via-orange-50 to-rose-50 px-5 py-4 shadow-sm animate-in slide-in-from-top-2 duration-500">
+                    <div className="flex items-start gap-3">
+                        <div className="mt-0.5 rounded-2xl bg-amber-500 p-2 text-white shadow-sm">
+                            <TriangleAlert size={18} />
+                        </div>
+                        <div>
+                            <p className="text-sm font-black uppercase tracking-[0.2em] text-amber-700">Sample Data Loaded</p>
+                            <h2 className="mt-1 text-xl font-extrabold text-gray-900">
+                                This workspace opens with starter sample data.
+                            </h2>
+                            <p className="mt-1 text-sm font-semibold text-gray-700">
+                                The current requirements and shifts are seeded placeholders for demonstration. Upload real master schedule and RideCo files, or load a saved draft, before using this for operational decisions.
+                            </p>
+                        </div>
+                    </div>
+                    <button
+                        onClick={() => setDismissedSampleBanner(true)}
+                        className="rounded-xl border border-amber-200 bg-white/80 p-2 text-amber-700 transition-colors hover:bg-white hover:text-amber-900"
+                        title="Dismiss sample data notice"
+                    >
+                        <X size={16} />
+                    </button>
+                </div>
+            )}
+
             {/* File Upload Staging Area */}
             {(uploadedFiles.master || uploadedFiles.rideco) && (
                 <div className="mb-8 bg-blue-50 border border-blue-100 rounded-2xl p-6 flex items-center justify-between animate-in slide-in-from-top-4">
@@ -1696,6 +1752,7 @@ export const OnDemandWorkspace: React.FC = () => {
                         zoneFilter={zoneFilter}
                         onZoneFilterChange={setZoneFilter}
                         metrics={metrics}
+                        changeoffSettings={optimizationSettings}
                     />
                 </div>
             )}

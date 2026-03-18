@@ -34,6 +34,9 @@ import {
     getAllRoutePlannerProjects,
     saveRoutePlannerProject,
 } from '../../utils/services/routePlannerProjectService';
+import { getAllMasterSchedules, getMasterSchedule } from '../../utils/services/masterScheduleService';
+import { deriveRoutePlannerMasterServiceSeed, findMostRecentMasterScheduleEntry, type RoutePlannerMasterServiceSeed } from '../../utils/route-planner/routePlannerMasterSchedule';
+import type { RouteIdentity } from '../../utils/masterScheduleTypes';
 
 function getErrorMessage(error: unknown): string {
     if (error instanceof Error && error.message.trim()) return error.message;
@@ -93,6 +96,8 @@ export interface RoutePlannerProjectController {
     canCompare: boolean;
     visibleScenarios: RouteScenario[];
     draftState: { baseSource: DraftRouteBaseSourceKind; routeId: string };
+    masterServiceSeed: RoutePlannerMasterServiceSeed | null;
+    isLoadingMasterServiceSeed: boolean;
     mapEditMode: 'inspect' | 'route' | 'stop';
     barrieStopsGeoJson: GeoJSON.FeatureCollection;
     isLoadingProjects: boolean;
@@ -171,8 +176,11 @@ export function useRoutePlannerProjectController({
     const [compareMode, setCompareMode] = useState(mode === 'existing-route-tweak');
     const [selectedStopId, setSelectedStopId] = useState<string | null>(null);
     const [mapEditMode, setMapEditMode] = useState<'inspect' | 'route' | 'stop'>('inspect');
+    const [masterServiceSeed, setMasterServiceSeed] = useState<RoutePlannerMasterServiceSeed | null>(null);
+    const [isLoadingMasterServiceSeed, setIsLoadingMasterServiceSeed] = useState(false);
     const stopRerouteRequestRef = useRef(0);
     const waypointRerouteRequestRef = useRef(0);
+    const masterServiceSeedRequestRef = useRef(0);
     const barrieStops = useMemo(() => getAllStopsWithCoords(), []);
     const barrieStopsGeoJson = useMemo(() => buildBarrieStopsGeoJson(barrieStops), [barrieStops]);
 
@@ -195,6 +203,55 @@ export function useRoutePlannerProjectController({
             syncDraftRouteProjectSource(current, mode, draftState.baseSource, draftState.routeId)
         );
     }, [draftState.baseSource, draftState.routeId, mode]);
+
+    useEffect(() => {
+        if (draftState.baseSource !== 'existing-route' || !teamId) {
+            setMasterServiceSeed(null);
+            setIsLoadingMasterServiceSeed(false);
+            return;
+        }
+
+        const requestId = masterServiceSeedRequestRef.current + 1;
+        masterServiceSeedRequestRef.current = requestId;
+        setIsLoadingMasterServiceSeed(true);
+
+        void (async () => {
+            try {
+                const schedules = await getAllMasterSchedules(teamId);
+                const latestEntry = findMostRecentMasterScheduleEntry(schedules, draftState.routeId);
+
+                if (!latestEntry) {
+                    if (masterServiceSeedRequestRef.current === requestId) {
+                        setMasterServiceSeed(null);
+                    }
+                    return;
+                }
+
+                const masterSchedule = await getMasterSchedule(teamId, latestEntry.id as RouteIdentity);
+                const nextSeed = masterSchedule
+                    ? deriveRoutePlannerMasterServiceSeed(masterSchedule.entry, masterSchedule.content)
+                    : null;
+
+                if (masterServiceSeedRequestRef.current !== requestId) return;
+
+                setMasterServiceSeed(nextSeed);
+                if (!nextSeed) return;
+
+                setProject((current) =>
+                    syncDraftRouteProjectSource(current, mode, draftState.baseSource, draftState.routeId, nextSeed)
+                );
+            } catch (error) {
+                console.error('Failed to load route planner master schedule seed:', error);
+                if (masterServiceSeedRequestRef.current === requestId) {
+                    setMasterServiceSeed(null);
+                }
+            } finally {
+                if (masterServiceSeedRequestRef.current === requestId) {
+                    setIsLoadingMasterServiceSeed(false);
+                }
+            }
+        })();
+    }, [draftState.baseSource, draftState.routeId, mode, teamId]);
 
     const loadProjects = async (preferredProjectId?: string): Promise<void> => {
         if (!userId) {
@@ -794,7 +851,7 @@ export function useRoutePlannerProjectController({
     };
 
     const handleCreateFreshProject = (): void => {
-        const freshProject = createDraftRouteProject(mode, draftState.baseSource, draftState.routeId, teamId);
+        const freshProject = createDraftRouteProject(mode, draftState.baseSource, draftState.routeId, teamId, masterServiceSeed);
         setProject(freshProject);
         setLocalDraftProject(freshProject);
         setDraftState(inferDraftState(freshProject, initialRouteId));
@@ -842,6 +899,8 @@ export function useRoutePlannerProjectController({
         canCompare,
         visibleScenarios,
         draftState,
+        masterServiceSeed,
+        isLoadingMasterServiceSeed,
         mapEditMode,
         barrieStopsGeoJson,
         isLoadingProjects,

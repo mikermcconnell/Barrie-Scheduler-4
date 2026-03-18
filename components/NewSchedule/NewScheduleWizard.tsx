@@ -191,6 +191,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
     const [segmentNames, setSegmentNames] = useState<string[]>([]);
     const [canonicalSegmentColumns, setCanonicalSegmentColumns] = useState<OrderedSegmentColumn[] | undefined>(undefined);
     const [canonicalDirectionStops, setCanonicalDirectionStops] = useState<Record<string, string[]> | undefined>(undefined);
+    const [canonicalRouteIdentity, setCanonicalRouteIdentity] = useState<string | undefined>(undefined);
 
     // State for Step 3 Config
     const [config, setConfig] = useState<ScheduleConfig>({
@@ -257,20 +258,26 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         if (!team?.id || !config.routeNumber?.trim()) {
             setCanonicalSegmentColumns(undefined);
             setCanonicalDirectionStops(undefined);
+            setCanonicalRouteIdentity(undefined);
             return () => {
                 isCancelled = true;
             };
         }
 
+        const routeIdentity = buildRouteIdentity(config.routeNumber.trim(), dayType);
+        setCanonicalSegmentColumns(undefined);
+        setCanonicalDirectionStops(undefined);
+        setCanonicalRouteIdentity(undefined);
+
         const loadCanonicalSegmentColumns = async () => {
             try {
-                const routeIdentity = buildRouteIdentity(config.routeNumber.trim(), dayType);
                 const result = await getMasterSchedule(team.id, routeIdentity);
                 if (isCancelled) return;
 
                 if (!result) {
                     setCanonicalSegmentColumns(undefined);
                     setCanonicalDirectionStops(undefined);
+                    setCanonicalRouteIdentity(routeIdentity);
                     return;
                 }
 
@@ -285,11 +292,13 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                 );
                 setCanonicalDirectionStops(directionStops);
                 setCanonicalSegmentColumns(columns.length > 0 ? columns : undefined);
+                setCanonicalRouteIdentity(routeIdentity);
             } catch (error) {
                 if (isCancelled) return;
                 console.error('Error loading canonical segment columns from master schedule:', error);
                 setCanonicalSegmentColumns(undefined);
                 setCanonicalDirectionStops(undefined);
+                setCanonicalRouteIdentity(undefined);
             }
         };
 
@@ -859,13 +868,16 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
             const groupedData = buildSegmentsMapFromParsedData(sortedParsedData);
             setSegmentsMap(groupedData);
 
-            let generationCanonicalColumns = canonicalSegmentColumns;
-            let generationCanonicalStops = canonicalDirectionStops;
+            const currentRouteIdentity = config.routeNumber?.trim()
+                ? buildRouteIdentity(config.routeNumber.trim(), dayType)
+                : undefined;
+            const hasFreshCanonicalData = !!currentRouteIdentity && canonicalRouteIdentity === currentRouteIdentity;
+            let generationCanonicalColumns = hasFreshCanonicalData ? canonicalSegmentColumns : undefined;
+            let generationCanonicalStops = hasFreshCanonicalData ? canonicalDirectionStops : undefined;
 
-            if ((!generationCanonicalColumns || !generationCanonicalStops) && team?.id && config.routeNumber?.trim()) {
+            if ((!generationCanonicalColumns || !generationCanonicalStops) && team?.id && config.routeNumber?.trim() && currentRouteIdentity) {
                 try {
-                    const routeIdentity = buildRouteIdentity(config.routeNumber.trim(), dayType);
-                    const masterResult = await getMasterSchedule(team.id, routeIdentity);
+                    const masterResult = await getMasterSchedule(team.id, currentRouteIdentity);
                     if (masterResult) {
                         generationCanonicalStops = {
                             North: masterResult.content.northTable.stops || [],
@@ -878,7 +890,11 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                         );
                         setCanonicalDirectionStops(generationCanonicalStops);
                         setCanonicalSegmentColumns(generationCanonicalColumns);
+                    } else {
+                        generationCanonicalStops = undefined;
+                        generationCanonicalColumns = undefined;
                     }
+                    setCanonicalRouteIdentity(currentRouteIdentity);
                 } catch (error) {
                     console.error('Failed to refresh canonical master data before generation:', error);
                 }

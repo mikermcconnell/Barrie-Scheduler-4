@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Layer, Popup, Source } from 'react-map-gl/mapbox';
-import type { LayerProps, MapMouseEvent, MapRef } from 'react-map-gl/mapbox';
+import type { MapMouseEvent, MapRef } from 'react-map-gl/mapbox';
 import type { StopMetrics } from '../../utils/performanceDataTypes';
-import { getAllStopsWithCoords } from '../../utils/gtfs/gtfsStopLookup';
+import { findStopCoords } from '../../utils/gtfs/gtfsStopLookup';
 import { loadGtfsRouteShapes } from '../../utils/gtfs/gtfsShapesLoader';
 import {
   getStopActivityBreakdown,
@@ -11,7 +11,7 @@ import {
   hasHourlyDataForStops,
   matchesStopSearch,
 } from '../../utils/performanceStopActivity';
-import { LassoControl, MapBase, RouteOverlay, toGeoJSON, pointInPolygon } from '../shared';
+import { HeatmapDotLayer, LassoControl, MapBase, RouteOverlay, toGeoJSON, pointInPolygon } from '../shared';
 
 interface StopActivityMapProps { stops: StopMetrics[]; }
 type ViewMode = 'total' | 'boardings' | 'alightings';
@@ -42,6 +42,12 @@ const HOUR_PRESETS = [
   { label: 'Evening', detail: '7-9 PM', hours: [19, 20, 21] },
   { label: 'Late Night', detail: '10 PM-1 AM', hours: [22, 23, 0, 1] },
 ] as const;
+const BARRIE_COORD_BOUNDS = {
+  minLat: 44.2,
+  maxLat: 44.55,
+  minLon: -79.9,
+  maxLon: -79.5,
+} as const;
 
 function zoomScale(zoom: number): number {
   return Math.max(0.3, Math.min(Math.pow(2, (zoom - 14) * 0.5), 2));
@@ -55,10 +61,13 @@ function assignBins(activities: number[]): number[] {
   return activities.map((a) => (a === 0 ? 0 : Math.max(1, Math.min(9, Math.ceil((Math.log(a + 1) / logMax) * 9)))));
 }
 
-function buildGtfsCoordsMap(): Map<string, { lat: number; lon: number }> {
-  const map = new Map<string, { lat: number; lon: number }>();
-  for (const stop of getAllStopsWithCoords()) map.set(stop.stop_id, { lat: stop.lat, lon: stop.lon });
-  return map;
+function hasUsableBarrieCoords(lat: number, lon: number): boolean {
+  return Number.isFinite(lat)
+    && Number.isFinite(lon)
+    && lat >= BARRIE_COORD_BOUNDS.minLat
+    && lat <= BARRIE_COORD_BOUNDS.maxLat
+    && lon >= BARRIE_COORD_BOUNDS.minLon
+    && lon <= BARRIE_COORD_BOUNDS.maxLon;
 }
 
 const Legend = () => (
@@ -107,13 +116,23 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({ stops }) => {
   const [lassoSelection, setLassoSelection] = useState<EnrichedStop[] | null>(null);
   const [bottomNFilter, setBottomNFilter] = useState<number | null>(null);
 
-  const gtfsCoords = useMemo(() => buildGtfsCoordsMap(), []);
-  const enrichedStops = useMemo(() => stops.map((stop) => { const gtfs = gtfsCoords.get(stop.stopId); return gtfs ? { ...stop, lat: gtfs.lat, lon: gtfs.lon } : stop; }), [stops, gtfsCoords]);
+  const enrichedStops = useMemo(() => stops.map((stop) => {
+    const gtfs = findStopCoords(stop.stopId, stop.stopName);
+    if (gtfs) {
+      return { ...stop, lat: gtfs.lat, lon: gtfs.lon };
+    }
+
+    if (hasUsableBarrieCoords(stop.lat, stop.lon)) {
+      return stop;
+    }
+
+    return { ...stop, lat: Number.NaN, lon: Number.NaN };
+  }), [stops]);
   const hasHourlyData = useMemo(() => hasHourlyDataForStops(enrichedStops), [enrichedStops]);
   const availableRoutes = useMemo(() => Array.from(new Set(enrichedStops.flatMap((stop) => stop.routes || []))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })), [enrichedStops]);
   const routeShapes = useMemo(() => { try { return loadGtfsRouteShapes(); } catch { return []; } }, []);
   const filteredStops = useMemo(() => {
-    let result = enrichedStops.filter((stop) => typeof stop.lat === 'number' && typeof stop.lon === 'number');
+    let result = enrichedStops.filter((stop) => hasUsableBarrieCoords(stop.lat, stop.lon));
     if (selectedRoute !== 'all') result = result.filter((stop) => stop.routes?.includes(selectedRoute));
     return result.map((stop) => {
       const filtered = getStopActivityBreakdown(stop, activeHours);
@@ -134,10 +153,6 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({ stops }) => {
   const selectedRank = selectedStop ? rankedDisplayedStops.findIndex((stop) => stop.stopId === selectedStop.stopId) + 1 : 0;
 
   const zoomScaleExpr = useMemo(() => ['interpolate', ['linear'], ['zoom'], 10, zoomScale(10), 14, 1, 18, zoomScale(18)] as mapboxgl.Expression, []);
-  const radiusExpr = useMemo(() => ['interpolate', ['linear'], ['get', 'bin'], 0, 3, 1, 4, 2, 5, 3, 6, 4, 7, 5, 9, 6, 11, 7, 14, 8, 17, 9, 21] as mapboxgl.Expression, []);
-  const colorExpr = useMemo(() => ['case', ['==', ['get', 'bin'], 0], 'rgba(255,255,255,0)', ['==', ['get', 'bin'], 1], '#d1d5db', ['==', ['get', 'bin'], 2], '#b0b5bc', ['==', ['get', 'bin'], 3], '#fef9c3', ['==', ['get', 'bin'], 4], '#fde68a', ['==', ['get', 'bin'], 5], '#fbbf24', ['==', ['get', 'bin'], 6], '#f59e0b', ['==', ['get', 'bin'], 7], '#f97316', ['==', ['get', 'bin'], 8], '#ef4444', '#b91c1c'] as mapboxgl.Expression, []);
-  const opacityExpr = useMemo(() => ['case', ['==', ['get', 'bin'], 0], 0, ['==', ['get', 'bin'], 1], 0.7, ['==', ['get', 'bin'], 2], 0.75, ['==', ['get', 'bin'], 3], 0.8, ['==', ['get', 'bin'], 4], 0.82, ['==', ['get', 'bin'], 5], 0.85, ['==', ['get', 'bin'], 6], 0.88, ['==', ['get', 'bin'], 7], 0.9, ['==', ['get', 'bin'], 8], 0.93, 0.95] as mapboxgl.Expression, []);
-  const stopLayer = useMemo<LayerProps>(() => ({ id: STOP_CIRCLE_LAYER_ID, type: 'circle', layout: { 'circle-sort-key': ['get', 'sortKey'] }, paint: { 'circle-radius': ['*', radiusExpr, zoomScaleExpr] as mapboxgl.Expression, 'circle-color': colorExpr, 'circle-opacity': opacityExpr, 'circle-stroke-color': OUTLINE_COLOR, 'circle-stroke-width': ['case', ['==', ['get', 'bin'], 0], 1.5, 1] as mapboxgl.Expression, 'circle-stroke-opacity': ['case', ['==', ['get', 'bin'], 0], 0.4, 0.8] as mapboxgl.Expression } }), [colorExpr, opacityExpr, radiusExpr, zoomScaleExpr]);
   const labelLayout = useMemo(() => ({ 'text-field': ['get', 'name'] as mapboxgl.Expression, 'text-size': 9, 'text-anchor': 'left' as const, 'text-offset': [0.9, 0.35] as [number, number], 'text-allow-overlap': false, 'symbol-sort-key': ['get', 'sortKey'] as mapboxgl.Expression }), []);
   const labelPaint = useMemo(() => ({ 'text-color': '#374151', 'text-halo-color': '#ffffff', 'text-halo-width': 1.8, 'text-halo-blur': 0.6 }), []);
   const ringGeoJSON = useCallback((stop: EnrichedStop | null, extra: number) => !stop ? null : ({ type: 'FeatureCollection' as const, features: [{ type: 'Feature' as const, properties: { radiusBase: ((renderedStopMap.get(stop.stopId)?.bin ?? 5) === 0 ? 14 : BINS[renderedStopMap.get(stop.stopId)?.bin ?? 5].radius) + extra }, geometry: { type: 'Point' as const, coordinates: toGeoJSON([stop.lat, stop.lon]) } }] }), [renderedStopMap]);
@@ -198,7 +213,7 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({ stops }) => {
   }, [displayedStops, selectedStop]);
   useEffect(() => {
     if (!mapReady || displayedStops.length === 0 || hasFittedRef.current) return;
-    const boundsStops = enrichedStops.filter((stop) => typeof stop.lat === 'number' && typeof stop.lon === 'number');
+    const boundsStops = enrichedStops.filter((stop) => hasUsableBarrieCoords(stop.lat, stop.lon));
     const target = boundsStops.length > 0 ? boundsStops : displayedStops;
     mapRef.current?.fitBounds([[Math.min(...target.map((stop) => stop.lon as number)), Math.min(...target.map((stop) => stop.lat as number))], [Math.max(...target.map((stop) => stop.lon as number)), Math.max(...target.map((stop) => stop.lat as number))]], { padding: 20, duration: 0 });
     hasFittedRef.current = true;
@@ -225,7 +240,18 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({ stops }) => {
       <div className={isFullscreen ? 'flex-1 w-full min-h-0' : 'h-[750px] w-full rounded-lg overflow-hidden'}>
         <MapBase mapRef={mapRef} latitude={BARRIE_CENTER[0]} longitude={BARRIE_CENTER[1]} zoom={13} showNavigation={true} onLoad={handleMapLoad} interactiveLayerIds={[STOP_CIRCLE_LAYER_ID]} onMouseMove={handleMapMouseMove} onMouseLeave={handleMapMouseLeave} onClick={handleMapClick} style={{ borderRadius: isFullscreen ? 0 : '0.5rem' }}>
           {routeShapesForDisplay.length > 0 && <RouteOverlay shapes={routeShapesForDisplay} opacity={selectedRoute === 'all' ? 0.65 : 0.85} weight={selectedRoute === 'all' ? 2.5 : 4} dashed={false} idPrefix="stop-activity-routes" />}
-          <Source id="stop-activity-stops-src" type="geojson" data={stopGeoJSON}><Layer {...stopLayer} /><Layer id="stop-activity-labels-major" type="symbol" minzoom={15} maxzoom={16} filter={['>=', ['get', 'bin'], 7] as unknown as mapboxgl.FilterSpecification} layout={labelLayout} paint={labelPaint} /><Layer id="stop-activity-labels-all" type="symbol" minzoom={16} layout={labelLayout} paint={labelPaint} /></Source>
+          <HeatmapDotLayer
+            idPrefix="stop-activity"
+            points={renderedStops.map((stop) => ({
+              id: stop.stopId,
+              lat: stop.lat,
+              lon: stop.lon,
+              value: stop.activity,
+            }))}
+            bins={BINS}
+            outlineColor={OUTLINE_COLOR}
+          />
+          <Source id="stop-activity-labels-src" type="geojson" data={stopGeoJSON}><Layer id="stop-activity-labels-major" type="symbol" minzoom={15} maxzoom={16} filter={['>=', ['get', 'bin'], 7] as unknown as mapboxgl.FilterSpecification} layout={labelLayout} paint={labelPaint} /><Layer id="stop-activity-labels-all" type="symbol" minzoom={16} layout={labelLayout} paint={labelPaint} /></Source>
           {selectedRing && <Source id="stop-activity-selected-src" type="geojson" data={selectedRing}><Layer id="stop-activity-selected-layer" type="circle" paint={{ 'circle-radius': ['*', ['get', 'radiusBase'], zoomScaleExpr] as mapboxgl.Expression, 'circle-color': '#3b82f6', 'circle-opacity': 0.15, 'circle-stroke-color': '#3b82f6', 'circle-stroke-width': 3 }} /></Source>}
           {previewRing && <Source id="stop-activity-preview-src" type="geojson" data={previewRing}><Layer id="stop-activity-preview-layer" type="circle" paint={{ 'circle-radius': ['*', ['get', 'radiusBase'], zoomScaleExpr] as mapboxgl.Expression, 'circle-color': '#3b82f6', 'circle-opacity': 0.12, 'circle-stroke-color': '#3b82f6', 'circle-stroke-width': 2.5 }} /></Source>}
           {lassoRing && <Source id="stop-activity-lasso-src" type="geojson" data={lassoRing}><Layer id="stop-activity-lasso-layer" type="circle" paint={{ 'circle-radius': ['*', ['get', 'radiusBase'], zoomScaleExpr] as mapboxgl.Expression, 'circle-color': '#f59e0b', 'circle-opacity': 0.2, 'circle-stroke-color': '#f59e0b', 'circle-stroke-width': 2.5 }} /></Source>}

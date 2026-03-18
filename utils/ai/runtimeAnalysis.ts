@@ -57,6 +57,87 @@ interface CanonicalSegmentColumnLike {
     direction?: string;
 }
 
+export interface SegmentBreakdownAggregate {
+    weightedSum: number;
+    totalWeight: number;
+    totalN: number;
+}
+
+export interface SegmentBreakdownBandData {
+    band: TimeBand;
+    segmentTotals: Record<string, SegmentBreakdownAggregate>;
+    totalSum: number;
+    totalCount: number;
+    timeSlots: string[];
+}
+
+export const sumDisplayedSegmentTotals = (
+    segmentNames: string[],
+    segmentTotals: Record<string, SegmentBreakdownAggregate>
+): number => (
+    segmentNames.reduce((sum, segmentName) => {
+        const aggregate = segmentTotals[segmentName];
+        if (!aggregate || aggregate.totalWeight <= 0) return sum;
+        return sum + Math.round(aggregate.weightedSum / aggregate.totalWeight);
+    }, 0)
+);
+
+export const computeSegmentBreakdownByBand = (
+    analysis: TripBucketAnalysis[],
+    bands: TimeBand[],
+    segmentNames: string[],
+    metric: 'p50' | 'p80'
+): Record<string, SegmentBreakdownBandData> => {
+    const canonicalSegmentNameLookup = buildNormalizedSegmentNameLookup(segmentNames);
+    const summary: Record<string, SegmentBreakdownBandData> = {};
+
+    bands.forEach((band) => {
+        summary[band.id] = {
+            band,
+            segmentTotals: {},
+            totalSum: 0,
+            totalCount: 0,
+            timeSlots: [],
+        };
+
+        segmentNames.forEach((segmentName) => {
+            summary[band.id].segmentTotals[segmentName] = {
+                weightedSum: 0,
+                totalWeight: 0,
+                totalN: 0,
+            };
+        });
+    });
+
+    analysis.forEach((bucket) => {
+        if (bucket.ignored || !bucket.assignedBand) return;
+        const bandData = summary[bucket.assignedBand];
+        if (!bandData) return;
+
+        bandData.timeSlots.push(bucket.timeBucket.split(' - ')[0]);
+
+        bucket.details?.forEach((detail) => {
+            const canonicalSegmentName = resolveCanonicalSegmentName(detail.segmentName, canonicalSegmentNameLookup);
+            if (!canonicalSegmentName) return;
+
+            const target = bandData.segmentTotals[canonicalSegmentName];
+            if (!target) return;
+
+            const weight = detail.n && detail.n > 0 ? detail.n : 1;
+            const value = metric === 'p50' ? detail.p50 : detail.p80;
+            target.weightedSum += value * weight;
+            target.totalWeight += weight;
+            target.totalN += weight;
+        });
+
+        const total = metric === 'p50' ? bucket.totalP50 : bucket.totalP80;
+        bandData.totalSum += total;
+        bandData.totalCount += 1;
+    });
+
+    return summary;
+};
+
 const COLORS = {
     A: '#ef4444', // Red (Classic implementation often uses Red for longest/slowest)
     B: '#f97316', // Orange

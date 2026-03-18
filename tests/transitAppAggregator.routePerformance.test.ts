@@ -112,4 +112,77 @@ describe('aggregateTransitAppData routePerformance', () => {
         expect(zzz?.normalizationAvailable).toBe(false);
         expect(zzz?.viewsPerScheduledTrip).toBeNull();
     });
+
+    it('uses view-based suggestion rates for planner scorecards', () => {
+        const parsed: TransitAppParsedData = {
+            lines: [makeLine('400', '2025-09-09', 100, 20, 30, 6)],
+            trips: [],
+            locations: [],
+            goTripLegs: [makeLeg('400', 'a1')],
+            plannedTripLegs: [],
+            tappedTripLegs: [],
+            users: [],
+        };
+
+        const summary = aggregateTransitAppData(parsed, baseStats, 'tester');
+        const route400 = summary.routePerformance?.scorecard.find(r => r.route === '400');
+
+        expect(route400).toBeDefined();
+        expect(route400?.viewToTapRate).toBe(0.2);
+        expect(route400?.viewToSuggestionRate).toBe(0.3);
+        expect(route400?.tapToSuggestionRate).toBe(1.5);
+        expect(route400?.suggestionToGoRate).toBe(0.2);
+    });
+
+    it('scopes observed legs to the row month instead of all imported history', () => {
+        const parsed: TransitAppParsedData = {
+            lines: [
+                makeLine('A', '2025-01-09', 100, 50, 30, 6),
+                makeLine('B', '2025-01-09', 100, 50, 30, 6),
+                makeLine('A', '2025-09-09', 100, 50, 30, 6),
+                makeLine('B', '2025-09-09', 100, 50, 30, 6),
+            ],
+            trips: [],
+            locations: [],
+            goTripLegs: [
+                {
+                    ...makeLeg('A', 'a-sep'),
+                    start_time: '2025-09-09 08:00:00 UTC',
+                    end_time: '2025-09-09 08:20:00 UTC',
+                },
+                {
+                    ...makeLeg('B', 'b-jan-1'),
+                    start_time: '2025-01-09 08:00:00 UTC',
+                    end_time: '2025-01-09 08:20:00 UTC',
+                },
+                {
+                    ...makeLeg('B', 'b-jan-2'),
+                    start_time: '2025-01-10 08:00:00 UTC',
+                    end_time: '2025-01-10 08:20:00 UTC',
+                },
+                {
+                    ...makeLeg('B', 'b-jan-3'),
+                    start_time: '2025-01-11 08:00:00 UTC',
+                    end_time: '2025-01-11 08:20:00 UTC',
+                },
+                {
+                    ...makeLeg('B', 'b-sep'),
+                    start_time: '2025-09-09 08:00:00 UTC',
+                    end_time: '2025-09-09 08:20:00 UTC',
+                },
+            ],
+            plannedTripLegs: [],
+            tappedTripLegs: [],
+            users: [],
+        };
+
+        const summary = aggregateTransitAppData(parsed, baseStats, 'tester');
+        const septemberB = summary.routePerformance?.monthly.find(r => r.route === 'B' && r.month === '2025-09');
+        const januaryB = summary.routePerformance?.monthly.find(r => r.route === 'B' && r.month === '2025-01');
+        const scorecardB = summary.routePerformance?.scorecard.find(r => r.route === 'B');
+
+        expect(januaryB?.totalLegs).toBe(3);
+        expect(septemberB?.totalLegs).toBe(1);
+        expect(scorecardB?.totalLegs).toBe(1);
+    });
 });

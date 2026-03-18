@@ -1,6 +1,7 @@
 import { getRouteConfig, isLoop } from '../config/routeDirectionConfig';
 import { loadGtfsRouteShapes } from '../gtfs/gtfsShapesLoader';
 import { simplifyRouteControlPoints } from './routePlannerControlPoints';
+import type { RoutePlannerMasterServiceSeed } from './routePlannerMasterSchedule';
 import { deriveRouteProject } from './routePlannerPlanning';
 import type { RouteBaseSource, RouteProject, RouteScenario, RouteScenarioPattern, RouteScenarioType } from './routePlannerTypes';
 
@@ -8,6 +9,9 @@ export type DraftRoutePlannerMode = 'existing-route-tweak' | 'route-concept';
 export type DraftRouteBaseSourceKind = 'blank' | 'existing-route';
 
 const EXISTING_ROUTE_BASELINE_SUFFIX = '-baseline';
+const DEFAULT_FIRST_DEPARTURE = '06:00';
+const DEFAULT_LAST_DEPARTURE = '22:00';
+const DEFAULT_FREQUENCY_MINUTES = 20;
 
 function buildBaseSource(baseSource: DraftRouteBaseSourceKind, routeId: string): RouteBaseSource {
     if (baseSource === 'existing-route') {
@@ -132,7 +136,8 @@ function createDraftScenario(
     mode: DraftRoutePlannerMode,
     baseSource: DraftRouteBaseSourceKind,
     routeId: string,
-    variant: 'default' | 'baseline' | 'working' = 'default'
+    variant: 'default' | 'baseline' | 'working' = 'default',
+    serviceSeed?: RoutePlannerMasterServiceSeed | null
 ): RouteScenario {
     const pattern = inferPattern(baseSource, routeId);
     const seed = buildRouteScenarioSeed(baseSource, routeId, pattern);
@@ -148,6 +153,21 @@ function createDraftScenario(
                 ? `Working scenario seeded from Route ${routeId}. Edit this option to test roadway and stop changes against the GTFS baseline.`
                 : `Starting template: Route ${routeId}.`
             : 'Start from a blank concept and define the corridor, stops, and service assumptions.';
+    const seededServiceDefinition = baseSource === 'existing-route' && serviceSeed
+        ? {
+            firstDeparture: serviceSeed.firstDeparture,
+            lastDeparture: serviceSeed.lastDeparture,
+            frequencyMinutes: serviceSeed.frequencyMinutes,
+            layoverMinutes: serviceSeed.layoverMinutes,
+            stops: serviceSeed.seededStops,
+        }
+        : {
+            firstDeparture: DEFAULT_FIRST_DEPARTURE,
+            lastDeparture: DEFAULT_LAST_DEPARTURE,
+            frequencyMinutes: DEFAULT_FREQUENCY_MINUTES,
+            layoverMinutes: 5,
+            stops: seed.stops,
+        };
 
     return {
         id: `${mode}-${baseSource}-${routeId}-${scenarioIdSuffix}`,
@@ -168,10 +188,10 @@ function createDraftScenario(
         cycleMinutes: 0,
         busesRequired: 0,
         serviceHours: 0,
-        firstDeparture: '06:00',
-        lastDeparture: '22:00',
-        frequencyMinutes: 20,
-        layoverMinutes: 5,
+        firstDeparture: seededServiceDefinition.firstDeparture,
+        lastDeparture: seededServiceDefinition.lastDeparture,
+        frequencyMinutes: seededServiceDefinition.frequencyMinutes,
+        layoverMinutes: seededServiceDefinition.layoverMinutes,
         timingProfile: 'balanced',
         startTerminalHoldMinutes: 0,
         endTerminalHoldMinutes: 0,
@@ -180,7 +200,7 @@ function createDraftScenario(
         departures: [],
         waypoints: seed.waypoints,
         geometry: seed.geometry,
-        stops: seed.stops,
+        stops: seededServiceDefinition.stops,
         coverage: {},
         status: 'draft',
     };
@@ -189,16 +209,17 @@ function createDraftScenario(
 function createDraftScenarios(
     mode: DraftRoutePlannerMode,
     baseSource: DraftRouteBaseSourceKind,
-    routeId: string
+    routeId: string,
+    serviceSeed?: RoutePlannerMasterServiceSeed | null
 ): RouteScenario[] {
     if (mode === 'existing-route-tweak' && baseSource === 'existing-route') {
         return [
-            createDraftScenario(mode, baseSource, routeId, 'baseline'),
-            createDraftScenario(mode, baseSource, routeId, 'working'),
+            createDraftScenario(mode, baseSource, routeId, 'baseline', serviceSeed),
+            createDraftScenario(mode, baseSource, routeId, 'working', serviceSeed),
         ];
     }
 
-    return [createDraftScenario(mode, baseSource, routeId)];
+    return [createDraftScenario(mode, baseSource, routeId, 'default', serviceSeed)];
 }
 
 function hasExistingRouteBaselineScenario(scenarios: RouteScenario[]): boolean {
@@ -209,10 +230,11 @@ export function createDraftRouteProject(
     mode: DraftRoutePlannerMode,
     baseSource: DraftRouteBaseSourceKind,
     routeId: string,
-    teamId?: string | null
+    teamId?: string | null,
+    serviceSeed?: RoutePlannerMasterServiceSeed | null
 ): RouteProject {
     const stamp = new Date();
-    const scenarios = createDraftScenarios(mode, baseSource, routeId);
+    const scenarios = createDraftScenarios(mode, baseSource, routeId, serviceSeed);
     const preferredScenarioId = scenarios.find((scenario) => !scenario.id.endsWith(EXISTING_ROUTE_BASELINE_SUFFIX))?.id
         ?? scenarios[0]?.id
         ?? null;
@@ -233,9 +255,10 @@ export function syncDraftRouteProjectSource(
     project: RouteProject,
     mode: DraftRoutePlannerMode,
     baseSource: DraftRouteBaseSourceKind,
-    routeId: string
+    routeId: string,
+    serviceSeed?: RoutePlannerMasterServiceSeed | null
 ): RouteProject {
-    const nextScenarioTemplates = createDraftScenarios(mode, baseSource, routeId);
+    const nextScenarioTemplates = createDraftScenarios(mode, baseSource, routeId, serviceSeed);
     let scenarios = project.scenarios.length > 0
         ? project.scenarios
         : nextScenarioTemplates;
@@ -268,12 +291,42 @@ export function syncDraftRouteProjectSource(
                 ? {
                     waypoints: templateScenario.waypoints,
                     geometry: templateScenario.geometry,
-                    stops: templateScenario.stops,
                 }
                 : {};
             const shouldUseTemplateLabel = sourceChanged || !scenario.name.trim();
             const shouldUseTemplateNotes = !scenario.notes.trim();
             const isBaselineScenario = scenario.id.endsWith(EXISTING_ROUTE_BASELINE_SUFFIX);
+            const shouldUseTemplateServiceDefinition = Boolean(
+                serviceSeed
+                && templateScenario.baseSource.kind === 'existing_route'
+                && (
+                    sourceChanged
+                    || isBaselineScenario
+                    || (
+                        scenario.firstDeparture === DEFAULT_FIRST_DEPARTURE
+                        && scenario.lastDeparture === DEFAULT_LAST_DEPARTURE
+                        && scenario.frequencyMinutes === DEFAULT_FREQUENCY_MINUTES
+                    )
+                )
+            );
+            const shouldUseTemplateLayover = Boolean(
+                serviceSeed
+                && templateScenario.baseSource.kind === 'existing_route'
+                && (
+                    sourceChanged
+                    || isBaselineScenario
+                    || scenario.layoverMinutes === 5
+                )
+            );
+            const shouldUseTemplateStops = Boolean(
+                templateScenario.baseSource.kind === 'existing_route'
+                && templateScenario.stops.length > 0
+                && (
+                    sourceChanged
+                    || isBaselineScenario
+                    || scenario.stops.length === 0
+                )
+            );
 
             return {
                 ...scenario,
@@ -285,6 +338,11 @@ export function syncDraftRouteProjectSource(
                 accent: isBaselineScenario ? templateScenario.accent : scenario.accent,
                 baseSource: templateScenario.baseSource,
                 notes: isBaselineScenario || shouldUseTemplateNotes ? templateScenario.notes : scenario.notes,
+                firstDeparture: shouldUseTemplateServiceDefinition ? templateScenario.firstDeparture : scenario.firstDeparture,
+                lastDeparture: shouldUseTemplateServiceDefinition ? templateScenario.lastDeparture : scenario.lastDeparture,
+                frequencyMinutes: shouldUseTemplateServiceDefinition ? templateScenario.frequencyMinutes : scenario.frequencyMinutes,
+                layoverMinutes: shouldUseTemplateLayover ? templateScenario.layoverMinutes : scenario.layoverMinutes,
+                stops: shouldUseTemplateStops ? templateScenario.stops : scenario.stops,
             };
         }),
         updatedAt: new Date(),

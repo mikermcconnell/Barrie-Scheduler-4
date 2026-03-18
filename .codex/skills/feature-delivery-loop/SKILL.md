@@ -1,6 +1,6 @@
 ---
 name: feature-delivery-loop
-description: Plan and deliver product features in an existing codebase with a disciplined delivery loop: audit the current state, compare docs to code, choose the next highest-value milestone, implement it, verify it, and continue iteratively. Use for both new and partially implemented features when the user asks to build a feature, add a module, wire a prototype, continue a feature, proceed, keep going, implement the next step, move a feature from prototype to usable functionality, or asks "where are we at" on feature work.
+description: "Plan and deliver product features in an existing codebase with a disciplined delivery loop: audit the current state, compare docs to code, choose the next highest-value milestone, implement it, verify it, and continue iteratively. Use for both new and partially implemented features when the user asks to build a feature, add a module, wire a prototype, continue a feature, proceed, keep going, implement the next step, move a feature from prototype to usable functionality, or asks 'where are we at' on feature work."
 ---
 
 # Feature Delivery Loop

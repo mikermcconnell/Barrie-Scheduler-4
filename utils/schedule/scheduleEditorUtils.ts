@@ -36,6 +36,25 @@ export const findTableAndTrip = (
 /**
  * Calculate headways between consecutive trips by direction
  */
+export const calculateOrderedHeadways = <T extends { id: string }>(
+    items: T[],
+    getTime: (item: T) => number | null | undefined
+): Record<string, number> => {
+    const ordered = items
+        .map(item => ({ item, time: getTime(item) }))
+        .filter((entry): entry is { item: T; time: number } => typeof entry.time === 'number' && Number.isFinite(entry.time))
+        .sort((a, b) => getOperationalSortTime(a.time) - getOperationalSortTime(b.time));
+
+    const headways: Record<string, number> = {};
+    for (let i = 1; i < ordered.length; i++) {
+        const current = ordered[i];
+        const prev = ordered[i - 1];
+        headways[current.item.id] = getOperationalSortTime(current.time) - getOperationalSortTime(prev.time);
+    }
+
+    return headways;
+};
+
 export const calculateHeadways = (trips: MasterTrip[]): Record<string, number> => {
     const headways: Record<string, number> = {};
     const byDir: Record<string, MasterTrip[]> = {};
@@ -47,13 +66,7 @@ export const calculateHeadways = (trips: MasterTrip[]): Record<string, number> =
     });
 
     Object.values(byDir).forEach(dirTrips => {
-        // Midnight-4AM trips are late-night, not early morning
-        dirTrips.sort((a, b) => getOperationalSortTime(a.startTime) - getOperationalSortTime(b.startTime));
-        for (let i = 1; i < dirTrips.length; i++) {
-            const current = dirTrips[i];
-            const prev = dirTrips[i - 1];
-            headways[current.id] = current.startTime - prev.startTime;
-        }
+        Object.assign(headways, calculateOrderedHeadways(dirTrips, trip => trip.startTime));
     });
 
     return headways;

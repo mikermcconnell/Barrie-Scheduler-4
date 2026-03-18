@@ -10,6 +10,7 @@ describe('scheduleGenerator canonical travel times', () => {
         const config: ScheduleConfig = {
             routeNumber: '7',
             cycleMode: 'Floating',
+            cycleTime: 0,
             recoveryRatio: 0,
             blocks: [
                 { id: '7-1', startTime: '06:00', endTime: '06:40', startStop: 'Park Place' },

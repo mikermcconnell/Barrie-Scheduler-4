@@ -1,16 +1,44 @@
 
 import React, { useMemo, useState, useEffect } from 'react';
-import { TripBucketAnalysis, TimeBand, BandSummary, DirectionBandSummary, computeDirectionBandSummary } from '../../../utils/ai/runtimeAnalysis';
+import {
+    TripBucketAnalysis,
+    TimeBand,
+    BandSummary,
+    DirectionBandSummary,
+    computeDirectionBandSummary,
+    computeSegmentBreakdownByBand,
+    sumDisplayedSegmentTotals,
+} from '../../../utils/ai/runtimeAnalysis';
 import { SegmentRawData } from '../utils/csvParser';
 import {
-    buildNormalizedSegmentNameLookup,
     getOrderedSegmentColumns,
     normalizeSegmentNameForMatching,
-    resolveCanonicalSegmentName,
     type OrderedSegmentColumn,
 } from '../utils/wizardState';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, ReferenceLine } from 'recharts';
 import { AlertTriangle, CheckCircle2, TrendingUp, Clock, BarChart2, ChevronDown, ChevronRight, Eye, EyeOff, Table } from 'lucide-react';
+import { buildNormalizedSegmentNameLookup, resolveCanonicalSegmentName } from '../../../utils/runtimeSegmentMatching';
+
+const truncateHeaderStop = (value: string, maxLength: number = 16): string => (
+    value.length > maxLength ? `${value.substring(0, maxLength - 3)}...` : value
+);
+
+const renderSegmentHeader = (segmentName: string) => {
+    const [fromStop = '', toStop = ''] = segmentName.split(' to ');
+    const destinationLabel = truncateHeaderStop(toStop || segmentName, 18);
+    const fromLabel = truncateHeaderStop(fromStop, 18);
+
+    return (
+        <div className="flex flex-col items-center leading-tight">
+            <span className="text-xs font-semibold text-gray-700" title={toStop || segmentName}>
+                {destinationLabel}
+            </span>
+            <span className="text-[11px] text-gray-400" title={fromStop ? `from ${fromStop}` : undefined}>
+                {fromStop ? `from ${fromLabel}` : ''}
+            </span>
+        </div>
+    );
+};
 
 // Segment Breakdown Matrix - Shows runtime data summarized by TIME BAND
 const SegmentBreakdownMatrix: React.FC<{
@@ -20,10 +48,6 @@ const SegmentBreakdownMatrix: React.FC<{
     segmentColumns: OrderedSegmentColumn[];
 }> = ({ analysis, bands, viewMetric, segmentColumns }) => {
     const segmentNames = segmentColumns.map(column => column.segmentName);
-    const canonicalSegmentNameLookup = useMemo(
-        () => buildNormalizedSegmentNameLookup(segmentNames),
-        [segmentNames]
-    );
     const segmentGroups = useMemo(() => {
         const groups: Array<{ label: string; count: number }> = [];
         segmentColumns.forEach((column) => {
@@ -53,54 +77,7 @@ const SegmentBreakdownMatrix: React.FC<{
 
     // Aggregate segment times by band
     const bandSummary = useMemo(() => {
-        const summary: Record<string, {
-            band: TimeBand;
-            segmentTotals: Record<string, { sum: number; count: number; totalN: number }>;
-            totalSum: number;
-            totalCount: number;
-            timeSlots: string[];
-        }> = {};
-
-        // Initialize for each band
-        bands.forEach(band => {
-            summary[band.id] = {
-                band,
-                segmentTotals: {},
-                totalSum: 0,
-                totalCount: 0,
-                timeSlots: []
-            };
-            segmentNames.forEach(seg => {
-                summary[band.id].segmentTotals[seg] = { sum: 0, count: 0, totalN: 0 };
-            });
-        });
-
-        // Aggregate data from each bucket into its assigned band
-        analysis.forEach(bucket => {
-            if (bucket.ignored || !bucket.assignedBand) return;
-            const bandData = summary[bucket.assignedBand];
-            if (!bandData) return;
-
-            // Track the time slot
-            const timeSlot = bucket.timeBucket.split(' - ')[0]; // Just the start time
-            bandData.timeSlots.push(timeSlot);
-
-            bucket.details?.forEach(detail => {
-                const value = viewMetric === 'p50' ? detail.p50 : detail.p80;
-                const canonicalSegmentName = resolveCanonicalSegmentName(detail.segmentName, canonicalSegmentNameLookup);
-                if (canonicalSegmentName && bandData.segmentTotals[canonicalSegmentName]) {
-                    bandData.segmentTotals[canonicalSegmentName].sum += value;
-                    bandData.segmentTotals[canonicalSegmentName].count += 1;
-                    bandData.segmentTotals[canonicalSegmentName].totalN += detail.n;
-                }
-            });
-
-            const total = viewMetric === 'p50' ? bucket.totalP50 : bucket.totalP80;
-            bandData.totalSum += total;
-            bandData.totalCount += 1;
-        });
-
-        return summary;
+        return computeSegmentBreakdownByBand(analysis, bands, segmentNames, viewMetric);
     }, [analysis, bands, segmentNames, viewMetric]);
 
     if (segmentNames.length === 0 || bands.length === 0) {
@@ -151,14 +128,7 @@ const SegmentBreakdownMatrix: React.FC<{
                             ) : (
                                 segmentColumns.map((column) => (
                                     <th key={column.segmentName} className="px-3 py-3 text-center font-medium text-gray-600 min-w-[90px]">
-                                        <div className="flex flex-col items-center">
-                                            {column.segmentName.split(' to ').map((s, i) => (
-                                                <span key={i} className={`text-xs ${i === 1 ? 'text-gray-400' : 'font-semibold'}`}>
-                                                    {i === 1 && '↓ '}
-                                                    {s.length > 15 ? s.substring(0, 12) + '...' : s}
-                                                </span>
-                                            ))}
-                                        </div>
+                                        {renderSegmentHeader(column.segmentName)}
                                     </th>
                                 ))
                             )}
@@ -173,14 +143,7 @@ const SegmentBreakdownMatrix: React.FC<{
                             <tr className="bg-gray-100 border-b border-gray-200">
                                 {segmentColumns.map((column) => (
                                     <th key={column.segmentName} className="px-3 py-3 text-center font-medium text-gray-600 min-w-[90px]">
-                                        <div className="flex flex-col items-center">
-                                            {column.segmentName.split(' to ').map((s, i) => (
-                                                <span key={i} className={`text-xs ${i === 1 ? 'text-gray-400' : 'font-semibold'}`}>
-                                                    {i === 1 && '↓ '}
-                                                    {s.length > 15 ? s.substring(0, 12) + '...' : s}
-                                                </span>
-                                            ))}
-                                        </div>
+                                        {renderSegmentHeader(column.segmentName)}
                                     </th>
                                 ))}
                             </tr>
@@ -190,8 +153,7 @@ const SegmentBreakdownMatrix: React.FC<{
                         {bands.map(band => {
                             const data = bandSummary[band.id];
                             if (!data || data.totalCount === 0) return null;
-
-                            const avgTotal = data.totalSum / data.totalCount;
+                            const displayedTotal = sumDisplayedSegmentTotals(segmentNames, data.segmentTotals);
 
                             return (
                                 <tr key={band.id} className="hover:bg-blue-50/30">
@@ -227,8 +189,8 @@ const SegmentBreakdownMatrix: React.FC<{
                                     {segmentColumns.map((column, columnIndex) => {
                                         const segName = column.segmentName;
                                         const segData = data.segmentTotals[segName];
-                                        const avgValue = segData && segData.count > 0
-                                            ? segData.sum / segData.count
+                                        const avgValue = segData && segData.totalWeight > 0
+                                            ? segData.weightedSum / segData.totalWeight
                                             : null;
 
                                         return (
@@ -254,7 +216,7 @@ const SegmentBreakdownMatrix: React.FC<{
                                         className="px-4 py-3 text-center font-mono font-bold text-lg"
                                         style={{ backgroundColor: band.color + '25' }}
                                     >
-                                        {avgTotal.toFixed(0)}
+                                        {displayedTotal}
                                     </td>
                                 </tr>
                             );
@@ -319,6 +281,14 @@ export const Step2Analysis: React.FC<Step2Props> = ({
         });
         return index;
     }, [displaySegmentColumns]);
+    const displaySegmentLookup = useMemo(
+        () => buildNormalizedSegmentNameLookup(displaySegmentNames),
+        [displaySegmentNames]
+    );
+    const segmentBreakdownByBand = useMemo(
+        () => computeSegmentBreakdownByBand(analysis, bands, displaySegmentNames, viewMetric),
+        [analysis, bands, displaySegmentNames, viewMetric]
+    );
 
     // Compute band summary for export to schedule generator - KEYED BY DIRECTION
     const computedBandSummary = useMemo(
@@ -350,11 +320,39 @@ export const Step2Analysis: React.FC<Step2Props> = ({
         }
     }, [computedBandSummary, onBandSummaryChange]);
 
-    // Prepare chart data - use buckets
+    const displayedBandTotals = useMemo(() => {
+        const totals = new Map<string, number>();
+        Object.entries(segmentBreakdownByBand).forEach(([bandId, bandData]) => {
+            totals.set(bandId, sumDisplayedSegmentTotals(displaySegmentNames, bandData.segmentTotals));
+        });
+        return totals;
+    }, [displaySegmentNames, segmentBreakdownByBand]);
+
+    // Prepare chart data - use the same per-band totals shown in the matrix.
     const chartData = useMemo(() => {
         return analysis.map(a => ({
             name: a.timeBucket.split(' - ')[0], // Just start time
-            runtime: viewMetric === 'p50' ? a.totalP50 : a.totalP80,
+            runtime: (a.assignedBand && displayedBandTotals.has(a.assignedBand))
+                ? displayedBandTotals.get(a.assignedBand)!
+                : sumDisplayedSegmentTotals(displaySegmentNames, displaySegmentNames.reduce<Record<string, { weightedSum: number; totalWeight: number; totalN: number }>>((acc, segmentName) => {
+                    let weightedSum = 0;
+                    let totalWeight = 0;
+                    let totalN = 0;
+
+                    a.details?.forEach((detail) => {
+                        const resolvedSegmentName = resolveCanonicalSegmentName(detail.segmentName, displaySegmentLookup);
+                        if (resolvedSegmentName !== segmentName) return;
+
+                        const weight = detail.n && detail.n > 0 ? detail.n : 1;
+                        const value = viewMetric === 'p50' ? detail.p50 : detail.p80;
+                        weightedSum += value * weight;
+                        totalWeight += weight;
+                        totalN += weight;
+                    });
+
+                    acc[segmentName] = { weightedSum, totalWeight, totalN };
+                    return acc;
+                }, {})),
             band: a.assignedBand,
             color: bands.find(b => b.id === a.assignedBand)?.color || '#cccccc', // Bands currently calculated on P50.
             ignored: a.ignored,
@@ -362,7 +360,7 @@ export const Step2Analysis: React.FC<Step2Props> = ({
             // Note: If we want Bands for P80, we'd need to re-calc binning for P80. 
             // Assumption: Bands for Schedule Logic are based on "Average" (P50).
         }));
-    }, [analysis, bands, viewMetric]);
+    }, [analysis, bands, displaySegmentLookup, displaySegmentNames, displayedBandTotals, viewMetric]);
 
     const toggleIgnore = (bucket: string) => {
         const newData = analysis.map(a => {
@@ -481,7 +479,8 @@ export const Step2Analysis: React.FC<Step2Props> = ({
                         <div>
                             <h3 className="font-bold text-blue-900">Analysis Logic</h3>
                             <p className="text-sm text-blue-700 mt-1">
-                                The graph sums overlapping segments for each 30-minute interval.
+                                The graph now shows the same per-band total displayed in the matrix, repeated across each
+                                30-minute slot in that band.
                                 Bands (A-E) are calculated based on the <strong>50th Percentile</strong> (Average) performance.
                             </p>
                         </div>
@@ -492,7 +491,9 @@ export const Step2Analysis: React.FC<Step2Props> = ({
                     {bands.map(band => (
                         <div key={band.id} className="flex items-center gap-2">
                             <div className="w-3 h-3 rounded-full" style={{ backgroundColor: band.color }} />
-                            <span className="text-xs font-bold text-gray-700">Band {band.id} ({band.avg.toFixed(0)}m)</span>
+                            <span className="text-xs font-bold text-gray-700">
+                                Band {band.id} ({(displayedBandTotals.get(band.id) ?? band.avg).toFixed(0)}m)
+                            </span>
                         </div>
                     ))}
                     {/* Additional Legend Items */}

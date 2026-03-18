@@ -49,7 +49,7 @@ describe('transitAppScoring.computeCompositeScore', () => {
     it('returns null if any required component is missing', () => {
         expect(computeCompositeScore({
             viewToTapRankPct: null,
-            tapToSuggestionRankPct: 50,
+            viewToSuggestionRankPct: 50,
             goTripsRankPct: 50,
             totalLegsRankPct: 50,
             suggestionToGoRankPct: 50,
@@ -59,7 +59,7 @@ describe('transitAppScoring.computeCompositeScore', () => {
     it('computes weighted score correctly', () => {
         expect(computeCompositeScore({
             viewToTapRankPct: 100,
-            tapToSuggestionRankPct: 50,
+            viewToSuggestionRankPct: 50,
             goTripsRankPct: 0,
             totalLegsRankPct: 100,
             suggestionToGoRankPct: 50,

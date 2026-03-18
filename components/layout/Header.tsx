@@ -50,12 +50,9 @@ export const Header: React.FC<HeaderProps> = ({
                     <div className="bg-gradient-to-br from-brand-green to-emerald-600 p-2 rounded-lg shadow-sm group-hover:shadow-md transition-all duration-300 transform group-hover:scale-105">
                         <LayoutDashboard className="text-white" size={20} />
                     </div>
-                    <div className="flex flex-col">
-                        <h1 className="text-xl font-bold text-gray-900 tracking-tight leading-none group-hover:text-emerald-700 transition-colors">
-                            Transit<span className="text-brand-green">Scheduler</span>
-                        </h1>
-                        <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mt-0.5">Enterprise Edition</span>
-                    </div>
+                    <h1 className="text-xl font-bold text-gray-900 tracking-tight leading-none group-hover:text-emerald-700 transition-colors">
+                        Transit<span className="text-brand-green">Scheduler</span>
+                    </h1>
                 </div>
 
                 {/* Right Actions */}

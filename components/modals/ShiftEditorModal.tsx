@@ -56,6 +56,18 @@ export const ShiftEditorModal: React.FC<Props> = ({
         else if (currentShift.zone === Zone.FLOATER) setLocalZoneFilter('Floater');
     }, [currentShift.zone]);
 
+    const handoffOptions = useMemo(() => (
+        allShifts
+            .filter(candidate => candidate.id !== currentShift.id)
+            .sort((a, b) => {
+                if (a.startSlot !== b.startSlot) {
+                    return a.startSlot - b.startSlot;
+                }
+
+                return a.driverName.localeCompare(b.driverName, undefined, { numeric: true, sensitivity: 'base' });
+            })
+    ), [allShifts, currentShift.id]);
+
 
     // Calculate chart data with ghost line
     const chartData = useMemo(() => {
@@ -260,6 +272,49 @@ export const ShiftEditorModal: React.FC<Props> = ({
                                     <span className="text-sm font-bold">Schedule Compliant</span>
                                 </div>
                             )}
+                        </div>
+                        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+                            <label className="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3">
+                                <div className="text-[11px] font-extrabold uppercase tracking-wider text-gray-500">Handoff From</div>
+                                <select
+                                    value={currentShift.handoffFromShiftId ?? ''}
+                                    onChange={(e) => setCurrentShift({
+                                        ...currentShift,
+                                        handoffFromShiftId: e.target.value || undefined,
+                                    })}
+                                    className="mt-2 w-full rounded-xl border-2 border-gray-200 bg-white px-3 py-2 text-sm font-bold text-gray-800 focus:border-brand-blue focus:outline-none"
+                                >
+                                    <option value="">None</option>
+                                    {handoffOptions
+                                        .filter(candidate => candidate.id !== currentShift.handoffToShiftId)
+                                        .map(candidate => (
+                                            <option key={candidate.id} value={candidate.id}>
+                                                {candidate.driverName} ({formatSlotToTime(candidate.startSlot)} - {formatSlotToTime(candidate.endSlot)})
+                                            </option>
+                                        ))}
+                                </select>
+                            </label>
+
+                            <label className="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3">
+                                <div className="text-[11px] font-extrabold uppercase tracking-wider text-gray-500">Handoff To</div>
+                                <select
+                                    value={currentShift.handoffToShiftId ?? ''}
+                                    onChange={(e) => setCurrentShift({
+                                        ...currentShift,
+                                        handoffToShiftId: e.target.value || undefined,
+                                    })}
+                                    className="mt-2 w-full rounded-xl border-2 border-gray-200 bg-white px-3 py-2 text-sm font-bold text-gray-800 focus:border-brand-blue focus:outline-none"
+                                >
+                                    <option value="">None</option>
+                                    {handoffOptions
+                                        .filter(candidate => candidate.id !== currentShift.handoffFromShiftId)
+                                        .map(candidate => (
+                                            <option key={candidate.id} value={candidate.id}>
+                                                {candidate.driverName} ({formatSlotToTime(candidate.startSlot)} - {formatSlotToTime(candidate.endSlot)})
+                                            </option>
+                                        ))}
+                                </select>
+                            </label>
                         </div>
                     </div>
                     <button

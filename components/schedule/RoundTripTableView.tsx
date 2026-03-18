@@ -27,6 +27,7 @@ import { getRouteVariant, getRouteConfig, getDirectionDisplay, extractDirectionF
 import { normalizeStopName, matchesStop } from '../NewSchedule/utils/blockStartDirection';
 import {
     calculateHeadways,
+    calculateOrderedHeadways,
     getRatioColor,
     getRecoveryStatus,
     calculatePeakVehicles,
@@ -237,6 +238,32 @@ const getArrivalTimeForStop = (
 
     // Normal lookup
     return getStopValue(trip.arrivalTimes, stopName) || getStopValue(trip.stops, stopName) || '';
+};
+
+const getRoundTripRowKey = (row: RoundTripTable['rows'][number]): string => {
+    const northTrip = row.trips.find(t => t.direction === 'North');
+    const southTrip = row.trips.find(t => t.direction === 'South');
+    return `${row.blockId}-${northTrip?.id || 'n'}-${southTrip?.id || 's'}`;
+};
+
+const getRowAnchorTime = (
+    row: RoundTripTable['rows'][number],
+    keyStop: ReturnType<typeof resolveKeyStop>
+): number | null => {
+    const northTrip = row.trips.find(t => t.direction === 'North');
+    const southTrip = row.trips.find(t => t.direction === 'South');
+
+    if (keyStop?.northStop) {
+        const northTime = northTrip?.stops?.[keyStop.northStop];
+        if (northTime) return TimeUtils.toMinutes(northTime) ?? northTrip?.startTime ?? null;
+    }
+
+    if (keyStop?.southStop) {
+        const southTime = southTrip?.stops?.[keyStop.southStop];
+        if (southTime) return TimeUtils.toMinutes(southTime) ?? southTrip?.startTime ?? null;
+    }
+
+    return northTrip?.startTime ?? southTrip?.startTime ?? null;
 };
 
 // --- Types ---
@@ -1243,6 +1270,10 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                         // Resolve key stop for Block Flow sort (generalized from Route 8 Allandale)
                                         const baseRoute = combined.routeName.split(' ')[0];
                                         const keyStop = resolveKeyStop(baseRoute, combined.northStops, combined.southStops);
+                                        const rowHeadways = calculateOrderedHeadways(
+                                            combined.rows.map(row => ({ id: getRoundTripRowKey(row), row })),
+                                            ({ row }) => getRowAnchorTime(row, keyStop)
+                                        );
 
                                         // Sort rows by the selected column
                                         const sortedRows = [...combined.rows].sort((a, b) => {
@@ -1288,14 +1319,16 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                         const southTrip = row.trips.find(t => t.direction === 'South');
                                         const lastTrip = [...row.trips].sort((a, b) => a.startTime - b.startTime).pop();
 
-                                        const uniqueRowKey = `${row.blockId}-${northTrip?.id || 'n'}-${southTrip?.id || 's'}-${rowIdx}`;
+                                        const stableRowKey = getRoundTripRowKey(row);
+                                        const uniqueRowKey = stableRowKey;
 
                                         const totalTravel = row.totalTravelTime;
                                         const totalRec = row.totalRecoveryTime;
                                         const displayCycleTime = totalTravel + totalRec;
                                         const ratio = totalTravel > 0 ? (totalRec / totalTravel) * 100 : 0;
 
-                                        const headway = northTrip ? headways[northTrip.id] : (southTrip ? headways[southTrip.id] : '-');
+                                        const headway = rowHeadways[stableRowKey]
+                                            ?? (northTrip ? headways[northTrip.id] : (southTrip ? headways[southTrip.id] : '-'));
 
                                         const ratioColorClass = getRatioColor(ratio);
 
@@ -1551,7 +1584,12 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                 <div className="flex items-center justify-center h-full">
                                                                     {onRecoveryEdit && northTrip && northArrivalAtStop && (
                                                                         <button
-                                                                            onClick={() => onRecoveryEdit(northTrip.id, stop, -1)}
+                                                                            type="button"
+                                                                            onMouseDown={(e) => {
+                                                                                e.preventDefault();
+                                                                                e.stopPropagation();
+                                                                                onRecoveryEdit(northTrip.id, stop, -1);
+                                                                            }}
                                                                             className="absolute left-0 top-0 bottom-0 w-3 opacity-40 group-hover/rec:opacity-100 flex items-center justify-center text-gray-400 hover:text-green-600 transition-all"
                                                                             title="-1 min recovery"
                                                                         >
@@ -1561,7 +1599,12 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                     <span className="px-2">{northArrivalAtStop ? (getStopValue(northTrip?.recoveryTimes, stop) ?? '') : ''}</span>
                                                                     {onRecoveryEdit && northTrip && northArrivalAtStop && (
                                                                         <button
-                                                                            onClick={() => onRecoveryEdit(northTrip.id, stop, 1)}
+                                                                            type="button"
+                                                                            onMouseDown={(e) => {
+                                                                                e.preventDefault();
+                                                                                e.stopPropagation();
+                                                                                onRecoveryEdit(northTrip.id, stop, 1);
+                                                                            }}
                                                                             className="absolute right-0 top-0 bottom-0 w-3 opacity-40 group-hover/rec:opacity-100 flex items-center justify-center text-gray-400 hover:text-green-600 transition-all"
                                                                             title="+1 min recovery"
                                                                         >
@@ -1783,7 +1826,12 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                 <div className="flex items-center justify-center h-full">
                                                                     {onRecoveryEdit && southTrip && southArrivalAtStop && (
                                                                         <button
-                                                                            onClick={() => onRecoveryEdit(southTrip.id, stop, -1)}
+                                                                            type="button"
+                                                                            onMouseDown={(e) => {
+                                                                                e.preventDefault();
+                                                                                e.stopPropagation();
+                                                                                onRecoveryEdit(southTrip.id, stop, -1);
+                                                                            }}
                                                                             className="absolute left-0 top-0 bottom-0 w-3 opacity-40 group-hover/rec:opacity-100 flex items-center justify-center text-gray-400 hover:text-green-600 transition-all"
                                                                             title="-1 min recovery"
                                                                         >
@@ -1793,7 +1841,12 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                     <span className="px-2">{southArrivalAtStop ? (getStopValue(southTrip?.recoveryTimes, stop) ?? '') : ''}</span>
                                                                     {onRecoveryEdit && southTrip && southArrivalAtStop && (
                                                                         <button
-                                                                            onClick={() => onRecoveryEdit(southTrip.id, stop, 1)}
+                                                                            type="button"
+                                                                            onMouseDown={(e) => {
+                                                                                e.preventDefault();
+                                                                                e.stopPropagation();
+                                                                                onRecoveryEdit(southTrip.id, stop, 1);
+                                                                            }}
                                                                             className="absolute right-0 top-0 bottom-0 w-3 opacity-40 group-hover/rec:opacity-100 flex items-center justify-center text-gray-400 hover:text-green-600 transition-all"
                                                                             title="+1 min recovery"
                                                                         >

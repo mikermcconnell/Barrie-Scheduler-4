@@ -698,6 +698,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
             }
         }
 
+        reassignBlocksForRelatedTables(newScheds, getTrueBaseRoute(table.routeName));
         onSchedulesChange(newScheds);
     };
 

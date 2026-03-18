@@ -109,6 +109,7 @@ export interface RouteMetricSummary {
     avgDailyTaps: number;
     daysActive: number;
     viewToTapRate?: number | null;
+    viewToSuggestionRate?: number | null;
     tapToSuggestionRate?: number | null;
     suggestionToGoRate?: number | null;
     compositeScore?: number | null;
@@ -159,10 +160,11 @@ export interface RoutePerformanceMonthly {
     avgDailyViews: number;
     avgDailyTaps: number;
     viewToTapRate: number | null;
+    viewToSuggestionRate: number | null;
     tapToSuggestionRate: number | null;
     suggestionToGoRate: number | null;
     viewToTapRankPct: number | null;
-    tapToSuggestionRankPct: number | null;
+    viewToSuggestionRankPct: number | null;
     suggestionToGoRankPct: number | null;
     goTripsRankPct: number | null;
     totalLegsRankPct: number | null;
@@ -187,6 +189,7 @@ export interface RoutePerformanceScorecardRow {
     totalLegs: number;
     uniqueTrips: number;
     viewToTapRate: number | null;
+    viewToSuggestionRate: number | null;
     tapToSuggestionRate: number | null;
     suggestionToGoRate: number | null;
     compositeScore: number | null;

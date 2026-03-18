@@ -90,7 +90,7 @@ export function aggregateTransitAppData(
         ...parsed.tappedTripLegs,
     ];
     const routeLegs = aggregateRouteLegSummary(allLegs);
-    const routePerformance = aggregateRoutePerformance(routeMetrics.daily, routeLegs);
+    const routePerformance = aggregateRoutePerformance(routeMetrics.daily, allLegs);
     const serviceGapAnalysis = aggregateServiceGapAnalysis(allLegs, routeMetrics.summary, routePerformance?.scorecard || []);
     const odPairs = aggregateODPairs(parsed.trips);
     const stopProximityAnalysis = aggregateStopProximityAnalysis(parsed.trips, allLegs, odPairs);
@@ -218,13 +218,10 @@ interface RouteMonthAccumulator {
 
 function aggregateRoutePerformance(
     dailyMetrics: RouteMetricDaily[],
-    routeLegs: RouteLegSummary[]
+    allLegs: TransitAppTripLegRow[]
 ): TransitAppRoutePerformance {
     const gtfsAvailable = hasGtfsNormalizationData();
-    const routeLegMap = new Map<string, RouteLegSummary>();
-    for (const leg of routeLegs) {
-        routeLegMap.set(normalizeRouteKey(leg.route), leg);
-    }
+    const routeLegMonthMap = aggregateRouteLegsByMonth(allLegs);
 
     const monthlyMap = new Map<string, RouteMonthAccumulator>();
     for (const daily of dailyMetrics) {
@@ -272,9 +269,9 @@ function aggregateRoutePerformance(
     const dayPartByKey = new Map<string, { weekday: DayPartAccumulator; weekend: DayPartAccumulator }>();
 
     for (const [key, acc] of monthlyMap.entries()) {
-        const legs = routeLegMap.get(acc.route);
+        const monthLegs = routeLegMonthMap.get(key);
         const daysActive = acc.days.size;
-        const ratioEligible = acc.totalViews >= MINIMUM_VIEWS_FOR_RATIOS;
+        const viewRatioEligible = acc.totalViews >= MINIMUM_VIEWS_FOR_RATIOS;
         const viewsPerScheduledTrip = gtfsAvailable && acc.totalScheduledTrips > 0
             ? safeRate(acc.totalViews, acc.totalScheduledTrips, 4)
             : null;
@@ -290,15 +287,16 @@ function aggregateRoutePerformance(
             totalTaps: acc.totalTaps,
             totalSuggestions: acc.totalSuggestions,
             totalGoTrips: acc.totalGoTrips,
-            totalLegs: legs?.totalLegs || 0,
-            uniqueTrips: legs?.uniqueTrips || 0,
+            totalLegs: monthLegs?.totalLegs || 0,
+            uniqueTrips: monthLegs?.uniqueTrips || 0,
             avgDailyViews: daysActive > 0 ? Math.round(acc.totalViews / daysActive) : 0,
             avgDailyTaps: daysActive > 0 ? Math.round(acc.totalTaps / daysActive) : 0,
-            viewToTapRate: ratioEligible ? safeRate(acc.totalTaps, acc.totalViews, 4) : null,
-            tapToSuggestionRate: ratioEligible ? safeRate(acc.totalSuggestions, acc.totalTaps, 4) : null,
-            suggestionToGoRate: ratioEligible ? safeRate(acc.totalGoTrips, acc.totalSuggestions, 4) : null,
+            viewToTapRate: viewRatioEligible ? safeRate(acc.totalTaps, acc.totalViews, 4) : null,
+            viewToSuggestionRate: viewRatioEligible ? safeRate(acc.totalSuggestions, acc.totalViews, 4) : null,
+            tapToSuggestionRate: safeRate(acc.totalSuggestions, acc.totalTaps, 4),
+            suggestionToGoRate: safeRate(acc.totalGoTrips, acc.totalSuggestions, 4),
             viewToTapRankPct: null,
-            tapToSuggestionRankPct: null,
+            viewToSuggestionRankPct: null,
             suggestionToGoRankPct: null,
             goTripsRankPct: null,
             totalLegsRankPct: null,
@@ -362,7 +360,7 @@ function aggregateRoutePerformance(
             confidence: latest.confidence,
             totalViews: latest.totalViews,
             viewToTapRate: latest.viewToTapRate,
-            tapToSuggestionRate: latest.tapToSuggestionRate,
+            viewToSuggestionRate: latest.viewToSuggestionRate,
             suggestionToGoRate: latest.suggestionToGoRate,
             compositeScore: latest.compositeScore,
             trend: trendInfo.trend,
@@ -384,6 +382,7 @@ function aggregateRoutePerformance(
             totalLegs: latest.totalLegs,
             uniqueTrips: latest.uniqueTrips,
             viewToTapRate: latest.viewToTapRate,
+            viewToSuggestionRate: latest.viewToSuggestionRate,
             tapToSuggestionRate: latest.tapToSuggestionRate,
             suggestionToGoRate: latest.suggestionToGoRate,
             compositeScore: latest.compositeScore,
@@ -451,20 +450,20 @@ function applyMonthlyPercentilesAndScores(rows: RoutePerformanceMonthly[]): void
     for (const month of months) {
         const monthRows = rows.filter(r => r.month === month);
         const viewToTapRanks = computePercentileRanks(monthRows.map(r => ({ key: r.route, value: r.viewToTapRate })));
-        const tapToSuggestionRanks = computePercentileRanks(monthRows.map(r => ({ key: r.route, value: r.tapToSuggestionRate })));
+        const viewToSuggestionRanks = computePercentileRanks(monthRows.map(r => ({ key: r.route, value: r.viewToSuggestionRate })));
         const suggestionToGoRanks = computePercentileRanks(monthRows.map(r => ({ key: r.route, value: r.suggestionToGoRate })));
         const goTripsRanks = computePercentileRanks(monthRows.map(r => ({ key: r.route, value: r.totalGoTrips })));
         const totalLegRanks = computePercentileRanks(monthRows.map(r => ({ key: r.route, value: r.totalLegs })));
 
         for (const row of monthRows) {
             row.viewToTapRankPct = viewToTapRanks.get(row.route) ?? null;
-            row.tapToSuggestionRankPct = tapToSuggestionRanks.get(row.route) ?? null;
+            row.viewToSuggestionRankPct = viewToSuggestionRanks.get(row.route) ?? null;
             row.suggestionToGoRankPct = suggestionToGoRanks.get(row.route) ?? null;
             row.goTripsRankPct = goTripsRanks.get(row.route) ?? null;
             row.totalLegsRankPct = totalLegRanks.get(row.route) ?? null;
             row.compositeScore = computeCompositeScore({
                 viewToTapRankPct: row.viewToTapRankPct,
-                tapToSuggestionRankPct: row.tapToSuggestionRankPct,
+                viewToSuggestionRankPct: row.viewToSuggestionRankPct,
                 goTripsRankPct: row.goTripsRankPct,
                 totalLegsRankPct: row.totalLegsRankPct,
                 suggestionToGoRankPct: row.suggestionToGoRankPct,
@@ -484,19 +483,19 @@ function applyDayPartScores(
         const metrics = monthRows.map(row => {
             const key = `${row.route}|${row.month}`;
             const dayMetrics = dayPartByKey.get(key)?.[dayPart] || { views: 0, taps: 0, suggestions: 0, goTrips: 0 };
-            const ratioEligible = dayMetrics.views >= MINIMUM_VIEWS_FOR_RATIOS;
+            const viewRatioEligible = dayMetrics.views >= MINIMUM_VIEWS_FOR_RATIOS;
             return {
                 route: row.route,
-                viewToTapRate: ratioEligible ? safeRate(dayMetrics.taps, dayMetrics.views, 4) : null,
-                tapToSuggestionRate: ratioEligible ? safeRate(dayMetrics.suggestions, dayMetrics.taps, 4) : null,
-                suggestionToGoRate: ratioEligible ? safeRate(dayMetrics.goTrips, dayMetrics.suggestions, 4) : null,
+                viewToTapRate: viewRatioEligible ? safeRate(dayMetrics.taps, dayMetrics.views, 4) : null,
+                viewToSuggestionRate: viewRatioEligible ? safeRate(dayMetrics.suggestions, dayMetrics.views, 4) : null,
+                suggestionToGoRate: safeRate(dayMetrics.goTrips, dayMetrics.suggestions, 4),
                 goTrips: dayMetrics.goTrips,
                 totalLegs: row.totalLegs,
             };
         });
 
         const viewToTapRanks = computePercentileRanks(metrics.map(m => ({ key: m.route, value: m.viewToTapRate })));
-        const tapToSuggestionRanks = computePercentileRanks(metrics.map(m => ({ key: m.route, value: m.tapToSuggestionRate })));
+        const viewToSuggestionRanks = computePercentileRanks(metrics.map(m => ({ key: m.route, value: m.viewToSuggestionRate })));
         const suggestionToGoRanks = computePercentileRanks(metrics.map(m => ({ key: m.route, value: m.suggestionToGoRate })));
         const goTripsRanks = computePercentileRanks(metrics.map(m => ({ key: m.route, value: m.goTrips })));
         const totalLegRanks = computePercentileRanks(metrics.map(m => ({ key: m.route, value: m.totalLegs })));
@@ -504,7 +503,7 @@ function applyDayPartScores(
         for (const row of monthRows) {
             const score = computeCompositeScore({
                 viewToTapRankPct: viewToTapRanks.get(row.route) ?? null,
-                tapToSuggestionRankPct: tapToSuggestionRanks.get(row.route) ?? null,
+                viewToSuggestionRankPct: viewToSuggestionRanks.get(row.route) ?? null,
                 goTripsRankPct: goTripsRanks.get(row.route) ?? null,
                 totalLegsRankPct: totalLegRanks.get(row.route) ?? null,
                 suggestionToGoRankPct: suggestionToGoRanks.get(row.route) ?? null,
@@ -1419,6 +1418,39 @@ function aggregateRouteLegSummary(allLegs: TransitAppTripLegRow[]): RouteLegSumm
         .sort((a, b) => b.totalLegs - a.totalLegs);
 
     return summaries;
+}
+
+function aggregateRouteLegsByMonth(allLegs: TransitAppTripLegRow[]): Map<string, { totalLegs: number; uniqueTrips: number }> {
+    const routeMonthMap = new Map<string, { totalLegs: number; trips: Set<string> }>();
+
+    for (const leg of allLegs) {
+        if (leg.mode !== 'Transit' || !leg.route_short_name || !leg.start_time || leg.start_time.length < 7) continue;
+
+        const route = normalizeRouteKey(leg.route_short_name);
+        const month = leg.start_time.slice(0, 7);
+        const key = `${route}|${month}`;
+        const existing = routeMonthMap.get(key);
+
+        if (existing) {
+            existing.totalLegs += 1;
+            existing.trips.add(leg.user_trip_id);
+        } else {
+            routeMonthMap.set(key, {
+                totalLegs: 1,
+                trips: new Set([leg.user_trip_id]),
+            });
+        }
+    }
+
+    return new Map(
+        Array.from(routeMonthMap.entries()).map(([key, value]) => ([
+            key,
+            {
+                totalLegs: value.totalLegs,
+                uniqueTrips: value.trips.size,
+            },
+        ]))
+    );
 }
 
 function getTopN(map: Map<string, number>, n: number): { stop: string; count: number }[] {

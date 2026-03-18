@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import Map, { NavigationControl, ScaleControl, MapRef } from 'react-map-gl/mapbox';
 import type { MapMouseEvent } from 'react-map-gl/mapbox';
 import 'mapbox-gl/dist/mapbox-gl.css';
@@ -49,10 +49,32 @@ export const MapBase: React.FC<MapBaseProps> = ({
     onClick,
 }) => {
     const [mapFailed, setMapFailed] = useState(false);
+    const isMountedRef = useRef(true);
+    const mapFailedRef = useRef(false);
 
     useEffect(() => {
+        return () => {
+            isMountedRef.current = false;
+        };
+    }, []);
+
+    useEffect(() => {
+        mapFailedRef.current = false;
         setMapFailed(false);
     }, [latitude, longitude, mapStyle, zoom]);
+
+    const handleMapError = useCallback((event: unknown) => {
+        console.error('Mapbox map error', event);
+
+        // react-map-gl can surface map/layer errors while a child Layer is still
+        // rendering. Defer the fallback state change to avoid setState-in-render
+        // warnings from React.
+        queueMicrotask(() => {
+            if (!isMountedRef.current || mapFailedRef.current) return;
+            mapFailedRef.current = true;
+            setMapFailed(true);
+        });
+    }, []);
 
     if (!MAPBOX_TOKEN) {
         return (
@@ -102,7 +124,7 @@ export const MapBase: React.FC<MapBaseProps> = ({
                 onMouseMove={onMouseMove}
                 onMouseLeave={onMouseLeave}
                 onClick={onClick}
-                onError={() => setMapFailed(true)}
+                onError={handleMapError}
             >
                 {showNavigation && <NavigationControl position="bottom-right" />}
                 {showScale && <ScaleControl position="bottom-left" unit="metric" />}

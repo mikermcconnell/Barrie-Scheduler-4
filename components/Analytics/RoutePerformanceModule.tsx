@@ -22,7 +22,7 @@ type SortKey =
     | 'compositeScore'
     | 'avgDailyViews'
     | 'viewToTapRate'
-    | 'tapToSuggestionRate'
+    | 'viewToSuggestionRate'
     | 'suggestionToGoRate'
     | 'trend'
     | 'confidence';
@@ -38,6 +38,7 @@ export const RoutePerformanceModule: React.FC<RoutePerformanceModuleProps> = ({ 
             const route = r.route.toUpperCase();
             const legs = legMap.get(route);
             const viewToTapRate = r.totalViews > 0 ? r.totalTaps / r.totalViews : null;
+            const viewToSuggestionRate = r.totalViews > 0 ? r.totalSuggestions / r.totalViews : null;
             const tapToSuggestionRate = r.totalTaps > 0 ? r.totalSuggestions / r.totalTaps : null;
             const suggestionToGoRate = r.totalSuggestions > 0 ? r.totalGoTrips / r.totalSuggestions : null;
             return {
@@ -52,6 +53,7 @@ export const RoutePerformanceModule: React.FC<RoutePerformanceModuleProps> = ({ 
                 totalLegs: legs?.totalLegs || 0,
                 uniqueTrips: legs?.uniqueTrips || 0,
                 viewToTapRate,
+                viewToSuggestionRate,
                 tapToSuggestionRate,
                 suggestionToGoRate,
                 compositeScore: null,
@@ -91,8 +93,8 @@ export const RoutePerformanceModule: React.FC<RoutePerformanceModuleProps> = ({ 
             if (sortKey === 'trend') return mult * a.trend.localeCompare(b.trend);
             if (sortKey === 'confidence') return mult * a.confidence.localeCompare(b.confidence);
 
-            const aVal = (a[sortKey] ?? Number.POSITIVE_INFINITY) as number;
-            const bVal = (b[sortKey] ?? Number.POSITIVE_INFINITY) as number;
+            const aVal = numericSortValue(a, sortKey);
+            const bVal = numericSortValue(b, sortKey);
             return mult * (aVal - bVal);
         });
         return rows;
@@ -236,9 +238,9 @@ export const RoutePerformanceModule: React.FC<RoutePerformanceModuleProps> = ({ 
                                     <SortableHeader label="Route" onClick={() => toggleSort('route')} />
                                     <SortableHeader label="Avg Daily Views" onClick={() => toggleSort('avgDailyViews')} align="right" />
                                     <SortableHeader label="View→Tap %" onClick={() => toggleSort('viewToTapRate')} align="right" />
-                                    <SortableHeader label="Tap→Suggestion %" onClick={() => toggleSort('tapToSuggestionRate')} align="right" />
+                                    <SortableHeader label="View→Suggestion %" onClick={() => toggleSort('viewToSuggestionRate')} align="right" />
                                     <SortableHeader label="Suggestion→GO %" onClick={() => toggleSort('suggestionToGoRate')} align="right" />
-                                    <th className="text-right py-2 px-3 text-gray-500 font-medium">Trip Legs</th>
+                                    <th className="text-right py-2 px-3 text-gray-500 font-medium">Observed Legs</th>
                                     <SortableHeader label="Score" onClick={() => toggleSort('compositeScore')} align="right" />
                                     <SortableHeader label="Trend" onClick={() => toggleSort('trend')} />
                                     <th className="text-right py-2 px-3 text-gray-500 font-medium">Weekday</th>
@@ -254,7 +256,7 @@ export const RoutePerformanceModule: React.FC<RoutePerformanceModuleProps> = ({ 
                                         <td className="py-2 px-3 font-bold">{row.route}</td>
                                         <td className="py-2 px-3 text-right">{fmt(row.avgDailyViews)}</td>
                                         <td className="py-2 px-3 text-right">{formatPercent(row.viewToTapRate)}</td>
-                                        <td className="py-2 px-3 text-right">{formatPercent(row.tapToSuggestionRate)}</td>
+                                        <td className="py-2 px-3 text-right">{formatPercent(getViewToSuggestionRate(row))}</td>
                                         <td className="py-2 px-3 text-right">{formatPercent(row.suggestionToGoRate)}</td>
                                         <td className="py-2 px-3 text-right">{fmt(row.totalLegs)}</td>
                                         <td className="py-2 px-3 text-right font-semibold">{row.compositeScore?.toFixed(1) || 'N/A'}</td>
@@ -293,6 +295,17 @@ const SortableHeader: React.FC<{ label: string; onClick: () => void; align?: 'le
 function formatPercent(value: number | null): string {
     if (value === null) return 'N/A';
     return `${(value * 100).toFixed(1)}%`;
+}
+
+function getViewToSuggestionRate(row: RoutePerformanceScorecardRow): number | null {
+    return row.viewToSuggestionRate ?? row.tapToSuggestionRate ?? null;
+}
+
+function numericSortValue(row: RoutePerformanceScorecardRow, sortKey: Exclude<SortKey, 'route' | 'trend' | 'confidence'>): number {
+    if (sortKey === 'viewToSuggestionRate') {
+        return getViewToSuggestionRate(row) ?? Number.POSITIVE_INFINITY;
+    }
+    return (row[sortKey] ?? Number.POSITIVE_INFINITY) as number;
 }
 
 function trendBadge(trend: string): string {

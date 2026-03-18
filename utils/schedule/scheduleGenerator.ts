@@ -361,16 +361,19 @@ export const generateSchedule = (
 
                     // 3. All-band weighted average
                     let totalSum = 0;
-                    let totalCount = 0;
+                    let totalWeight = 0;
                     dirBands.forEach(b => {
                         const seg = b.segments.find(s => s.segmentName === segmentName);
                         if (seg && seg.avgTime > 0) {
-                            totalSum += seg.avgTime * b.timeSlots.length;
-                            totalCount += b.timeSlots.length;
+                            const weight = seg.totalN && seg.totalN > 0
+                                ? seg.totalN
+                                : Math.max(1, b.timeSlots.length);
+                            totalSum += seg.avgTime * weight;
+                            totalWeight += weight;
                         }
                     });
-                    if (totalCount > 0) {
-                        return { time: totalSum / totalCount, source: 'all-band-avg' };
+                    if (totalWeight > 0) {
+                        return { time: totalSum / totalWeight, source: 'all-band-avg' };
                     }
                 }
 
@@ -400,7 +403,7 @@ export const generateSchedule = (
                 }
             }
 
-            // Calculate direction target to ensure North + South = band's avgTotal exactly
+            // Use the observed segment chain as the target after per-segment rounding.
             const isPartialTrip = activeStartIdx > 0;
             const directionTarget = Math.max(1, Math.round(rawSum));
 

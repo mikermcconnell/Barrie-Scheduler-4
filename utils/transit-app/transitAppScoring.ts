@@ -2,7 +2,7 @@ import type { TransitAppConfidence, TransitAppTrend } from './transitAppTypes';
 
 export interface WeightedScoreInput {
     viewToTapRankPct: number | null;
-    tapToSuggestionRankPct: number | null;
+    viewToSuggestionRankPct: number | null;
     goTripsRankPct: number | null;
     totalLegsRankPct: number | null;
     suggestionToGoRankPct: number | null;
@@ -71,7 +71,7 @@ export function computePercentileRanks(values: Array<{ key: string; value: numbe
 export function computeCompositeScore(input: WeightedScoreInput): number | null {
     if (
         input.viewToTapRankPct === null
-        || input.tapToSuggestionRankPct === null
+        || input.viewToSuggestionRankPct === null
         || input.goTripsRankPct === null
         || input.totalLegsRankPct === null
         || input.suggestionToGoRankPct === null
@@ -80,7 +80,7 @@ export function computeCompositeScore(input: WeightedScoreInput): number | null 
     }
 
     const score = (0.30 * input.viewToTapRankPct)
-        + (0.25 * input.tapToSuggestionRankPct)
+        + (0.25 * input.viewToSuggestionRankPct)
         + (0.20 * input.goTripsRankPct)
         + (0.15 * input.totalLegsRankPct)
         + (0.10 * input.suggestionToGoRankPct);

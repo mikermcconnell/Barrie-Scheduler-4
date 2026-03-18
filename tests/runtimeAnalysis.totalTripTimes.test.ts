@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { calculateTotalTripTimes, computeDirectionBandSummary } from '../utils/ai/runtimeAnalysis';
+import {
+    calculateTotalTripTimes,
+    computeDirectionBandSummary,
+    computeSegmentBreakdownByBand,
+    sumDisplayedSegmentTotals,
+} from '../utils/ai/runtimeAnalysis';
 import type { RuntimeData } from '../components/NewSchedule/utils/csvParser';
 
 describe('runtimeAnalysis.calculateTotalTripTimes', () => {
@@ -112,5 +117,49 @@ describe('runtimeAnalysis.calculateTotalTripTimes', () => {
         expect(summary.North[0].segments[0].segmentName).toBe('Park Place to Peggy Hill');
         expect(summary.North[0].segments[0].avgTime).toBeCloseTo(9.4, 5);
         expect(summary.North[0].segments[0].totalN).toBe(10);
+    });
+
+    it('weights Step 2 segment breakdown averages by observation count after canonical matching', () => {
+        const breakdown = computeSegmentBreakdownByBand(
+            [
+                {
+                    timeBucket: '06:00 - 06:29',
+                    totalP50: 20,
+                    totalP80: 22,
+                    assignedBand: 'A',
+                    isOutlier: false,
+                    ignored: false,
+                    details: [
+                        { segmentName: 'Park Pl to Peggy Hill', p50: 4, p80: 5, n: 1 },
+                    ],
+                },
+                {
+                    timeBucket: '06:30 - 06:59',
+                    totalP50: 20,
+                    totalP80: 22,
+                    assignedBand: 'A',
+                    isOutlier: false,
+                    ignored: false,
+                    details: [
+                        { segmentName: 'Park Place to Peggy Hill', p50: 10, p80: 11, n: 9 },
+                    ],
+                },
+            ],
+            [
+                { id: 'A', label: 'Band A', min: 20, max: 20, avg: 20, color: '#ef4444', count: 2 },
+            ],
+            ['Park Place to Peggy Hill'],
+            'p50'
+        );
+
+        expect(breakdown.A.segmentTotals['Park Place to Peggy Hill'].weightedSum).toBe(94);
+        expect(breakdown.A.segmentTotals['Park Place to Peggy Hill'].totalWeight).toBe(10);
+        expect(
+            breakdown.A.segmentTotals['Park Place to Peggy Hill'].weightedSum
+            / breakdown.A.segmentTotals['Park Place to Peggy Hill'].totalWeight
+        ).toBeCloseTo(9.4, 5);
+        expect(
+            sumDisplayedSegmentTotals(['Park Place to Peggy Hill'], breakdown.A.segmentTotals)
+        ).toBe(9);
     });
 });

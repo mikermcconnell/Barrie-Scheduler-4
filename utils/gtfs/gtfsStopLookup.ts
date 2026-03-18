@@ -21,6 +21,17 @@ export interface GtfsStopWithCoords {
     lon: number;
 }
 
+function normalizeStopLookupKey(value: string): string {
+    const trimmed = value.trim().toLowerCase();
+    if (!trimmed) return '';
+
+    if (/^\d+$/.test(trimmed)) {
+        return String(Number(trimmed));
+    }
+
+    return trimmed.replace(/\s+/g, ' ');
+}
+
 function parseCsvRow(line: string): string[] {
     const values: string[] = [];
     let current = '';
@@ -99,6 +110,7 @@ export function buildStopNameToIdMap(): Record<string, string> {
 }
 
 let cachedStopsWithCoords: GtfsStopWithCoords[] | null = null;
+let cachedStopCoordsLookup: Map<string, { lat: number; lon: number }> | null = null;
 
 /**
  * Parse all stops with lat/lon coordinates from GTFS stops.txt.
@@ -138,6 +150,37 @@ export function getAllStopsWithCoords(): GtfsStopWithCoords[] {
 
     cachedStopsWithCoords = results;
     return results;
+}
+
+function getStopCoordsLookup(): Map<string, { lat: number; lon: number }> {
+    if (cachedStopCoordsLookup) return cachedStopCoordsLookup;
+
+    const lookup = new Map<string, { lat: number; lon: number }>();
+    for (const stop of getAllStopsWithCoords()) {
+        for (const rawKey of [stop.stop_id, stop.stop_code, stop.stop_name]) {
+            if (!rawKey) continue;
+            const key = normalizeStopLookupKey(rawKey);
+            if (!key || lookup.has(key)) continue;
+            lookup.set(key, { lat: stop.lat, lon: stop.lon });
+        }
+    }
+
+    cachedStopCoordsLookup = lookup;
+    return lookup;
+}
+
+export function findStopCoords(stopId?: string | null, stopName?: string | null): { lat: number; lon: number } | null {
+    const lookup = getStopCoordsLookup();
+
+    for (const rawKey of [stopId, stopName]) {
+        if (!rawKey) continue;
+        const key = normalizeStopLookupKey(rawKey);
+        if (!key) continue;
+        const coords = lookup.get(key);
+        if (coords) return coords;
+    }
+
+    return null;
 }
 
 /**

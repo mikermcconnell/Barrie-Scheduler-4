@@ -11,7 +11,7 @@ export interface PlannerRuleInput {
     confidence: TransitAppConfidence;
     totalViews: number;
     viewToTapRate: number | null;
-    tapToSuggestionRate: number | null;
+    viewToSuggestionRate: number | null;
     suggestionToGoRate: number | null;
     compositeScore: number | null;
     trend: TransitAppTrend;
@@ -34,7 +34,7 @@ const DIAGNOSIS_LABELS: Record<TransitAppDiagnosisCode, string> = {
     healthy: 'Healthy performance',
     low_awareness: 'Low route awareness',
     low_interest_conversion: 'Low view-to-tap conversion',
-    low_itinerary_followthrough: 'Low tap-to-suggestion follow-through',
+    low_itinerary_followthrough: 'Low view-to-suggestion follow-through',
     low_regional_integration: 'Weak GO integration conversion',
     weekday_weekend_mismatch: 'Weekday/weekend mismatch',
     seasonal_drop: 'Seasonal score drop',
@@ -77,7 +77,7 @@ export function evaluatePlannerRules(input: PlannerRuleInput): PlannerRuleResult
         recommendedAction = 'retime_service';
         effortBand = 'Medium';
         impactBand = 'Medium';
-    } else if (input.tapToSuggestionRate !== null && input.tapToSuggestionRate < 0.35) {
+    } else if (input.viewToSuggestionRate !== null && input.viewToSuggestionRate < 0.03) {
         diagnosisCode = 'low_itinerary_followthrough';
         recommendedAction = 'adjust_frequency';
         effortBand = 'High';
