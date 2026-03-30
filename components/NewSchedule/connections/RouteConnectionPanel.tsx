@@ -68,6 +68,11 @@ export const RouteConnectionPanel: React.FC<RouteConnectionPanelProps> = ({
         return library.targets.find(t => t.id === targetId);
     };
 
+    const getDefaultConnectionTypeForTarget = (targetId: string): ConnectionType => {
+        const target = getTarget(targetId);
+        return target?.defaultEventType === 'arrival' ? 'feed_arriving' : 'meet_departing';
+    };
+
     // Toggle connection enabled
     const handleToggleConnection = (connectionId: string) => {
         onUpdateConfig({
@@ -257,7 +262,16 @@ export const RouteConnectionPanel: React.FC<RouteConnectionPanelProps> = ({
                                 <label className="block text-xs text-gray-500 mb-1">Target</label>
                                 <select
                                     value={newConnection.targetId}
-                                    onChange={(e) => setNewConnection({ ...newConnection, targetId: e.target.value })}
+                                    onChange={(e) => {
+                                        const nextTargetId = e.target.value;
+                                        setNewConnection({
+                                            ...newConnection,
+                                            targetId: nextTargetId,
+                                            connectionType: nextTargetId
+                                                ? getDefaultConnectionTypeForTarget(nextTargetId)
+                                                : 'meet_departing'
+                                        });
+                                    }}
                                     className="w-full text-sm border border-gray-200 rounded px-2 py-1.5"
                                 >
                                     <option value="">Select a target...</option>

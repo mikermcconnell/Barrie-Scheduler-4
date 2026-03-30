@@ -13,7 +13,9 @@ import {
     Trash2,
     AlertCircle,
     ToggleLeft,
-    ToggleRight
+    ToggleRight,
+    ChevronDown,
+    ChevronUp
 } from 'lucide-react';
 import type {
     ConnectionTarget,
@@ -41,6 +43,11 @@ export interface StopWithName {
     enabled: boolean;
 }
 
+export interface StopOption {
+    code: string;
+    name: string;
+}
+
 /**
  * Initial data for pre-filling the form (from templates).
  */
@@ -64,6 +71,7 @@ interface AddTargetModalProps {
     dayType: DayType;
     existingTargetNames: string[];
     validStopCodes?: string[];
+    availableStops?: StopOption[];
     defaultQualityWindowSettings?: ConnectionQualityWindowSettings;
     initialData?: AddTargetInitialData;
     mode?: 'add' | 'edit';
@@ -76,14 +84,17 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
     dayType,
     existingTargetNames,
     validStopCodes,
+    availableStops,
     defaultQualityWindowSettings,
     initialData,
     mode = 'add'
 }) => {
     type NewTimeEventChoice = 'default' | ConnectionEventType;
+    type TimeDayPattern = 'current' | 'weekday' | 'saturday' | 'sunday' | 'daily';
     const [name, setName] = useState('');
     const [location, setLocation] = useState('');
     const [stopCode, setStopCode] = useState('');
+    const [stopSearch, setStopSearch] = useState('');
     const [stops, setStops] = useState<StopWithName[]>([]);
     const [autoPopulateStops, setAutoPopulateStops] = useState(false);
     const [icon, setIcon] = useState<'train' | 'clock'>('train');
@@ -91,10 +102,12 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
     const [newTimeStr, setNewTimeStr] = useState('');
     const [newTimeLabel, setNewTimeLabel] = useState('');
     const [newTimeEventType, setNewTimeEventType] = useState<NewTimeEventChoice>('default');
+    const [newTimeDayPattern, setNewTimeDayPattern] = useState<TimeDayPattern>('current');
     const [defaultEventType, setDefaultEventType] = useState<ConnectionEventType>('departure');
     const [previewTripTime, setPreviewTripTime] = useState('8:00 AM');
     const [error, setError] = useState('');
     const [hasInitialized, setHasInitialized] = useState(false);
+    const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
     const [useLibraryTimingDefaults, setUseLibraryTimingDefaults] = useState(true);
     const [qualityWindowSettings, setQualityWindowSettings] = useState<ConnectionQualityWindowSettings>(
         defaultQualityWindowSettings || DEFAULT_CONNECTION_QUALITY_WINDOW_SETTINGS
@@ -124,6 +137,44 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
         () => defaultQualityWindowSettings || DEFAULT_CONNECTION_QUALITY_WINDOW_SETTINGS,
         [defaultQualityWindowSettings]
     );
+    const selectableStops = React.useMemo<StopOption[]>(() => {
+        const optionMap = new Map<string, string>();
+        const sourceStops = stops.length > 0
+            ? stops.map(stop => ({ code: stop.code, name: stop.name }))
+            : (availableStops || []);
+
+        sourceStops.forEach(stop => {
+            const code = stop.code?.trim();
+            const name = stop.name?.trim();
+            if (!code) return;
+            optionMap.set(code, name || `Stop ${code}`);
+        });
+
+        editModeAllowedStopCodes.forEach(code => {
+            if (!optionMap.has(code)) {
+                optionMap.set(code, `Current stop (${code})`);
+            }
+        });
+
+        return Array.from(optionMap.entries())
+            .map(([code, name]) => ({ code, name }))
+            .sort((a, b) => {
+                const nameCompare = a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+                return nameCompare !== 0 ? nameCompare : a.code.localeCompare(b.code, undefined, { sensitivity: 'base' });
+            });
+    }, [availableStops, editModeAllowedStopCodes, stops]);
+    const selectedStopOption = React.useMemo(
+        () => selectableStops.find(option => option.code === stopCode.trim()),
+        [selectableStops, stopCode]
+    );
+    const filteredSelectableStops = React.useMemo(() => {
+        const query = stopSearch.trim().toLowerCase();
+        if (!query) return selectableStops.slice(0, 8);
+        return selectableStops
+            .filter(option => option.name.toLowerCase().includes(query) || option.code.toLowerCase().includes(query))
+            .slice(0, 8);
+    }, [selectableStops, stopSearch]);
+    const stopPickerEnabled = selectableStops.length > 0 && !(autoPopulateStops && stops.length > 0);
 
     // Track if icon was set from template (hide Type selector)
     const iconFromTemplate = initialData?.icon !== undefined;
@@ -138,12 +189,28 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
         ));
     };
 
+    const selectStopOption = (option: StopOption) => {
+        setStopCode(option.code);
+        setStopSearch(`${option.name} (${option.code})`);
+        setError('');
+    };
+
+    React.useEffect(() => {
+        if (selectedStopOption && !autoPopulateStops) {
+            setStopSearch(`${selectedStopOption.name} (${selectedStopOption.code})`);
+        }
+    }, [autoPopulateStops, selectedStopOption]);
+
     // Apply initial data when modal opens with new initialData
     React.useEffect(() => {
         if (isOpen && initialData && !hasInitialized) {
             if (initialData.name) setName(initialData.name);
             if (initialData.location) setLocation(initialData.location);
-            if (initialData.stopCode) setStopCode(initialData.stopCode);
+            if (initialData.stopCode) {
+                setStopCode(initialData.stopCode);
+                const matchedStop = selectableStops.find(stop => stop.code === initialData.stopCode);
+                setStopSearch(matchedStop ? `${matchedStop.name} (${matchedStop.code})` : initialData.stopCode);
+            }
             if (initialData.stops) setStops(initialData.stops);
             if (initialData.autoPopulateStops !== undefined) setAutoPopulateStops(initialData.autoPopulateStops);
             if (initialData.icon) setIcon(initialData.icon);
@@ -163,50 +230,98 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
                 setQualityWindowSettings(activeDefaultQualitySettings);
                 setUseLibraryTimingDefaults(true);
             }
+            setIsAdvancedOpen(Boolean(
+                initialData.defaultEventType === 'arrival'
+                || initialData.qualityWindowSettings
+                || initialData.times?.some(time => Boolean(time.eventType))
+            ));
             setHasInitialized(true);
         } else if (isOpen && !initialData && !hasInitialized) {
             setQualityWindowSettings(activeDefaultQualitySettings);
             setUseLibraryTimingDefaults(true);
+            setIsAdvancedOpen(false);
             setHasInitialized(true);
+        }
+        if (isOpen && !hasInitialized && !initialData) {
+            setStopSearch('');
         }
         // Reset initialization flag when modal closes
         if (!isOpen) {
             setHasInitialized(false);
+            setStopSearch('');
+            setIsAdvancedOpen(false);
         }
-    }, [isOpen, initialData, hasInitialized, activeDefaultQualitySettings]);
+    }, [isOpen, initialData, hasInitialized, activeDefaultQualitySettings, selectableStops]);
 
     if (!isOpen) return null;
 
-    // Add a new time
+    const getDaysForPattern = (pattern: TimeDayPattern): DayType[] => {
+        switch (pattern) {
+            case 'weekday':
+                return ['Weekday'];
+            case 'saturday':
+                return ['Saturday'];
+            case 'sunday':
+                return ['Sunday'];
+            case 'daily':
+                return ['Weekday', 'Saturday', 'Sunday'];
+            case 'current':
+            default:
+                return [dayType];
+        }
+    };
+
+    const splitTimeEntries = (value: string): string[] => value
+        .split(/[\n,;]+/)
+        .map(entry => entry.trim())
+        .filter(Boolean);
+
+    // Add one or more times
     const handleAddTime = () => {
-        const minutes = parseConnectionTime(newTimeStr);
-        const isMidnight = /^\s*(12:00\s*[ap]m?|00:00)\s*$/i.test(newTimeStr);
-        if (minutes === 0 && !isMidnight) {
-            setError('Invalid time format. Use HH:MM AM/PM or HH:MM');
+        const rawEntries = splitTimeEntries(newTimeStr);
+
+        if (rawEntries.length === 0) {
+            setError('Enter at least one time');
             return;
         }
 
-        if (minutes < 0 || minutes > MAX_SERVICE_MINUTES) {
-            setError(`Time must be between 0 and ${MAX_SERVICE_MINUTES} minutes`);
-            return;
+        const parsedMinutes: number[] = [];
+        const seenMinutes = new Set<number>();
+
+        for (const rawEntry of rawEntries) {
+            const minutes = parseConnectionTime(rawEntry);
+            const isMidnight = /^\s*(12:00\s*[ap]m?|00:00)\s*$/i.test(rawEntry);
+
+            if (minutes === 0 && !isMidnight) {
+                setError(`Invalid time "${rawEntry}". Use HH:MM AM/PM or HH:MM`);
+                return;
+            }
+
+            if (minutes < 0 || minutes > MAX_SERVICE_MINUTES) {
+                setError(`Time "${rawEntry}" must be between 0 and ${MAX_SERVICE_MINUTES} minutes`);
+                return;
+            }
+
+            if (seenMinutes.has(minutes) || times.some(t => t.time === minutes)) {
+                setError(`Time "${rawEntry}" already exists`);
+                return;
+            }
+
+            seenMinutes.add(minutes);
+            parsedMinutes.push(minutes);
         }
 
-        // Check for duplicate
-        if (times.some(t => t.time === minutes)) {
-            setError('This time already exists');
-            return;
-        }
-
-        const newTime: ConnectionTime = {
+        const daysActive = getDaysForPattern(newTimeDayPattern);
+        const newTimes: ConnectionTime[] = parsedMinutes.map(minutes => ({
             id: generateConnectionId(),
             time: minutes,
-            label: newTimeLabel || undefined,
+            label: newTimeLabel.trim() || undefined,
             eventType: newTimeEventType === 'default' ? undefined : newTimeEventType,
-            daysActive: [dayType], // Default to current day type
+            daysActive,
             enabled: true
-        };
+        }));
 
-        setTimes([...times, newTime].sort((a, b) => a.time - b.time));
+        setTimes([...times, ...newTimes].sort((a, b) => a.time - b.time));
         setNewTimeStr('');
         setNewTimeLabel('');
         setError('');
@@ -236,7 +351,14 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
         }
 
         const normalizedName = name.trim().toLowerCase();
-        if (existingTargetNames.some(existing => existing.trim().toLowerCase() === normalizedName)) {
+        const initialNormalizedName = initialData?.name?.trim().toLowerCase();
+        if (existingTargetNames.some(existing => {
+            const existingNormalized = existing.trim().toLowerCase();
+            if (mode === 'edit' && initialNormalizedName && existingNormalized === initialNormalizedName) {
+                return false;
+            }
+            return existingNormalized === normalizedName;
+        })) {
             setError('A target with this name already exists');
             return;
         }
@@ -287,6 +409,9 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
             type: 'manual' as ConnectionTargetType,
             location: location.trim() || undefined,
             stopCode: autoPopulateStops && enabledStopCodes.length > 0 ? enabledStopCodes[0] : stopCode.trim(),
+            stopName: autoPopulateStops && enabledStopCodes.length > 0
+                ? stops.find(stop => stop.code === enabledStopCodes[0])?.name
+                : selectedStopOption?.name,
             icon,
             times,
             color: icon === 'train' ? 'green' : 'teal',
@@ -303,10 +428,13 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
         setName('');
         setLocation('');
         setStopCode('');
+        setStopSearch('');
         setIcon('train');
         setTimes([]);
         setNewTimeEventType('default');
+        setNewTimeDayPattern('current');
         setDefaultEventType('departure');
+        setIsAdvancedOpen(false);
         setQualityWindowSettings(activeDefaultQualitySettings);
         setUseLibraryTimingDefaults(true);
         setError('');
@@ -373,60 +501,6 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
                         />
                     </div>
 
-                    {/* Preview simulation */}
-                    {times.length > 0 && (
-                        <div className="border border-gray-200 rounded-lg p-3 bg-white">
-                            <div className="flex items-center justify-between mb-2">
-                                <label className="text-sm font-medium text-gray-700">Preview Simulation</label>
-                                <input
-                                    type="text"
-                                    value={previewTripTime}
-                                    onChange={(e) => setPreviewTripTime(e.target.value)}
-                                    className="w-28 px-2 py-1 border border-gray-200 rounded text-sm"
-                                    placeholder="8:00 AM"
-                                />
-                            </div>
-                            {(() => {
-                                const previewMinutes = parseConnectionTime(previewTripTime);
-                                const isMidnight = /^\s*(12:00\s*[ap]m?|00:00)\s*$/i.test(previewTripTime);
-                                if (previewMinutes === 0 && !isMidnight) {
-                                    return <p className="text-xs text-gray-500">Enter valid preview time.</p>;
-                                }
-                                const activeTimes = times.filter(t => t.enabled && t.daysActive.includes(dayType));
-                                if (activeTimes.length === 0) {
-                                    return <p className="text-xs text-gray-500">No enabled times for {dayType}.</p>;
-                                }
-
-                                const ranked = activeTimes
-                                    .map(t => {
-                                        const eventType = t.eventType || defaultEventType;
-                                        const gap = eventType === 'arrival'
-                                            ? previewMinutes - t.time
-                                            : t.time - previewMinutes;
-                                        return { time: t, eventType, gap };
-                                    })
-                                    .sort((a, b) => Math.abs(a.gap) - Math.abs(b.gap))
-                                    .slice(0, 3);
-
-                                return (
-                                    <div className="space-y-1">
-                                        {ranked.map(item => (
-                                            <div key={item.time.id} className="text-xs text-gray-700 flex items-center justify-between">
-                                                <span>
-                                                    {formatConnectionTime(item.time.time)} {item.time.label || ''}
-                                                    <span className="ml-1 px-1 rounded bg-gray-100">
-                                                        {item.eventType === 'arrival' ? 'ARR' : 'DEP'}
-                                                    </span>
-                                                </span>
-                                                <span>{formatGapTimeForEvent(item.gap, item.eventType)}</span>
-                                            </div>
-                                        ))}
-                                    </div>
-                                );
-                            })()}
-                        </div>
-                    )}
-
                     {/* Location */}
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -441,11 +515,11 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
                         />
                     </div>
 
-                    {/* Stop Code - show toggle if auto-populate available */}
+                    {/* Stop - show toggle if auto-populate available */}
                     <div>
                         <div className="flex items-center justify-between mb-1">
                             <label className="block text-sm font-medium text-gray-700">
-                                Stop Code *
+                                Stop *
                             </label>
                             {stops.length > 0 && (
                                 <button
@@ -491,6 +565,64 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
                                 {enabledStopCodes.length === 0 && (
                                     <p className="text-xs text-red-600 mt-2">
                                         Select at least one stop
+                                    </p>
+                                )}
+                            </div>
+                        ) : stopPickerEnabled ? (
+                            <div className="space-y-2">
+                                <input
+                                    type="text"
+                                    value={stopSearch}
+                                    onChange={(e) => {
+                                        const nextValue = e.target.value;
+                                        setStopSearch(nextValue);
+                                        const normalized = nextValue.trim().toLowerCase();
+                                        const exactMatch = selectableStops.find(option => {
+                                            const label = `${option.name} (${option.code})`.toLowerCase();
+                                            return option.code.toLowerCase() === normalized
+                                                || option.name.toLowerCase() === normalized
+                                                || label === normalized;
+                                        });
+                                        setStopCode(exactMatch?.code || '');
+                                    }}
+                                    placeholder="Search stop name or code"
+                                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                />
+                                <div className="border border-gray-200 rounded-lg overflow-hidden bg-white">
+                                    {filteredSelectableStops.length > 0 ? (
+                                        <div className="max-h-40 overflow-y-auto">
+                                            {filteredSelectableStops.map(option => {
+                                                const isSelected = option.code === stopCode.trim();
+                                                return (
+                                                    <button
+                                                        key={option.code}
+                                                        type="button"
+                                                        onClick={() => selectStopOption(option)}
+                                                        className={`w-full px-3 py-2 flex items-center justify-between text-left text-sm border-b border-gray-100 last:border-b-0 ${
+                                                            isSelected
+                                                                ? 'bg-blue-50 text-blue-700'
+                                                                : 'hover:bg-gray-50 text-gray-700'
+                                                        }`}
+                                                    >
+                                                        <span className="truncate pr-3">{option.name}</span>
+                                                        <span className="font-mono text-xs text-gray-500">{option.code}</span>
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    ) : (
+                                        <div className="px-3 py-3 text-sm text-gray-500">
+                                            No stops match that search.
+                                        </div>
+                                    )}
+                                </div>
+                                {selectedStopOption ? (
+                                    <p className="text-xs text-gray-600">
+                                        Selected: <span className="font-medium text-gray-800">{selectedStopOption.name}</span> ({selectedStopOption.code})
+                                    </p>
+                                ) : (
+                                    <p className="text-xs text-gray-500">
+                                        Choose a stop from the list to fill the stop code automatically.
                                     </p>
                                 )}
                             </div>
@@ -543,51 +675,227 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
                         <label className="block text-sm font-medium text-gray-700 mb-1">
                             Times *
                         </label>
-                        <div className="mb-2">
-                            <label className="text-xs text-gray-600 mr-2">Default Event</label>
-                            <select
-                                value={defaultEventType}
-                                onChange={(e) => setDefaultEventType(e.target.value as ConnectionEventType)}
-                                className="px-2 py-1 border border-gray-200 rounded text-sm bg-white"
-                            >
-                                <option value="departure">Departure</option>
-                                <option value="arrival">Arrival</option>
-                            </select>
-                        </div>
-
                         {/* Add time form */}
-                        <div className="flex gap-2 mb-3">
-                            <input
-                                type="text"
+                        <div className="grid grid-cols-[minmax(0,1.5fr)_auto] gap-2 mb-2">
+                            <textarea
                                 value={newTimeStr}
                                 onChange={(e) => setNewTimeStr(e.target.value)}
-                                placeholder="7:15 AM"
-                                className="w-28 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                placeholder="7:15 AM, 8:45 AM or one per line"
+                                rows={3}
+                                className="min-h-[76px] px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-y"
                             />
                             <select
-                                value={newTimeEventType}
-                                onChange={(e) => setNewTimeEventType(e.target.value as NewTimeEventChoice)}
-                                className="w-24 px-2 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
-                                title="Connection event type"
+                                value={newTimeDayPattern}
+                                onChange={(e) => setNewTimeDayPattern(e.target.value as TimeDayPattern)}
+                                className="w-28 h-fit px-2 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                                title="Day pattern for new times"
                             >
-                                <option value="default">DEF</option>
-                                <option value="departure">DEP</option>
-                                <option value="arrival">ARR</option>
+                                <option value="current">{dayType}</option>
+                                <option value="weekday">Weekdays</option>
+                                <option value="saturday">Saturday</option>
+                                <option value="sunday">Sunday</option>
+                                <option value="daily">Daily</option>
                             </select>
+                        </div>
+                        <div className="flex gap-2 mb-3">
                             <input
                                 type="text"
                                 value={newTimeLabel}
                                 onChange={(e) => setNewTimeLabel(e.target.value)}
-                                placeholder="Label (optional)"
+                                placeholder="Label for added times (optional)"
                                 className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                             />
                             <button
                                 onClick={handleAddTime}
                                 className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                                title="Add times"
                             >
                                 <Plus className="w-4 h-4" />
                             </button>
                         </div>
+                        <p className="text-xs text-gray-500 mb-3">
+                            Paste several times at once. Separate them with commas, semicolons, or line breaks. The selected day pattern applies to each new time.
+                        </p>
+
+                        <button
+                            type="button"
+                            onClick={() => setIsAdvancedOpen(!isAdvancedOpen)}
+                            aria-expanded={isAdvancedOpen}
+                            aria-controls="add-target-modal-advanced"
+                            className="mb-3 inline-flex items-center gap-2 text-sm font-medium text-gray-700 hover:text-gray-900"
+                        >
+                            <span>Advanced</span>
+                            {isAdvancedOpen ? (
+                                <ChevronUp className="w-4 h-4" />
+                            ) : (
+                                <ChevronDown className="w-4 h-4" />
+                            )}
+                            <span className="text-xs font-normal text-gray-500">
+                                default event, timing preview, quality windows
+                            </span>
+                        </button>
+
+                        {isAdvancedOpen && (
+                            <div id="add-target-modal-advanced" className="space-y-3 mb-3 rounded-lg border border-gray-200 bg-gray-50/70 p-3">
+                                <div>
+                                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                                        Default Event
+                                    </label>
+                                    <select
+                                        value={defaultEventType}
+                                        onChange={(e) => setDefaultEventType(e.target.value as ConnectionEventType)}
+                                        aria-label="Default connection event"
+                                        className="px-2 py-1 border border-gray-200 rounded text-sm bg-white"
+                                    >
+                                        <option value="departure">Departure</option>
+                                        <option value="arrival">Arrival</option>
+                                    </select>
+                                </div>
+
+                                <div>
+                                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                                        Event for New Times
+                                    </label>
+                                    <select
+                                        value={newTimeEventType}
+                                        onChange={(e) => setNewTimeEventType(e.target.value as NewTimeEventChoice)}
+                                        aria-label="New time event override"
+                                        className="w-36 px-2 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                                        title="Connection event type"
+                                    >
+                                        <option value="default">Use default</option>
+                                        <option value="departure">Departure</option>
+                                        <option value="arrival">Arrival</option>
+                                    </select>
+                                    <p className="mt-1 text-xs text-gray-500">
+                                        Use this when a new time needs a different connection side than the default.
+                                    </p>
+                                </div>
+
+                                {times.length > 0 && (
+                                    <div className="border border-gray-200 rounded-lg p-3 bg-white">
+                                        <div className="flex items-center justify-between mb-2">
+                                            <label className="text-sm font-medium text-gray-700">Preview Simulation</label>
+                                            <input
+                                                type="text"
+                                                value={previewTripTime}
+                                                onChange={(e) => setPreviewTripTime(e.target.value)}
+                                                className="w-28 px-2 py-1 border border-gray-200 rounded text-sm"
+                                                placeholder="8:00 AM"
+                                            />
+                                        </div>
+                                        {(() => {
+                                            const previewMinutes = parseConnectionTime(previewTripTime);
+                                            const isMidnight = /^\s*(12:00\s*[ap]m?|00:00)\s*$/i.test(previewTripTime);
+                                            if (previewMinutes === 0 && !isMidnight) {
+                                                return <p className="text-xs text-gray-500">Enter valid preview time.</p>;
+                                            }
+                                            const activeTimes = times.filter(t => t.enabled && t.daysActive.includes(dayType));
+                                            if (activeTimes.length === 0) {
+                                                return <p className="text-xs text-gray-500">No enabled times for {dayType}.</p>;
+                                            }
+
+                                            const ranked = activeTimes
+                                                .map(t => {
+                                                    const eventType = t.eventType || defaultEventType;
+                                                    const gap = eventType === 'arrival'
+                                                        ? previewMinutes - t.time
+                                                        : t.time - previewMinutes;
+                                                    return { time: t, eventType, gap };
+                                                })
+                                                .sort((a, b) => Math.abs(a.gap) - Math.abs(b.gap))
+                                                .slice(0, 3);
+
+                                            return (
+                                                <div className="space-y-1">
+                                                    {ranked.map(item => (
+                                                        <div key={item.time.id} className="text-xs text-gray-700 flex items-center justify-between">
+                                                            <span>
+                                                                {formatConnectionTime(item.time.time)} {item.time.label || ''}
+                                                                <span className="ml-1 px-1 rounded bg-gray-100">
+                                                                    {item.eventType === 'arrival' ? 'ARR' : 'DEP'}
+                                                                </span>
+                                                            </span>
+                                                            <span>{formatGapTimeForEvent(item.gap, item.eventType)}</span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            );
+                                        })()}
+                                    </div>
+                                )}
+
+                                <div className="border border-gray-200 rounded-lg p-3 bg-white">
+                                    <div className="flex items-center justify-between mb-2">
+                                        <label className="block text-sm font-medium text-gray-700">
+                                            Connection Timing
+                                        </label>
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                const nextUseDefault = !useLibraryTimingDefaults;
+                                                setUseLibraryTimingDefaults(nextUseDefault);
+                                                if (nextUseDefault) {
+                                                    setQualityWindowSettings(activeDefaultQualitySettings);
+                                                }
+                                            }}
+                                            className="flex items-center gap-1.5 text-xs text-gray-600 hover:text-gray-900"
+                                        >
+                                            {useLibraryTimingDefaults ? (
+                                                <ToggleRight className="w-5 h-5 text-teal-600" />
+                                            ) : (
+                                                <ToggleLeft className="w-5 h-5 text-gray-400" />
+                                            )}
+                                            <span>Use library default</span>
+                                        </button>
+                                    </div>
+                                    {!useLibraryTimingDefaults && (
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <label className="text-xs text-gray-600">
+                                                Good Min
+                                                <input
+                                                    type="number"
+                                                    min={0}
+                                                    value={qualityWindowSettings.goodMin}
+                                                    onChange={(e) => setQualityWindowSettings({ ...qualityWindowSettings, goodMin: Number(e.target.value || 0) })}
+                                                    className="mt-1 w-full px-2 py-1 border border-gray-200 rounded text-sm"
+                                                />
+                                            </label>
+                                            <label className="text-xs text-gray-600">
+                                                Excellent Min
+                                                <input
+                                                    type="number"
+                                                    min={0}
+                                                    value={qualityWindowSettings.excellentMin}
+                                                    onChange={(e) => setQualityWindowSettings({ ...qualityWindowSettings, excellentMin: Number(e.target.value || 0) })}
+                                                    className="mt-1 w-full px-2 py-1 border border-gray-200 rounded text-sm"
+                                                />
+                                            </label>
+                                            <label className="text-xs text-gray-600">
+                                                Excellent Max
+                                                <input
+                                                    type="number"
+                                                    min={0}
+                                                    value={qualityWindowSettings.excellentMax}
+                                                    onChange={(e) => setQualityWindowSettings({ ...qualityWindowSettings, excellentMax: Number(e.target.value || 0) })}
+                                                    className="mt-1 w-full px-2 py-1 border border-gray-200 rounded text-sm"
+                                                />
+                                            </label>
+                                            <label className="text-xs text-gray-600">
+                                                Good Max
+                                                <input
+                                                    type="number"
+                                                    min={0}
+                                                    value={qualityWindowSettings.goodMax}
+                                                    onChange={(e) => setQualityWindowSettings({ ...qualityWindowSettings, goodMax: Number(e.target.value || 0) })}
+                                                    className="mt-1 w-full px-2 py-1 border border-gray-200 rounded text-sm"
+                                                />
+                                            </label>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
 
                         {/* Time list */}
                         {times.length === 0 ? (
@@ -649,76 +957,6 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
                         )}
                     </div>
 
-                    {/* Connection timing quality settings */}
-                    <div className="border border-gray-200 rounded-lg p-3 bg-gray-50/60">
-                        <div className="flex items-center justify-between mb-2">
-                            <label className="block text-sm font-medium text-gray-700">
-                                Connection Timing
-                            </label>
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    const nextUseDefault = !useLibraryTimingDefaults;
-                                    setUseLibraryTimingDefaults(nextUseDefault);
-                                    if (nextUseDefault) {
-                                        setQualityWindowSettings(activeDefaultQualitySettings);
-                                    }
-                                }}
-                                className="flex items-center gap-1.5 text-xs text-gray-600 hover:text-gray-900"
-                            >
-                                {useLibraryTimingDefaults ? (
-                                    <ToggleRight className="w-5 h-5 text-teal-600" />
-                                ) : (
-                                    <ToggleLeft className="w-5 h-5 text-gray-400" />
-                                )}
-                                <span>Use library default</span>
-                            </button>
-                        </div>
-                        {!useLibraryTimingDefaults && (
-                            <div className="grid grid-cols-2 gap-2">
-                                <label className="text-xs text-gray-600">
-                                    Good Min
-                                    <input
-                                        type="number"
-                                        min={0}
-                                        value={qualityWindowSettings.goodMin}
-                                        onChange={(e) => setQualityWindowSettings({ ...qualityWindowSettings, goodMin: Number(e.target.value || 0) })}
-                                        className="mt-1 w-full px-2 py-1 border border-gray-200 rounded text-sm"
-                                    />
-                                </label>
-                                <label className="text-xs text-gray-600">
-                                    Excellent Min
-                                    <input
-                                        type="number"
-                                        min={0}
-                                        value={qualityWindowSettings.excellentMin}
-                                        onChange={(e) => setQualityWindowSettings({ ...qualityWindowSettings, excellentMin: Number(e.target.value || 0) })}
-                                        className="mt-1 w-full px-2 py-1 border border-gray-200 rounded text-sm"
-                                    />
-                                </label>
-                                <label className="text-xs text-gray-600">
-                                    Excellent Max
-                                    <input
-                                        type="number"
-                                        min={0}
-                                        value={qualityWindowSettings.excellentMax}
-                                        onChange={(e) => setQualityWindowSettings({ ...qualityWindowSettings, excellentMax: Number(e.target.value || 0) })}
-                                        className="mt-1 w-full px-2 py-1 border border-gray-200 rounded text-sm"
-                                    />
-                                </label>
-                                <label className="text-xs text-gray-600">
-                                    Good Max
-                                    <input
-                                        type="number"
-                                        min={0}
-                                        value={qualityWindowSettings.goodMax}
-                                        onChange={(e) => setQualityWindowSettings({ ...qualityWindowSettings, goodMax: Number(e.target.value || 0) })}
-                                        className="mt-1 w-full px-2 py-1 border border-gray-200 rounded text-sm"
-                                    />
-                                </label>
-                            </div>
-                        )}
-                    </div>
                 </div>
 
                 {/* Footer */}

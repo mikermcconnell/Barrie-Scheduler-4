@@ -1,8 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import { Timer, ArrowRight, Plus, Minus, Info, Clock, TrendingUp, Pause, Maximize2, Minimize2, ChevronUp, ChevronDown } from 'lucide-react';
-import { MasterRouteTable, MasterTrip } from '../utils/parsers/masterScheduleParser';
-import { TimeUtils } from '../utils/timeUtils';
+import { MasterRouteTable } from '../utils/parsers/masterScheduleParser';
 import { getRouteColor, getRouteTextColor } from '../utils/config/routeColors';
+import { calculateGridTravelMinutes, isSamePhysicalStop, isStationaryTravelSegment } from '../utils/schedule/travelTimeGridUtils';
 
 // Time Band type
 interface TimeBandDisplay {
@@ -49,18 +49,28 @@ const getTravelColor = (minutes: number): string => {
 export const TravelTimeGrid: React.FC<TravelTimeGridProps> = ({ schedules, onBulkAdjust, onRecoveryAdjust, onSingleTripAdjust, onSingleRecoveryAdjust, bands, analysis, segmentNames }) => {
     const [expandedRoute, setExpandedRoute] = useState<string | null>(null);
     const [isFullScreen, setIsFullScreen] = useState(false);
+    const displaySegmentNames = useMemo(
+        () => (segmentNames || []).filter(segmentName => !isStationaryTravelSegment(segmentName)),
+        [segmentNames]
+    );
+    const formatHourLabel = (hour: number) => {
+        if (hour >= 24) return `${hour}:00`;
+
+        const normalized = hour % 24;
+        if (normalized === 0) return '12 AM';
+        if (normalized < 12) return `${normalized} AM`;
+        if (normalized === 12) return '12 PM';
+        return `${normalized - 12} PM`;
+    };
 
     // Process schedules into grid data
     const routeGrids = useMemo(() => {
         return schedules.map(table => {
-            const isStationary = (from: string, to: string) =>
-                from.split('(')[0].trim() === to.split('(')[0].trim();
-
             const rawPairs: { from: string; to: string; isStationary: boolean }[] = [];
             for (let i = 0; i < table.stops.length - 1; i++) {
                 const from = table.stops[i];
                 const to = table.stops[i + 1];
-                rawPairs.push({ from, to, isStationary: isStationary(from, to) });
+                rawPairs.push({ from, to, isStationary: isSamePhysicalStop(from, to) });
             }
 
             const stopPairs = rawPairs.filter(p => !p.isStationary);
@@ -68,28 +78,27 @@ export const TravelTimeGrid: React.FC<TravelTimeGridProps> = ({ schedules, onBul
             // hour -> stopPairIndex -> first trip found
             const hourlyData: Record<number, Record<number, { travel: number; recovery: number; tripId: string }>> = {};
 
-            table.trips.forEach(trip => {
+            const orderedTrips = [...table.trips].sort((a, b) => a.startTime - b.startTime);
+            const selectedHourSources: Record<number, string> = {};
+
+            orderedTrips.forEach(trip => {
                 const hour = Math.floor(trip.startTime / 60);
-                if (!hourlyData[hour]) hourlyData[hour] = {};
+                if (selectedHourSources[hour]) return;
+
+                const tripRowData: Record<number, { travel: number; recovery: number; tripId: string }> = {};
 
                 stopPairs.forEach((pair, filteredIdx) => {
-                    if (hourlyData[hour][filteredIdx]) return;
+                    const travel = calculateGridTravelMinutes(trip, pair.from, pair.to);
+                    if (travel === null) return;
 
-                    const fromTimeStr = trip.stops[pair.from];
-                    const toTimeStr = trip.stops[pair.to];
-
-                    if (fromTimeStr && toTimeStr) {
-                        const fromMins = TimeUtils.toMinutes(fromTimeStr);
-                        const toMins = TimeUtils.toMinutes(toTimeStr);
-
-                        if (fromMins !== null && toMins !== null) {
-                            const travel = toMins - fromMins;
-                            const recovery = trip.recoveryTimes?.[pair.to] || 0;
-
-                            hourlyData[hour][filteredIdx] = { travel, recovery, tripId: trip.id };
-                        }
-                    }
+                    const recovery = trip.recoveryTimes?.[pair.to] || 0;
+                    tripRowData[filteredIdx] = { travel, recovery, tripId: trip.id };
                 });
+
+                if (Object.keys(tripRowData).length > 0) {
+                    selectedHourSources[hour] = trip.id;
+                    hourlyData[hour] = tripRowData;
+                }
             });
 
             // Extract base route name for color
@@ -102,14 +111,18 @@ export const TravelTimeGrid: React.FC<TravelTimeGridProps> = ({ schedules, onBul
                 routeName: table.routeName,
                 baseName,
                 stopPairs,
-                hourlyData
+                hourlyData,
+                hours: Array.from(
+                    { length: Math.max(25, Math.max(0, ...Object.keys(hourlyData).map(Number)) + 1) },
+                    (_, hour) => hour
+                )
             };
         });
     }, [schedules]);
 
     // Calculate band summary with segment breakdowns (p50 and p80)
     const bandSummary = useMemo(() => {
-        if (!bands || !analysis || !segmentNames) return null;
+        if (!bands || !analysis || displaySegmentNames.length === 0) return null;
 
         const summary: Record<string, {
             band: TimeBandDisplay;
@@ -130,7 +143,7 @@ export const TravelTimeGrid: React.FC<TravelTimeGridProps> = ({ schedules, onBul
                 totalCount: 0,
                 timeSlots: []
             };
-            segmentNames.forEach(seg => {
+            displaySegmentNames.forEach(seg => {
                 summary[band.id].segmentTotals[seg] = { sumP50: 0, sumP80: 0, count: 0 };
             });
         });
@@ -159,7 +172,7 @@ export const TravelTimeGrid: React.FC<TravelTimeGridProps> = ({ schedules, onBul
         });
 
         return summary;
-    }, [bands, analysis, segmentNames]);
+    }, [bands, analysis, displaySegmentNames]);
 
     if (schedules.length === 0) {
         return (
@@ -174,7 +187,7 @@ export const TravelTimeGrid: React.FC<TravelTimeGridProps> = ({ schedules, onBul
     return (
         <div className={`flex flex-col gap-4 ${isFullScreen ? 'fixed inset-0 z-50 bg-white overflow-auto p-4' : ''}`}>
             {/* Segment Times by Band Table */}
-            {bandSummary && bands && segmentNames && segmentNames.length > 0 && (
+            {bandSummary && bands && displaySegmentNames.length > 0 && (
                 <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                     <div className="p-4 border-b border-gray-200 bg-gray-50">
                         <h3 className="font-bold text-gray-900">Segment Times by Band</h3>
@@ -186,7 +199,7 @@ export const TravelTimeGrid: React.FC<TravelTimeGridProps> = ({ schedules, onBul
                                 <tr className="bg-gray-100 border-b border-gray-200">
                                     <th className="px-4 py-3 text-left font-bold text-gray-700 min-w-[100px]">Band</th>
                                     <th className="px-4 py-3 text-left font-bold text-gray-700 min-w-[180px]">Time Slots</th>
-                                    {segmentNames.map(seg => (
+                                    {displaySegmentNames.map(seg => (
                                         <th key={seg} className="px-3 py-3 text-center font-medium text-gray-600 min-w-[90px]">
                                             <div className="flex flex-col items-center">
                                                 {seg.split(' to ').map((s, i) => (
@@ -215,7 +228,7 @@ export const TravelTimeGrid: React.FC<TravelTimeGridProps> = ({ schedules, onBul
                                     const avgTotalP80 = data.totalSumP80 / data.totalCount;
 
                                     // Find min/max for color gradients
-                                    const allP50s = segmentNames.map(seg => {
+                                    const allP50s = displaySegmentNames.map(seg => {
                                         const s = data.segmentTotals[seg];
                                         return s && s.count > 0 ? s.sumP50 / s.count : 0;
                                     });
@@ -246,7 +259,7 @@ export const TravelTimeGrid: React.FC<TravelTimeGridProps> = ({ schedules, onBul
                                                     )}
                                                 </div>
                                             </td>
-                                            {segmentNames.map(seg => {
+                                            {displaySegmentNames.map(seg => {
                                                 const segData = data.segmentTotals[seg];
                                                 const avgP50 = segData && segData.count > 0 ? segData.sumP50 / segData.count : 0;
                                                 const avgP80 = segData && segData.count > 0 ? segData.sumP80 / segData.count : 0;
@@ -321,7 +334,7 @@ export const TravelTimeGrid: React.FC<TravelTimeGridProps> = ({ schedules, onBul
                                 <h3 className="text-sm font-bold">{grid.routeName}</h3>
                                 <span className="text-[10px] opacity-70 uppercase">Travel Matrix</span>
                             </div>
-                            <span className="text-[10px] opacity-80">First trip/hour</span>
+                            <span className="text-[10px] opacity-80">First trip with data in hour</span>
                         </div>
 
                         {/* Table Container */}
@@ -372,7 +385,7 @@ export const TravelTimeGrid: React.FC<TravelTimeGridProps> = ({ schedules, onBul
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {Array.from({ length: 24 }).map((_, hour) => {
+                                    {grid.hours.map(hour => {
                                         const hasDataForHour = Object.keys(grid.hourlyData[hour] || {}).length > 0;
                                         if (!hasDataForHour) return null;
 
@@ -383,7 +396,7 @@ export const TravelTimeGrid: React.FC<TravelTimeGridProps> = ({ schedules, onBul
                                             >
                                                 <td className="sticky left-0 z-10 bg-gray-100 p-3 border-r border-b border-gray-200 text-center shadow-[2px_0_8px_-4px_rgba(0,0,0,0.1)]">
                                                     <span className="font-mono text-sm font-bold text-gray-700">
-                                                        {hour.toString().padStart(2, '0')}:00
+                                                        {formatHourLabel(hour)}
                                                     </span>
                                                 </td>
                                                 {grid.stopPairs.map((pair, idx) => {
@@ -400,7 +413,7 @@ export const TravelTimeGrid: React.FC<TravelTimeGridProps> = ({ schedules, onBul
                                                                     <div className="flex items-center gap-0.5">
                                                                         <button
                                                                             onClick={() => onSingleTripAdjust?.(data.tripId, pair.to, -1, grid.routeName)}
-                                                                            className="opacity-0 group-hover/cell:opacity-100 p-0.5 hover:bg-gray-100 text-gray-400 hover:text-gray-700 rounded transition-opacity"
+                                                                            className="opacity-0 group-hover/cell:opacity-100 group-focus-within/cell:opacity-100 focus:opacity-100 p-0.5 hover:bg-gray-100 text-gray-400 hover:text-gray-700 rounded transition-opacity"
                                                                             title="-1 travel"
                                                                         >
                                                                             <ChevronDown size={10} />
@@ -410,7 +423,7 @@ export const TravelTimeGrid: React.FC<TravelTimeGridProps> = ({ schedules, onBul
                                                                         </span>
                                                                         <button
                                                                             onClick={() => onSingleTripAdjust?.(data.tripId, pair.to, 1, grid.routeName)}
-                                                                            className="opacity-0 group-hover/cell:opacity-100 p-0.5 hover:bg-gray-100 text-gray-400 hover:text-gray-700 rounded transition-opacity"
+                                                                            className="opacity-0 group-hover/cell:opacity-100 group-focus-within/cell:opacity-100 focus:opacity-100 p-0.5 hover:bg-gray-100 text-gray-400 hover:text-gray-700 rounded transition-opacity"
                                                                             title="+1 travel"
                                                                         >
                                                                             <ChevronUp size={10} />
@@ -421,7 +434,7 @@ export const TravelTimeGrid: React.FC<TravelTimeGridProps> = ({ schedules, onBul
                                                                         <div className="flex items-center gap-0.5">
                                                                             <button
                                                                                 onClick={() => onSingleRecoveryAdjust?.(data.tripId, pair.to, -1, grid.routeName)}
-                                                                                className="opacity-0 group-hover/cell:opacity-100 p-0.5 hover:bg-indigo-100 text-indigo-400 hover:text-indigo-700 rounded transition-opacity"
+                                                                                className="opacity-0 group-hover/cell:opacity-100 group-focus-within/cell:opacity-100 focus:opacity-100 p-0.5 hover:bg-indigo-100 text-indigo-400 hover:text-indigo-700 rounded transition-opacity"
                                                                                 title="-1 recovery"
                                                                             >
                                                                                 <ChevronDown size={8} />
@@ -431,7 +444,7 @@ export const TravelTimeGrid: React.FC<TravelTimeGridProps> = ({ schedules, onBul
                                                                             </span>
                                                                             <button
                                                                                 onClick={() => onSingleRecoveryAdjust?.(data.tripId, pair.to, 1, grid.routeName)}
-                                                                                className="opacity-0 group-hover/cell:opacity-100 p-0.5 hover:bg-indigo-100 text-indigo-400 hover:text-indigo-700 rounded transition-opacity"
+                                                                                className="opacity-0 group-hover/cell:opacity-100 group-focus-within/cell:opacity-100 focus:opacity-100 p-0.5 hover:bg-indigo-100 text-indigo-400 hover:text-indigo-700 rounded transition-opacity"
                                                                                 title="+1 recovery"
                                                                             >
                                                                                 <ChevronUp size={8} />

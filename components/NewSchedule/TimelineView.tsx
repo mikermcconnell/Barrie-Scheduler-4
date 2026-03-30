@@ -11,9 +11,8 @@
  */
 
 import React, { useState, useRef, useMemo, useCallback, useEffect } from 'react';
-import { ZoomIn, ZoomOut, Clock, AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-react';
-import { MasterRouteTable, MasterTrip } from '../../utils/parsers/masterScheduleParser';
-import { TimeUtils } from '../../utils/timeUtils';
+import { ZoomIn, ZoomOut, Clock, AlertTriangle } from 'lucide-react';
+import { MasterRouteTable } from '../../utils/parsers/masterScheduleParser';
 
 interface TimelineViewProps {
     schedules: MasterRouteTable[];
@@ -29,12 +28,19 @@ interface TripBar {
     startTime: number; // minutes from midnight
     endTime: number;
     travelTime: number;
+    recoveryTime: number;
     hasOverlap: boolean;
 }
 
 interface BlockRow {
     blockId: string;
     trips: TripBar[];
+}
+
+interface DragPreview {
+    tripId: string;
+    startTime: number;
+    endTime: number;
 }
 
 const HOUR_WIDTH_BASE = 120; // pixels per hour at zoom 1
@@ -50,8 +56,8 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
     selectedTripId
 }) => {
     const containerRef = useRef<HTMLDivElement>(null);
+    const blockLabelsRef = useRef<HTMLDivElement>(null);
     const [zoom, setZoom] = useState(1);
-    const [scrollLeft, setScrollLeft] = useState(0);
     const [isDragging, setIsDragging] = useState(false);
     const [dragType, setDragType] = useState<'move' | 'resize-start' | 'resize-end' | null>(null);
     const [dragTripId, setDragTripId] = useState<string | null>(null);
@@ -59,6 +65,9 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
     const [dragOriginalStart, setDragOriginalStart] = useState(0);
     const [dragOriginalEnd, setDragOriginalEnd] = useState(0);
     const [hoveredTripId, setHoveredTripId] = useState<string | null>(null);
+    const [dragPreview, setDragPreview] = useState<DragPreview | null>(null);
+    const dragMovedRef = useRef(false);
+    const dragPreviewRef = useRef<DragPreview | null>(null);
 
     // Calculate time range from all trips
     const { minHour, maxHour, blockRows, overlaps } = useMemo(() => {
@@ -74,6 +83,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                     startTime: trip.startTime,
                     endTime: trip.endTime,
                     travelTime: trip.travelTime,
+                    recoveryTime: trip.recoveryTime,
                     hasOverlap: false
                 };
                 allTrips.push(bar);
@@ -87,7 +97,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
         Object.values(blockMap).forEach(trips => {
             trips.sort((a, b) => a.startTime - b.startTime);
             for (let i = 0; i < trips.length - 1; i++) {
-                if (trips[i].endTime > trips[i + 1].startTime) {
+                if ((trips[i].endTime + trips[i].recoveryTime) > trips[i + 1].startTime) {
                     trips[i].hasOverlap = true;
                     trips[i + 1].hasOverlap = true;
                     overlapsSet.add(trips[i].id);
@@ -97,15 +107,22 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
         });
 
         // Calculate time range
-        let minH = 24, maxH = 0;
+        let minH = Number.POSITIVE_INFINITY;
+        let maxH = Number.NEGATIVE_INFINITY;
         allTrips.forEach(t => {
             const startHour = Math.floor(t.startTime / 60);
             const endHour = Math.ceil(t.endTime / 60);
             if (startHour < minH) minH = startHour;
             if (endHour > maxH) maxH = endHour;
         });
-        minH = Math.max(0, minH - 1);
-        maxH = Math.min(24, maxH + 1);
+
+        if (!Number.isFinite(minH) || !Number.isFinite(maxH)) {
+            minH = 0;
+            maxH = 24;
+        } else {
+            minH = Math.max(0, minH - 1);
+            maxH = Math.max(minH + 1, maxH + 1);
+        }
 
         // Build block rows sorted by first trip time
         const rows: BlockRow[] = Object.entries(blockMap)
@@ -131,18 +148,30 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
         return ((minutes / 60) - minHour) * hourWidth;
     }, [minHour, hourWidth]);
 
-    // Convert pixel position to time
-    const xToTime = useCallback((x: number) => {
-        return Math.round(((x / hourWidth) + minHour) * 60);
-    }, [minHour, hourWidth]);
+    const getTripById = useCallback((tripId: string) => {
+        for (const table of schedules) {
+            for (const trip of table.trips) {
+                if (trip.id === tripId) return trip;
+            }
+        }
+        return null;
+    }, [schedules]);
 
+    const commitTripTimeChange = useCallback((tripId: string, startTime: number, endTime: number) => {
+        if (endTime <= startTime) return;
+        onTripTimeChange?.(tripId, startTime, endTime - startTime);
+    }, [onTripTimeChange]);
+
+    // Convert pixel position to time
     // Handle zoom
     const handleZoomIn = () => setZoom(Math.min(MAX_ZOOM, zoom + 0.25));
     const handleZoomOut = () => setZoom(Math.max(MIN_ZOOM, zoom - 0.25));
 
     // Handle scroll
     const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
-        setScrollLeft(e.currentTarget.scrollLeft);
+        if (blockLabelsRef.current) {
+            blockLabelsRef.current.scrollTop = e.currentTarget.scrollTop;
+        }
     };
 
     // Handle mouse down on trip bar
@@ -150,7 +179,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
         e.preventDefault();
         e.stopPropagation();
 
-        const trip = schedules.flatMap(s => s.trips).find(t => t.id === tripId);
+        const trip = getTripById(tripId);
         if (!trip) return;
 
         setIsDragging(true);
@@ -159,6 +188,14 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
         setDragStartX(e.clientX);
         setDragOriginalStart(trip.startTime);
         setDragOriginalEnd(trip.endTime);
+        dragMovedRef.current = false;
+        const preview = {
+            tripId,
+            startTime: trip.startTime,
+            endTime: trip.endTime
+        };
+        dragPreviewRef.current = preview;
+        setDragPreview(preview);
 
         // Select trip on click
         onTripSelect?.(tripId);
@@ -171,40 +208,55 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
         const deltaX = e.clientX - dragStartX;
         const deltaMinutes = Math.round(deltaX / hourWidth * 60);
 
-        // Find current trip data
-        const trip = schedules.flatMap(s => s.trips).find(t => t.id === dragTripId);
-        if (!trip) return;
-
         let newStart = dragOriginalStart;
         let newEnd = dragOriginalEnd;
+        let changed = false;
 
         switch (dragType) {
             case 'move':
                 newStart = dragOriginalStart + deltaMinutes;
                 newEnd = dragOriginalEnd + deltaMinutes;
+                if (newStart < 0) {
+                    const duration = dragOriginalEnd - dragOriginalStart;
+                    newStart = 0;
+                    newEnd = duration;
+                }
+                changed = deltaMinutes !== 0;
                 break;
             case 'resize-start':
                 newStart = Math.min(dragOriginalStart + deltaMinutes, dragOriginalEnd - 5);
+                newStart = Math.max(0, newStart);
+                changed = deltaMinutes !== 0;
                 break;
             case 'resize-end':
                 newEnd = Math.max(dragOriginalEnd + deltaMinutes, dragOriginalStart + 5);
+                changed = deltaMinutes !== 0;
                 break;
         }
 
-        // Constrain to valid times
-        newStart = Math.max(0, newStart);
-        newEnd = Math.min(24 * 60, newEnd);
-
-        // Call the change handler with new values
-        onTripTimeChange?.(dragTripId, newStart, newEnd - newStart);
-    }, [isDragging, dragTripId, dragType, dragStartX, dragOriginalStart, dragOriginalEnd, hourWidth, schedules, onTripTimeChange]);
+        if (changed) dragMovedRef.current = true;
+        const preview = {
+            tripId: dragTripId,
+            startTime: newStart,
+            endTime: newEnd
+        };
+        dragPreviewRef.current = preview;
+        setDragPreview(preview);
+    }, [isDragging, dragTripId, dragType, dragStartX, dragOriginalStart, dragOriginalEnd, hourWidth, getTripById]);
 
     // Handle mouse up
     const handleMouseUp = useCallback(() => {
+        const preview = dragPreviewRef.current;
+        if (dragTripId && preview && dragMovedRef.current) {
+            commitTripTimeChange(dragTripId, preview.startTime, preview.endTime);
+        }
         setIsDragging(false);
         setDragType(null);
         setDragTripId(null);
-    }, []);
+        setDragPreview(null);
+        dragPreviewRef.current = null;
+        dragMovedRef.current = false;
+    }, [commitTripTimeChange, dragTripId]);
 
     // Add/remove global mouse listeners
     useEffect(() => {
@@ -227,11 +279,65 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
 
     // Format time for tooltip
     const formatTime = (minutes: number) => {
-        const h = Math.floor(minutes / 60);
-        const m = minutes % 60;
+        const dayOffset = Math.floor(minutes / 1440);
+        const normalizedMinutes = ((minutes % 1440) + 1440) % 1440;
+        const h = Math.floor(normalizedMinutes / 60);
+        const m = normalizedMinutes % 60;
         const period = h >= 12 ? 'PM' : 'AM';
         const h12 = h % 12 || 12;
-        return `${h12}:${m.toString().padStart(2, '0')} ${period}`;
+        return `${h12}:${m.toString().padStart(2, '0')} ${period}${dayOffset > 0 ? ` (+${dayOffset})` : ''}`;
+    };
+
+    const formatHourLabel = (hour: number) => {
+        const dayOffset = Math.floor(hour / 24);
+        const normalizedHour = ((hour % 24) + 24) % 24;
+        const label = normalizedHour === 0 ? '12 AM' :
+            normalizedHour < 12 ? `${normalizedHour} AM` :
+                normalizedHour === 12 ? '12 PM' :
+                    `${normalizedHour - 12} PM`;
+        return dayOffset > 0 ? `${label} +${dayOffset}` : label;
+    };
+
+    const handleTripKeyDown = (e: React.KeyboardEvent, trip: TripBar) => {
+        const step = e.shiftKey ? 5 : 1;
+        const isMoveKey = e.key === 'ArrowLeft' || e.key === 'ArrowRight';
+        const isResizeKey = e.altKey && isMoveKey;
+
+        if (!isMoveKey) {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onTripSelect?.(trip.id);
+            }
+            return;
+        }
+
+        e.preventDefault();
+
+        const direction = e.key === 'ArrowRight' ? 1 : -1;
+        const currentStart = trip.startTime;
+        const currentEnd = trip.endTime;
+
+        if (isResizeKey) {
+            const nextStart = e.key === 'ArrowLeft'
+                ? Math.min(currentStart, currentEnd - 5)
+                : currentStart;
+            const nextEnd = e.key === 'ArrowRight'
+                ? currentEnd + step
+                : Math.max(currentStart + 5, currentEnd - step);
+            commitTripTimeChange(trip.id, nextStart, nextEnd);
+            return;
+        }
+
+        const duration = currentEnd - currentStart;
+        const nextStart = Math.max(0, currentStart + (direction * step));
+        commitTripTimeChange(trip.id, nextStart, nextStart + duration);
+    };
+
+    const resolveTripBounds = (trip: TripBar) => {
+        if (dragPreview?.tripId === trip.id) {
+            return { startTime: dragPreview.startTime, endTime: dragPreview.endTime };
+        }
+        return { startTime: trip.startTime, endTime: trip.endTime };
     };
 
     return (
@@ -278,7 +384,11 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                     <div className="h-8 border-b border-gray-200 flex items-center justify-center text-xs font-semibold text-gray-500 uppercase">
                         Block
                     </div>
-                    <div className="overflow-y-auto" style={{ height: `calc(100% - ${TIME_LABEL_HEIGHT}px)` }}>
+                    <div
+                        ref={blockLabelsRef}
+                        className="overflow-y-auto"
+                        style={{ height: `calc(100% - ${TIME_LABEL_HEIGHT}px)` }}
+                    >
                         {blockRows.map(row => (
                             <div
                                 key={row.blockId}
@@ -310,10 +420,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                                     style={{ width: hourWidth }}
                                 >
                                     <span className="text-[10px] text-gray-500">
-                                        {hour === 0 ? '12 AM' :
-                                            hour < 12 ? `${hour} AM` :
-                                                hour === 12 ? '12 PM' :
-                                                    `${hour - 12} PM`}
+                                        {formatHourLabel(hour)}
                                     </span>
                                 </div>
                             ))}
@@ -340,8 +447,9 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                                     style={{ height: ROW_HEIGHT }}
                                 >
                                     {row.trips.map(trip => {
-                                        const left = timeToX(trip.startTime);
-                                        const width = timeToX(trip.endTime) - left;
+                                        const bounds = resolveTripBounds(trip);
+                                        const left = timeToX(bounds.startTime);
+                                        const width = timeToX(bounds.endTime) - left;
                                         const isSelected = selectedTripId === trip.id;
                                         const isHovered = hoveredTripId === trip.id;
 
@@ -354,21 +462,31 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                                                     width: Math.max(width, 4),
                                                     height: ROW_HEIGHT - 16,
                                                 }}
+                                                role="button"
+                                                tabIndex={0}
+                                                aria-label={`Trip ${trip.blockId} ${trip.direction} ${formatTime(bounds.startTime)} to ${formatTime(bounds.endTime)}`}
                                                 onMouseDown={(e) => handleMouseDown(e, trip.id, 'move')}
+                                                onKeyDown={(e) => handleTripKeyDown(e, trip)}
                                                 onMouseEnter={() => setHoveredTripId(trip.id)}
                                                 onMouseLeave={() => setHoveredTripId(null)}
-                                                title={`${trip.direction}: ${formatTime(trip.startTime)} - ${formatTime(trip.endTime)} (${trip.travelTime} min)`}
+                                                title={`${trip.direction}: ${formatTime(bounds.startTime)} - ${formatTime(bounds.endTime)} (${trip.travelTime} min)`}
                                             >
                                                 {/* Resize handles */}
                                                 {width > 20 && (
                                                     <>
                                                         <div
                                                             className="absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-black/20 rounded-l-sm"
-                                                            onMouseDown={(e) => handleMouseDown(e, trip.id, 'resize-start')}
+                                                            onMouseDown={(e) => {
+                                                                e.stopPropagation();
+                                                                handleMouseDown(e, trip.id, 'resize-start');
+                                                            }}
                                                         />
                                                         <div
                                                             className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-black/20 rounded-r-sm"
-                                                            onMouseDown={(e) => handleMouseDown(e, trip.id, 'resize-end')}
+                                                            onMouseDown={(e) => {
+                                                                e.stopPropagation();
+                                                                handleMouseDown(e, trip.id, 'resize-end');
+                                                            }}
                                                         />
                                                     </>
                                                 )}

@@ -37,8 +37,6 @@ import {
     Car,
     MoreVertical,
     Pencil,
-    Upload,
-    Database
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import ExcelJS from 'exceljs';
@@ -72,17 +70,10 @@ import {
     setTripStartStop,
     setTripEndStop
 } from './NewSchedule/utils/timeCascade';
-import { UploadToMasterModal } from './modals/UploadToMasterModal';
-import { BulkUploadToMasterModal, RouteForUpload } from './modals/BulkUploadToMasterModal';
-import {
-    uploadToMasterSchedule,
-    prepareUpload
-} from '../utils/services/masterScheduleService';
 import {
     extractRouteNumber,
     extractDayType,
-    type DayType,
-    type UploadConfirmation
+    type DayType
 } from '../utils/masterScheduleTypes';
 import {
     deepCloneSchedules,
@@ -106,9 +97,7 @@ import { RoundTripTableView } from './schedule/RoundTripTableView';
 import { getRouteConfig, extractDirectionFromName, parseRouteInfo } from '../utils/config/routeDirectionConfig';
 import { reassignBlocksForTables, MatchConfigPresets } from '../utils/blocks/blockAssignmentCore';
 import type { CascadeMode } from '../hooks/useScheduleEditing';
-import { useUploadToMaster, ConsolidatedRoute } from '../hooks/useUploadToMaster';
 import { useTravelTimeGrid } from '../hooks/useTravelTimeGrid';
-import { ScheduleSidebar } from './layout/ScheduleSidebar';
 import { CascadeModeSelector } from './ui/CascadeModeSelector';
 import { isEditableEventTarget } from '../utils/domUtils';
 // --- Main Editor Component ---
@@ -181,7 +170,7 @@ export interface ScheduleEditorProps {
     // Hide autosave when parent handles it
     hideAutoSave?: boolean;
 
-    // Upload to Master Schedule (optional - only shown if teamId is provided)
+    // Team-scoped actions
     teamId?: string;
     userId?: string;
     uploaderName?: string;
@@ -230,6 +219,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
     publishDisabled,
     masterBaseline
 }) => {
+    const MIDNIGHT_ROLLOVER_THRESHOLD = 210; // 3:30 AM
     const [activeRouteIdx, setActiveRouteIdx] = useState(0);
     const [activeDay, setActiveDay] = useState<string>('Weekday');
     const [subView, setSubView] = useState<'editor' | 'matrix' | 'timeline'>('editor');
@@ -237,11 +227,10 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
     const [isFullScreen, setIsFullScreen] = useState(false);
     const [showAuditLog, setShowAuditLog] = useState(false);
 
-    // Upload to Master State - now handled by useUploadToMaster hook
-
     // Connections Panel State
     const [showConnectionsPanel, setShowConnectionsPanel] = useState(false);
     const [connectionLibrary, setConnectionLibrary] = useState<ConnectionLibrary | null>(null);
+    void uploaderName;
 
     // Load connection library when teamId is available
     useEffect(() => {
@@ -363,15 +352,6 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         });
     }, [schedules]);
 
-    // Upload to Master Hook
-    const upload = useUploadToMaster(
-        consolidatedRoutes as ConsolidatedRoute[],
-        teamId,
-        userId,
-        uploaderName,
-        showSuccessToast
-    );
-
     // Travel Time Grid Hook
     const gridHandlers = useTravelTimeGrid(schedules, onSchedulesChange, logAction);
 
@@ -407,8 +387,13 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
             if (hasShortcutModifier && e.key === 's') {
                 e.preventDefault();
                 if (!readOnly && onSaveVersion) {
-                    void onSaveVersion();
-                    showSuccessToast?.('Version saved');
+                    void onSaveVersion()
+                        .then(() => {
+                            showSuccessToast?.('Version saved');
+                        })
+                        .catch((error) => {
+                            console.error('Save version failed:', error);
+                        });
                 }
             }
             // Don't hijack field-level undo/redo or escape while a user is typing.
@@ -437,19 +422,46 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
 
     // Handlers
     const recalculateTrip = (trip: MasterTrip, cols: string[]) => {
-
         let start: number | null = null;
         let end: number | null = null;
+        let offset = 0;
+        let lastAdjusted: number | null = null;
+        const stopMinutes: Record<string, number> = {};
+
         cols.forEach(col => {
-            const m = TimeUtils.toMinutes(trip.stops[col]);
-            if (m !== null) {
-                if (start === null) start = m;
-                end = m;
+            const raw = TimeUtils.toMinutes(trip.stops[col]);
+            if (raw !== null) {
+                let adjusted = raw;
+
+                if (raw >= 1440) {
+                    adjusted = raw;
+                    offset = Math.floor(raw / 1440) * 1440;
+                } else {
+                    if (lastAdjusted !== null && raw + offset < lastAdjusted - 60) {
+                        offset += 1440;
+                    }
+                    adjusted = raw + offset;
+                }
+
+                if (start === null) start = adjusted;
+                end = adjusted;
+                lastAdjusted = adjusted;
+                stopMinutes[col] = adjusted;
             }
         });
+
         if (start !== null && end !== null) {
+            if (start < MIDNIGHT_ROLLOVER_THRESHOLD && !Object.values(stopMinutes).some(v => v >= 1440)) {
+                start += 1440;
+                end += 1440;
+                for (const key of Object.keys(stopMinutes)) {
+                    stopMinutes[key] += 1440;
+                }
+            }
+
             trip.startTime = start;
             trip.endTime = end;
+            trip.stopMinutes = stopMinutes;
             trip.cycleTime = end - start;  // Full span: last departure - first departure
             trip.travelTime = Math.max(0, trip.cycleTime - trip.recoveryTime);  // Travel = cycle - recovery
         }
@@ -973,6 +985,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         // Recalculate derived values
         recalculateTrip(trip, table.stops);
         validateRouteTable(table);
+        reassignBlocksForRelatedTables(newScheds, getTrueBaseRoute(table.routeName));
 
         logAction('edit', `Timeline: Moved trip to ${TimeUtils.fromMinutes(newStartTime)}`, {
             tripId,
@@ -1379,9 +1392,6 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         link.click();
     };
 
-    // --- Upload to Master Handlers ---
-    // NOTE: Upload handlers moved to useUploadToMaster hook (see upload.* above)
-
     // Active Data
     const activeRouteGroup = consolidatedRoutes[activeRouteIdx];
     const activeRoute = activeRouteGroup?.days[activeDay] || activeRouteGroup?.days[Object.keys(activeRouteGroup?.days || {})[0]];
@@ -1418,23 +1428,6 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                     onClose={() => setContextMenu(null)}
                 />
             )}
-
-            {/* Upload to Master Modal (Single Route) */}
-            <UploadToMasterModal
-                isOpen={upload.showUploadModal}
-                confirmation={upload.uploadConfirmation}
-                onConfirm={upload.confirmUpload}
-                onCancel={upload.cancelUpload}
-                isUploading={upload.isUploading}
-            />
-
-            {/* Bulk Upload to Master Modal */}
-            <BulkUploadToMasterModal
-                isOpen={upload.showBulkUploadModal}
-                routes={upload.routesForUpload}
-                onConfirm={upload.handleBulkUpload}
-                onCancel={upload.closeBulkUpload}
-            />
 
             <div className={`h-full flex flex-col bg-gray-50 overflow-hidden ${isFullScreen ? 'fixed inset-0 z-[9999] bg-white' : ''}`}>
                 {/* WorkspaceHeader - hidden in embedded mode */}
@@ -1506,18 +1499,6 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                                                             <div className={`w-1.5 h-1.5 rounded-full ${activeDay === day ? 'bg-blue-600' : 'bg-gray-300'}`} />
                                                             {day}
                                                         </button>
-                                                        {teamId && !readOnly && (
-                                                            <button
-                                                                onClick={(e) => {
-                                                                    e.stopPropagation();
-                                                                    upload.initiateUpload(route.name, day as DayType);
-                                                                }}
-                                                                className="p-1.5 rounded text-gray-600 hover:text-green-700 hover:bg-green-50 transition-colors"
-                                                                title={`Upload Route ${route.name} (${day}) to Master`}
-                                                            >
-                                                                <Upload size={12} />
-                                                            </button>
-                                                        )}
                                                     </div>
                                                 ))}
                                             </div>
@@ -1529,22 +1510,6 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                             {/* Footer Actions - hidden in readOnly mode */}
                             {!readOnly && (
                                 <div className="border-t border-gray-100">
-                                    {/* Upload to Master Button */}
-                                    {teamId && (
-                                        <div className="p-3 border-b border-gray-100">
-                                            <button
-                                                onClick={upload.openBulkUpload}
-                                                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-green-600 text-white font-bold rounded-lg hover:bg-green-700 transition-colors shadow-sm"
-                                            >
-                                                <Database size={16} />
-                                                Upload to Master
-                                            </button>
-                                            <p className="text-xs text-gray-500 text-center mt-2">
-                                                {upload.routesForUpload.length} route{upload.routesForUpload.length !== 1 ? 's' : ''} available
-                                            </p>
-                                        </div>
-                                    )}
-
                                 </div>
                             )}
                         </div>

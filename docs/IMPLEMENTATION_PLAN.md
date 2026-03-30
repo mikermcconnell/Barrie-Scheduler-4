@@ -87,6 +87,8 @@ Platform analysis with hub configuration.
 |------|----------|---------|
 | Fix C7 sync bug | High | Wire `ConnectionsPanel` state updates back to `ScheduleEditor` |
 | Add stop code validation (C4) | Medium | Validate against known GTFS stops on target creation |
+| Add GO GTFS template scope controls | Medium | Let planners narrow GO imports/templates by station and direction so the library is not flooded with all four GO targets at once |
+| Add connection template regression coverage | Medium | Protect calendar_dates-only GO GTFS selection, arrival/departure template semantics, and route-connection defaults |
 | Add test coverage | Medium | Baseline `tests/connectionUtils.test.ts` exists, but component and sync coverage are still missing |
 
 ### Interlining Reimplementation

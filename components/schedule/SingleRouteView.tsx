@@ -23,7 +23,7 @@ import { MasterRouteTable, MasterTrip } from '../../utils/parsers/masterSchedule
 import { TimeUtils } from '../../utils/timeUtils';
 import { getRouteConfig, extractDirectionFromName } from '../../utils/config/routeDirectionConfig';
 import {
-    calculateHeadways,
+    calculateSequentialHeadways,
     getRatioColor,
     parseTimeInput,
     sanitizeInput,
@@ -59,8 +59,8 @@ export const SingleRouteView: React.FC<SingleRouteViewProps> = ({ table, showSum
         return set;
     }, [table]);
 
-    const headways = useMemo(() => calculateHeadways(table.trips), [table.trips]);
     const sortedTrips = useMemo(() => sortTripsByBlockFlow(table.trips), [table.trips]);
+    const headways = useMemo(() => calculateSequentialHeadways(sortedTrips, trip => trip.startTime), [sortedTrips]);
 
     // Build column map: column index (1-based) -> { type: 'block' | 'stop' | 'recovery', stopName?: string }
     const columnMap = useMemo(() => {
@@ -173,7 +173,7 @@ export const SingleRouteView: React.FC<SingleRouteViewProps> = ({ table, showSum
                             {/* Stop Names Row - spans ARR+R+DEP for stops with recovery */}
                             <tr>
                                 <th rowSpan={2} className="p-2 border-b bg-gray-50 text-sm font-semibold text-gray-700 align-middle text-left">Pattern</th>
-                                <th rowSpan={2} className="p-2 border-b bg-gray-50 sticky left-0 z-30 text-sm font-semibold text-gray-700 uppercase align-middle">Block</th>
+                                <th rowSpan={2} className="p-2 border-b bg-gray-50 text-sm font-semibold text-gray-700 uppercase align-middle">Block</th>
                                 {table.stops.map(stop => {
                                     const stopCode = table.stopIds?.[stop];
                                     return (
@@ -222,7 +222,7 @@ export const SingleRouteView: React.FC<SingleRouteViewProps> = ({ table, showSum
                             {sortedTrips.map((trip, idx) => (
                                 <tr key={trip.id} className={`group hover:bg-gray-50 ${idx % 2 === 0 ? 'bg-white' : 'bg-gray-50/30'}`}>
                                     <td className="p-2 text-left text-xs text-gray-500 truncate max-w-[200px]" title={trip.patternLabel || '-'}>{trip.patternLabel || '-'}</td>
-                                    <td className="p-3 border-r sticky left-0 bg-white group-hover:bg-gray-50 z-30 font-mono text-sm font-bold text-center">
+                                    <td className="p-3 border-r bg-white group-hover:bg-gray-50 font-mono text-sm font-bold text-center">
                                         <div className="flex flex-col items-center">
                                             <span>{trip.blockId}</span>
                                             {onAddTrip && <button onClick={() => onAddTrip(trip.blockId, trip.id)} className="opacity-70 group-hover:opacity-100 absolute -right-2 top-1/2 -translate-y-1/2 bg-blue-600 text-white rounded-full p-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"><Plus size={10} /></button>}
@@ -261,9 +261,23 @@ export const SingleRouteView: React.FC<SingleRouteViewProps> = ({ table, showSum
 
                                         // Get connection info for this stop
                                         const stopCode = table.stopIds?.[stop] || '';
-                                        const connections = connectionLibrary && stopCode && depMin !== null
-                                            ? getConnectionsForStop(stopCode, depMin, connectionLibrary, dayType)
+                                        const connections = connectionLibrary && stopCode && (arrMin !== null || depMin !== null)
+                                            ? getConnectionsForStop(
+                                                stopCode,
+                                                {
+                                                    arrival: arrMin,
+                                                    departure: depMin
+                                                },
+                                                connectionLibrary,
+                                                dayType
+                                            )
                                             : [];
+                                        const arrivalConnections = hasRecovery
+                                            ? connections.filter(connection => connection.eventType === 'departure')
+                                            : [];
+                                        const departureConnections = hasRecovery
+                                            ? connections.filter(connection => connection.eventType === 'arrival')
+                                            : connections;
 
                                         return (
                                             <React.Fragment key={stop}>
@@ -271,10 +285,13 @@ export const SingleRouteView: React.FC<SingleRouteViewProps> = ({ table, showSum
                                                     <>
                                                         {/* ARR Column */}
                                                         <td className="p-0 border-r relative" style={{ minWidth: '56px', width: '56px' }}>
-                                                            <div className="flex items-center justify-center">
+                                                            <div className={`flex ${arrivalConnections.length > 0 ? 'flex-col' : 'items-center'} justify-center`}>
                                                                 <span className={`w-full font-mono text-sm text-center p-1 text-gray-700 ${arrDiff !== 0 ? 'font-bold' : ''}`}>
                                                                     {arrTime}
                                                                 </span>
+                                                                {arrivalConnections.length > 0 && (
+                                                                    <ConnectionIndicator connections={arrivalConnections} />
+                                                                )}
                                                                 {arrDiff !== 0 && (
                                                                     <span className={`absolute top-0 right-0 text-[9px] font-bold px-0.5 rounded-bl ${arrDiff > 0 ? 'text-green-600 bg-green-50' : 'text-red-600 bg-red-50'}`}>
                                                                         {arrDiff > 0 ? '+' : ''}{arrDiff}
@@ -299,7 +316,7 @@ export const SingleRouteView: React.FC<SingleRouteViewProps> = ({ table, showSum
                                                         </td>
                                                         {/* DEP Column */}
                                                         <td className="p-0 border-r relative group/time" style={{ minWidth: '80px', width: '80px' }}>
-                                                            <div className={`flex ${connections.length > 0 ? 'flex-col' : 'items-center'} justify-center`}>
+                                                            <div className={`flex ${departureConnections.length > 0 ? 'flex-col' : 'items-center'} justify-center`}>
                                                                 <input
                                                                     type="text"
                                                                     key={`${trip.id}-${stop}-${depTime}`}
@@ -321,8 +338,8 @@ export const SingleRouteView: React.FC<SingleRouteViewProps> = ({ table, showSum
                                                                     disabled={readOnly}
                                                                     className={`w-full bg-transparent font-mono text-sm text-center p-1 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-200 ${depDiff !== 0 ? 'font-bold' : ''} ${readOnly ? 'cursor-default' : ''}`}
                                                                 />
-                                                                {connections.length > 0 && (
-                                                                    <ConnectionIndicator connections={connections} />
+                                                                {departureConnections.length > 0 && (
+                                                                    <ConnectionIndicator connections={departureConnections} />
                                                                 )}
                                                                 {depDiff !== 0 && (
                                                                     <span className={`absolute top-0 right-0 text-[9px] font-bold px-0.5 rounded-bl ${depDiff > 0 ? 'text-green-600 bg-green-50' : 'text-red-600 bg-red-50'}`}>

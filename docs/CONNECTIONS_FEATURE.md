@@ -151,6 +151,7 @@ Notes:
 | **C4** | Stop code not validated against known stops | Medium | Open | Only checks non-empty; doesn't verify against GTFS stop list. `AddTargetModal.tsx:183` |
 | **C7** | Panel edits don't refresh editor indicators | High | Open | `ConnectionsPanel` maintains local state and doesn't notify parent `ScheduleEditor`. Indicators only update after closing/reopening panel. Fix: add `onLibraryChanged` callback prop. |
 | **C8** | Route-based target resync only in panel lifecycle | Medium | Open | Derivation/resync from master schedules happens in `ConnectionsPanel` local state, not wired to editor state. |
+| **C9** | GO GTFS import is all-or-nothing | Medium | Open | The chooser bulk-imports all four GO station/direction templates at once. Add scope controls so planners can import only the station/direction they actually need. |
 
 ### Untested Areas
 

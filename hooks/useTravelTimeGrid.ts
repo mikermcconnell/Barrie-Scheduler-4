@@ -11,6 +11,8 @@
 import { useCallback } from 'react';
 import type { MasterRouteTable, MasterTrip } from '../utils/parsers/masterScheduleParser';
 import { validateRouteTable } from '../utils/parsers/masterScheduleParser';
+import { reassignBlocksForTables, MatchConfigPresets } from '../utils/blocks/blockAssignmentCore';
+import { parseRouteInfo } from '../utils/config/routeDirectionConfig';
 import { TimeUtils } from '../utils/timeUtils';
 import { deepCloneSchedules } from '../utils/schedule/scheduleEditorUtils';
 
@@ -25,6 +27,24 @@ export interface UseTravelTimeGridResult {
  * Recalculate trip times based on stop values
  */
 const MIDNIGHT_ROLLOVER_THRESHOLD = 210; // 3:30 AM
+
+const getTrueBaseRoute = (routeName: string): string => {
+    const stripped = routeName
+        .replace(/\s*\((North|South)\)/gi, '')
+        .replace(/\s*\((Weekday|Saturday|Sunday)\)/gi, '')
+        .trim();
+
+    const parsed = parseRouteInfo(stripped);
+    return parsed.suffixIsDirection ? parsed.baseRoute : stripped;
+};
+
+const reassignBlocksForRelatedTables = (tables: MasterRouteTable[], routeName: string) => {
+    const baseName = getTrueBaseRoute(routeName);
+    const relatedTables = tables.filter(table => getTrueBaseRoute(table.routeName) === baseName);
+    if (relatedTables.length === 0) return;
+
+    reassignBlocksForTables(relatedTables, baseName, MatchConfigPresets.editor);
+};
 
 const recalculateTrip = (trip: MasterTrip, cols: string[]) => {
     let start: number | null = null;
@@ -107,11 +127,19 @@ export function useTravelTimeGrid(
                 if (t !== null) {
                     trip.stops[stop] = TimeUtils.fromMinutes(t + delta);
                 }
+                if (trip.arrivalTimes?.[stop] !== undefined) {
+                    const arr = TimeUtils.toMinutes(trip.arrivalTimes[stop]);
+                    if (arr !== null) trip.arrivalTimes[stop] = TimeUtils.fromMinutes(arr + delta);
+                }
+                if (trip.stopMinutes?.[stop] !== undefined) {
+                    trip.stopMinutes[stop] += delta;
+                }
             }
             recalculateTrip(trip, targetTable.stops);
         });
 
         newScheds.forEach(t => validateRouteTable(t));
+        reassignBlocksForRelatedTables(newScheds, routeName);
         onSchedulesChange(newScheds);
     }, [schedules, onSchedulesChange, logAction]);
 
@@ -142,10 +170,18 @@ export function useTravelTimeGrid(
             if (t !== null) {
                 trip.stops[stop] = TimeUtils.fromMinutes(t + delta);
             }
+            if (trip.arrivalTimes?.[stop] !== undefined) {
+                const arr = TimeUtils.toMinutes(trip.arrivalTimes[stop]);
+                if (arr !== null) trip.arrivalTimes[stop] = TimeUtils.fromMinutes(arr + delta);
+            }
+            if (trip.stopMinutes?.[stop] !== undefined) {
+                trip.stopMinutes[stop] += delta;
+            }
         }
         recalculateTrip(trip, targetTable.stops);
 
         newScheds.forEach(t => validateRouteTable(t));
+        reassignBlocksForRelatedTables(newScheds, routeName);
         onSchedulesChange(newScheds);
     }, [schedules, onSchedulesChange]);
 
@@ -165,21 +201,40 @@ export function useTravelTimeGrid(
 
         targetTable.trips.forEach(trip => {
             const oldRec = trip.recoveryTimes?.[stopName] || 0;
-            const newRec = Math.max(0, oldRec + delta);
+            const maxRec = Math.max(0, trip.travelTime - 1);
+            const newRec = Math.max(0, Math.min(oldRec + delta, maxRec));
+            const actualDelta = newRec - oldRec;
             if (!trip.recoveryTimes) trip.recoveryTimes = {};
             trip.recoveryTimes[stopName] = newRec;
+            trip.recoveryTime = Object.values(trip.recoveryTimes).reduce((sum, v) => sum + (v || 0), 0);
 
             if (stopIdx !== -1) {
+                const arrivalAtStop = trip.arrivalTimes?.[stopName];
+                if (arrivalAtStop) {
+                    const arr = TimeUtils.toMinutes(arrivalAtStop);
+                    if (arr !== null) {
+                        trip.stops[stopName] = TimeUtils.fromMinutes(arr + newRec);
+                    }
+                }
+
                 for (let i = stopIdx + 1; i < targetTable.stops.length; i++) {
                     const s = targetTable.stops[i];
                     const t = TimeUtils.toMinutes(trip.stops[s]);
-                    if (t !== null) trip.stops[s] = TimeUtils.fromMinutes(t + delta);
+                    if (t !== null) trip.stops[s] = TimeUtils.fromMinutes(t + actualDelta);
+                    if (trip.arrivalTimes?.[s]) {
+                        const arr = TimeUtils.toMinutes(trip.arrivalTimes[s]);
+                        if (arr !== null) trip.arrivalTimes[s] = TimeUtils.fromMinutes(arr + actualDelta);
+                    }
+                    if (trip.stopMinutes?.[s] !== undefined) {
+                        trip.stopMinutes[s] += actualDelta;
+                    }
                 }
             }
             recalculateTrip(trip, targetTable.stops);
         });
 
         newScheds.forEach(t => validateRouteTable(t));
+        reassignBlocksForRelatedTables(newScheds, routeName);
         onSchedulesChange(newScheds);
     }, [schedules, onSchedulesChange]);
 
@@ -203,21 +258,38 @@ export function useTravelTimeGrid(
 
         // Adjust recovery for this trip
         const oldRec = trip.recoveryTimes?.[stopName] || 0;
-        const newRec = Math.max(0, oldRec + delta);
+        const maxRec = Math.max(0, trip.travelTime - 1);
+        const newRec = Math.max(0, Math.min(oldRec + delta, maxRec));
+        const actualDelta = newRec - oldRec;
         if (!trip.recoveryTimes) trip.recoveryTimes = {};
         trip.recoveryTimes[stopName] = newRec;
+        trip.recoveryTime = Object.values(trip.recoveryTimes).reduce((sum, v) => sum + (v || 0), 0);
 
         // Cascade time changes to subsequent stops
         if (stopIdx !== -1) {
+            const arrivalAtStop = trip.arrivalTimes?.[stopName];
+            if (arrivalAtStop) {
+                const arr = TimeUtils.toMinutes(arrivalAtStop);
+                if (arr !== null) trip.stops[stopName] = TimeUtils.fromMinutes(arr + newRec);
+            }
+
             for (let i = stopIdx + 1; i < targetTable.stops.length; i++) {
                 const s = targetTable.stops[i];
                 const t = TimeUtils.toMinutes(trip.stops[s]);
-                if (t !== null) trip.stops[s] = TimeUtils.fromMinutes(t + delta);
+                if (t !== null) trip.stops[s] = TimeUtils.fromMinutes(t + actualDelta);
+                if (trip.arrivalTimes?.[s]) {
+                    const arr = TimeUtils.toMinutes(trip.arrivalTimes[s]);
+                    if (arr !== null) trip.arrivalTimes[s] = TimeUtils.fromMinutes(arr + actualDelta);
+                }
+                if (trip.stopMinutes?.[s] !== undefined) {
+                    trip.stopMinutes[s] += actualDelta;
+                }
             }
         }
         recalculateTrip(trip, targetTable.stops);
 
         newScheds.forEach(t => validateRouteTable(t));
+        reassignBlocksForRelatedTables(newScheds, routeName);
         onSchedulesChange(newScheds);
     }, [schedules, onSchedulesChange]);
 

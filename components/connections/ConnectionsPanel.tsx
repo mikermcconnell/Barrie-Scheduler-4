@@ -21,7 +21,7 @@ import type {
 } from '../../utils/connections/connectionTypes';
 import { generateConnectionId, parseConnectionTime } from '../../utils/connections/connectionTypes';
 import { ConnectionLibraryPanel } from '../NewSchedule/connections/ConnectionLibraryPanel';
-import { AddTargetModal, AddTargetInitialData } from '../NewSchedule/connections/AddTargetModal';
+import { AddTargetModal, AddTargetInitialData, type StopOption } from '../NewSchedule/connections/AddTargetModal';
 import { ImportRouteModal } from '../NewSchedule/connections/ImportRouteModal';
 import { ConnectionAddChooser, ConnectionTemplateSelection } from '../NewSchedule/connections/ConnectionAddChooser';
 import {
@@ -30,6 +30,7 @@ import {
 } from '../../utils/connections/connectionLibraryService';
 import { getMasterSchedule } from '../../utils/services/masterScheduleService';
 import { appendLibraryChange } from '../../utils/connections/connectionLibraryUtils';
+import { alignTemplateInitialDataToLoadedStops } from '../../utils/connections/templateInitialDataUtils';
 
 interface ConnectionsPanelProps {
     schedules: MasterRouteTable[];
@@ -60,61 +61,27 @@ export const ConnectionsPanel: React.FC<ConnectionsPanelProps> = ({
     const [showAddTargetModal, setShowAddTargetModal] = useState(false);
     const [showImportRouteModal, setShowImportRouteModal] = useState(false);
     const [addTargetInitialData, setAddTargetInitialData] = useState<AddTargetInitialData | undefined>();
-    const getTemplateInitialData = useCallback((data: AddTargetInitialData): AddTargetInitialData => {
-        const name = (data.name || '').toLowerCase();
-        const location = (data.location || '').toLowerCase();
-        const isGoTemplate = data.icon === 'train' && (
-            name.includes('go')
-            || location.includes('go')
-            || name.includes('allandale')
-            || location.includes('allandale')
-        );
-        if (!isGoTemplate) return data;
-
-        const wantsBarrieSouth = name.includes('barrie south') || location.includes('barrie south');
-        const wantsAllandale = name.includes('allandale') || location.includes('allandale');
-
-        const stopMap = new Map<string, string>(); // code -> name
-        for (const table of schedules) {
+    const availableStops = React.useMemo<StopOption[]>(() => {
+        const stopMap = new Map<string, string>();
+        schedules.forEach(table => {
             Object.entries(table.stopIds || {}).forEach(([stopName, code]) => {
-                const normalizedName = stopName.toLowerCase();
-                const isBarrieSouthMatch = normalizedName.includes('barrie south')
-                    && (normalizedName.includes('terminal') || normalizedName.includes('go'));
-                const isAllandaleMatch = normalizedName.includes('allandale')
-                    && (normalizedName.includes('terminal') || normalizedName.includes('go'));
-                const stationMatch = wantsBarrieSouth
-                    ? isBarrieSouthMatch
-                    : wantsAllandale
-                        ? isAllandaleMatch
-                        : (isBarrieSouthMatch || isAllandaleMatch);
-                if (stationMatch && code) {
-                    stopMap.set(code, stopName);
+                const trimmed = (code || '').trim();
+                if (trimmed && !stopMap.has(trimmed)) {
+                    stopMap.set(trimmed, stopName);
                 }
             });
-        }
-
-        const matchedStops = Array.from(stopMap.entries())
-            .map(([code, stopName]) => ({ code, name: stopName, enabled: true }));
-
-        if (matchedStops.length === 0) return data;
-
-        return {
-            ...data,
-            stops: matchedStops,
-            stopCode: matchedStops[0].code,
-            autoPopulateStops: true
-        };
-    }, [schedules]);
-    const validStopCodes = React.useMemo(() => {
-        const codes = new Set<string>();
-        schedules.forEach(table => {
-            Object.values(table.stopIds || {}).forEach(code => {
-                const trimmed = (code || '').trim();
-                if (trimmed) codes.add(trimmed);
-            });
         });
-        return Array.from(codes);
+        return Array.from(stopMap.entries())
+            .map(([code, name]) => ({ code, name }))
+            .sort((a, b) => {
+                const nameCompare = a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+                return nameCompare !== 0 ? nameCompare : a.code.localeCompare(b.code, undefined, { sensitivity: 'base' });
+            });
     }, [schedules]);
+    const getTemplateInitialData = useCallback((data: AddTargetInitialData): AddTargetInitialData => (
+        alignTemplateInitialDataToLoadedStops(data, availableStops, schedules)
+    ), [availableStops, schedules]);
+    const validStopCodes = React.useMemo(() => availableStops.map(stop => stop.code), [availableStops]);
 
     const deriveRouteTargetTimes = useCallback((
         table: MasterRouteTable,
@@ -470,6 +437,7 @@ export const ConnectionsPanel: React.FC<ConnectionsPanelProps> = ({
                             onImportRoute={() => setShowImportRouteModal(true)}
                             schedules={schedules}
                             validStopCodes={validStopCodes}
+                            availableStops={availableStops}
                             userId={userId}
                             dayType={dayType}
                         />
@@ -505,6 +473,7 @@ export const ConnectionsPanel: React.FC<ConnectionsPanelProps> = ({
                 dayType={dayType}
                 existingTargetNames={connectionLibrary?.targets.map(t => t.name) || []}
                 validStopCodes={validStopCodes}
+                availableStops={availableStops}
                 defaultQualityWindowSettings={connectionLibrary?.qualityWindowSettings}
                 initialData={addTargetInitialData}
             />

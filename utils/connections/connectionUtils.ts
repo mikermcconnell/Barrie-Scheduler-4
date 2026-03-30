@@ -25,6 +25,11 @@ import {
 const MAX_EARLY_MINUTES = 20;
 const MAX_LATE_MINUTES = 7;
 
+export interface StopConnectionTripTimes {
+    arrival?: number | null;
+    departure?: number | null;
+}
+
 /**
  * A matched connection for display in the schedule table.
  */
@@ -71,23 +76,49 @@ function getEventType(connectionTime: ConnectionTime, target: ConnectionTarget):
     return connectionTime.eventType || target.defaultEventType || 'departure';
 }
 
+function normalizeTripTimes(tripTime: number | StopConnectionTripTimes): StopConnectionTripTimes {
+    if (typeof tripTime === 'number') {
+        return {
+            arrival: tripTime,
+            departure: tripTime
+        };
+    }
+    return tripTime;
+}
+
+function getTripTimeForEvent(
+    eventType: ConnectionEventType,
+    tripTime: number | StopConnectionTripTimes
+): number | null {
+    const normalizedTripTime = normalizeTripTimes(tripTime);
+
+    if (eventType === 'arrival') {
+        return normalizedTripTime.departure ?? normalizedTripTime.arrival ?? null;
+    }
+
+    return normalizedTripTime.arrival ?? normalizedTripTime.departure ?? null;
+}
+
 function getGapForEvent(
     connectionTime: ConnectionTime,
     target: ConnectionTarget,
-    tripTime: number
-): number {
+    tripTime: number | StopConnectionTripTimes
+): number | null {
     const eventType = getEventType(connectionTime, target);
+    const eventTripTime = getTripTimeForEvent(eventType, tripTime);
+    if (eventTripTime === null) return null;
+
     if (eventType === 'arrival') {
         // For train arrivals, bus should depart AFTER train arrives.
-        return tripTime - connectionTime.time;
+        return eventTripTime - connectionTime.time;
     }
     // For departures, bus should arrive BEFORE train departs.
-    return connectionTime.time - tripTime;
+    return connectionTime.time - eventTripTime;
 }
 
 function findPreferredConnectionTime(
     target: ConnectionTarget,
-    tripTime: number,
+    tripTime: number | StopConnectionTripTimes,
     dayType: DayType
 ): ConnectionTime | null {
     if (!target.times || target.times.length === 0) return null;
@@ -95,20 +126,29 @@ function findPreferredConnectionTime(
     const applicableTimes = target.times.filter(t => t.enabled && t.daysActive.includes(dayType));
     if (applicableTimes.length === 0) return null;
 
+    const candidateTimes = applicableTimes
+        .map(time => ({
+            time,
+            gap: getGapForEvent(time, target, tripTime)
+        }))
+        .filter((candidate): candidate is { time: ConnectionTime; gap: number } => candidate.gap !== null);
+
+    if (candidateTimes.length === 0) return null;
+
     // Preferred candidates are in the "connectable" direction:
     // - departure: train departs at/after bus time
     // - arrival: train arrives at/before bus time
-    const preferred = applicableTimes
-        .filter(t => getGapForEvent(t, target, tripTime) >= 0)
-        .sort((a, b) => getGapForEvent(a, target, tripTime) - getGapForEvent(b, target, tripTime));
+    const preferred = candidateTimes
+        .filter(candidate => candidate.gap >= 0)
+        .sort((a, b) => a.gap - b.gap);
 
-    if (preferred.length > 0) return preferred[0];
+    if (preferred.length > 0) return preferred[0].time;
 
     // Fallback to closest overall (shows missed/too-early context).
-    const closest = applicableTimes.sort(
-        (a, b) => Math.abs(getGapForEvent(a, target, tripTime)) - Math.abs(getGapForEvent(b, target, tripTime))
+    const closest = candidateTimes.sort(
+        (a, b) => Math.abs(a.gap) - Math.abs(b.gap)
     );
-    return closest.length > 0 ? closest[0] : null;
+    return closest.length > 0 ? closest[0].time : null;
 }
 
 function getQualitySettings(connectionLibrary: ConnectionLibrary): ConnectionQualityWindowSettings {
@@ -137,14 +177,15 @@ function classifyConnectionQuality(
  * Get all connection matches for a stop at a given time.
  *
  * @param stopCode - The stop code (e.g., "330" for Georgian College)
- * @param tripTime - When the trip departs from this stop (minutes from midnight)
+ * @param tripTime - The trip time at this stop. Pass a single number for departure-only stops,
+ * or { arrival, departure } when terminal recovery means the bus arrival and departure differ.
  * @param connectionLibrary - The team's connection library
  * @param dayType - The current day type (Weekday, Saturday, Sunday)
  * @returns Array of connection matches with status info
  */
 export function getConnectionsForStop(
     stopCode: string,
-    tripTime: number | null,
+    tripTime: number | StopConnectionTripTimes | null,
     connectionLibrary: ConnectionLibrary | null,
     dayType: DayType
 ): ConnectionMatch[] {
@@ -164,6 +205,11 @@ export function getConnectionsForStop(
         // - departure: before departure
         // - arrival: after arrival
         const gapMinutes = getGapForEvent(connTime, target, tripTime);
+        const eventTripTime = getTripTimeForEvent(eventType, tripTime);
+
+        if (gapMinutes === null || eventTripTime === null) {
+            continue;
+        }
 
         // Hide non-actionable matches outside the connection window.
         if (gapMinutes > MAX_EARLY_MINUTES || gapMinutes < -MAX_LATE_MINUTES) {
@@ -182,7 +228,7 @@ export function getConnectionsForStop(
             targetTimeLabel: connTime.label
                 ? `${formatConnectionTime(connTime.time)} ${connTime.label}`
                 : formatConnectionTime(connTime.time),
-            tripTime,
+            tripTime: eventTripTime,
             eventType,
             gapMinutes,
             meetsConnection,

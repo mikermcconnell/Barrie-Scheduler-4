@@ -44,6 +44,7 @@ import { getConnectionLibrary, saveConnectionLibrary } from '../../../utils/conn
 import { getMasterSchedule } from '../../../utils/services/masterScheduleService';
 import { optimizeForConnections, checkConnections, ConnectionCheckResult } from '../../../utils/connections/connectionOptimizer';
 import { appendLibraryChange } from '../../../utils/connections/connectionLibraryUtils';
+import { alignTemplateInitialDataToLoadedStops } from '../../../utils/connections/templateInitialDataUtils';
 
 interface Step5Props {
     schedules: MasterRouteTable[];
@@ -128,52 +129,6 @@ export const Step5Connections: React.FC<Step5Props> = ({
             enabled: true
         }));
     }, []);
-
-    const getTemplateInitialData = useCallback((data: AddTargetInitialData): AddTargetInitialData => {
-        const name = (data.name || '').toLowerCase();
-        const location = (data.location || '').toLowerCase();
-        const isGoTemplate = data.icon === 'train' && (
-            name.includes('go')
-            || location.includes('go')
-            || name.includes('allandale')
-            || location.includes('allandale')
-        );
-        if (!isGoTemplate) return data;
-
-        const wantsBarrieSouth = name.includes('barrie south') || location.includes('barrie south');
-        const wantsAllandale = name.includes('allandale') || location.includes('allandale');
-
-        const stopMap = new Map<string, string>(); // code -> name
-        for (const table of validationSchedules) {
-            Object.entries(table.stopIds || {}).forEach(([stopName, code]) => {
-                const normalizedName = stopName.toLowerCase();
-                const isBarrieSouthMatch = normalizedName.includes('barrie south')
-                    && (normalizedName.includes('terminal') || normalizedName.includes('go'));
-                const isAllandaleMatch = normalizedName.includes('allandale')
-                    && (normalizedName.includes('terminal') || normalizedName.includes('go'));
-                const stationMatch = wantsBarrieSouth
-                    ? isBarrieSouthMatch
-                    : wantsAllandale
-                        ? isAllandaleMatch
-                        : (isBarrieSouthMatch || isAllandaleMatch);
-                if (stationMatch && code) {
-                    stopMap.set(code, stopName);
-                }
-            });
-        }
-
-        const matchedStops = Array.from(stopMap.entries())
-            .map(([code, stopName]) => ({ code, name: stopName, enabled: true }));
-
-        if (matchedStops.length === 0) return data;
-
-        return {
-            ...data,
-            stops: matchedStops,
-            stopCode: matchedStops[0].code,
-            autoPopulateStops: true
-        };
-    }, [validationSchedules]);
 
     const validStopCodes = React.useMemo(() => {
         const codes = new Set<string>();
@@ -391,6 +346,9 @@ export const Step5Connections: React.FC<Step5Props> = ({
             .map(([code, name]) => ({ code, name }))
             .sort((a, b) => a.name.localeCompare(b.name));
     }, [schedules]);
+    const getTemplateInitialData = useCallback((data: AddTargetInitialData): AddTargetInitialData => (
+        alignTemplateInitialDataToLoadedStops(data, availableStops, validationSchedules)
+    ), [availableStops, validationSchedules]);
 
     // Count statistics
     const stats = React.useMemo(() => {
@@ -773,6 +731,7 @@ export const Step5Connections: React.FC<Step5Props> = ({
                 dayType={dayType}
                 existingTargetNames={connectionLibrary?.targets.map(t => t.name) || []}
                 validStopCodes={validStopCodes}
+                availableStops={availableStops}
                 defaultQualityWindowSettings={connectionLibrary?.qualityWindowSettings}
                 initialData={addTargetInitialData}
             />

@@ -50,7 +50,7 @@ interface TripConnectionPair {
     connection: RouteConnection;
     target: ConnectionTarget;
     targetTimes: number[]; // All applicable target times
-    stopTime: number; // Trip's time at the connection stop
+    stopTime: number; // Bus arrival/departure time at the connection stop, depending on connection type
 }
 
 interface GapAnalysis {
@@ -410,7 +410,7 @@ function buildConnectionPairs(
                 const trip = table.trips[tripIndex];
 
                 // Check if trip has the connection stop (lookup by stop code)
-                const stopTime = getTripStopTimeByCode(trip, connection.stopCode, table.stopIds || {});
+                const stopTime = getTripStopTimeByCode(trip, connection.stopCode, table.stopIds || {}, connection.connectionType);
                 if (stopTime === null) continue;
 
                 // Apply time filter if set
@@ -533,7 +533,8 @@ function getTargetTimes(target: ConnectionTarget): number[] {
 function getTripStopTimeByCode(
     trip: MasterTrip,
     stopCode: string,
-    stopIds: Record<string, string>
+    stopIds: Record<string, string>,
+    connectionType: 'meet_departing' | 'feed_arriving'
 ): number | null {
     if (!trip.stops || !stopCode) return null;
 
@@ -541,6 +542,14 @@ function getTripStopTimeByCode(
     const stopName = Object.entries(stopIds).find(([, code]) => code === stopCode)?.[0];
     if (!stopName) return null;
 
+    if (connectionType === 'meet_departing') {
+        return getTripStopArrivalTime(trip, stopName) ?? getTripStopDepartureTime(trip, stopName);
+    }
+
+    return getTripStopDepartureTime(trip, stopName) ?? getTripStopArrivalTime(trip, stopName);
+}
+
+function getTripStopDepartureTime(trip: MasterTrip, stopName: string): number | null {
     const stopMinutes = trip.stopMinutes?.[stopName];
     if (stopMinutes !== undefined) {
         return stopMinutes;
@@ -552,6 +561,22 @@ function getTripStopTimeByCode(
     if (parsed === null) return null;
 
     return normalizeTripMinutes(parsed, trip.startTime);
+}
+
+function getTripStopArrivalTime(trip: MasterTrip, stopName: string): number | null {
+    const arrivalTimeStr = trip.arrivalTimes?.[stopName];
+    if (arrivalTimeStr) {
+        const parsedArrival = parseTimeToMinutes(arrivalTimeStr);
+        if (parsedArrival !== null) {
+            return normalizeTripMinutes(parsedArrival, trip.startTime);
+        }
+    }
+
+    const departureTime = getTripStopDepartureTime(trip, stopName);
+    if (departureTime === null) return null;
+
+    const recovery = trip.recoveryTimes?.[stopName] ?? 0;
+    return departureTime - recovery;
 }
 
 function normalizeTripMinutes(rawMinutes: number, tripStartTime: number): number {

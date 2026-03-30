@@ -44,6 +44,8 @@ export interface GoCalendar {
     friday: string;
     saturday: string;
     sunday: string;
+    start_date?: string;
+    end_date?: string;
 }
 
 export interface GoCalendarDate {
@@ -246,7 +248,7 @@ export async function fetchGoTransitGTFS(): Promise<GoTransitCache> {
         stops?: Array<{ stop_id: string; stop_name: string; stop_code?: string; stop_lat?: number; stop_lon?: number }>;
         stopTimes?: Array<{ trip_id: string; stop_id: string; arrival_time: string; departure_time: string; stop_sequence: number }>;
         trips?: Array<{ trip_id: string; route_id: string; service_id: string; trip_headsign?: string; direction_id?: string | number }>;
-        calendar?: Array<{ service_id: string; monday: string | number; tuesday: string | number; wednesday: string | number; thursday: string | number; friday: string | number; saturday: string | number; sunday: string | number }>;
+        calendar?: Array<{ service_id: string; monday: string | number; tuesday: string | number; wednesday: string | number; thursday: string | number; friday: string | number; saturday: string | number; sunday: string | number; start_date?: string | number; end_date?: string | number }>;
         calendarDates?: Array<{ service_id: string; date: string | number; exception_type: string | number }>;
     };
 
@@ -292,7 +294,9 @@ export async function fetchGoTransitGTFS(): Promise<GoTransitCache> {
             thursday: String(c.thursday),
             friday: String(c.friday),
             saturday: String(c.saturday),
-            sunday: String(c.sunday)
+            sunday: String(c.sunday),
+            start_date: c.start_date ? String(c.start_date) : undefined,
+            end_date: c.end_date ? String(c.end_date) : undefined
         }));
 
     const calendarDates = (feed.calendarDates || [])
@@ -368,10 +372,10 @@ function getDayServiceFlag(dayType: DayType): keyof GoCalendar {
     return 'monday';
 }
 
-type ServiceDayAvailability = {
-    Weekday: boolean;
-    Saturday: boolean;
-    Sunday: boolean;
+type RepresentativeServiceIdsByDay = {
+    Weekday: Set<string>;
+    Saturday: Set<string>;
+    Sunday: Set<string>;
 };
 
 function hasCalendarBaseline(calendar: GoCalendar | undefined): boolean {
@@ -397,23 +401,113 @@ function getDayTypeForGtfsDate(dateStr: string): DayType | null {
     return 'Weekday';
 }
 
-function buildServiceDayAvailabilityMap(calendarDates: GoCalendarDate[] | undefined): Map<string, ServiceDayAvailability> {
-    const byService = new Map<string, ServiceDayAvailability>();
-    if (!Array.isArray(calendarDates)) return byService;
+function toLocalGtfsDateString(referenceDate: Date): string {
+    const year = referenceDate.getFullYear();
+    const month = `${referenceDate.getMonth() + 1}`.padStart(2, '0');
+    const day = `${referenceDate.getDate()}`.padStart(2, '0');
+    return `${year}${month}${day}`;
+}
+
+function getReferenceDateForDayType(
+    dayType: DayType,
+    referenceDate: Date = new Date()
+): string {
+    const base = new Date(referenceDate);
+    base.setHours(12, 0, 0, 0);
+
+    for (let offset = 0; offset < 7; offset += 1) {
+        const candidate = new Date(base);
+        candidate.setDate(base.getDate() + offset);
+        const candidateDay = candidate.getDay();
+
+        if (dayType === 'Weekday' && candidateDay >= 1 && candidateDay <= 5) {
+            return toLocalGtfsDateString(candidate);
+        }
+        if (dayType === 'Saturday' && candidateDay === 6) {
+            return toLocalGtfsDateString(candidate);
+        }
+        if (dayType === 'Sunday' && candidateDay === 0) {
+            return toLocalGtfsDateString(candidate);
+        }
+    }
+
+    return toLocalGtfsDateString(base);
+}
+
+function isDateWithinCalendarRange(
+    dateStr: string,
+    calendar: GoCalendar | undefined
+): boolean {
+    if (!calendar) return true;
+    if (calendar.start_date && /^\d{8}$/.test(calendar.start_date) && dateStr < calendar.start_date) {
+        return false;
+    }
+    if (calendar.end_date && /^\d{8}$/.test(calendar.end_date) && dateStr > calendar.end_date) {
+        return false;
+    }
+    return true;
+}
+
+function buildRepresentativeServiceIdsByDay(
+    calendarDates: GoCalendarDate[] | undefined,
+    referenceDate: Date = new Date()
+): RepresentativeServiceIdsByDay {
+    const empty = {
+        Weekday: new Set<string>(),
+        Saturday: new Set<string>(),
+        Sunday: new Set<string>()
+    };
+    if (!Array.isArray(calendarDates) || calendarDates.length === 0) return empty;
+
+    const byDayType = {
+        Weekday: new Map<string, Set<string>>(),
+        Saturday: new Map<string, Set<string>>(),
+        Sunday: new Map<string, Set<string>>()
+    };
 
     for (const calendarDate of calendarDates) {
         if (!calendarDate?.service_id) continue;
         if (String(calendarDate.exception_type) !== '1') continue;
-        const dayType = getDayTypeForGtfsDate(String(calendarDate.date || ''));
+        const dateStr = String(calendarDate.date || '');
+        const dayType = getDayTypeForGtfsDate(dateStr);
         if (!dayType) continue;
 
-        const existing = byService.get(calendarDate.service_id) || {
-            Weekday: false,
-            Saturday: false,
-            Sunday: false
-        };
-        existing[dayType] = true;
-        byService.set(calendarDate.service_id, existing);
+        const dateBucket = byDayType[dayType].get(dateStr) || new Set<string>();
+        dateBucket.add(calendarDate.service_id);
+        byDayType[dayType].set(dateStr, dateBucket);
+    }
+
+    const referenceDateStr = toLocalGtfsDateString(referenceDate);
+    const pickRepresentative = (dateMap: Map<string, Set<string>>): Set<string> => {
+        const dates = Array.from(dateMap.keys()).sort();
+        if (dates.length === 0) return new Set<string>();
+
+        const nextOrCurrent = dates.find(dateStr => dateStr >= referenceDateStr);
+        const selectedDate = nextOrCurrent || dates[dates.length - 1];
+        return new Set(dateMap.get(selectedDate) || []);
+    };
+
+    return {
+        Weekday: pickRepresentative(byDayType.Weekday),
+        Saturday: pickRepresentative(byDayType.Saturday),
+        Sunday: pickRepresentative(byDayType.Sunday)
+    };
+}
+
+function buildExactServiceExceptions(
+    calendarDates: GoCalendarDate[] | undefined
+): Map<string, Map<string, string>> {
+    const byService = new Map<string, Map<string, string>>();
+    if (!Array.isArray(calendarDates) || calendarDates.length === 0) return byService;
+
+    for (const calendarDate of calendarDates) {
+        const serviceId = calendarDate?.service_id;
+        const dateStr = String(calendarDate?.date || '');
+        if (!serviceId || !/^\d{8}$/.test(dateStr)) continue;
+
+        const dateMap = byService.get(serviceId) || new Map<string, string>();
+        dateMap.set(dateStr, String(calendarDate.exception_type ?? ''));
+        byService.set(serviceId, dateMap);
     }
 
     return byService;
@@ -423,18 +517,31 @@ function isServiceActiveForDay(
     calendar: GoCalendar | undefined,
     dayType: DayType,
     serviceId: string,
-    derivedDayAvailability: Map<string, ServiceDayAvailability>
+    representativeServiceIdsByDay: RepresentativeServiceIdsByDay,
+    referenceDate: string,
+    exactServiceExceptions: Map<string, Map<string, string>>
 ): boolean {
+    const exactException = exactServiceExceptions.get(serviceId)?.get(referenceDate);
+    if (exactException === '2') return false;
+    if (exactException === '1') return true;
+
     if (hasCalendarBaseline(calendar)) {
         const dayFlag = getDayServiceFlag(dayType);
-        return String(calendar?.[dayFlag] || '0') === '1';
+        return isDateWithinCalendarRange(referenceDate, calendar)
+            && String(calendar?.[dayFlag] || '0') === '1';
     }
 
-    const derived = derivedDayAvailability.get(serviceId);
-    if (derived) return Boolean(derived[dayType]);
+    const representativeServiceIds = representativeServiceIdsByDay[dayType];
+    if (representativeServiceIds.size > 0) {
+        return representativeServiceIds.has(serviceId);
+    }
 
     // If neither calendar nor calendar_dates information exists, do not block data.
-    return !calendar && derivedDayAvailability.size === 0;
+    return !calendar
+        && representativeServiceIdsByDay.Weekday.size === 0
+        && representativeServiceIdsByDay.Saturday.size === 0
+        && representativeServiceIdsByDay.Sunday.size === 0
+        && exactServiceExceptions.size === 0;
 }
 
 function inferTripDirection(trip: GoTrip): GoDirection | null {
@@ -548,7 +655,9 @@ export function getGoTrainTimesForStopDetailed(
     if (cache && cache.stopTimes.length > 0 && cache.trips.length > 0) {
         const tripById = new Map(cache.trips.map(t => [t.trip_id, t]));
         const calendarByService = new Map(cache.calendar.map(c => [c.service_id, c]));
-        const derivedDayAvailability = buildServiceDayAvailabilityMap(cache.calendarDates);
+        const representativeServiceIdsByDay = buildRepresentativeServiceIdsByDay(cache.calendarDates);
+        const exactServiceExceptions = buildExactServiceExceptions(cache.calendarDates);
+        const referenceDate = getReferenceDateForDayType(dayType);
         const seen = new Set<number>();
 
         const extracted = cache.stopTimes
@@ -559,8 +668,9 @@ export function getGoTrainTimesForStopDetailed(
                 const inferredDirection = inferTripDirection(trip);
                 if (inferredDirection !== direction) return null;
                 const service = calendarByService.get(trip.service_id);
-                if (!isServiceActiveForDay(service, dayType, trip.service_id, derivedDayAvailability)) return null;
-                const minutes = parseGtfsTime(st.departure_time);
+                if (!isServiceActiveForDay(service, dayType, trip.service_id, representativeServiceIdsByDay, referenceDate, exactServiceExceptions)) return null;
+                const targetTime = direction === 'northbound' ? st.arrival_time : st.departure_time;
+                const minutes = parseGtfsTime(targetTime);
                 if (!Number.isFinite(minutes)) return null;
                 if (seen.has(minutes)) return null;
                 seen.add(minutes);

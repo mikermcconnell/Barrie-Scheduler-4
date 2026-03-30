@@ -37,7 +37,7 @@ import {
     targetHasActiveTimesForDay,
     targetMatchesLoadedStops
 } from '../../../utils/connections/connectionLibraryUtils';
-import { AddTargetModal } from './AddTargetModal';
+import { AddTargetModal, type StopOption } from './AddTargetModal';
 
 interface ConnectionLibraryPanelProps {
     library: ConnectionLibrary | null;
@@ -46,6 +46,7 @@ interface ConnectionLibraryPanelProps {
     onImportRoute: () => void;
     schedules?: MasterRouteTable[];
     validStopCodes?: string[];
+    availableStops?: StopOption[];
     userId: string;
     dayType: 'Weekday' | 'Saturday' | 'Sunday';
 }
@@ -73,6 +74,7 @@ export const ConnectionLibraryPanel: React.FC<ConnectionLibraryPanelProps> = ({
     onImportRoute,
     schedules = [],
     validStopCodes,
+    availableStops = [],
     userId,
     dayType
 }) => {
@@ -230,7 +232,7 @@ export const ConnectionLibraryPanel: React.FC<ConnectionLibraryPanelProps> = ({
         stops: (editingTarget.stopCodes || (editingTarget.stopCode ? [editingTarget.stopCode] : []))
             .map(code => ({
                 code,
-                name: `Stop ${code}`,
+                name: availableStops.find(stop => stop.code === code)?.name || `Stop ${code}`,
                 enabled: true
             }))
     } : undefined;
@@ -702,6 +704,7 @@ export const ConnectionLibraryPanel: React.FC<ConnectionLibraryPanelProps> = ({
                     dayType={dayType}
                     existingTargetNames={library.targets.filter(t => t.id !== editingTarget.id).map(t => t.name)}
                     validStopCodes={validStopCodes}
+                    availableStops={availableStops}
                     defaultQualityWindowSettings={library.qualityWindowSettings || DEFAULT_CONNECTION_QUALITY_WINDOW_SETTINGS}
                     initialData={editingInitialData}
                     mode="edit"
