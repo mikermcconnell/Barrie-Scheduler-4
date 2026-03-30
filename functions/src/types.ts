@@ -384,6 +384,42 @@ export interface RouteLoadProfile {
   stops: LoadProfileStop[];
 }
 
+export interface RouteStopDeviationEntry {
+  stopName: string;
+  stopId: string;
+  routeStopIndex: number;
+  deviations: number[];
+}
+
+export interface RouteStopDeviationProfile {
+  routeId: string;
+  direction: string;
+  stops: RouteStopDeviationEntry[];
+}
+
+export interface RidershipHeatmapTrip {
+  terminalDepartureTime: string;
+  tripName: string;
+  block: string;
+  direction: string;
+}
+
+export interface RidershipHeatmapStop {
+  stopName: string;
+  stopId: string;
+  routeStopIndex: number;
+  isTimepoint: boolean;
+}
+
+export interface RouteRidershipHeatmap {
+  routeId: string;
+  routeName: string;
+  direction: string;
+  trips: RidershipHeatmapTrip[];
+  stops: RidershipHeatmapStop[];
+  cells: ([number, number] | null)[][];
+}
+
 export interface DataQuality {
   totalRecords: number;
   inBetweenFiltered: number;
@@ -416,6 +452,7 @@ export interface DailySummary {
   byStop: StopMetrics[];
   byTrip: TripMetrics[];
   loadProfiles: RouteLoadProfile[];
+  ridershipHeatmaps?: RouteRidershipHeatmap[];
   missedTrips?: {
     totalScheduled: number;
     totalMatched: number;
@@ -440,12 +477,14 @@ export interface DailySummary {
   segmentRuntimes?: DailySegmentRuntimes;
   stopSegmentRuntimes?: DailyStopSegmentRuntimes;
   tripStopSegmentRuntimes?: DailyTripStopSegmentRuntimes;
+  routeStopDeviations?: RouteStopDeviationProfile[];
   byRouteHour?: RouteHourMetrics[];
   dataQuality: DataQuality;
   schemaVersion: number;
 }
 
-export const PERFORMANCE_SCHEMA_VERSION = 7;
+export const PERFORMANCE_SCHEMA_VERSION = 8;
+export const PERFORMANCE_RUNTIME_LOGIC_VERSION = 3;
 
 export interface PerformanceDataSummary {
   dailySummaries: DailySummary[];
@@ -459,5 +498,6 @@ export interface PerformanceMetadata {
   dateRange: { start: string; end: string };
   dayCount: number;
   totalRecords: number;
+  runtimeLogicVersion?: number;
   storagePath?: string;
 }

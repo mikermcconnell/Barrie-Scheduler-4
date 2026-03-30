@@ -5,6 +5,7 @@ import { Upload, FileUp, X, Calendar, Database, FileSpreadsheet, BarChart3, Aler
 import { GTFSImport } from '../../GTFSImport';
 import type { GTFSImportResult } from '../../../utils/gtfs/gtfsTypes';
 import type { AvailableRuntimeRoute } from '../../../utils/performanceRuntimeComputer';
+import type { PerformanceRuntimeDiagnostics } from '../../../utils/performanceRuntimeComputer';
 
 export type ImportMode = 'csv' | 'gtfs' | 'performance';
 
@@ -27,6 +28,7 @@ interface Step1Props {
     onPerformanceConfigChange?: (config: PerformanceConfig) => void;
     performanceDataLoading?: boolean;
     performanceDateRange?: { start: string; end: string };
+    performanceDiagnostics?: PerformanceRuntimeDiagnostics | null;
 }
 
 type DurationPreset = 'day' | 'week' | 'month' | 'three-months';
@@ -81,6 +83,7 @@ export const Step1Upload: React.FC<Step1Props> = ({
     onPerformanceConfigChange,
     performanceDataLoading,
     performanceDateRange,
+    performanceDiagnostics,
 }) => {
     const onDrop = useCallback((acceptedFiles: File[]) => {
         // Limit to 2 files max (North/South or Single Loop)
@@ -333,6 +336,13 @@ export const Step1Upload: React.FC<Step1Props> = ({
                                                     }`}>
                                                         {route.segmentDayCount} runtime days
                                                     </span>
+                                                    <span className={`rounded-full px-2 py-1 text-[11px] font-semibold ${
+                                                        route.stopLevelDayCount > 0
+                                                            ? (isSelected ? 'bg-white text-teal-700' : 'bg-gray-50 text-gray-600')
+                                                            : 'bg-amber-100 text-amber-700'
+                                                    }`}>
+                                                        {route.stopLevelDayCount} stop-level days
+                                                    </span>
                                                     {route.directions.length > 0 && (
                                                         <span className={`rounded-full px-2 py-1 text-[11px] font-semibold ${
                                                             isSelected ? 'bg-white text-teal-700' : 'bg-gray-50 text-gray-600'
@@ -438,11 +448,49 @@ export const Step1Upload: React.FC<Step1Props> = ({
                                                         <p className="font-bold text-teal-900">{route.totalObs.toLocaleString()}</p>
                                                     </div>
                                                 </div>
+                                                {route.stopLevelDayCount === 0 && (
+                                                    <p className="mt-2 text-xs text-amber-700">
+                                                        This route only has older coarse runtime summaries right now. Re-import STREETS data to compute stop-level runtimes for New Schedule.
+                                                    </p>
+                                                )}
                                                 {route.segmentDayCount < route.dayCount && (
                                                     <p className="mt-2 text-xs text-amber-700">
                                                         Segment runtimes available for {route.segmentDayCount} of {route.dayCount} days.
                                                         Re-import STREETS data to compute runtimes for all days.
                                                     </p>
+                                                )}
+                                                {performanceDiagnostics && (
+                                                    <div className="mt-3 rounded-lg border border-teal-200 bg-white/70 p-3 text-xs text-teal-900">
+                                                        <p className="font-bold text-teal-800 mb-1">Runtime Readiness Check</p>
+                                                        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                                                            <div>
+                                                                <span className="text-teal-600">Days in range</span>
+                                                                <p className="font-bold">{performanceDiagnostics.filteredDayCount}</p>
+                                                            </div>
+                                                            <div>
+                                                                <span className="text-teal-600">Matched days</span>
+                                                                <p className="font-bold">{performanceDiagnostics.matchedRouteDayCount}</p>
+                                                            </div>
+                                                            <div>
+                                                                <span className="text-teal-600">Stop-level rows</span>
+                                                                <p className="font-bold">{performanceDiagnostics.stopEntryCount}</p>
+                                                            </div>
+                                                            <div>
+                                                                <span className="text-teal-600">Trip-leg rows</span>
+                                                                <p className="font-bold">{performanceDiagnostics.tripEntryCount}</p>
+                                                            </div>
+                                                        </div>
+                                                        <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2">
+                                                            <div>
+                                                                <span className="text-teal-600">Matched route IDs</span>
+                                                                <p className="font-medium">{performanceDiagnostics.matchedRouteIds.join(', ') || 'None'}</p>
+                                                            </div>
+                                                            <div>
+                                                                <span className="text-teal-600">Directions seen</span>
+                                                                <p className="font-medium">{performanceDiagnostics.directions.join(', ') || 'None'}</p>
+                                                            </div>
+                                                        </div>
+                                                    </div>
                                                 )}
                                             </>
                                         );

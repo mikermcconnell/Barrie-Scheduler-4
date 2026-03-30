@@ -145,6 +145,7 @@ export interface CascadeTimepointObs {
 
 /** A downstream trip affected by a dwell incident earlier on the same block. */
 export interface CascadeAffectedTrip {
+  phase?: 'same-trip' | 'later-trip';  // incident-trip remainder vs later block carryover
   tripName: string;
   tripId: string;
   routeId: string;
@@ -177,16 +178,19 @@ export interface DwellCascade {
   observedDepartureTime: string;
   trackedDwellSeconds: number;
   severity: DwellSeverity;
+  baselineLateSeconds?: number;      // lateness already present on arrival into the dwell stop
 
   // Cascade results
+  sameTripImpact?: CascadeAffectedTrip | null; // observed remainder of the incident trip, if available
+  sameTripObserved?: boolean;                  // whether any downstream same-trip observation was available
   cascadedTrips: CascadeAffectedTrip[];
-  blastRadius: number;            // total attributed late departures across all trips
-  affectedTripCount: number;      // number of trips touched before attributed recovery
-  backUnderThresholdAtTrip?: string | null; // trip where attributed delay first dropped to <= 5 min
-  backUnderThresholdAtStop?: string | null; // stop where attributed delay first dropped to <= 5 min
-  recoveredAtTrip: string | null; // trip name where chain ended
+  blastRadius: number;            // total attributed late departures across later trips
+  affectedTripCount: number;      // number of later trips touched before attributed recovery
+  backUnderThresholdAtTrip?: string | null; // first trip where attributed delay dropped to <= 5 min
+  backUnderThresholdAtStop?: string | null; // first stop where attributed delay dropped to <= 5 min
+  recoveredAtTrip: string | null; // trip name where attributed delay fully cleared
   recoveredAtStop: string | null; // specific stop where attributed delay reached zero
-  totalLateSeconds: number;       // legacy field: sum of attributed delay across all affected timepoints
+  totalLateSeconds: number;       // legacy field: sum of attributed delay across later-trip timepoints
   recoveryTimeAvailableSeconds: number; // scheduled recovery between incident trip and next trip
   observedRecoverySeconds?: number;     // actual recovery (AVL-based, less if bus ran late)
 }
@@ -513,7 +517,8 @@ export interface DailySummary {
   schemaVersion: number;
 }
 
-export const PERFORMANCE_SCHEMA_VERSION = 7;
+export const PERFORMANCE_SCHEMA_VERSION = 8;
+export const PERFORMANCE_RUNTIME_LOGIC_VERSION = 3;
 
 // ─── Multi-Day Summary (for trend views) ────────────────────────────
 
@@ -531,6 +536,7 @@ export interface PerformanceMetadata {
   dateRange: { start: string; end: string };
   dayCount: number;
   totalRecords: number;
+  runtimeLogicVersion?: number;
   storagePath?: string;
 }
 

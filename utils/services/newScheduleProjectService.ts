@@ -29,6 +29,8 @@ import type { MasterRouteTable } from '../parsers/masterScheduleParser';
 import type { RuntimeData } from '../../components/NewSchedule/utils/csvParser';
 import type { TripBucketAnalysis, TimeBand } from '../ai/runtimeAnalysis';
 import type { ScheduleConfig } from '../../components/NewSchedule/steps/Step3Build';
+import type { ApprovedRuntimeModel } from '../../components/NewSchedule/utils/wizardState';
+import type { ApprovedRuntimeContract } from '../../components/NewSchedule/utils/step2ReviewTypes';
 
 function stripUndefinedDeep<T>(value: T): T {
     if (Array.isArray(value)) {
@@ -71,6 +73,8 @@ export interface NewScheduleProject {
     routeNumber?: string;
     analysis?: TripBucketAnalysis[];
     bands?: TimeBand[];
+    approvedRuntimeContract?: ApprovedRuntimeContract;
+    approvedRuntimeModel?: ApprovedRuntimeModel;
     config?: ScheduleConfig;
     // Generated schedule (if completed)
     generatedSchedules?: MasterRouteTable[];
@@ -119,7 +123,9 @@ export const saveProject = async (
     const hasHeavyData = (project.generatedSchedules && project.generatedSchedules.length > 0) ||
         (project.originalGeneratedSchedules && project.originalGeneratedSchedules.length > 0) ||
         (project.parsedData && project.parsedData.length > 0) ||
-        (project.analysis && project.analysis.length > 0);
+        (project.analysis && project.analysis.length > 0) ||
+        !!project.approvedRuntimeContract ||
+        !!project.approvedRuntimeModel;
 
     if (hasHeavyData) {
         const content = JSON.stringify({
@@ -128,6 +134,8 @@ export const saveProject = async (
             parsedData: project.parsedData, // Save raw data!
             analysis: project.analysis,
             bands: project.bands,
+            approvedRuntimeContract: project.approvedRuntimeContract,
+            approvedRuntimeModel: project.approvedRuntimeModel,
             config: sanitizedConfig
         });
 
@@ -218,6 +226,8 @@ export const getProject = async (
         generatedSchedules: [],
         originalGeneratedSchedules: [],
         parsedData: [], // Default empty
+        approvedRuntimeContract: undefined,
+        approvedRuntimeModel: undefined,
         createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate() : new Date(),
         updatedAt: data.updatedAt instanceof Timestamp ? data.updatedAt.toDate() : new Date()
     };
@@ -237,6 +247,8 @@ export const getProject = async (
                 parsedData: content.parsedData || [], // Restore raw data
                 analysis: content.analysis || [],
                 bands: content.bands || [],
+                approvedRuntimeContract: content.approvedRuntimeContract,
+                approvedRuntimeModel: content.approvedRuntimeModel,
                 config: content.config || fullData.config
             };
             console.log('Loaded from Cloud Storage:', {
@@ -282,6 +294,7 @@ export const getAllProjects = async (userId: string): Promise<NewScheduleProject
             generatedSchedules: [] as MasterRouteTable[],
             originalGeneratedSchedules: [] as MasterRouteTable[],
             storagePath: data.storagePath,
+            approvedRuntimeContract: undefined,
             createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate() : new Date(),
             updatedAt: data.updatedAt instanceof Timestamp ? data.updatedAt.toDate() : new Date()
         };
@@ -341,6 +354,7 @@ export const duplicateProject = async (
         routeNumber: project.routeNumber,
         analysis: project.analysis,
         bands: project.bands,
+        approvedRuntimeContract: project.approvedRuntimeContract,
         config: project.config,
         generatedSchedules: project.generatedSchedules,
         originalGeneratedSchedules: project.originalGeneratedSchedules,

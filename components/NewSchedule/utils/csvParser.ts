@@ -1,18 +1,34 @@
 
+import { parseRouteInfo } from '../../../utils/config/routeDirectionConfig';
+
 export interface SegmentRawData {
     segmentName: string;
-    timeBuckets: Record<string, { p50: number, p80: number, n: number }>;
+    timeBuckets: Record<string, SegmentTimeBucket>;
     fromRouteStopIndex?: number;
     toRouteStopIndex?: number;
 }
 
 export type RouteDirection = 'North' | 'South' | 'A' | 'B' | 'Loop';
 
+export interface BucketContribution {
+    date: string;
+    runtime: number;
+}
+
+export interface SegmentTimeBucket {
+    p50: number;
+    p80: number;
+    n: number;
+    contributions?: BucketContribution[];
+}
+
 export interface RuntimeData {
     segments: SegmentRawData[];
     allTimeBuckets: string[];
     detectedRouteNumber?: string;
     detectedDirection?: RouteDirection;
+    sampleCountMode?: 'observations' | 'days';
+    troubleshootingPatternStatus?: 'anchored' | 'fallback';
 }
 
 export const parseRuntimeCSV = async (file: File): Promise<RuntimeData> => {
@@ -149,10 +165,18 @@ export const parseRuntimeCSV = async (file: File): Promise<RuntimeData> => {
         // Only matches when there is NO separate N/S direction after (Pattern 0 handles that)
         const attachedPattern = firstCol.match(/^(\d+)([AB])\s/i);
         if (attachedPattern) {
-            detectedRouteNumber = attachedPattern[1];
-            const dirLetter = attachedPattern[2].toUpperCase();
-            if (dirLetter === 'A') detectedDirection = 'A';
-            else if (dirLetter === 'B') detectedDirection = 'B';
+            const routeToken = `${attachedPattern[1]}${attachedPattern[2].toUpperCase()}`;
+            const parsedRoute = parseRouteInfo(routeToken);
+
+            if (parsedRoute.suffixIsDirection && parsedRoute.direction) {
+                detectedRouteNumber = parsedRoute.baseRoute;
+                detectedDirection = parsedRoute.direction;
+            } else {
+                detectedRouteNumber = attachedPattern[1];
+                const dirLetter = attachedPattern[2].toUpperCase();
+                if (dirLetter === 'A') detectedDirection = 'A';
+                else if (dirLetter === 'B') detectedDirection = 'B';
+            }
             break;
         }
 
@@ -180,7 +204,8 @@ export const parseRuntimeCSV = async (file: File): Promise<RuntimeData> => {
         segments: Object.values(resultSegments),
         allTimeBuckets: allBuckets,
         detectedRouteNumber,
-        detectedDirection
+        detectedDirection,
+        sampleCountMode: 'observations',
     };
 };
 

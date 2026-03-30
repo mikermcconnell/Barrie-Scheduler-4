@@ -1,10 +1,14 @@
 
 import React from 'react';
-import { TimeBand } from '../../../utils/ai/runtimeAnalysis';
+import { TimeBand, TripBucketAnalysis } from '../../../utils/ai/runtimeAnalysis';
 import { Clock, Bus, Plus, Trash2, LayoutGrid, Loader2, Database } from 'lucide-react';
 import { getMasterSchedule } from '../../../utils/services/masterScheduleService';
 import type { RouteIdentity } from '../../../utils/masterScheduleTypes';
 import { resolveBlockStartDirection, shouldShowStartDirectionForRoute, normalizeDirectionHint, inferBlockStartDirection } from '../utils/blockStartDirection';
+import { computeSuggestedStrictCycle } from '../../../utils/schedule/strictCycleSuggestion';
+import { buildStep2ApprovedRuntimeModelFromContract } from '../utils/step2ApprovedRuntimeModelAdapter';
+import type { ApprovedRuntimeContract } from '../utils/step2ReviewTypes';
+import type { ApprovedRuntimeModel } from '../utils/wizardState';
 
 // Configuration Constants
 export const SCHEDULE_DEFAULTS = {
@@ -45,6 +49,9 @@ export interface ScheduleConfig {
 interface Step3Props {
     dayType: string;
     bands: TimeBand[];
+    analysis?: TripBucketAnalysis[];
+    approvedRuntimeContract?: ApprovedRuntimeContract | null;
+    approvedRuntimeModel?: ApprovedRuntimeModel | null;
     config: ScheduleConfig;
     setConfig: (c: ScheduleConfig) => void;
     teamId?: string;
@@ -58,6 +65,8 @@ const START_STOP_SUGGESTIONS_ID = 'start-stop-suggestions';
 export const Step3Build: React.FC<Step3Props> = ({
     dayType,
     bands,
+    analysis,
+    approvedRuntimeContract,
     config,
     setConfig,
     teamId,
@@ -100,6 +109,11 @@ export const Step3Build: React.FC<Step3Props> = ({
         if ((config.recoveryRatio ?? 0) > 0) return;
         setConfig({ ...config, recoveryRatio: SCHEDULE_DEFAULTS.RECOVERY_RATIO });
     }, [config, setConfig]);
+
+    const resolvedApprovedRuntimeModel = React.useMemo(
+        () => buildStep2ApprovedRuntimeModelFromContract(approvedRuntimeContract),
+        [approvedRuntimeContract]
+    );
 
     // Convert minutes-from-midnight to "HH:MM" string
     const minutesToTimeStr = (minutes: number): string => {
@@ -469,13 +483,13 @@ export const Step3Build: React.FC<Step3Props> = ({
 
     const cycleTime = config.cycleTime;
     const computedHeadway = config.blocks.length > 0 ? cycleTime / config.blocks.length : 0;
-    const bandsWithData = bands.filter(b => b.count > 0 && b.avg > 0);
-    const suggestedStrictCycle = bandsWithData.length > 0
-        ? Math.round(
-            bandsWithData.reduce((sum, b) => sum + (b.avg * b.count), 0) /
-            bandsWithData.reduce((sum, b) => sum + b.count, 0)
-        )
-        : null;
+    const strictCycleAnalysis = resolvedApprovedRuntimeModel?.buckets ?? analysis;
+    const strictCycleBands = resolvedApprovedRuntimeModel?.bands ?? bands;
+    const strictCycleSuggestion = React.useMemo(
+        () => computeSuggestedStrictCycle(strictCycleAnalysis, strictCycleBands),
+        [strictCycleAnalysis, strictCycleBands]
+    );
+    const suggestedStrictCycle = strictCycleSuggestion.minutes;
     const strictCycleDeltaPct = (suggestedStrictCycle && cycleTime > 0)
         ? Math.round(((cycleTime - suggestedStrictCycle) / suggestedStrictCycle) * 100)
         : null;
@@ -487,6 +501,13 @@ export const Step3Build: React.FC<Step3Props> = ({
                 : Math.abs(strictCycleDeltaPct) >= 20
                     ? 'warning'
                     : null;
+    const isHighConfidenceStrictCycle = strictCycleSuggestion.quality === 'high';
+    const strictCycleLead = isHighConfidenceStrictCycle
+        ? (strictCycleSeverity === 'critical' ? 'Strongly recommended:' : 'Check strict cycle:')
+        : 'Reference only:';
+    const strictCycleButtonLabel = isHighConfidenceStrictCycle
+        ? `Use suggested ${suggestedStrictCycle}m`
+        : `Use reference ${suggestedStrictCycle}m`;
 
     return (
         <div className="h-full flex flex-col animate-in fade-in duration-500 overflow-hidden">
@@ -496,6 +517,11 @@ export const Step3Build: React.FC<Step3Props> = ({
                     <p className="text-gray-500">
                         Define your service parameters for <strong>{dayType}</strong>.
                     </p>
+                    {resolvedApprovedRuntimeModel && (
+                        <p className="mt-1 text-xs text-gray-400">
+                            Using the approved Step 2 runtime model: {resolvedApprovedRuntimeModel.usableBucketCount} active bucket{resolvedApprovedRuntimeModel.usableBucketCount === 1 ? '' : 's'} across {resolvedApprovedRuntimeModel.usableBandCount} band{resolvedApprovedRuntimeModel.usableBandCount === 1 ? '' : 's'}.
+                        </p>
+                    )}
                 </div>
 
                 {/* Time Band Legend (Reference) */}
@@ -626,7 +652,7 @@ export const Step3Build: React.FC<Step3Props> = ({
                                                         : 'text-amber-800'
                                                 }`}
                                             >
-                                                {strictCycleSeverity === 'critical' ? 'Strongly recommended:' : 'Check strict cycle:'} {cycleTime}m is {strictCycleDeltaPct! > 0 ? `${strictCycleDeltaPct}% above` : `${Math.abs(strictCycleDeltaPct!)}% below`} observed runtime (~{suggestedStrictCycle}m).
+                                                {strictCycleLead} {cycleTime}m is {strictCycleDeltaPct! > 0 ? `${strictCycleDeltaPct}% above` : `${Math.abs(strictCycleDeltaPct!)}% below`} {strictCycleSuggestion.basisLabel} (~{suggestedStrictCycle}m).
                                             </p>
                                             <button
                                                 type="button"
@@ -637,8 +663,13 @@ export const Step3Build: React.FC<Step3Props> = ({
                                                         : 'text-amber-700 hover:text-amber-800'
                                                 }`}
                                             >
-                                                Use suggested {suggestedStrictCycle}m
+                                                {strictCycleButtonLabel}
                                             </button>
+                                            {!isHighConfidenceStrictCycle && (
+                                                <p className="mt-1 text-[10px] text-gray-600">
+                                                    This reference excludes the weakest observed buckets where possible, but it is not treated as a high-confidence planner default.
+                                                </p>
+                                            )}
                                         </div>
                                     )}
                                 </div>

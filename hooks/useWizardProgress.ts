@@ -10,6 +10,8 @@ import type { TripBucketAnalysis, TimeBand } from '../utils/ai/runtimeAnalysis';
 import type { ScheduleConfig } from '../components/NewSchedule/steps/Step3Build';
 import type { RuntimeData } from '../components/NewSchedule/utils/csvParser';
 import type { MasterRouteTable } from '../utils/parsers/masterScheduleParser';
+import type { ApprovedRuntimeModel } from '../components/NewSchedule/utils/wizardState';
+import type { ApprovedRuntimeContract } from '../components/NewSchedule/utils/step2ReviewTypes';
 import { hasRestorableWizardProgress } from '../components/NewSchedule/utils/wizardState';
 
 const WIZARD_PROGRESS_KEY = 'newScheduleWizard_progress';
@@ -35,6 +37,8 @@ export interface WizardProgress {
     generatedSchedules?: MasterRouteTable[]; // Added for persistence
     originalGeneratedSchedules?: MasterRouteTable[]; // Stable Step 4 delta baseline
     parsedData?: RuntimeData[]; // Added for persistence
+    approvedRuntimeContract?: ApprovedRuntimeContract;
+    approvedRuntimeModel?: ApprovedRuntimeModel;
     updatedAt: string;
 }
 

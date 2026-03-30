@@ -3,10 +3,12 @@ import {
   STREETSRecord, DailySummary, parseDayType, deriveDayTypeFromDate,
   SystemMetrics, RouteMetrics, HourMetrics, StopMetrics, TripMetrics,
   RouteLoadProfile, LoadProfileStop, DataQuality, OTPBreakdown,
+  RouteRidershipHeatmap, RidershipHeatmapTrip, RidershipHeatmapStop,
   classifyOTP, PERFORMANCE_SCHEMA_VERSION, DEFAULT_LOAD_CAP,
   OperatorDwellMetrics, DwellIncident, OperatorDwellSummary,
   classifyDwell, DWELL_THRESHOLDS,
   DailySegmentRuntimes, DailySegmentRuntimeEntry, DailyStopSegmentRuntimes, DailyStopSegmentRuntimeEntry, DailyTripStopSegmentRuntimes, DailyTripStopSegmentRuntimeEntry, SegmentRuntimeObservation, TripStopSegmentObservation,
+  RouteStopDeviationProfile, RouteStopDeviationEntry,
   RouteHourMetrics,
 } from './types';
 import { buildDailyCascadeMetrics } from './dwellCascadeComputer';
@@ -549,6 +551,97 @@ function buildLoadProfiles(records: STREETSRecord[]): RouteLoadProfile[] {
   });
 }
 
+function buildRidershipHeatmaps(records: STREETSRecord[]): RouteRidershipHeatmap[] {
+  const byRouteDir = groupBy(records, r => `${r.routeId}||${r.direction}`);
+  const results: RouteRidershipHeatmap[] = [];
+
+  for (const [key, recs] of byRouteDir) {
+    const [routeId, direction] = key.split('||');
+    const routeName = recs[0].routeName;
+
+    const tripMap = new Map<string, RidershipHeatmapTrip>();
+    const recordsByTrip = new Map<string, STREETSRecord[]>();
+
+    for (const r of recs) {
+      if (!tripMap.has(r.terminalDepartureTime)) {
+        tripMap.set(r.terminalDepartureTime, {
+          terminalDepartureTime: r.terminalDepartureTime,
+          tripName: r.tripName,
+          block: r.block,
+          direction: r.direction,
+        });
+      }
+      const tripRecs = recordsByTrip.get(r.terminalDepartureTime);
+      if (tripRecs) tripRecs.push(r);
+      else recordsByTrip.set(r.terminalDepartureTime, [r]);
+    }
+
+    let longestTripRecs: STREETSRecord[] = [];
+    let longestStopCount = 0;
+    for (const tripRecs of recordsByTrip.values()) {
+      const uniqueStops = new Set(tripRecs.map(r => r.stopId));
+      if (uniqueStops.size > longestStopCount) {
+        longestStopCount = uniqueStops.size;
+        longestTripRecs = tripRecs;
+      }
+    }
+
+    const canonicalIndex = new Map<string, number>();
+    for (const r of longestTripRecs) {
+      if (!canonicalIndex.has(r.stopId)) {
+        canonicalIndex.set(r.stopId, r.routeStopIndex);
+      }
+    }
+
+    const stopMap = new Map<string, RidershipHeatmapStop>();
+    for (const r of recs) {
+      if (!stopMap.has(r.stopId)) {
+        stopMap.set(r.stopId, {
+          stopName: r.stopName,
+          stopId: r.stopId,
+          routeStopIndex: canonicalIndex.get(r.stopId) ?? r.routeStopIndex,
+          isTimepoint: r.timePoint,
+        });
+      } else if (r.timePoint) {
+        stopMap.get(r.stopId)!.isTimepoint = true;
+      }
+    }
+
+    const trips = Array.from(tripMap.values())
+      .sort((a, b) => timeToSeconds(a.terminalDepartureTime) - timeToSeconds(b.terminalDepartureTime));
+    const stops = Array.from(stopMap.values())
+      .sort((a, b) => a.routeStopIndex - b.routeStopIndex);
+
+    const tripIdx = new Map<string, number>();
+    trips.forEach((t, i) => tripIdx.set(t.terminalDepartureTime, i));
+    const stopIdx = new Map<string, number>();
+    stops.forEach((s, i) => stopIdx.set(s.stopId, i));
+
+    const cells: ([number, number] | null)[][] = stops.map(() => trips.map((): [number, number] | null => null));
+
+    for (const r of recs) {
+      const si = stopIdx.get(r.stopId);
+      const ti = tripIdx.get(r.terminalDepartureTime);
+      if (si === undefined || ti === undefined) continue;
+      const existing = cells[si][ti];
+      if (existing) {
+        existing[0] += r.boardings;
+        existing[1] += r.alightings;
+      } else {
+        cells[si][ti] = [r.boardings, r.alightings];
+      }
+    }
+
+    results.push({ routeId, routeName, direction, trips, stops, cells });
+  }
+
+  return results.sort((a, b) => {
+    const cmp = a.routeId.localeCompare(b.routeId, undefined, { numeric: true });
+    if (cmp !== 0) return cmp;
+    return a.direction.localeCompare(b.direction);
+  });
+}
+
 function buildOperatorDwellMetrics(records: STREETSRecord[], date: string): OperatorDwellMetrics {
   const incidents: DwellIncident[] = [];
 
@@ -758,6 +851,83 @@ function buildDataQuality(
   };
 }
 
+function getObservedSegmentEndTime(
+  to: Pick<STREETSRecord, 'observedArrivalTime' | 'observedDepartureTime'>,
+  isTerminalSegmentEnd: boolean,
+): string | null {
+  return isTerminalSegmentEnd
+    ? (to.observedArrivalTime || to.observedDepartureTime)
+    : (to.observedDepartureTime || to.observedArrivalTime);
+}
+
+function getScheduledControlHoldSeconds(
+  stop: Pick<STREETSRecord, 'arrivalTime' | 'stopTime' | 'timePoint'>,
+): number {
+  if (!stop.timePoint) return 0;
+
+  const schedArrivalSec = parseStrictTimeToSeconds(stop.arrivalTime);
+  let schedDepartureSec = parseStrictTimeToSeconds(stop.stopTime);
+  if (schedArrivalSec === null || schedDepartureSec === null) return 0;
+
+  if (schedDepartureSec < schedArrivalSec) {
+    if (schedArrivalSec - schedDepartureSec >= MIDNIGHT_ROLLOVER_MIN_GAP_SECONDS) {
+      schedDepartureSec += 86400;
+    } else {
+      return 0;
+    }
+  }
+
+  return Math.max(0, schedDepartureSec - schedArrivalSec);
+}
+
+function getActualStopDwellSeconds(
+  stop: Pick<STREETSRecord, 'observedArrivalTime' | 'observedDepartureTime'>,
+): number {
+  if (!stop.observedArrivalTime || !stop.observedDepartureTime) return 0;
+
+  const observedArrivalSec = parseStrictTimeToSeconds(stop.observedArrivalTime);
+  let observedDepartureSec = parseStrictTimeToSeconds(stop.observedDepartureTime);
+  if (observedArrivalSec === null || observedDepartureSec === null) return 0;
+
+  if (observedDepartureSec < observedArrivalSec) {
+    if (observedArrivalSec - observedDepartureSec >= MIDNIGHT_ROLLOVER_MIN_GAP_SECONDS) {
+      observedDepartureSec += 86400;
+    } else {
+      return 0;
+    }
+  }
+
+  return Math.max(0, observedDepartureSec - observedArrivalSec);
+}
+
+function computeObservedSegmentRuntimeSeconds(
+  from: Pick<STREETSRecord, 'observedDepartureTime'>,
+  to: Pick<STREETSRecord, 'arrivalTime' | 'stopTime' | 'timePoint' | 'observedArrivalTime' | 'observedDepartureTime'>,
+  isTerminalSegmentEnd: boolean,
+): number | null {
+  if (!from.observedDepartureTime) return null;
+
+  const observedSegmentEndTime = getObservedSegmentEndTime(to, isTerminalSegmentEnd);
+  if (!observedSegmentEndTime) return null;
+
+  const departureSec = timeToSeconds(from.observedDepartureTime);
+  let observedEndSec = timeToSeconds(observedSegmentEndTime);
+  if (observedEndSec < departureSec) observedEndSec += 86400;
+
+  let runtimeSec = observedEndSec - departureSec;
+  if (runtimeSec <= 0) return null;
+
+  const downstreamDepartureUsed = !!to.observedDepartureTime && observedSegmentEndTime === to.observedDepartureTime;
+  if (downstreamDepartureUsed) {
+    const scheduledControlHoldSec = getScheduledControlHoldSeconds(to);
+    const actualDwellSec = getActualStopDwellSeconds(to);
+    const controlHoldToSubtractSec = Math.min(runtimeSec, scheduledControlHoldSec, actualDwellSec);
+    runtimeSec -= controlHoldToSubtractSec;
+  }
+
+  return runtimeSec > 0 ? runtimeSec : null;
+}
+
 function buildSegmentRuntimes(records: STREETSRecord[]): DailySegmentRuntimes {
   const byTrip = groupBy(records, r => r.tripId);
   const tripsWithData = new Set<string>();
@@ -773,14 +943,9 @@ function buildSegmentRuntimes(records: STREETSRecord[]): DailySegmentRuntimes {
     for (let i = 0; i < timepoints.length - 1; i++) {
       const from = timepoints[i];
       const to = timepoints[i + 1];
-      if (!from.observedDepartureTime || !to.observedArrivalTime) continue;
-
-      const depSec = timeToSeconds(from.observedDepartureTime);
-      let arrSec = timeToSeconds(to.observedArrivalTime);
-      if (arrSec < depSec) arrSec += 86400;
-
-      const runtimeSec = arrSec - depSec;
-      if (runtimeSec <= 0 || runtimeSec > 7200) continue;
+      const isTerminalSegmentEnd = i === timepoints.length - 2;
+      const runtimeSec = computeObservedSegmentRuntimeSeconds(from, to, isTerminalSegmentEnd);
+      if (runtimeSec === null || runtimeSec > 7200) continue;
 
       const runtimeMinutes = Math.round(runtimeSec / 60 * 100) / 100;
       const schedSec = timeToSeconds(from.stopTime);
@@ -839,16 +1004,12 @@ function buildStopSegmentRuntimes(records: STREETSRecord[]): DailyStopSegmentRun
     for (let i = 0; i < sorted.length - 1; i++) {
       const from = sorted[i];
       const to = sorted[i + 1];
-      if (!from.observedDepartureTime || !to.observedArrivalTime) continue;
+      const isTerminalSegmentEnd = i === sorted.length - 2;
       if (!from.stopId || !to.stopId || from.stopId === to.stopId) continue;
       if (to.routeStopIndex <= from.routeStopIndex) continue;
 
-      const depSec = timeToSeconds(from.observedDepartureTime);
-      let arrSec = timeToSeconds(to.observedArrivalTime);
-      if (arrSec < depSec) arrSec += 86400;
-
-      const runtimeSec = arrSec - depSec;
-      if (runtimeSec <= 0 || runtimeSec > 3600) continue;
+      const runtimeSec = computeObservedSegmentRuntimeSeconds(from, to, isTerminalSegmentEnd);
+      if (runtimeSec === null || runtimeSec > 3600) continue;
 
       const runtimeMinutes = Math.round(runtimeSec / 60 * 100) / 100;
       const schedSec = timeToSeconds(from.stopTime);
@@ -923,16 +1084,12 @@ function buildTripStopSegmentRuntimes(records: STREETSRecord[]): DailyTripStopSe
     for (let i = 0; i < sorted.length - 1; i++) {
       const from = sorted[i];
       const to = sorted[i + 1];
-      if (!from.observedDepartureTime || !to.observedArrivalTime) continue;
+      const isTerminalSegmentEnd = i === sorted.length - 2;
       if (!from.stopId || !to.stopId || from.stopId === to.stopId) continue;
       if (to.routeStopIndex <= from.routeStopIndex) continue;
 
-      const depSec = timeToSeconds(from.observedDepartureTime);
-      let arrSec = timeToSeconds(to.observedArrivalTime);
-      if (arrSec < depSec) arrSec += 86400;
-
-      const runtimeSec = arrSec - depSec;
-      if (runtimeSec <= 0 || runtimeSec > 3600) continue;
+      const runtimeSec = computeObservedSegmentRuntimeSeconds(from, to, isTerminalSegmentEnd);
+      if (runtimeSec === null || runtimeSec > 3600) continue;
 
       const runtimeMinutes = Math.round(runtimeSec / 60 * 100) / 100;
       const schedSec = timeToSeconds(from.stopTime);
@@ -968,6 +1125,48 @@ function buildTripStopSegmentRuntimes(records: STREETSRecord[]): DailyTripStopSe
   return { entries, totalObservations, tripsWithData: entries.length };
 }
 
+function buildRouteStopDeviations(records: STREETSRecord[]): RouteStopDeviationProfile[] {
+  const eligible = otpEligible(records);
+
+  const profileMap = new Map<string, Map<string, { stopName: string; stopId: string; routeStopIndex: number; deviations: number[] }>>();
+
+  for (const r of eligible) {
+    const profileKey = `${r.routeId}||${r.direction}`;
+    let stopMap = profileMap.get(profileKey);
+    if (!stopMap) {
+      stopMap = new Map();
+      profileMap.set(profileKey, stopMap);
+    }
+
+    const deviation = computeDeviation(r);
+    const existing = stopMap.get(r.stopId);
+    if (existing) {
+      existing.deviations.push(deviation);
+    } else {
+      stopMap.set(r.stopId, {
+        stopName: r.stopName,
+        stopId: r.stopId,
+        routeStopIndex: r.routeStopIndex,
+        deviations: [deviation],
+      });
+    }
+  }
+
+  const profiles: RouteStopDeviationProfile[] = [];
+  for (const [key, stopMap] of profileMap) {
+    const [routeId, direction] = key.split('||');
+    const stops: RouteStopDeviationEntry[] = Array.from(stopMap.values())
+      .sort((a, b) => a.routeStopIndex - b.routeStopIndex);
+    profiles.push({ routeId, direction, stops });
+  }
+
+  return profiles.sort((a, b) => {
+    const cmp = a.routeId.localeCompare(b.routeId, undefined, { numeric: true });
+    if (cmp !== 0) return cmp;
+    return a.direction.localeCompare(b.direction);
+  });
+}
+
 function aggregateSingleDay(date: string, records: STREETSRecord[]): DailySummary {
   const rawDay = records[0].day;
   const dayType = (rawDay === 'SATURDAY' || rawDay === 'SUNDAY' || rawDay === 'MONDAY' ||
@@ -987,11 +1186,13 @@ function aggregateSingleDay(date: string, records: STREETSRecord[]): DailySummar
     byStop: buildStopMetrics(records),
     byTrip: buildTripMetrics(records),
     loadProfiles: buildLoadProfiles(records),
+    ridershipHeatmaps: buildRidershipHeatmaps(records),
     byOperatorDwell: dwellMetrics,
     byCascade: buildDailyCascadeMetrics(records, dwellMetrics.incidents.filter(i => i.severity !== 'minor')),
     segmentRuntimes: buildSegmentRuntimes(records),
     stopSegmentRuntimes: buildStopSegmentRuntimes(records),
     tripStopSegmentRuntimes: buildTripStopSegmentRuntimes(records),
+    routeStopDeviations: buildRouteStopDeviations(records),
     byRouteHour: buildRouteHourMetrics(records),
     dataQuality: buildDataQuality(records, sanitization),
     schemaVersion: PERFORMANCE_SCHEMA_VERSION,

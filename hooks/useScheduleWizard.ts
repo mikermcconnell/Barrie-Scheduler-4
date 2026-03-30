@@ -11,6 +11,7 @@ import {
     calculateTotalTripTimes,
     detectOutliers,
     calculateBands,
+    hardenRuntimeAnalysisBuckets,
     TripBucketAnalysis,
     TimeBand,
     DirectionBandSummary,
@@ -22,6 +23,7 @@ import { MasterRouteTable } from '../utils/parsers/masterScheduleParser';
 import { useWizardProgress, WizardProgress } from './useWizardProgress';
 import { saveProject, getProject, NewScheduleProject } from '../utils/services/newScheduleProjectService';
 import { buildStopNameToIdMap } from '../utils/gtfs/gtfsStopLookup';
+import { buildSegmentsMapFromParsedData, getOrderedSegmentNames } from '../components/NewSchedule/utils/wizardState';
 
 // Constants
 export const DEFAULT_CYCLE_TIME = 60;
@@ -188,20 +190,16 @@ export const useScheduleWizard = (): UseScheduleWizardReturn => {
             setParsedData(results);
 
             // Run initial analysis
+            const groupedSegments = buildSegmentsMapFromParsedData(results);
+            const orderedSegmentNames = getOrderedSegmentNames(groupedSegments);
             const rawAnalysis = calculateTotalTripTimes(results);
-            const withOutliers = detectOutliers(rawAnalysis);
+            const hardenedAnalysis = hardenRuntimeAnalysisBuckets(rawAnalysis, orderedSegmentNames);
+            const withOutliers = detectOutliers(hardenedAnalysis);
             const { buckets, bands: generatedBands } = calculateBands(withOutliers);
 
             setAnalysis(buckets);
             setBands(generatedBands);
 
-            // Build segmentsMap for direction-keyed lookups
-            const groupedSegments: Record<string, SegmentRawData[]> = {};
-            results.forEach(pd => {
-                const dir = pd.detectedDirection || 'North';
-                if (!groupedSegments[dir]) groupedSegments[dir] = [];
-                groupedSegments[dir].push(...pd.segments);
-            });
             setSegmentsMap(groupedSegments);
 
             // Auto-detect config from first file

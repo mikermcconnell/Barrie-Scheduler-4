@@ -951,6 +951,83 @@ function buildOperatorDwellMetrics(records: STREETSRecord[], date: string): Oper
   };
 }
 
+function getObservedSegmentEndTime(
+  to: Pick<STREETSRecord, 'observedArrivalTime' | 'observedDepartureTime'>,
+  isTerminalSegmentEnd: boolean,
+): string | null {
+  return isTerminalSegmentEnd
+    ? (to.observedArrivalTime || to.observedDepartureTime)
+    : (to.observedDepartureTime || to.observedArrivalTime);
+}
+
+function getScheduledControlHoldSeconds(
+  stop: Pick<STREETSRecord, 'arrivalTime' | 'stopTime' | 'timePoint'>,
+): number {
+  if (!stop.timePoint) return 0;
+
+  const schedArrivalSec = parseStrictTimeToSeconds(stop.arrivalTime);
+  let schedDepartureSec = parseStrictTimeToSeconds(stop.stopTime);
+  if (schedArrivalSec === null || schedDepartureSec === null) return 0;
+
+  if (schedDepartureSec < schedArrivalSec) {
+    if (schedArrivalSec - schedDepartureSec >= MIDNIGHT_ROLLOVER_MIN_GAP_SECONDS) {
+      schedDepartureSec += 86400;
+    } else {
+      return 0;
+    }
+  }
+
+  return Math.max(0, schedDepartureSec - schedArrivalSec);
+}
+
+function getActualStopDwellSeconds(
+  stop: Pick<STREETSRecord, 'observedArrivalTime' | 'observedDepartureTime'>,
+): number {
+  if (!stop.observedArrivalTime || !stop.observedDepartureTime) return 0;
+
+  const observedArrivalSec = parseStrictTimeToSeconds(stop.observedArrivalTime);
+  let observedDepartureSec = parseStrictTimeToSeconds(stop.observedDepartureTime);
+  if (observedArrivalSec === null || observedDepartureSec === null) return 0;
+
+  if (observedDepartureSec < observedArrivalSec) {
+    if (observedArrivalSec - observedDepartureSec >= MIDNIGHT_ROLLOVER_MIN_GAP_SECONDS) {
+      observedDepartureSec += 86400;
+    } else {
+      return 0;
+    }
+  }
+
+  return Math.max(0, observedDepartureSec - observedArrivalSec);
+}
+
+function computeObservedSegmentRuntimeSeconds(
+  from: Pick<STREETSRecord, 'observedDepartureTime'>,
+  to: Pick<STREETSRecord, 'arrivalTime' | 'stopTime' | 'timePoint' | 'observedArrivalTime' | 'observedDepartureTime'>,
+  isTerminalSegmentEnd: boolean,
+): number | null {
+  if (!from.observedDepartureTime) return null;
+
+  const observedSegmentEndTime = getObservedSegmentEndTime(to, isTerminalSegmentEnd);
+  if (!observedSegmentEndTime) return null;
+
+  const departureSec = timeToSeconds(from.observedDepartureTime);
+  let observedEndSec = timeToSeconds(observedSegmentEndTime);
+  if (observedEndSec < departureSec) observedEndSec += 86400;
+
+  let runtimeSec = observedEndSec - departureSec;
+  if (runtimeSec <= 0) return null;
+
+  const downstreamDepartureUsed = !!to.observedDepartureTime && observedSegmentEndTime === to.observedDepartureTime;
+  if (downstreamDepartureUsed) {
+    const scheduledControlHoldSec = getScheduledControlHoldSeconds(to);
+    const actualDwellSec = getActualStopDwellSeconds(to);
+    const controlHoldToSubtractSec = Math.min(runtimeSec, scheduledControlHoldSec, actualDwellSec);
+    runtimeSec -= controlHoldToSubtractSec;
+  }
+
+  return runtimeSec > 0 ? runtimeSec : null;
+}
+
 function buildSegmentRuntimes(records: STREETSRecord[]): DailySegmentRuntimes {
   const byTrip = groupBy(records, r => r.tripId);
   const tripsWithData = new Set<string>();
@@ -972,20 +1049,12 @@ function buildSegmentRuntimes(records: STREETSRecord[]): DailySegmentRuntimes {
     for (let i = 0; i < timepoints.length - 1; i++) {
       const from = timepoints[i];
       const to = timepoints[i + 1];
+      const isTerminalSegmentEnd = i === timepoints.length - 2;
 
-      // Both must have observed times
-      if (!from.observedDepartureTime || !to.observedArrivalTime) continue;
-
-      const depSec = timeToSeconds(from.observedDepartureTime);
-      let arrSec = timeToSeconds(to.observedArrivalTime);
-
-      // Post-midnight guard: arrival < departure means midnight rollover
-      if (arrSec < depSec) arrSec += 86400;
-
-      const runtimeSec = arrSec - depSec;
+      const runtimeSec = computeObservedSegmentRuntimeSeconds(from, to, isTerminalSegmentEnd);
 
       // Sanity: skip <= 0 or > 120 minutes
-      if (runtimeSec <= 0 || runtimeSec > 7200) continue;
+      if (runtimeSec === null || runtimeSec > 7200) continue;
 
       const runtimeMinutes = Math.round(runtimeSec / 60 * 100) / 100;
 
@@ -1054,17 +1123,13 @@ function buildStopSegmentRuntimes(records: STREETSRecord[]): DailyStopSegmentRun
     for (let i = 0; i < sorted.length - 1; i++) {
       const from = sorted[i];
       const to = sorted[i + 1];
+      const isTerminalSegmentEnd = i === sorted.length - 2;
 
-      if (!from.observedDepartureTime || !to.observedArrivalTime) continue;
       if (!from.stopId || !to.stopId || from.stopId === to.stopId) continue;
       if (to.routeStopIndex <= from.routeStopIndex) continue;
 
-      const depSec = timeToSeconds(from.observedDepartureTime);
-      let arrSec = timeToSeconds(to.observedArrivalTime);
-      if (arrSec < depSec) arrSec += 86400;
-
-      const runtimeSec = arrSec - depSec;
-      if (runtimeSec <= 0 || runtimeSec > 3600) continue;
+      const runtimeSec = computeObservedSegmentRuntimeSeconds(from, to, isTerminalSegmentEnd);
+      if (runtimeSec === null || runtimeSec > 3600) continue;
 
       const runtimeMinutes = Math.round(runtimeSec / 60 * 100) / 100;
       const schedSec = timeToSeconds(from.stopTime);
@@ -1144,17 +1209,13 @@ function buildTripStopSegmentRuntimes(records: STREETSRecord[]): DailyTripStopSe
     for (let i = 0; i < sorted.length - 1; i++) {
       const from = sorted[i];
       const to = sorted[i + 1];
+      const isTerminalSegmentEnd = i === sorted.length - 2;
 
-      if (!from.observedDepartureTime || !to.observedArrivalTime) continue;
       if (!from.stopId || !to.stopId || from.stopId === to.stopId) continue;
       if (to.routeStopIndex <= from.routeStopIndex) continue;
 
-      const depSec = timeToSeconds(from.observedDepartureTime);
-      let arrSec = timeToSeconds(to.observedArrivalTime);
-      if (arrSec < depSec) arrSec += 86400;
-
-      const runtimeSec = arrSec - depSec;
-      if (runtimeSec <= 0 || runtimeSec > 3600) continue;
+      const runtimeSec = computeObservedSegmentRuntimeSeconds(from, to, isTerminalSegmentEnd);
+      if (runtimeSec === null || runtimeSec > 3600) continue;
 
       const runtimeMinutes = Math.round(runtimeSec / 60 * 100) / 100;
       const schedSec = timeToSeconds(from.stopTime);

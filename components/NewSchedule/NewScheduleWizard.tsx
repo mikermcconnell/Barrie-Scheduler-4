@@ -5,15 +5,20 @@ import { Step1Upload, type ImportMode, type PerformanceConfig } from './steps/St
 import { Step2Analysis } from './steps/Step2Analysis';
 import { Step3Build, ScheduleConfig } from './steps/Step3Build';
 import { Step4Schedule } from './steps/Step4Schedule';
+import { Step2ApprovalFooter } from './step2/Step2ApprovalFooter';
 import { parseRuntimeCSV, RuntimeData, SegmentRawData } from './utils/csvParser';
 import { usePerformanceDataQuery } from '../../hooks/usePerformanceData';
-import { computeRuntimesFromPerformance, getAvailableRuntimeRoutes } from '../../utils/performanceRuntimeComputer';
+import {
+    computeRuntimesFromPerformance,
+    getAvailableRuntimeRoutes,
+    inspectPerformanceRuntimeAvailability,
+} from '../../utils/performanceRuntimeComputer';
 import type { DayType as PerfDayType } from '../../utils/performanceDataTypes';
-import { calculateTotalTripTimes, detectOutliers, calculateBands, TripBucketAnalysis, TimeBand, DirectionBandSummary, computeDirectionBandSummary } from '../../utils/ai/runtimeAnalysis';
+import { calculateTotalTripTimes, detectOutliers, calculateBands, hardenRuntimeAnalysisBuckets, TripBucketAnalysis, TimeBand, DirectionBandSummary } from '../../utils/ai/runtimeAnalysis';
 import { generateSchedule } from '../../utils/schedule/scheduleGenerator';
+import { computeSuggestedStrictCycle } from '../../utils/schedule/strictCycleSuggestion';
 import { MasterRouteTable } from '../../utils/parsers/masterScheduleParser';
-import { useWizardProgress, WizardProgress } from '../../hooks/useWizardProgress';
-import { ResumeWizardModal } from './ResumeWizardModal';
+import { useWizardProgress } from '../../hooks/useWizardProgress';
 import { NewScheduleHeader } from './NewScheduleHeader';
 import { ProjectManagerModal } from './ProjectManagerModal';
 import { AutoSaveStatus } from '../../hooks/useAutoSave';
@@ -28,17 +33,45 @@ import { extractDirectionFromName } from '../../utils/config/routeDirectionConfi
 import type { UploadConfirmation, DayType as MasterDayType } from '../../utils/masterScheduleTypes';
 import { buildStopNameToIdMap } from '../../utils/gtfs/gtfsStopLookup';
 import { resolveAutoRouteNumber } from './utils/routeInference';
+import { resolveStopOrderFromPerformance } from '../../utils/newSchedule/stopOrderResolver';
 import {
     buildCanonicalSegmentColumnsFromMasterStops,
     buildSegmentsMapFromParsedData,
+    clampWizardStepToCurrentStep2Approval,
     createDefaultPerformanceConfig,
     createDefaultScheduleConfig,
     deriveWizardStepFromProject,
+    getUsableCanonicalDirectionStops,
     getOrderedSegmentNames,
     shouldShowNextStepAction,
+    type ApprovedRuntimeModel,
     type OrderedSegmentColumn,
 } from './utils/wizardState';
-import { resolveWizardPersistenceStep } from './utils/wizardPersistence';
+import {
+    buildFirebaseWizardSaveData,
+    buildLocalWizardProgress,
+    normalizeRestoredWizardState,
+} from './utils/wizardProjectState';
+import {
+    buildStep2ReviewResult,
+    buildStep2SourceSnapshot,
+    type Step2ReviewBuilderInput,
+} from './utils/step2ReviewBuilder';
+import { buildStep2ParsedDataFingerprint } from './utils/step2ParsedDataFingerprint';
+import { buildStep2ApprovedRuntimeModelFromContract } from './utils/step2ApprovedRuntimeModelAdapter';
+import { createStep2ApprovedRuntimeContract } from './utils/step2Approval';
+import { resolveStep2ApprovalState } from './utils/step2Invalidation';
+import {
+    buildStep2StopOrderHealth,
+    extractStopOrderDirectionStops,
+    type Step2StopOrderHealth,
+} from './utils/step2StopOrder';
+import type {
+    ApprovedRuntimeContract,
+    Step2ApprovalState,
+    Step2CanonicalRouteSource,
+    Step2ReviewResult,
+} from './utils/step2ReviewTypes';
 
 // Constants - centralized magic numbers
 const DEFAULT_CYCLE_TIME = 60;
@@ -69,12 +102,25 @@ const stripExtension = (name: string): string => name.replace(/\.[^.]+$/, '');
 
 const cleanTitleFragment = (value: string): string => {
     return stripExtension(value)
-        .replace(/[_\-]+/g, ' ')
+        .replace(/[_-]+/g, ' ')
         .replace(/\s+/g, ' ')
         .replace(/\b(final|latest|updated|copy|draft)\b/gi, ' ')
         .replace(/\b(v|ver|rev)\s*\d+\b/gi, ' ')
         .replace(/\s+/g, ' ')
         .trim();
+};
+
+const formatFooterTimestamp = (value?: string | null): string | null => {
+    if (!value) return null;
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return null;
+    return new Intl.DateTimeFormat(undefined, {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+    }).format(parsed);
 };
 
 const buildSourceLabelFromFiles = (inputFiles: File[]): string => {
@@ -176,24 +222,46 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
     const availableRoutes = useMemo(() => {
         if (!perfData?.dailySummaries) return [];
         const normalizedDayType = dayType.toLowerCase() as PerfDayType;
-        return getAvailableRuntimeRoutes(perfData.dailySummaries, normalizedDayType);
-    }, [perfData?.dailySummaries, dayType]);
+        return getAvailableRuntimeRoutes(
+            perfData.dailySummaries,
+            normalizedDayType,
+            performanceConfig.dateRange || undefined
+        );
+    }, [perfData?.dailySummaries, dayType, performanceConfig.dateRange]);
 
     const performanceDateRange = useMemo(() => {
         if (!perfData?.metadata?.dateRange) return undefined;
         return perfData.metadata.dateRange;
     }, [perfData?.metadata?.dateRange]);
 
+    const performanceDiagnostics = useMemo(() => {
+        if (!perfData?.dailySummaries || !performanceConfig.routeId) return null;
+        return inspectPerformanceRuntimeAvailability(perfData.dailySummaries, {
+            routeId: performanceConfig.routeId,
+            dayType: dayType.toLowerCase() as PerfDayType,
+            dateRange: performanceConfig.dateRange || undefined,
+            metadata: perfData.metadata,
+        });
+    }, [dayType, perfData?.dailySummaries, perfData?.metadata, performanceConfig.dateRange, performanceConfig.routeId]);
+
     // State for Step 2 Analysis
     const [parsedData, setParsedData] = useState<RuntimeData[]>([]);
     const [analysis, setAnalysis] = useState<TripBucketAnalysis[]>([]);
     const [bands, setBands] = useState<TimeBand[]>([]);
-    const [bandSummary, setBandSummary] = useState<DirectionBandSummary>({});
+    const [, setBandSummary] = useState<DirectionBandSummary>({});
     const [segmentsMap, setSegmentsMap] = useState<Record<string, SegmentRawData[]>>({});
     const [segmentNames, setSegmentNames] = useState<string[]>([]);
+    const [matrixAnalysis, setMatrixAnalysis] = useState<TripBucketAnalysis[]>([]);
+    const [matrixSegmentsMap, setMatrixSegmentsMap] = useState<Record<string, SegmentRawData[]>>({});
+    const [troubleshootingPatternWarning, setTroubleshootingPatternWarning] = useState<string | null>(null);
     const [canonicalSegmentColumns, setCanonicalSegmentColumns] = useState<OrderedSegmentColumn[] | undefined>(undefined);
     const [canonicalDirectionStops, setCanonicalDirectionStops] = useState<Record<string, string[]> | undefined>(undefined);
     const [canonicalRouteIdentity, setCanonicalRouteIdentity] = useState<string | undefined>(undefined);
+    const [canonicalRouteSource, setCanonicalRouteSource] = useState<Step2CanonicalRouteSource | undefined>(undefined);
+    const [step2StopOrderHealth, setStep2StopOrderHealth] = useState<Step2StopOrderHealth | null>(null);
+    const [approvedRuntimeContract, setApprovedRuntimeContract] = useState<ApprovedRuntimeContract | null>(null);
+    const [legacyApprovedRuntimeModel, setLegacyApprovedRuntimeModel] = useState<ApprovedRuntimeModel | null>(null);
+    const [step2WarningsAcknowledged, setStep2WarningsAcknowledged] = useState(false);
 
     // State for Step 3 Config
     const [config, setConfig] = useState<ScheduleConfig>({
@@ -206,6 +274,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
     // State for Step 4 Schedule
     const [generatedSchedules, setGeneratedSchedules] = useState<MasterRouteTable[]>([]);
     const [originalGeneratedSchedules, setOriginalGeneratedSchedules] = useState<MasterRouteTable[]>([]);
+    const [step4EditorSessionKey, setStep4EditorSessionKey] = useState(0);
 
     // Master Schedule Upload State
     const [showUploadModal, setShowUploadModal] = useState(false);
@@ -227,6 +296,11 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
             .then(({ stopCodes }) => setMasterStopCodes(stopCodes))
             .catch(err => console.error('Failed to load master stop codes:', err));
     }, [team?.id]);
+
+    useEffect(() => {
+        if (importMode === 'performance') return;
+        setStep2StopOrderHealth(null);
+    }, [importMode]);
 
     useEffect(() => {
         projectIdRef.current = projectId;
@@ -255,6 +329,174 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         return [...generatedSchedules, scopeTable];
     }, [generatedSchedules, masterStopCodes]);
 
+    const currentConfiguredRouteIdentity = useMemo(() => (
+        config.routeNumber?.trim()
+            ? buildRouteIdentity(config.routeNumber.trim(), dayType)
+            : undefined
+    ), [config.routeNumber, dayType]);
+
+    const activeCanonicalSegmentColumns = useMemo(() => (
+        currentConfiguredRouteIdentity && canonicalRouteIdentity === currentConfiguredRouteIdentity
+            ? canonicalSegmentColumns
+            : undefined
+    ), [canonicalRouteIdentity, canonicalSegmentColumns, currentConfiguredRouteIdentity]);
+
+    const activeCanonicalDirectionStops = useMemo(() => (
+        currentConfiguredRouteIdentity && canonicalRouteIdentity === currentConfiguredRouteIdentity
+            ? canonicalDirectionStops
+            : undefined
+    ), [canonicalDirectionStops, canonicalRouteIdentity, currentConfiguredRouteIdentity]);
+
+    const activeCanonicalRouteSource = useMemo(() => (
+        currentConfiguredRouteIdentity && canonicalRouteIdentity === currentConfiguredRouteIdentity
+            ? canonicalRouteSource
+            : undefined
+    ), [canonicalRouteIdentity, canonicalRouteSource, currentConfiguredRouteIdentity]);
+
+    const parsedDataFingerprint = useMemo(
+        () => buildStep2ParsedDataFingerprint(parsedData, {
+            analysis,
+            bands,
+            segmentsMap,
+            matrixAnalysis,
+            matrixSegmentsMap,
+            troubleshootingPatternWarning,
+            canonicalDirectionStops: activeCanonicalDirectionStops,
+            canonicalSegmentColumns: activeCanonicalSegmentColumns,
+        }),
+        [
+            activeCanonicalDirectionStops,
+            activeCanonicalSegmentColumns,
+            analysis,
+            bands,
+            matrixAnalysis,
+            matrixSegmentsMap,
+            parsedData,
+            segmentsMap,
+            troubleshootingPatternWarning,
+        ]
+    );
+
+    const step2PlannerOverrides = useMemo(() => ({
+        excludedBuckets: analysis
+            .filter(bucket => bucket.ignored)
+            .map(bucket => bucket.timeBucket),
+    }), [analysis]);
+
+    const step2ReviewBuilderInput = useMemo<Step2ReviewBuilderInput | null>(() => {
+        if (analysis.length === 0) return null;
+
+        return {
+            routeIdentity: currentConfiguredRouteIdentity || buildRouteIdentity((config.routeNumber || DEFAULT_ROUTE_NUMBER).trim(), dayType),
+            routeNumber: (config.routeNumber || DEFAULT_ROUTE_NUMBER).trim(),
+            dayType,
+            importMode,
+            performanceConfig: importMode === 'performance'
+                ? {
+                    routeId: performanceConfig.routeId,
+                    dateRange: performanceConfig.dateRange,
+                }
+                : null,
+            performanceDiagnostics: importMode === 'performance'
+                ? {
+                    routeId: performanceConfig.routeId,
+                    dateRange: performanceConfig.dateRange,
+                    runtimeLogicVersion: performanceDiagnostics?.runtimeLogicVersion,
+                    importedAt: performanceDiagnostics?.importedAt,
+                }
+                : null,
+            parsedDataFingerprint,
+            canonicalDirectionStops: activeCanonicalDirectionStops ?? null,
+            canonicalRouteSource: activeCanonicalRouteSource ?? {
+                type: 'runtime-derived',
+                routeIdentity: currentConfiguredRouteIdentity,
+                versionHint: 'runtime-derived',
+            },
+            plannerOverrides: step2PlannerOverrides,
+            analysis,
+            bands,
+            segmentsMap,
+            matrixAnalysis,
+            matrixSegmentsMap,
+            troubleshootingPatternWarning,
+            canonicalSegmentColumns: activeCanonicalSegmentColumns ?? null,
+            runtimeDiagnostics: importMode === 'performance' ? performanceDiagnostics : null,
+            stopOrder: step2StopOrderHealth,
+        };
+    }, [
+        activeCanonicalDirectionStops,
+        activeCanonicalSegmentColumns,
+        analysis,
+        bands,
+        config.routeNumber,
+        currentConfiguredRouteIdentity,
+        dayType,
+        importMode,
+        matrixAnalysis,
+        matrixSegmentsMap,
+        parsedDataFingerprint,
+        performanceConfig.dateRange,
+        performanceConfig.routeId,
+        performanceDiagnostics,
+        step2StopOrderHealth,
+        segmentsMap,
+        step2PlannerOverrides,
+        activeCanonicalRouteSource,
+        troubleshootingPatternWarning,
+    ]);
+
+    const step2ReviewResult = useMemo<Step2ReviewResult | null>(
+        () => (step2ReviewBuilderInput ? buildStep2ReviewResult(step2ReviewBuilderInput) : null),
+        [step2ReviewBuilderInput]
+    );
+
+    const step2HealthReport = step2ReviewResult?.health ?? null;
+
+    const approvalState = useMemo<Step2ApprovalState>(() => (
+        step2ReviewResult
+            ? resolveStep2ApprovalState(step2ReviewResult, approvedRuntimeContract)
+            : 'unapproved'
+    ), [approvedRuntimeContract, step2ReviewResult]);
+
+    const approvedContractRuntimeModel = useMemo(
+        () => buildStep2ApprovedRuntimeModelFromContract(approvedRuntimeContract),
+        [approvedRuntimeContract]
+    );
+
+    const lastApprovedRuntimeModel = useMemo<ApprovedRuntimeModel | null>(
+        () => approvedContractRuntimeModel ?? legacyApprovedRuntimeModel,
+        [approvedContractRuntimeModel, legacyApprovedRuntimeModel]
+    );
+
+    const approvedRuntimeModel = useMemo<ApprovedRuntimeModel | null>(() => {
+        if (approvalState !== 'approved') return null;
+        return approvedContractRuntimeModel ?? legacyApprovedRuntimeModel;
+    }, [approvalState, approvedContractRuntimeModel, legacyApprovedRuntimeModel]);
+
+    const currentApprovedRuntimeContract = useMemo<ApprovedRuntimeContract | null>(() => (
+        approvalState === 'approved' ? approvedRuntimeContract : null
+    ), [approvalState, approvedRuntimeContract]);
+
+    useEffect(() => {
+        const gatedStep = clampWizardStepToCurrentStep2Approval(step as 1 | 2 | 3 | 4, approvalState);
+        if (gatedStep !== step) {
+            setStep(gatedStep);
+        }
+    }, [approvalState, step]);
+
+    useEffect(() => {
+        if (!step2ReviewResult) {
+            setStep2WarningsAcknowledged(false);
+            return;
+        }
+
+        if (approvalState === 'approved' && step2ReviewResult.health.status === 'warning') {
+            setStep2WarningsAcknowledged(true);
+            return;
+        }
+
+        setStep2WarningsAcknowledged(false);
+    }, [approvalState, step2ReviewResult?.health.status, step2ReviewResult?.inputFingerprint]);
     useEffect(() => {
         let isCancelled = false;
 
@@ -262,15 +504,27 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
             setCanonicalSegmentColumns(undefined);
             setCanonicalDirectionStops(undefined);
             setCanonicalRouteIdentity(undefined);
+            setCanonicalRouteSource(undefined);
             return () => {
                 isCancelled = true;
             };
         }
 
         const routeIdentity = buildRouteIdentity(config.routeNumber.trim(), dayType);
+        if (
+            importMode === 'performance'
+            && canonicalRouteSource?.type === 'runtime-derived'
+            && canonicalRouteIdentity === routeIdentity
+            && canonicalDirectionStops
+        ) {
+            return () => {
+                isCancelled = true;
+            };
+        }
         setCanonicalSegmentColumns(undefined);
         setCanonicalDirectionStops(undefined);
         setCanonicalRouteIdentity(undefined);
+        setCanonicalRouteSource(undefined);
 
         const loadCanonicalSegmentColumns = async () => {
             try {
@@ -281,13 +535,21 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                     setCanonicalSegmentColumns(undefined);
                     setCanonicalDirectionStops(undefined);
                     setCanonicalRouteIdentity(routeIdentity);
+                    setCanonicalRouteSource(undefined);
                     return;
                 }
 
-                const directionStops: Record<string, string[]> = {
+                const directionStops = getUsableCanonicalDirectionStops(config.routeNumber.trim(), {
                     North: result.content.northTable.stops || [],
                     South: result.content.southTable.stops || [],
-                };
+                });
+                if (!directionStops) {
+                    setCanonicalSegmentColumns(undefined);
+                    setCanonicalDirectionStops(undefined);
+                    setCanonicalRouteIdentity(routeIdentity);
+                    setCanonicalRouteSource(undefined);
+                    return;
+                }
                 const columns = buildCanonicalSegmentColumnsFromMasterStops(
                     config.routeNumber.trim(),
                     directionStops.North,
@@ -296,12 +558,18 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                 setCanonicalDirectionStops(directionStops);
                 setCanonicalSegmentColumns(columns.length > 0 ? columns : undefined);
                 setCanonicalRouteIdentity(routeIdentity);
+                setCanonicalRouteSource({
+                    type: 'master',
+                    routeIdentity,
+                    versionHint: 'master-schedule',
+                });
             } catch (error) {
                 if (isCancelled) return;
                 console.error('Error loading canonical segment columns from master schedule:', error);
                 setCanonicalSegmentColumns(undefined);
                 setCanonicalDirectionStops(undefined);
                 setCanonicalRouteIdentity(undefined);
+                setCanonicalRouteSource(undefined);
             }
         };
 
@@ -310,7 +578,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         return () => {
             isCancelled = true;
         };
-    }, [team?.id, config.routeNumber, dayType]);
+    }, [team?.id, config.routeNumber, dayType, importMode, canonicalDirectionStops, canonicalRouteIdentity, canonicalRouteSource]);
 
     // Backfill old generated schedules that used sequential stop IDs (#1, #2, ...)
     // so existing projects immediately get real stop codes for connections.
@@ -401,9 +669,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
     };
 
     // Wizard Progress Persistence
-    const { load, save, clear, hasProgress, hasCheckedProgress, setHasCheckedProgress } = useWizardProgress();
-    const [showResumeModal, setShowResumeModal] = useState(false);
-    const [savedProgress, setSavedProgress] = useState<WizardProgress | null>(null);
+    const { save, clear } = useWizardProgress();
 
     // ========== CONSOLIDATED SAVE SYSTEM ==========
     // Save state tracking to prevent race conditions
@@ -425,6 +691,10 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
     const [lastCloudSaveTime, setLastCloudSaveTime] = useState<Date | null>(null);
     const stateVersionRef = useRef(0);
     const lastSavedVersionRef = useRef(0);
+
+    const startNewStep4EditorSession = useCallback(() => {
+        setStep4EditorSessionKey(prev => prev + 1);
+    }, []);
 
     const resolveUniqueProjectName = useCallback(async (
         requestedName: string,
@@ -452,25 +722,41 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
     const buildLocalSaveData = useCallback((overrides?: {
         generatedSchedules?: MasterRouteTable[];
         originalGeneratedSchedules?: MasterRouteTable[];
-    }) => {
-        const persistenceStep = resolveWizardPersistenceStep(step as 1 | 2 | 3 | 4, overrides);
-        return ({
-        step: persistenceStep,
+    }) => buildLocalWizardProgress({
+        step: step as 1 | 2 | 3 | 4,
         dayType,
         importMode,
         performanceConfig,
         autofillFromMaster,
         projectName,
         fileNames: files.map(f => f.name),
-        analysis: persistenceStep >= 2 ? analysis : undefined,
-        bands: persistenceStep >= 2 ? bands : undefined,
-        config: persistenceStep >= 3 ? config : undefined,
-        generatedSchedules: persistenceStep >= 4 ? (overrides?.generatedSchedules ?? generatedSchedules) : undefined,
-        originalGeneratedSchedules: persistenceStep >= 4 ? (overrides?.originalGeneratedSchedules ?? originalGeneratedSchedules) : undefined,
-        parsedData: persistenceStep >= 1 ? parsedData : undefined,
-        updatedAt: new Date().toISOString()
-        });
-    }, [step, dayType, importMode, performanceConfig, autofillFromMaster, projectName, files, analysis, bands, config, generatedSchedules, originalGeneratedSchedules, parsedData]);
+        analysis,
+        bands,
+        config,
+        generatedSchedules,
+        originalGeneratedSchedules,
+        parsedData,
+        approvedRuntimeContract: approvedRuntimeContract || undefined,
+        approvedRuntimeModel: lastApprovedRuntimeModel || undefined,
+        projectId,
+    }, overrides), [
+        step,
+        dayType,
+        importMode,
+        performanceConfig,
+        autofillFromMaster,
+        projectName,
+        files,
+        analysis,
+        bands,
+        config,
+        generatedSchedules,
+        originalGeneratedSchedules,
+        parsedData,
+        approvedRuntimeContract,
+        lastApprovedRuntimeModel,
+        projectId
+    ]);
 
     // Helper: Build Firebase save data structure
     const buildFirebaseSaveData = useCallback((overrides?: {
@@ -479,39 +765,56 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         generatedSchedules?: MasterRouteTable[];
         originalGeneratedSchedules?: MasterRouteTable[];
         isGenerated?: boolean;
-    }) => {
-        const effectiveProjectId = overrides?.id ?? projectId;
-        const persistenceStep = resolveWizardPersistenceStep(step as 1 | 2 | 3 | 4, overrides);
-        return ({
-        name: overrides?.name || projectName,
+    }) => buildFirebaseWizardSaveData({
+        step: step as 1 | 2 | 3 | 4,
         dayType,
         importMode,
-        autofillFromMaster,
         performanceConfig,
-        routeNumber: config.routeNumber,
-        analysis: persistenceStep >= 2 ? analysis : undefined,
-        bands: persistenceStep >= 2 ? bands : undefined,
-        config: persistenceStep >= 3 ? config : undefined,
-        generatedSchedules: persistenceStep >= 4 ? (overrides?.generatedSchedules ?? generatedSchedules) : undefined,
-        originalGeneratedSchedules: persistenceStep >= 4 ? (overrides?.originalGeneratedSchedules ?? originalGeneratedSchedules) : undefined,
-        parsedData: persistenceStep >= 1 ? parsedData : undefined,
-        isGenerated: overrides?.isGenerated ?? (persistenceStep >= 4),
-        ...(effectiveProjectId ? { id: effectiveProjectId } : {})
-        });
-    }, [projectName, dayType, importMode, autofillFromMaster, performanceConfig, config, step, analysis, bands, generatedSchedules, originalGeneratedSchedules, parsedData, projectId]);
+        autofillFromMaster,
+        projectName,
+        fileNames: files.map(f => f.name),
+        analysis,
+        bands,
+        config,
+        generatedSchedules,
+        originalGeneratedSchedules,
+        parsedData,
+        approvedRuntimeContract: approvedRuntimeContract || undefined,
+        approvedRuntimeModel: lastApprovedRuntimeModel || undefined,
+        projectId,
+    }, overrides), [
+        step,
+        dayType,
+        importMode,
+        performanceConfig,
+        autofillFromMaster,
+        projectName,
+        files,
+        analysis,
+        bands,
+        config,
+        generatedSchedules,
+        originalGeneratedSchedules,
+        parsedData,
+        approvedRuntimeContract,
+        lastApprovedRuntimeModel,
+        projectId
+    ]);
 
     // Track state version for dirty detection - increment on meaningful changes
     useEffect(() => {
         if (!isLoadingProject) {
             stateVersionRef.current += 1;
         }
-    }, [step, dayType, files.length, analysis, bands, config, generatedSchedules, originalGeneratedSchedules, parsedData, autofillFromMaster, isLoadingProject]);
+    }, [step, dayType, files.length, analysis, bands, config, generatedSchedules, originalGeneratedSchedules, parsedData, approvedRuntimeContract, lastApprovedRuntimeModel, autofillFromMaster, isLoadingProject]);
 
     const hasProjectContent = useMemo(() => (
         files.length > 0 ||
         parsedData.length > 0 ||
         analysis.length > 0 ||
         bands.length > 0 ||
+        !!approvedRuntimeContract ||
+        !!lastApprovedRuntimeModel ||
         config.blocks.length > 0 ||
         generatedSchedules.length > 0 ||
         !!projectId ||
@@ -521,6 +824,8 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         parsedData.length,
         analysis.length,
         bands.length,
+        approvedRuntimeContract,
+        lastApprovedRuntimeModel,
         config.blocks.length,
         generatedSchedules.length,
         projectId,
@@ -584,10 +889,10 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
             setLastCloudSaveTime(new Date());
             lastSavedVersionRef.current = stateVersionRef.current;
             return savedId;
-        } catch (e) {
-            console.error('Firebase save failed:', e);
+        } catch (error) {
+            console.error('Firebase save failed:', error);
             setCloudSaveStatus('error');
-            throw e;
+            throw error;
         } finally {
             setIsSaving(false);
             // If there was a pending save, execute it with stored overrides
@@ -631,7 +936,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                 }
             }
         };
-    }, [step, dayType, hasProjectContent, analysis, bands, config, generatedSchedules, originalGeneratedSchedules, save, buildLocalSaveData, isLoadingProject]);
+    }, [step, dayType, hasProjectContent, analysis, bands, approvedRuntimeContract, lastApprovedRuntimeModel, config, generatedSchedules, originalGeneratedSchedules, save, buildLocalSaveData, isLoadingProject]);
 
     // Warn before navigating away if there are unsaved changes
     useEffect(() => {
@@ -649,71 +954,89 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
     }, [isSaving, step]);
     // ========== END CONSOLIDATED SAVE SYSTEM ==========
 
-    // Check for saved progress on mount
-    useEffect(() => {
-        if (!hasCheckedProgress && hasProgress()) {
-            const progress = load();
-            setSavedProgress(progress);
-            setShowResumeModal(true);
-        }
-        setHasCheckedProgress(true);
-    }, [hasCheckedProgress, hasProgress, load, setHasCheckedProgress]);
+    const resetLoadedWizardData = useCallback(() => {
+        setFiles([]);
+        setParsedData([]);
+        setAnalysis([]);
+        setBands([]);
+        setBandSummary({});
+        setSegmentsMap({});
+        setSegmentNames([]);
+        setTroubleshootingPatternWarning(null);
+        setGeneratedSchedules([]);
+        setOriginalGeneratedSchedules([]);
+        setConfig(createDefaultScheduleConfig());
+        setIsMasterCompareActive(false);
+        setMasterBaseline(null);
+        setIsCompareLoading(false);
+        setCanonicalSegmentColumns(undefined);
+        setCanonicalDirectionStops(undefined);
+        setCanonicalRouteIdentity(undefined);
+        setCanonicalRouteSource(undefined);
+        setStep2StopOrderHealth(null);
+        setApprovedRuntimeContract(null);
+        setLegacyApprovedRuntimeModel(null);
+        setStep2WarningsAcknowledged(false);
+    }, []);
 
-    const handleResume = () => {
-        if (savedProgress) {
-            setFiles([]);
-            setProjectId(undefined);
-            projectIdRef.current = undefined;
-            setParsedData([]);
-            setAnalysis([]);
-            setBands([]);
-            setBandSummary({});
-            setSegmentsMap({});
-            setSegmentNames([]);
-            setGeneratedSchedules([]);
-            setOriginalGeneratedSchedules([]);
-            setConfig(createDefaultScheduleConfig());
-            setStep(savedProgress.step);
-            setMaxStepReached(Math.max(savedProgress.step, maxStepReached));
-            setDayType(savedProgress.dayType);
-            setImportMode(savedProgress.importMode || 'csv');
-            setPerformanceConfig(savedProgress.performanceConfig || createDefaultPerformanceConfig());
-            setAutofillFromMaster(savedProgress.autofillFromMaster ?? true);
-            if (savedProgress.projectName) {
-                setProjectName(savedProgress.projectName);
-                setIsAutoProjectName(false);
-            }
-            if (savedProgress.analysis) {
-                setAnalysis(savedProgress.analysis);
-                setSegmentNames(getOrderedSegmentNames({}, savedProgress.analysis));
-            }
-            if (savedProgress.bands) setBands(savedProgress.bands);
-            if (savedProgress.config) setConfig(savedProgress.config);
-            if (savedProgress.generatedSchedules) setGeneratedSchedules(savedProgress.generatedSchedules);
-            if (savedProgress.originalGeneratedSchedules) {
-                setOriginalGeneratedSchedules(savedProgress.originalGeneratedSchedules);
-            } else if (savedProgress.generatedSchedules) {
-                setOriginalGeneratedSchedules(savedProgress.generatedSchedules);
-            }
+    const applyRestoredWizardData = useCallback((restored: ReturnType<typeof normalizeRestoredWizardState>) => {
+        setDayType(restored.dayType);
+        setImportMode(restored.importMode);
+        setPerformanceConfig(restored.performanceConfig);
+        setAutofillFromMaster(restored.autofillFromMaster);
+        setParsedData(restored.parsedData);
+        setAnalysis(restored.analysis);
+        setBands(restored.bands);
+        setConfig(restored.config);
+        setSegmentsMap(restored.segmentsMap);
+        setSegmentNames(restored.segmentNames);
+        setGeneratedSchedules(restored.generatedSchedules);
+        setOriginalGeneratedSchedules(restored.originalGeneratedSchedules);
+        setApprovedRuntimeContract(restored.approvedRuntimeContract || null);
+        setLegacyApprovedRuntimeModel(restored.approvedRuntimeModel || null);
+        setStep2WarningsAcknowledged(false);
+    }, []);
 
-            // Restore Raw Data if available
-            if (savedProgress.parsedData && savedProgress.parsedData.length > 0) {
-                const groupedSegments = buildSegmentsMapFromParsedData(savedProgress.parsedData);
-                setParsedData(savedProgress.parsedData);
-                setSegmentsMap(groupedSegments);
-                setSegmentNames(getOrderedSegmentNames(groupedSegments, savedProgress.analysis));
-            }
+    const restoreProjectData = useCallback((fullProject: {
+        id: string;
+        name: string;
+        dayType: 'Weekday' | 'Saturday' | 'Sunday';
+        importMode?: ImportMode;
+        performanceConfig?: PerformanceConfig;
+        autofillFromMaster?: boolean;
+        analysis?: TripBucketAnalysis[];
+        bands?: TimeBand[];
+        config?: ScheduleConfig;
+        generatedSchedules?: MasterRouteTable[];
+        originalGeneratedSchedules?: MasterRouteTable[];
+        parsedData?: RuntimeData[];
+        approvedRuntimeContract?: ApprovedRuntimeContract;
+        approvedRuntimeModel?: ApprovedRuntimeModel;
+        isGenerated?: boolean;
+    }) => {
+        const restoredState = normalizeRestoredWizardState({
+            dayType: fullProject.dayType,
+            importMode: fullProject.importMode,
+            performanceConfig: fullProject.performanceConfig,
+            autofillFromMaster: fullProject.autofillFromMaster,
+            analysis: fullProject.analysis,
+            bands: fullProject.bands,
+            config: fullProject.config,
+            generatedSchedules: fullProject.generatedSchedules,
+            originalGeneratedSchedules: fullProject.originalGeneratedSchedules,
+            parsedData: fullProject.parsedData,
+            approvedRuntimeContract: fullProject.approvedRuntimeContract,
+            approvedRuntimeModel: fullProject.approvedRuntimeModel,
+        });
 
-            toast.success('Progress Restored', 'Continuing from where you left off');
-        }
-        setShowResumeModal(false);
-    };
-
-    const handleStartFresh = () => {
-        resetWizardState();
-        setSavedProgress(null);
-        setShowResumeModal(false);
-    };
+        resetLoadedWizardData();
+        setProjectId(fullProject.id);
+        projectIdRef.current = fullProject.id;
+        setProjectName(fullProject.name);
+        setIsAutoProjectName(false);
+        applyRestoredWizardData(restoredState);
+        startNewStep4EditorSession();
+    }, [applyRestoredWizardData, resetLoadedWizardData, startNewStep4EditorSession]);
 
     // Save Feedback State
     const [isManualSaving, setIsManualSaving] = useState(false);
@@ -732,7 +1055,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                 setManualSaveSuccess(true);
                 setTimeout(() => setManualSaveSuccess(false), 2000);
                 toast.success('Saved to Cloud', 'Schedule backed up securely');
-            } catch (e) {
+            } catch {
                 toast.error('Cloud Save Failed', 'Saved locally. Click "Save" to retry.');
             }
         } else {
@@ -753,25 +1076,69 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
             try {
                 await saveToFirebase({ name: newName });
                 toast.success('Renamed', `Project renamed to "${newName}"`);
-            } catch (e) {
+            } catch {
                 toast.warning('Rename Saved Locally', 'Could not sync to cloud');
             }
         }
     };
 
+    const handleApproveStep2 = useCallback((acknowledgedWarnings: string[]) => {
+        if (!step2ReviewResult || !step2ReviewBuilderInput) {
+            toast.warning('Approval Failed', 'Step 2 review data is not ready yet.');
+            return;
+        }
+
+        const contract = createStep2ApprovedRuntimeContract({
+            reviewResult: step2ReviewResult,
+            sourceSnapshot: buildStep2SourceSnapshot(step2ReviewBuilderInput),
+            approvedAt: new Date().toISOString(),
+            acknowledgedWarnings,
+        });
+
+        if (!contract) {
+            toast.warning('Approval Failed', 'Review the warnings and try approving the runtime model again.');
+            return;
+        }
+
+        setApprovedRuntimeContract(contract);
+        setLegacyApprovedRuntimeModel(buildStep2ApprovedRuntimeModelFromContract(contract));
+        setStep2WarningsAcknowledged(contract.readinessStatus === 'warning');
+        toast.success('Runtime Approved', 'Step 2 is now approved for schedule building.');
+    }, [
+        step2ReviewBuilderInput,
+        step2ReviewResult,
+        toast,
+    ]);
+
     // Shared helper: take RuntimeData[] through analysis pipeline and advance to Step 2
-    const processRuntimeResults = (results: RuntimeData[]) => {
+    const processRuntimeResults = (results: RuntimeData[], displayResults: RuntimeData[] = results) => {
         setParsedData(results);
 
-        const rawAnalysis = calculateTotalTripTimes(results);
-        const withOutliers = detectOutliers(rawAnalysis);
-        const { buckets, bands: generatedBands } = calculateBands(withOutliers);
         const groupedSegments = buildSegmentsMapFromParsedData(results);
+        const orderedSegmentNames = getOrderedSegmentNames(groupedSegments);
+        const rawAnalysis = calculateTotalTripTimes(results);
+        const hardenedAnalysis = hardenRuntimeAnalysisBuckets(rawAnalysis, orderedSegmentNames);
+        const withOutliers = detectOutliers(hardenedAnalysis);
+        const { buckets, bands: generatedBands } = calculateBands(withOutliers);
+        const displayRawAnalysis = calculateTotalTripTimes(displayResults);
+        const displayWithOutliers = detectOutliers(displayRawAnalysis);
+        const { buckets: displayBuckets } = calculateBands(displayWithOutliers);
+        const displayGroupedSegments = buildSegmentsMapFromParsedData(displayResults);
 
         setAnalysis(buckets);
         setBands(generatedBands);
         setSegmentsMap(groupedSegments);
         setSegmentNames(getOrderedSegmentNames(groupedSegments, buckets));
+        setMatrixAnalysis(displayBuckets);
+        setMatrixSegmentsMap(displayGroupedSegments);
+        const fallbackDirections = displayResults
+            .filter(runtime => runtime.troubleshootingPatternStatus === 'fallback' && runtime.detectedDirection)
+            .map(runtime => runtime.detectedDirection as string);
+        setTroubleshootingPatternWarning(
+            fallbackDirections.length > 0
+                ? `Troubleshooting view could not confirm a full anchored route pattern for ${Array.from(new Set(fallbackDirections)).join(', ')}. The stop-by-stop matrix is hidden until a confirmed full-route path is available.`
+                : null
+        );
 
         const autoRouteNumber = resolveAutoRouteNumber(
             results.map(r => r.detectedRouteNumber)
@@ -818,19 +1185,111 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                     return;
                 }
                 try {
+                    const selectedRouteMetadata = availableRoutes.find(route => route.routeId === performanceConfig.routeId);
+                    if (selectedRouteMetadata && selectedRouteMetadata.stopLevelDayCount === 0) {
+                        toast.error(
+                            'Re-import STREETS Data',
+                            `Route ${performanceConfig.routeId} only has older coarse runtime summaries right now. Re-import STREETS data to compute stop-level runtimes for New Schedule.`
+                        );
+                        return;
+                    }
+
                     const normalizedDayType = dayType.toLowerCase() as PerfDayType;
+                    const selectedRouteNumber = performanceConfig.routeId.trim();
+                    const selectedRouteIdentity = buildRouteIdentity(selectedRouteNumber, dayType);
+                    let masterCanonicalStops: Record<string, string[]> | undefined;
+
+                    if (team?.id && selectedRouteIdentity) {
+                        const masterResult = await getMasterSchedule(team.id, selectedRouteIdentity);
+                        if (masterResult) {
+                            masterCanonicalStops = getUsableCanonicalDirectionStops(selectedRouteNumber, {
+                                North: masterResult.content.northTable.stops || [],
+                                South: masterResult.content.southTable.stops || [],
+                            });
+                        }
+                    }
+
+                    const stopOrderResolution = resolveStopOrderFromPerformance(perfData.dailySummaries, {
+                        routeId: selectedRouteNumber,
+                        dayType: normalizedDayType,
+                        dateRange: performanceConfig.dateRange || undefined,
+                        patternAnchorStops: masterCanonicalStops,
+                    });
+                    const resolvedCanonicalStops = stopOrderResolution.decision === 'accept'
+                        ? getUsableCanonicalDirectionStops(
+                            selectedRouteNumber,
+                            extractStopOrderDirectionStops(stopOrderResolution)
+                        )
+                        : undefined;
+                    const selectedCanonicalStops = resolvedCanonicalStops ?? masterCanonicalStops;
+                    const selectedCanonicalColumns = selectedCanonicalStops
+                        ? buildCanonicalSegmentColumnsFromMasterStops(
+                            selectedRouteNumber,
+                            selectedCanonicalStops.North,
+                            selectedCanonicalStops.South
+                        )
+                        : [];
+                    const selectedCanonicalRouteSource: Step2CanonicalRouteSource | undefined = resolvedCanonicalStops
+                        ? {
+                            type: 'runtime-derived',
+                            routeIdentity: selectedRouteIdentity,
+                            versionHint: `stop-order-${stopOrderResolution.decision}`,
+                        }
+                        : masterCanonicalStops
+                            ? {
+                                type: 'master',
+                                routeIdentity: selectedRouteIdentity,
+                                versionHint: 'master-schedule',
+                            }
+                            : undefined;
+
+                    setCanonicalDirectionStops(selectedCanonicalStops);
+                    setCanonicalSegmentColumns(selectedCanonicalColumns.length > 0 ? selectedCanonicalColumns : undefined);
+                    setCanonicalRouteIdentity(selectedRouteIdentity);
+                    setCanonicalRouteSource(selectedCanonicalStops ? selectedCanonicalRouteSource : undefined);
+                    setStep2StopOrderHealth(buildStep2StopOrderHealth(
+                        stopOrderResolution,
+                        resolvedCanonicalStops
+                            ? 'runtime-derived'
+                            : masterCanonicalStops
+                                ? 'master-fallback'
+                                : 'none'
+                    ));
+
                     const results = computeRuntimesFromPerformance(perfData.dailySummaries, {
                         routeId: performanceConfig.routeId,
                         dayType: normalizedDayType,
                         dateRange: performanceConfig.dateRange || undefined,
+                        canonicalDirectionStops: selectedCanonicalStops,
+                        patternAnchorStops: resolvedCanonicalStops ?? masterCanonicalStops,
+                        fullPatternOnly: true,
                     });
+                    // Keep the schedule-driving analysis tied to the canonical route chain,
+                    // but let the Step 2 matrix show the finer stop-to-stop legs when available.
+                    const displayResults = selectedCanonicalStops
+                        ? computeRuntimesFromPerformance(perfData.dailySummaries, {
+                            routeId: performanceConfig.routeId,
+                            dayType: normalizedDayType,
+                            dateRange: performanceConfig.dateRange || undefined,
+                            patternAnchorStops: resolvedCanonicalStops ?? masterCanonicalStops,
+                            fullPatternOnly: true,
+                        })
+                        : results;
 
                     if (results.length === 0) {
-                        toast.error('No Data', `No segment runtime data found for Route ${performanceConfig.routeId} on ${dayType}s`);
+                        const diagnosticsMessage = performanceDiagnostics
+                            ? `Checked ${performanceDiagnostics.filteredDayCount} ${dayType.toLowerCase()} day(s); matched ${performanceDiagnostics.matchedRouteDayCount} day(s), ${performanceDiagnostics.stopEntryCount} stop-level segment row(s), ${performanceDiagnostics.tripEntryCount} trip-leg row(s), and ${performanceDiagnostics.coarseEntryCount} coarse segment row(s).`
+                            : undefined;
+                        toast.error(
+                            'No Data',
+                            diagnosticsMessage
+                                ? `No segment runtime data found for Route ${performanceConfig.routeId} on ${dayType}s. ${diagnosticsMessage}`
+                                : `No segment runtime data found for Route ${performanceConfig.routeId} on ${dayType}s`
+                        );
                         return;
                     }
 
-                    processRuntimeResults(results);
+                    processRuntimeResults(results, displayResults);
                     toast.success('Data Computed', 'Performance runtimes analyzed successfully');
                 } catch (error) {
                     console.error(error);
@@ -852,6 +1311,13 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                 }
             }
         } else if (step === 2) {
+            if (approvalState !== 'approved') {
+                toast.warning(
+                    'Step 2 Approval Needed',
+                    'Approve the reviewed runtime model before moving to schedule building.'
+                );
+                return;
+            }
             // Initialize one block for convenience if empty
             if (config.blocks.length === 0) {
                 setConfig(prev => ({
@@ -867,32 +1333,47 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                 return;
             }
 
+            const activeApprovedPlanning = currentApprovedRuntimeContract?.planning ?? null;
+            const activeRuntimeModel = currentApprovedRuntimeContract
+                ? buildStep2ApprovedRuntimeModelFromContract(currentApprovedRuntimeContract)
+                : null;
+            if (!activeApprovedPlanning || !activeRuntimeModel) {
+                toast.error('Runtime Model Missing', 'Return to Step 2 and confirm the runtime analysis before generating.');
+                return;
+            }
+
+            const approvedBuckets = activeApprovedPlanning?.buckets ?? activeRuntimeModel?.buckets ?? [];
+            const approvedBands = activeApprovedPlanning?.bands ?? activeRuntimeModel?.bands ?? [];
+            const approvedDirectionBandSummary = activeApprovedPlanning?.directionBandSummary ?? activeRuntimeModel?.directionBandSummary;
+
             // Non-blocking guidance: strict cycle should be close to observed runtime bands.
             if (config.cycleMode !== 'Floating') {
-                const bandsWithData = bands.filter(b => b.count > 0 && b.avg > 0);
-                if (bandsWithData.length > 0 && config.cycleTime > 0) {
-                    const suggested = Math.round(
-                        bandsWithData.reduce((sum, b) => sum + (b.avg * b.count), 0) /
-                        bandsWithData.reduce((sum, b) => sum + b.count, 0)
-                    );
+                const suggestion = computeSuggestedStrictCycle(approvedBuckets, approvedBands);
+                const suggested = suggestion.minutes;
+                if (suggested && config.cycleTime > 0) {
                     const deltaPct = Math.round(((config.cycleTime - suggested) / suggested) * 100);
+                    const referenceLabel = suggestion.quality === 'high'
+                        ? 'observed cycle reference'
+                        : `${suggestion.basisLabel} reference`;
                     if (Math.abs(deltaPct) >= 35) {
                         toast.error(
                             'Strict Cycle Time Is Far Off',
-                            `${config.cycleTime}m vs observed ~${suggested}m (${deltaPct > 0 ? '+' : ''}${deltaPct}%).`
+                            `${config.cycleTime}m vs ${referenceLabel} ~${suggested}m (${deltaPct > 0 ? '+' : ''}${deltaPct}%).`
                         );
                     } else if (Math.abs(deltaPct) >= 20) {
                         toast.warning(
                             'Check Strict Cycle Time',
-                            `Configured ${config.cycleTime}m vs observed ~${suggested}m (${deltaPct > 0 ? '+' : ''}${deltaPct}%).`
+                            `Configured ${config.cycleTime}m vs ${referenceLabel} ~${suggested}m (${deltaPct > 0 ? '+' : ''}${deltaPct}%).`
                         );
                     }
                 }
             }
 
+            const generationSourceData = parsedData;
+
             // Sort parsed data by direction
             const directionOrder: Record<string, number> = { 'North': 0, 'A': 1, 'Loop': 2, 'South': 3, 'B': 4 };
-            const sortedParsedData = [...parsedData].sort((a, b) => {
+            const sortedParsedData = [...generationSourceData].sort((a, b) => {
                 const orderA = a.detectedDirection ? (directionOrder[a.detectedDirection] ?? 2) : 2;
                 const orderB = b.detectedDirection ? (directionOrder[b.detectedDirection] ?? 2) : 2;
                 return orderA - orderB;
@@ -901,31 +1382,31 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
             const groupedData = buildSegmentsMapFromParsedData(sortedParsedData);
             setSegmentsMap(groupedData);
 
-            const currentRouteIdentity = config.routeNumber?.trim()
-                ? buildRouteIdentity(config.routeNumber.trim(), dayType)
-                : undefined;
+            const currentRouteIdentity = currentConfiguredRouteIdentity;
             const hasFreshCanonicalData = !!currentRouteIdentity && canonicalRouteIdentity === currentRouteIdentity;
-            let generationCanonicalColumns = hasFreshCanonicalData ? canonicalSegmentColumns : undefined;
-            let generationCanonicalStops = hasFreshCanonicalData ? canonicalDirectionStops : undefined;
+            let generationCanonicalStops = activeApprovedPlanning?.canonicalDirectionStops
+                ?? (hasFreshCanonicalData ? activeCanonicalDirectionStops : undefined);
 
-            if ((!generationCanonicalColumns || !generationCanonicalStops) && team?.id && config.routeNumber?.trim() && currentRouteIdentity) {
+            if (!generationCanonicalStops && team?.id && config.routeNumber?.trim() && currentRouteIdentity) {
                 try {
                     const masterResult = await getMasterSchedule(team.id, currentRouteIdentity);
                     if (masterResult) {
-                        generationCanonicalStops = {
+                        generationCanonicalStops = getUsableCanonicalDirectionStops(config.routeNumber.trim(), {
                             North: masterResult.content.northTable.stops || [],
                             South: masterResult.content.southTable.stops || [],
-                        };
-                        generationCanonicalColumns = buildCanonicalSegmentColumnsFromMasterStops(
-                            config.routeNumber.trim(),
-                            generationCanonicalStops.North,
-                            generationCanonicalStops.South
-                        );
+                        });
                         setCanonicalDirectionStops(generationCanonicalStops);
-                        setCanonicalSegmentColumns(generationCanonicalColumns);
+                        setCanonicalSegmentColumns(
+                            generationCanonicalStops
+                                ? buildCanonicalSegmentColumnsFromMasterStops(
+                                    config.routeNumber.trim(),
+                                    generationCanonicalStops.North,
+                                    generationCanonicalStops.South
+                                )
+                                : undefined
+                        );
                     } else {
                         generationCanonicalStops = undefined;
-                        generationCanonicalColumns = undefined;
                     }
                     setCanonicalRouteIdentity(currentRouteIdentity);
                 } catch (error) {
@@ -933,20 +1414,17 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                 }
             }
 
-            // Compute bandSummary synchronously at generation time
-            const freshBandSummary = computeDirectionBandSummary(
-                analysis,
-                bands,
-                groupedData,
-                generationCanonicalColumns ? { canonicalSegmentColumns: generationCanonicalColumns } : undefined
-            );
+            if (!approvedDirectionBandSummary) {
+                toast.error('Runtime Model Missing', 'The approved Step 2 direction summary is unavailable. Re-approve Step 2 and try again.');
+                return;
+            }
 
             // Generate schedule
             const generatedTables = generateSchedule(
                 config,
-                analysis,
-                bands,
-                freshBandSummary,
+                approvedBuckets,
+                approvedBands,
+                approvedDirectionBandSummary,
                 groupedData,
                 dayType,
                 gtfsStopLookup,
@@ -961,6 +1439,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
 
             setGeneratedSchedules(generatedTables);
             setOriginalGeneratedSchedules(generatedTables);
+            startNewStep4EditorSession();
 
             // Sync block configs with actual generated start/end stops.
             // The autofill from master may have different stops than the runtime
@@ -1017,7 +1496,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                         isGenerated: true
                     });
                     toast.success('Saved to Cloud', 'Schedule backed up securely');
-                } catch (e) {
+                } catch {
                     toast.error('Cloud Save Failed', 'Saved locally. Click "Save" to retry.');
                 }
             }
@@ -1043,6 +1522,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         setBandSummary({});
         setSegmentsMap({});
         setSegmentNames([]);
+        setTroubleshootingPatternWarning(null);
         setGeneratedSchedules([]);
         setOriginalGeneratedSchedules([]);
         setConfig(createDefaultScheduleConfig());
@@ -1056,6 +1536,10 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         setIsMasterCompareActive(false);
         setMasterBaseline(null);
         setIsCompareLoading(false);
+        setApprovedRuntimeContract(null);
+        setLegacyApprovedRuntimeModel(null);
+        setStep2WarningsAcknowledged(false);
+        setStep4EditorSessionKey(0);
         setShowUploadModal(false);
         setUploadConfirmation(null);
     }, [clear]);
@@ -1067,70 +1551,6 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         resetWizardState();
         toast.info('New Project', 'Starting fresh');
     };
-
-    // Helper: Restore project data into wizard state (shared by load callbacks)
-    const restoreProjectData = useCallback((fullProject: {
-        id: string;
-        name: string;
-        dayType: 'Weekday' | 'Saturday' | 'Sunday';
-        importMode?: ImportMode;
-        performanceConfig?: PerformanceConfig;
-        autofillFromMaster?: boolean;
-        analysis?: TripBucketAnalysis[];
-        bands?: TimeBand[];
-        config?: ScheduleConfig;
-        generatedSchedules?: MasterRouteTable[];
-        originalGeneratedSchedules?: MasterRouteTable[];
-        parsedData?: RuntimeData[];
-        isGenerated?: boolean;
-    }) => {
-        setIsMasterCompareActive(false);
-        setMasterBaseline(null);
-        setIsCompareLoading(false);
-        setProjectId(fullProject.id);
-        projectIdRef.current = fullProject.id;
-        setProjectName(fullProject.name);
-        setIsAutoProjectName(false);
-        setDayType(fullProject.dayType);
-        setImportMode(fullProject.importMode || 'csv');
-        setPerformanceConfig(fullProject.performanceConfig || createDefaultPerformanceConfig());
-        setAutofillFromMaster(fullProject.autofillFromMaster ?? true);
-        setFiles([]);
-        setParsedData([]);
-        setAnalysis([]);
-        setBands([]);
-        setBandSummary({});
-        setSegmentsMap({});
-        setSegmentNames([]);
-        setGeneratedSchedules([]);
-        setOriginalGeneratedSchedules([]);
-        setConfig(createDefaultScheduleConfig());
-
-        if (fullProject.analysis && fullProject.analysis.length > 0) {
-            setAnalysis(fullProject.analysis);
-            setSegmentNames(getOrderedSegmentNames({}, fullProject.analysis));
-        }
-        if (fullProject.bands && fullProject.bands.length > 0) {
-            setBands(fullProject.bands);
-        }
-        if (fullProject.config) {
-            setConfig(fullProject.config);
-        }
-        if (fullProject.generatedSchedules && fullProject.generatedSchedules.length > 0) {
-            setGeneratedSchedules(fullProject.generatedSchedules);
-        }
-        if (fullProject.originalGeneratedSchedules && fullProject.originalGeneratedSchedules.length > 0) {
-            setOriginalGeneratedSchedules(fullProject.originalGeneratedSchedules);
-        } else if (fullProject.generatedSchedules && fullProject.generatedSchedules.length > 0) {
-            setOriginalGeneratedSchedules(fullProject.generatedSchedules);
-        }
-        if (fullProject.parsedData && fullProject.parsedData.length > 0) {
-            const groupedSegments = buildSegmentsMapFromParsedData(fullProject.parsedData);
-            setParsedData(fullProject.parsedData);
-            setSegmentsMap(groupedSegments);
-            setSegmentNames(getOrderedSegmentNames(groupedSegments, fullProject.analysis));
-        }
-    }, []);
 
     // ========== COMPARE TO MASTER (INLINE TOGGLE) ==========
 
@@ -1236,18 +1656,25 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         setUploadConfirmation(null);
     };
 
+    const step2ApprovalRequiresAcknowledgement = step2HealthReport?.status === 'warning';
+    const step2ApprovalWarnings = step2ApprovalRequiresAcknowledgement
+        ? step2HealthReport?.warnings ?? []
+        : [];
+    const step2ApprovalActionDisabled = (
+        !step2ReviewResult
+        || approvalState === 'approved'
+        || step2HealthReport?.status === 'blocked'
+        || (step2ApprovalRequiresAcknowledgement && !step2WarningsAcknowledged)
+    );
+    const primaryActionDisabled = step === 3 && approvalState !== 'approved';
+    const primaryActionLabel = step === 3
+        ? 'Generate Schedule'
+        : step === 2
+            ? 'Continue to Build Schedule'
+            : 'Next Step';
+
     return (
         <>
-            {/* Resume Modal */}
-            <ResumeWizardModal
-                isOpen={showResumeModal}
-                progress={savedProgress}
-                onResume={handleResume}
-                onStartFresh={handleStartFresh}
-                onClose={() => setShowResumeModal(false)}
-                isAuthenticated={!!user?.uid}
-            />
-
             <div className="flex flex-col h-full bg-gray-50/50">
                 {/* Wizard Header */}
                 <NewScheduleHeader
@@ -1259,7 +1686,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                     onNewProject={handleNewProject}
                     onSaveVersion={handleSaveProgress}
                     onClose={onBack}
-                    onStepClick={(s) => setStep(s)}
+                    onStepClick={(s) => setStep(clampWizardStepToCurrentStep2Approval(s as 1 | 2 | 3 | 4, approvalState))}
                     maxStepReached={maxStepReached}
                     cloudSaveStatus={cloudSaveStatus}
                     lastCloudSaveTime={lastCloudSaveTime}
@@ -1297,6 +1724,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                                 onPerformanceConfigChange={setPerformanceConfig}
                                 performanceDataLoading={perfQuery.isLoading}
                                 performanceDateRange={performanceDateRange}
+                                performanceDiagnostics={performanceDiagnostics}
                             />
                         )}
                         {step === 2 && (
@@ -1307,7 +1735,18 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                                 bands={bands}
                                 setAnalysis={handleAnalysisUpdate}
                                 segmentsMap={segmentsMap}
-                                canonicalSegmentColumns={canonicalSegmentColumns}
+                                matrixAnalysis={matrixAnalysis}
+                                matrixSegmentsMap={matrixSegmentsMap}
+                                canonicalSegmentColumns={activeCanonicalSegmentColumns}
+                                canonicalDirectionStops={activeCanonicalDirectionStops}
+                                healthReport={step2HealthReport}
+                                approvedRuntimeModel={approvedRuntimeModel}
+                                approvalState={approvalState}
+                                approvedRuntimeContract={approvedRuntimeContract}
+                                onApproveRuntimeContract={handleApproveStep2}
+                                warningAcknowledged={step2WarningsAcknowledged}
+                                onWarningAcknowledgedChange={setStep2WarningsAcknowledged}
+                                troubleshootingPatternWarning={troubleshootingPatternWarning}
                                 onBandSummaryChange={setBandSummary}
                             />
                         )}
@@ -1315,6 +1754,9 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                             <Step3Build
                                 dayType={dayType}
                                 bands={bands}
+                                analysis={analysis}
+                                approvedRuntimeContract={currentApprovedRuntimeContract}
+                                approvedRuntimeModel={lastApprovedRuntimeModel}
                                 config={config}
                                 setConfig={setConfig}
                                 teamId={team?.id}
@@ -1327,9 +1769,10 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                             <Step4Schedule
                                 initialSchedules={generatedSchedules}
                                 originalSchedules={originalGeneratedSchedules}
-                                bands={bands}
-                                analysis={analysis}
-                                segmentNames={segmentNames}
+                                editorSessionKey={step4EditorSessionKey}
+                                bands={currentApprovedRuntimeContract?.planning.bands ?? bands}
+                                analysis={currentApprovedRuntimeContract?.planning.buckets ?? analysis}
+                                segmentNames={currentApprovedRuntimeContract?.planning.segmentColumns.map(column => column.segmentName) ?? segmentNames}
                                 onUpdateSchedules={setGeneratedSchedules}
                                 projectName={projectName}
                                 autoSaveStatus={autoSaveStatus}
@@ -1340,6 +1783,8 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                                 userId={user?.uid}
                                 masterBaseline={isMasterCompareActive ? masterBaseline : null}
                                 connectionScopeSchedules={connectionScopeSchedules}
+                                approvedRuntimeContract={currentApprovedRuntimeContract}
+                                approvedRuntimeModel={lastApprovedRuntimeModel}
                             />
                         )}
                     </div>
@@ -1406,12 +1851,34 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                             </button>
                         )}
 
-                        {shouldShowNextStepAction(step, importMode) && (
+                        {step === 2 && (
+                            <Step2ApprovalFooter
+                                approvalState={approvalState}
+                                readinessStatus={step2HealthReport?.status ?? 'blocked'}
+                                primaryActionVariant={approvalState === 'approved' ? 'continue' : 'approve'}
+                                approvalRequiresAcknowledgement={step2ApprovalRequiresAcknowledgement}
+                                warningAcknowledged={step2WarningsAcknowledged}
+                                approvedAtLabel={formatFooterTimestamp(approvedRuntimeContract?.approvedAt)}
+                                approvalActionDisabled={step2ApprovalActionDisabled}
+                                continueActionDisabled={approvalState !== 'approved'}
+                                onApproveRuntimeContract={() => handleApproveStep2(step2ApprovalWarnings)}
+                                onContinueToStep3={() => {
+                                    void handleNext();
+                                }}
+                            />
+                        )}
+
+                        {step !== 2 && shouldShowNextStepAction(step, importMode) && (
                             <button
                                 onClick={handleNext}
-                                className="px-6 py-2 rounded-lg bg-brand-blue text-white font-bold hover:brightness-110 shadow-md shadow-blue-500/20 flex items-center gap-2"
+                                disabled={primaryActionDisabled}
+                                className={`px-6 py-2 rounded-lg font-bold shadow-md flex items-center gap-2 ${
+                                    primaryActionDisabled
+                                        ? 'bg-gray-300 text-gray-500 shadow-none cursor-not-allowed'
+                                        : 'bg-brand-blue text-white hover:brightness-110 shadow-blue-500/20'
+                                }`}
                             >
-                                {step === 3 ? 'Generate Schedule' : 'Next Step'}
+                                {primaryActionLabel}
                                 <ArrowRight size={18} />
                             </button>
                         )}
@@ -1438,7 +1905,10 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                                 restoreProjectData(fullProject);
 
                                 // Calculate which step to go to based on what data exists
-                                const nextStep = deriveWizardStepFromProject(fullProject);
+                                const nextStep = clampWizardStepToCurrentStep2Approval(
+                                    deriveWizardStepFromProject(fullProject),
+                                    fullProject.approvedRuntimeContract ? 'approved' : 'unapproved'
+                                );
                                 setStep(nextStep);
                                 setMaxStepReached(nextStep);
                                 toast.success('Project Loaded', `${fullProject.name} - Step ${nextStep}`);
@@ -1464,7 +1934,10 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                     setIsCompareLoading(false);
                     restoreProjectData(fullProject);
 
-                    const nextStep = deriveWizardStepFromProject(fullProject);
+                    const nextStep = clampWizardStepToCurrentStep2Approval(
+                        deriveWizardStepFromProject(fullProject),
+                        fullProject.approvedRuntimeContract ? 'approved' : 'unapproved'
+                    );
                     setStep(nextStep);
                     setMaxStepReached(nextStep);
                     toast.success('Schedule Loaded', `${fullProject.name} - Step ${nextStep}`);

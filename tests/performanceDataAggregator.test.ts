@@ -353,7 +353,7 @@ describe('aggregateDailySummaries', () => {
         expect(entry?.fromRouteStopIndex).toBe(0);
         expect(entry?.toRouteStopIndex).toBe(1);
         expect(entry?.observations[0]).toEqual({
-            runtimeMinutes: 5,
+            runtimeMinutes: 5.5,
             timeBucket: '07:00',
         });
     });
@@ -449,7 +449,7 @@ describe('aggregateDailySummaries', () => {
                 toStopId: 'stop-b',
                 fromRouteStopIndex: 0,
                 toRouteStopIndex: 1,
-                runtimeMinutes: 5,
+                runtimeMinutes: 5.5,
                 timeBucket: '07:00',
             },
             {
@@ -458,6 +458,185 @@ describe('aggregateDailySummaries', () => {
                 fromRouteStopIndex: 1,
                 toRouteStopIndex: 2,
                 runtimeMinutes: 4.5,
+                timeBucket: '07:00',
+            },
+        ]);
+    });
+
+    it('includes intermediate stop dwell in chained stop-to-stop runtime while still excluding terminal layover', () => {
+        const records = [
+            makeRecord({
+                tripId: 'route-7-like',
+                tripName: '7A - 07:00',
+                terminalDepartureTime: '07:00',
+                routeId: '7',
+                direction: 'N',
+                routeStopIndex: 0,
+                stopId: 'park',
+                stopName: 'Park Place',
+                stopTime: '07:00',
+                observedDepartureTime: '07:01:00',
+            }),
+            makeRecord({
+                tripId: 'route-7-like',
+                tripName: '7A - 07:00',
+                terminalDepartureTime: '07:00',
+                routeId: '7',
+                direction: 'N',
+                routeStopIndex: 1,
+                stopId: 'mid',
+                stopName: 'Intermediate Stop',
+                arrivalTime: '07:05',
+                observedArrivalTime: '07:06:00',
+                stopTime: '07:05',
+                observedDepartureTime: '07:09:00',
+                timePoint: false,
+            }),
+            makeRecord({
+                tripId: 'route-7-like',
+                tripName: '7A - 07:00',
+                terminalDepartureTime: '07:00',
+                routeId: '7',
+                direction: 'N',
+                routeStopIndex: 2,
+                stopId: 'peggy',
+                stopName: 'Peggy Hill',
+                arrivalTime: '07:12',
+                observedArrivalTime: '07:14:00',
+                stopTime: '07:12',
+            }),
+        ];
+
+        const summaries = aggregateDailySummaries(records);
+        const tripEntry = summaries[0].tripStopSegmentRuntimes?.entries[0];
+
+        expect(tripEntry?.segments).toEqual([
+            {
+                fromStopId: 'park',
+                toStopId: 'mid',
+                fromRouteStopIndex: 0,
+                toRouteStopIndex: 1,
+                runtimeMinutes: 8,
+                timeBucket: '07:00',
+            },
+            {
+                fromStopId: 'mid',
+                toStopId: 'peggy',
+                fromRouteStopIndex: 1,
+                toRouteStopIndex: 2,
+                runtimeMinutes: 5,
+                timeBucket: '07:00',
+            },
+        ]);
+    });
+
+    it('subtracts planned control-point hold from non-terminal runtime legs while keeping travel time', () => {
+        const records = [
+            makeRecord({
+                tripId: 'route-7-control-hold',
+                tripName: '7A - 07:00',
+                terminalDepartureTime: '07:00',
+                routeId: '7',
+                direction: 'N',
+                routeStopIndex: 0,
+                stopId: 'park',
+                stopName: 'Park Place',
+                arrivalTime: '07:00',
+                stopTime: '07:00',
+                observedArrivalTime: '07:00:30',
+                observedDepartureTime: '07:01:00',
+            }),
+            makeRecord({
+                tripId: 'route-7-control-hold',
+                tripName: '7A - 07:00',
+                terminalDepartureTime: '07:00',
+                routeId: '7',
+                direction: 'N',
+                routeStopIndex: 1,
+                stopId: 'dt',
+                stopName: 'Downtown Hub',
+                arrivalTime: '07:10',
+                observedArrivalTime: '07:11:00',
+                stopTime: '07:15',
+                observedDepartureTime: '07:16:00',
+                timePoint: true,
+            }),
+            makeRecord({
+                tripId: 'route-7-control-hold',
+                tripName: '7A - 07:00',
+                terminalDepartureTime: '07:00',
+                routeId: '7',
+                direction: 'N',
+                routeStopIndex: 2,
+                stopId: 'rose',
+                stopName: 'Rose Street',
+                arrivalTime: '07:27',
+                observedArrivalTime: '07:28:00',
+                stopTime: '07:27',
+                timePoint: true,
+            }),
+        ];
+
+        const summaries = aggregateDailySummaries(records);
+        const segmentEntries = summaries[0].segmentRuntimes?.entries ?? [];
+        const stopEntries = summaries[0].stopSegmentRuntimes?.entries ?? [];
+        const tripEntry = summaries[0].tripStopSegmentRuntimes?.entries[0];
+
+        expect(segmentEntries).toEqual([
+            {
+                routeId: '7',
+                direction: 'N',
+                segmentName: 'Park Place to Downtown Hub',
+                observations: [{ runtimeMinutes: 10, timeBucket: '07:00' }],
+            },
+            {
+                routeId: '7',
+                direction: 'N',
+                segmentName: 'Downtown Hub to Rose Street',
+                observations: [{ runtimeMinutes: 12, timeBucket: '07:00' }],
+            },
+        ]);
+        expect(stopEntries).toEqual([
+            {
+                routeId: '7',
+                direction: 'N',
+                fromStopId: 'park',
+                toStopId: 'dt',
+                fromStopName: 'Park Place',
+                toStopName: 'Downtown Hub',
+                fromRouteStopIndex: 0,
+                toRouteStopIndex: 1,
+                segmentName: 'Park Place to Downtown Hub',
+                observations: [{ runtimeMinutes: 10, timeBucket: '07:00' }],
+            },
+            {
+                routeId: '7',
+                direction: 'N',
+                fromStopId: 'dt',
+                toStopId: 'rose',
+                fromStopName: 'Downtown Hub',
+                toStopName: 'Rose Street',
+                fromRouteStopIndex: 1,
+                toRouteStopIndex: 2,
+                segmentName: 'Downtown Hub to Rose Street',
+                observations: [{ runtimeMinutes: 12, timeBucket: '07:00' }],
+            },
+        ]);
+        expect(tripEntry?.segments).toEqual([
+            {
+                fromStopId: 'park',
+                toStopId: 'dt',
+                fromRouteStopIndex: 0,
+                toRouteStopIndex: 1,
+                runtimeMinutes: 10,
+                timeBucket: '07:00',
+            },
+            {
+                fromStopId: 'dt',
+                toStopId: 'rose',
+                fromRouteStopIndex: 1,
+                toRouteStopIndex: 2,
+                runtimeMinutes: 12,
                 timeBucket: '07:00',
             },
         ]);
