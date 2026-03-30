@@ -32,16 +32,12 @@ const cloneSnapshotValue = <T>(value: T): T => {
 };
 
 export const canCreateStep2Approval = (input: Step2ApprovalCreationInput): boolean => {
-    const { reviewResult, acknowledgedWarnings } = input;
+    const { reviewResult } = input;
 
     if (reviewResult.lifecycle !== 'reviewable') return false;
     if (!reviewResult.approvalEligible) return false;
     if (reviewResult.health.status === 'blocked') return false;
     if (!reviewResult.inputFingerprint.trim()) return false;
-
-    if (reviewResult.health.status === 'warning' && !normalizeWarningList(acknowledgedWarnings)) {
-        return false;
-    }
 
     return true;
 };
@@ -52,7 +48,9 @@ export const createStep2ApprovedRuntimeContract = (
     if (!canCreateStep2Approval(input)) return null;
 
     const { reviewResult, sourceSnapshot, approvedAt, approvedBy, acknowledgedWarnings } = input;
-    const normalizedAcknowledgedWarnings = normalizeWarningList(acknowledgedWarnings);
+    const normalizedAcknowledgedWarnings = normalizeWarningList(
+        acknowledgedWarnings ?? (reviewResult.health.status === 'warning' ? reviewResult.health.warnings : undefined)
+    );
     const normalizedSourceSnapshot = {
         performanceRouteId: sourceSnapshot.performanceRouteId?.trim(),
         performanceDateRange: sourceSnapshot.performanceDateRange

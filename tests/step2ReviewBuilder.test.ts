@@ -18,6 +18,8 @@ const diagnostics: PerformanceRuntimeDiagnostics = {
     runtimeLogicVersion: 2,
     isCurrentRuntimeLogic: true,
     usesLegacyRuntimeLogic: false,
+    excludedLegacyDayCount: 0,
+    usesCleanHistoryCutoff: false,
 };
 
 describe('step2ReviewBuilder', () => {
@@ -99,7 +101,7 @@ describe('step2ReviewBuilder', () => {
                 assignedBand: 'B',
                 isOutlier: false,
                 ignored: false,
-                details: [],
+                details: [] as never[],
             }],
             matrixSegmentsMap: {
                 North: [{ segmentName: 'Park Place to Peggy Hill Community Centre', timeBuckets: {} }],
@@ -110,7 +112,7 @@ describe('step2ReviewBuilder', () => {
                 { segmentName: 'Peggy Hill Community Centre to Allandale GO Station', direction: 'North', groupLabel: '7A' },
                 { segmentName: 'Allandale GO Station to Downtime', direction: 'South', groupLabel: '7B' },
                 { segmentName: 'Downtime to Peggy Hill Community Centre', direction: 'South', groupLabel: '7B' },
-            ] as const,
+            ],
             runtimeDiagnostics: diagnostics,
         };
 

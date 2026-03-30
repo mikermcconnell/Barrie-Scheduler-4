@@ -511,6 +511,9 @@ export interface Step2DataHealthReport {
     importedAt?: string;
     runtimeLogicVersion?: number;
     usesLegacyRuntimeLogic: boolean;
+    cleanHistoryStartDate?: string;
+    excludedLegacyDayCount?: number;
+    usesCleanHistoryCutoff?: boolean;
 }
 
 export interface ApprovedRuntimeBandPreview {
@@ -733,6 +736,9 @@ export const buildStep2DataHealthReport = (params: {
         importedAt: performanceDiagnostics?.importedAt,
         runtimeLogicVersion: performanceDiagnostics?.runtimeLogicVersion,
         usesLegacyRuntimeLogic: performanceDiagnostics?.usesLegacyRuntimeLogic ?? false,
+        cleanHistoryStartDate: performanceDiagnostics?.cleanHistoryStartDate,
+        excludedLegacyDayCount: performanceDiagnostics?.excludedLegacyDayCount,
+        usesCleanHistoryCutoff: performanceDiagnostics?.usesCleanHistoryCutoff ?? false,
     };
 };
 

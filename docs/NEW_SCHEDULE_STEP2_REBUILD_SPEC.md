@@ -243,7 +243,7 @@ The step may continue only when:
 - approval state is `approved`
 - the approved artifact still matches current Step 1 inputs
 
-If readiness is `warning`, the approval action must include a clear acknowledgement message.
+If readiness is `warning`, approval is still allowed, but the warning reasons must stay visible in Step 2 health/review surfaces and be captured in the approved contract snapshot.
 
 If readiness is `blocked`, approval is unavailable.
 
@@ -372,11 +372,12 @@ Blocked conditions include:
 
 ## 14.2 Warning
 
-Warning means approval is allowed, but only with acknowledgement.
+Warning means approval is allowed, but the warning reasons must remain visible and traceable in the saved approval.
 
 Warning examples:
 
 - legacy runtime logic import
+- legacy pre-fix history excluded by the clean-history cutoff
 - low-confidence buckets exist
 - fallback runtime source is in use
 - unmatched segments exist outside the approved planning subset
@@ -499,6 +500,7 @@ The rebuild must explicitly support these cases.
 - coarse fallback only
 - mixed-source imports
 - legacy runtime logic metadata
+- clean-history cutoff excluding older legacy days
 
 ### 18.4 Barrie-Specific Matching Cases
 
@@ -600,6 +602,7 @@ Recommended footer actions:
 - `Continue to Step 3`
 
 The Continue action should remain disabled until approval exists and is valid.
+The in-page Step 2 approval strip is not required for this internal tool; approval should stay in the footer and warnings should be communicated through Data Health / review content instead of a duplicate acknowledgement banner.
 
 ---
 
@@ -619,7 +622,7 @@ Minimum test layers:
 ### 22.2 UI Integration Tests
 
 - blocked state disables approval and continue
-- warning state requires acknowledgement
+- warning state remains approvable without a separate acknowledgement control
 - approval enables continue
 - changing Step 1 inputs invalidates approval
 - troubleshooting fallback state renders correctly
@@ -639,7 +642,7 @@ The Step 2 rebuild is not done until all are true:
 - [ ] Step 2 has an explicit runtime review state model
 - [ ] Step 2 has an explicit approval action
 - [ ] `blocked` truly prevents progress
-- [ ] `warning` requires acknowledgement before approval
+- [ ] `warning` remains approvable while warning reasons stay visible and persisted in the approval snapshot
 - [ ] Step 3 depends on the approved contract only
 - [ ] Step 4 depends on the approved contract only
 - [ ] troubleshooting data is separated from the planning contract

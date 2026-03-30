@@ -56,7 +56,7 @@ describe('Step2ApprovalFooter', () => {
         expect(onApprove).not.toHaveBeenCalled();
     });
 
-    it('requires acknowledgement before approving a warning state', () => {
+    it('allows approving a warning state without an acknowledgement gate', () => {
         const onApprove = vi.fn();
 
         container = document.createElement('div');
@@ -81,8 +81,14 @@ describe('Step2ApprovalFooter', () => {
         expect(status?.textContent).toContain('warning');
 
         const primary = container.querySelector('[data-testid="step2-approval-footer-primary"]') as HTMLButtonElement | null;
-        expect(primary?.textContent).toContain('Acknowledge warnings and approve');
-        expect(primary?.disabled).toBe(true);
+        expect(primary?.textContent).toContain('Approve runtime model');
+        expect(primary?.disabled).toBe(false);
+
+        flushSync(() => {
+            primary?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        });
+
+        expect(onApprove).toHaveBeenCalledTimes(1);
     });
 
     it('enables continue when the runtime model is approved', () => {
@@ -155,4 +161,3 @@ describe('Step2ApprovalFooter', () => {
         expect(onApprove).toHaveBeenCalledTimes(1);
     });
 });
-

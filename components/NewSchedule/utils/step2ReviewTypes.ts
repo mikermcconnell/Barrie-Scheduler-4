@@ -34,6 +34,9 @@ export interface Step2PerformanceDiagnostics {
     dateRange: Step2DateRange | null;
     runtimeLogicVersion?: number;
     importedAt?: string;
+    cleanHistoryStartDate?: string;
+    excludedLegacyDayCount?: number;
+    usesCleanHistoryCutoff?: boolean;
     stopOrderDecision?: 'accept' | 'review' | 'blocked';
     stopOrderConfidence?: 'high' | 'medium' | 'low';
     stopOrderSource?: 'runtime-derived' | 'master-fallback' | 'none';
@@ -50,6 +53,7 @@ export interface Step2SourceSnapshot {
     performanceDateRange?: Step2DateRange | null;
     runtimeLogicVersion?: number;
     importedAt?: string;
+    cleanHistoryStartDate?: string;
     stopOrderDecision?: 'accept' | 'review' | 'blocked';
     stopOrderConfidence?: 'high' | 'medium' | 'low';
     stopOrderSource?: 'runtime-derived' | 'master-fallback' | 'none';
@@ -98,6 +102,9 @@ export interface Step2ReviewHealth {
     importedAt?: string;
     runtimeLogicVersion?: number;
     usesLegacyRuntimeLogic: boolean;
+    cleanHistoryStartDate?: string;
+    excludedLegacyDayCount?: number;
+    usesCleanHistoryCutoff?: boolean;
 }
 
 export interface Step2PlanningPayload {

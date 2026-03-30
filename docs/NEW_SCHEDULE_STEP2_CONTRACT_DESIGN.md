@@ -306,6 +306,7 @@ interface ApprovedRuntimeContract {
     performanceDateRange?: { start: string; end: string } | null;
     runtimeLogicVersion?: number;
     importedAt?: string;
+    cleanHistoryStartDate?: string;
   };
 
   planning: Step2PlanningPayload;
@@ -367,7 +368,7 @@ Approval is allowed only when:
 - readiness status = `warning` or `ready`
 - review result is not stale
 
-If readiness = `warning`, the planner must acknowledge warnings during approval.
+If readiness = `warning`, approval is still allowed. The warning list should remain visible in Step 2 and should be copied into the approved contract snapshot.
 
 If readiness = `blocked`, the approve action is disabled.
 
@@ -546,7 +547,7 @@ Owns:
 - current contract candidate summary
 - currently approved contract summary
 - stale/current status
-- approval timestamp and warning acknowledgement summary when present
+- approval timestamp and warning summary when present
 
 This replaces the misleading current “Approved Runtime Model” panel.
 

@@ -530,7 +530,7 @@ describe('Step2Analysis', () => {
         expect(container.textContent).not.toContain('Sproule at Kraus');
     });
 
-    it('shows approval status and warning acknowledgement in the Step 2 panel while leaving the action to the footer', () => {
+    it('keeps approval actions in the footer and removes the in-page acknowledgement gate', () => {
         container = document.createElement('div');
         document.body.appendChild(container);
         root = createRoot(container);
@@ -611,21 +611,8 @@ describe('Step2Analysis', () => {
             );
         });
 
-        const approvalPanel = container.querySelector('[data-testid="step2-approval-panel"]');
-        expect(approvalPanel).toBeTruthy();
-        expect(container.querySelector('[data-testid="step2-approval-state"]')?.textContent).toContain('unapproved');
-
         const approveButton = container.querySelector('[data-testid="step2-approval-action"]') as HTMLButtonElement | null;
         expect(approveButton).toBeNull();
-        expect(container.textContent).toContain('Use the footer to approve this runtime model');
-
-        const warningCheckbox = Array.from(container.querySelectorAll('input[type="checkbox"]'))[0] as HTMLInputElement | undefined;
-        expect(warningCheckbox).toBeTruthy();
-        expect(warningCheckbox?.checked).toBe(false);
-        flushSync(() => {
-            warningCheckbox?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-        });
-
-        expect(warningCheckbox?.checked).toBe(true);
+        expect(container.textContent).not.toContain('I understand the current warnings');
     });
 });

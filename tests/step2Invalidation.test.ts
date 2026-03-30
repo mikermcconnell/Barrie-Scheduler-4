@@ -83,11 +83,10 @@ describe('step2Invalidation', () => {
 
     it('marks approval stale when the approval contract schema version changes', () => {
         const mismatchedSchema = approvedContract
-            ? { ...approvedContract, schemaVersion: 2 as const }
+            ? ({ ...approvedContract, schemaVersion: 2 } as any)
             : null;
 
         expect(isStep2ApprovalStale(reviewResult, mismatchedSchema)).toBe(true);
         expect(resolveStep2ApprovalState(reviewResult, mismatchedSchema)).toBe('stale');
     });
 });
-

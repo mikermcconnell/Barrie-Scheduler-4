@@ -131,6 +131,9 @@ export const buildStep2ReviewResult = (
                 : null,
             runtimeLogicVersion: input.performanceDiagnostics.runtimeLogicVersion,
             importedAt: input.performanceDiagnostics.importedAt?.trim(),
+            cleanHistoryStartDate: input.performanceDiagnostics.cleanHistoryStartDate?.trim(),
+            excludedLegacyDayCount: input.performanceDiagnostics.excludedLegacyDayCount,
+            usesCleanHistoryCutoff: input.performanceDiagnostics.usesCleanHistoryCutoff,
             stopOrderDecision: input.performanceDiagnostics.stopOrderDecision,
             stopOrderConfidence: input.performanceDiagnostics.stopOrderConfidence,
             stopOrderSource: input.performanceDiagnostics.stopOrderSource,
@@ -227,6 +230,9 @@ export const buildStep2SourceSnapshot = (
         : null,
     runtimeLogicVersion: input.performanceDiagnostics?.runtimeLogicVersion,
     importedAt: input.performanceDiagnostics?.importedAt?.trim(),
+    ...(input.performanceDiagnostics?.cleanHistoryStartDate?.trim()
+        ? { cleanHistoryStartDate: input.performanceDiagnostics.cleanHistoryStartDate.trim() }
+        : {}),
     stopOrderDecision: input.performanceDiagnostics?.stopOrderDecision,
     stopOrderConfidence: input.performanceDiagnostics?.stopOrderConfidence,
     stopOrderSource: input.performanceDiagnostics?.stopOrderSource,

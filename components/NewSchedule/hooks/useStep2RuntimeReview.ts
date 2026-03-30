@@ -306,8 +306,7 @@ export const useStep2RuntimeReview = ({
     const approvalRequiresAcknowledgement = displayedHealthReport.status === 'warning';
     const approvalWarningList = approvalRequiresAcknowledgement ? displayedHealthReport.warnings : [];
     const approvalActionDisabled = resolvedApprovalState === 'approved'
-        || displayedHealthReport.status === 'blocked'
-        || (approvalRequiresAcknowledgement && !warningAcknowledged);
+        || displayedHealthReport.status === 'blocked';
     const approvedAtLabel = formatImportedAt(approvedRuntimeContract?.approvedAt);
 
     const chartBasisLabel = sampleCountMode === 'days'

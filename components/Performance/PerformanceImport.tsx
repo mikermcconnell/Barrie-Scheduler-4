@@ -155,6 +155,7 @@ export const PerformanceImport: React.FC<PerformanceImportProps> = ({
                     dayCount: dailySummaries.length,
                     totalRecords: records.length,
                     runtimeLogicVersion: PERFORMANCE_RUNTIME_LOGIC_VERSION,
+                    cleanHistoryStartDate: dates[0],
                 },
                 schemaVersion: PERFORMANCE_SCHEMA_VERSION,
             };

@@ -537,6 +537,7 @@ export interface PerformanceMetadata {
   dayCount: number;
   totalRecords: number;
   runtimeLogicVersion?: number;
+  cleanHistoryStartDate?: string;
   storagePath?: string;
 }
 

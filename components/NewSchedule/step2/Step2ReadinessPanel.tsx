@@ -21,6 +21,17 @@ const formatImportedAt = (value?: string): string | null => {
     }).format(parsed);
 };
 
+const formatServiceDate = (value?: string): string | null => {
+    if (!value) return null;
+    const parsed = new Date(`${value}T12:00:00`);
+    if (Number.isNaN(parsed.getTime())) return null;
+    return new Intl.DateTimeFormat(undefined, {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+    }).format(parsed);
+};
+
 export const Step2ReadinessPanel: React.FC<Step2ReadinessPanelProps> = ({
     healthReport,
     showDataHealth,
@@ -84,6 +95,12 @@ export const Step2ReadinessPanel: React.FC<Step2ReadinessPanelProps> = ({
                             {healthReport.runtimeLogicVersion !== undefined && (
                                 <div className="mt-1">Logic v{healthReport.runtimeLogicVersion}</div>
                             )}
+                            {healthReport.cleanHistoryStartDate && (
+                                <>
+                                    <div className="mt-2 font-semibold">Clean history</div>
+                                    <div>Using {formatServiceDate(healthReport.cleanHistoryStartDate) || healthReport.cleanHistoryStartDate} onward</div>
+                                </>
+                            )}
                         </div>
                     </div>
 
@@ -132,6 +149,19 @@ export const Step2ReadinessPanel: React.FC<Step2ReadinessPanelProps> = ({
                                 {healthReport.boundaryBucketCount ?? 0} boundary • {healthReport.singleGapBucketCount ?? 0} single-gap
                             </div>
                         </div>
+                        {healthReport.cleanHistoryStartDate && (
+                            <div className="rounded-lg bg-white/80 p-3 border border-white/70">
+                                <div className="text-[11px] font-bold uppercase tracking-wide text-gray-500">Clean history window</div>
+                                <div className="mt-1 text-sm font-semibold text-gray-900">
+                                    {formatServiceDate(healthReport.cleanHistoryStartDate) || healthReport.cleanHistoryStartDate}
+                                </div>
+                                <div className="text-xs text-gray-600">
+                                    {(healthReport.excludedLegacyDayCount ?? 0) > 0
+                                        ? `${healthReport.excludedLegacyDayCount} older day${healthReport.excludedLegacyDayCount === 1 ? '' : 's'} ignored`
+                                        : 'Only clean-history days in use'}
+                                </div>
+                            </div>
+                        )}
                         {healthReport.stopOrder && (
                             <div className="rounded-lg bg-white/80 p-3 border border-white/70 col-span-2 md:col-span-1">
                                 <div className="text-[11px] font-bold uppercase tracking-wide text-gray-500">Stop order</div>

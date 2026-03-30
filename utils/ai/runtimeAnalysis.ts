@@ -427,7 +427,7 @@ export const hardenRuntimeAnalysisBuckets = (
         });
     });
 
-    return baseAnnotated.map((bucket) => {
+    return baseAnnotated.map((bucket): TripBucketAnalysis => {
         const repair = repairableBuckets.get(bucket.timeBucket);
         if (!repair) return bucket;
 
@@ -437,7 +437,7 @@ export const hardenRuntimeAnalysisBuckets = (
             totalP80: bucket.totalP80 + repair.estimatedDetails.reduce((sum, detail) => sum + detail.p80, 0),
             details: [...bucket.details, ...repair.estimatedDetails],
             observedSegmentCount: expectedSegmentNames.length,
-            missingSegmentNames: [],
+            missingSegmentNames: [] as string[],
             coverageCause: 'repaired-single-gap',
             repairedSegments: repair.estimatedDetails.map((detail) => detail.segmentName),
             repairSourceBuckets: repair.sourceBuckets,

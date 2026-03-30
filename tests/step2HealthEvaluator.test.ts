@@ -17,6 +17,8 @@ const diagnostics: PerformanceRuntimeDiagnostics = {
     runtimeLogicVersion: 2,
     isCurrentRuntimeLogic: true,
     usesLegacyRuntimeLogic: false,
+    excludedLegacyDayCount: 0,
+    usesCleanHistoryCutoff: false,
 };
 
 describe('step2HealthEvaluator', () => {
@@ -55,7 +57,7 @@ describe('step2HealthEvaluator', () => {
                 { segmentName: 'Peggy Hill to Allandale GO Station', direction: 'North', groupLabel: '7A' },
                 { segmentName: 'Allandale GO Station to Downtown', direction: 'South', groupLabel: '7B' },
                 { segmentName: 'Downtown to Peggy Hill', direction: 'South', groupLabel: '7B' },
-            ] as const,
+            ],
             performanceDiagnostics: diagnostics,
         };
 
@@ -95,7 +97,7 @@ describe('step2HealthEvaluator', () => {
                 { segmentName: 'Peggy Hill to Allandale GO Station', direction: 'North', groupLabel: '7A' },
                 { segmentName: 'Allandale GO Station to Downtown', direction: 'North', groupLabel: '7A' },
                 { segmentName: 'Downtown to Peggy Hill', direction: 'South', groupLabel: '7B' },
-            ] as const,
+            ],
             performanceDiagnostics: {
                 ...diagnostics,
                 filteredDayCount: 3,
@@ -112,4 +114,3 @@ describe('step2HealthEvaluator', () => {
         expect(blocked.warnings).toContain('This performance import was built with older runtime logic. Re-importing is recommended.');
     });
 });
-

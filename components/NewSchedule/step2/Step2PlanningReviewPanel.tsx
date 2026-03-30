@@ -19,7 +19,6 @@ import type {
     ApprovedRuntimeContract,
     Step2ApprovalState,
 } from '../utils/step2ReviewTypes';
-import { Step2ApprovalPanel } from './Step2ApprovalPanel';
 import { Step2ApprovedRuntimeModelPanel } from './Step2ApprovedRuntimeModelPanel';
 import { Step2ReadinessPanel } from './Step2ReadinessPanel';
 import { Step2RuntimeReviewHeader } from './Step2RuntimeReviewHeader';
@@ -618,19 +617,9 @@ export const Step2PlanningReviewPanel: React.FC<Step2Props> = ({
     approvedRuntimeContract,
     onApproveRuntimeContract,
     warningAcknowledged,
-    onWarningAcknowledgedChange,
     troubleshootingPatternWarning,
     onBandSummaryChange,
 }) => {
-    const [internalWarningAcknowledged, setInternalWarningAcknowledged] = React.useState(false);
-    const resolvedWarningAcknowledged = warningAcknowledged ?? internalWarningAcknowledged;
-    const setResolvedWarningAcknowledged = onWarningAcknowledgedChange ?? setInternalWarningAcknowledged;
-
-    React.useEffect(() => {
-        if (approvalState === 'approved') return;
-        setResolvedWarningAcknowledged(false);
-    }, [approvalState, healthReport?.status]);
-
     const {
         viewMetric,
         setViewMetric,
@@ -678,7 +667,7 @@ export const Step2PlanningReviewPanel: React.FC<Step2Props> = ({
         approvedRuntimeModel,
         approvalState,
         approvedRuntimeContract,
-        warningAcknowledged: resolvedWarningAcknowledged,
+        warningAcknowledged: warningAcknowledged ?? false,
         onBandSummaryChange,
     });
 
@@ -688,19 +677,6 @@ export const Step2PlanningReviewPanel: React.FC<Step2Props> = ({
                 hasGroupedSegmentColumns={displaySegmentColumns.some(column => column.groupLabel)}
                 viewMetric={viewMetric}
                 onViewMetricChange={setViewMetric}
-            />
-
-            <Step2ApprovalPanel
-                approvalState={resolvedApprovalState}
-                healthReport={displayedHealthReport}
-                approvedAtLabel={approvedAtLabel}
-                approvalRequiresAcknowledgement={approvalRequiresAcknowledgement}
-                resolvedWarningAcknowledged={resolvedWarningAcknowledged}
-                onResolvedWarningAcknowledgedChange={setResolvedWarningAcknowledged}
-                approvalWarningList={approvalWarningList}
-                approvalActionDisabled={approvalActionDisabled}
-                onApproveRuntimeContract={onApproveRuntimeContract}
-                showAction={false}
             />
 
             <Step2ReadinessPanel

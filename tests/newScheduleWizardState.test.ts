@@ -415,6 +415,8 @@ describe('newSchedule wizard state helpers', () => {
                 runtimeLogicVersion: 1,
                 isCurrentRuntimeLogic: false,
                 usesLegacyRuntimeLogic: true,
+                excludedLegacyDayCount: 0,
+                usesCleanHistoryCutoff: false,
             },
         });
 
@@ -469,6 +471,8 @@ describe('newSchedule wizard state helpers', () => {
                 importedAt: '2026-03-24T12:00:00.000Z',
                 isCurrentRuntimeLogic: false,
                 usesLegacyRuntimeLogic: true,
+                excludedLegacyDayCount: 0,
+                usesCleanHistoryCutoff: false,
             },
         });
 
@@ -524,6 +528,8 @@ describe('newSchedule wizard state helpers', () => {
                 runtimeLogicVersion: 2,
                 isCurrentRuntimeLogic: true,
                 usesLegacyRuntimeLogic: false,
+                excludedLegacyDayCount: 0,
+                usesCleanHistoryCutoff: false,
             },
         });
 
@@ -584,6 +590,8 @@ describe('newSchedule wizard state helpers', () => {
                 runtimeLogicVersion: 2,
                 isCurrentRuntimeLogic: true,
                 usesLegacyRuntimeLogic: false,
+                excludedLegacyDayCount: 0,
+                usesCleanHistoryCutoff: false,
             },
         });
 

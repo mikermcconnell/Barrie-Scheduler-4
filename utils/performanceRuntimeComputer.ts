@@ -7,9 +7,13 @@ import type {
   DailySegmentRuntimeEntry,
   DailyStopSegmentRuntimeEntry,
   DailyTripStopSegmentRuntimeEntry,
+  PerformanceDataSummary,
   PerformanceMetadata,
 } from './performanceDataTypes';
-import { PERFORMANCE_RUNTIME_LOGIC_VERSION } from './performanceDataTypes';
+import {
+  PERFORMANCE_RUNTIME_LOGIC_VERSION,
+  PERFORMANCE_SCHEMA_VERSION,
+} from './performanceDataTypes';
 import type {
   RuntimeData,
   SegmentRawData,
@@ -1204,6 +1208,14 @@ export interface PerformanceRuntimeOptions {
   fullPatternOnly?: boolean;
 }
 
+export interface Step2CleanHistoryWindow {
+  dailySummaries: DailySummary[];
+  cleanHistoryStartDate?: string;
+  excludedLegacyDayCount: number;
+  usesCleanHistoryCutoff: boolean;
+  reason: 'metadata-cutoff' | 'schema-tail' | 'legacy-runtime-logic' | 'no-clean-history';
+}
+
 export interface PerformanceRuntimeDiagnostics {
   selectedRouteId: string;
   canonicalRouteId: string;
@@ -1218,17 +1230,105 @@ export interface PerformanceRuntimeDiagnostics {
   runtimeLogicVersion?: number;
   isCurrentRuntimeLogic: boolean;
   usesLegacyRuntimeLogic: boolean;
+  cleanHistoryStartDate?: string;
+  excludedLegacyDayCount: number;
+  usesCleanHistoryCutoff: boolean;
+}
+
+function findCurrentSchemaTailStartDate(dailySummaries: DailySummary[]): string | undefined {
+  if (dailySummaries.length === 0) return undefined;
+  const sorted = [...dailySummaries].sort((a, b) => a.date.localeCompare(b.date));
+  let startIndex = sorted.length;
+
+  for (let index = sorted.length - 1; index >= 0; index -= 1) {
+    if (sorted[index].schemaVersion < PERFORMANCE_SCHEMA_VERSION) {
+      break;
+    }
+    startIndex = index;
+  }
+
+  return startIndex < sorted.length ? sorted[startIndex].date : undefined;
+}
+
+function normalizeCleanHistoryStartDate(value?: string | null): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const normalized = value.trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? normalized : undefined;
+}
+
+export function getStep2CleanHistoryWindow(
+  dailySummaries: DailySummary[],
+  metadata?: Pick<PerformanceMetadata, 'runtimeLogicVersion' | 'cleanHistoryStartDate'> | null,
+): Step2CleanHistoryWindow {
+  const sorted = [...dailySummaries].sort((a, b) => a.date.localeCompare(b.date));
+  const runtimeLogicVersion = metadata?.runtimeLogicVersion;
+
+  if ((runtimeLogicVersion ?? 0) < PERFORMANCE_RUNTIME_LOGIC_VERSION) {
+    return {
+      dailySummaries: [],
+      excludedLegacyDayCount: sorted.length,
+      usesCleanHistoryCutoff: false,
+      reason: 'legacy-runtime-logic',
+    };
+  }
+
+  const explicitCutoff = normalizeCleanHistoryStartDate(metadata?.cleanHistoryStartDate);
+  const fallbackCutoff = explicitCutoff ?? findCurrentSchemaTailStartDate(sorted);
+  if (!fallbackCutoff) {
+    return {
+      dailySummaries: [],
+      excludedLegacyDayCount: sorted.length,
+      usesCleanHistoryCutoff: false,
+      reason: 'no-clean-history',
+    };
+  }
+
+  const filtered = sorted.filter(summary => summary.date >= fallbackCutoff);
+  return {
+    dailySummaries: filtered,
+    cleanHistoryStartDate: fallbackCutoff,
+    excludedLegacyDayCount: sorted.length - filtered.length,
+    usesCleanHistoryCutoff: filtered.length < sorted.length,
+    reason: explicitCutoff ? 'metadata-cutoff' : 'schema-tail',
+  };
+}
+
+export function getStep2CleanPerformanceSummary(
+  summary: PerformanceDataSummary | null | undefined,
+): (PerformanceDataSummary & {
+  metadata: PerformanceMetadata & {
+    cleanHistoryStartDate?: string;
+  };
+}) | null {
+  if (!summary) return null;
+  const window = getStep2CleanHistoryWindow(summary.dailySummaries || [], summary.metadata);
+  return {
+    ...summary,
+    dailySummaries: window.dailySummaries,
+    metadata: {
+      ...summary.metadata,
+      cleanHistoryStartDate: window.cleanHistoryStartDate,
+      dayCount: window.dailySummaries.length,
+      dateRange: window.dailySummaries.length > 0
+        ? {
+          start: window.dailySummaries[0].date,
+          end: window.dailySummaries[window.dailySummaries.length - 1].date,
+        }
+        : summary.metadata.dateRange,
+    },
+  };
 }
 
 export function inspectPerformanceRuntimeAvailability(
   dailySummaries: DailySummary[],
   options: Pick<PerformanceRuntimeOptions, 'routeId' | 'dayType' | 'dateRange'> & {
-    metadata?: Pick<PerformanceMetadata, 'importedAt' | 'runtimeLogicVersion'>;
+    metadata?: Pick<PerformanceMetadata, 'importedAt' | 'runtimeLogicVersion' | 'cleanHistoryStartDate'>;
   }
 ): PerformanceRuntimeDiagnostics {
   const { routeId, dayType, dateRange, metadata } = options;
   const canonicalRouteId = getCanonicalRouteId(routeId);
-  const filtered = dailySummaries.filter(d => {
+  const cleanHistoryWindow = getStep2CleanHistoryWindow(dailySummaries, metadata);
+  const filtered = cleanHistoryWindow.dailySummaries.filter(d => {
     if (d.dayType !== dayType) return false;
     if (dateRange) {
       if (d.date < dateRange.start || d.date > dateRange.end) return false;
@@ -1287,6 +1387,9 @@ export function inspectPerformanceRuntimeAvailability(
     runtimeLogicVersion: metadata?.runtimeLogicVersion,
     isCurrentRuntimeLogic: (metadata?.runtimeLogicVersion ?? 0) >= PERFORMANCE_RUNTIME_LOGIC_VERSION,
     usesLegacyRuntimeLogic: (metadata?.runtimeLogicVersion ?? 0) < PERFORMANCE_RUNTIME_LOGIC_VERSION,
+    cleanHistoryStartDate: cleanHistoryWindow.cleanHistoryStartDate,
+    excludedLegacyDayCount: cleanHistoryWindow.excludedLegacyDayCount,
+    usesCleanHistoryCutoff: cleanHistoryWindow.usesCleanHistoryCutoff,
   };
 }
 

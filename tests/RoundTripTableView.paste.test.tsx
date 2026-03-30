@@ -69,7 +69,7 @@ vi.mock('../hooks/useGridNavigation', () => ({
   useGridNavigation: ({ callbacks }: any) => {
     navState.callbacks = callbacks;
     return {
-      containerRef: { current: null },
+      containerRef: { current: null as HTMLDivElement | null },
       handleKeyDown: vi.fn(),
       isCellActive: () => false,
       isRowActive: () => false,

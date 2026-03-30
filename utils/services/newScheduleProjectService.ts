@@ -294,7 +294,7 @@ export const getAllProjects = async (userId: string): Promise<NewScheduleProject
             generatedSchedules: [] as MasterRouteTable[],
             originalGeneratedSchedules: [] as MasterRouteTable[],
             storagePath: data.storagePath,
-            approvedRuntimeContract: undefined,
+            approvedRuntimeContract: undefined as ApprovedRuntimeContract | undefined,
             createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate() : new Date(),
             updatedAt: data.updatedAt instanceof Timestamp ? data.updatedAt.toDate() : new Date()
         };

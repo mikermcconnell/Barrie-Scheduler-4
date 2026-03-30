@@ -9,6 +9,7 @@ import type {
 import {
     computeRuntimesFromPerformance,
     getAvailableRuntimeRoutes,
+    getStep2CleanHistoryWindow,
     inspectPerformanceRuntimeAvailability,
 } from '../utils/performanceRuntimeComputer';
 import { calculateBands, calculateTotalTripTimes } from '../utils/ai/runtimeAnalysis';
@@ -28,6 +29,7 @@ function makeSummary(params: {
     stopEntries?: DailyStopSegmentRuntimeEntry[];
     tripEntries?: DailyTripStopSegmentRuntimeEntry[];
     routeNames?: Record<string, string>;
+    schemaVersion?: number;
 }): DailySummary {
     const entries = params.entries || [];
     const stopEntries = params.stopEntries || [];
@@ -56,6 +58,7 @@ function makeSummary(params: {
             totalObservations: tripEntries.reduce((sum, entry) => sum + entry.segments.length, 0),
             tripsWithData: tripEntries.length,
         },
+        schemaVersion: params.schemaVersion ?? 8,
     } as DailySummary;
 }
 
@@ -2361,6 +2364,44 @@ describe('performanceRuntimeComputer.getAvailableRuntimeRoutes', () => {
 });
 
 describe('performanceRuntimeComputer.inspectPerformanceRuntimeAvailability', () => {
+    it('derives a clean-history cutoff from the current-schema tail', () => {
+        const summaries: DailySummary[] = [
+            makeSummary({
+                date: '2026-03-20',
+                dayType: 'weekday',
+                schemaVersion: 7,
+                routeNames: { '2A': 'Route 2A' },
+            }),
+            makeSummary({
+                date: '2026-03-21',
+                dayType: 'weekday',
+                schemaVersion: 7,
+                routeNames: { '2A': 'Route 2A' },
+            }),
+            makeSummary({
+                date: '2026-03-22',
+                dayType: 'weekday',
+                schemaVersion: 8,
+                routeNames: { '2A': 'Route 2A' },
+            }),
+            makeSummary({
+                date: '2026-03-23',
+                dayType: 'weekday',
+                schemaVersion: 8,
+                routeNames: { '2A': 'Route 2A' },
+            }),
+        ];
+
+        const cleanWindow = getStep2CleanHistoryWindow(summaries, {
+            runtimeLogicVersion: 3,
+        });
+
+        expect(cleanWindow.cleanHistoryStartDate).toBe('2026-03-22');
+        expect(cleanWindow.excludedLegacyDayCount).toBe(2);
+        expect(cleanWindow.dailySummaries.map(day => day.date)).toEqual(['2026-03-22', '2026-03-23']);
+        expect(cleanWindow.usesCleanHistoryCutoff).toBe(true);
+    });
+
     it('reports route availability counts for the selected day type and date range', () => {
         const summaries: DailySummary[] = [
             makeSummary({
@@ -2405,7 +2446,7 @@ describe('performanceRuntimeComputer.inspectPerformanceRuntimeAvailability', () 
             dateRange: { start: '2026-01-01', end: '2026-01-09' },
             metadata: {
                 importedAt: '2026-03-24T12:00:00.000Z',
-                runtimeLogicVersion: 1,
+                runtimeLogicVersion: 3,
             },
         });
 
@@ -2417,9 +2458,11 @@ describe('performanceRuntimeComputer.inspectPerformanceRuntimeAvailability', () 
         expect(diagnostics.matchedRouteIds).toEqual(['12A', '12B']);
         expect(diagnostics.directions).toEqual(['North', 'South']);
         expect(diagnostics.importedAt).toBe('2026-03-24T12:00:00.000Z');
-        expect(diagnostics.runtimeLogicVersion).toBe(1);
-        expect(diagnostics.usesLegacyRuntimeLogic).toBe(true);
-        expect(diagnostics.isCurrentRuntimeLogic).toBe(false);
+        expect(diagnostics.runtimeLogicVersion).toBe(3);
+        expect(diagnostics.usesLegacyRuntimeLogic).toBe(false);
+        expect(diagnostics.isCurrentRuntimeLogic).toBe(true);
+        expect(diagnostics.excludedLegacyDayCount).toBe(0);
+        expect(diagnostics.cleanHistoryStartDate).toBe('2026-01-06');
     });
 
     it('treats missing runtime logic metadata as legacy performance data', () => {
@@ -2451,10 +2494,68 @@ describe('performanceRuntimeComputer.inspectPerformanceRuntimeAvailability', () 
             },
         });
 
-        expect(diagnostics.filteredDayCount).toBe(1);
-        expect(diagnostics.matchedRouteDayCount).toBe(1);
+        expect(diagnostics.filteredDayCount).toBe(0);
+        expect(diagnostics.matchedRouteDayCount).toBe(0);
         expect(diagnostics.runtimeLogicVersion).toBeUndefined();
         expect(diagnostics.isCurrentRuntimeLogic).toBe(false);
         expect(diagnostics.usesLegacyRuntimeLogic).toBe(true);
+        expect(diagnostics.excludedLegacyDayCount).toBe(1);
+    });
+
+    it('ignores older days before the clean-history cutoff when inspecting Step 2 availability', () => {
+        const summaries: DailySummary[] = [
+            makeSummary({
+                date: '2026-03-20',
+                dayType: 'weekday',
+                schemaVersion: 7,
+                routeNames: { '2A': 'Route 2A' },
+                stopEntries: [{
+                    routeId: '2A',
+                    direction: 'N',
+                    fromStopId: 'legacy-a',
+                    toStopId: 'legacy-b',
+                    fromStopName: 'Legacy A',
+                    toStopName: 'Legacy B',
+                    fromRouteStopIndex: 1,
+                    toRouteStopIndex: 2,
+                    segmentName: 'Legacy A to Legacy B',
+                    observations: [{ timeBucket: '06:00', runtimeMinutes: 10 }],
+                }],
+            }),
+            makeSummary({
+                date: '2026-03-22',
+                dayType: 'weekday',
+                schemaVersion: 8,
+                routeNames: { '2A': 'Route 2A' },
+                stopEntries: [{
+                    routeId: '2A',
+                    direction: 'N',
+                    fromStopId: 'clean-a',
+                    toStopId: 'clean-b',
+                    fromStopName: 'Clean A',
+                    toStopName: 'Clean B',
+                    fromRouteStopIndex: 1,
+                    toRouteStopIndex: 2,
+                    segmentName: 'Clean A to Clean B',
+                    observations: [{ timeBucket: '06:00', runtimeMinutes: 12 }],
+                }],
+            }),
+        ];
+
+        const diagnostics = inspectPerformanceRuntimeAvailability(summaries, {
+            routeId: '2',
+            dayType: 'weekday',
+            metadata: {
+                importedAt: '2026-03-30T12:00:00.000Z',
+                runtimeLogicVersion: 3,
+            },
+        });
+
+        expect(diagnostics.filteredDayCount).toBe(1);
+        expect(diagnostics.matchedRouteDayCount).toBe(1);
+        expect(diagnostics.stopEntryCount).toBe(1);
+        expect(diagnostics.cleanHistoryStartDate).toBe('2026-03-22');
+        expect(diagnostics.excludedLegacyDayCount).toBe(1);
+        expect(diagnostics.usesCleanHistoryCutoff).toBe(true);
     });
 });

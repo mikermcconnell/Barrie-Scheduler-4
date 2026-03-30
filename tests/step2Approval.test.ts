@@ -70,12 +70,12 @@ const sourceSnapshot: Step2SourceSnapshot = {
 };
 
 describe('step2Approval', () => {
-    it('requires warning acknowledgement before creating an approved contract', () => {
+    it('allows warning approvals and records the active warnings on the approved contract', () => {
         expect(canCreateStep2Approval({
             reviewResult: baseReviewResult,
             sourceSnapshot,
             approvedAt: '2026-03-27T12:30:00.000Z',
-        })).toBe(false);
+        })).toBe(true);
 
         expect(canCreateStep2Approval({
             reviewResult: {
@@ -89,6 +89,13 @@ describe('step2Approval', () => {
             sourceSnapshot,
             approvedAt: '2026-03-27T12:30:00.000Z',
         })).toBe(true);
+
+        const contract = createStep2ApprovedRuntimeContract({
+            reviewResult: baseReviewResult,
+            sourceSnapshot,
+            approvedAt: '2026-03-27T12:30:00.000Z',
+        });
+        expect(contract?.acknowledgedWarnings).toEqual(['Legacy runtime logic detected']);
     });
 
     it('creates a normalized approved contract when the review is eligible', () => {

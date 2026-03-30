@@ -125,9 +125,27 @@ function getTotalRecords(summary: PerformanceDataSummary): number {
   return (summary?.dailySummaries || []).reduce((acc, d) => acc + (d?.dataQuality?.totalRecords || 0), 0);
 }
 
+function resolveCleanHistoryStartDate(
+  existingStartDate: string | null | undefined,
+  importedSummaries: PerformanceDataSummary['dailySummaries'],
+  runtimeLogicVersion: number | undefined,
+): string | undefined {
+  const normalizedExisting = normalizeDateString(existingStartDate);
+  if (normalizedExisting) return normalizedExisting;
+  if ((runtimeLogicVersion ?? 0) < PERFORMANCE_RUNTIME_LOGIC_VERSION) return undefined;
+
+  const importedDates = importedSummaries
+    .map(summary => normalizeDateString(summary.date))
+    .filter((value): value is string => value !== null)
+    .sort();
+
+  return importedDates[0];
+}
+
 function buildPerformanceSummary(
   dailySummaries: PerformanceDataSummary['dailySummaries'],
   importedBy: string,
+  cleanHistoryStartDate?: string,
 ): PerformanceDataSummary {
   const sortedSummaries = [...dailySummaries].sort((a, b) => a.date.localeCompare(b.date));
   const allDates = sortedSummaries.map(s => s.date);
@@ -145,6 +163,7 @@ function buildPerformanceSummary(
       dayCount: sortedSummaries.length,
       totalRecords,
       runtimeLogicVersion: PERFORMANCE_RUNTIME_LOGIC_VERSION,
+      cleanHistoryStartDate,
     },
     schemaVersion: PERFORMANCE_SCHEMA_VERSION,
   };
@@ -366,6 +385,7 @@ async function savePerformanceSummary(params: {
     dayCount: params.summary.metadata.dayCount,
     totalRecords: params.summary.metadata.totalRecords,
     runtimeLogicVersion: params.summary.metadata.runtimeLogicVersion,
+    cleanHistoryStartDate: params.summary.metadata.cleanHistoryStartDate ?? null,
   });
 
   if (params.deleteOld && params.oldStoragePath && params.oldStoragePath !== storagePath) {
@@ -479,11 +499,13 @@ export const ingestPerformanceData = onRequest(
       // --- Load existing data (to append) ---
       let existingSummaries: PerformanceDataSummary['dailySummaries'] = [];
       let oldStoragePath: string | null = null;
+      let existingCleanHistoryStartDate: string | undefined;
 
       try {
         const existing = await loadExistingPerformanceSummary(teamId);
         existingSummaries = existing.summary?.dailySummaries || [];
         oldStoragePath = existing.storagePath;
+        existingCleanHistoryStartDate = existing.summary?.metadata?.cleanHistoryStartDate;
         if (existingSummaries.length > 0) {
           console.log(`Loaded ${existingSummaries.length} existing day(s)`);
         }
@@ -498,7 +520,15 @@ export const ingestPerformanceData = onRequest(
         console.log(`Pruned ${pruned} days older than ${getRetentionCutoffDateString()} (${MAX_RETENTION_DAYS}-day retention)`);
       }
 
-      const summary = buildPerformanceSummary(mergedSummaries, 'auto-ingest');
+      const summary = buildPerformanceSummary(
+        mergedSummaries,
+        'auto-ingest',
+        resolveCleanHistoryStartDate(
+          existingCleanHistoryStartDate,
+          newSummaries,
+          PERFORMANCE_RUNTIME_LOGIC_VERSION,
+        ),
+      );
       const storagePath = await savePerformanceSummary({
         teamId,
         summary,
@@ -661,7 +691,15 @@ export const rebuildPerformanceHistory = onRequest(
         startDate,
         endDate,
       );
-      const nextSummary = buildPerformanceSummary(mergedSummaries, 'history-rebuild');
+      const nextSummary = buildPerformanceSummary(
+        mergedSummaries,
+        'history-rebuild',
+        resolveCleanHistoryStartDate(
+          existing.summary?.metadata?.cleanHistoryStartDate,
+          rebuiltSummaries,
+          PERFORMANCE_RUNTIME_LOGIC_VERSION,
+        ),
+      );
       const storagePath = await savePerformanceSummary({
         teamId,
         summary: nextSummary,

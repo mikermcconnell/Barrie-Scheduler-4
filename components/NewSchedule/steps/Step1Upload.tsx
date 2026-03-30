@@ -279,7 +279,7 @@ export const Step1Upload: React.FC<Step1Props> = ({
                             <AlertTriangle className="mx-auto text-amber-400 mb-3" size={40} />
                             <p className="text-amber-800 font-medium">No segment runtime data available</p>
                             <p className="text-amber-600 text-sm mt-1">
-                                Import STREETS data from the Performance Dashboard first. Older imports may need to be re-imported to include segment runtimes.
+                                Step 2 now uses clean post-fix STREETS history only. Import or re-import current-format daily data from the Performance Dashboard to start the clean history window.
                             </p>
                         </div>
                     ) : (
@@ -490,6 +490,17 @@ export const Step1Upload: React.FC<Step1Props> = ({
                                                                 <p className="font-medium">{performanceDiagnostics.directions.join(', ') || 'None'}</p>
                                                             </div>
                                                         </div>
+                                                        {performanceDiagnostics.cleanHistoryStartDate && (
+                                                            <div className="mt-2 rounded-md border border-teal-100 bg-teal-50/60 px-3 py-2">
+                                                                <span className="text-teal-600">Clean history window</span>
+                                                                <p className="font-medium">
+                                                                    Using {performanceDiagnostics.cleanHistoryStartDate} onward
+                                                                    {performanceDiagnostics.excludedLegacyDayCount > 0
+                                                                        ? ` • ${performanceDiagnostics.excludedLegacyDayCount} older day${performanceDiagnostics.excludedLegacyDayCount === 1 ? '' : 's'} ignored`
+                                                                        : ''}
+                                                                </p>
+                                                            </div>
+                                                        )}
                                                     </div>
                                                 )}
                                             </>

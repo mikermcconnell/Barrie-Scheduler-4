@@ -73,7 +73,6 @@ export const buildStep2ParsedDataFingerprint = (
     const payload = {
         parsedData: parsedData.map((runtime, index) => ({
             index,
-            fileName: normalizeText(runtime.fileName || ''),
             detectedRouteNumber: normalizeText(runtime.detectedRouteNumber || ''),
             detectedDirection: normalizeText(runtime.detectedDirection || ''),
             troubleshootingPatternStatus: runtime.troubleshootingPatternStatus || null,

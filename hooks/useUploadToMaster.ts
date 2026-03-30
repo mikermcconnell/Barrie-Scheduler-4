@@ -55,7 +55,7 @@ export function useUploadToMaster(
     const [uploadConfirmation] = useState<UploadConfirmation | null>(null);
     const [isUploading] = useState(false);
 
-    const routesForUpload = useMemo<never[]>(() => [], []);
+    const routesForUpload = useMemo(() => [] as never[], []);
 
     const notifyDisabled = useCallback(() => {
         showSuccessToast?.('Upload to Master is no longer available here. Use Publish instead.');

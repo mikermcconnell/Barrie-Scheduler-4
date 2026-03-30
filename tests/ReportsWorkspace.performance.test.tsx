@@ -20,13 +20,13 @@ vi.mock('../components/contexts/AuthContext', () => ({
 
 vi.mock('../hooks/usePerformanceData', () => ({
   usePerformanceMetadataQuery: () => ({
-    data: null,
+    data: null as unknown,
     isLoading: false,
   }),
   usePerformanceDataQuery: (...args: unknown[]) => {
     usePerformanceDataQuerySpy(...args);
     return {
-      data: null,
+      data: null as unknown,
       isLoading: false,
     };
   },

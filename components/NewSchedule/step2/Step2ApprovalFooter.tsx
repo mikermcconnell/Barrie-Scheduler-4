@@ -77,11 +77,6 @@ const getStatusMessage = (
     }
 
     if (readinessStatus === 'warning') {
-        if (props.approvalRequiresAcknowledgement && !props.warningAcknowledged) {
-            return props.warningMessage?.trim()
-                || 'This review can be approved, but the warnings must be acknowledged first.';
-        }
-
         return props.warningMessage?.trim()
             || 'This review is usable, but it still has warnings that should be reviewed before continuing.';
     }
@@ -103,10 +98,6 @@ const getPrimaryActionLabel = (
     if (approvalState === 'approved') return 'Approved';
     if (approvalState === 'stale') return 'Re-approve runtime model';
     if (readinessStatus === 'blocked') return 'Approve runtime model';
-    if (approvalRequiresAcknowledgement && !warningAcknowledged) {
-        return 'Acknowledge warnings and approve';
-    }
-
     return 'Approve runtime model';
 };
 
@@ -140,7 +131,6 @@ export const Step2ApprovalFooter: React.FC<Step2ApprovalFooterProps> = ({
         ? continueActionDisabled || approvalState !== 'approved' || readinessStatus === 'blocked'
         : approvalActionDisabled
             || readinessStatus === 'blocked'
-            || (approvalRequiresAcknowledgement && !warningAcknowledged)
             || approvalState === 'approved' && !onApproveRuntimeContract;
 
     const handlePrimaryAction = () => {
@@ -209,11 +199,6 @@ export const Step2ApprovalFooter: React.FC<Step2ApprovalFooterProps> = ({
                             Approved {approvedAtLabel}
                         </p>
                     )}
-                    {primaryActionVariant === 'approve' && approvalRequiresAcknowledgement && !warningAcknowledged && (
-                        <p className="text-xs font-medium text-amber-800">
-                            Acknowledgement is required before approving this runtime model.
-                        </p>
-                    )}
                 </div>
 
                 <div className="flex flex-col items-start gap-2 md:items-end">
@@ -247,4 +232,3 @@ export const Step2ApprovalFooter: React.FC<Step2ApprovalFooterProps> = ({
         </div>
     );
 };
-

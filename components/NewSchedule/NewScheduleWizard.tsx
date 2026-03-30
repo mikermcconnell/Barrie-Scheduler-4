@@ -11,6 +11,7 @@ import { usePerformanceDataQuery } from '../../hooks/usePerformanceData';
 import {
     computeRuntimesFromPerformance,
     getAvailableRuntimeRoutes,
+    getStep2CleanPerformanceSummary,
     inspectPerformanceRuntimeAvailability,
 } from '../../utils/performanceRuntimeComputer';
 import type { DayType as PerfDayType } from '../../utils/performanceDataTypes';
@@ -218,21 +219,25 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
     // Performance data (lazy-loaded only when performance mode is selected)
     const perfQuery = usePerformanceDataQuery(team?.id, importMode === 'performance');
     const perfData = perfQuery.data;
+    const cleanStep2PerfData = useMemo(
+        () => getStep2CleanPerformanceSummary(perfData),
+        [perfData]
+    );
 
     const availableRoutes = useMemo(() => {
-        if (!perfData?.dailySummaries) return [];
+        if (!cleanStep2PerfData?.dailySummaries) return [];
         const normalizedDayType = dayType.toLowerCase() as PerfDayType;
         return getAvailableRuntimeRoutes(
-            perfData.dailySummaries,
+            cleanStep2PerfData.dailySummaries,
             normalizedDayType,
             performanceConfig.dateRange || undefined
         );
-    }, [perfData?.dailySummaries, dayType, performanceConfig.dateRange]);
+    }, [cleanStep2PerfData?.dailySummaries, dayType, performanceConfig.dateRange]);
 
     const performanceDateRange = useMemo(() => {
-        if (!perfData?.metadata?.dateRange) return undefined;
-        return perfData.metadata.dateRange;
-    }, [perfData?.metadata?.dateRange]);
+        if (!cleanStep2PerfData?.metadata?.dateRange) return undefined;
+        return cleanStep2PerfData.metadata.dateRange;
+    }, [cleanStep2PerfData?.metadata?.dateRange]);
 
     const performanceDiagnostics = useMemo(() => {
         if (!perfData?.dailySummaries || !performanceConfig.routeId) return null;
@@ -382,6 +387,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
             .filter(bucket => bucket.ignored)
             .map(bucket => bucket.timeBucket),
     }), [analysis]);
+    const step2ImportMode = importMode === 'performance' ? 'performance' : 'csv';
 
     const step2ReviewBuilderInput = useMemo<Step2ReviewBuilderInput | null>(() => {
         if (analysis.length === 0) return null;
@@ -390,19 +396,22 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
             routeIdentity: currentConfiguredRouteIdentity || buildRouteIdentity((config.routeNumber || DEFAULT_ROUTE_NUMBER).trim(), dayType),
             routeNumber: (config.routeNumber || DEFAULT_ROUTE_NUMBER).trim(),
             dayType,
-            importMode,
-            performanceConfig: importMode === 'performance'
+            importMode: step2ImportMode,
+            performanceConfig: step2ImportMode === 'performance'
                 ? {
                     routeId: performanceConfig.routeId,
                     dateRange: performanceConfig.dateRange,
                 }
                 : null,
-            performanceDiagnostics: importMode === 'performance'
+            performanceDiagnostics: step2ImportMode === 'performance'
                 ? {
                     routeId: performanceConfig.routeId,
                     dateRange: performanceConfig.dateRange,
                     runtimeLogicVersion: performanceDiagnostics?.runtimeLogicVersion,
                     importedAt: performanceDiagnostics?.importedAt,
+                    cleanHistoryStartDate: performanceDiagnostics?.cleanHistoryStartDate,
+                    excludedLegacyDayCount: performanceDiagnostics?.excludedLegacyDayCount,
+                    usesCleanHistoryCutoff: performanceDiagnostics?.usesCleanHistoryCutoff,
                 }
                 : null,
             parsedDataFingerprint,
@@ -420,7 +429,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
             matrixSegmentsMap,
             troubleshootingPatternWarning,
             canonicalSegmentColumns: activeCanonicalSegmentColumns ?? null,
-            runtimeDiagnostics: importMode === 'performance' ? performanceDiagnostics : null,
+            runtimeDiagnostics: step2ImportMode === 'performance' ? performanceDiagnostics : null,
             stopOrder: step2StopOrderHealth,
         };
     }, [
@@ -439,6 +448,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         performanceConfig.routeId,
         performanceDiagnostics,
         step2StopOrderHealth,
+        step2ImportMode,
         segmentsMap,
         step2PlannerOverrides,
         activeCanonicalRouteSource,
@@ -1180,8 +1190,11 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                         return;
                     }
                 }
-                if (!perfData?.dailySummaries) {
-                    toast.warning('No Data', 'Performance data is not loaded yet');
+                if (!cleanStep2PerfData || cleanStep2PerfData.dailySummaries.length === 0) {
+                    toast.warning(
+                        'Clean History Needed',
+                        'Step 2 is now using clean post-fix history only. Import or re-import at least one day with the current STREETS pipeline before building schedules.'
+                    );
                     return;
                 }
                 try {
@@ -1209,7 +1222,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                         }
                     }
 
-                    const stopOrderResolution = resolveStopOrderFromPerformance(perfData.dailySummaries, {
+                    const stopOrderResolution = resolveStopOrderFromPerformance(cleanStep2PerfData.dailySummaries, {
                         routeId: selectedRouteNumber,
                         dayType: normalizedDayType,
                         dateRange: performanceConfig.dateRange || undefined,
@@ -1256,7 +1269,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                                 : 'none'
                     ));
 
-                    const results = computeRuntimesFromPerformance(perfData.dailySummaries, {
+                    const results = computeRuntimesFromPerformance(cleanStep2PerfData.dailySummaries, {
                         routeId: performanceConfig.routeId,
                         dayType: normalizedDayType,
                         dateRange: performanceConfig.dateRange || undefined,
@@ -1267,7 +1280,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                     // Keep the schedule-driving analysis tied to the canonical route chain,
                     // but let the Step 2 matrix show the finer stop-to-stop legs when available.
                     const displayResults = selectedCanonicalStops
-                        ? computeRuntimesFromPerformance(perfData.dailySummaries, {
+                        ? computeRuntimesFromPerformance(cleanStep2PerfData.dailySummaries, {
                             routeId: performanceConfig.routeId,
                             dayType: normalizedDayType,
                             dateRange: performanceConfig.dateRange || undefined,
@@ -1664,7 +1677,6 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         !step2ReviewResult
         || approvalState === 'approved'
         || step2HealthReport?.status === 'blocked'
-        || (step2ApprovalRequiresAcknowledgement && !step2WarningsAcknowledged)
     );
     const primaryActionDisabled = step === 3 && approvalState !== 'approved';
     const primaryActionLabel = step === 3

@@ -83,6 +83,7 @@ export async function savePerformanceData(
                         dayCount: allDays.length,
                         totalRecords: summary.metadata.totalRecords,
                         runtimeLogicVersion: summary.metadata.runtimeLogicVersion ?? oldSummary.metadata?.runtimeLogicVersion,
+                        cleanHistoryStartDate: summary.metadata.cleanHistoryStartDate ?? oldSummary.metadata?.cleanHistoryStartDate,
                     },
                     schemaVersion: summary.schemaVersion,
                 };
@@ -108,6 +109,7 @@ export async function savePerformanceData(
         dayCount: merged.metadata.dayCount,
         totalRecords: merged.metadata.totalRecords,
         runtimeLogicVersion: merged.metadata.runtimeLogicVersion ?? null,
+        cleanHistoryStartDate: merged.metadata.cleanHistoryStartDate ?? null,
     });
 
     // Clean up old storage file only after new data + metadata are committed.
@@ -135,6 +137,7 @@ export async function getPerformanceMetadata(teamId: string): Promise<Performanc
             dayCount: data.dayCount || 0,
             totalRecords: data.totalRecords || 0,
             runtimeLogicVersion: typeof data.runtimeLogicVersion === 'number' ? data.runtimeLogicVersion : undefined,
+            cleanHistoryStartDate: typeof data.cleanHistoryStartDate === 'string' ? data.cleanHistoryStartDate : undefined,
             storagePath: data.storagePath || '',
         };
     } catch (error) {
