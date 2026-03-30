@@ -129,6 +129,29 @@ export function useGridNavigation({
         return null;
     }, [columns.length, rows.length, isCellPopulated]);
 
+    const findBoundaryCell = useCallback((position: 'first' | 'last'): { row: number; col: number } | null => {
+        if (position === 'first') {
+            for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+                for (let colIndex = 0; colIndex < columns.length; colIndex++) {
+                    if (isCellPopulated(rowIndex, colIndex)) {
+                        return { row: rowIndex, col: colIndex };
+                    }
+                }
+            }
+            return null;
+        }
+
+        for (let rowIndex = rows.length - 1; rowIndex >= 0; rowIndex--) {
+            for (let colIndex = columns.length - 1; colIndex >= 0; colIndex--) {
+                if (isCellPopulated(rowIndex, colIndex)) {
+                    return { row: rowIndex, col: colIndex };
+                }
+            }
+        }
+
+        return null;
+    }, [columns.length, rows.length, isCellPopulated]);
+
     // Navigate to a specific cell
     const navigateTo = useCallback((rowIndex: number, colIndex: number, andEdit = false) => {
         const address = buildAddress(rowIndex, colIndex);
@@ -152,6 +175,20 @@ export function useGridNavigation({
             callbacks.onStartEdit?.(address);
         }
     }, [buildAddress, callbacks]);
+
+    const focusFirstCell = useCallback((andEdit = false) => {
+        const first = findBoundaryCell('first');
+        if (first) {
+            navigateTo(first.row, first.col, andEdit);
+        }
+    }, [findBoundaryCell, navigateTo]);
+
+    const focusLastCell = useCallback((andEdit = false) => {
+        const last = findBoundaryCell('last');
+        if (last) {
+            navigateTo(last.row, last.col, andEdit);
+        }
+    }, [findBoundaryCell, navigateTo]);
 
     // Activate a specific cell (called on click)
     const activateCell = useCallback((rowIndex: number, colIndex: number) => {
@@ -235,10 +272,22 @@ export function useGridNavigation({
         if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
         if (isEditing) return;
 
-        if (!activeCell) return;
+        if (!activeCell) {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'Home') {
+                e.preventDefault();
+                focusFirstCell();
+            } else if ((e.ctrlKey || e.metaKey) && e.key === 'End') {
+                e.preventDefault();
+                focusLastCell();
+            } else if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Enter', 'F2', ' ', 'Home', 'End'].includes(e.key)) {
+                e.preventDefault();
+                focusFirstCell(e.key === 'Enter' || e.key === 'F2' || e.key === ' ');
+            }
+            return;
+        }
 
         // Ctrl+C: Copy
-        if (e.ctrlKey && e.key === 'c') {
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
             e.preventDefault();
             e.stopPropagation();
             const value = callbacks.onCopy?.(activeCell);
@@ -248,8 +297,8 @@ export function useGridNavigation({
             return;
         }
 
-        // Ctrl+V: Paste
-        if (e.ctrlKey && e.key === 'v') {
+        // Ctrl/Cmd+V: Paste
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') {
             e.preventDefault();
             e.stopPropagation();
             navigator.clipboard.readText().then(text => {
@@ -260,8 +309,21 @@ export function useGridNavigation({
             return;
         }
 
-        // Don't capture Ctrl+Z/Y/S — those are handled at document level
-        if (e.ctrlKey) return;
+        // Ctrl/Cmd+Home/End: jump to first/last populated cell in the grid
+        if ((e.ctrlKey || e.metaKey) && e.key === 'Home') {
+            e.preventDefault();
+            focusFirstCell();
+            return;
+        }
+
+        if ((e.ctrlKey || e.metaKey) && e.key === 'End') {
+            e.preventDefault();
+            focusLastCell();
+            return;
+        }
+
+        // Don't capture Ctrl/Cmd+Z/Y/S — those are handled at document level
+        if (e.ctrlKey || e.metaKey) return;
 
         switch (e.key) {
             case 'ArrowLeft': {
@@ -298,6 +360,14 @@ export function useGridNavigation({
                 break;
             }
             case 'Enter': {
+                e.preventDefault();
+                if (activeCell.cellType !== 'recovery') {
+                    startEditing();
+                }
+                break;
+            }
+            case 'F2':
+            case ' ': {
                 e.preventDefault();
                 if (activeCell.cellType !== 'recovery') {
                     startEditing();
@@ -343,7 +413,7 @@ export function useGridNavigation({
             }
         }
     }, [disabled, isEditing, activeCell, findNextCell, navigateTo, clearActiveCell,
-        startEditing, columns.length, isCellPopulated, callbacks]);
+        startEditing, columns.length, isCellPopulated, callbacks, focusFirstCell, focusLastCell]);
 
     // Helper: check if a given cell is the active cell
     const isCellActive = useCallback((rowIndex: number, colIndex: number): boolean => {
@@ -366,6 +436,8 @@ export function useGridNavigation({
         cancelEdit,
         handleKeyDown,
         handleNudge,
+        focusFirstCell,
+        focusLastCell,
         isCellActive,
         isRowActive,
         navigateTo,

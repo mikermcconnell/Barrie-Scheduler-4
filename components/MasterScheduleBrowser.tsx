@@ -37,6 +37,7 @@ import { buildRouteIdentity } from '../utils/masterScheduleTypes';
 import type { MasterRouteTable, MasterTrip } from '../utils/parsers/masterScheduleParser';
 import { buildRoundTripView } from '../utils/parsers/masterScheduleParser';
 import { getRouteColor, getRouteTextColor } from '../utils/config/routeColors';
+import { calculateSequentialHeadways } from '../utils/schedule/scheduleEditorUtils';
 import { PlatformTimeline } from './PlatformTimeline';
 import { ScheduleEditor } from './ScheduleEditor';
 import { consumeNetworkConnectionMasterHandoff } from '../utils/network-connections/networkConnectionHandoff';
@@ -700,16 +701,6 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
             });
         };
 
-        // Helper: Calculate headway from previous trip
-        const calculateHeadways = (sortedTrips: MasterTrip[]): Map<string, number> => {
-            const headways = new Map<string, number>();
-            for (let i = 1; i < sortedTrips.length; i++) {
-                const headway = sortedTrips[i].startTime - sortedTrips[i - 1].startTime;
-                headways.set(sortedTrips[i].id, headway);
-            }
-            return headways;
-        };
-
         // ===== HELPER: Render a direction's trip table =====
         type StopColumn = { name: string; subColumns: string[]; type: 'regular' | 'turnaround' };
 
@@ -794,7 +785,7 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
             // Sort and calculate headways
             const sortedTrips = sortTripsLikeTweaker(trips);
             const tripsByTime = [...trips].sort((a, b) => a.startTime - b.startTime);
-            const headways = calculateHeadways(tripsByTime);
+            const headways = calculateSequentialHeadways(sortedTrips, trip => trip.startTime);
 
             let prevBlock = '';
 
@@ -802,7 +793,7 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
             sortedTrips.forEach((trip, rowIdx) => {
                 const timeBand = trip.assignedBand || '';
                 const tripRatio = trip.travelTime > 0 ? Math.round((trip.recoveryTime / trip.travelTime) * 100) : 0;
-                const headway = headways.get(trip.id) || 0;
+                const headway = headways[trip.id] || 0;
                 const isNewBlock = prevBlock !== '' && trip.blockId !== prevBlock;
                 prevBlock = trip.blockId;
 

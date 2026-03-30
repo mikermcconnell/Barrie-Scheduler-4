@@ -313,7 +313,7 @@ export function parseRouteInfo(routeIdentifier: string): ParsedRouteInfo {
             direction: null, // Direction not embedded in the identifier itself
             variant: cleaned,
             isLoop: routeIsLoop,
-            suffixIsDirection: false,
+            suffixIsDirection: !!config.suffixIsDirection,
         };
     }
 

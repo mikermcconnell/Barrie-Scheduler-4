@@ -147,9 +147,9 @@ export interface ExternalConnection {
     targetId: string;
     targetName: string;
     connectionType: ConnectionType;
-    targetTime: number;                    // The GO train departure time (minutes from midnight)
-    tripArrivalTime: number;               // When THIS trip arrives at connection stop
-    gapMinutes: number;                    // targetTime - tripArrivalTime (+ = early, - = late)
+    targetTime: number;                    // External target event time (minutes from midnight)
+    tripArrivalTime: number;               // Bus event time used for the connection gap at this stop
+    gapMinutes: number;                    // Positive = useful margin in the preferred direction
     meetsConnection: boolean;              // Is gap >= buffer requirement?
     stopCode: string;                      // Stop code (unique identifier)
     stopName?: string;                     // Stop name for display (optional)

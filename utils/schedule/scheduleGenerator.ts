@@ -132,7 +132,8 @@ export const generateSchedule = (
     dayType: string = 'Weekday',
     gtfsStopLookup?: Record<string, string>,
     fallbackStopLookup?: Record<string, string>,
-    canonicalTimepointsMap?: Record<string, string[]>
+    canonicalTimepointsMap?: Record<string, string[]>,
+    directionalBuckets?: Record<string, TripBucketAnalysis[]>
 ): MasterRouteTable[] => {
     // 1. Validation
     const isFloatingMode = config.cycleMode === 'Floating';
@@ -200,18 +201,21 @@ export const generateSchedule = (
     };
 
     // Helper: Find the bucket for a given time (or closest bucket if not found)
-    const findBucketForTime = (timeMinutes: number): TripBucketAnalysis | null => {
+    const findBucketForTime = (
+        timeMinutes: number,
+        sourceBuckets: TripBucketAnalysis[] = buckets
+    ): TripBucketAnalysis | null => {
         const h = Math.floor(timeMinutes / 60) % 24;
         const m = Math.floor(timeMinutes % 60);
         const slotM = m >= 30 ? 30 : 0;
         const lookupStr = `${Math.floor(h).toString().padStart(2, '0')}:${slotM.toString().padStart(2, '0')}`;
 
         // First try exact match
-        const bucket = buckets.find(b => b.timeBucket.startsWith(lookupStr) && !b.ignored && b.assignedBand);
+        const bucket = sourceBuckets.find(b => b.timeBucket.startsWith(lookupStr) && !b.ignored && b.assignedBand);
         if (bucket) return bucket;
 
         // If no exact match, find the CLOSEST bucket with valid data
-        const validBuckets = buckets.filter(b => !b.ignored && b.assignedBand && b.totalP50 > 0);
+        const validBuckets = sourceBuckets.filter(b => !b.ignored && b.assignedBand && b.totalP50 > 0);
         if (validBuckets.length === 0) return null;
 
         let closestBucket = validBuckets[0];
@@ -234,7 +238,7 @@ export const generateSchedule = (
     // Helper: Get band travel time for a given time slot
     // Helper: Find which band a time slot falls into for a specific direction
     const getBandForTime = (timeMinutes: number, direction: string): BandSummary | null => {
-        const bucket = findBucketForTime(timeMinutes);
+        const bucket = findBucketForTime(timeMinutes, directionalBuckets?.[direction] || buckets);
         if (!bucket || !bucket.assignedBand) return null;
 
         const dirBands = bandSummary[direction];
@@ -387,6 +391,8 @@ export const generateSchedule = (
 
             // First pass: collect raw segment times and sum
             const rawSegmentTimes: number[] = [];
+            const runtimeSourceBreakdown: Record<string, string> = {};
+            const runtimeSourceCounts = new Map<string, number>();
             let rawSum = 0;
 
             for (let i = 0; i < dirTimepoints.length - 1; i++) {
@@ -395,11 +401,14 @@ export const generateSchedule = (
 
                 const reliable = getReliableSegmentTime(fromStop, toStop);
                 let segTime: number | null = reliable.time;
+                const segmentName = `${fromStop} to ${toStop}`;
 
                 rawSegmentTimes.push(segTime);
+                runtimeSourceBreakdown[segmentName] = reliable.source;
                 // Only count active segments toward raw sum
                 if (i >= activeStartIdx) {
                     rawSum += segTime;
+                    runtimeSourceCounts.set(reliable.source, (runtimeSourceCounts.get(reliable.source) || 0) + 1);
                 }
             }
 
@@ -496,6 +505,7 @@ export const generateSchedule = (
 
             // 5. Construct Trip Object with Arrival Times, Recovery Times, and Departure Times
             const stopTimes: Record<string, string> = {};
+            const stopMinutes: Record<string, number> = {};
             const arrivalTimes: Record<string, string> = {};
             let currentStopMins = currentTime;
 
@@ -513,8 +523,14 @@ export const generateSchedule = (
 
                 arrivalTimes[stop] = toTimeStr(arrivalMins);
                 stopTimes[stop] = toTimeStr(departureMins);
+                stopMinutes[stop] = departureMins;
                 currentStopMins = departureMins;
             });
+
+            const runtimeSourceSummary = Array.from(runtimeSourceCounts.entries())
+                .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+                .map(([source, count]) => `${source}:${count}`)
+                .join(', ');
 
             // Create MasterTrip with full time breakdown
             const newTrip: MasterTrip = {
@@ -528,11 +544,14 @@ export const generateSchedule = (
                 rowId: 0,
                 travelTime: pureTravelTime,
                 stops: stopTimes,
+                stopMinutes,
                 arrivalTimes: arrivalTimes,
                 recoveryTimes: recoveryTimes,
                 recoveryTime: totalRecovery,
                 cycleTime: tripCycleAllocated,
                 assignedBand: currentBand?.bandId || undefined,
+                runtimeSourceSummary: runtimeSourceSummary || undefined,
+                runtimeSourceBreakdown: Object.keys(runtimeSourceBreakdown).length > 0 ? runtimeSourceBreakdown : undefined,
                 startStopIndex: activeStartIdx > 0 ? activeStartIdx : undefined
             };
 

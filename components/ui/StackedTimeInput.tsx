@@ -52,6 +52,8 @@ export interface StackedTimeInputProps {
     onNavigateAway?: (direction: 'down' | 'right' | 'left' | 'cancel') => void;
     /** External trigger to start editing (from grid navigation Enter key) */
     externalEdit?: boolean;
+    /** Accessible label describing the cell and current value */
+    ariaLabel?: string;
 }
 
 export const StackedTimeInput = forwardRef<StackedTimeInputHandle, StackedTimeInputProps>(({
@@ -66,6 +68,7 @@ export const StackedTimeInput = forwardRef<StackedTimeInputHandle, StackedTimeIn
     onNudge,
     onNavigateAway,
     externalEdit = false,
+    ariaLabel,
 }, ref) => {
     const [isEditing, setIsEditing] = useState(false);
     const [editValue, setEditValue] = useState(value);
@@ -190,24 +193,30 @@ export const StackedTimeInput = forwardRef<StackedTimeInputHandle, StackedTimeIn
                 className={`w-full h-full bg-white font-medium text-xs text-gray-900 text-center ring-2 ${focusClass} outline-none px-1`}
                 placeholder={placeholder}
                 disabled={disabled}
+                aria-label={ariaLabel}
             />
         );
     }
 
     // Display mode - show formatted time, click to edit
     return (
-        <div
-            className={`flex items-center justify-center w-full h-full py-1 whitespace-nowrap ${
+        <button
+            type="button"
+            className={`flex items-center justify-center w-full h-full py-1 whitespace-nowrap border-0 bg-transparent appearance-none ${
                 disabled ? 'cursor-default' : 'cursor-text hover:bg-gray-50'
             }`}
             onClick={handleClick}
+            onFocus={onActivate}
+            disabled={disabled}
+            tabIndex={-1}
+            aria-label={ariaLabel}
         >
             {parsed ? (
                 <span className="text-xs font-medium text-gray-800">{`${parsed.time} ${parsed.period}`}</span>
             ) : (
                 <span className="text-xs text-gray-500">{value || placeholder}</span>
             )}
-        </div>
+        </button>
     );
 });
 

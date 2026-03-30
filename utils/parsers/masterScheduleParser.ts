@@ -44,6 +44,8 @@ export interface MasterTrip {
 
     // Band Assignment (from New Schedule wizard)
     assignedBand?: string; // 'A', 'B', 'C', 'D', 'E' - determined by departure time
+    runtimeSourceSummary?: string; // Human-readable summary of runtime lookup sources used for this trip
+    runtimeSourceBreakdown?: Record<string, string>; // Segment -> lookup source used during generation
 
     // Partial Trip Support (start/end at mid-route stops)
     startStopIndex?: number; // 0-based index of first active stop (undefined = 0)

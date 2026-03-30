@@ -70,6 +70,7 @@ export interface TimelinePoint {
   isLate: boolean;
   tripIndex: number;
   tripName: string;
+  phase: 'same-trip' | 'later-trip';
   isTripStart: boolean;
 }
 
@@ -93,6 +94,7 @@ export function buildTimelinePoints(trips: CascadeAffectedTrip[]): TimelinePoint
         isLate: tp.isLate,
         tripIndex: ti,
         tripName: trip.tripName,
+        phase: trip.phase ?? 'later-trip',
         isTripStart: si === 0,
       });
     }
@@ -121,6 +123,7 @@ export const TRIP_FILL_COLORS: Record<TripNodeColor, { fill: string; stroke: str
 export interface TripSegment {
   tripIndex: number;
   tripName: string;
+  phase: 'same-trip' | 'later-trip';
   color: TripNodeColor;
   startPointIndex: number;
   endPointIndex: number;
@@ -144,6 +147,7 @@ export function buildTripSegments(
     segments.push({
       tripIndex: ti,
       tripName: trip.tripName,
+      phase: trip.phase ?? 'later-trip',
       color: getTripNodeColor(trip),
       startPointIndex: tripPoints[0].index,
       endPointIndex: tripPoints[tripPoints.length - 1].index,

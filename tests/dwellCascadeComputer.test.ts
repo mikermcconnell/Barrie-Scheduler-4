@@ -130,6 +130,56 @@ function buildBlockRecords(opts: {
   return records;
 }
 
+function buildSameTripStoryRecords(opts: {
+  sameTripObservedDeparture?: string | null;
+  laterTripObservedDepartures?: Record<number, string | null>;
+}): STREETSRecord[] {
+  const makeTrip = (
+    tripName: string,
+    tripId: string,
+    terminalDepartureTime: string,
+    stopTimes: Array<{
+      stopName: string;
+      stopId: string;
+      idx: number;
+      tp: boolean;
+      sched: string;
+      obsArrival?: string | null;
+      obsDeparture?: string | null;
+    }>,
+  ): STREETSRecord[] => (
+    stopTimes.map(stop => makeRecord({
+      block: '10-02',
+      tripName,
+      tripId,
+      terminalDepartureTime,
+      stopName: stop.stopName,
+      stopId: stop.stopId,
+      routeStopIndex: stop.idx,
+      timePoint: stop.tp,
+      arrivalTime: stop.sched,
+      stopTime: stop.sched,
+      observedArrivalTime: stop.obsArrival === undefined ? `${stop.sched}:00` : stop.obsArrival,
+      observedDepartureTime: stop.obsDeparture === undefined ? `${stop.sched}:00` : stop.obsDeparture,
+    }))
+  );
+
+  return [
+    ...makeTrip('Trip-1', 'trip-guid-1', '08:00', [
+      { stopName: 'Terminal North', stopId: 'TN', idx: 1, tp: true, sched: '08:00' },
+      { stopName: 'Stop B', stopId: 'SB', idx: 2, tp: true, sched: '08:10', obsArrival: '08:10:00', obsDeparture: '08:15:00' },
+      { stopName: 'Midway', stopId: 'MW', idx: 3, tp: true, sched: '08:18', obsDeparture: opts.sameTripObservedDeparture },
+      { stopName: 'Terminal South', stopId: 'TS', idx: 4, tp: false, sched: '08:25' },
+    ]),
+    ...makeTrip('Trip-2', 'trip-guid-2', '08:30', [
+      { stopName: 'Terminal North', stopId: 'TN', idx: 1, tp: true, sched: '08:30', obsDeparture: opts.laterTripObservedDepartures?.[1] },
+      { stopName: 'Stop C', stopId: 'SC', idx: 2, tp: true, sched: '08:40', obsDeparture: opts.laterTripObservedDepartures?.[2] },
+      { stopName: 'Midway', stopId: 'MW', idx: 3, tp: true, sched: '08:48', obsDeparture: opts.laterTripObservedDepartures?.[3] },
+      { stopName: 'Terminal South', stopId: 'TS', idx: 4, tp: false, sched: '08:55' },
+    ]),
+  ];
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────
 
 describe('dwellCascadeComputer.buildDailyCascadeMetrics', () => {
@@ -168,6 +218,67 @@ describe('dwellCascadeComputer.buildDailyCascadeMetrics', () => {
     expect(cascade.totalLateSeconds).toBe(0);
     expect(result.totalNonCascaded).toBe(1);
     expect(result.totalCascaded).toBe(0);
+  });
+
+  it('traces the remainder of the incident trip before later trips and can recover on the same trip', () => {
+    const records = buildSameTripStoryRecords({
+      sameTripObservedDeparture: '08:18:00', // same-trip downstream point is back to zero
+      laterTripObservedDepartures: {
+        1: '08:36:00',
+        2: '08:46:00',
+      },
+    });
+    const incident = makeIncident({ tripName: 'Trip-1', block: '10-02' });
+
+    const result = buildDailyCascadeMetrics(records, [incident]);
+    const cascade = result.cascades[0];
+
+    expect(cascade.sameTripObserved).toBe(true);
+    expect(cascade.sameTripImpact).toBeTruthy();
+    expect(cascade.sameTripImpact?.phase).toBe('same-trip');
+    expect(cascade.sameTripImpact?.tripName).toBe('Trip-1');
+    expect(cascade.sameTripImpact?.timepoints).toHaveLength(1);
+    expect(cascade.sameTripImpact?.timepoints[0].stopName).toBe('Midway');
+    expect(cascade.sameTripImpact?.timepoints[0].deviationSeconds).toBe(0);
+    expect(cascade.sameTripImpact?.recoveredHere).toBe(true);
+    expect(cascade.backUnderThresholdAtTrip).toBe('Trip-1');
+    expect(cascade.backUnderThresholdAtStop).toBe('Midway');
+    expect(cascade.recoveredAtTrip).toBe('Trip-1');
+    expect(cascade.recoveredAtStop).toBe('Midway');
+    expect(cascade.cascadedTrips).toHaveLength(0);
+    expect(cascade.affectedTripCount).toBe(0);
+    expect(cascade.blastRadius).toBe(0);
+  });
+
+  it('includes same-trip impact first, then later-trip carryover when delay survives the incident trip', () => {
+    const records = buildSameTripStoryRecords({
+      sameTripObservedDeparture: '08:24:00', // +6 min on the incident trip
+      laterTripObservedDepartures: {
+        1: '08:34:00', // +4 min, now back under threshold
+        2: '08:40:00', // +0 min, recovered to zero
+      },
+    });
+    const incident = makeIncident({ tripName: 'Trip-1', block: '10-02' });
+
+    const result = buildDailyCascadeMetrics(records, [incident]);
+    const cascade = result.cascades[0];
+
+    expect(cascade.sameTripObserved).toBe(true);
+    expect(cascade.sameTripImpact?.tripName).toBe('Trip-1');
+    expect(cascade.sameTripImpact?.lateTimepointCount).toBe(1);
+    expect(cascade.sameTripImpact?.affectedTimepointCount).toBe(1);
+    expect(cascade.sameTripImpact?.timepoints[0].deviationSeconds).toBe(360);
+
+    expect(cascade.cascadedTrips).toHaveLength(1);
+    expect(cascade.cascadedTrips[0].phase).toBe('later-trip');
+    expect(cascade.cascadedTrips[0].tripName).toBe('Trip-2');
+    expect(cascade.cascadedTrips[0].affectedTimepointCount).toBe(1);
+    expect(cascade.cascadedTrips[0].lateTimepointCount).toBe(0);
+    expect(cascade.backUnderThresholdAtTrip).toBe('Trip-2');
+    expect(cascade.backUnderThresholdAtStop).toBe('Terminal North');
+    expect(cascade.recoveredAtTrip).toBe('Trip-2');
+    expect(cascade.recoveredAtStop).toBe('Stop C');
+    expect(cascade.affectedTripCount).toBe(1);
   });
 
   it('tracks back-under-threshold separately from full recovery', () => {
@@ -270,7 +381,7 @@ describe('dwellCascadeComputer.buildDailyCascadeMetrics', () => {
     expect(cascade.totalLateSeconds).toBe(1560);
 
     const trip4 = cascade.cascadedTrips[2];
-    expect(trip4.backUnderThresholdAtStop).toBeNull();
+    expect(trip4.backUnderThresholdAtStop).toBe('Terminal North');
     expect(trip4.recoveredAtStop).toBe('Stop B');
     expect(trip4.recoveredHere).toBe(true);
     expect(trip4.timepoints[0].deviationSeconds).toBe(120);

@@ -87,5 +87,11 @@ describe('scheduleGenerator canonical travel times', () => {
         expect(southTable?.stops).toEqual(canonicalTimepointsMap.South);
         expect(northTable?.trips[0].travelTime).toBe(10);
         expect(southTable?.trips[0].travelTime).toBe(22);
+        expect(northTable?.trips[0].stopMinutes?.['Peggy Hill']).toBe(364);
+        expect(northTable?.trips[0].runtimeSourceSummary).toContain('band:2');
+        expect(northTable?.trips[0].runtimeSourceBreakdown).toEqual({
+            'Park Place to Peggy Hill': 'band',
+            'Peggy Hill to Georgian College': 'band',
+        });
     });
 });

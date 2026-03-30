@@ -5,45 +5,73 @@
  * Non-intrusive: information-only indicators on the schedule grid.
  */
 
-import type { MasterTrip } from '../parsers/masterScheduleParser';
-import { analyzeHeadways, calculateHeadways } from './scheduleEditorUtils';
-
 export interface ScheduleInsight {
     type: 'headway' | 'recovery';
     severity: 'info' | 'warning';
     message: string;
 }
 
-/**
- * Detect headway anomalies for a trip.
- * Flags trips where headway deviates >50% from the average headway.
- */
-export function getHeadwayInsights(
-    trip: MasterTrip,
-    allTrips: MasterTrip[],
-    targetHeadway?: number
-): ScheduleInsight | null {
-    if (allTrips.length < 3) return null;
+const MIN_HEADWAY_SAMPLE_SIZE = 3;
+const MIN_HEADWAY_ABSOLUTE_DEVIATION = 6;
+const MIN_HEADWAY_PERCENT_DEVIATION = 0.25;
 
-    const headways = calculateHeadways(allTrips);
-    const tripHeadway = headways[trip.id];
-    if (typeof tripHeadway !== 'number') return null;
+function getMedian(values: number[]): number | null {
+    const valid = values
+        .filter(value => Number.isFinite(value) && value > 0)
+        .sort((a, b) => a - b);
 
-    const { avg } = analyzeHeadways(allTrips);
-    const reference = targetHeadway || avg;
-    if (!reference || reference === 0) return null;
+    if (valid.length === 0) return null;
 
-    const deviation = Math.abs(tripHeadway - reference) / reference;
-    if (deviation > 0.5) {
-        const dir = tripHeadway > reference ? 'longer' : 'shorter';
-        return {
-            type: 'headway',
-            severity: 'warning',
-            message: `Headway ${tripHeadway}m is ${Math.round(deviation * 100)}% ${dir} than avg ${reference}m`,
-        };
+    const middle = Math.floor(valid.length / 2);
+    if (valid.length % 2 === 1) {
+        return valid[middle];
     }
 
-    return null;
+    return Math.round((valid[middle - 1] + valid[middle]) / 2);
+}
+
+/**
+ * Detect headway anomalies for a displayed round-trip row.
+ * Uses the visible row headways rather than raw per-trip sequencing so the
+ * warning matches what the planner sees in the table.
+ */
+export function getHeadwayInsights(
+    currentHeadway: number | null | undefined,
+    displayedHeadways: number[],
+    targetHeadway?: number
+): ScheduleInsight | null {
+    if (typeof currentHeadway !== 'number' || !Number.isFinite(currentHeadway) || currentHeadway <= 0) {
+        return null;
+    }
+
+    const hasExplicitTarget = typeof targetHeadway === 'number' && Number.isFinite(targetHeadway) && targetHeadway > 0;
+    const reference = hasExplicitTarget
+        ? targetHeadway
+        : getMedian(displayedHeadways);
+
+    if (!reference || reference <= 0) return null;
+    if (!hasExplicitTarget && displayedHeadways.filter(value => Number.isFinite(value) && value > 0).length < MIN_HEADWAY_SAMPLE_SIZE) {
+        return null;
+    }
+
+    const absoluteDeviation = Math.abs(currentHeadway - reference);
+    const percentDeviation = absoluteDeviation / reference;
+
+    if (
+        absoluteDeviation < MIN_HEADWAY_ABSOLUTE_DEVIATION
+        || percentDeviation < MIN_HEADWAY_PERCENT_DEVIATION
+    ) {
+        return null;
+    }
+
+    const dir = currentHeadway > reference ? 'longer' : 'shorter';
+    const referenceLabel = hasExplicitTarget ? `target ${reference}m` : `typical ${reference}m`;
+
+    return {
+        type: 'headway',
+        severity: 'warning',
+        message: `Headway ${currentHeadway}m is ${absoluteDeviation}m ${dir} than ${referenceLabel}`,
+    };
 }
 
 /**
@@ -81,20 +109,16 @@ export function getRecoveryInsights(
  * Get all insights for a round-trip row.
  */
 export function getRowInsights(
-    trips: MasterTrip[],
-    allTrips: MasterTrip[],
+    currentHeadway: number | null | undefined,
+    displayedHeadways: number[],
     totalTravel: number,
     totalRecovery: number,
     targetHeadway?: number
 ): ScheduleInsight[] {
     const insights: ScheduleInsight[] = [];
 
-    // Check headway for the first trip in the row
-    const primaryTrip = trips[0];
-    if (primaryTrip) {
-        const headwayInsight = getHeadwayInsights(primaryTrip, allTrips, targetHeadway);
-        if (headwayInsight) insights.push(headwayInsight);
-    }
+    const headwayInsight = getHeadwayInsights(currentHeadway, displayedHeadways, targetHeadway);
+    if (headwayInsight) insights.push(headwayInsight);
 
     // Check recovery ratio
     const recoveryInsight = getRecoveryInsights(totalRecovery, totalTravel);

@@ -55,6 +55,34 @@ export const calculateOrderedHeadways = <T extends { id: string }>(
     return headways;
 };
 
+/**
+ * Calculate headways in the exact order items are displayed.
+ *
+ * Unlike calculateOrderedHeadways, this does not sort first. It compares each
+ * item's anchor time to the previous displayed item's anchor time so the first
+ * displayed row stays blank and later rows reflect on-screen sequence.
+ */
+export const calculateSequentialHeadways = <T extends { id: string }>(
+    items: T[],
+    getTime: (item: T) => number | null | undefined
+): Record<string, number> => {
+    const headways: Record<string, number> = {};
+    let previousTime: number | null = null;
+
+    items.forEach(item => {
+        const currentTime = getTime(item);
+        if (typeof currentTime !== 'number' || !Number.isFinite(currentTime)) return;
+
+        if (previousTime !== null) {
+            headways[item.id] = getOperationalSortTime(currentTime) - getOperationalSortTime(previousTime);
+        }
+
+        previousTime = currentTime;
+    });
+
+    return headways;
+};
+
 export const calculateHeadways = (trips: MasterTrip[]): Record<string, number> => {
     const headways: Record<string, number> = {};
     const byDir: Record<string, MasterTrip[]> = {};
@@ -90,7 +118,7 @@ export const analyzeHeadways = (trips: MasterTrip[]): { avg: number; irregular: 
         // Midnight-4AM trips are late-night, not early morning
         const sorted = [...dirTrips].sort((a, b) => getOperationalSortTime(a.startTime) - getOperationalSortTime(b.startTime));
         for (let i = 1; i < sorted.length; i++) {
-            const headway = sorted[i].startTime - sorted[i - 1].startTime;
+            const headway = getOperationalSortTime(sorted[i].startTime) - getOperationalSortTime(sorted[i - 1].startTime);
             allHeadways.push(headway);
         }
     });
@@ -204,6 +232,8 @@ export const calculateServiceSpan = (trips: MasterTrip[]): { start: string; end:
 
     const startMins = sortedByStart[0].startTime;
     const endMins = sortedByEnd[0].endTime;
+    const operationalStartMins = getOperationalSortTime(startMins);
+    const operationalEndMins = getOperationalSortTime(endMins);
 
     const formatTime = (mins: number) => {
         const h = Math.floor(mins / 60) % 24;
@@ -216,7 +246,7 @@ export const calculateServiceSpan = (trips: MasterTrip[]): { start: string; end:
     return {
         start: formatTime(startMins),
         end: formatTime(endMins),
-        hours: Number(((endMins - startMins) / 60).toFixed(1))
+        hours: Number(((operationalEndMins - operationalStartMins) / 60).toFixed(1))
     };
 };
 
@@ -279,52 +309,68 @@ export const parseTimeInput = (input: string, originalValue?: string): string | 
         originalValue?.toLowerCase().includes('am') ? 'AM' : null;
 
     const cleaned = input.replace(/[^0-9:]/g, '');
+    if (!cleaned) {
+        return null;
+    }
 
     let hours: number;
     let minutes: number;
 
     if (cleaned.includes(':')) {
-        const [h, m] = cleaned.split(':');
-        hours = parseInt(h) || 0;
-        minutes = parseInt(m) || 0;
+        const [h, m, ...rest] = cleaned.split(':');
+        if (rest.length > 0 || !h) {
+            return null;
+        }
+        hours = parseInt(h, 10);
+        minutes = m ? parseInt(m, 10) : 0;
     } else if (cleaned.length <= 2) {
-        hours = parseInt(cleaned) || 0;
+        hours = parseInt(cleaned, 10);
         minutes = 0;
     } else if (cleaned.length === 3) {
-        hours = parseInt(cleaned[0]) || 0;
-        minutes = parseInt(cleaned.slice(1)) || 0;
+        hours = parseInt(cleaned[0], 10);
+        minutes = parseInt(cleaned.slice(1), 10);
     } else if (cleaned.length >= 4) {
-        hours = parseInt(cleaned.slice(0, cleaned.length - 2)) || 0;
-        minutes = parseInt(cleaned.slice(-2)) || 0;
+        hours = parseInt(cleaned.slice(0, cleaned.length - 2), 10);
+        minutes = parseInt(cleaned.slice(-2), 10);
     } else {
         return null;
     }
 
-    if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+    if (!Number.isFinite(hours) || !Number.isFinite(minutes) || minutes < 0 || minutes > 59) {
         return null;
     }
 
-    let period: 'AM' | 'PM';
+    if (hasExplicitPeriod) {
+        if (hours < 1 || hours > 12) {
+            return null;
+        }
 
-    if (hasExplicitPM) {
-        period = 'PM';
-        if (hours < 12) hours += 12;
-    } else if (hasExplicitAM) {
-        period = 'AM';
-        if (hours === 12) hours = 0;
-    } else if (hours >= 12 && hours <= 23) {
-        period = 'PM';
+        if (hasExplicitPM && hours < 12) hours += 12;
+        if (hasExplicitAM && hours === 12) hours = 0;
+    } else if (originalPeriod && hours >= 1 && hours <= 12) {
+        if (originalPeriod === 'AM' && hours === 12) {
+            hours = 0;
+        } else if (originalPeriod === 'PM' && hours < 12) {
+            hours += 12;
+        }
+    } else if (hours < 0 || hours > 23) {
+        return null;
+    } else if (hours >= 13) {
+        // Already a 24-hour PM-style value; keep as-is.
     } else if (hours === 0) {
-        period = 'AM';
-    } else if (!hasExplicitPeriod && originalPeriod) {
-        period = originalPeriod;
+        // Midnight
     } else {
         // For ambiguous times without explicit AM/PM:
         // - Hours 1-6: default to AM (early morning transit service)
         // - Hours 7-11: default to PM (afternoon service)
-        period = hours >= 1 && hours <= 6 ? 'AM' : 'PM';
+        if (hours >= 1 && hours <= 6) {
+            // Already AM-style; keep as-is.
+        } else if (hours >= 7 && hours <= 11) {
+            hours += 12;
+        }
     }
 
+    const period: 'AM' | 'PM' = hours >= 12 ? 'PM' : 'AM';
     const h12 = hours > 12 ? hours - 12 : (hours === 0 ? 12 : hours);
     return `${h12}:${minutes.toString().padStart(2, '0')} ${period}`;
 };
@@ -408,7 +454,7 @@ export const validateSchedule = (trips: MasterTrip[]): ValidationWarning[] => {
         // Midnight-4AM trips are late-night, not early morning
         const sorted = [...dirTrips].sort((a, b) => getOperationalSortTime(a.startTime) - getOperationalSortTime(b.startTime));
         for (let i = 1; i < sorted.length; i++) {
-            const gap = sorted[i].startTime - sorted[i - 1].endTime;
+            const gap = getOperationalSortTime(sorted[i].startTime) - getOperationalSortTime(sorted[i - 1].endTime);
             if (gap > 90) {
                 warnings.push({
                     type: 'warning',

@@ -191,11 +191,125 @@ function computeRecoveryTime(currentTrip: BlockTrip, nextTrip: BlockTrip): { sch
 
 // ─── Cascade Tracing (Pure AVL Forward Walk) ─────────────────────────
 
+interface TracedTripSummary {
+  trip: CascadeAffectedTrip | null;
+  observedTimepointCount: number;
+}
+
+function buildTracedTrip(
+  trip: BlockTrip,
+  baselineLateSeconds: number,
+  options: {
+    phase: 'same-trip' | 'later-trip';
+    scheduledRecoverySeconds: number;
+    observedRecoverySeconds?: number;
+    startAfterRouteStopIndex?: number;
+  },
+): TracedTripSummary {
+  const maxStopIdx = Math.max(...trip.records.map(r => r.routeStopIndex));
+  const timepointRecords = trip.records.filter((r) => {
+    if (!r.timePoint || r.routeStopIndex >= maxStopIdx) return false;
+    if (options.startAfterRouteStopIndex !== undefined && r.routeStopIndex <= options.startAfterRouteStopIndex) {
+      return false;
+    }
+    return true;
+  });
+
+  const timepoints: CascadeTimepointObs[] = [];
+  let lateCount = 0;
+  let affectedCount = 0;
+  let observedTimepointCount = 0;
+  let tripBackUnderThresholdStop: string | null = null;
+  let tripRecoveredAtStop: string | null = null;
+
+  for (const rec of timepointRecords) {
+    let deviationSeconds: number | null = null;
+    let rawDeviationSeconds: number | null = null;
+    let isLate = false;
+
+    if (rec.observedDepartureTime) {
+      observedTimepointCount++;
+      rawDeviationSeconds = computeObservedDeviationSeconds(rec.stopTime, rec.observedDepartureTime);
+      deviationSeconds = computeAttributedDelaySeconds(rawDeviationSeconds, baselineLateSeconds);
+
+      if ((deviationSeconds ?? 0) > 0) {
+        affectedCount++;
+      }
+
+      if ((deviationSeconds ?? 0) > OTP_THRESHOLDS.lateSeconds) {
+        isLate = true;
+        lateCount++;
+      } else if (tripBackUnderThresholdStop === null) {
+        tripBackUnderThresholdStop = rec.stopName;
+      }
+
+      if ((deviationSeconds ?? 0) === 0) {
+        tripRecoveredAtStop = rec.stopName;
+      }
+    }
+
+    timepoints.push({
+      stopName: rec.stopName,
+      stopId: rec.stopId,
+      routeStopIndex: rec.routeStopIndex,
+      scheduledDeparture: rec.stopTime,
+      observedDeparture: rec.observedDepartureTime ?? null,
+      deviationSeconds,
+      rawDeviationSeconds,
+      isLate,
+      boardings: rec.boardings,
+    });
+
+    if (tripRecoveredAtStop !== null) {
+      break;
+    }
+  }
+
+  if (observedTimepointCount === 0) {
+    return {
+      trip: null,
+      observedTimepointCount,
+    };
+  }
+
+  let tripLateSeconds = 0;
+  for (const tp of timepoints) {
+    if ((tp.deviationSeconds ?? 0) > 0) {
+      tripLateSeconds += tp.deviationSeconds;
+    }
+  }
+
+  return {
+    trip: {
+      phase: options.phase,
+      tripName: trip.tripName,
+      tripId: trip.tripId,
+      routeId: trip.routeId,
+      routeName: trip.routeName,
+      terminalDepartureTime: trip.records[0].terminalDepartureTime,
+      scheduledRecoverySeconds: options.scheduledRecoverySeconds,
+      observedRecoverySeconds: options.observedRecoverySeconds,
+      timepoints,
+      lateTimepointCount: lateCount,
+      affectedTimepointCount: affectedCount,
+      backUnderThresholdAtStop: tripBackUnderThresholdStop,
+      recoveredAtStop: tripRecoveredAtStop,
+      otpStatus: lateCount > 0 ? 'late' : 'on-time',
+      backUnderThresholdHere: tripBackUnderThresholdStop !== null,
+      recoveredHere: tripRecoveredAtStop !== null,
+      lateSeconds: tripLateSeconds,
+    },
+    observedTimepointCount,
+  };
+}
+
 function traceCascade(
   incident: DwellIncident,
   incidentTrip: BlockTrip,
   subsequentTrips: BlockTrip[],
 ): DwellCascade {
+  let sameTripImpact: CascadeAffectedTrip | null = null;
+  let sameTripObserved = false;
   const cascadedTrips: CascadeAffectedTrip[] = [];
   let chainBroken = false;
   let backUnderThresholdAtTrip: string | null = null;
@@ -215,6 +329,28 @@ function traceCascade(
   const recoveryTimeAvailableSeconds = topRecovery.scheduled;
   const observedRecoverySeconds = topRecovery.observed;
 
+  if (incidentRecord) {
+    const sameTripSummary = buildTracedTrip(incidentTrip, baselineLateSeconds, {
+      phase: 'same-trip',
+      scheduledRecoverySeconds: 0,
+      startAfterRouteStopIndex: incidentRecord.routeStopIndex,
+    });
+
+    sameTripObserved = sameTripSummary.observedTimepointCount > 0;
+    sameTripImpact = sameTripSummary.trip;
+
+    if (sameTripImpact?.backUnderThresholdHere) {
+      backUnderThresholdAtTrip = incidentTrip.tripName;
+      backUnderThresholdAtStop = sameTripImpact.backUnderThresholdAtStop ?? null;
+    }
+
+    if (sameTripImpact?.recoveredHere) {
+      recoveredAtTrip = incidentTrip.tripName;
+      recoveredAtStop = sameTripImpact.recoveredAtStop;
+      chainBroken = true;
+    }
+  }
+
   for (let i = 0; i < subsequentTrips.length; i++) {
     if (chainBroken) break;
 
@@ -222,101 +358,27 @@ function traceCascade(
     const prevTrip = i === 0 ? incidentTrip : subsequentTrips[i - 1];
     const recoveryResult = computeRecoveryTime(prevTrip, nextTrip);
 
-    // Walk every timepoint in this trip
-    const maxStopIdx = Math.max(...nextTrip.records.map(r => r.routeStopIndex));
-    const timepointRecords = nextTrip.records.filter(
-      r => r.timePoint && r.routeStopIndex < maxStopIdx,
-    );
+    const tripSummary = buildTracedTrip(nextTrip, baselineLateSeconds, {
+      phase: 'later-trip',
+      scheduledRecoverySeconds: recoveryResult.scheduled,
+      observedRecoverySeconds: recoveryResult.observed,
+    });
 
-    const timepoints: CascadeTimepointObs[] = [];
-    let lateCount = 0;
-    let affectedCount = 0;
-    let observedTimepointCount = 0;
-    let tripBackUnderThresholdStop: string | null = null;
-    let tripRecoveredAtStop: string | null = null;
-
-    for (const rec of timepointRecords) {
-      let deviationSeconds: number | null = null;
-      let rawDeviationSeconds: number | null = null;
-      let isLate = false;
-
-      if (rec.observedDepartureTime) {
-        observedTimepointCount++;
-        rawDeviationSeconds = computeObservedDeviationSeconds(rec.stopTime, rec.observedDepartureTime);
-        deviationSeconds = computeAttributedDelaySeconds(rawDeviationSeconds, baselineLateSeconds);
-
-        if ((deviationSeconds ?? 0) > 0) {
-          affectedCount++;
-        }
-
-        if ((deviationSeconds ?? 0) > OTP_THRESHOLDS.lateSeconds) {
-          isLate = true;
-          lateCount++;
-        } else if (backUnderThresholdAtTrip === null) {
-          tripBackUnderThresholdStop = rec.stopName;
-          backUnderThresholdAtTrip = nextTrip.tripName;
-          backUnderThresholdAtStop = rec.stopName;
-        }
-
-        if ((deviationSeconds ?? 0) === 0) {
-          tripRecoveredAtStop = rec.stopName;
-          recoveredAtTrip = nextTrip.tripName;
-          recoveredAtStop = rec.stopName;
-          chainBroken = true;
-        }
-      }
-      // null observedDeparture → skip (don't count, don't break chain)
-
-      timepoints.push({
-        stopName: rec.stopName,
-        stopId: rec.stopId,
-        routeStopIndex: rec.routeStopIndex,
-        scheduledDeparture: rec.stopTime,
-        observedDeparture: rec.observedDepartureTime ?? null,
-        deviationSeconds,
-        rawDeviationSeconds,
-        isLate,
-        boardings: rec.boardings,
-      });
-
-      if (chainBroken) break;
-    }
-
-    // Missing AVL on an entire downstream trip is unknown, not recovery.
-    if (observedTimepointCount === 0) {
+    if (!tripSummary.trip) {
       continue;
     }
 
-    // Sum attributable delay across all affected timepoints in the trip.
-    let tripLateSeconds = 0;
-    for (const tp of timepoints) {
-      if ((tp.deviationSeconds ?? 0) > 0) {
-        tripLateSeconds += tp.deviationSeconds;
-      }
+    cascadedTrips.push(tripSummary.trip);
+
+    if (!backUnderThresholdAtTrip && tripSummary.trip.backUnderThresholdHere) {
+      backUnderThresholdAtTrip = nextTrip.tripName;
+      backUnderThresholdAtStop = tripSummary.trip.backUnderThresholdAtStop ?? null;
     }
 
-    cascadedTrips.push({
-      tripName: nextTrip.tripName,
-      tripId: nextTrip.tripId,
-      routeId: nextTrip.routeId,
-      routeName: nextTrip.routeName,
-      terminalDepartureTime: nextTrip.records[0].terminalDepartureTime,
-      scheduledRecoverySeconds: recoveryResult.scheduled,
-      observedRecoverySeconds: recoveryResult.observed,
-      timepoints,
-      lateTimepointCount: lateCount,
-      affectedTimepointCount: affectedCount,
-      backUnderThresholdAtStop: tripBackUnderThresholdStop,
-      recoveredAtStop: tripRecoveredAtStop,
-      otpStatus: lateCount > 0 ? 'late' : 'on-time',
-      backUnderThresholdHere: tripBackUnderThresholdStop !== null,
-      recoveredHere: tripRecoveredAtStop !== null,
-      lateSeconds: tripLateSeconds,
-    });
-
-    if (affectedCount === 0 && !chainBroken) {
-      chainBroken = true;
+    if (tripSummary.trip.recoveredHere) {
       recoveredAtTrip = nextTrip.tripName;
+      recoveredAtStop = tripSummary.trip.recoveredAtStop;
+      chainBroken = true;
     }
   }
 
@@ -350,9 +412,12 @@ function traceCascade(
     observedDepartureTime: incident.observedDepartureTime,
     trackedDwellSeconds: incident.trackedDwellSeconds,
     severity: incident.severity,
+    baselineLateSeconds,
+    sameTripImpact,
+    sameTripObserved,
     cascadedTrips,
     blastRadius,
-    affectedTripCount: cascadedTrips.length,
+    affectedTripCount: cascadedTrips.filter(trip => trip.affectedTimepointCount > 0).length,
     backUnderThresholdAtTrip,
     backUnderThresholdAtStop,
     recoveredAtTrip,

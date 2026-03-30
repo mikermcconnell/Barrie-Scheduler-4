@@ -59,7 +59,7 @@ describe('buildTimelinePoints', () => {
     ];
     const points = buildTimelinePoints(trips);
     expect(points).toHaveLength(3);
-    expect(points[0]).toMatchObject({ stopName: 'A', deviationMinutes: 6, tripIndex: 0, tripName: 'Trip 1' });
+    expect(points[0]).toMatchObject({ stopName: 'A', deviationMinutes: 6, tripIndex: 0, tripName: 'Trip 1', phase: 'later-trip' });
     expect(points[1]).toMatchObject({ stopName: 'B', deviationMinutes: 5, tripIndex: 0 });
     expect(points[2]).toMatchObject({ stopName: 'C', deviationMinutes: 2, tripIndex: 1, tripName: 'Trip 2' });
   });
@@ -76,11 +76,12 @@ describe('buildTimelinePoints', () => {
 
   it('marks trip boundaries correctly', () => {
     const trips: CascadeAffectedTrip[] = [
-      makeTrip({ tripName: 'T1', timepoints: [makeTimepoint(), makeTimepoint()] }),
+      makeTrip({ tripName: 'T1', phase: 'same-trip', timepoints: [makeTimepoint(), makeTimepoint()] }),
       makeTrip({ tripName: 'T2', timepoints: [makeTimepoint()] }),
     ];
     const points = buildTimelinePoints(trips);
     expect(points[0].isTripStart).toBe(true);
+    expect(points[0].phase).toBe('same-trip');
     expect(points[1].isTripStart).toBe(false);
     expect(points[2].isTripStart).toBe(true);
   });
