@@ -1,17 +1,14 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     ArrowLeft, RefreshCw, LayoutDashboard, Clock, TrendingUp,
-    BarChart3, ExternalLink, Timer,
+    BarChart3, ExternalLink, Timer, Loader2,
 } from 'lucide-react';
 import type { PerformanceDataSummary, PerformanceTab, DayType } from '../../utils/performanceDataTypes';
-import { SystemOverviewModule } from './SystemOverviewModule';
-import { OTPModule } from './OTPModule';
-import { RidershipModule } from './RidershipModule';
-import { LoadProfileModule } from './LoadProfileModule';
 import { PerformanceFilterBar, filterDailySummaries, type TimeRange } from './PerformanceFilterBar';
-import { OperatorDwellModule } from './OperatorDwellModule';
 import { PerformanceScopeProvider } from './performanceScope';
 import { resolveFilteredScope } from '../../utils/performanceDataScope';
+import { lazyWithRetry } from '../../utils/lazyWithRetry';
+import { PerformanceImportHealthPanel } from './PerformanceImportHealthPanel';
 
 interface PerformanceWorkspaceProps {
     data: PerformanceDataSummary;
@@ -38,6 +35,36 @@ const DAY_TYPE_LABELS: Record<DayType, string> = { weekday: 'Weekday', saturday:
 
 const LOCALHOST_HOSTNAMES = new Set(['localhost', '127.0.0.1', '::1']);
 const isLocalhost = () => typeof window !== 'undefined' && LOCALHOST_HOSTNAMES.has(window.location.hostname);
+
+const SystemOverviewModule = lazyWithRetry(
+    () => import('./SystemOverviewModule').then(module => ({ default: module.SystemOverviewModule })),
+    'performance-system-overview',
+);
+const OTPModule = lazyWithRetry(
+    () => import('./OTPModule').then(module => ({ default: module.OTPModule })),
+    'performance-otp-module',
+);
+const RidershipModule = lazyWithRetry(
+    () => import('./RidershipModule').then(module => ({ default: module.RidershipModule })),
+    'performance-ridership-module',
+);
+const LoadProfileModule = lazyWithRetry(
+    () => import('./LoadProfileModule').then(module => ({ default: module.LoadProfileModule })),
+    'performance-load-profiles-module',
+);
+const OperatorDwellModule = lazyWithRetry(
+    () => import('./OperatorDwellModule').then(module => ({ default: module.OperatorDwellModule })),
+    'performance-operator-dwell-module',
+);
+
+const PerformancePanelLoading: React.FC<{ label: string }> = ({ label }) => (
+    <div className="flex min-h-[320px] items-center justify-center">
+        <div className="flex flex-col items-center gap-3 text-gray-500">
+            <Loader2 className="animate-spin text-cyan-500" size={28} />
+            <span className="text-sm font-medium">{label}</span>
+        </div>
+    </div>
+);
 
 export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data, onReimport, onBack }) => {
     const allowIncompleteTabs = import.meta.env.DEV || isLocalhost();
@@ -181,6 +208,8 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data
                 </button>
             </div>
 
+            <PerformanceImportHealthPanel data={data} />
+
             {/* Tab Bar */}
             <div className="border-b border-gray-200 bg-gray-50/50 rounded-t-lg">
                 <div ref={tabBarRef} className="flex overflow-x-auto scrollbar-hide">
@@ -251,7 +280,9 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data
                         {filteredScopeLabel}
                     </span>
                 </div>
-                {renderPanel()}
+                <Suspense fallback={<PerformancePanelLoading label="Loading panel..." />}>
+                    {renderPanel()}
+                </Suspense>
             </div>
         </div>
     );

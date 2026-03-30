@@ -12,6 +12,7 @@ import {
 import { Users, MapPin, Route, Calendar, ArrowRight } from 'lucide-react';
 import type { TransitAppDataSummary } from '../../utils/transit-app/transitAppTypes';
 import { MetricCard, ChartCard, NoData, fmt } from './AnalyticsShared';
+import { buildAppUsageTimeline, formatFullDateUtc } from './appUsageChartUtils';
 
 interface OverviewPanelProps {
     data: TransitAppDataSummary;
@@ -22,7 +23,7 @@ export const OverviewPanel: React.FC<OverviewPanelProps> = ({ data, onNavigate }
     const { routeMetrics, tripDistribution, transferPatterns, appUsage } = data;
 
     // KPI values
-    const totalUsers = appUsage.reduce((sum, d) => sum + d.users, 0);
+    const userDays = appUsage.reduce((sum, d) => sum + d.users, 0);
     const totalTrips = tripDistribution.daily.reduce((sum, d) => sum + d.count, 0);
     const routesTracked = routeMetrics.summary.length;
     const daysCovered = appUsage.length || tripDistribution.daily.length;
@@ -38,9 +39,7 @@ export const OverviewPanel: React.FC<OverviewPanelProps> = ({ data, onNavigate }
         .map(d => ({ date: d.date.slice(5), count: d.count }));
 
     // Mini sparkline data — app usage (last 30 days)
-    const usageSparkData = appUsage
-        .slice(-30)
-        .map(d => ({ date: d.date.slice(5), users: d.users }));
+    const usageSparkData = buildAppUsageTimeline(appUsage).slice(-30);
 
     // Top 5 routes table
     const top5Routes = routeMetrics.summary.slice(0, 5);
@@ -52,7 +51,13 @@ export const OverviewPanel: React.FC<OverviewPanelProps> = ({ data, onNavigate }
         <div className="space-y-6">
             {/* KPI Cards */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                <MetricCard icon={<Users size={20} />} label="Total Users" value={fmt(totalUsers)} color="cyan" />
+                <MetricCard
+                    icon={<Users size={20} />}
+                    label="User-Days"
+                    value={fmt(userDays)}
+                    color="cyan"
+                    subValue="Sum of daily user counts"
+                />
                 <MetricCard icon={<MapPin size={20} />} label="Trip Requests" value={fmt(totalTrips)} color="indigo" />
                 <MetricCard icon={<Route size={20} />} label="Routes Tracked" value={fmt(routesTracked)} color="emerald" />
                 <MetricCard icon={<Calendar size={20} />} label="Days Covered" value={fmt(daysCovered)} color="amber" />
@@ -97,9 +102,15 @@ export const OverviewPanel: React.FC<OverviewPanelProps> = ({ data, onNavigate }
                     {usageSparkData.length > 0 ? (
                         <ResponsiveContainer width="100%" height={120}>
                             <LineChart data={usageSparkData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
-                                <XAxis dataKey="date" hide />
+                                <XAxis dataKey="timestamp" type="number" domain={['dataMin', 'dataMax']} scale="time" hide />
                                 <YAxis hide />
-                                <Tooltip />
+                                <Tooltip
+                                    labelFormatter={(value: number) => {
+                                        const point = usageSparkData.find(d => d.timestamp === value);
+                                        return formatFullDateUtc(point?.date ?? '');
+                                    }}
+                                    formatter={(value: number) => [fmt(value), 'Users']}
+                                />
                                 <Line type="monotone" dataKey="users" stroke="#06b6d4" strokeWidth={2} dot={false} />
                             </LineChart>
                         </ResponsiveContainer>

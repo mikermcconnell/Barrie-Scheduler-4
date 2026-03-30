@@ -7,12 +7,58 @@ import { ChartCard } from '../Analytics/AnalyticsShared';
 import type { PerformanceDataSummary, RouteLoadProfile } from '../../utils/performanceDataTypes';
 import { DEFAULT_LOAD_CAP } from '../../utils/performanceDataTypes';
 import { getRouteColor, getRouteTextColor } from '../../utils/config/routeColors';
+import { ArrowUpDown, ChevronDown, ChevronUp } from 'lucide-react';
 
 interface LoadProfileModuleProps {
     data: PerformanceDataSummary;
 }
 
 const MIN_LOAD_PROFILE_DAYS = 5;
+type SortDir = 'asc' | 'desc';
+type StopSortKey = 'stopIndex' | 'stopName' | 'tp' | 'boardings' | 'alightings' | 'avgLoad' | 'maxLoad';
+
+function compareText(a: string, b: string): number {
+    return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+}
+
+function compareNumber(a: number, b: number): number {
+    return a - b;
+}
+
+function SortableHeader({
+    label,
+    sortKey,
+    activeKey,
+    direction,
+    onClick,
+    align = 'left',
+}: {
+    label: string;
+    sortKey: StopSortKey;
+    activeKey: StopSortKey;
+    direction: SortDir;
+    onClick: (key: StopSortKey) => void;
+    align?: 'left' | 'right' | 'center';
+}) {
+    const active = activeKey === sortKey;
+    const alignClass = align === 'right' ? 'justify-end text-right' : align === 'center' ? 'justify-center text-center' : 'justify-start text-left';
+    return (
+        <th className="py-2 px-2 font-bold text-gray-500 text-xs uppercase">
+            <button
+                type="button"
+                onClick={() => onClick(sortKey)}
+                className={`w-full inline-flex items-center gap-0.5 ${alignClass} cursor-pointer select-none hover:text-gray-700 transition-colors`}
+            >
+                <span>{label}</span>
+                {active ? (
+                    direction === 'asc' ? <ChevronUp size={11} /> : <ChevronDown size={11} />
+                ) : (
+                    <ArrowUpDown size={11} className="opacity-25" />
+                )}
+            </button>
+        </th>
+    );
+}
 
 export const LoadProfileModule: React.FC<LoadProfileModuleProps> = ({ data }) => {
     const filtered = data.dailySummaries;
@@ -128,11 +174,59 @@ export const LoadProfileModule: React.FC<LoadProfileModuleProps> = ({ data }) =>
     );
 
     const [selectedProfile, setSelectedProfile] = useState<string>(profileOptions[0]?.key ?? '');
+    const [stopSortKey, setStopSortKey] = useState<StopSortKey>('stopIndex');
+    const [stopSortDir, setStopSortDir] = useState<SortDir>('asc');
 
     const activeProfile = useMemo(
         () => mergedProfiles.find(p => `${p.routeId}__${p.direction}` === selectedProfile),
         [mergedProfiles, selectedProfile]
     );
+
+    const sortedStops = useMemo(() => {
+        if (!activeProfile) return [];
+        const rows = [...activeProfile.stops];
+        rows.sort((a, b) => {
+            const mult = stopSortDir === 'asc' ? 1 : -1;
+            let cmp = 0;
+            switch (stopSortKey) {
+                case 'stopIndex':
+                    cmp = compareNumber(a.routeStopIndex, b.routeStopIndex);
+                    break;
+                case 'stopName':
+                    cmp = compareText(a.stopName, b.stopName);
+                    break;
+                case 'tp':
+                    cmp = compareNumber(Number(a.isTimepoint), Number(b.isTimepoint));
+                    break;
+                case 'boardings':
+                    cmp = compareNumber(a.avgBoardings, b.avgBoardings);
+                    break;
+                case 'alightings':
+                    cmp = compareNumber(a.avgAlightings, b.avgAlightings);
+                    break;
+                case 'avgLoad':
+                    cmp = compareNumber(a.avgLoad, b.avgLoad);
+                    break;
+                case 'maxLoad':
+                    cmp = compareNumber(a.maxLoad, b.maxLoad);
+                    break;
+            }
+            if (cmp !== 0) return mult * cmp;
+            return compareNumber(a.routeStopIndex, b.routeStopIndex) || compareText(a.stopName, b.stopName);
+        });
+        return rows;
+    }, [activeProfile, stopSortDir, stopSortKey]);
+
+    const toggleStopSort = (key: StopSortKey) => {
+        setStopSortKey(prev => {
+            if (prev === key) {
+                setStopSortDir(dir => (dir === 'asc' ? 'desc' : 'asc'));
+                return prev;
+            }
+            setStopSortDir(key === 'stopIndex' || key === 'stopName' || key === 'tp' ? 'asc' : 'desc');
+            return key;
+        });
+    };
 
     // Update selection if it becomes invalid
     React.useEffect(() => {
@@ -409,19 +503,19 @@ export const LoadProfileModule: React.FC<LoadProfileModuleProps> = ({ data }) =>
                             <table className="w-full text-sm">
                                 <thead className="sticky top-0 bg-white">
                                     <tr className="border-b border-gray-100">
-                                        <th className="text-left py-2 px-2 font-bold text-gray-500 text-xs uppercase">#</th>
-                                        <th className="text-left py-2 px-2 font-bold text-gray-500 text-xs uppercase">Stop</th>
-                                        <th className="text-center py-2 px-2 font-bold text-gray-500 text-xs uppercase">TP</th>
-                                        <th className="text-right py-2 px-2 font-bold text-gray-500 text-xs uppercase">Board</th>
-                                        <th className="text-right py-2 px-2 font-bold text-gray-500 text-xs uppercase">Alight</th>
-                                        <th className="text-right py-2 px-2 font-bold text-gray-500 text-xs uppercase">Avg Load</th>
-                                        <th className="text-right py-2 px-2 font-bold text-gray-500 text-xs uppercase">Max Load</th>
+                                        <SortableHeader label="#" sortKey="stopIndex" activeKey={stopSortKey} direction={stopSortDir} onClick={toggleStopSort} />
+                                        <SortableHeader label="Stop" sortKey="stopName" activeKey={stopSortKey} direction={stopSortDir} onClick={toggleStopSort} />
+                                        <SortableHeader label="TP" sortKey="tp" activeKey={stopSortKey} direction={stopSortDir} onClick={toggleStopSort} align="center" />
+                                        <SortableHeader label="Board" sortKey="boardings" activeKey={stopSortKey} direction={stopSortDir} onClick={toggleStopSort} align="right" />
+                                        <SortableHeader label="Alight" sortKey="alightings" activeKey={stopSortKey} direction={stopSortDir} onClick={toggleStopSort} align="right" />
+                                        <SortableHeader label="Avg Load" sortKey="avgLoad" activeKey={stopSortKey} direction={stopSortDir} onClick={toggleStopSort} align="right" />
+                                        <SortableHeader label="Max Load" sortKey="maxLoad" activeKey={stopSortKey} direction={stopSortDir} onClick={toggleStopSort} align="right" />
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {activeProfile.stops.map((s, i) => (
-                                        <tr key={i} className="border-b border-gray-50 hover:bg-gray-50">
-                                            <td className="py-1.5 px-2 text-gray-400">{i + 1}</td>
+                                    {sortedStops.map((s) => (
+                                        <tr key={`${s.stopId}-${s.routeStopIndex}`} className="border-b border-gray-50 hover:bg-gray-50">
+                                            <td className="py-1.5 px-2 text-gray-400">{s.routeStopIndex + 1}</td>
                                             <td className="py-1.5 px-2 text-gray-700">{s.stopName}</td>
                                             <td className="py-1.5 px-2 text-center">
                                                 {s.isTimepoint && <span className="text-amber-500 text-xs font-bold">TP</span>}

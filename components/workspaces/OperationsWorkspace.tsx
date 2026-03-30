@@ -1,7 +1,6 @@
-import React, { useState, useCallback, useEffect } from 'react';
-import { ArrowRight, ArrowLeft, Clock, FileText } from 'lucide-react';
-import { PerformanceDashboard } from '../Performance/PerformanceDashboard';
-import { ReportsWorkspace as PerfReportsWorkspace } from './ReportsWorkspace';
+import React, { Suspense, useState, useCallback, useEffect } from 'react';
+import { ArrowRight, ArrowLeft, Clock, FileText, Loader2 } from 'lucide-react';
+import { lazyWithRetry } from '../../utils/lazyWithRetry';
 
 type OperationsViewMode = 'dashboard' | 'performance' | 'perf-reports';
 
@@ -10,6 +9,15 @@ const VIEW_MODE_LABELS: Record<OperationsViewMode, string> = {
     performance: 'Operations Dashboard',
     'perf-reports': 'STREETS Reports',
 };
+
+const PerformanceDashboard = lazyWithRetry(
+    () => import('../Performance/PerformanceDashboard').then(module => ({ default: module.PerformanceDashboard })),
+    'operations-performance-dashboard',
+);
+const PerfReportsWorkspace = lazyWithRetry(
+    () => import('./ReportsWorkspace').then(module => ({ default: module.ReportsWorkspace })),
+    'operations-reports-workspace',
+);
 
 function parseHashViewMode(): OperationsViewMode {
     const hash = window.location.hash.slice(1);
@@ -46,6 +54,15 @@ const DashboardCard: React.FC<DashboardCardProps> = ({ onClick, icon, title, des
         </button>
     );
 };
+
+const OperationsSubviewLoading: React.FC<{ label: string }> = ({ label }) => (
+    <div className="flex h-full items-center justify-center">
+        <div className="flex flex-col items-center gap-3 text-gray-500">
+            <Loader2 className="animate-spin text-cyan-500" size={28} />
+            <span className="text-sm font-medium">{label}</span>
+        </div>
+    </div>
+);
 
 export const OperationsWorkspace: React.FC = () => {
     const [viewMode, setViewModeState] = useState<OperationsViewMode>(parseHashViewMode);
@@ -104,13 +121,15 @@ export const OperationsWorkspace: React.FC = () => {
 
             <div className="flex-grow overflow-hidden relative bg-white rounded-3xl border-2 border-gray-100 shadow-sm">
                 <div className="absolute inset-0">
-                    {viewMode === 'performance' && (
-                        <PerformanceDashboard onClose={() => setViewMode('dashboard')} />
-                    )}
+                    <Suspense fallback={<OperationsSubviewLoading label="Loading operations view..." />}>
+                        {viewMode === 'performance' && (
+                            <PerformanceDashboard onClose={() => setViewMode('dashboard')} />
+                        )}
 
-                    {viewMode === 'perf-reports' && (
-                        <PerfReportsWorkspace onClose={() => setViewMode('dashboard')} />
-                    )}
+                        {viewMode === 'perf-reports' && (
+                            <PerfReportsWorkspace onClose={() => setViewMode('dashboard')} />
+                        )}
+                    </Suspense>
                 </div>
             </div>
         </div>

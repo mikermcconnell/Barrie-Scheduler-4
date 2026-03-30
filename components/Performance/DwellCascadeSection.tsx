@@ -1,8 +1,9 @@
-import React, { useMemo, useState } from 'react';
-import { Zap, Target, Activity, AlertTriangle, ChevronDown, ChevronRight, Shield } from 'lucide-react';
+import React, { useCallback, useMemo, useState } from 'react';
+import { Zap, Target, Activity, AlertTriangle, ArrowUpDown, ChevronDown, ChevronRight, ChevronUp, Shield } from 'lucide-react';
 import type {
     PerformanceDataSummary,
     DwellCascade,
+    CascadeAffectedTrip,
     CascadeStopImpact,
     TerminalRecoveryStats,
     DailyCascadeMetrics,
@@ -18,6 +19,14 @@ interface DwellCascadeSectionProps {
 }
 
 type CascadeImpactState = 'otp-impact' | 'delay-only' | 'absorbed';
+type SortDir = 'asc' | 'desc';
+type RouteSortCol = 'routeId' | 'routeName' | 'totalTrips' | 'cascadeCausedTrips' | 'otpPenaltyPp';
+type StopSortCol = 'stopName' | 'routeId' | 'incidentCount' | 'cascadedCount' | 'avgBlastRadius' | 'totalBlastRadius';
+type DetailSortCol = 'date' | 'block' | 'tripName' | 'stopName' | 'trackedDwellSeconds' | 'recoveryTimeAvailableSeconds' | 'blastRadius' | 'impactState';
+type TripSortCol = 'tripName' | 'routeId' | 'terminalDepartureTime' | 'lateSeconds' | 'otpStatus' | 'recoveryState';
+type TerminalSortCol = 'stopName' | 'routeId' | 'incidentCount' | 'absorbedCount' | 'avgScheduledRecoverySeconds' | 'avgExcessLateSeconds' | 'sufficientRecovery';
+
+const collator = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
 
 const CascadeBadge: React.FC<{ state: CascadeImpactState }> = ({ state }) => (
     <span className={`inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full ${
@@ -67,13 +76,74 @@ const tripRecoveredToZero = (cascade: DwellCascade, trip: DwellCascade['cascaded
 const tripBackUnderThreshold = (cascade: DwellCascade, trip: DwellCascade['cascadedTrips'][number]): boolean =>
     hasExplicitThresholdMilestone(cascade) ? !!trip.backUnderThresholdHere : !!trip.recoveredHere;
 
+function compareText(a: string, b: string): number {
+    return collator.compare(a ?? '', b ?? '');
+}
+
+function getCascadeKey(cascade: DwellCascade): string {
+    return [
+        cascade.date,
+        cascade.block,
+        cascade.routeId,
+        cascade.tripName,
+        cascade.stopId,
+        cascade.observedDepartureTime,
+    ].join('||');
+}
+
+function SortIcon({ active, dir }: { active: boolean; dir: SortDir }) {
+    if (!active) return <ArrowUpDown size={11} className="opacity-25" />;
+    return dir === 'desc'
+        ? <ChevronDown size={11} />
+        : <ChevronUp size={11} />;
+}
+
+function SortableHeader({
+    label,
+    active,
+    dir,
+    onClick,
+    right = false,
+    className = '',
+}: {
+    label: string;
+    active: boolean;
+    dir: SortDir;
+    onClick: () => void;
+    right?: boolean;
+    className?: string;
+}) {
+    return (
+        <th className={`pb-2 pr-3 font-medium ${right ? 'text-right' : ''} ${className}`}>
+            <button
+                type="button"
+                onClick={onClick}
+                className={`inline-flex items-center gap-0.5 cursor-pointer select-none hover:text-gray-700 transition-colors ${right ? 'justify-end w-full' : ''}`}
+            >
+                {label}
+                <SortIcon active={active} dir={dir} />
+            </button>
+        </th>
+    );
+}
+
 export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }) => {
-    const [expandedCascade, setExpandedCascade] = useState<number | null>(null);
+    const [expandedCascade, setExpandedCascade] = useState<string | null>(null);
     const [stopFilter, setStopFilter] = useState<string | null>(null);
     const [cascadePage, setCascadePage] = useState(1);
     const [showDetails, setShowDetails] = useState(false);
     const [selectedCascade, setSelectedCascade] = useState<DwellCascade | null>(null);
     const [incidentRouteFilter, setIncidentRouteFilter] = useState<string>('all');
+    const [routeSortCol, setRouteSortCol] = useState<RouteSortCol>('otpPenaltyPp');
+    const [routeSortDir, setRouteSortDir] = useState<SortDir>('desc');
+    const [stopSortCol, setStopSortCol] = useState<StopSortCol>('cascadedCount');
+    const [stopSortDir, setStopSortDir] = useState<SortDir>('desc');
+    const [detailSortCol, setDetailSortCol] = useState<DetailSortCol>('date');
+    const [detailSortDir, setDetailSortDir] = useState<SortDir>('desc');
+    const [tripSortCol, setTripSortCol] = useState<TripSortCol>('lateSeconds');
+    const [tripSortDir, setTripSortDir] = useState<SortDir>('desc');
+    const [terminalSortCol, setTerminalSortCol] = useState<TerminalSortCol>('sufficientRecovery');
+    const [terminalSortDir, setTerminalSortDir] = useState<SortDir>('desc');
 
     const hasCascadeData = data.dailySummaries.some(d => d.byCascade);
 
@@ -131,6 +201,33 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
         [otpImpactedCascades, data.dailySummaries],
     );
 
+    const sortedRouteRows = useMemo(() => {
+        const rows = [...routeRows];
+        rows.sort((a, b) => {
+            const mult = routeSortDir === 'asc' ? 1 : -1;
+            let cmp = 0;
+            switch (routeSortCol) {
+                case 'routeId':
+                    cmp = compareText(a.routeId, b.routeId);
+                    break;
+                case 'routeName':
+                    cmp = compareText(a.routeName, b.routeName);
+                    break;
+                case 'totalTrips':
+                    cmp = a.totalTrips - b.totalTrips;
+                    break;
+                case 'cascadeCausedTrips':
+                    cmp = a.cascadeCausedTrips - b.cascadeCausedTrips;
+                    break;
+                case 'otpPenaltyPp':
+                    cmp = a.otpPenaltyPp - b.otpPenaltyPp;
+                    break;
+            }
+            return mult * cmp;
+        });
+        return rows;
+    }, [routeRows, routeSortCol, routeSortDir]);
+
     // Unique route IDs for incident filter dropdown
     const incidentRouteIds = useMemo(() => {
         const ids = new Set(otpImpactedCascades.filter(c => c.severity === 'high').map(c => c.routeId));
@@ -154,6 +251,36 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
         );
     }, [otpImpactedCascades, incidentRouteFilter]);
 
+    const sortedStopRows = useMemo(() => {
+        const rows = [...metrics.byStop];
+        rows.sort((a, b) => {
+            const mult = stopSortDir === 'asc' ? 1 : -1;
+            let cmp = 0;
+            switch (stopSortCol) {
+                case 'stopName':
+                    cmp = compareText(a.stopName, b.stopName);
+                    break;
+                case 'routeId':
+                    cmp = compareText(a.routeId, b.routeId);
+                    break;
+                case 'incidentCount':
+                    cmp = a.incidentCount - b.incidentCount;
+                    break;
+                case 'cascadedCount':
+                    cmp = a.cascadedCount - b.cascadedCount;
+                    break;
+                case 'avgBlastRadius':
+                    cmp = a.avgBlastRadius - b.avgBlastRadius;
+                    break;
+                case 'totalBlastRadius':
+                    cmp = a.totalBlastRadius - b.totalBlastRadius;
+                    break;
+            }
+            return mult * cmp;
+        });
+        return rows;
+    }, [metrics.byStop, stopSortCol, stopSortDir]);
+
     const isMultiDay = data.dailySummaries.length > 1;
 
     // Existing detail: filter cascades by selected stop
@@ -161,12 +288,127 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
     const filteredCascades = stopFilter
         ? metrics.cascades.filter(c => `${c.stopId}||${c.stopName}||${c.routeId}` === stopFilter)
         : metrics.cascades;
+    const sortedCascades = useMemo(() => {
+        const rows = [...filteredCascades];
+        rows.sort((a, b) => {
+            const mult = detailSortDir === 'asc' ? 1 : -1;
+            let cmp = 0;
+            switch (detailSortCol) {
+                case 'date':
+                    cmp = a.date.localeCompare(b.date);
+                    break;
+                case 'block':
+                    cmp = compareText(a.block, b.block);
+                    break;
+                case 'tripName':
+                    cmp = compareText(a.tripName, b.tripName);
+                    break;
+                case 'stopName':
+                    cmp = compareText(a.stopName, b.stopName);
+                    break;
+                case 'trackedDwellSeconds':
+                    cmp = a.trackedDwellSeconds - b.trackedDwellSeconds;
+                    break;
+                case 'recoveryTimeAvailableSeconds':
+                    cmp = a.recoveryTimeAvailableSeconds - b.recoveryTimeAvailableSeconds;
+                    break;
+                case 'blastRadius':
+                    cmp = a.blastRadius - b.blastRadius;
+                    break;
+                case 'impactState':
+                    cmp = (getCascadeImpactState(a) === 'otp-impact' ? 2 : getCascadeImpactState(a) === 'delay-only' ? 1 : 0)
+                        - (getCascadeImpactState(b) === 'otp-impact' ? 2 : getCascadeImpactState(b) === 'delay-only' ? 1 : 0);
+                    break;
+            }
+            return mult * cmp;
+        });
+        return rows;
+    }, [filteredCascades, detailSortCol, detailSortDir]);
     const totalPages = Math.max(1, Math.ceil(filteredCascades.length / CASCADES_PER_PAGE));
     const currentPage = Math.min(cascadePage, totalPages);
-    const pagedCascades = filteredCascades.slice(
+    const pagedCascades = sortedCascades.slice(
         (currentPage - 1) * CASCADES_PER_PAGE,
         currentPage * CASCADES_PER_PAGE,
     );
+
+    const sortedTerminalRows = useMemo(() => {
+        const rows = [...metrics.byTerminal];
+        rows.sort((a, b) => {
+            const mult = terminalSortDir === 'asc' ? 1 : -1;
+            let cmp = 0;
+            switch (terminalSortCol) {
+                case 'stopName':
+                    cmp = compareText(a.stopName, b.stopName);
+                    break;
+                case 'routeId':
+                    cmp = compareText(a.routeId, b.routeId);
+                    break;
+                case 'incidentCount':
+                    cmp = a.incidentCount - b.incidentCount;
+                    break;
+                case 'absorbedCount':
+                    cmp = a.absorbedCount - b.absorbedCount;
+                    break;
+                case 'avgScheduledRecoverySeconds':
+                    cmp = a.avgScheduledRecoverySeconds - b.avgScheduledRecoverySeconds;
+                    break;
+                case 'avgExcessLateSeconds':
+                    cmp = a.avgExcessLateSeconds - b.avgExcessLateSeconds;
+                    break;
+                case 'sufficientRecovery':
+                    cmp = Number(a.sufficientRecovery) - Number(b.sufficientRecovery);
+                    break;
+            }
+            return mult * cmp;
+        });
+        return rows;
+    }, [metrics.byTerminal, terminalSortCol, terminalSortDir]);
+
+    const handleRouteSort = useCallback((col: RouteSortCol) => {
+        if (col === routeSortCol) {
+            setRouteSortDir(d => d === 'asc' ? 'desc' : 'asc');
+        } else {
+            setRouteSortCol(col);
+            setRouteSortDir('desc');
+        }
+    }, [routeSortCol]);
+
+    const handleStopSort = useCallback((col: StopSortCol) => {
+        if (col === stopSortCol) {
+            setStopSortDir(d => d === 'asc' ? 'desc' : 'asc');
+        } else {
+            setStopSortCol(col);
+            setStopSortDir('desc');
+        }
+    }, [stopSortCol]);
+
+    const handleDetailSort = useCallback((col: DetailSortCol) => {
+        if (col === detailSortCol) {
+            setDetailSortDir(d => d === 'asc' ? 'desc' : 'asc');
+        } else {
+            setDetailSortCol(col);
+            setDetailSortDir('desc');
+        }
+        setCascadePage(1);
+    }, [detailSortCol]);
+
+    const handleTripSort = useCallback((col: TripSortCol) => {
+        if (col === tripSortCol) {
+            setTripSortDir(d => d === 'asc' ? 'desc' : 'asc');
+        } else {
+            setTripSortCol(col);
+            setTripSortDir('desc');
+        }
+    }, [tripSortCol]);
+
+    const handleTerminalSort = useCallback((col: TerminalSortCol) => {
+        if (col === terminalSortCol) {
+            setTerminalSortDir(d => d === 'asc' ? 'desc' : 'asc');
+        } else {
+            setTerminalSortCol(col);
+            setTerminalSortDir('desc');
+        }
+    }, [terminalSortCol]);
 
     if (!hasCascadeData) {
         return (
@@ -192,7 +434,7 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
         <>
         <div className="space-y-5">
 
-            {/* ── A: Impact Attribution Banner ── */}
+            {/* ── A: Visible block carryover banner ── */}
             <div className={`flex items-start gap-3 px-4 py-4 rounded-lg border ${
                 downstreamImpactedCascades.length === 0
                     ? 'bg-emerald-50 border-emerald-200'
@@ -210,25 +452,25 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                 <div className="min-w-0">
                     {downstreamImpactedCascades.length === 0 ? (
                         <p className="text-sm font-medium text-emerald-800">
-                            All dwell incidents absorbed before affecting downstream trips.
+                            All dwell incidents were absorbed before any later-trip carryover showed up.
                         </p>
                     ) : metrics.totalBlastRadius === 0 ? (
                         <>
                             <p className="text-sm font-semibold text-amber-800">
-                                Dwell created downstream delay on{' '}
+                                Dwell created later-trip delay on{' '}
                                 <span className="font-bold">{fmt(downstreamImpactedCascades.length)}</span>
                                 {' '}incidents across{' '}
                                 <span className="font-bold">{fmt(downstreamAffectedTrips)}</span>
-                                {' '}downstream trips, but none crossed the 5-minute OTP late threshold.
+                                {' '}later trips, but none crossed the 5-minute OTP late threshold.
                             </p>
                             <p className="text-sm text-amber-700 mt-1">
-                                Recovery reduced the impact below OTP-failure levels before those trips became officially late.
+                                Recovery reduced the visible carryover below OTP-failure levels before those trips became officially late.
                             </p>
                         </>
                     ) : (
                         <>
                             <p className="text-sm font-semibold text-red-800">
-                                Dwell cascades impacted an estimated{' '}
+                                Visible block carryover affected an estimated{' '}
                                 <span className="font-bold">{fmt(metrics.totalBlastRadius)}</span>
                                 {' '}of{' '}
                                 <span className="font-bold">{fmt(otpImpact?.totalAssessed ?? 0)}</span>
@@ -253,7 +495,7 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                             {delayOnlyIncidentCount > 0 && (
                                 <p className="text-xs text-red-600 mt-1.5">
                                     {fmt(delayOnlyIncidentCount)} additional incident{delayOnlyIncidentCount === 1 ? '' : 's'}
-                                    {' '}created downstream delay that stayed below the OTP late threshold.
+                                    {' '}created later-trip delay that stayed below the OTP late threshold.
                                 </p>
                             )}
                             {worstIncident && (
@@ -261,10 +503,16 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                                     Worst: Route {worstIncident.routeId} · Block {worstIncident.block} · {worstIncident.stopName}
                                     {' '}({fmtTime(worstIncident.observedDepartureTime)})
                                     {' '}—{' '}
-                                    {fmtMin(worstIncident.trackedDwellSeconds)} min excess dwell → {worstIncident.affectedTripCount} trips affected
+                                    {fmtMin(worstIncident.trackedDwellSeconds)} min excess dwell → {worstIncident.affectedTripCount} later trips touched
                                 </p>
                             )}
                         </>
+                    )}
+                    {downstreamImpactedCascades.length > 0 && (
+                        <p className="mt-2 text-xs text-gray-600">
+                            Current view shows block carryover starting at the first observed downstream timepoint on later trips in the same block.
+                            {' '}Same-trip downstream tracing is not shown here yet.
+                        </p>
                     )}
                 </div>
             </div>
@@ -273,27 +521,27 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
             {(routeRows.length > 0 || topIncidents.length > 0) && (
                 <div className="grid grid-cols-1 lg:grid-cols-[40%_1fr] gap-4 items-start">
 
-                    {/* B: Route Attribution Table */}
-                        <ChartCard
-                            title="Route Attribution"
-                            subtitle="Unique downstream trips pushed into OTP-late status by dwell"
-                        >
+                    {/* B: Block Carryover by Route Table */}
+                    <ChartCard
+                        title="Block Carryover by Route"
+                        subtitle="Unique later trips pushed into OTP-late status by dwell carryover"
+                    >
                         {routeRows.length === 0 ? (
-                            <p className="text-sm text-gray-400 py-8 text-center">No route attribution data</p>
+                            <p className="text-sm text-gray-400 py-8 text-center">No block carryover data</p>
                         ) : (
                             <div className="overflow-x-auto">
                                 <table className="w-full text-sm">
                                     <thead>
                                         <tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wider">
-                                            <th className="pb-2 pr-3 font-medium">Route</th>
-                                            <th className="pb-2 pr-2 font-medium text-right">Trips</th>
-                                            <th className="pb-2 pr-2 font-medium text-right">OTP-Late Trips</th>
-                                            <th className="pb-2 pr-2 font-medium text-right">OTP Penalty</th>
+                                            <SortableHeader label="Route" active={routeSortCol === 'routeId'} dir={routeSortDir} onClick={() => handleRouteSort('routeId')} />
+                                            <SortableHeader label="Trips Touched" right active={routeSortCol === 'totalTrips'} dir={routeSortDir} onClick={() => handleRouteSort('totalTrips')} />
+                                            <SortableHeader label="OTP-Late Departures" right active={routeSortCol === 'cascadeCausedTrips'} dir={routeSortDir} onClick={() => handleRouteSort('cascadeCausedTrips')} />
+                                            <SortableHeader label="OTP Carryover" right active={routeSortCol === 'otpPenaltyPp'} dir={routeSortDir} onClick={() => handleRouteSort('otpPenaltyPp')} />
                                             <th className="pb-2 font-medium w-20"></th>
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {routeRows.map(row => {
+                                        {sortedRouteRows.map(row => {
                                             const maxPenalty = routeRows[0]?.otpPenaltyPp ?? 1;
                                             const barPct = maxPenalty > 0 ? (row.otpPenaltyPp / maxPenalty) * 100 : 0;
                                             return (
@@ -326,12 +574,12 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                         )}
                     </ChartCard>
 
-                    {/* C: Top Incident List */}
+                    {/* C: Top Block Carryover Incidents */}
                     <div className="space-y-2">
                         <div className="flex items-center justify-between">
                             <div>
-                                <h3 className="text-sm font-semibold text-gray-800">Top Incidents</h3>
-                                <p className="text-xs text-gray-500">High-severity events that produced OTP-late departures</p>
+                                <h3 className="text-sm font-semibold text-gray-800">Top Block Carryover Incidents</h3>
+                                <p className="text-xs text-gray-500">High-severity dwell incidents with observed later-trip carryover</p>
                             </div>
                             <select
                                 value={incidentRouteFilter}
@@ -345,7 +593,7 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                             </select>
                         </div>
                         {topIncidents.length === 0 ? (
-                            <p className="text-sm text-gray-400 py-4 text-center">No high-severity OTP impacts</p>
+                            <p className="text-sm text-gray-400 py-4 text-center">No high-severity block carryover incidents</p>
                         ) : (
                             <div className="space-y-1.5">
                                 {topIncidents.map((incident, i) => {
@@ -380,11 +628,11 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                                             {/* Metrics */}
                                             <div className="flex items-center gap-3 shrink-0 text-xs tabular-nums">
                                                 <span className="font-medium text-red-600">{fmtMin(incident.trackedDwellSeconds)}m</span>
-                                                <span title="Trips affected" className="text-gray-500">
+                                                <span title="Later trips touched" className="text-gray-500">
                                                     <span className="font-semibold text-gray-700">{incident.affectedTripCount}</span> trips
                                                 </span>
                                                 <span title="OTP-late departures" className="text-gray-500">
-                                                    <span className="font-semibold text-gray-700">{incident.blastRadius}</span> OTP late dep
+                                                    <span className="font-semibold text-gray-700">{incident.blastRadius}</span> OTP-late dep
                                                 </span>
                                             </div>
                                             {/* Recovery status */}
@@ -416,24 +664,24 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                             <MetricCard
                                 icon={<Zap size={18} />}
-                                label="Downstream Impact"
+                                label="Later Trips Touched"
                                 value={`${fmt(downstreamImpactedCascades.length)} / ${fmt(metrics.cascades.length)}`}
                                 color="red"
-                                subValue={`${fmtPct(downstreamImpactedCascades.length, metrics.cascades.length)} affected a following trip`}
+                                subValue={`${fmtPct(downstreamImpactedCascades.length, metrics.cascades.length)} showed any later-trip carryover`}
                             />
                             <MetricCard
                                 icon={<Target size={18} />}
-                                label="OTP-Impacting Incidents"
+                                label="OTP-Late Incidents"
                                 value={`${fmt(metrics.totalCascaded)} / ${fmt(metrics.cascades.length)}`}
                                 color="amber"
                                 subValue={`${fmtPct(metrics.totalCascaded, metrics.cascades.length)} crossed the 5-minute OTP threshold`}
                             />
                             <MetricCard
                                 icon={<Activity size={18} />}
-                                label="Avg Blast Radius"
+                                label="Avg OTP-Late Departures"
                                 value={metrics.avgBlastRadius.toFixed(1)}
                                 color="cyan"
-                                subValue="OTP-late departures per incident with OTP impact"
+                                subValue="OTP-late departures per incident with visible carryover"
                             />
                             <MetricCard
                                 icon={<Shield size={18} />}
@@ -441,17 +689,17 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                                 value={worstTerminal ? worstTerminal.stopName.split(' ').slice(0, 3).join(' ') : '—'}
                                 color="indigo"
                                 subValue={worstTerminal
-                                    ? `${worstTerminal.cascadedCount} cascades · ${fmtPct(worstTerminal.absorbedCount, worstTerminal.incidentCount)} absorbed`
+                                    ? `${worstTerminal.cascadedCount} carryover incidents · ${fmtPct(worstTerminal.absorbedCount, worstTerminal.incidentCount)} absorbed`
                                     : 'No terminal data'}
                             />
                         </div>
 
-                        {/* Stop Impact Ranking + Cascade Detail */}
+                        {/* Stop Carryover Ranking + Detail */}
                         <div className="grid grid-cols-1 lg:grid-cols-[35%_1fr] gap-4 items-start">
-                            {/* Stop Impact Ranking */}
+                            {/* Stop Carryover Ranking */}
                             <ChartCard
-                                title="Stop Impact Ranking"
-                                subtitle="Stops ranked by downstream OTP damage"
+                                title="Stop Carryover Ranking"
+                                subtitle="Stops ranked by later-trip carryover"
                                 headerExtra={stopFilter ? (
                                     <button
                                         onClick={() => { setStopFilter(null); setCascadePage(1); }}
@@ -468,16 +716,16 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                                         <table className="w-full text-sm">
                                             <thead className="sticky top-0 bg-white">
                                                 <tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wider">
-                                                    <th className="pb-2 pr-3 font-medium">Stop</th>
-                                                    <th className="pb-2 pr-3 font-medium">Route</th>
-                                                    <th className="pb-2 pr-2 font-medium text-right">Inc</th>
-                                                    <th className="pb-2 pr-2 font-medium text-right">Casc</th>
-                                                    <th className="pb-2 pr-2 font-medium text-right">Avg BR</th>
-                                                    <th className="pb-2 font-medium text-right">Damage</th>
+                                                    <SortableHeader label="Stop" active={stopSortCol === 'stopName'} dir={stopSortDir} onClick={() => handleStopSort('stopName')} />
+                                                    <SortableHeader label="Route" active={stopSortCol === 'routeId'} dir={stopSortDir} onClick={() => handleStopSort('routeId')} />
+                                                    <SortableHeader label="Inc" right active={stopSortCol === 'incidentCount'} dir={stopSortDir} onClick={() => handleStopSort('incidentCount')} />
+                                                    <SortableHeader label="Casc" right active={stopSortCol === 'cascadedCount'} dir={stopSortDir} onClick={() => handleStopSort('cascadedCount')} />
+                                                    <SortableHeader label="Avg BR" right active={stopSortCol === 'avgBlastRadius'} dir={stopSortDir} onClick={() => handleStopSort('avgBlastRadius')} />
+                                                    <SortableHeader label="Carryover" right active={stopSortCol === 'totalBlastRadius'} dir={stopSortDir} onClick={() => handleStopSort('totalBlastRadius')} />
                                                 </tr>
                                             </thead>
                                             <tbody>
-                                                {metrics.byStop.map((stop: CascadeStopImpact) => {
+                                                {sortedStopRows.map((stop: CascadeStopImpact) => {
                                                     const key = `${stop.stopId}||${stop.stopName}||${stop.routeId}`;
                                                     const isSelected = stopFilter === key;
                                                     return (
@@ -511,36 +759,36 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
 
                             {/* Cascade Detail */}
                             <ChartCard
-                                title="Cascade Detail"
+                                title="Block Carryover Detail"
                                 subtitle={stopFilter ? 'Filtered by stop — click row to expand' : 'All cascades — click row to expand'}
                             >
                                 {filteredCascades.length === 0 ? (
-                                    <p className="text-sm text-gray-400 py-8 text-center">No cascades to display</p>
+                                    <p className="text-sm text-gray-400 py-8 text-center">No block carryover to display</p>
                                 ) : (
                                     <div className="overflow-x-auto max-h-[460px] overflow-y-auto">
                                         <table className="w-full text-sm">
                                             <thead className="sticky top-0 bg-white">
                                                 <tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wider">
                                                     <th className="pb-2 pr-1 font-medium w-5"></th>
-                                                    <th className="pb-2 pr-3 font-medium">Date</th>
-                                                    <th className="pb-2 pr-3 font-medium">Block</th>
-                                                    <th className="pb-2 pr-3 font-medium">Trip</th>
-                                                    <th className="pb-2 pr-3 font-medium">Stop</th>
-                                                    <th className="pb-2 pr-2 font-medium text-right">Dwell</th>
-                                                    <th className="pb-2 pr-2 font-medium text-right">Recovery</th>
-                                                    <th className="pb-2 pr-2 font-medium text-right">OTP dep</th>
-                                                    <th className="pb-2 font-medium">Status</th>
+                                                    <SortableHeader label="Date" active={detailSortCol === 'date'} dir={detailSortDir} onClick={() => handleDetailSort('date')} />
+                                                    <SortableHeader label="Block" active={detailSortCol === 'block'} dir={detailSortDir} onClick={() => handleDetailSort('block')} />
+                                                    <SortableHeader label="Trip" active={detailSortCol === 'tripName'} dir={detailSortDir} onClick={() => handleDetailSort('tripName')} />
+                                                    <SortableHeader label="Stop" active={detailSortCol === 'stopName'} dir={detailSortDir} onClick={() => handleDetailSort('stopName')} />
+                                                    <SortableHeader label="Dwell" right active={detailSortCol === 'trackedDwellSeconds'} dir={detailSortDir} onClick={() => handleDetailSort('trackedDwellSeconds')} />
+                                                    <SortableHeader label="Recovery" right active={detailSortCol === 'recoveryTimeAvailableSeconds'} dir={detailSortDir} onClick={() => handleDetailSort('recoveryTimeAvailableSeconds')} />
+                                                    <SortableHeader label="OTP dep" right active={detailSortCol === 'blastRadius'} dir={detailSortDir} onClick={() => handleDetailSort('blastRadius')} />
+                                                    <SortableHeader label="Status" active={detailSortCol === 'impactState'} dir={detailSortDir} onClick={() => handleDetailSort('impactState')} />
                                                 </tr>
                                             </thead>
                                             <tbody>
-                                                {pagedCascades.map((cascade: DwellCascade, idx: number) => {
+                                                {pagedCascades.map((cascade: DwellCascade) => {
                                                     const impactState = getCascadeImpactState(cascade);
-                                                    const globalIdx = (currentPage - 1) * CASCADES_PER_PAGE + idx;
-                                                    const isExpanded = expandedCascade === globalIdx;
+                                                    const cascadeKey = getCascadeKey(cascade);
+                                                    const isExpanded = expandedCascade === cascadeKey;
                                                     return (
-                                                        <React.Fragment key={`${cascade.block}-${cascade.tripName}-${cascade.date}-${idx}`}>
+                                                        <React.Fragment key={cascadeKey}>
                                                             <tr
-                                                                onClick={() => setExpandedCascade(isExpanded ? null : globalIdx)}
+                                                                onClick={() => setExpandedCascade(isExpanded ? null : cascadeKey)}
                                                                 className={`border-b border-gray-100 cursor-pointer transition-colors ${
                                                                     isExpanded ? 'bg-gray-50' : 'hover:bg-gray-50'
                                                                 }`}
@@ -564,7 +812,7 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                                                                     {cascade.blastRadius > 0 ? (
                                                                         <span className="text-red-600">{cascade.blastRadius}</span>
                                                                     ) : (
-                                                                                <span className="text-gray-400">0</span>
+                                                                        <span className="text-gray-400">0</span>
                                                                     )}
                                                                 </td>
                                                                 <td className="py-2"><CascadeBadge state={impactState} /></td>
@@ -574,21 +822,49 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                                                                     <td colSpan={9} className="p-0">
                                                                         <div className="bg-gray-50 border-l-2 border-cyan-300 ml-5 px-4 py-2">
                                                                             <p className="text-xs text-gray-500 font-medium mb-1.5">
-                                                                                Downstream affected trips ({cascade.cascadedTrips.length})
+                                                                                Visible later trips touched ({cascade.cascadedTrips.length})
                                                                             </p>
                                                                             <table className="w-full text-xs">
                                                                                 <thead>
-                                                                                    <tr className="text-gray-400 uppercase tracking-wider">
-                                                                                        <th className="pb-1 pr-3 text-left font-medium">Trip</th>
-                                                                                        <th className="pb-1 pr-3 text-left font-medium">Route</th>
-                                                                                        <th className="pb-1 pr-3 text-left font-medium">Sched. Dep</th>
-                                                                                        <th className="pb-1 pr-2 text-right font-medium">Delay (min)</th>
-                                                                                        <th className="pb-1 pr-2 text-left font-medium">OTP</th>
-                                                                                        <th className="pb-1 font-medium">Recovery</th>
+                                                                                    <tr className="border-b border-gray-200 text-gray-400 uppercase tracking-wider">
+                                                                                        <SortableHeader label="Trip" active={tripSortCol === 'tripName'} dir={tripSortDir} onClick={() => handleTripSort('tripName')} />
+                                                                                        <SortableHeader label="Route" active={tripSortCol === 'routeId'} dir={tripSortDir} onClick={() => handleTripSort('routeId')} />
+                                                                                        <SortableHeader label="Sched. Dep" active={tripSortCol === 'terminalDepartureTime'} dir={tripSortDir} onClick={() => handleTripSort('terminalDepartureTime')} />
+                                                                                        <SortableHeader label="Delay (min)" right active={tripSortCol === 'lateSeconds'} dir={tripSortDir} onClick={() => handleTripSort('lateSeconds')} />
+                                                                                        <SortableHeader label="OTP" active={tripSortCol === 'otpStatus'} dir={tripSortDir} onClick={() => handleTripSort('otpStatus')} />
+                                                                                        <SortableHeader label="Recovery" active={tripSortCol === 'recoveryState'} dir={tripSortDir} onClick={() => handleTripSort('recoveryState')} />
                                                                                     </tr>
                                                                                 </thead>
                                                                                 <tbody>
-                                                                                    {cascade.cascadedTrips.map((ct, ctIdx) => (
+                                                                                    {[...cascade.cascadedTrips].sort((a, b) => {
+                                                                                        const mult = tripSortDir === 'asc' ? 1 : -1;
+                                                                                        let cmp = 0;
+                                                                                        switch (tripSortCol) {
+                                                                                            case 'tripName':
+                                                                                                cmp = compareText(a.tripName, b.tripName);
+                                                                                                break;
+                                                                                            case 'routeId':
+                                                                                                cmp = compareText(a.routeId, b.routeId);
+                                                                                                break;
+                                                                                            case 'terminalDepartureTime':
+                                                                                                cmp = compareText(a.terminalDepartureTime, b.terminalDepartureTime);
+                                                                                                break;
+                                                                                            case 'lateSeconds':
+                                                                                                cmp = a.lateSeconds - b.lateSeconds;
+                                                                                                break;
+                                                                                            case 'otpStatus': {
+                                                                                                const order: Record<CascadeAffectedTrip['otpStatus'], number> = { early: 0, 'on-time': 1, late: 2 };
+                                                                                                cmp = order[a.otpStatus] - order[b.otpStatus];
+                                                                                                break;
+                                                                                            }
+                                                                                            case 'recoveryState': {
+                                                                                                const state = (trip: CascadeAffectedTrip) => tripRecoveredToZero(cascade, trip) ? 2 : tripBackUnderThreshold(cascade, trip) ? 1 : 0;
+                                                                                                cmp = state(a) - state(b);
+                                                                                                break;
+                                                                                            }
+                                                                                        }
+                                                                                        return mult * cmp;
+                                                                                    }).map((ct, ctIdx) => (
                                                                                         <tr key={ctIdx} className="border-t border-gray-200">
                                                                                             <td className="py-1.5 pr-3 text-gray-700 max-w-[120px] truncate">{ct.tripName}</td>
                                                                                             <td className="py-1.5 pr-3 text-gray-500">{ct.routeId}</td>
@@ -612,11 +888,11 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                                                                                                     <span className="text-emerald-600 font-medium">Recovered to zero</span>
                                                                                                 ) : tripBackUnderThreshold(cascade, ct) ? (
                                                                                                     <span className="text-blue-600 font-medium">Back under 5 min</span>
-                                                                                                ) : (
-                                                                                                    <span className="text-red-500">Delay carried forward</span>
-                                                                                                )}
-                                                                                            </td>
-                                                                                        </tr>
+                                                                                            ) : (
+                                                                                                <span className="text-red-500">Delay carried forward</span>
+                                                                                            )}
+                                                                                        </td>
+                                                                                    </tr>
                                                                                     ))}
                                                                                 </tbody>
                                                                             </table>
@@ -665,23 +941,23 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                         {metrics.byTerminal.length > 0 && (
                             <ChartCard
                                 title="Terminal Recovery Analysis"
-                                subtitle="Does scheduled recovery keep dwell from creating OTP-late downstream impact at each turnpoint?"
+                                subtitle="Does scheduled recovery keep later-trip carryover below the OTP threshold at each turnpoint?"
                             >
                                 <div className="overflow-x-auto">
                                     <table className="w-full text-sm">
                                         <thead>
                                             <tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wider">
-                                                <th className="pb-2 pr-3 font-medium">Terminal Stop</th>
-                                                <th className="pb-2 pr-3 font-medium">Route</th>
-                                                <th className="pb-2 pr-2 font-medium text-right">Incidents</th>
-                                                <th className="pb-2 pr-2 font-medium text-right">No OTP Impact</th>
-                                                <th className="pb-2 pr-2 font-medium text-right">Avg Recovery</th>
-                                                <th className="pb-2 pr-2 font-medium text-right">Avg Attrib Delay</th>
-                                                <th className="pb-2 font-medium">Status</th>
+                                                <SortableHeader label="Terminal Stop" active={terminalSortCol === 'stopName'} dir={terminalSortDir} onClick={() => handleTerminalSort('stopName')} />
+                                                <SortableHeader label="Route" active={terminalSortCol === 'routeId'} dir={terminalSortDir} onClick={() => handleTerminalSort('routeId')} />
+                                                <SortableHeader label="Incidents" right active={terminalSortCol === 'incidentCount'} dir={terminalSortDir} onClick={() => handleTerminalSort('incidentCount')} />
+                                                <SortableHeader label="No OTP Impact" right active={terminalSortCol === 'absorbedCount'} dir={terminalSortDir} onClick={() => handleTerminalSort('absorbedCount')} />
+                                                <SortableHeader label="Avg Recovery" right active={terminalSortCol === 'avgScheduledRecoverySeconds'} dir={terminalSortDir} onClick={() => handleTerminalSort('avgScheduledRecoverySeconds')} />
+                                                <SortableHeader label="Avg Attrib Delay" right active={terminalSortCol === 'avgExcessLateSeconds'} dir={terminalSortDir} onClick={() => handleTerminalSort('avgExcessLateSeconds')} />
+                                                <SortableHeader label="Status" active={terminalSortCol === 'sufficientRecovery'} dir={terminalSortDir} onClick={() => handleTerminalSort('sufficientRecovery')} />
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            {metrics.byTerminal.map((t: TerminalRecoveryStats) => (
+                                            {sortedTerminalRows.map((t: TerminalRecoveryStats) => (
                                                 <tr key={`${t.stopId}-${t.routeId}`} className="border-b border-gray-100">
                                                     <td className="py-2 pr-3 text-gray-700 max-w-[200px] truncate" title={t.stopName}>
                                                         {t.stopName}

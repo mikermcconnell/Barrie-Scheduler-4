@@ -5,7 +5,7 @@ import { parseSTREETSCSV } from './parser';
 export { sendDailyReport, testDailyReport } from './dailyReport';
 export { optimizeSchedule } from './optimize';
 import { aggregateDailySummaries } from './aggregator';
-import { PerformanceDataSummary, PERFORMANCE_SCHEMA_VERSION } from './types';
+import { PerformanceDataSummary, PERFORMANCE_RUNTIME_LOGIC_VERSION, PERFORMANCE_SCHEMA_VERSION } from './types';
 
 admin.initializeApp();
 
@@ -17,6 +17,20 @@ const INGEST_API_KEY = defineSecret('INGEST_API_KEY');
 
 // Team ID for Barrie Transit — passed as query param or defaults to this
 const DEFAULT_TEAM_ID = 'PHICwXGlvDen0RGt7fCG';
+const MAX_RETENTION_DAYS = 380;
+const DEFAULT_REBUILD_WINDOW_DAYS = 30;
+
+interface PerformanceImportRunRecord {
+  importedAt?: admin.firestore.Timestamp | null;
+  importedBy?: string;
+  rawStoragePath?: string;
+  dateRange?: { start?: string; end?: string };
+  serviceDates?: string[];
+  recordCount?: number;
+  warningCount?: number;
+  contentLength?: number;
+  contentType?: string;
+}
 
 function parseBooleanFlag(value: unknown, fallback = false): boolean {
   if (value == null) return fallback;
@@ -28,9 +42,181 @@ function parseBooleanFlag(value: unknown, fallback = false): boolean {
   return fallback;
 }
 
+function normalizeDateString(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? normalized : null;
+}
+
+function formatDateOnly(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function addDays(date: Date, days: number): Date {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+export function resolveRebuildWindow(
+  now: Date,
+  startDateRaw?: unknown,
+  endDateRaw?: unknown,
+  daysRaw?: unknown,
+): { startDate: string; endDate: string } {
+  const normalizedEnd = normalizeDateString(endDateRaw) ?? formatDateOnly(now);
+  const normalizedStart = normalizeDateString(startDateRaw);
+
+  if (normalizedStart) {
+    return {
+      startDate: normalizedStart,
+      endDate: normalizedEnd < normalizedStart ? normalizedStart : normalizedEnd,
+    };
+  }
+
+  const parsedDays = Number.parseInt(String(daysRaw ?? DEFAULT_REBUILD_WINDOW_DAYS), 10);
+  const trailingDays = Number.isFinite(parsedDays) && parsedDays > 0
+    ? parsedDays
+    : DEFAULT_REBUILD_WINDOW_DAYS;
+  const endDate = new Date(`${normalizedEnd}T12:00:00`);
+  const startDate = addDays(endDate, -(trailingDays - 1));
+  return {
+    startDate: formatDateOnly(startDate),
+    endDate: normalizedEnd,
+  };
+}
+
+function dateRangesOverlap(
+  startA: string | null | undefined,
+  endA: string | null | undefined,
+  startB: string,
+  endB: string,
+): boolean {
+  if (!startA && !endA) return false;
+  const left = startA ?? endA!;
+  const right = endA ?? startA!;
+  return !(right < startB || left > endB);
+}
+
+function getPerformanceMetadataRef(teamId: string) {
+  return getDb().doc(`teams/${teamId}/performanceData/metadata`);
+}
+
+function getPerformanceImportsCollection(teamId: string) {
+  return getDb().collection(`teams/${teamId}/performanceImports`);
+}
+
+function buildPerformanceDataStoragePath(teamId: string, timestamp: string, suffix = '') {
+  return `teams/${teamId}/performanceData/${timestamp}${suffix}.json`;
+}
+
+function buildRawPerformanceImportStoragePath(teamId: string, timestamp: string) {
+  return `teams/${teamId}/performanceImports/raw/${timestamp}.csv`;
+}
+
+function getRetentionCutoffDateString(retentionDays = MAX_RETENTION_DAYS): string {
+  const cutoffDate = new Date();
+  cutoffDate.setDate(cutoffDate.getDate() - retentionDays);
+  return cutoffDate.toISOString().slice(0, 10);
+}
+
 function getTotalRecords(summary: PerformanceDataSummary): number {
   if (typeof summary?.metadata?.totalRecords === 'number') return summary.metadata.totalRecords;
   return (summary?.dailySummaries || []).reduce((acc, d) => acc + (d?.dataQuality?.totalRecords || 0), 0);
+}
+
+function buildPerformanceSummary(
+  dailySummaries: PerformanceDataSummary['dailySummaries'],
+  importedBy: string,
+): PerformanceDataSummary {
+  const sortedSummaries = [...dailySummaries].sort((a, b) => a.date.localeCompare(b.date));
+  const allDates = sortedSummaries.map(s => s.date);
+  const totalRecords = sortedSummaries.reduce((acc, s) => acc + (s.dataQuality?.totalRecords || 0), 0);
+
+  return {
+    dailySummaries: sortedSummaries,
+    metadata: {
+      importedAt: new Date().toISOString(),
+      importedBy,
+      dateRange: {
+        start: allDates[0],
+        end: allDates[allDates.length - 1],
+      },
+      dayCount: sortedSummaries.length,
+      totalRecords,
+      runtimeLogicVersion: PERFORMANCE_RUNTIME_LOGIC_VERSION,
+    },
+    schemaVersion: PERFORMANCE_SCHEMA_VERSION,
+  };
+}
+
+function mergeDailySummaries(
+  existingSummaries: PerformanceDataSummary['dailySummaries'],
+  replacementSummaries: PerformanceDataSummary['dailySummaries'],
+  retentionDays = MAX_RETENTION_DAYS,
+): PerformanceDataSummary['dailySummaries'] {
+  const mergedMap = new Map(existingSummaries.map(s => [s.date, s]));
+  for (const summary of replacementSummaries) {
+    mergedMap.set(summary.date, summary);
+  }
+
+  const cutoffStr = getRetentionCutoffDateString(retentionDays);
+  return Array.from(mergedMap.values())
+    .filter(s => s.date >= cutoffStr)
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+export function mergeRebuiltDailySummaries(
+  existingSummaries: PerformanceDataSummary['dailySummaries'],
+  rebuiltSummaries: PerformanceDataSummary['dailySummaries'],
+  startDate: string,
+  endDate: string,
+): PerformanceDataSummary['dailySummaries'] {
+  const rebuiltMap = new Map(rebuiltSummaries.map(summary => [summary.date, summary]));
+  const merged: PerformanceDataSummary['dailySummaries'] = [];
+  const seenDates = new Set<string>();
+
+  for (const summary of existingSummaries) {
+    if (summary.date >= startDate && summary.date <= endDate) {
+      const rebuilt = rebuiltMap.get(summary.date);
+      merged.push(rebuilt ?? summary);
+      seenDates.add(summary.date);
+    } else {
+      merged.push(summary);
+      seenDates.add(summary.date);
+    }
+  }
+
+  for (const rebuilt of rebuiltSummaries) {
+    if (rebuilt.date < startDate || rebuilt.date > endDate) continue;
+    if (seenDates.has(rebuilt.date)) continue;
+    merged.push(rebuilt);
+  }
+
+  return merged.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+async function loadExistingPerformanceSummary(teamId: string): Promise<{
+  summary: PerformanceDataSummary | null;
+  storagePath: string | null;
+}> {
+  const metadataRef = getPerformanceMetadataRef(teamId);
+  const metadataSnap = await metadataRef.get();
+
+  if (!metadataSnap.exists) {
+    return { summary: null, storagePath: null };
+  }
+
+  const meta = metadataSnap.data() || {};
+  const storagePath = typeof meta.storagePath === 'string' ? meta.storagePath : null;
+  if (!storagePath) {
+    return { summary: null, storagePath: null };
+  }
+
+  const file = getBucket().file(storagePath);
+  const [content] = await file.download();
+  const summary: PerformanceDataSummary = JSON.parse(content.toString('utf-8'));
+  return { summary, storagePath };
 }
 
 function sanitizeNumericField(obj: Record<string, unknown> | undefined, key: string, cap: number, stats: {
@@ -113,6 +299,84 @@ function sanitizeDailySummaryLoads(day: Record<string, unknown>, cap: number): {
   }
 
   return stats;
+}
+
+async function savePerformanceImportArchive(params: {
+  teamId: string;
+  runId: string;
+  csvText: string;
+  newSummaries: PerformanceDataSummary['dailySummaries'];
+  recordCount: number;
+  warningCount: number;
+  importedBy: string;
+  contentType: string;
+}): Promise<string> {
+  const rawStoragePath = buildRawPerformanceImportStoragePath(params.teamId, params.runId);
+  const serviceDates = params.newSummaries.map(summary => summary.date).sort();
+
+  await getBucket().file(rawStoragePath).save(params.csvText, {
+    contentType: params.contentType,
+    metadata: {
+      metadata: {
+        importedBy: params.importedBy,
+        serviceDates: serviceDates.join(','),
+        recordCount: String(params.recordCount),
+        warningCount: String(params.warningCount),
+      },
+    },
+  });
+
+  await getPerformanceImportsCollection(params.teamId).doc(params.runId).set({
+    importedAt: admin.firestore.FieldValue.serverTimestamp(),
+    importedBy: params.importedBy,
+    rawStoragePath,
+    dateRange: {
+      start: serviceDates[0],
+      end: serviceDates[serviceDates.length - 1],
+    },
+    serviceDates,
+    recordCount: params.recordCount,
+    warningCount: params.warningCount,
+    contentLength: Buffer.byteLength(params.csvText, 'utf8'),
+    contentType: params.contentType,
+  });
+
+  return rawStoragePath;
+}
+
+async function savePerformanceSummary(params: {
+  teamId: string;
+  summary: PerformanceDataSummary;
+  importedBy: string;
+  suffix?: string;
+  oldStoragePath?: string | null;
+  deleteOld?: boolean;
+}): Promise<string> {
+  const timestamp = Date.now().toString();
+  const storagePath = buildPerformanceDataStoragePath(params.teamId, timestamp, params.suffix ?? '');
+  const jsonStr = JSON.stringify(params.summary);
+
+  await getBucket().file(storagePath).save(jsonStr, { contentType: 'application/json' });
+
+  await getPerformanceMetadataRef(params.teamId).set({
+    importedAt: admin.firestore.FieldValue.serverTimestamp(),
+    importedBy: params.importedBy,
+    storagePath,
+    dateRange: params.summary.metadata.dateRange,
+    dayCount: params.summary.metadata.dayCount,
+    totalRecords: params.summary.metadata.totalRecords,
+    runtimeLogicVersion: params.summary.metadata.runtimeLogicVersion,
+  });
+
+  if (params.deleteOld && params.oldStoragePath && params.oldStoragePath !== storagePath) {
+    try {
+      await getBucket().file(params.oldStoragePath).delete();
+    } catch {
+      // Old file may already be gone.
+    }
+  }
+
+  return storagePath;
 }
 
 /**
@@ -200,97 +464,49 @@ export const ingestPerformanceData = onRequest(
       const newDates = newSummaries.map(s => s.date);
       console.log(`Aggregated ${newSummaries.length} day(s): ${newDates.join(', ')}`);
 
-      // --- Load existing data (to append) ---
-      const metadataRef = getDb().doc(`teams/${teamId}/performanceData/metadata`);
-      const metadataSnap = await metadataRef.get();
+      const runId = Date.now().toString();
+      const rawStoragePath = await savePerformanceImportArchive({
+        teamId,
+        runId,
+        csvText,
+        newSummaries,
+        recordCount: records.length,
+        warningCount: warnings.length,
+        importedBy: 'auto-ingest',
+        contentType: contentType.includes('json') ? 'application/json' : 'text/csv',
+      });
 
+      // --- Load existing data (to append) ---
       let existingSummaries: PerformanceDataSummary['dailySummaries'] = [];
       let oldStoragePath: string | null = null;
 
-      if (metadataSnap.exists) {
-        const meta = metadataSnap.data()!;
-        oldStoragePath = meta.storagePath || null;
-
-        if (oldStoragePath) {
-          try {
-            const file = getBucket().file(oldStoragePath);
-            const [content] = await file.download();
-            const existing: PerformanceDataSummary = JSON.parse(content.toString('utf-8'));
-            existingSummaries = existing.dailySummaries || [];
-            console.log(`Loaded ${existingSummaries.length} existing day(s)`);
-          } catch (err) {
-            console.warn('Could not load existing data, starting fresh:', err);
-          }
+      try {
+        const existing = await loadExistingPerformanceSummary(teamId);
+        existingSummaries = existing.summary?.dailySummaries || [];
+        oldStoragePath = existing.storagePath;
+        if (existingSummaries.length > 0) {
+          console.log(`Loaded ${existingSummaries.length} existing day(s)`);
         }
+      } catch (err) {
+        console.warn('Could not load existing data, starting fresh:', err);
       }
 
-      // --- Merge: replace any days that match, append new ones ---
-      const mergedMap = new Map(existingSummaries.map(s => [s.date, s]));
-      for (const summary of newSummaries) {
-        mergedMap.set(summary.date, summary); // overwrites if same date exists
-      }
-      const MAX_RETENTION_DAYS = 380;
-      const cutoffDate = new Date();
-      cutoffDate.setDate(cutoffDate.getDate() - MAX_RETENTION_DAYS);
-      const cutoffStr = cutoffDate.toISOString().slice(0, 10); // YYYY-MM-DD
-
-      const preFilterCount = mergedMap.size;
-      const mergedSummaries = Array.from(mergedMap.values())
-        .filter(s => s.date >= cutoffStr)
-        .sort((a, b) => a.date.localeCompare(b.date));
+      const mergedSummaries = mergeDailySummaries(existingSummaries, newSummaries);
+      const preFilterCount = new Set([...existingSummaries.map(s => s.date), ...newSummaries.map(s => s.date)]).size;
       const pruned = preFilterCount - mergedSummaries.length;
       if (pruned > 0) {
-        console.log(`Pruned ${pruned} days older than ${cutoffStr} (${MAX_RETENTION_DAYS}-day retention)`);
+        console.log(`Pruned ${pruned} days older than ${getRetentionCutoffDateString()} (${MAX_RETENTION_DAYS}-day retention)`);
       }
 
-      const allDates = mergedSummaries.map(s => s.date);
-      let totalRecords = 0;
-      for (const s of mergedSummaries) {
-        totalRecords += s.dataQuality.totalRecords;
-      }
-
-      const summary: PerformanceDataSummary = {
-        dailySummaries: mergedSummaries,
-        metadata: {
-          importedAt: new Date().toISOString(),
-          importedBy: 'auto-ingest',
-          dateRange: {
-            start: allDates[0],
-            end: allDates[allDates.length - 1],
-          },
-          dayCount: mergedSummaries.length,
-          totalRecords,
-        },
-        schemaVersion: PERFORMANCE_SCHEMA_VERSION,
-      };
-
-      // --- Save to Storage ---
-      const timestamp = Date.now().toString();
-      const storagePath = `teams/${teamId}/performanceData/${timestamp}.json`;
-      const jsonStr = JSON.stringify(summary);
-
-      const file = getBucket().file(storagePath);
-      await file.save(jsonStr, { contentType: 'application/json' });
-      console.log(`Saved ${(jsonStr.length / 1024 / 1024).toFixed(2)} MB to ${storagePath}`);
-
-      // --- Save metadata to Firestore ---
-      await metadataRef.set({
-        importedAt: admin.firestore.FieldValue.serverTimestamp(),
+      const summary = buildPerformanceSummary(mergedSummaries, 'auto-ingest');
+      const storagePath = await savePerformanceSummary({
+        teamId,
+        summary,
         importedBy: 'auto-ingest',
-        storagePath,
-        dateRange: summary.metadata.dateRange,
-        dayCount: summary.metadata.dayCount,
-        totalRecords: summary.metadata.totalRecords,
+        oldStoragePath,
+        deleteOld: true,
       });
-
-      // --- Clean up old storage file after metadata update succeeds ---
-      if (oldStoragePath && oldStoragePath !== storagePath) {
-        try {
-          await getBucket().file(oldStoragePath).delete();
-        } catch {
-          // Old file may already be gone
-        }
-      }
+      console.log(`Saved ${summary.dailySummaries.length} day(s) to ${storagePath}`);
 
       console.log('Ingest complete');
 
@@ -301,6 +517,7 @@ export const ingestPerformanceData = onRequest(
         totalDaysStored: mergedSummaries.length,
         recordsParsed: records.length,
         warnings,
+        rawStoragePath,
       });
     } catch (err) {
       console.error('Ingest failed:', err);
@@ -310,6 +527,169 @@ export const ingestPerformanceData = onRequest(
       });
     }
   }
+);
+
+/**
+ * rebuildPerformanceHistory
+ *
+ * Replays archived raw STREETS CSV imports for a selected date window and
+ * rewrites the stored performance summary for those dates using the current
+ * aggregation logic.
+ *
+ * Uses the same API key auth as ingestPerformanceData.
+ *
+ * Query/body options:
+ *   teamId    string   (optional, default team)
+ *   startDate string   (optional, YYYY-MM-DD)
+ *   endDate   string   (optional, YYYY-MM-DD; defaults to today)
+ *   days      number   (optional, trailing-day window when startDate not provided; default 30)
+ *   apply     boolean  (optional, default false = dry run)
+ *   deleteOld boolean  (optional, default false)
+ */
+export const rebuildPerformanceHistory = onRequest(
+  {
+    secrets: [INGEST_API_KEY],
+    memory: '1GiB',
+    timeoutSeconds: 540,
+    maxInstances: 1,
+    region: 'us-central1',
+  },
+  async (req, res) => {
+    if (req.method !== 'POST') {
+      res.status(405).json({ error: 'Method not allowed. Use POST.' });
+      return;
+    }
+
+    const apiKey = req.headers['x-api-key'] as string | undefined;
+    if (!apiKey || apiKey !== INGEST_API_KEY.value()) {
+      res.status(401).json({ error: 'Invalid or missing API key' });
+      return;
+    }
+
+    const body = (typeof req.body === 'string')
+      ? (() => {
+        try { return JSON.parse(req.body); } catch { return {}; }
+      })()
+      : (req.body || {});
+
+    const teamId = String(req.query.teamId || body.teamId || DEFAULT_TEAM_ID);
+    const { startDate, endDate } = resolveRebuildWindow(
+      new Date(),
+      req.query.startDate ?? body.startDate,
+      req.query.endDate ?? body.endDate,
+      req.query.days ?? body.days,
+    );
+    const apply = parseBooleanFlag(req.query.apply ?? body.apply, false);
+    const deleteOld = parseBooleanFlag(req.query.deleteOld ?? body.deleteOld, false);
+
+    try {
+      const runSnap = await getPerformanceImportsCollection(teamId).get();
+      const importRuns = runSnap.docs
+        .map(doc => ({ id: doc.id, ...(doc.data() as PerformanceImportRunRecord) }))
+        .filter(run => {
+          if (Array.isArray(run.serviceDates) && run.serviceDates.length > 0) {
+            return run.serviceDates.some(date => date >= startDate && date <= endDate);
+          }
+          return dateRangesOverlap(run.dateRange?.start, run.dateRange?.end, startDate, endDate);
+        })
+        .sort((a, b) => a.id.localeCompare(b.id));
+
+      if (importRuns.length === 0) {
+        res.status(404).json({
+          error: 'No archived raw performance imports matched that date window.',
+          startDate,
+          endDate,
+        });
+        return;
+      }
+
+      const rebuiltMap = new Map<string, PerformanceDataSummary['dailySummaries'][number]>();
+      const replayedRunIds: string[] = [];
+      const replayErrors: { runId: string; message: string }[] = [];
+
+      for (const run of importRuns) {
+        if (!run.rawStoragePath) {
+          replayErrors.push({ runId: run.id, message: 'Missing rawStoragePath on archived import run.' });
+          continue;
+        }
+
+        try {
+          const [content] = await getBucket().file(run.rawStoragePath).download();
+          const csvText = content.toString('utf8');
+          const parsed = parseSTREETSCSV(csvText);
+          const summaries = aggregateDailySummaries(parsed.records)
+            .filter(summary => summary.date >= startDate && summary.date <= endDate);
+
+          for (const summary of summaries) {
+            rebuiltMap.set(summary.date, summary);
+          }
+          replayedRunIds.push(run.id);
+        } catch (err) {
+          replayErrors.push({
+            runId: run.id,
+            message: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
+      const rebuiltSummaries = Array.from(rebuiltMap.values())
+        .sort((a, b) => a.date.localeCompare(b.date));
+
+      if (!apply) {
+        res.status(200).json({
+          ok: true,
+          dryRun: true,
+          startDate,
+          endDate,
+          matchingImportRuns: importRuns.length,
+          replayedImportRuns: replayedRunIds.length,
+          rebuiltDates: rebuiltSummaries.map(summary => summary.date),
+          replayErrors,
+        });
+        return;
+      }
+
+      const existing = await loadExistingPerformanceSummary(teamId);
+      if (!existing.summary) {
+        res.status(404).json({ error: `No existing performance summary found for team ${teamId}.` });
+        return;
+      }
+
+      const mergedSummaries = mergeRebuiltDailySummaries(
+        existing.summary.dailySummaries || [],
+        rebuiltSummaries,
+        startDate,
+        endDate,
+      );
+      const nextSummary = buildPerformanceSummary(mergedSummaries, 'history-rebuild');
+      const storagePath = await savePerformanceSummary({
+        teamId,
+        summary: nextSummary,
+        importedBy: 'history-rebuild',
+        suffix: '-history-rebuild',
+        oldStoragePath: existing.storagePath,
+        deleteOld,
+      });
+
+      res.status(200).json({
+        ok: true,
+        dryRun: false,
+        startDate,
+        endDate,
+        matchingImportRuns: importRuns.length,
+        replayedImportRuns: replayedRunIds.length,
+        rebuiltDates: rebuiltSummaries.map(summary => summary.date),
+        replayErrors,
+        storagePath,
+      });
+    } catch (err) {
+      console.error('Performance history rebuild failed:', err);
+      res.status(500).json({
+        error: 'Performance history rebuild failed',
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  },
 );
 
 /**

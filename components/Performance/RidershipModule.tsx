@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
     LineChart, Line, Legend,
@@ -9,6 +9,7 @@ import { StopActivityMap } from './StopActivityMap';
 import type { PerformanceDataSummary } from '../../utils/performanceDataTypes';
 import { compareDateStrings, shortDateLabel } from '../../utils/performanceDateUtils';
 import { aggregateStopActivity } from '../../utils/performanceStopActivity';
+import { ArrowUpDown, ChevronDown, ChevronUp } from 'lucide-react';
 
 interface RidershipModuleProps {
     data: PerformanceDataSummary;
@@ -21,14 +22,61 @@ const RIDERSHIP_ROUTE_GROUPS: Record<string, string> = {
     '7A': '7A/7B',
     '7B': '7A/7B',
 };
+type SortDir = 'asc' | 'desc';
+type RouteSortKey = 'routeId' | 'routeName' | 'ridership' | 'avgPerDay' | 'boardsPerServiceHour';
 
 function getRidershipRouteKey(routeId: string): string {
     const normalized = routeId.trim().toUpperCase();
     return RIDERSHIP_ROUTE_GROUPS[normalized] || routeId;
 }
 
+function compareText(a: string, b: string): number {
+    return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+}
+
+function compareNumber(a: number, b: number): number {
+    return a - b;
+}
+
+function SortableHeader({
+    label,
+    sortKey,
+    activeKey,
+    direction,
+    onClick,
+    align = 'left',
+}: {
+    label: string;
+    sortKey: RouteSortKey;
+    activeKey: RouteSortKey;
+    direction: SortDir;
+    onClick: (key: RouteSortKey) => void;
+    align?: 'left' | 'right' | 'center';
+}) {
+    const active = activeKey === sortKey;
+    const alignClass = align === 'right' ? 'justify-end text-right' : align === 'center' ? 'justify-center text-center' : 'justify-start text-left';
+    return (
+        <th className={`py-2 px-2 font-bold text-gray-500 text-xs uppercase`}>
+            <button
+                type="button"
+                onClick={() => onClick(sortKey)}
+                className={`w-full inline-flex items-center gap-0.5 ${alignClass} cursor-pointer select-none hover:text-gray-700 transition-colors`}
+            >
+                <span>{label}</span>
+                {active ? (
+                    direction === 'asc' ? <ChevronUp size={11} /> : <ChevronDown size={11} />
+                ) : (
+                    <ArrowUpDown size={11} className="opacity-25" />
+                )}
+            </button>
+        </th>
+    );
+}
+
 export const RidershipModule: React.FC<RidershipModuleProps> = ({ data }) => {
     const filtered = data.dailySummaries;
+    const [routeSortKey, setRouteSortKey] = useState<RouteSortKey>('ridership');
+    const [routeSortDir, setRouteSortDir] = useState<SortDir>('desc');
 
     // Daily ridership trend
     const dailyTrend = useMemo(() =>
@@ -47,6 +95,7 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({ data }) => {
             routeId: string;
             routeName: string;
             ridership: number;
+            serviceHours: number;
             days: number;
             sourceRouteIds: Set<string>;
         }>();
@@ -57,10 +106,12 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({ data }) => {
                     routeId: routeKey,
                     routeName: r.routeName,
                     ridership: 0,
+                    serviceHours: 0,
                     days: 0,
                     sourceRouteIds: new Set<string>(),
                 };
                 ex.ridership += r.ridership;
+                ex.serviceHours += r.serviceHours;
                 ex.days++;
                 ex.sourceRouteIds.add(r.routeId);
                 routeMap.set(routeKey, ex);
@@ -73,9 +124,51 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({ data }) => {
                     ? `Combined ${Array.from(r.sourceRouteIds).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).join(' + ')}`
                     : r.routeName,
                 avgPerDay: Math.round(r.ridership / r.days),
+                boardsPerServiceHour: r.serviceHours > 0
+                    ? Math.round((r.ridership / r.serviceHours) * 10) / 10
+                    : 0,
             }))
             .sort((a, b) => b.ridership - a.ridership);
     }, [filtered]);
+
+    const sortedRouteRanking = useMemo(() => {
+        const rows = [...routeRanking];
+        rows.sort((a, b) => {
+            const mult = routeSortDir === 'asc' ? 1 : -1;
+            let cmp = 0;
+            switch (routeSortKey) {
+                case 'routeId':
+                    cmp = compareText(a.routeId, b.routeId);
+                    break;
+                case 'routeName':
+                    cmp = compareText(a.routeName, b.routeName);
+                    break;
+                case 'ridership':
+                    cmp = compareNumber(a.ridership, b.ridership);
+                    break;
+                case 'avgPerDay':
+                    cmp = compareNumber(a.avgPerDay, b.avgPerDay);
+                    break;
+                case 'boardsPerServiceHour':
+                    cmp = compareNumber(a.boardsPerServiceHour, b.boardsPerServiceHour);
+                    break;
+            }
+            if (cmp !== 0) return mult * cmp;
+            return compareText(a.routeId, b.routeId);
+        });
+        return rows;
+    }, [routeRanking, routeSortDir, routeSortKey]);
+
+    const toggleRouteSort = (key: RouteSortKey) => {
+        setRouteSortKey(prev => {
+            if (prev === key) {
+                setRouteSortDir(dir => (dir === 'asc' ? 'desc' : 'asc'));
+                return prev;
+            }
+            setRouteSortDir(key === 'routeId' || key === 'routeName' ? 'asc' : 'desc');
+            return key;
+        });
+    };
 
     // Hourly distribution
     const hourlyDist = useMemo(() => {
@@ -155,24 +248,26 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({ data }) => {
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 {/* Route Ranking */}
-                <ChartCard title="Ridership by Route" subtitle="Total and daily average">
+                <ChartCard title="Ridership by Route" subtitle="Total, daily average, and boards per service hour">
                     <div className="overflow-x-auto">
                         <table className="w-full text-sm">
                             <thead>
                                 <tr className="border-b border-gray-100">
-                                    <th className="text-left py-2 px-2 font-bold text-gray-500 text-xs uppercase">Route</th>
-                                    <th className="text-left py-2 px-2 font-bold text-gray-500 text-xs uppercase">Name</th>
-                                    <th className="text-right py-2 px-2 font-bold text-gray-500 text-xs uppercase">Total</th>
-                                    <th className="text-right py-2 px-2 font-bold text-gray-500 text-xs uppercase">Avg/Day</th>
+                                    <SortableHeader label="Route" sortKey="routeId" activeKey={routeSortKey} direction={routeSortDir} onClick={toggleRouteSort} />
+                                    <SortableHeader label="Name" sortKey="routeName" activeKey={routeSortKey} direction={routeSortDir} onClick={toggleRouteSort} />
+                                    <SortableHeader label="Total" sortKey="ridership" activeKey={routeSortKey} direction={routeSortDir} onClick={toggleRouteSort} align="right" />
+                                    <SortableHeader label="Avg/Day" sortKey="avgPerDay" activeKey={routeSortKey} direction={routeSortDir} onClick={toggleRouteSort} align="right" />
+                                    <SortableHeader label="Boards / Service Hr" sortKey="boardsPerServiceHour" activeKey={routeSortKey} direction={routeSortDir} onClick={toggleRouteSort} align="right" />
                                 </tr>
                             </thead>
                             <tbody>
-                                {routeRanking.map((r, i) => (
+                                {sortedRouteRanking.map((r) => (
                                     <tr key={r.routeId} className="border-b border-gray-50 hover:bg-gray-50">
                                         <td className="py-1.5 px-2 font-bold text-gray-900">{r.routeId}</td>
                                         <td className="py-1.5 px-2 text-gray-500 truncate max-w-[120px]">{r.routeName}</td>
                                         <td className="py-1.5 px-2 text-right font-medium text-gray-700">{r.ridership.toLocaleString()}</td>
                                         <td className="py-1.5 px-2 text-right text-gray-500">{r.avgPerDay.toLocaleString()}</td>
+                                        <td className="py-1.5 px-2 text-right text-gray-500 tabular-nums">{r.boardsPerServiceHour.toFixed(1)}</td>
                                     </tr>
                                 ))}
                             </tbody>

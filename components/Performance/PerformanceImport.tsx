@@ -15,7 +15,10 @@ import type {
     PerformanceDataSummary,
     STREETSRecord,
 } from '../../utils/performanceDataTypes';
-import { PERFORMANCE_SCHEMA_VERSION } from '../../utils/performanceDataTypes';
+import {
+    PERFORMANCE_RUNTIME_LOGIC_VERSION,
+    PERFORMANCE_SCHEMA_VERSION,
+} from '../../utils/performanceDataTypes';
 import { compareDateStrings } from '../../utils/performanceDateUtils';
 
 interface PerformanceImportProps {
@@ -151,6 +154,7 @@ export const PerformanceImport: React.FC<PerformanceImportProps> = ({
                     dateRange: { start: dates[0], end: dates[dates.length - 1] },
                     dayCount: dailySummaries.length,
                     totalRecords: records.length,
+                    runtimeLogicVersion: PERFORMANCE_RUNTIME_LOGIC_VERSION,
                 },
                 schemaVersion: PERFORMANCE_SCHEMA_VERSION,
             };

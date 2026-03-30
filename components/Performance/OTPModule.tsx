@@ -9,6 +9,7 @@ import type { PerformanceDataSummary, RouteStopDeviationProfile } from '../../ut
 import {
     computeMissedTripsForDay, hasGtfsCoverage,
 } from '../../utils/gtfs/gtfsScheduleIndex';
+import { ArrowUpDown, ChevronDown, ChevronUp } from 'lucide-react';
 
 interface OTPModuleProps {
     data: PerformanceDataSummary;
@@ -19,6 +20,9 @@ const MIN_LATE_TRIP_DAYS = 3;
 const MIN_ADHERENCE_DAYS = 3;
 const OTP_TARGET_PERCENT = 85;
 const DAY_TYPE_LABELS = { weekday: 'Weekday', saturday: 'Saturday', sunday: 'Sunday' } as const;
+type SortDir = 'asc' | 'desc';
+type MissedSortKey = 'routeId' | 'departure' | 'headsign' | 'blockId' | 'lateByMinutes';
+type LateTripSortKey = 'routeId' | 'dayType' | 'tripName' | 'block' | 'observedDays' | 'lateDays' | 'avgDelay' | 'maxDelay' | 'lastLateDate';
 
 function parseHourOfDay(raw: string): number | null {
     const value = raw.trim();
@@ -43,8 +47,69 @@ function percentile(sorted: number[], p: number): number {
     return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
 }
 
+function compareText(a: string, b: string): number {
+    return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+}
+
+function compareNumber(a: number, b: number): number {
+    return a - b;
+}
+
+function compareOptionalNumber(a: number | undefined, b: number | undefined): number {
+    if (a == null && b == null) return 0;
+    if (a == null) return 1;
+    if (b == null) return -1;
+    return a - b;
+}
+
+function compareOptionalDate(a: string, b: string): number {
+    if (a === '—' && b === '—') return 0;
+    if (a === '—') return 1;
+    if (b === '—') return -1;
+    return a.localeCompare(b);
+}
+
+function SortableHeader({
+    label,
+    sortKey,
+    activeKey,
+    direction,
+    onClick,
+    align = 'left',
+}: {
+    label: string;
+    sortKey: string;
+    activeKey: string;
+    direction: SortDir;
+    onClick: (key: string) => void;
+    align?: 'left' | 'right' | 'center';
+}) {
+    const active = activeKey === sortKey;
+    const alignClass = align === 'right' ? 'justify-end text-right' : align === 'center' ? 'justify-center text-center' : 'justify-start text-left';
+    return (
+        <th className={`py-2 px-2 font-bold text-gray-500 text-xs uppercase`}>
+            <button
+                type="button"
+                onClick={() => onClick(sortKey)}
+                className={`w-full inline-flex items-center gap-0.5 ${alignClass} cursor-pointer select-none hover:text-gray-700 transition-colors`}
+            >
+                <span>{label}</span>
+                {active ? (
+                    direction === 'asc' ? <ChevronUp size={11} /> : <ChevronDown size={11} />
+                ) : (
+                    <ArrowUpDown size={11} className="opacity-25" />
+                )}
+            </button>
+        </th>
+    );
+}
+
 export const OTPModule: React.FC<OTPModuleProps> = ({ data }) => {
     const filtered = data.dailySummaries;
+    const [missedSortKey, setMissedSortKey] = useState<MissedSortKey>('routeId');
+    const [missedSortDir, setMissedSortDir] = useState<SortDir>('asc');
+    const [lateTripSortKey, setLateTripSortKey] = useState<LateTripSortKey>('avgDelay');
+    const [lateTripSortDir, setLateTripSortDir] = useState<SortDir>('desc');
 
     // Route × Hour heatmap data
     const heatmapData = useMemo(() => {
@@ -187,6 +252,60 @@ export const OTPModule: React.FC<OTPModuleProps> = ({ data }) => {
             .slice(0, 50);
     }, [filtered]);
 
+    const sortedLateTrips = useMemo(() => {
+        const rows = [...lateTrips];
+        rows.sort((a, b) => {
+            const mult = lateTripSortDir === 'asc' ? 1 : -1;
+            let cmp = 0;
+            switch (lateTripSortKey) {
+                case 'routeId':
+                    cmp = compareText(a.routeId, b.routeId);
+                    break;
+                case 'dayType':
+                    cmp = compareText(DAY_TYPE_LABELS[a.dayType], DAY_TYPE_LABELS[b.dayType]);
+                    break;
+                case 'tripName':
+                    cmp = compareText(a.tripName, b.tripName);
+                    break;
+                case 'block':
+                    cmp = compareText(a.block, b.block);
+                    break;
+                case 'observedDays':
+                    cmp = compareNumber(a.observedDays, b.observedDays);
+                    break;
+                case 'lateDays':
+                    cmp = compareNumber(a.lateDays, b.lateDays);
+                    break;
+                case 'avgDelay':
+                    cmp = compareNumber(a.avgDelay, b.avgDelay);
+                    break;
+                case 'maxDelay':
+                    cmp = compareNumber(a.maxDelay, b.maxDelay);
+                    break;
+                case 'lastLateDate':
+                    if (a.lastLateDate === '—' || b.lastLateDate === '—') {
+                        return compareOptionalDate(a.lastLateDate, b.lastLateDate);
+                    }
+                    cmp = compareText(a.lastLateDate, b.lastLateDate);
+                    break;
+            }
+            if (cmp !== 0) return mult * cmp;
+            return compareText(a.routeId, b.routeId) || compareText(a.tripName, b.tripName);
+        });
+        return rows;
+    }, [lateTrips, lateTripSortDir, lateTripSortKey]);
+
+    const toggleLateTripSort = (key: LateTripSortKey) => {
+        setLateTripSortKey(prev => {
+            if (prev === key) {
+                setLateTripSortDir(dir => (dir === 'asc' ? 'desc' : 'asc'));
+                return prev;
+            }
+            setLateTripSortDir(key === 'routeId' || key === 'dayType' || key === 'tripName' || key === 'block' || key === 'lastLateDate' ? 'asc' : 'desc');
+            return key;
+        });
+    };
+
     // Hourly OTP pattern
     const hourlyOTP = useMemo(() => {
         const hourMap = new Map<number, { total: number; onTime: number; early: number; late: number }>();
@@ -241,6 +360,48 @@ export const OTPModule: React.FC<OTPModuleProps> = ({ data }) => {
                 return a.departure.localeCompare(b.departure);
             });
     }, [missedTripsDay]);
+
+    const sortedMissedTrips = useMemo(() => {
+        const rows = [...missedTrips];
+        rows.sort((a, b) => {
+            const mult = missedSortDir === 'asc' ? 1 : -1;
+            let cmp = 0;
+            switch (missedSortKey) {
+                case 'routeId':
+                    cmp = compareText(a.routeId, b.routeId);
+                    break;
+                case 'departure':
+                    cmp = compareText(a.departure, b.departure);
+                    break;
+                case 'headsign':
+                    cmp = compareText(a.headsign || '—', b.headsign || '—');
+                    break;
+                case 'blockId':
+                    cmp = compareText(a.blockId || '—', b.blockId || '—');
+                    break;
+                case 'lateByMinutes':
+                    if (a.lateByMinutes == null || b.lateByMinutes == null) {
+                        return compareOptionalNumber(a.lateByMinutes, b.lateByMinutes);
+                    }
+                    cmp = compareNumber(a.lateByMinutes, b.lateByMinutes);
+                    break;
+            }
+            if (cmp !== 0) return mult * cmp;
+            return compareText(a.routeId, b.routeId) || compareText(a.departure, b.departure);
+        });
+        return rows;
+    }, [missedTrips, missedSortDir, missedSortKey]);
+
+    const toggleMissedSort = (key: MissedSortKey) => {
+        setMissedSortKey(prev => {
+            if (prev === key) {
+                setMissedSortDir(dir => (dir === 'asc' ? 'desc' : 'asc'));
+                return prev;
+            }
+            setMissedSortDir(key === 'routeId' || key === 'departure' || key === 'headsign' || key === 'blockId' ? 'asc' : 'desc');
+            return key;
+        });
+    };
 
     // ── Schedule Adherence Profile ──────────────────────────────────────
     const hasAnyRouteStopDeviationPayload = useMemo(
@@ -399,20 +560,20 @@ export const OTPModule: React.FC<OTPModuleProps> = ({ data }) => {
                         <table className="w-full text-sm">
                             <thead className="sticky top-0 bg-white">
                                 <tr className="border-b border-gray-100">
-                                    <th className="text-left py-2 px-2 font-bold text-gray-500 text-xs uppercase">Route</th>
-                                    <th className="text-left py-2 px-2 font-bold text-gray-500 text-xs uppercase">Departure</th>
-                                    <th className="text-left py-2 px-2 font-bold text-gray-500 text-xs uppercase">Headsign</th>
-                                    <th className="text-left py-2 px-2 font-bold text-gray-500 text-xs uppercase">Block</th>
-                                    <th className="text-right py-2 px-2 font-bold text-gray-500 text-xs uppercase">Late By</th>
+                                    <SortableHeader label="Route" sortKey="routeId" activeKey={missedSortKey} direction={missedSortDir} onClick={toggleMissedSort} />
+                                    <SortableHeader label="Departure" sortKey="departure" activeKey={missedSortKey} direction={missedSortDir} onClick={toggleMissedSort} />
+                                    <SortableHeader label="Headsign" sortKey="headsign" activeKey={missedSortKey} direction={missedSortDir} onClick={toggleMissedSort} />
+                                    <SortableHeader label="Block" sortKey="blockId" activeKey={missedSortKey} direction={missedSortDir} onClick={toggleMissedSort} />
+                                    <SortableHeader label="Late By" sortKey="lateByMinutes" activeKey={missedSortKey} direction={missedSortDir} onClick={toggleMissedSort} align="right" />
                                 </tr>
                             </thead>
                             <tbody>
                                 <tr className="bg-gray-50">
                                     <td colSpan={5} className="py-1.5 px-2 text-xs font-bold text-gray-700 uppercase tracking-wide">
-                                        Not performed at all ({missedTrips.filter(t => t.missType === 'not_performed').length})
+                                        Not performed at all ({sortedMissedTrips.filter(t => t.missType === 'not_performed').length})
                                     </td>
                                 </tr>
-                                {missedTrips.filter(t => t.missType === 'not_performed').map((t, i) => (
+                                {sortedMissedTrips.filter(t => t.missType === 'not_performed').map((t, i) => (
                                     <tr key={`np-${i}`} className="border-b border-gray-50 hover:bg-gray-50">
                                         <td className="py-1.5 px-2 font-bold text-gray-900">{t.routeId}</td>
                                         <td className="py-1.5 px-2 font-medium text-gray-900">{t.departure}</td>
@@ -423,10 +584,10 @@ export const OTPModule: React.FC<OTPModuleProps> = ({ data }) => {
                                 ))}
                                 <tr className="bg-amber-50">
                                     <td colSpan={5} className="py-1.5 px-2 text-xs font-bold text-amber-700 uppercase tracking-wide">
-                                        Over 15 min late ({missedTrips.filter(t => t.missType === 'late_over_15').length})
+                                        Over 15 min late ({sortedMissedTrips.filter(t => t.missType === 'late_over_15').length})
                                     </td>
                                 </tr>
-                                {missedTrips.filter(t => t.missType === 'late_over_15').map((t, i) => (
+                                {sortedMissedTrips.filter(t => t.missType === 'late_over_15').map((t, i) => (
                                     <tr key={`late-${i}`} className="border-b border-gray-50 hover:bg-gray-50">
                                         <td className="py-1.5 px-2 font-bold text-gray-900">{t.routeId}</td>
                                         <td className="py-1.5 px-2 font-medium text-gray-900">{t.departure}</td>
@@ -656,19 +817,19 @@ export const OTPModule: React.FC<OTPModuleProps> = ({ data }) => {
                         <table className="w-full text-sm">
                             <thead className="sticky top-0 bg-white">
                                 <tr className="border-b border-gray-100">
-                                    <th className="text-left py-2 px-2 font-bold text-gray-500 text-xs uppercase">Route</th>
-                                    <th className="text-left py-2 px-2 font-bold text-gray-500 text-xs uppercase">Day Type</th>
-                                    <th className="text-left py-2 px-2 font-bold text-gray-500 text-xs uppercase">Trip</th>
-                                    <th className="text-left py-2 px-2 font-bold text-gray-500 text-xs uppercase">Block</th>
-                                    <th className="text-right py-2 px-2 font-bold text-gray-500 text-xs uppercase">Observed Days</th>
-                                    <th className="text-right py-2 px-2 font-bold text-gray-500 text-xs uppercase">Late Days</th>
-                                    <th className="text-right py-2 px-2 font-bold text-gray-500 text-xs uppercase">Avg Delay</th>
-                                    <th className="text-right py-2 px-2 font-bold text-gray-500 text-xs uppercase">Max Delay</th>
-                                    <th className="text-right py-2 px-2 font-bold text-gray-500 text-xs uppercase">Last Late</th>
+                                    <SortableHeader label="Route" sortKey="routeId" activeKey={lateTripSortKey} direction={lateTripSortDir} onClick={toggleLateTripSort} />
+                                    <SortableHeader label="Day Type" sortKey="dayType" activeKey={lateTripSortKey} direction={lateTripSortDir} onClick={toggleLateTripSort} />
+                                    <SortableHeader label="Trip" sortKey="tripName" activeKey={lateTripSortKey} direction={lateTripSortDir} onClick={toggleLateTripSort} />
+                                    <SortableHeader label="Block" sortKey="block" activeKey={lateTripSortKey} direction={lateTripSortDir} onClick={toggleLateTripSort} />
+                                    <SortableHeader label="Observed Days" sortKey="observedDays" activeKey={lateTripSortKey} direction={lateTripSortDir} onClick={toggleLateTripSort} align="right" />
+                                    <SortableHeader label="Late Days" sortKey="lateDays" activeKey={lateTripSortKey} direction={lateTripSortDir} onClick={toggleLateTripSort} align="right" />
+                                    <SortableHeader label="Avg Delay" sortKey="avgDelay" activeKey={lateTripSortKey} direction={lateTripSortDir} onClick={toggleLateTripSort} align="right" />
+                                    <SortableHeader label="Max Delay" sortKey="maxDelay" activeKey={lateTripSortKey} direction={lateTripSortDir} onClick={toggleLateTripSort} align="right" />
+                                    <SortableHeader label="Last Late" sortKey="lastLateDate" activeKey={lateTripSortKey} direction={lateTripSortDir} onClick={toggleLateTripSort} align="right" />
                                 </tr>
                             </thead>
                             <tbody>
-                                {lateTrips.map((t, i) => (
+                                {sortedLateTrips.map((t, i) => (
                                     <tr key={i} className="border-b border-gray-50 hover:bg-gray-50">
                                         <td className="py-1.5 px-2 font-bold text-gray-900">{t.routeId}</td>
                                         <td className="py-1.5 px-2 text-gray-500">{DAY_TYPE_LABELS[t.dayType]}</td>

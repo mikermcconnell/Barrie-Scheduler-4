@@ -2,7 +2,7 @@ import React, { useMemo, useState, useCallback, useEffect } from 'react';
 import {
     LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts';
-import { AlertTriangle, ChevronDown, ChevronUp, Clock, Users, Timer, TrendingUp } from 'lucide-react';
+import { AlertTriangle, ArrowUpDown, ChevronDown, ChevronUp, Clock, Users, Timer, TrendingUp } from 'lucide-react';
 import type { PerformanceDataSummary, DwellIncident, OperatorDwellSummary } from '../../utils/performanceDataTypes';
 import { MetricCard, ChartCard, fmt } from '../Analytics/AnalyticsShared';
 import { aggregateDwellAcrossDays } from '../../utils/schedule/operatorDwellUtils';
@@ -26,7 +26,10 @@ const TREND_DATES_STYLE: TrendDatesStyle = 'monthDay';
 
 type SortCol = 'date' | 'routeId' | 'stopName' | 'observedArrivalTime' | 'observedDepartureTime' | 'trackedDwellSeconds' | 'severity';
 type SortDir = 'asc' | 'desc';
+type OperatorSortCol = 'operatorId' | 'moderateCount' | 'highCount' | 'totalIncidents' | 'totalTrackedDwellSeconds' | 'avgTrackedDwellSeconds' | 'incidentsPer100ServiceHours';
+type TrendSortCol = 'routeId' | 'tripName' | 'block' | 'stopName' | 'approxTime' | 'distinctDays' | 'totalIncidents' | 'avgDwellMin' | 'operators' | 'dates';
 const SEVERITY_ORDER: Record<string, number> = { moderate: 1, high: 2 };
+const collator = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
 
 const SeverityBadge: React.FC<{ severity: 'moderate' | 'high' }> = ({ severity }) => (
     <span className={`inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full ${
@@ -61,12 +64,57 @@ function formatTrendDates(dates: string[], style: TrendDatesStyle): string {
     return dates.map(d => formatTrendDate(d, style)).join(', ');
 }
 
+function compareText(a: string, b: string): number {
+    return collator.compare(a ?? '', b ?? '');
+}
+
+function SortIcon({ active, dir }: { active: boolean; dir: SortDir }) {
+    if (!active) return <ArrowUpDown size={11} className="opacity-25" />;
+    return dir === 'desc'
+        ? <ChevronDown size={11} />
+        : <ChevronUp size={11} />;
+}
+
+function SortableHeader({
+    label,
+    right = false,
+    active,
+    dir,
+    onClick,
+    title,
+}: {
+    label: string;
+    right?: boolean;
+    active: boolean;
+    dir: SortDir;
+    onClick: () => void;
+    title?: string;
+}) {
+    return (
+        <th className={`pb-2 pr-3 font-medium ${right ? 'text-right' : ''}`}>
+            <button
+                type="button"
+                onClick={onClick}
+                title={title}
+                className={`inline-flex items-center gap-0.5 cursor-pointer select-none hover:text-gray-700 transition-colors ${right ? 'justify-end w-full' : ''}`}
+            >
+                {label}
+                <SortIcon active={active} dir={dir} />
+            </button>
+        </th>
+    );
+}
+
 export const OperatorDwellModule: React.FC<OperatorDwellModuleProps> = ({ data }) => {
     const [subView, setSubView] = useState<'incidents' | 'cascade'>('incidents');
     const [selectedOperator, setSelectedOperator] = useState<string | null>(null);
     const [incidentPage, setIncidentPage] = useState(1);
     const [sortCol, setSortCol] = useState<SortCol>('trackedDwellSeconds');
     const [sortDir, setSortDir] = useState<SortDir>('desc');
+    const [operatorSortCol, setOperatorSortCol] = useState<OperatorSortCol>('totalIncidents');
+    const [operatorSortDir, setOperatorSortDir] = useState<SortDir>('desc');
+    const [trendSortCol, setTrendSortCol] = useState<TrendSortCol>('distinctDays');
+    const [trendSortDir, setTrendSortDir] = useState<SortDir>('desc');
     const [exportingExcel, setExportingExcel] = useState(false);
     const [exportingPDF, setExportingPDF] = useState(false);
 
@@ -125,8 +173,10 @@ export const OperatorDwellModule: React.FC<OperatorDwellModuleProps> = ({ data }
                 cmp = a.trackedDwellSeconds - b.trackedDwellSeconds;
             } else if (sortCol === 'severity') {
                 cmp = (SEVERITY_ORDER[a.severity] ?? 0) - (SEVERITY_ORDER[b.severity] ?? 0);
+            } else if (sortCol === 'date') {
+                cmp = compareDateStrings(a.date, b.date);
             } else {
-                cmp = a[sortCol].localeCompare(b[sortCol]);
+                cmp = compareText(a[sortCol], b[sortCol]);
             }
             return sortDir === 'desc' ? -cmp : cmp;
         });
@@ -255,8 +305,95 @@ export const OperatorDwellModule: React.FC<OperatorDwellModuleProps> = ({ data }
             });
         }
 
-        return trends.sort((a, b) => b.distinctDays - a.distinctDays || b.totalIncidents - a.totalIncidents);
-    }, [metrics.incidents]);
+        return trends.sort((a, b) => {
+            const mult = trendSortDir === 'asc' ? 1 : -1;
+            let cmp = 0;
+            switch (trendSortCol) {
+                case 'routeId':
+                    cmp = compareText(a.routeId, b.routeId);
+                    break;
+                case 'tripName':
+                    cmp = compareText(a.tripName, b.tripName);
+                    break;
+                case 'block':
+                    cmp = compareText(a.blocks.join(', '), b.blocks.join(', '));
+                    break;
+                case 'stopName':
+                    cmp = compareText(a.stopName, b.stopName);
+                    break;
+                case 'approxTime':
+                    cmp = compareText(a.approxTime, b.approxTime);
+                    break;
+                case 'distinctDays':
+                    cmp = a.distinctDays - b.distinctDays;
+                    break;
+                case 'totalIncidents':
+                    cmp = a.totalIncidents - b.totalIncidents;
+                    break;
+                case 'avgDwellMin':
+                    cmp = a.avgDwellMin - b.avgDwellMin;
+                    break;
+                case 'operators':
+                    cmp = compareText(a.operators.join(', '), b.operators.join(', '));
+                    break;
+                case 'dates':
+                    cmp = compareText(a.dates.join(', '), b.dates.join(', '));
+                    break;
+            }
+            return mult * cmp;
+        });
+    }, [metrics.incidents, trendSortCol, trendSortDir]);
+
+    const operatorSummary = useMemo(() => {
+        const rows = [...metrics.byOperator];
+        rows.sort((a, b) => {
+            const mult = operatorSortDir === 'asc' ? 1 : -1;
+            let cmp = 0;
+            switch (operatorSortCol) {
+                case 'operatorId':
+                    cmp = compareText(a.operatorId, b.operatorId);
+                    break;
+                case 'moderateCount':
+                    cmp = a.moderateCount - b.moderateCount;
+                    break;
+                case 'highCount':
+                    cmp = a.highCount - b.highCount;
+                    break;
+                case 'totalIncidents':
+                    cmp = a.totalIncidents - b.totalIncidents;
+                    break;
+                case 'totalTrackedDwellSeconds':
+                    cmp = a.totalTrackedDwellSeconds - b.totalTrackedDwellSeconds;
+                    break;
+                case 'avgTrackedDwellSeconds':
+                    cmp = a.avgTrackedDwellSeconds - b.avgTrackedDwellSeconds;
+                    break;
+                case 'incidentsPer100ServiceHours':
+                    cmp = (a.incidentsPer100ServiceHours ?? 0) - (b.incidentsPer100ServiceHours ?? 0);
+                    break;
+            }
+            return mult * cmp;
+        });
+        return rows;
+    }, [metrics.byOperator, operatorSortCol, operatorSortDir]);
+
+    const handleOperatorSort = useCallback((col: OperatorSortCol) => {
+        if (col === operatorSortCol) {
+            setOperatorSortDir(d => d === 'asc' ? 'desc' : 'asc');
+        } else {
+            setOperatorSortCol(col);
+            setOperatorSortDir('desc');
+        }
+    }, [operatorSortCol]);
+
+    const handleTrendSort = useCallback((col: TrendSortCol) => {
+        if (col === trendSortCol) {
+            setTrendSortDir(d => d === 'asc' ? 'desc' : 'asc');
+        } else {
+            setTrendSortCol(col);
+            setTrendSortDir('desc');
+        }
+    }, [trendSortCol]);
 
     return (
         <div className="space-y-5">
@@ -370,17 +507,17 @@ export const OperatorDwellModule: React.FC<OperatorDwellModuleProps> = ({ data }
                             <table className="w-full text-sm">
                                 <thead className="sticky top-0 bg-white">
                                     <tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wider">
-                                        <th className="pb-2 pr-3 font-medium">Operator</th>
-                                        <th className="pb-2 pr-3 font-medium text-right">Mod</th>
-                                        <th className="pb-2 pr-3 font-medium text-right">High</th>
-                                        <th className="pb-2 pr-3 font-medium text-right">Total</th>
-                                        <th className="pb-2 pr-3 font-medium text-right">Total (hr)</th>
-                                        <th className="pb-2 pr-3 font-medium text-right">Avg (min)</th>
-                                        <th className="pb-2 font-medium text-right" title="Incidents per 100 service hours">/100h</th>
+                                        <SortableHeader label="Operator" active={operatorSortCol === 'operatorId'} dir={operatorSortDir} onClick={() => handleOperatorSort('operatorId')} />
+                                        <SortableHeader label="Mod" right active={operatorSortCol === 'moderateCount'} dir={operatorSortDir} onClick={() => handleOperatorSort('moderateCount')} />
+                                        <SortableHeader label="High" right active={operatorSortCol === 'highCount'} dir={operatorSortDir} onClick={() => handleOperatorSort('highCount')} />
+                                        <SortableHeader label="Total" right active={operatorSortCol === 'totalIncidents'} dir={operatorSortDir} onClick={() => handleOperatorSort('totalIncidents')} />
+                                        <SortableHeader label="Total (hr)" right active={operatorSortCol === 'totalTrackedDwellSeconds'} dir={operatorSortDir} onClick={() => handleOperatorSort('totalTrackedDwellSeconds')} />
+                                        <SortableHeader label="Avg (min)" right active={operatorSortCol === 'avgTrackedDwellSeconds'} dir={operatorSortDir} onClick={() => handleOperatorSort('avgTrackedDwellSeconds')} />
+                                        <SortableHeader label="/100h" right active={operatorSortCol === 'incidentsPer100ServiceHours'} dir={operatorSortDir} onClick={() => handleOperatorSort('incidentsPer100ServiceHours')} title="Incidents per 100 service hours" />
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {metrics.byOperator.map((op: OperatorDwellSummary) => {
+                                    {operatorSummary.map((op: OperatorDwellSummary) => {
                                         const isSelected = selectedOperator === op.operatorId;
                                         return (
                                             <tr
@@ -418,29 +555,13 @@ export const OperatorDwellModule: React.FC<OperatorDwellModuleProps> = ({ data }
                             <table className="w-full text-sm">
                                 <thead className="sticky top-0 bg-white">
                                     <tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wider">
-                                        {([
-                                            { col: 'date', label: 'Date' },
-                                            { col: 'routeId', label: 'Route' },
-                                            { col: 'stopName', label: 'Stop' },
-                                            { col: 'observedArrivalTime', label: 'Arrival' },
-                                            { col: 'observedDepartureTime', label: 'Departure' },
-                                            { col: 'trackedDwellSeconds', label: 'Tracked (min)', right: true },
-                                            { col: 'severity', label: 'Severity' },
-                                        ] as { col: SortCol; label: string; right?: boolean }[]).map(({ col, label, right }) => (
-                                            <th
-                                                key={col}
-                                                onClick={() => handleSort(col)}
-                                                className={`pb-2 pr-3 font-medium cursor-pointer select-none hover:text-gray-700 transition-colors ${right ? 'text-right' : ''}`}
-                                            >
-                                                <span className="inline-flex items-center gap-0.5">
-                                                    {label}
-                                                    {sortCol === col
-                                                        ? (sortDir === 'desc' ? <ChevronDown size={11} /> : <ChevronUp size={11} />)
-                                                        : <ChevronDown size={11} className="opacity-20" />
-                                                    }
-                                                </span>
-                                            </th>
-                                        ))}
+                                        <SortableHeader label="Date" active={sortCol === 'date'} dir={sortDir} onClick={() => handleSort('date')} />
+                                        <SortableHeader label="Route" active={sortCol === 'routeId'} dir={sortDir} onClick={() => handleSort('routeId')} />
+                                        <SortableHeader label="Stop" active={sortCol === 'stopName'} dir={sortDir} onClick={() => handleSort('stopName')} />
+                                        <SortableHeader label="Arrival" active={sortCol === 'observedArrivalTime'} dir={sortDir} onClick={() => handleSort('observedArrivalTime')} />
+                                        <SortableHeader label="Departure" active={sortCol === 'observedDepartureTime'} dir={sortDir} onClick={() => handleSort('observedDepartureTime')} />
+                                        <SortableHeader label="Tracked (min)" right active={sortCol === 'trackedDwellSeconds'} dir={sortDir} onClick={() => handleSort('trackedDwellSeconds')} />
+                                        <SortableHeader label="Severity" active={sortCol === 'severity'} dir={sortDir} onClick={() => handleSort('severity')} />
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -551,17 +672,17 @@ export const OperatorDwellModule: React.FC<OperatorDwellModuleProps> = ({ data }
                     <div className="overflow-x-auto">
                         <table className="w-full text-sm">
                             <thead>
-                                <tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wider">
-                                    <th className="pb-2 pr-3 font-medium">Route</th>
-                                    <th className="pb-2 pr-3 font-medium">Trip</th>
-                                    <th className="pb-2 pr-3 font-medium">Block</th>
-                                    <th className="pb-2 pr-3 font-medium">Stop</th>
-                                    <th className="pb-2 pr-3 font-medium">~Time</th>
-                                    <th className="pb-2 pr-3 font-medium text-right">Days</th>
-                                    <th className="pb-2 pr-3 font-medium text-right">Incidents</th>
-                                    <th className="pb-2 pr-3 font-medium text-right">Avg (min)</th>
-                                    <th className="pb-2 pr-3 font-medium">Operators</th>
-                                    <th className="pb-2 font-medium">Dates</th>
+                                    <tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wider">
+                                    <SortableHeader label="Route" active={trendSortCol === 'routeId'} dir={trendSortDir} onClick={() => handleTrendSort('routeId')} />
+                                    <SortableHeader label="Trip" active={trendSortCol === 'tripName'} dir={trendSortDir} onClick={() => handleTrendSort('tripName')} />
+                                    <SortableHeader label="Block" active={trendSortCol === 'block'} dir={trendSortDir} onClick={() => handleTrendSort('block')} />
+                                    <SortableHeader label="Stop" active={trendSortCol === 'stopName'} dir={trendSortDir} onClick={() => handleTrendSort('stopName')} />
+                                    <SortableHeader label="~Time" active={trendSortCol === 'approxTime'} dir={trendSortDir} onClick={() => handleTrendSort('approxTime')} />
+                                    <SortableHeader label="Days" right active={trendSortCol === 'distinctDays'} dir={trendSortDir} onClick={() => handleTrendSort('distinctDays')} />
+                                    <SortableHeader label="Incidents" right active={trendSortCol === 'totalIncidents'} dir={trendSortDir} onClick={() => handleTrendSort('totalIncidents')} />
+                                    <SortableHeader label="Avg (min)" right active={trendSortCol === 'avgDwellMin'} dir={trendSortDir} onClick={() => handleTrendSort('avgDwellMin')} />
+                                    <SortableHeader label="Operators" active={trendSortCol === 'operators'} dir={trendSortDir} onClick={() => handleTrendSort('operators')} />
+                                    <SortableHeader label="Dates" active={trendSortCol === 'dates'} dir={trendSortDir} onClick={() => handleTrendSort('dates')} />
                                 </tr>
                             </thead>
                             <tbody>

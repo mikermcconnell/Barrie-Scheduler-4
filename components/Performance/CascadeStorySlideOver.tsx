@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
     Activity,
     ArrowRight,
+    AlertTriangle,
     CheckCircle2,
     Clock3,
     MapPin,
@@ -96,6 +97,31 @@ const MetricBlock: React.FC<{
     );
 };
 
+const PhaseSectionCard: React.FC<{
+    tone: MilestoneTone;
+    phase: string;
+    headline: string;
+    detail: string;
+    metricLabel: string;
+    metricValue: string;
+}> = ({ tone, phase, headline, detail, metricLabel, metricValue }) => {
+    const styles = toneMap[tone];
+    return (
+        <div className={`rounded-2xl border-2 p-4 ${styles.card}`}>
+            <div className="flex items-start justify-between gap-3">
+                <div>
+                    <p className="text-xs font-extrabold uppercase tracking-[0.18em] text-gray-500">{phase}</p>
+                    <p className={`mt-1 text-sm font-extrabold ${styles.text}`}>{headline}</p>
+                </div>
+                <span className={`rounded-full border px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-[0.16em] ${styles.badge}`}>
+                    {metricLabel}: {metricValue}
+                </span>
+            </div>
+            <p className="mt-2 text-sm font-semibold text-gray-600">{detail}</p>
+        </div>
+    );
+};
+
 const StoryStep: React.FC<{
     tone: MilestoneTone;
     icon: React.ReactNode;
@@ -167,15 +193,26 @@ function tripRecoveredHere(trip: CascadeAffectedTrip): boolean {
     return hasExplicitTripThresholdMilestone(trip) ? !!trip.recoveredHere : false;
 }
 
+function getMilestonePhaseBadge(cascade: DwellCascade, tripName: string | null): string | undefined {
+    if (!tripName) return undefined;
+    return tripName === cascade.tripName ? 'Same trip' : 'Later trip';
+}
+
 const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, onClose, stopLoadLookup, dailySummaries }) => {
     const [selectedTripIndex, setSelectedTripIndex] = useState<number | null>(null);
     const [selectedPointIndex, setSelectedPointIndex] = useState<number | null>(null);
     const [visible, setVisible] = useState(false);
+    const storyTrips = useMemo(
+        () => cascade.sameTripImpact ? [cascade.sameTripImpact, ...cascade.cascadedTrips] : cascade.cascadedTrips,
+        [cascade.cascadedTrips, cascade.sameTripImpact],
+    );
+    const sameTripImpact = cascade.sameTripImpact ?? null;
+    const sameTripObserved = cascade.sameTripObserved === true;
 
     const customerImpact = useMemo(() => {
         let affectedBoardings = 0;
         let lateBoardings = 0;
-        for (const trip of cascade.cascadedTrips) {
+        for (const trip of storyTrips) {
             for (const tp of trip.timepoints) {
                 const boardings = tp.boardings ?? 0;
                 if ((tp.deviationSeconds ?? 0) > 0) affectedBoardings += boardings;
@@ -184,7 +221,7 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
         }
         if (affectedBoardings === 0 && lateBoardings === 0) return null;
         return { affectedBoardings, lateBoardings };
-    }, [cascade.cascadedTrips]);
+    }, [storyTrips]);
 
     const otpImpact = useMemo(() => {
         const rows = buildCascadeLateDepartureImpactByRoute(cascade, dailySummaries);
@@ -193,17 +230,82 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
 
     const thresholdMilestone = useMemo(() => getThresholdMilestone(cascade), [cascade]);
     const fullRecoveryMilestone = useMemo(() => getFullRecoveryMilestone(cascade), [cascade]);
+    const thresholdPhaseBadge = useMemo(
+        () => getMilestonePhaseBadge(cascade, thresholdMilestone.trip),
+        [cascade, thresholdMilestone.trip],
+    );
+    const fullRecoveryPhaseBadge = useMemo(
+        () => getMilestonePhaseBadge(cascade, fullRecoveryMilestone.trip),
+        [cascade, fullRecoveryMilestone.trip],
+    );
+    const firstObservedTrip = storyTrips[0]?.tripName ?? null;
+    const firstObservedStop = storyTrips[0]?.timepoints[0]?.stopName ?? null;
+    const startsOnLaterTrip = firstObservedTrip !== null && firstObservedTrip !== cascade.tripName;
+    const sameTripLateSeconds = sameTripImpact?.lateSeconds ?? 0;
+    const sameTripOtpLateDepartures = sameTripImpact?.lateTimepointCount ?? 0;
+    const laterTripOtpLateDepartures = cascade.blastRadius;
+    const sameTripPhaseTone: MilestoneTone = sameTripImpact
+        ? sameTripImpact.recoveredHere
+            ? 'emerald'
+            : sameTripImpact.lateTimepointCount > 0
+                ? 'red'
+                : sameTripImpact.affectedTimepointCount > 0
+                    ? 'amber'
+                    : 'emerald'
+        : 'amber';
+    const sameTripPhaseHeadline = sameTripImpact
+        ? sameTripImpact.recoveredHere
+            ? 'Recovered before the incident trip ended'
+            : sameTripImpact.backUnderThresholdHere
+                ? `Back under 5 min by ${sameTripImpact.backUnderThresholdAtStop}`
+                : sameTripImpact.affectedTimepointCount > 0
+                    ? `${sameTripImpact.affectedTimepointCount} same-trip points carried delay`
+                    : 'No same-trip delay remained at the first observed point'
+        : sameTripObserved
+            ? 'Same-trip phase was observed'
+            : 'Same-trip result is unknown';
+    const sameTripPhaseDetail = sameTripImpact
+        ? sameTripImpact.lateTimepointCount > 0
+            ? `${sameTripImpact.lateTimepointCount} observed same-trip departures stayed above the OTP threshold after the dwell.`
+            : sameTripImpact.affectedTimepointCount > 0
+                ? 'The incident trip still carried dwell-attributed delay, but it stayed below the OTP-late threshold.'
+                : 'The first observed downstream same-trip point showed no remaining dwell-attributed delay.'
+        : sameTripObserved
+            ? 'Observed same-trip points were available, but no dwell-attributed carryover segment needed to be shown.'
+            : 'No observed downstream timepoint was available after the dwell stop on the incident trip.';
+    const laterTripPhaseTone: MilestoneTone = cascade.affectedTripCount > 0
+        ? 'amber'
+        : cascade.recoveredAtTrip === cascade.tripName
+            ? 'emerald'
+            : cascade.recoveryTimeAvailableSeconds === 0
+                ? 'blue'
+                : 'emerald';
+    const laterTripPhaseHeadline = cascade.affectedTripCount > 0
+        ? `${cascade.affectedTripCount} later trips still carried delay`
+        : cascade.recoveredAtTrip === cascade.tripName
+            ? 'Absorbed before later-trip carryover began'
+            : cascade.recoveryTimeAvailableSeconds === 0
+                ? 'No later trip was available in this block'
+                : 'No later-trip carryover was observed';
+    const laterTripPhaseDetail = cascade.affectedTripCount > 0
+        ? `${fmtMin(cascade.totalLateSeconds)} dwell-attributed minutes remained visible after the incident trip, including ${cascade.blastRadius} OTP-late departures.`
+        : cascade.recoveredAtTrip === cascade.tripName
+            ? 'The delay cleared on the incident trip before it could carry into the next scheduled trip.'
+            : cascade.recoveryTimeAvailableSeconds === 0
+                ? 'This incident happened on the last trip in the block, so there was no later trip to trace.'
+                : 'Later trips were observed, but none carried measurable dwell-attributed delay.';
 
     const focusTripIndex = useMemo(() => {
         if (selectedTripIndex !== null) return selectedTripIndex;
-        const recoveredIdx = cascade.cascadedTrips.findIndex(trip => tripRecoveredHere(trip));
+        if (sameTripImpact) return 0;
+        const recoveredIdx = storyTrips.findIndex(trip => tripRecoveredHere(trip));
         if (recoveredIdx >= 0) return recoveredIdx;
-        const thresholdIdx = cascade.cascadedTrips.findIndex(trip => tripBackUnderThresholdHere(trip));
+        const thresholdIdx = storyTrips.findIndex(trip => tripBackUnderThresholdHere(trip));
         if (thresholdIdx >= 0) return thresholdIdx;
-        return cascade.cascadedTrips.length > 0 ? cascade.cascadedTrips.length - 1 : null;
-    }, [cascade.cascadedTrips, selectedTripIndex]);
+        return storyTrips.length > 0 ? storyTrips.length - 1 : null;
+    }, [sameTripImpact, selectedTripIndex, storyTrips]);
 
-    const focusTrip = focusTripIndex !== null ? cascade.cascadedTrips[focusTripIndex] ?? null : null;
+    const focusTrip = focusTripIndex !== null ? storyTrips[focusTripIndex] ?? null : null;
 
     useEffect(() => {
         const frame = requestAnimationFrame(() => setVisible(true));
@@ -245,9 +347,9 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
                                     <Zap size={22} />
                                 </div>
                                 <div className="min-w-0">
-                                    <h2 className="text-2xl font-extrabold text-gray-900">Cascade Story</h2>
+                                    <h2 className="text-2xl font-extrabold text-gray-900">Dwell Incident Story</h2>
                                     <p className="text-sm font-semibold text-gray-500">
-                                        Trace where the dwell started, where the route came back under five minutes, and where it fully recovered to zero.
+                                        Follow the incident on the same trip first, then see whether it carried into later trips on the block.
                                     </p>
                                 </div>
                                 <SeverityBadge severity={cascade.severity} />
@@ -262,7 +364,23 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
                                 <span className="rounded-full border border-red-200 bg-red-50 px-3 py-1 text-red-700">
                                     +{fmtMin(cascade.trackedDwellSeconds)} min dwell
                                 </span>
+                                <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-amber-700">
+                                    {fmtMin(cascade.baselineLateSeconds ?? 0)} min pre-existing late
+                                </span>
                             </div>
+
+                            {startsOnLaterTrip ? (
+                                <div className="mt-4 flex items-start gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">
+                                    <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-500" />
+                                    <span>
+                                        Current traced path starts on a later trip in the same block
+                                        {firstObservedTrip ? ` (${firstObservedTrip}` : ''}
+                                        {firstObservedStop ? ` at ${firstObservedStop}` : ''}
+                                        {firstObservedTrip ? ')' : ''}.
+                                        {' '}This view begins at the first observed downstream timepoint available after the dwell, so the first visible point may be far from the origin stop.
+                                    </span>
+                                </div>
+                            ) : null}
                         </div>
 
                         <button
@@ -286,47 +404,108 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
                                     <StoryStep
                                         tone="red"
                                         icon={<MapPin size={18} />}
-                                        label="Started"
+                                        label="Dwell incident"
                                         badge={cascade.tripName}
                                         headline={`${cascade.stopName} at ${fmtTime(cascade.observedDepartureTime)}`}
-                                        detail={`${fmtMin(cascade.trackedDwellSeconds)} minutes of excess dwell created the cascade.`}
+                                        detail={`${fmtMin(cascade.trackedDwellSeconds)} minutes of excess dwell with ${fmtMin(cascade.baselineLateSeconds ?? 0)} minutes of pre-existing lateness entering the stop.`}
                                     />
+                                    {sameTripImpact ? (
+                                        <StoryStep
+                                            tone={sameTripPhaseTone}
+                                            icon={<Route size={18} />}
+                                            label="Same-trip impact"
+                                            badge="Same trip"
+                                            headline={sameTripImpact.recoveredHere
+                                                ? `Recovered on ${cascade.tripName} at ${sameTripImpact.recoveredAtStop}`
+                                                : sameTripImpact.backUnderThresholdHere
+                                                    ? `Same-trip delay dropped under 5 min at ${sameTripImpact.backUnderThresholdAtStop}`
+                                                    : sameTripImpact.affectedTimepointCount > 0
+                                                        ? `${sameTripImpact.affectedTimepointCount} same-trip points still carried delay`
+                                                        : 'Same-trip delay was not observed'}
+                                            detail={sameTripImpact.lateTimepointCount > 0
+                                                ? `${sameTripImpact.lateTimepointCount} same-trip departures stayed above the OTP threshold after the dwell.`
+                                                : sameTripImpact.affectedTimepointCount > 0
+                                                    ? 'The incident trip still carried dwell-attributed delay, but it stayed below the OTP-late threshold.'
+                                                    : 'The first observed downstream same-trip point showed no remaining dwell-attributed delay.'}
+                                        />
+                                    ) : !sameTripObserved ? (
+                                        <StoryStep
+                                            tone="amber"
+                                            icon={<AlertTriangle size={18} />}
+                                            label="Same-trip impact"
+                                            badge="Unknown"
+                                            headline="No same-trip observation available"
+                                            detail="There was no observed downstream timepoint after the dwell on the incident trip, so the story resumes only when later-trip observations are available."
+                                        />
+                                    ) : null}
                                     <StoryStep
-                                        tone="amber"
-                                        icon={<Route size={18} />}
-                                        label="Propagated"
-                                        headline={`${cascade.affectedTripCount} downstream trips carried delay`}
-                                        detail={`${fmtMin(cascade.totalLateSeconds)} total minutes of attributed delay across the traced chain.`}
-                                        badge={`${cascade.blastRadius} OTP-late dep`}
+                                        tone={laterTripPhaseTone}
+                                        icon={<ArrowRight size={18} />}
+                                        label="Later-trip carryover"
+                                        headline={cascade.affectedTripCount > 0
+                                            ? `${cascade.affectedTripCount} later trips touched`
+                                            : cascade.recoveredAtTrip === cascade.tripName
+                                                ? 'Absorbed before the next trip'
+                                                : cascade.recoveryTimeAvailableSeconds === 0
+                                                    ? 'No later trip in this block'
+                                                    : 'No later-trip carryover observed'}
+                                        detail={laterTripPhaseDetail}
+                                        badge={cascade.affectedTripCount > 0 ? `${cascade.blastRadius} OTP-late departures` : 'No later carryover'}
                                     />
                                     <StoryStep
                                         tone={thresholdMilestone.trip ? 'blue' : 'amber'}
                                         icon={<TrendingDown size={18} />}
                                         label="Back Under 5 Min"
+                                        badge={thresholdPhaseBadge}
                                         headline={thresholdMilestone.trip && thresholdMilestone.stop
                                             ? `${thresholdMilestone.trip} at ${thresholdMilestone.stop}`
                                             : 'Route never came back under the OTP threshold'}
                                         detail={thresholdMilestone.trip
-                                            ? 'This is the first point where the dwell-attributed delay dropped to five minutes or less.'
-                                            : 'Every observed downstream timepoint stayed above the OTP-late threshold.'}
+                                            ? 'This is the first observed point where dwell-attributed delay dropped to five minutes or less.'
+                                            : 'Every observed point in the traced story stayed above the OTP-late threshold.'}
                                     />
                                     <StoryStep
                                         tone={fullRecoveryMilestone.trip ? 'emerald' : 'amber'}
                                         icon={<CheckCircle2 size={18} />}
                                         label="Recovered To Zero"
+                                        badge={fullRecoveryPhaseBadge}
                                         headline={fullRecoveryMilestone.trip && fullRecoveryMilestone.stop
                                             ? `${fullRecoveryMilestone.trip} at ${fullRecoveryMilestone.stop}`
                                             : 'Full recovery was not observed'}
                                         detail={fullRecoveryMilestone.trip
                                             ? 'At this point, no dwell-attributed delay remained on the block.'
-                                            : 'The route still carried some dwell-attributed delay by the end of the traced chain.'}
+                                            : 'The route still carried some dwell-attributed delay by the end of the traced story.'}
                                     />
                                 </div>
                             </WorkspaceCard>
 
                             <WorkspaceCard
-                                title="Chain Of Impact"
-                                subtitle="Select a trip to inspect its share of the cascade."
+                                title="Story Sections"
+                                subtitle="Separate the incident trip remainder from any later-trip carryover."
+                            >
+                                <div className="space-y-3">
+                                    <PhaseSectionCard
+                                        tone={sameTripPhaseTone}
+                                        phase="Incident trip remainder"
+                                        headline={sameTripPhaseHeadline}
+                                        detail={sameTripPhaseDetail}
+                                        metricLabel="Observed points"
+                                        metricValue={sameTripImpact ? `${sameTripImpact.affectedTimepointCount}` : sameTripObserved ? '0' : 'Unknown'}
+                                    />
+                                    <PhaseSectionCard
+                                        tone={laterTripPhaseTone}
+                                        phase="Later block trips"
+                                        headline={laterTripPhaseHeadline}
+                                        detail={laterTripPhaseDetail}
+                                        metricLabel="Trips touched"
+                                        metricValue={`${cascade.affectedTripCount}`}
+                                    />
+                                </div>
+                            </WorkspaceCard>
+
+                            <WorkspaceCard
+                                title="Trip Story Chain"
+                                subtitle="Same-trip impact first, then later trips on the block when carryover survives."
                             >
                                 <CascadeTripChain
                                     cascade={cascade}
@@ -338,8 +517,8 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
 
                         <div className="space-y-5">
                             <WorkspaceCard
-                                title="Route Map"
-                                subtitle="Origin, threshold milestone, recovery, and downstream path on the route."
+                                title="Story Route Map"
+                                subtitle="Origin, same-trip observations, and later-trip carryover on the route."
                             >
                                 <CascadeRouteMap
                                     cascade={cascade}
@@ -350,11 +529,11 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
                             </WorkspaceCard>
 
                             <WorkspaceCard
-                                title="Delay Timeline"
-                                subtitle="Attributed delay by downstream timepoint, with threshold and zero-recovery milestones."
+                                title="Incident Delay Timeline"
+                                subtitle="Dwell-attributed delay across observed same-trip and later-trip timepoints."
                             >
                                 <CascadeTimelineChart
-                                    trips={cascade.cascadedTrips}
+                                    trips={storyTrips}
                                     routeId={cascade.routeId}
                                     selectedTripIndex={selectedTripIndex}
                                     onSelectPoint={setSelectedPointIndex}
@@ -367,55 +546,122 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
 
                         <div className="space-y-5">
                             <WorkspaceCard
-                                title="Total Route Impact"
-                                subtitle="Operational effect attributed to this dwell incident."
+                                title="Incident Summary"
+                                subtitle="What the dwell added on the incident trip and what carried beyond it."
                             >
-                                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-1">
-                                    <MetricBlock
-                                        label="Trips Touched"
-                                        value={`${cascade.affectedTripCount}`}
-                                        note="Trips that still carried some dwell-attributed delay."
-                                        tone="amber"
-                                    />
-                                    <MetricBlock
-                                        label="Attributed Delay"
-                                        value={`${fmtMin(cascade.totalLateSeconds)} min`}
-                                        note="Total dwell-attributed minutes carried across downstream timepoints."
-                                        tone="red"
-                                    />
-                                    <MetricBlock
-                                        label="OTP-Late Departures"
-                                        value={`${cascade.blastRadius}`}
-                                        note="Downstream timepoints pushed beyond the 5-minute OTP threshold."
-                                        tone={cascade.blastRadius > 0 ? 'red' : 'blue'}
-                                    />
-                                    <MetricBlock
-                                        label="Recovery Window"
-                                        value={`${fmtMin(cascade.recoveryTimeAvailableSeconds)} min`}
-                                        note={cascade.observedRecoverySeconds !== undefined
-                                            ? `${fmtMin(cascade.observedRecoverySeconds)} minutes observed between the incident trip and the next trip.`
-                                            : 'Scheduled recovery between the incident trip and the next trip.'}
-                                        tone="blue"
-                                    />
+                                <div className="space-y-4">
+                                    <div>
+                                        <div className="mb-3 flex items-center gap-2">
+                                            <span className="rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-[10px] font-extrabold uppercase tracking-[0.18em] text-brand-blue">
+                                                Same trip
+                                            </span>
+                                            <p className="text-xs font-extrabold uppercase tracking-[0.18em] text-gray-400">Incident trip remainder</p>
+                                        </div>
+                                        <MetricBlock
+                                            label="Same-Trip Delay Carried"
+                                            value={sameTripImpact ? `${fmtMin(sameTripLateSeconds)} min` : 'Unknown'}
+                                            note={sameTripImpact
+                                                ? sameTripImpact.recoveredHere
+                                                    ? 'The incident trip recovered before it ended.'
+                                                    : 'Observed delay carried on the remainder of the incident trip.'
+                                                : 'No downstream same-trip observation was available after the dwell stop.'}
+                                            tone={sameTripPhaseTone}
+                                        />
+                                        <div className="mt-3">
+                                            <MetricBlock
+                                                label="Same-Trip OTP-Late Departures"
+                                                value={`${sameTripOtpLateDepartures}`}
+                                                note="Observed departures on the incident trip remainder that stayed above the 5-minute OTP threshold."
+                                                tone={sameTripOtpLateDepartures > 0 ? 'red' : 'blue'}
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div>
+                                        <div className="mb-3 flex items-center gap-2">
+                                            <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[10px] font-extrabold uppercase tracking-[0.18em] text-amber-700">
+                                                Later trips
+                                            </span>
+                                            <p className="text-xs font-extrabold uppercase tracking-[0.18em] text-gray-400">Carryover beyond the incident trip</p>
+                                        </div>
+                                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-1">
+                                            <MetricBlock
+                                                label="Later Trips Touched"
+                                                value={`${cascade.affectedTripCount}`}
+                                                note="Later trips that still carried any dwell-attributed delay."
+                                                tone={cascade.affectedTripCount > 0 ? 'amber' : 'emerald'}
+                                            />
+                                            <MetricBlock
+                                                label="Later-Trip OTP-Late Departures"
+                                                value={`${laterTripOtpLateDepartures}`}
+                                                note="Observed later-trip departures that still stayed above the 5-minute OTP threshold."
+                                                tone={laterTripOtpLateDepartures > 0 ? 'red' : 'blue'}
+                                            />
+                                            <MetricBlock
+                                                label="Recovery Window"
+                                                value={`${fmtMin(cascade.recoveryTimeAvailableSeconds)} min`}
+                                                note={cascade.observedRecoverySeconds !== undefined
+                                                    ? `${fmtMin(cascade.observedRecoverySeconds)} minutes observed between the incident trip and the next trip.`
+                                                    : 'Scheduled recovery between the incident trip and the next trip.'}
+                                                tone="blue"
+                                            />
+                                        </div>
+                                        <div className="mt-3 grid grid-cols-1 gap-3">
+                                            <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4">
+                                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                                    <div>
+                                                        <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-brand-blue">First back under 5 min</p>
+                                                        <p className="mt-1 text-sm font-extrabold text-blue-900">
+                                                            {thresholdMilestone.trip && thresholdMilestone.stop
+                                                                ? `${thresholdMilestone.trip} at ${thresholdMilestone.stop}`
+                                                                : 'Not observed'}
+                                                        </p>
+                                                    </div>
+                                                    {thresholdPhaseBadge ? (
+                                                        <span className="rounded-full border border-blue-200 bg-white px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-[0.16em] text-brand-blue">
+                                                            {thresholdPhaseBadge}
+                                                        </span>
+                                                    ) : null}
+                                                </div>
+                                            </div>
+                                            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+                                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                                    <div>
+                                                        <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-emerald-700">Recovered to zero</p>
+                                                        <p className="mt-1 text-sm font-extrabold text-emerald-900">
+                                                            {fullRecoveryMilestone.trip && fullRecoveryMilestone.stop
+                                                                ? `${fullRecoveryMilestone.trip} at ${fullRecoveryMilestone.stop}`
+                                                                : 'Not observed'}
+                                                        </p>
+                                                    </div>
+                                                    {fullRecoveryPhaseBadge ? (
+                                                        <span className="rounded-full border border-emerald-200 bg-white px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-[0.16em] text-emerald-700">
+                                                            {fullRecoveryPhaseBadge}
+                                                        </span>
+                                                    ) : null}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
                             </WorkspaceCard>
 
                             {customerImpact ? (
                                 <WorkspaceCard
                                     title="Customer Exposure"
-                                    subtitle="APC-derived boardings at affected downstream stops."
+                                    subtitle="APC-derived boardings at observed affected stops in the full incident story."
                                 >
                                     <div className="space-y-3">
                                         <MetricBlock
                                             label="Affected Boardings"
                                             value={`${customerImpact.affectedBoardings}`}
-                                            note="Boardings at downstream stops where the dwell still had measurable delay impact."
+                                            note="Boardings at observed stops where the dwell still had measurable delay impact."
                                             tone="blue"
                                         />
                                         <MetricBlock
                                             label="Boardings At OTP-Late Stops"
                                             value={`${customerImpact.lateBoardings}`}
-                                            note="Subset of boardings that occurred while the route was still above the OTP-late threshold."
+                                            note="Subset of boardings that occurred while the traced story was still above the OTP-late threshold."
                                             tone={customerImpact.lateBoardings > 0 ? 'red' : 'emerald'}
                                         />
                                     </div>
@@ -424,8 +670,12 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
 
                             {focusTrip ? (
                                 <WorkspaceCard
-                                    title="Focused Trip"
-                                    subtitle={selectedTripIndex !== null ? 'Selected from the chain.' : 'Auto-focused on the milestone or last affected trip.'}
+                                    title={focusTrip.phase === 'same-trip' ? 'Focused Same-Trip Segment' : 'Focused Later Trip'}
+                                    subtitle={selectedTripIndex !== null
+                                        ? 'Selected from the chain.'
+                                        : focusTrip.phase === 'same-trip'
+                                            ? 'Auto-focused on the incident trip because it contains the first visible story point.'
+                                            : 'Auto-focused on the milestone or last touched trip.'}
                                 >
                                     <div className="space-y-3">
                                         <div className="rounded-2xl border-2 border-gray-200 bg-gray-50 p-4">
@@ -433,7 +683,7 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
                                                 <div>
                                                     <p className="text-sm font-extrabold text-gray-900">{focusTrip.tripName}</p>
                                                     <p className="mt-1 text-sm font-semibold text-gray-500">
-                                                        Route {focusTrip.routeId} · {fmtTime(focusTrip.terminalDepartureTime)}
+                                                        Route {focusTrip.routeId} · {focusTrip.phase === 'same-trip' ? 'incident trip remainder' : fmtTime(focusTrip.terminalDepartureTime)}
                                                     </p>
                                                 </div>
                                                 <span className={`rounded-full border px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-[0.16em] ${
@@ -443,28 +693,35 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
                                                             ? 'border-amber-200 bg-amber-50 text-amber-700'
                                                             : 'border-emerald-200 bg-emerald-50 text-emerald-700'
                                                 }`}>
-                                                    {focusTrip.lateTimepointCount > 0 ? 'OTP impact' : focusTrip.affectedTimepointCount > 0 ? 'Delay only' : 'Recovered'}
+                                                    {focusTrip.lateTimepointCount > 0 ? 'OTP-late' : focusTrip.affectedTimepointCount > 0 ? 'Carryover' : 'Cleared'}
                                                 </span>
                                             </div>
                                         </div>
 
                                         <div className="grid grid-cols-2 gap-3">
                                             <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
-                                                <div className="text-xs font-extrabold uppercase tracking-[0.16em] text-gray-400">Late Points</div>
+                                                <div className="text-xs font-extrabold uppercase tracking-[0.16em] text-gray-400">OTP-late Points</div>
                                                 <div className="mt-2 text-lg font-extrabold text-gray-900">{focusTrip.lateTimepointCount}</div>
                                             </div>
                                             <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
-                                                <div className="text-xs font-extrabold uppercase tracking-[0.16em] text-gray-400">Affected Points</div>
+                                                <div className="text-xs font-extrabold uppercase tracking-[0.16em] text-gray-400">Carryover Points</div>
                                                 <div className="mt-2 text-lg font-extrabold text-gray-900">{focusTrip.affectedTimepointCount}</div>
                                             </div>
                                         </div>
 
                                         <div className="rounded-2xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-600">
-                                            <div className="flex items-center gap-2">
-                                                <Clock3 size={15} className="text-gray-400" />
-                                                Scheduled recovery before this trip: <span className="font-extrabold text-gray-900">{fmtMin(focusTrip.scheduledRecoverySeconds)} min</span>
-                                            </div>
-                                            {focusTrip.observedRecoverySeconds !== undefined ? (
+                                            {focusTrip.phase === 'same-trip' ? (
+                                                <div className="flex items-center gap-2">
+                                                    <Clock3 size={15} className="text-gray-400" />
+                                                    This segment shows observed downstream points on the incident trip after the dwell stop.
+                                                </div>
+                                            ) : (
+                                                <div className="flex items-center gap-2">
+                                                    <Clock3 size={15} className="text-gray-400" />
+                                                    Scheduled recovery before this trip: <span className="font-extrabold text-gray-900">{fmtMin(focusTrip.scheduledRecoverySeconds)} min</span>
+                                                </div>
+                                            )}
+                                            {focusTrip.phase !== 'same-trip' && focusTrip.observedRecoverySeconds !== undefined ? (
                                                 <div className="mt-2 flex items-center gap-2">
                                                     <Activity size={15} className="text-gray-400" />
                                                     Observed recovery before this trip: <span className="font-extrabold text-gray-900">{fmtMin(focusTrip.observedRecoverySeconds)} min</span>
@@ -473,7 +730,7 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
                                             <div className="mt-2 flex items-center gap-2">
                                                 <ArrowRight size={15} className="text-gray-400" />
                                                 {tripRecoveredHere(focusTrip)
-                                                    ? `Fully recovered to zero at ${focusTrip.recoveredAtStop}.`
+                                                    ? `Cleared to zero at ${focusTrip.recoveredAtStop}.`
                                                     : tripBackUnderThresholdHere(focusTrip)
                                                         ? `Came back under five minutes at ${focusTrip.backUnderThresholdAtStop}.`
                                                         : 'Delay carried through this trip without reaching a milestone.'}
@@ -485,8 +742,8 @@ const CascadeStorySlideOver: React.FC<CascadeStorySlideOverProps> = ({ cascade, 
 
                             {otpImpact ? (
                                 <WorkspaceCard
-                                    title="Route OTP Penalty"
-                                    subtitle="Per-route downstream OTP effect attributed to this dwell incident."
+                                    title="Route OTP Carryover"
+                                    subtitle="Per-route later-trip OTP-late departures attributed to this dwell incident."
                                 >
                                     <div className="space-y-3">
                                         {otpImpact.map((impact) => (

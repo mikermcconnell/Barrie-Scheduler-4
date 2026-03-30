@@ -199,7 +199,7 @@ function normalizeShiftForPrompt(shift: any) {
     };
 }
 
-function optimizeImplementation(
+async function optimizeImplementation(
     requirements: any[],
     apiKey: string,
     mode: 'full' | 'refine' = 'full',
@@ -281,11 +281,12 @@ function optimizeImplementation(
     `;
 
     const extendedPipeline = shouldUseExtendedOptimizePipeline(mode, process.env.OPTIMIZE_MULTI_PHASE);
-    return runPipeline(apiKey, demandContext, commonRules, mode, currentShifts, focusInstruction, extendedPipeline, optimizationOptions, requestId);
+    return runPipeline(apiKey, requirements, demandContext, commonRules, mode, currentShifts, focusInstruction, extendedPipeline, optimizationOptions, requestId);
 }
 
 async function runPipeline(
     apiKey: string,
+    requirements: any[],
     demandContext: string,
     commonRules: string,
     mode: 'full' | 'refine',

@@ -4,7 +4,7 @@ import {
     LineChart, Line, PieChart, Pie, Cell, ReferenceLine, ComposedChart,
 } from 'recharts';
 import {
-    Clock, Users, AlertTriangle, ArrowRight,
+    Clock, Users, AlertTriangle, ArrowRight, ArrowUpDown, ChevronDown, ChevronUp,
     Calendar, Database, ClipboardList,
 } from 'lucide-react';
 import { MetricCard, ChartCard } from '../Analytics/AnalyticsShared';
@@ -33,6 +33,8 @@ const DAY_TYPE_LABELS: Record<DayType, string> = {
 const DONUT_COLORS = { early: '#f59e0b', onTime: '#10b981', late: '#ef4444' };
 const MIN_ACTION_QUEUE_DAYS = 3;
 const MIN_BUSY_TRIP_OBSERVATIONS = 5;
+type SortDir = 'asc' | 'desc';
+type RouteScoreSortKey = 'routeId' | 'routeName' | 'avgOtp' | 'avgEarly' | 'avgLate' | 'trend' | 'ridership' | 'alightings' | 'bph' | 'missed';
 
 type ActionQueueItemType = 'route' | 'trip';
 type ActionQueueBand = 'Act now' | 'Watch' | 'Monitor';
@@ -103,9 +105,61 @@ function actionBand(score: number): ActionQueueBand {
     return 'Monitor';
 }
 
+function compareText(a: string, b: string): number {
+    return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+}
+
+function compareNumber(a: number, b: number): number {
+    return a - b;
+}
+
+function compareTrend(a: '↑' | '↓' | '–', b: '↑' | '↓' | '–'): number {
+    const order: Record<'↑' | '↓' | '–', number> = { '↑': 2, '–': 1, '↓': 0 };
+    return order[a] - order[b];
+}
+
+function SortableHeader({
+    label,
+    sortKey,
+    activeKey,
+    direction,
+    onClick,
+    align = 'left',
+    className = '',
+}: {
+    label: string;
+    sortKey: RouteScoreSortKey;
+    activeKey: RouteScoreSortKey;
+    direction: SortDir;
+    onClick: (key: RouteScoreSortKey) => void;
+    align?: 'left' | 'right' | 'center';
+    className?: string;
+}) {
+    const active = activeKey === sortKey;
+    const baseAlign = align === 'right' ? 'justify-end text-right' : align === 'center' ? 'justify-center text-center' : 'justify-start text-left';
+    return (
+        <th className={`py-2 px-2 font-bold text-gray-500 text-xs uppercase ${className}`}>
+            <button
+                type="button"
+                onClick={() => onClick(sortKey)}
+                className={`w-full inline-flex items-center gap-0.5 ${baseAlign} cursor-pointer select-none hover:text-gray-700 transition-colors`}
+            >
+                <span>{label}</span>
+                {active ? (
+                    direction === 'asc' ? <ChevronUp size={11} /> : <ChevronDown size={11} />
+                ) : (
+                    <ArrowUpDown size={11} className="opacity-25" />
+                )}
+            </button>
+        </th>
+    );
+}
+
 
 export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data, onNavigate, scope, scopeLabel, dayTypeFilter }) => {
     const filtered = data.dailySummaries;
+    const [routeScoreSortKey, setRouteScoreSortKey] = React.useState<RouteScoreSortKey>('avgOtp');
+    const [routeScoreSortDir, setRouteScoreSortDir] = React.useState<SortDir>('desc');
 
     // ── Peer days (same day type for trend context in Action Queue) ───
     const peerDays = useMemo(() => {
@@ -391,6 +445,12 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
         return { hasCoverage, totalScheduled, totalObserved: totalMatched, totalMissed, missedPct, routesMissed, skippedDays };
     }, [filtered]);
 
+    const missedCountByRoute = useMemo(() => {
+        const map = new Map<string, number>();
+        for (const row of missedTrips.routesMissed) map.set(row.routeId, row.count);
+        return map;
+    }, [missedTrips.routesMissed]);
+
     // ── OTP trend (always all days, independent of date selector) ──
     const otpTrend = useMemo(() =>
         data.dailySummaries.map(d => ({
@@ -484,9 +544,65 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                     avgOtp, avgEarly, avgLate, ridership: r.ridership,
                     alightings: r.alightings, bph, trend,
                 };
-            })
+                })
             .sort((a, b) => b.avgOtp - a.avgOtp);
     }, [filtered]);
+
+    const sortedRouteRanking = useMemo(() => {
+        const rows = [...routeRanking];
+        rows.sort((a, b) => {
+            const mult = routeScoreSortDir === 'asc' ? 1 : -1;
+            const routeMissedA = missedCountByRoute.get(a.routeId) ?? 0;
+            const routeMissedB = missedCountByRoute.get(b.routeId) ?? 0;
+            let cmp = 0;
+            switch (routeScoreSortKey) {
+                case 'routeId':
+                    cmp = compareText(a.routeId, b.routeId);
+                    break;
+                case 'routeName':
+                    cmp = compareText(a.routeName, b.routeName);
+                    break;
+                case 'avgOtp':
+                    cmp = compareNumber(a.avgOtp, b.avgOtp);
+                    break;
+                case 'avgEarly':
+                    cmp = compareNumber(a.avgEarly, b.avgEarly);
+                    break;
+                case 'avgLate':
+                    cmp = compareNumber(a.avgLate, b.avgLate);
+                    break;
+                case 'trend':
+                    cmp = compareTrend(a.trend, b.trend);
+                    break;
+                case 'ridership':
+                    cmp = compareNumber(a.ridership, b.ridership);
+                    break;
+                case 'alightings':
+                    cmp = compareNumber(a.alightings, b.alightings);
+                    break;
+                case 'bph':
+                    cmp = compareNumber(a.bph, b.bph);
+                    break;
+                case 'missed':
+                    cmp = compareNumber(routeMissedA, routeMissedB);
+                    break;
+            }
+            if (cmp !== 0) return mult * cmp;
+            return compareText(a.routeId, b.routeId);
+        });
+        return rows;
+    }, [routeRanking, routeScoreSortDir, routeScoreSortKey, missedCountByRoute]);
+
+    const toggleRouteScoreSort = (key: RouteScoreSortKey) => {
+        setRouteScoreSortKey(prev => {
+            if (prev === key) {
+                setRouteScoreSortDir(dir => (dir === 'asc' ? 'desc' : 'asc'));
+                return prev;
+            }
+            setRouteScoreSortDir(key === 'routeId' || key === 'routeName' ? 'asc' : 'desc');
+            return key;
+        });
+    };
 
     // ── Data quality aggregate ─────────────────────────────────────
     const dataQuality = useMemo((): DataQuality | null => {
@@ -754,24 +870,24 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                     <table className="w-full text-sm">
                         <thead>
                             <tr className="border-b border-gray-100">
-                                <th className="text-left py-2 px-2 font-bold text-gray-500 text-xs uppercase">Route</th>
-                                <th className="text-left py-2 px-2 font-bold text-gray-500 text-xs uppercase">Name</th>
-                                <th className="text-right py-2 px-2 font-bold text-gray-500 text-xs uppercase">OTP%</th>
-                                <th className="text-right py-2 px-2 font-bold text-gray-500 text-xs uppercase">Early%</th>
-                                <th className="text-right py-2 px-2 font-bold text-gray-500 text-xs uppercase">Late%</th>
+                                <SortableHeader label="Route" sortKey="routeId" activeKey={routeScoreSortKey} direction={routeScoreSortDir} onClick={toggleRouteScoreSort} />
+                                <SortableHeader label="Name" sortKey="routeName" activeKey={routeScoreSortKey} direction={routeScoreSortDir} onClick={toggleRouteScoreSort} />
+                                <SortableHeader label="OTP%" sortKey="avgOtp" activeKey={routeScoreSortKey} direction={routeScoreSortDir} onClick={toggleRouteScoreSort} align="right" />
+                                <SortableHeader label="Early%" sortKey="avgEarly" activeKey={routeScoreSortKey} direction={routeScoreSortDir} onClick={toggleRouteScoreSort} align="right" />
+                                <SortableHeader label="Late%" sortKey="avgLate" activeKey={routeScoreSortKey} direction={routeScoreSortDir} onClick={toggleRouteScoreSort} align="right" />
                                 {filtered.length >= 2 && (
-                                    <th className="text-center py-2 px-2 font-bold text-gray-500 text-xs uppercase">Trend</th>
+                                    <SortableHeader label="Trend" sortKey="trend" activeKey={routeScoreSortKey} direction={routeScoreSortDir} onClick={toggleRouteScoreSort} align="center" />
                                 )}
-                                <th className="text-right py-2 px-2 font-bold text-gray-500 text-xs uppercase">Boards</th>
-                                <th className="text-right py-2 px-2 font-bold text-gray-500 text-xs uppercase">Alights</th>
-                                <th className="text-right py-2 px-2 font-bold text-gray-500 text-xs uppercase">BPH</th>
+                                <SortableHeader label="Boards" sortKey="ridership" activeKey={routeScoreSortKey} direction={routeScoreSortDir} onClick={toggleRouteScoreSort} align="right" />
+                                <SortableHeader label="Alights" sortKey="alightings" activeKey={routeScoreSortKey} direction={routeScoreSortDir} onClick={toggleRouteScoreSort} align="right" />
+                                <SortableHeader label="BPH" sortKey="bph" activeKey={routeScoreSortKey} direction={routeScoreSortDir} onClick={toggleRouteScoreSort} align="right" />
                                 {missedTrips.hasCoverage && (
-                                    <th className="text-right py-2 px-2 font-bold text-gray-500 text-xs uppercase">Missed</th>
+                                    <SortableHeader label="Missed" sortKey="missed" activeKey={routeScoreSortKey} direction={routeScoreSortDir} onClick={toggleRouteScoreSort} align="right" />
                                 )}
                             </tr>
                         </thead>
                         <tbody>
-                            {routeRanking.map(r => (
+                            {sortedRouteRanking.map(r => (
                                 <tr key={r.routeId} className={`border-b border-gray-50 hover:bg-gray-50 ${r.avgOtp < 70 ? 'bg-red-50' : ''}`}>
                                     <td className="py-2 px-2 font-bold text-gray-900">{r.routeId}</td>
                                     <td className="py-2 px-2 text-gray-500">{r.routeName}</td>
@@ -793,8 +909,7 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                                     <td className="py-2 px-2 text-right font-medium text-gray-700">{r.alightings.toLocaleString()}</td>
                                     <td className="py-2 px-2 text-right font-bold text-cyan-600">{r.bph.toFixed(1)}</td>
                                     {missedTrips.hasCoverage && (() => {
-                                        const missed = missedTrips.routesMissed.find(m => m.routeId === r.routeId);
-                                        const count = missed?.count ?? 0;
+                                        const count = missedCountByRoute.get(r.routeId) ?? 0;
                                         return (
                                             <td className={`py-2 px-2 text-right font-bold ${count > 0 ? 'text-red-600' : 'text-gray-300'}`}>
                                                 {count}

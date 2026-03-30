@@ -27,6 +27,9 @@ interface TooltipState {
 
 const OTP_LATE_MINUTES = 5;
 
+const phaseLabel = (phase: 'same-trip' | 'later-trip'): string =>
+    phase === 'same-trip' ? 'Same-trip impact' : 'Later-trip carryover';
+
 const CascadeTimelineChart: React.FC<CascadeTimelineChartProps> = ({
     trips,
     routeId,
@@ -62,7 +65,7 @@ const CascadeTimelineChart: React.FC<CascadeTimelineChartProps> = ({
     if (points.length === 0) {
         return (
             <div className="flex h-40 items-center justify-center rounded-2xl border-2 border-dashed border-gray-200 bg-gray-50 text-sm font-semibold text-gray-400">
-                No downstream timepoint data available for this cascade.
+                No observed timepoint data available for this incident story.
             </div>
         );
     }
@@ -78,6 +81,26 @@ const CascadeTimelineChart: React.FC<CascadeTimelineChartProps> = ({
     const innerWidth = svgWidth - marginLeft - marginRight;
     const innerHeight = svgHeight - marginTop - marginBottom;
 
+    const sameTripSegments = segments.filter(seg => seg.phase === 'same-trip');
+    const laterTripSegments = segments.filter(seg => seg.phase === 'later-trip');
+    const sameTripPointCount = points.filter(point => point.phase === 'same-trip').length;
+    const laterTripPointCount = points.filter(point => point.phase === 'later-trip').length;
+
+    const sameTripBlock = sameTripSegments.length > 0
+        ? {
+            startPointIndex: sameTripSegments[0].startPointIndex,
+            endPointIndex: sameTripSegments[sameTripSegments.length - 1].endPointIndex,
+        }
+        : null;
+    const laterTripBlock = laterTripSegments.length > 0
+        ? {
+            startPointIndex: laterTripSegments[0].startPointIndex,
+            endPointIndex: laterTripSegments[laterTripSegments.length - 1].endPointIndex,
+        }
+        : null;
+    const phaseBoundaryIndex =
+        sameTripBlock && laterTripBlock ? laterTripBlock.startPointIndex : null;
+
     // Compute deviation scale
     const deviations = points.map(p => p.deviationMinutes ?? 0).filter(d => d > 0);
     const maxDeviation = deviations.length > 0 ? Math.max(...deviations) : OTP_LATE_MINUTES + 2;
@@ -91,6 +114,12 @@ const CascadeTimelineChart: React.FC<CascadeTimelineChartProps> = ({
 
     const yBaseline = yOf(0);
     const yThreshold = yOf(OTP_LATE_MINUTES);
+
+    const bandForBlock = (startPointIndex: number, endPointIndex: number): { x: number; width: number } => {
+        const left = Math.max(marginLeft, xOf(startPointIndex) - xStep / 2);
+        const right = Math.min(marginLeft + innerWidth, xOf(endPointIndex) + xStep / 2);
+        return { x: left, width: Math.max(0, right - left) };
+    };
 
     // Build per-segment area polygons and line paths
     const segmentAreas = segments.map((seg) => {
@@ -218,6 +247,23 @@ const CascadeTimelineChart: React.FC<CascadeTimelineChartProps> = ({
 
     return (
         <div className="relative overflow-x-auto">
+            <div className="mb-3 flex flex-wrap items-center gap-2 text-[11px] font-semibold">
+                {sameTripPointCount > 0 ? (
+                    <span className="inline-flex items-center gap-1 rounded-full border border-red-200 bg-red-50 px-3 py-1 text-red-700">
+                        <span className="text-[10px] uppercase tracking-[0.16em]">Same trip</span>
+                        <span>Same-trip impact · {sameTripPointCount} points</span>
+                    </span>
+                ) : null}
+                {laterTripPointCount > 0 ? (
+                    <span className="inline-flex items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-brand-blue">
+                        <span className="text-[10px] uppercase tracking-[0.16em]">Later trips</span>
+                        <span>Later-trip carryover · {laterTripPointCount} points</span>
+                    </span>
+                ) : null}
+                <span className="text-gray-500 font-medium">
+                    The background tint and dashed divider show where the visible story shifts from the incident trip to downstream carryover.
+                </span>
+            </div>
             <svg
                 width={svgWidth}
                 height={svgHeight}
@@ -225,14 +271,71 @@ const CascadeTimelineChart: React.FC<CascadeTimelineChartProps> = ({
                 onMouseLeave={handleMouseLeave}
                 style={{ cursor: 'crosshair', display: 'block' }}
             >
-                {/* Green on-time zone background */}
+                {/* Phase background bands */}
+                {sameTripBlock && (
+                    <rect
+                        x={bandForBlock(sameTripBlock.startPointIndex, sameTripBlock.endPointIndex).x}
+                        y={marginTop - 18}
+                        width={bandForBlock(sameTripBlock.startPointIndex, sameTripBlock.endPointIndex).width}
+                        height={innerHeight + 18}
+                        rx={14}
+                        fill="#fef2f2"
+                        opacity={0.4}
+                    />
+                )}
+                {laterTripBlock && (
+                    <rect
+                        x={bandForBlock(laterTripBlock.startPointIndex, laterTripBlock.endPointIndex).x}
+                        y={marginTop - 18}
+                        width={bandForBlock(laterTripBlock.startPointIndex, laterTripBlock.endPointIndex).width}
+                        height={innerHeight + 18}
+                        rx={14}
+                        fill="#eff6ff"
+                        opacity={0.35}
+                    />
+                )}
+                {phaseBoundaryIndex !== null && (
+                    <g>
+                        <line
+                            x1={xOf(phaseBoundaryIndex)}
+                            y1={marginTop - 10}
+                            x2={xOf(phaseBoundaryIndex)}
+                            y2={yBaseline}
+                            stroke="#94a3b8"
+                            strokeWidth={1.5}
+                            strokeDasharray="6 4"
+                            opacity={0.8}
+                        />
+                        <rect
+                            x={xOf(phaseBoundaryIndex) - 44}
+                            y={6}
+                            width={88}
+                            height={18}
+                            rx={9}
+                            fill="#ffffff"
+                            opacity={0.94}
+                            stroke="#cbd5e1"
+                        />
+                        <text
+                            x={xOf(phaseBoundaryIndex)}
+                            y={19}
+                            textAnchor="middle"
+                            fontSize={9}
+                            fill="#475569"
+                            fontWeight={600}
+                        >
+                            Later-trip carryover
+                        </text>
+                    </g>
+                )}
+                {/* Under-5-minute zone background */}
                 <rect
                     x={marginLeft}
                     y={yThreshold}
                     width={innerWidth}
                     height={yBaseline - yThreshold}
-                    fill="#dcfce7"
-                    opacity={0.5}
+                    fill="#dbeafe"
+                    opacity={0.45}
                 />
 
                 {/* OTP threshold dashed line at 5 min */}
@@ -272,6 +375,12 @@ const CascadeTimelineChart: React.FC<CascadeTimelineChartProps> = ({
                 {segments.map((seg, si) => {
                     const ptIdx = seg.startPointIndex;
                     const colors = TRIP_FILL_COLORS[seg.color];
+                    const phaseTitle = phaseLabel(seg.phase);
+                    const phaseSummary = seg.lateCount > 0
+                        ? `${seg.lateCount}/${seg.totalCount} OTP-late`
+                        : seg.affectedCount > 0
+                            ? `${seg.affectedCount}/${seg.totalCount} delayed`
+                            : 'recovered';
                     if (si === 0) {
                         return (
                             <text
@@ -283,13 +392,9 @@ const CascadeTimelineChart: React.FC<CascadeTimelineChartProps> = ({
                                 fill={colors.stroke}
                                 fontWeight={600}
                             >
-                                {seg.tripName}
+                                {phaseTitle} · {seg.tripName}
                                 {' · '}
-                                {seg.lateCount > 0
-                                    ? `${seg.lateCount}/${seg.totalCount} OTP-late`
-                                    : seg.affectedCount > 0
-                                        ? `${seg.affectedCount}/${seg.totalCount} delayed`
-                                        : 'recovered'}
+                                {phaseSummary}
                             </text>
                         );
                     }
@@ -312,13 +417,9 @@ const CascadeTimelineChart: React.FC<CascadeTimelineChartProps> = ({
                                 fill={colors.stroke}
                                 fontWeight={600}
                             >
-                                {seg.tripName}
+                                {phaseTitle} · {seg.tripName}
                                 {' · '}
-                                {seg.lateCount > 0
-                                    ? `${seg.lateCount}/${seg.totalCount} OTP-late`
-                                    : seg.affectedCount > 0
-                                        ? `${seg.affectedCount}/${seg.totalCount} delayed`
-                                        : 'recovered'}
+                                {phaseSummary}
                             </text>
                         </g>
                     );
@@ -626,6 +727,12 @@ const CascadeTimelineChart: React.FC<CascadeTimelineChartProps> = ({
                             </span>
                         </div>
                     )}
+                    <div className="flex gap-2 mt-1 border-t border-gray-100 pt-1">
+                        <span className="text-gray-400">Phase</span>
+                        <span className="font-medium text-gray-700">
+                            {phaseLabel(tooltip.point.phase)}
+                        </span>
+                    </div>
                     {(() => {
                         const ld = stopLoadLookup.get(`${routeId}_${tooltip.point.stopId}`);
                         if (!ld) return null;

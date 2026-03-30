@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import type { TransitAppDataSummary } from '../../utils/transit-app/transitAppTypes';
 import { TransitAppMap } from './TransitAppMap';
+import { buildAppUsageTimeline, formatFullDateUtc } from './appUsageChartUtils';
 
 interface TransitAppDashboardProps {
     data: TransitAppDataSummary;
@@ -47,7 +48,7 @@ export const TransitAppDashboard: React.FC<TransitAppDashboardProps> = ({
     const fmt = (n: number) => n.toLocaleString();
 
     // Metric cards
-    const totalUsers = appUsage.reduce((sum, d) => sum + d.users, 0);
+    const userDays = appUsage.reduce((sum, d) => sum + d.users, 0);
     const totalTrips = tripDistribution.daily.reduce((sum, d) => sum + d.count, 0);
     const routesTracked = routeMetrics.summary.length;
     const daysCovered = appUsage.length || tripDistribution.daily.length;
@@ -63,11 +64,7 @@ export const TransitAppDashboard: React.FC<TransitAppDashboardProps> = ({
         }));
 
     // App usage chart data
-    const usageChartData = appUsage.map(d => ({
-        date: d.date.slice(5), // MM-DD
-        users: d.users,
-        sessions: d.sessions,
-    }));
+    const usageChartData = buildAppUsageTimeline(appUsage);
 
     // Hourly distribution chart
     const hourlyData = tripDistribution.hourly.map(h => ({
@@ -107,7 +104,7 @@ export const TransitAppDashboard: React.FC<TransitAppDashboardProps> = ({
 
             {/* Metric Cards */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                <MetricCard icon={<Users size={20} />} label="Total Users" value={fmt(totalUsers)} color="cyan" />
+                <MetricCard icon={<Users size={20} />} label="User-Days" value={fmt(userDays)} color="cyan" />
                 <MetricCard icon={<MapPin size={20} />} label="Trip Requests" value={fmt(totalTrips)} color="indigo" />
                 <MetricCard icon={<Route size={20} />} label="Routes Tracked" value={fmt(routesTracked)} color="emerald" />
                 <MetricCard icon={<Calendar size={20} />} label="Days Covered" value={fmt(daysCovered)} color="amber" />
@@ -139,9 +136,15 @@ export const TransitAppDashboard: React.FC<TransitAppDashboardProps> = ({
                         <ResponsiveContainer width="100%" height={280}>
                             <LineChart data={usageChartData} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
                                 <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                                <XAxis dataKey="date" tick={{ fontSize: 10 }} interval={Math.max(0, Math.floor(usageChartData.length / 12) - 1)} />
+                                <XAxis dataKey="timestamp" type="number" domain={['dataMin', 'dataMax']} scale="time" tick={{ fontSize: 10 }} />
                                 <YAxis tick={{ fontSize: 11 }} />
-                                <Tooltip />
+                                <Tooltip
+                                    labelFormatter={(value: number) => {
+                                        const point = usageChartData.find(d => d.timestamp === value);
+                                        return formatFullDateUtc(point?.date ?? '');
+                                    }}
+                                    formatter={(value: number, name: string) => [fmt(value), name]}
+                                />
                                 <Line type="monotone" dataKey="users" stroke="#06b6d4" strokeWidth={2} dot={false} name="Users" />
                                 <Line type="monotone" dataKey="sessions" stroke="#8b5cf6" strokeWidth={2} dot={false} name="Sessions" />
                             </LineChart>

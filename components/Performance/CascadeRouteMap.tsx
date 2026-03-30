@@ -1,6 +1,7 @@
 import React, { useMemo, useRef, useState, useCallback } from 'react';
 import { Source, Layer, Marker, Popup } from 'react-map-gl/mapbox';
 import type { LayerProps, MapRef } from 'react-map-gl/mapbox';
+import { AlertTriangle } from 'lucide-react';
 import { MapBase, toGeoJSON } from '../shared';
 import { getAllStopsWithCoords } from '../../utils/gtfs/gtfsStopLookup';
 import { loadGtfsRouteShapes } from '../../utils/gtfs/gtfsShapesLoader';
@@ -32,6 +33,8 @@ interface StopEntry {
     stopName: string;
     worstDevSec: number | null;
     tripIndex: number;
+    phase: 'same-trip' | 'later-trip';
+    multiPhase: boolean;
     tripColor: string;
     isBackUnderThreshold: boolean;
     isRecovery: boolean;
@@ -71,17 +74,35 @@ const CascadeRouteMap: React.FC<CascadeRouteMapProps> = ({
     }, [cascade.routeId]);
 
     // Memoize timeline points and trip segments
+    const storyTrips = useMemo(
+        () => cascade.sameTripImpact ? [cascade.sameTripImpact, ...cascade.cascadedTrips] : cascade.cascadedTrips,
+        [cascade.cascadedTrips, cascade.sameTripImpact],
+    );
     const timelinePoints = useMemo(
-        () => buildTimelinePoints(cascade.cascadedTrips),
-        [cascade.cascadedTrips],
+        () => buildTimelinePoints(storyTrips),
+        [storyTrips],
     );
 
     const tripSegments = useMemo(
-        () => buildTripSegments(cascade.cascadedTrips, timelinePoints),
-        [cascade.cascadedTrips, timelinePoints],
+        () => buildTripSegments(storyTrips, timelinePoints),
+        [storyTrips, timelinePoints],
     );
     const selectedPoint = selectedPointIndex !== null ? timelinePoints[selectedPointIndex] ?? null : null;
     const thresholdStopName = (cascade.backUnderThresholdAtStop ?? cascade.recoveredAtStop ?? '').toLowerCase();
+    const firstVisibleTrip = storyTrips[0]?.tripName ?? null;
+    const traceStartsOnLaterTrip = firstVisibleTrip !== null && firstVisibleTrip !== cascade.tripName;
+    const stopPhaseCoverage = useMemo(() => {
+        const coverage = new Map<string, Set<'same-trip' | 'later-trip'>>();
+        for (const point of timelinePoints) {
+            const phases = coverage.get(point.stopId) ?? new Set<'same-trip' | 'later-trip'>();
+            phases.add(point.phase);
+            coverage.set(point.stopId, phases);
+        }
+        return coverage;
+    }, [timelinePoints]);
+    const sameTripPointCount = timelinePoints.filter(point => point.phase === 'same-trip').length;
+    const laterTripPointCount = timelinePoints.filter(point => point.phase === 'later-trip').length;
+    const repeatedPhaseStopCount = Array.from(stopPhaseCoverage.values()).filter(phases => phases.size > 1).length;
 
     // Check if any coords are available for a fallback message
     const hasAnyCoords = useMemo(() => {
@@ -130,13 +151,16 @@ const CascadeRouteMap: React.FC<CascadeRouteMapProps> = ({
 
             const isDimmed = selectedTripIndex !== null && seg.tripIndex !== selectedTripIndex;
             const colors = TRIP_FILL_COLORS[seg.color];
+            const phaseEmphasis = seg.phase === 'same-trip'
+                ? { width: 4.5, opacity: 0.92 }
+                : { width: 3.25, opacity: 0.78 };
 
             features.push({
                 type: 'Feature',
                 properties: {
                     tripColor: colors.stroke,
-                    lineWidth: isDimmed ? 1.5 : 4,
-                    lineOpacity: isDimmed ? 0.3 : 0.85,
+                    lineWidth: isDimmed ? phaseEmphasis.width * 0.6 : phaseEmphasis.width,
+                    lineOpacity: isDimmed ? phaseEmphasis.opacity * 0.35 : phaseEmphasis.opacity,
                 },
                 geometry: {
                     type: 'LineString',
@@ -164,7 +188,7 @@ const CascadeRouteMap: React.FC<CascadeRouteMapProps> = ({
 
         for (const pt of timelinePoints) {
             const devSec = pt.deviationMinutes != null ? pt.deviationMinutes * 60 : null;
-            const trip = cascade.cascadedTrips[pt.tripIndex];
+            const trip = storyTrips[pt.tripIndex];
             const color = trip ? getTripNodeColor(trip) : 'red';
             const coords = gtfsCoords.get(pt.stopId);
             if (!coords) continue;
@@ -176,6 +200,8 @@ const CascadeRouteMap: React.FC<CascadeRouteMapProps> = ({
                     stopName: pt.stopName,
                     worstDevSec: devSec,
                     tripIndex: pt.tripIndex,
+                    phase: pt.phase,
+                    multiPhase: (stopPhaseCoverage.get(pt.stopId)?.size ?? 0) > 1,
                     tripColor: TRIP_FILL_COLORS[color].stroke,
                     isBackUnderThreshold: false,
                     isRecovery: false,
@@ -188,8 +214,10 @@ const CascadeRouteMap: React.FC<CascadeRouteMapProps> = ({
                 if (curDev > prevDev) {
                     existing.worstDevSec = devSec;
                     existing.tripIndex = pt.tripIndex;
+                    existing.phase = pt.phase;
                     existing.tripColor = TRIP_FILL_COLORS[color].stroke;
                 }
+                existing.multiPhase = (stopPhaseCoverage.get(pt.stopId)?.size ?? 0) > 1;
             }
         }
 
@@ -212,7 +240,7 @@ const CascadeRouteMap: React.FC<CascadeRouteMapProps> = ({
         }
 
         return Array.from(stopMap.values());
-    }, [timelinePoints, cascade, gtfsCoords, thresholdStopName]);
+    }, [timelinePoints, cascade, gtfsCoords, storyTrips, thresholdStopName, stopPhaseCoverage]);
 
     // ── Fit bounds after map loads ────────────────────────────────────────────
     const handleMapLoad = useCallback(() => {
@@ -258,7 +286,10 @@ const CascadeRouteMap: React.FC<CascadeRouteMapProps> = ({
             ? `${entry.stopName}\nRecovery stop\n${devLabel}`
             : entry.isBackUnderThreshold
                 ? `${entry.stopName}\nBack under 5 min\n${devLabel}`
-                : `${entry.stopName}\n${devLabel}`;
+                : `${entry.stopName}\n${entry.phase === 'same-trip' ? 'Same-trip impact point' : 'Later-trip carryover point'}\n${devLabel}`;
+        if (entry.multiPhase) {
+            text += '\nObserved in both same-trip and later-trip phases';
+        }
         const loadData = stopLoadLookup.get(`${cascade.routeId}_${entry.stopId}`);
         if (loadData) {
             text += `\n${loadData.avgBoardings.toFixed(0)} boarding · load: ${loadData.avgLoad.toFixed(0)}`;
@@ -271,6 +302,9 @@ const CascadeRouteMap: React.FC<CascadeRouteMapProps> = ({
         const isAlsoRecovery = cascade.recoveredAtStop
             && cascade.recoveredAtStop.toLowerCase() === cascade.stopName.toLowerCase();
         let text = `⚡ ${cascade.stopName}\nDwell event origin\n${originMin} min excess`;
+        if (traceStartsOnLaterTrip) {
+            text += '\nVisible trace starts on a later trip';
+        }
         if (isAlsoRecovery) text += '\n✓ Also recovery stop';
         const originLoad = stopLoadLookup.get(`${cascade.routeId}_${cascade.stopId}`);
         if (originLoad) {
@@ -312,6 +346,57 @@ const CascadeRouteMap: React.FC<CascadeRouteMapProps> = ({
             `}</style>
 
             <div className="w-full rounded-lg" style={{ height: 300, position: 'relative' }}>
+                {traceStartsOnLaterTrip ? (
+                    <div
+                        style={{
+                            position: 'absolute',
+                            top: 10,
+                            left: 10,
+                            right: 10,
+                            zIndex: 11,
+                            pointerEvents: 'none',
+                        }}
+                    >
+                        <div className="flex items-start gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800 shadow-sm">
+                            <AlertTriangle size={14} className="mt-0.5 shrink-0 text-amber-500" />
+                            <span>
+                                This map begins at the first observed downstream timepoint on a later trip.
+                                {' '}The remainder of the incident trip is not shown yet.
+                            </span>
+                        </div>
+                    </div>
+                ) : null}
+                <div
+                    style={{
+                        position: 'absolute',
+                        top: 10,
+                        right: 10,
+                        zIndex: 11,
+                        pointerEvents: 'none',
+                        maxWidth: 230,
+                    }}
+                >
+                    <div className="rounded-2xl border border-slate-200 bg-white/95 px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm backdrop-blur-sm">
+                        <div className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-slate-500">Story phases</div>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                            {sameTripPointCount > 0 ? (
+                                <span className="rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-[0.14em] text-red-700">
+                                    Same-trip impact · {sameTripPointCount}
+                                </span>
+                            ) : null}
+                            {laterTripPointCount > 0 ? (
+                                <span className="rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-[0.14em] text-brand-blue">
+                                    Later-trip carryover · {laterTripPointCount}
+                                </span>
+                            ) : null}
+                        </div>
+                        {repeatedPhaseStopCount > 0 ? (
+                            <div className="mt-2 text-[11px] font-medium text-slate-500">
+                                {repeatedPhaseStopCount} stop{repeatedPhaseStopCount === 1 ? '' : 's'} appear in both phases.
+                            </div>
+                        ) : null}
+                    </div>
+                </div>
                 <MapBase
                     mapRef={mapRef}
                     mapStyle="mapbox://styles/mapbox/light-v11"
@@ -410,10 +495,14 @@ const CascadeRouteMap: React.FC<CascadeRouteMapProps> = ({
                                             style={{
                                                 width: 12,
                                                 height: 12,
-                                                borderRadius: '50%',
+                                                borderRadius: entry.phase === 'same-trip' ? 4 : '50%',
                                                 background: fillColor,
                                                 border: `2px solid ${entry.tripColor}`,
-                                                boxShadow: isSelectedPoint ? '0 0 0 4px rgba(15,23,42,0.12)' : undefined,
+                                                boxShadow: entry.multiPhase
+                                                    ? '0 0 0 3px rgba(15,23,42,0.08)'
+                                                    : isSelectedPoint
+                                                        ? '0 0 0 4px rgba(15,23,42,0.12)'
+                                                        : undefined,
                                                 opacity: isDimmed ? 0.3 : 0.85,
                                                 cursor: 'pointer',
                                             }}
@@ -493,32 +582,50 @@ const CascadeRouteMap: React.FC<CascadeRouteMapProps> = ({
                         bottom: 28,
                         left: 10,
                         background: 'white',
-                        padding: '6px 10px',
-                        borderRadius: 6,
+                        padding: '8px 10px',
+                        borderRadius: 10,
                         fontSize: 10,
-                        lineHeight: 1.6,
+                        lineHeight: 1.45,
                         boxShadow: '0 1px 4px rgba(0,0,0,0.15)',
                         pointerEvents: 'none',
                         zIndex: 10,
+                        maxWidth: 240,
                     }}
                 >
+                    <div style={{ marginBottom: 6, fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#6b7280' }}>
+                        Phase key
+                    </div>
                     {([
-                        { color: '#ef4444', label: 'All late' },
-                        { color: '#f59e0b', label: 'Some late' },
-                        { color: '#10b981', label: 'Recovered to zero' },
-                    ] as const).map(({ color, label }) => (
-                        <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                            <span style={{ color, fontWeight: 600, fontSize: 11 }}>━━</span>
+                        { stroke: '#475569', label: 'Same-trip impact', weight: 700, opacity: 1 },
+                        { stroke: '#94a3b8', label: 'Later-trip carryover', weight: 600, opacity: 1 },
+                    ] as const).map(({ stroke, label, weight, opacity }) => (
+                        <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span style={{ color: stroke, fontWeight: weight, fontSize: 11, opacity }}>━━</span>
                             <span>{label}</span>
                         </div>
                     ))}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <div style={{ marginTop: 4, fontSize: 10, color: '#6b7280' }}>
+                        Phase is explained by the labels and line emphasis; trip colors still show severity.
+                    </div>
+                    <div style={{ marginTop: 8, paddingTop: 6, borderTop: '1px solid #e5e7eb' }}>
+                        {([
+                            { color: '#ef4444', label: 'OTP-late carryover' },
+                            { color: '#f59e0b', label: 'Delay carryover' },
+                            { color: '#10b981', label: 'Recovered to zero' },
+                        ] as const).map(({ color, label }) => (
+                            <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                <span style={{ color, fontWeight: 600, fontSize: 11 }}>━━</span>
+                                <span>{label}</span>
+                            </div>
+                        ))}
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4 }}>
                         <span style={{ fontSize: 11, color: '#2563eb' }}>◉</span>
                         <span>Back under 5 min</span>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                         <span style={{ fontSize: 11, color: '#dc2626' }}>⚡</span>
-                        <span>Dwell origin</span>
+                        <span>Dwell incident</span>
                     </div>
                 </div>
             </div>
