@@ -21,6 +21,7 @@ firebase/
 │   ├── connectionLibrary/default         # Shared connection targets used by app services
 │   ├── transitAppData/{docId}            # Transit App analytics datasets
 │   ├── performanceData/{docId}           # STREETS / ops performance datasets
+│   ├── performanceImports/{importId}     # Archived raw STREETS import runs for replay/rebuild
 │   └── odMatrixData/{docId}              # Origin-destination datasets
 │       └── imports/{importId}            # OD import history
 │
@@ -44,6 +45,7 @@ storage/
     ├── routeMaps/{safeName}
     ├── transitAppData/{allPaths}
     ├── performanceData/{allPaths}
+    ├── performanceImports/raw/{timestamp}.csv
     └── odMatrixData/{allPaths}
 ```
 

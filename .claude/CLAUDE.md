@@ -148,6 +148,7 @@ Route 8A and 8B have custom "Block Flow" sort logic in `RoundTripTableView.tsx`:
 - **South-only pullout trips** (no North leg): fall back to South Allandale arrival time — this keeps morning pullouts grouped chronologically at the top
 - **Post-midnight trips** (12am–3am): use `getOperationalSortTime()` (DAY_START = 4:00 AM) so late-night service sorts at the bottom, not the top
 - **Tiebreaker**: `compareBlockIds()` for same-time departures
+- **Routes where A/B is direction** (2, 7, 12): Block Flow sorts by the A-side terminal arrival first, with B-side first departure as fallback when that A-side terminal arrival cell is blank
 - **All other routes**: keep standard `pairIndex`-based block flow sort
 - Allandale stops found dynamically via `combined.northStops.find(s => includes('allandale'))`
 

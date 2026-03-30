@@ -21,11 +21,17 @@ Use this file to decide what to load first and what to ignore unless explicitly 
 6. `.claude/CLAUDE.md`
    Tool-specific workflow supplement and extra verification guidance for danger-zone work.
 
+Load `ORCHESTRATOR.md` when working in orchestrator mode, delegating implementation work, recovering from compacted context, or when you need the repo's living summary of architecture, conventions, fragile areas, and current repo state. It supports Tier 1 docs and should not replace them.
+
 Load `.claude/context.md` only when the task touches locked schedule behavior or you need detailed historical implementation notes.
 
 Load `docs/IMPLEMENTATION_PLAN.md` only when roadmap status matters.
 
-Load `docs/CONNECTIONS_FEATURE.md`, `docs/AUTO_INGEST_SETUP.md`, `docs/OD_WORKSPACE_GUIDE.md`, and other feature docs only when the task is directly related.
+Load `docs/CONNECTIONS_FEATURE.md`, `docs/AUTO_INGEST_SETUP.md`, `docs/OD_WORKSPACE_GUIDE.md`, `docs/DWELL_CASCADE_FEATURE.md`, and other feature docs only when the task is directly related.
+
+Load `docs/NEW_SCHEDULE_STEP2_REBUILD_SPEC.md` when the task is directly related to rebuilding or implementing New Schedule wizard Step 2.
+Load `docs/NEW_SCHEDULE_STEP2_CONTRACT_DESIGN.md` when the task needs the Step 2 contract, approval, invalidation, or UI/component design.
+Load `docs/NEW_SCHEDULE_STOP_ORDER_RESOLUTION.md` when the task touches dynamic planning-chain / stop-order resolution, partial-trip filtering, or the source-of-truth rules for Step 2 route-chain selection.
 
 Do not load `docs/plans/` or `docs/archive/` by default.
 
@@ -45,12 +51,17 @@ These should stay concise, current, and safe to use as default context.
 
 ### Tier 2: Operational reference
 
+- `ORCHESTRATOR.md`
 - `.claude/CLAUDE.md`
 - `.claude/context.md`
 - `docs/IMPLEMENTATION_PLAN.md`
+- `docs/NEW_SCHEDULE_STEP2_REBUILD_SPEC.md`
+- `docs/NEW_SCHEDULE_STEP2_CONTRACT_DESIGN.md`
+- `docs/NEW_SCHEDULE_STOP_ORDER_RESOLUTION.md`
 - `docs/CONNECTIONS_FEATURE.md`
 - `docs/AUTO_INGEST_SETUP.md`
 - `docs/OD_WORKSPACE_GUIDE.md`
+- `docs/DWELL_CASCADE_FEATURE.md`
 - `docs/route-colors.md`
 
 These are useful, but narrower in scope and more likely to drift.

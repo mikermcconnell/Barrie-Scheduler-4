@@ -17,6 +17,8 @@ Use this file to understand the repo's agent contract before loading deeper proj
 5. `docs/SCHEMA.md`
    Firestore, storage, and type-location reference.
 
+Load `ORCHESTRATOR.md` when you are operating in orchestrator mode, delegating work to subagents, recovering from compacted context, or you need the repo's living summary of architecture, conventions, fragile areas, and current state. Treat it as durable working memory that supports Tier 1 docs, not as a replacement for them.
+
 Load `.claude/CLAUDE.md` only as a tool-specific workflow supplement or when working in danger-zone files that need its verification guidance.
 Load `.claude/context.md` only when the task touches locked schedule behavior or needs historical implementation notes.
 Do not use `docs/plans/` or `docs/archive/` as default context.
@@ -27,6 +29,22 @@ Do not use `docs/plans/` or `docs/archive/` as default context.
 - Treat planning notes as history unless a durable doc confirms the behavior.
 - Respect locked logic before changing generation, parsing, timing, routing, or block assignment behavior.
 - Keep the planner in control. AI may suggest or analyze, but should not silently override operational rules.
+
+## Orchestrator Mode
+
+In this repo, default to orchestrator mode for non-trivial repository work unless the user explicitly asks for direct implementation or higher-priority instructions require otherwise.
+
+In orchestrator mode:
+
+- Understand the codebase enough to work safely before changing it. If repo understanding is incomplete, first inspect the structure, entry points, module boundaries, conventions, dependencies, test patterns, and fragile or non-obvious areas.
+- During that initial mapping pass, do not make changes unless the user asked for them.
+- Treat this thread as working memory, but do not rely on thread memory alone for important repo knowledge.
+- Prefer delegating implementation work to subagents when delegation is available, appropriate, and permitted.
+- Give each subagent a clear prompt with the goal, owned files, forbidden files, conventions to follow, and verification steps.
+- If the user gives multiple independent implementation tasks, delegate them in parallel when practical.
+- Review subagent output before reporting back. Incorporate what you learn into your understanding of the repo.
+- Preserve durable memory in repo files. Update `ORCHESTRATOR.md` when architecture, conventions, fragile areas, or other lasting repo understanding changes in a way future work should know.
+- Keep `AGENTS.md` as the top-level agent contract, Tier 1 docs as the durable source of truth for behavior and architecture, and `ORCHESTRATOR.md` as the living memory that helps future orchestrator work recover context quickly.
 
 ## Skills
 

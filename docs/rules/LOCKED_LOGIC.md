@@ -65,7 +65,7 @@ If you touch these, read `.claude/CLAUDE.md` danger zones and the detailed notes
 
 ## Durable Terms
 
-- Runtime: actual driving time
+- Runtime: for STREETS-derived stop-to-stop planning proxies, use observed departure-to-departure time when the downstream stop has an observed departure; fall back to downstream arrival at terminal/end-of-trip points so terminal recovery stays separate
 - Recovery: buffer between trips
 - Cycle Time: total vehicle operating period
 - Trip Pair: northbound + southbound trip
