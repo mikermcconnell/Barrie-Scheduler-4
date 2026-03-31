@@ -53,6 +53,11 @@ service cloud.firestore {
         allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
       }
 
+      // Shared connection library
+      match /connectionLibrary/{libraryId} {
+        allow read, write: if isTeamMember(teamId);
+      }
+
       // Transit App Data
       match /transitAppData/{docId} {
         allow read, write: if isTeamMember(teamId);

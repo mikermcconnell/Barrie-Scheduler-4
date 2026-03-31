@@ -79,12 +79,12 @@ export const HUBS: HubConfig[] = [
             {
                 platformId: "Stop 1",
                 routes: ["101", "2", "2B", "7", "7B", "8B", "11", "12B"],
-                capacity: 2
+                capacity: 3
             },
             {
                 platformId: "Stop 2",
                 routes: ["100", "7A", "8A", "10", "12A"],
-                capacity: 2
+                capacity: 3
             },
         ]
     },
