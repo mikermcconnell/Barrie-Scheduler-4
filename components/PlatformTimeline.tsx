@@ -31,6 +31,12 @@ import { useTeam } from './contexts/TeamContext';
 import { useAuth } from './contexts/AuthContext';
 import { usePlatformConfig } from '../hooks/usePlatformConfig';
 import { PlatformConfigEditor } from './PlatformConfigEditor';
+import {
+    describePlatformRouteDirection,
+    formatPlatformRouteDirection,
+    getDisplayRoutes,
+    getPlatformDirectionBadge
+} from '../utils/platform/platformDisplay';
 
 // ============ CONSTANTS ============
 
@@ -53,6 +59,7 @@ interface PlatformTimelineProps {
     dayType: DayType;
     schedules: MasterScheduleEntry[];
     contentCache: Map<RouteIdentity, MasterScheduleContent>;
+    loadingContent?: boolean;
 }
 
 // ============ HELPER: time→pixel ============
@@ -110,6 +117,28 @@ function getVehicleKey(event: DwellEvent): string {
     const block = event.blockId?.trim().toUpperCase();
     if (block) return `block:${block}`;
     return `trip:${event.tripId}`;
+}
+
+function getEventDirectionLabel(event: Pick<DwellEvent, 'route' | 'direction'>): string | null {
+    return getPlatformDirectionBadge(event.route, event.direction);
+}
+
+function buildEventAriaLabel(event: DwellEvent): string {
+    return [
+        describePlatformRouteDirection(event.route, event.direction),
+        `${formatMinutesToTime(event.arrivalMin)} to ${formatMinutesToTime(event.departureMin)}`,
+        event.stopId ? `${event.stopName}, stop ${event.stopId}` : event.stopName
+    ].join(', ');
+}
+
+function buildConflictAriaLabel(conflict: ConflictMarkerData): string {
+    const diagnostics = getConflictDiagnostics(conflict);
+    return [
+        `Conflict at ${conflict.hubName} ${conflict.platformId}`,
+        `${formatMinutesToTime(conflict.window.startMin)} to ${formatMinutesToTime(conflict.window.endMin)}`,
+        `Demand ${conflict.window.busCount} versus capacity ${conflict.capacity}`,
+        diagnostics.reason
+    ].join(', ');
 }
 
 function getConflictDiagnostics(conflict: ConflictMarkerData): ConflictDiagnostics {
@@ -290,11 +319,12 @@ type TooltipData =
 export const PlatformTimeline: React.FC<PlatformTimelineProps> = ({
     dayType,
     schedules,
-    contentCache
+    contentCache,
+    loadingContent = false
 }) => {
-    const { team } = useTeam();
+    const { team, canManageTeam } = useTeam();
     const { user } = useAuth();
-    const { config, loading: configLoading, refresh: refreshConfig } = usePlatformConfig(team?.id);
+    const { config, loading: configLoading, error: configError, refresh: refreshConfig } = usePlatformConfig(team?.id);
 
     const [visibleHubs, setVisibleHubs] = useState<Set<string>>(new Set());
     const [zoomIndex, setZoomIndex] = useState(0);
@@ -365,20 +395,6 @@ export const PlatformTimeline: React.FC<PlatformTimelineProps> = ({
         s.dayType === dayType && contentCache.has(s.id as RouteIdentity)
     ).length;
     const totalSchedulesForDayType = schedules.filter(s => s.dayType === dayType).length;
-
-    if (loadedScheduleCount === 0) {
-        return (
-            <div className="flex flex-col items-center justify-center py-16 text-gray-500">
-                <MapPin size={48} className="mb-4 opacity-50" />
-                <p className="text-lg font-medium">No schedules loaded for {dayType}</p>
-                <p className="text-sm mt-2">
-                    {totalSchedulesForDayType > 0
-                        ? `Click on route tabs to load ${totalSchedulesForDayType} available schedule(s)`
-                        : 'No schedules have been uploaded for this day type yet'}
-                </p>
-            </div>
-        );
-    }
 
     const totalVisits = hubAnalyses.reduce((sum, h) => sum + h.totalDailyVisits, 0);
     const totalConflicts = hubAnalyses.reduce((sum, h) => sum + h.totalConflictWindows, 0);
@@ -477,6 +493,26 @@ export const PlatformTimeline: React.FC<PlatformTimelineProps> = ({
         setTooltip(null);
     }, []);
 
+    if (loadedScheduleCount === 0) {
+        return (
+            <div className="flex flex-col items-center justify-center py-16 text-gray-500">
+                <MapPin size={48} className="mb-4 opacity-50" />
+                <p className="text-lg font-medium">
+                    {loadingContent && totalSchedulesForDayType > 0
+                        ? `Loading ${dayType} schedules…`
+                        : `No schedules loaded for ${dayType}`}
+                </p>
+                <p className="text-sm mt-2">
+                    {totalSchedulesForDayType > 0
+                        ? loadingContent
+                            ? `Loading ${totalSchedulesForDayType} available schedule(s) for platform analysis`
+                            : `Open the Platforms tab and the schedules for ${dayType} will load automatically`
+                        : 'No schedules have been uploaded for this day type yet'}
+                </p>
+            </div>
+        );
+    }
+
     return (
         <div className="space-y-4">
             {/* Header */}
@@ -496,7 +532,21 @@ export const PlatformTimeline: React.FC<PlatformTimelineProps> = ({
                 showConflictsOnly={showConflictsOnly}
                 onToggleConflictsOnly={() => setShowConflictsOnly(v => !v)}
                 onOpenConfig={() => setShowConfigEditor(true)}
+                canEditConfig={canManageTeam}
+                configLoading={configLoading}
             />
+
+            {configLoading && (
+                <div className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded px-3 py-2">
+                    Loading platform configuration…
+                </div>
+            )}
+
+            {configError && (
+                <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+                    {configError}
+                </div>
+            )}
 
             {showConflictsOnly && !hasConflictViewData ? (
                 <div className="bg-white border border-gray-200 rounded-lg p-10 text-center text-gray-500">
@@ -602,7 +652,7 @@ export const PlatformTimeline: React.FC<PlatformTimelineProps> = ({
             )}
 
             {/* Config Editor Modal */}
-            {showConfigEditor && team && user && (
+            {showConfigEditor && team && user && canManageTeam && (
                 <PlatformConfigEditor
                     teamId={team.id}
                     userId={user.uid}
@@ -635,6 +685,8 @@ interface TimelineHeaderProps {
     showConflictsOnly: boolean;
     onToggleConflictsOnly: () => void;
     onOpenConfig: () => void;
+    canEditConfig: boolean;
+    configLoading: boolean;
 }
 
 const TimelineHeader: React.FC<TimelineHeaderProps> = ({
@@ -652,7 +704,9 @@ const TimelineHeader: React.FC<TimelineHeaderProps> = ({
     zoomLevel,
     showConflictsOnly,
     onToggleConflictsOnly,
-    onOpenConfig
+    onOpenConfig,
+    canEditConfig,
+    configLoading
 }) => {
     const [showExplain, setShowExplain] = useState(false);
 
@@ -720,14 +774,19 @@ const TimelineHeader: React.FC<TimelineHeaderProps> = ({
                     >
                         <ZoomIn size={16} />
                     </button>
-                    <div className="w-px h-5 bg-gray-200 mx-1" />
-                    <button
-                        onClick={onOpenConfig}
-                        className="p-1.5 rounded-md hover:bg-gray-100 transition-colors"
-                        title="Platform configuration"
-                    >
-                        <Settings size={16} />
-                    </button>
+                    {canEditConfig && (
+                        <>
+                            <div className="w-px h-5 bg-gray-200 mx-1" />
+                            <button
+                                onClick={onOpenConfig}
+                                disabled={configLoading}
+                                className="p-1.5 rounded-md hover:bg-gray-100 disabled:opacity-40 transition-colors"
+                                title={configLoading ? 'Loading platform configuration' : 'Platform configuration'}
+                            >
+                                <Settings size={16} />
+                            </button>
+                        </>
+                    )}
                 </div>
             </div>
 
@@ -917,6 +976,7 @@ const PlatformLane: React.FC<PlatformLaneProps> = ({
 }) => {
     const barY = y + 4;
     const barHeight = ROW_HEIGHT - 8;
+    const displayRoutes = getDisplayRoutes(platform.routes);
 
     return (
         <g>
@@ -931,7 +991,7 @@ const PlatformLane: React.FC<PlatformLaneProps> = ({
             </text>
 
             {/* Gutter: route color badges */}
-            {platform.routes.slice(0, 4).map((route, i) => (
+            {displayRoutes.slice(0, 4).map((route, i) => (
                 <g key={route}>
                     <rect
                         x={90 + i * 28}
@@ -995,6 +1055,17 @@ const PlatformLane: React.FC<PlatformLaneProps> = ({
                             onMouseEnter={() => onConflictMouseEnter(conflictMarker, x1 + w / 2, y)}
                             onMouseLeave={onMarkerMouseLeave}
                             onClick={() => onConflictClick(conflictMarker)}
+                            onFocus={() => onConflictMouseEnter(conflictMarker, x1 + w / 2, y)}
+                            onBlur={onMarkerMouseLeave}
+                            onKeyDown={(event) => {
+                                if (event.key === 'Enter' || event.key === ' ') {
+                                    event.preventDefault();
+                                    onConflictClick(conflictMarker);
+                                }
+                            }}
+                            tabIndex={0}
+                            role="button"
+                            aria-label={buildConflictAriaLabel(conflictMarker)}
                         />
                     </g>
                 );
@@ -1020,6 +1091,11 @@ const PlatformLane: React.FC<PlatformLaneProps> = ({
                         className="cursor-pointer"
                         onMouseEnter={() => onBarMouseEnter(event, x1 + w / 2, y)}
                         onMouseLeave={onMarkerMouseLeave}
+                        onFocus={() => onBarMouseEnter(event, x1 + w / 2, y)}
+                        onBlur={onMarkerMouseLeave}
+                        tabIndex={0}
+                        role="img"
+                        aria-label={buildEventAriaLabel(event)}
                     />
                 );
             })}
@@ -1049,6 +1125,7 @@ const TooltipOverlay: React.FC<TooltipOverlayProps> = ({ tooltip, containerRef }
 
     if (tooltip.kind === 'event') {
         const { event } = tooltip;
+        const directionLabel = getEventDirectionLabel(event);
         return (
             <div
                 className="absolute pointer-events-none z-50 bg-gray-900 text-white text-xs rounded-lg px-3 py-2 shadow-lg"
@@ -1069,7 +1146,9 @@ const TooltipOverlay: React.FC<TooltipOverlayProps> = ({ tooltip, containerRef }
                     >
                         {event.route}
                     </span>
-                    <span className="font-medium">{event.direction}</span>
+                    {directionLabel && (
+                        <span className="font-medium">{directionLabel}</span>
+                    )}
                     {event.blockId && (
                         <span className="text-gray-400">Block {event.blockId}</span>
                     )}
@@ -1116,7 +1195,8 @@ const TooltipOverlay: React.FC<TooltipOverlayProps> = ({ tooltip, containerRef }
             <div className="space-y-1">
                 {diagnostics.vehicles.slice(0, 4).map(v => (
                     <div key={v.key} className="text-[11px] text-gray-200 truncate">
-                        {v.route} {v.direction} • {v.gtfsBlockId ? `GTFS ${v.gtfsBlockId}` : `Block ${v.blockId}`}
+                        {formatPlatformRouteDirection(v.route, v.direction)} •
+                        {v.gtfsBlockId ? `GTFS ${v.gtfsBlockId}` : `Block ${v.blockId}`}
                         {v.stopId ? ` • Stop ${v.stopId}` : ''}
                     </div>
                 ))}
@@ -1262,7 +1342,7 @@ const ConflictInspectorPanel: React.FC<ConflictInspectorPanelProps> = ({ conflic
                         {reassignmentSuggestions.slice(0, 6).map(suggestion => (
                             <div key={suggestion.eventUid} className="text-xs border border-emerald-200 bg-emerald-50 rounded px-2 py-1.5">
                                 <div className="font-medium text-emerald-800">
-                                    Move {suggestion.route} {suggestion.direction}: {suggestion.fromPlatformId} → {suggestion.toPlatformId}
+                                    Move {formatPlatformRouteDirection(suggestion.route, suggestion.direction)}: {suggestion.fromPlatformId} → {suggestion.toPlatformId}
                                 </div>
                                 <div className="text-emerald-700">
                                     {formatMinutesToTime(suggestion.startMin)} → {formatMinutesToTime(suggestion.endMin)} • {suggestion.blockLabel}
@@ -1286,7 +1366,9 @@ const ConflictInspectorPanel: React.FC<ConflictInspectorPanelProps> = ({ conflic
             <div className="space-y-2">
                 <div className="text-xs font-medium text-gray-700">Trips In Window</div>
                 <div className="max-h-56 overflow-y-auto space-y-1.5 pr-1">
-                    {sortedEvents.map(event => (
+                    {sortedEvents.map(event => {
+                        const directionLabel = getEventDirectionLabel(event);
+                        return (
                         <div key={event.eventUid} className="text-xs border border-gray-200 rounded px-2 py-1.5 bg-white">
                             <div className="flex items-center gap-1.5 flex-wrap">
                                 <span
@@ -1298,7 +1380,9 @@ const ConflictInspectorPanel: React.FC<ConflictInspectorPanelProps> = ({ conflic
                                 >
                                     {event.route}
                                 </span>
-                                <span className="font-medium text-gray-800">{event.direction}</span>
+                                {directionLabel && (
+                                    <span className="font-medium text-gray-800">{directionLabel}</span>
+                                )}
                                 <span className="text-gray-500">
                                     {event.gtfsBlockId ? `GTFS ${event.gtfsBlockId}` : `Block ${event.blockId}`}
                                 </span>
@@ -1309,7 +1393,8 @@ const ConflictInspectorPanel: React.FC<ConflictInspectorPanelProps> = ({ conflic
                             </div>
                             <div className="text-gray-500 truncate">{event.stopName}</div>
                         </div>
-                    ))}
+                        );
+                    })}
                 </div>
             </div>
         </aside>

@@ -47,6 +47,12 @@ service cloud.firestore {
         }
       }
 
+      // Platform configuration
+      match /platformConfig/{configId} {
+        allow read: if isTeamMember(teamId);
+        allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
+      }
+
       // Transit App Data
       match /transitAppData/{docId} {
         allow read, write: if isTeamMember(teamId);

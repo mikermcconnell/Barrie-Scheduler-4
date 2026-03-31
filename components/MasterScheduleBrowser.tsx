@@ -298,6 +298,18 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
         }
     }, [selectedRoute, team, schedules, loadContentIfNeeded]);
 
+    // Preload all schedules for the active day type when viewing platforms
+    useEffect(() => {
+        if (selectedRoute === 'platforms' && team && schedules.length > 0) {
+            schedules
+                .filter(entry => entry.dayType === selectedDayType)
+                .forEach(entry => {
+                    const routeIdentity = buildRouteIdentity(entry.routeNumber, entry.dayType);
+                    loadContentIfNeeded(routeIdentity);
+                });
+        }
+    }, [selectedRoute, selectedDayType, team, schedules, loadContentIfNeeded]);
+
     // Handlers
     const handleDelete = async (routeIdentity: RouteIdentity, routeNumber: string, dayType: DayType) => {
         if (!team) return;
@@ -1686,6 +1698,7 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
                                 dayType={selectedDayType}
                                 schedules={schedules}
                                 contentCache={contentCache}
+                                loadingContent={loadingContent}
                             />
                         </div>
                     )}

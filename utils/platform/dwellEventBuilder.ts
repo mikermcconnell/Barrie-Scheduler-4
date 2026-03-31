@@ -91,7 +91,8 @@ export function populateDwellEvents(
                     if (!platform) continue;
 
                     // Calculate times (handles both scheduleGenerator and GTFS conventions)
-                    let { arrivalMin, departureMin } = getDwellTimes(trip, stopName);
+                    const { arrivalMin, departureMin: initialDepartureMin } = getDwellTimes(trip, stopName);
+                    let departureMin = initialDepartureMin;
 
                     // Skip invalid times
                     if (departureMin < 0 || arrivalMin < 0) continue;

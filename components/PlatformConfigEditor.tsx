@@ -7,12 +7,14 @@
 
 import React, { useState, useEffect } from 'react';
 import { X, Plus, Trash2, RotateCcw } from 'lucide-react';
+import { useToast } from './contexts/ToastContext';
 import {
+    buildDefaultPlatformConfig,
     getPlatformConfig,
+    getPlatformConfigErrorMessage,
     savePlatformConfig,
-    seedFromDefaults
 } from '../utils/platform/platformConfigService';
-import { HUBS, ROUTE_FAMILIES, type HubConfig, type PlatformAssignment } from '../utils/platform/platformConfig';
+import { HUBS, type HubConfig, type PlatformAssignment } from '../utils/platform/platformConfig';
 
 interface PlatformConfigEditorProps {
     teamId: string;
@@ -27,12 +29,13 @@ export const PlatformConfigEditor: React.FC<PlatformConfigEditorProps> = ({
     onClose,
     onSaved
 }) => {
+    const toast = useToast();
     const [hubs, setHubs] = useState<HubConfig[]>([]);
-    const [routeFamilies, setRouteFamilies] = useState<Record<string, string[]>>({});
     const [selectedHubIndex, setSelectedHubIndex] = useState(0);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [errors, setErrors] = useState<string[]>([]);
+    const [loadWarning, setLoadWarning] = useState<string | null>(null);
 
     // Load config on mount
     useEffect(() => {
@@ -41,16 +44,17 @@ export const PlatformConfigEditor: React.FC<PlatformConfigEditorProps> = ({
                 const existing = await getPlatformConfig(teamId);
                 if (existing && existing.hubs.length > 0) {
                     setHubs(JSON.parse(JSON.stringify(existing.hubs)));
-                    setRouteFamilies({ ...existing.routeFamilies });
+                    setLoadWarning(null);
                 } else {
-                    // Start from hardcoded defaults
-                    setHubs(JSON.parse(JSON.stringify(HUBS)));
-                    setRouteFamilies({ ...ROUTE_FAMILIES });
+                    const defaults = buildDefaultPlatformConfig();
+                    setHubs(JSON.parse(JSON.stringify(defaults.hubs)));
+                    setLoadWarning(null);
                 }
             } catch (error) {
                 console.error('Error loading platform config:', error);
-                setHubs(JSON.parse(JSON.stringify(HUBS)));
-                setRouteFamilies({ ...ROUTE_FAMILIES });
+                const defaults = buildDefaultPlatformConfig();
+                setHubs(JSON.parse(JSON.stringify(defaults.hubs)));
+                setLoadWarning(getPlatformConfigErrorMessage(error, 'load'));
             } finally {
                 setLoading(false);
             }
@@ -106,11 +110,12 @@ export const PlatformConfigEditor: React.FC<PlatformConfigEditorProps> = ({
         setErrors([]);
         setSaving(true);
         try {
-            await savePlatformConfig(teamId, { hubs, routeFamilies }, userId);
+            await savePlatformConfig(teamId, { hubs }, userId);
+            toast?.success('Platform configuration saved');
             onSaved();
         } catch (error) {
             console.error('Error saving platform config:', error);
-            setErrors(['Failed to save. Please try again.']);
+            setErrors([getPlatformConfigErrorMessage(error, 'save')]);
         } finally {
             setSaving(false);
         }
@@ -119,9 +124,9 @@ export const PlatformConfigEditor: React.FC<PlatformConfigEditorProps> = ({
     // Reset to defaults
     async function handleResetDefaults() {
         setHubs(JSON.parse(JSON.stringify(HUBS)));
-        setRouteFamilies({ ...ROUTE_FAMILIES });
         setSelectedHubIndex(0);
         setErrors([]);
+        setLoadWarning(null);
     }
 
     // Hub mutations
@@ -139,7 +144,7 @@ export const PlatformConfigEditor: React.FC<PlatformConfigEditorProps> = ({
     function deleteHub(index: number) {
         const next = hubs.filter((_, i) => i !== index);
         setHubs(next);
-        setSelectedHubIndex(Math.min(selectedHubIndex, next.length - 1));
+        setSelectedHubIndex(next.length === 0 ? 0 : Math.min(selectedHubIndex, next.length - 1));
     }
 
     function updateHub(index: number, updates: Partial<HubConfig>) {
@@ -360,6 +365,12 @@ export const PlatformConfigEditor: React.FC<PlatformConfigEditorProps> = ({
                         )}
                     </div>
                 </div>
+
+                {loadWarning && (
+                    <div className="px-6 py-2 bg-amber-50 border-t border-amber-200">
+                        <p className="text-xs text-amber-800">{loadWarning}</p>
+                    </div>
+                )}
 
                 {/* Error messages */}
                 {errors.length > 0 && (

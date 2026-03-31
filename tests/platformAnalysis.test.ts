@@ -38,6 +38,17 @@ const DIRECTIONAL_VARIANT_HUBS: HubConfig[] = [
     }
 ];
 
+const ROUTE_2_VARIANT_HUBS: HubConfig[] = [
+    {
+        name: 'Route 2 Hub',
+        stopCodes: ['HUB2'],
+        stopNamePatterns: ['route 2 hub'],
+        platforms: [
+            { platformId: 'P2', routes: ['2', '2A', '2B'], capacity: 2 }
+        ]
+    }
+];
+
 function toTime(minutes: number): string {
     const normalized = ((minutes % 1440) + 1440) % 1440;
     const h24 = Math.floor(normalized / 60);
@@ -364,6 +375,56 @@ describe('platformAnalysis bus identity', () => {
         expect(routes.has('12')).toBe(false);
         expect(routes.has('12A')).toBe(true);
         expect(routes.has('12B')).toBe(true);
+    });
+
+    it('labels base route 2 as 2A/2B by direction in platform analysis', () => {
+        const northTrip = buildTrip({
+            id: '2-N-1',
+            blockId: '2-1',
+            direction: 'North',
+            arrivalMin: 500,
+            departureMin: 505
+        });
+        northTrip.stops = { 'Route 2 Hub Stop': toTime(505) };
+        northTrip.arrivalTimes = { 'Route 2 Hub Stop': toTime(500) };
+
+        const southTrip = buildTrip({
+            id: '2-S-1',
+            blockId: '2-2',
+            direction: 'South',
+            arrivalMin: 560,
+            departureMin: 565
+        });
+        southTrip.stops = { 'Route 2 Hub Stop': toTime(565) };
+        southTrip.arrivalTimes = { 'Route 2 Hub Stop': toTime(560) };
+
+        const content: MasterScheduleContent = {
+            northTable: {
+                routeName: '2 (Weekday) (North)',
+                stops: ['Route 2 Hub Stop'],
+                stopIds: { 'Route 2 Hub Stop': 'HUB2' },
+                trips: [northTrip]
+            },
+            southTable: {
+                routeName: '2 (Weekday) (South)',
+                stops: ['Route 2 Hub Stop'],
+                stopIds: { 'Route 2 Hub Stop': 'HUB2' },
+                trips: [southTrip]
+            },
+            metadata: {
+                routeNumber: '2',
+                dayType: 'Weekday',
+                uploadedAt: new Date('2026-01-01T00:00:00.000Z').toISOString()
+            }
+        };
+
+        const analysis = aggregatePlatformData([content], ['2'], ROUTE_2_VARIANT_HUBS);
+        expect(analysis).toHaveLength(1);
+
+        const routes = new Set(analysis[0].platforms[0].events.map(e => e.route));
+        expect(routes.has('2')).toBe(false);
+        expect(routes.has('2A')).toBe(true);
+        expect(routes.has('2B')).toBe(true);
     });
 
     it('ignores zero-duration conflict spikes from same-minute events', () => {

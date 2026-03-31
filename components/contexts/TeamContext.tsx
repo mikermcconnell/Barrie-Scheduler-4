@@ -6,12 +6,14 @@
 
 import React, { createContext, useContext, useEffect, useState, ReactNode, useCallback } from 'react';
 import { useAuth } from './AuthContext';
-import { getUserTeam, joinTeamByInviteCode } from '../../utils/services/teamService';
-import type { Team } from '../../utils/masterScheduleTypes';
+import { getUserTeam, joinTeamByInviteCode, getTeamMember } from '../../utils/services/teamService';
+import type { Team, TeamRole } from '../../utils/masterScheduleTypes';
 import { getDevAuthConfig } from '../../utils/dev/devAuth';
 
 interface TeamContextType {
     team: Team | null;
+    teamRole: TeamRole | null;
+    canManageTeam: boolean;
     loading: boolean;
     refreshTeam: () => Promise<void>;
     hasTeam: boolean;
@@ -19,6 +21,8 @@ interface TeamContextType {
 
 const fallbackTeamContext: TeamContextType = {
     team: null,
+    teamRole: null,
+    canManageTeam: false,
     loading: false,
     refreshTeam: async () => { },
     hasTeam: false
@@ -37,12 +41,14 @@ interface TeamProviderProps {
 export const TeamProvider: React.FC<TeamProviderProps> = ({ children }) => {
     const { user } = useAuth();
     const [team, setTeam] = useState<Team | null>(null);
+    const [teamRole, setTeamRole] = useState<TeamRole | null>(null);
     const [loading, setLoading] = useState(true);
     const devAuth = getDevAuthConfig();
 
     const loadTeam = useCallback(async () => {
         if (!user) {
             setTeam(null);
+            setTeamRole(null);
             setLoading(false);
             return;
         }
@@ -62,9 +68,16 @@ export const TeamProvider: React.FC<TeamProviderProps> = ({ children }) => {
             }
 
             setTeam(userTeam);
+            if (userTeam) {
+                const member = await getTeamMember(userTeam.id, user.uid);
+                setTeamRole(member?.role ?? null);
+            } else {
+                setTeamRole(null);
+            }
         } catch (error) {
             console.error('Error loading team:', error);
             setTeam(null);
+            setTeamRole(null);
         } finally {
             setLoading(false);
         }
@@ -81,6 +94,8 @@ export const TeamProvider: React.FC<TeamProviderProps> = ({ children }) => {
 
     const value: TeamContextType = {
         team,
+        teamRole,
+        canManageTeam: teamRole === 'owner' || teamRole === 'admin',
         loading,
         refreshTeam,
         hasTeam: team !== null

@@ -6,24 +6,34 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { getEffectiveConfig, type PlatformConfigDocument } from '../utils/platform/platformConfigService';
+import {
+    buildDefaultPlatformConfig,
+    getEffectiveConfig,
+    getPlatformConfigErrorMessage,
+    type PlatformConfigDocument
+} from '../utils/platform/platformConfigService';
 
 export function usePlatformConfig(teamId: string | undefined) {
     const [config, setConfig] = useState<PlatformConfigDocument | null>(null);
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
 
     const load = useCallback(async () => {
         if (!teamId) {
             setConfig(null);
             setLoading(false);
+            setError(null);
             return;
         }
         setLoading(true);
+        setError(null);
         try {
             const result = await getEffectiveConfig(teamId);
             setConfig(result);
         } catch (error) {
             console.error('Error loading platform config:', error);
+            setConfig(buildDefaultPlatformConfig());
+            setError(getPlatformConfigErrorMessage(error, 'load'));
         } finally {
             setLoading(false);
         }
@@ -35,5 +45,5 @@ export function usePlatformConfig(teamId: string | undefined) {
 
     const refresh = useCallback(() => load(), [load]);
 
-    return { config, loading, refresh };
+    return { config, loading, error, refresh };
 }

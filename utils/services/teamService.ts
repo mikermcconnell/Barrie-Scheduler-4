@@ -176,6 +176,28 @@ export async function getUserTeam(userId: string): Promise<Team | null> {
 }
 
 /**
+ * Get a single team member record.
+ */
+export async function getTeamMember(teamId: string, userId: string): Promise<TeamMember | null> {
+    const memberRef = doc(db, 'teams', teamId, 'members', userId);
+    const memberSnap = await getDoc(memberRef);
+
+    if (!memberSnap.exists()) {
+        return null;
+    }
+
+    const data = memberSnap.data();
+    return {
+        id: memberSnap.id,
+        userId: data.userId,
+        role: data.role,
+        joinedAt: timestampToDate(data.joinedAt),
+        displayName: data.displayName,
+        email: data.email
+    };
+}
+
+/**
  * Rename team (owner/admin only - enforcement via security rules)
  */
 export async function renameTeam(teamId: string, newName: string): Promise<void> {
