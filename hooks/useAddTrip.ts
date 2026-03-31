@@ -55,7 +55,6 @@ export const useAddTrip = ({
         afterTripId: string,
         _routeData: { north?: MasterRouteTable; south?: MasterRouteTable }
     ) => {
-        console.log('openAddTripModal called with afterTripId:', afterTripId);
         if (!afterTripId) return;
 
         const result = findTableAndTrip(schedules, afterTripId);
@@ -66,7 +65,6 @@ export const useAddTrip = ({
 
         const referenceTrip = result.trip;
         const targetTable = result.table;
-        console.log('Found reference trip:', referenceTrip.id, 'blockId:', referenceTrip.blockId, 'in table:', targetTable.routeName);
 
         // Find the "next" trip in the schedule (for midpoint calculation)
         const sortedTrips = [...targetTable.trips].sort((a, b) => a.startTime - b.startTime);
@@ -77,7 +75,6 @@ export const useAddTrip = ({
         const routeBaseName = targetTable.routeName
             .replace(/ \(North\).*$/, '')
             .replace(/ \(South\).*$/, '');
-        console.log('Setting modal context with routeBaseName:', routeBaseName);
 
         setModalContext({
             referenceTrip,
@@ -99,7 +96,6 @@ export const useAddTrip = ({
      * Handle confirmed add trip from modal
      */
     const handleConfirm = useCallback((modalResult: AddTripResult) => {
-        console.log('handleAddTripFromModal called with:', modalResult);
         if (!modalContext) {
             console.error('No addTripModalContext!');
             return;
@@ -108,37 +104,28 @@ export const useAddTrip = ({
         const { referenceTrip, targetTable: origTable, routeBaseName } = modalContext;
         const { startTime, tripCount, newBlockId } = modalResult;
 
-        console.log('Reference trip:', referenceTrip);
-        console.log('Original table routeName:', origTable.routeName);
-        console.log('Route base name:', routeBaseName);
-
         // Deep clone for undo/redo integrity
         const newScheds = deepCloneSchedules(schedules);
-        console.log('Cloned schedules count:', newScheds.length);
 
         // Find the cloned version of the original target table
         const clonedOrigTable = newScheds.find(t => t.routeName === origTable.routeName);
         if (!clonedOrigTable) {
             console.error('Could not find cloned target table with name:', origTable.routeName);
-            console.log('Available route names:', newScheds.map(t => t.routeName));
             setModalContext(null);
             return;
         }
-        console.log('Found clonedOrigTable:', clonedOrigTable.routeName);
 
         // Find related tables in cloned schedules (for bidirectional routes)
         const baseName = routeBaseName;
         const northTable = newScheds.find(t => t.routeName === baseName + ' (North)');
         const southTable = newScheds.find(t => t.routeName === baseName + ' (South)');
         const isBidirectional = northTable && southTable;
-        console.log('isBidirectional:', isBidirectional, 'northTable:', !!northTable, 'southTable:', !!southTable);
 
         // Create trips
         const travelTime = referenceTrip.travelTime || 30;
         const recoveryTime = referenceTrip.recoveryTime || 0;
         let currentTime = startTime;
         let currentDirection = referenceTrip.direction || 'North';
-        console.log('Creating trips - travelTime:', travelTime, 'recoveryTime:', recoveryTime, 'startTime:', startTime);
 
         // Calculate stop-to-stop intervals from reference trip
         const getStopIntervals = (refTrip: MasterTrip, stops: string[]): number[] => {
@@ -167,7 +154,6 @@ export const useAddTrip = ({
                 console.error('No target table found for trip', i);
                 continue;
             }
-            console.log('Adding trip', i, 'to table:', targetTable.routeName);
 
             const tripEndTime = currentTime + travelTime;
 
@@ -195,7 +181,6 @@ export const useAddTrip = ({
                 stops: newStops,
                 cycleTime: travelTime + recoveryTime
             };
-            console.log('Created newTrip:', JSON.stringify(newTrip, null, 2));
 
             targetTable.trips.push(newTrip);
             targetTable.trips.sort((a, b) => a.startTime - b.startTime);
@@ -208,11 +193,6 @@ export const useAddTrip = ({
             }
         }
 
-        // Debug: show trips in the table after adding
-        console.log('Trips added! New trip count in clonedOrigTable:', clonedOrigTable.trips.length);
-        console.log('Last few trips:', clonedOrigTable.trips.slice(-3).map(t => ({ id: t.id, blockId: t.blockId, startTime: t.startTime })));
-        console.log('Calling setSchedules with newScheds:', newScheds.length, 'tables');
-
         setSchedules(newScheds);
 
         // Show success message
@@ -222,7 +202,6 @@ export const useAddTrip = ({
             onSuccess(`✓ Added ${tripCount} trip${tripCount > 1 ? 's' : ''} to Route ${routeNum} (${dayLabel}) as block ${newBlockId}`);
         }
 
-        console.log('setSchedules completed, closing modal');
         setModalContext(null);
     }, [modalContext, schedules, setSchedules, onSuccess]);
 

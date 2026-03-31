@@ -113,6 +113,70 @@ describe('RoundTripTableView accessibility polish', () => {
     expect(timeButton).not.toBeNull();
   });
 
+  it('shows the actions column by default in editable schedule views', () => {
+    const onAddTrip = vi.fn();
+
+    flushSync(() => {
+      root?.render(
+        <RoundTripTableView
+          schedules={[
+            {
+              routeName: '10 (Weekday) (North)',
+              stops: ['North Terminal'],
+              stopIds: { 'North Terminal': '1001' },
+              trips: [
+                {
+                  id: 'north-trip',
+                  blockId: '10-1',
+                  direction: 'North',
+                  tripNumber: 1,
+                  rowId: 1,
+                  startTime: 420,
+                  endTime: 450,
+                  recoveryTime: 0,
+                  travelTime: 30,
+                  cycleTime: 30,
+                  stops: { 'North Terminal': '7:00 AM' },
+                  arrivalTimes: { 'North Terminal': '7:00 AM' },
+                  stopMinutes: { 'North Terminal': 420 }
+                }
+              ]
+            },
+            {
+              routeName: '10 (Weekday) (South)',
+              stops: ['South Terminal'],
+              stopIds: { 'South Terminal': '2001' },
+              trips: [
+                {
+                  id: 'south-trip',
+                  blockId: '10-1',
+                  direction: 'South',
+                  tripNumber: 2,
+                  rowId: 2,
+                  startTime: 455,
+                  endTime: 485,
+                  recoveryTime: 0,
+                  travelTime: 30,
+                  cycleTime: 30,
+                  stops: { 'South Terminal': '7:35 AM' },
+                  arrivalTimes: { 'South Terminal': '7:35 AM' },
+                  stopMinutes: { 'South Terminal': 455 }
+                }
+              ]
+            }
+          ] as any}
+          onCellEdit={vi.fn()}
+          onAddTrip={onAddTrip}
+        />
+      );
+    });
+
+    const addTripButtons = Array.from(
+      container?.querySelectorAll('button[aria-label="Add round trip"]') ?? [],
+    );
+    expect(addTripButtons.length).toBeGreaterThan(0);
+  });
+
   it('does not freeze the first schedule column in the combined view', () => {
     flushSync(() => {
       root?.render(

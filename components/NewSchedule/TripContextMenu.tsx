@@ -7,8 +7,9 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Trash2, Plus, MapPinOff, MapPin, Copy, ChevronRight } from 'lucide-react';
 
 export interface TripContextMenuAction {
-    type: 'endBlockHere' | 'startBlockHere' | 'deleteTrip' | 'addTripAfter' | 'duplicateTrip';
+    type: 'endBlockHere' | 'startBlockHere' | 'deleteTrip' | 'deleteRoundTrip' | 'addTripAfter' | 'duplicateTrip';
     tripId: string;
+    tripIds?: string[];
     stopName?: string;
     stopIndex?: number;
 }
@@ -22,6 +23,11 @@ interface TripContextMenuProps {
     currentStopName?: string;
     currentStopIndex?: number;
     stops: string[];
+    rowTripIds?: string[];
+    menuLabel?: string;
+    addLabel?: string;
+    deleteLabel?: string;
+    hideTripSpecificActions?: boolean;
     onAction: (action: TripContextMenuAction) => void;
     onClose: () => void;
 }
@@ -35,6 +41,11 @@ export const TripContextMenu: React.FC<TripContextMenuProps> = ({
     currentStopName,
     currentStopIndex,
     stops,
+    rowTripIds,
+    menuLabel,
+    addLabel,
+    deleteLabel,
+    hideTripSpecificActions = false,
     onAction,
     onClose
 }) => {
@@ -83,22 +94,30 @@ export const TripContextMenu: React.FC<TripContextMenuProps> = ({
         onAction({
             type,
             tripId,
+            tripIds: rowTripIds,
             stopName,
             stopIndex
         });
         onClose();
     };
 
-    const handleSubmenuHover = (
-        submenu: 'endBlock' | 'startBlock',
-        e: React.MouseEvent<HTMLButtonElement>
-    ) => {
-        const rect = e.currentTarget.getBoundingClientRect();
+    const openSubmenu = (submenu: 'endBlock' | 'startBlock', element: HTMLElement) => {
+        const rect = element.getBoundingClientRect();
         setSubmenuPosition({
             x: rect.right,
             y: rect.top
         });
         setActiveSubmenu(submenu);
+    };
+
+    const handleSubmenuKeyDown = (
+        e: React.KeyboardEvent<HTMLButtonElement>,
+        submenu: 'endBlock' | 'startBlock'
+    ) => {
+        if (e.key === 'ArrowRight' || e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            openSubmenu(submenu, e.currentTarget);
+        }
     };
 
     // Stops for "End Block Here" - all except the last one
@@ -117,17 +136,21 @@ export const TripContextMenu: React.FC<TripContextMenuProps> = ({
             {/* Header */}
             <div className="px-3 py-2 border-b border-gray-100">
                 <div className="text-xs font-semibold text-gray-700">Block {blockId}</div>
-                <div className="text-[10px] text-gray-400">{tripDirection}bound</div>
+                <div className="text-[10px] text-gray-400">{menuLabel ?? `${tripDirection}bound`}</div>
             </div>
 
             {/* Actions */}
             <div className="py-1">
                 {/* Start Block Here - with submenu */}
-                {startBlockStops.length > 0 && (
+                {!hideTripSpecificActions && startBlockStops.length > 0 && (
                     <div className="relative">
                         <button
-                            onMouseEnter={(e) => handleSubmenuHover('startBlock', e)}
+                            onMouseEnter={(e) => openSubmenu('startBlock', e.currentTarget)}
+                            onFocus={(e) => openSubmenu('startBlock', e.currentTarget)}
+                            onKeyDown={(e) => handleSubmenuKeyDown(e, 'startBlock')}
                             className="w-full px-3 py-2 text-left text-sm flex items-center gap-2 hover:bg-gray-50 text-gray-700"
+                            aria-haspopup="menu"
+                            aria-expanded={activeSubmenu === 'startBlock'}
                         >
                             <MapPin size={14} className="text-green-500" />
                             <span className="flex-1">Start Trip Here</span>
@@ -163,11 +186,15 @@ export const TripContextMenu: React.FC<TripContextMenuProps> = ({
                 )}
 
                 {/* End Block Here - with submenu */}
-                {endBlockStops.length > 0 && (
+                {!hideTripSpecificActions && endBlockStops.length > 0 && (
                     <div className="relative">
                         <button
-                            onMouseEnter={(e) => handleSubmenuHover('endBlock', e)}
+                            onMouseEnter={(e) => openSubmenu('endBlock', e.currentTarget)}
+                            onFocus={(e) => openSubmenu('endBlock', e.currentTarget)}
+                            onKeyDown={(e) => handleSubmenuKeyDown(e, 'endBlock')}
                             className="w-full px-3 py-2 text-left text-sm flex items-center gap-2 hover:bg-gray-50 text-gray-700"
+                            aria-haspopup="menu"
+                            aria-expanded={activeSubmenu === 'endBlock'}
                         >
                             <MapPinOff size={14} className="text-orange-500" />
                             <span className="flex-1">End Trip Here</span>
@@ -199,7 +226,7 @@ export const TripContextMenu: React.FC<TripContextMenuProps> = ({
                     </div>
                 )}
 
-                {(startBlockStops.length > 0 || endBlockStops.length > 0) && (
+                {!hideTripSpecificActions && (startBlockStops.length > 0 || endBlockStops.length > 0) && (
                     <div className="border-t border-gray-100 my-1" />
                 )}
 
@@ -209,27 +236,29 @@ export const TripContextMenu: React.FC<TripContextMenuProps> = ({
                     className="w-full px-3 py-2 text-left text-sm flex items-center gap-2 hover:bg-gray-50 text-gray-700"
                 >
                     <Plus size={14} className="text-blue-500" />
-                    <span>Add Trip After</span>
+                    <span>{addLabel ?? 'Add Trip After'}</span>
                 </button>
 
                 {/* Duplicate Trip */}
-                <button
-                    onClick={() => handleAction('duplicateTrip')}
-                    className="w-full px-3 py-2 text-left text-sm flex items-center gap-2 hover:bg-gray-50 text-gray-700"
-                >
-                    <Copy size={14} className="text-purple-500" />
-                    <span>Duplicate Trip</span>
-                </button>
+                {!hideTripSpecificActions && (
+                    <button
+                        onClick={() => handleAction('duplicateTrip')}
+                        className="w-full px-3 py-2 text-left text-sm flex items-center gap-2 hover:bg-gray-50 text-gray-700"
+                    >
+                        <Copy size={14} className="text-purple-500" />
+                        <span>Duplicate Trip</span>
+                    </button>
+                )}
 
                 <div className="border-t border-gray-100 my-1" />
 
                 {/* Delete Trip */}
                 <button
-                    onClick={() => handleAction('deleteTrip')}
+                    onClick={() => handleAction(hideTripSpecificActions ? 'deleteRoundTrip' : 'deleteTrip')}
                     className="w-full px-3 py-2 text-left text-sm flex items-center gap-2 hover:bg-red-50 text-red-600"
                 >
                     <Trash2 size={14} />
-                    <span>Delete Trip</span>
+                    <span>{deleteLabel ?? 'Delete Trip'}</span>
                 </button>
             </div>
         </div>

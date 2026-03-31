@@ -306,9 +306,9 @@ export interface RoundTripTableViewProps {
     onRecoveryEdit?: (tripId: string, stopName: string, delta: number) => void;
     originalSchedules?: MasterRouteTable[];
     onResetOriginals?: () => void;
-    onDeleteTrip?: (tripId: string) => void;
+    onDeleteTrip?: (tripIds: string[], options?: { treatAsRoundTrip?: boolean }) => void;
     onDuplicateTrip?: (tripId: string) => void;
-    onAddTrip?: (blockId: string, afterTripId: string) => void;
+    onAddTrip?: (afterTripId: string) => void;
     onTripRightClick?: (
         e: React.MouseEvent,
         tripId: string,
@@ -318,7 +318,19 @@ export interface RoundTripTableViewProps {
         stopName?: string,
         stopIndex?: number
     ) => void;
-    onMenuOpen?: (tripId: string, x: number, y: number, direction: 'North' | 'South', blockId: string, stops: string[]) => void;
+    onMenuOpen?: (request: {
+        tripId: string;
+        x: number;
+        y: number;
+        direction: 'North' | 'South';
+        blockId: string;
+        stops: string[];
+        rowTripIds?: string[];
+        menuLabel?: string;
+        addLabel?: string;
+        deleteLabel?: string;
+        hideTripSpecificActions?: boolean;
+    }) => void;
     draftName?: string;
     filter?: FilterState;
     targetCycleTime?: number;
@@ -367,7 +379,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
     const [density, setDensity] = useState<DensityMode>('compact');
     const [timepointOnly, setTimepointOnly] = useState(false);
     const [showMetaCols, setShowMetaCols] = useState(true);
-    const [showActionsCol, setShowActionsCol] = useState(false);
+    const [showActionsCol, setShowActionsCol] = useState(true);
     const [showRowNumberCol, setShowRowNumberCol] = useState(false);
     const [showDeltas, setShowDeltas] = useState(true);
 
@@ -1284,6 +1296,9 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                         const northTrip = row.trips.find(t => t.direction === 'North');
                                         const southTrip = row.trips.find(t => t.direction === 'South');
                                         const lastTrip = [...row.trips].sort((a, b) => a.startTime - b.startTime).pop();
+                                        const actionTrip = lastTrip ?? northTrip ?? southTrip;
+                                        const actionStops = actionTrip?.direction === 'South' ? combined.southStops : combined.northStops;
+                                        const rowTripIds = row.trips.map(trip => trip.id);
 
                                         const stableRowKey = getRoundTripRowKey(row);
                                         const uniqueRowKey = stableRowKey;
@@ -1374,8 +1389,8 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                 key={uniqueRowKey}
                                                 className={`group hover:bg-blue-50/50 ${rowBg} ${grayOutClass} ${filterHighlightClass} ${searchHideClass} ${isNewTrip ? 'ring-2 ring-inset ring-green-300 bg-green-50/30' : ''} ${gridNav.isRowActive(rowIdx) ? 'bg-blue-50/30' : ''}`}
                                                 onContextMenu={(e) => {
-                                                    if (onTripRightClick && northTrip) {
-                                                        onTripRightClick(e, northTrip.id, 'North', row.blockId, combined.northStops);
+                                                    if (onTripRightClick && actionTrip) {
+                                                        onTripRightClick(e, actionTrip.id, actionTrip.direction, row.blockId, actionStops);
                                                     }
                                                 }}
                                             >
@@ -1392,37 +1407,47 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                 {showActions && (
                                                     <td className="p-1 border-r border-gray-100 bg-white group-hover:bg-gray-100 z-20">
                                                         <div className="flex items-center justify-center gap-0.5">
-                                                            {onAddTrip && (
+                                                            {onAddTrip && lastTrip && (
                                                                 <button
-                                                                    onClick={() => onAddTrip(row.blockId, lastTrip?.id || '')}
+                                                                    onClick={() => onAddTrip(lastTrip.id)}
                                                                     className="p-1 rounded hover:bg-green-50 text-gray-600 hover:text-green-700 transition-colors"
-                                                                    title="Add trip to block"
-                                                                    aria-label="Add trip"
+                                                                    title="Add round trip after this row"
+                                                                    aria-label="Add round trip"
                                                                 >
                                                                     <Plus size={12} />
                                                                 </button>
                                                             )}
-                                                            {northTrip && (
+                                                            {actionTrip && onMenuOpen && (
                                                                 <button
                                                                     onClick={(e) => {
-                                                                        if (onMenuOpen) {
-                                                                            const rect = e.currentTarget.getBoundingClientRect();
-                                                                            onMenuOpen(northTrip.id, rect.left, rect.bottom + 4, 'North', row.blockId, combined.northStops);
-                                                                        }
+                                                                        const rect = e.currentTarget.getBoundingClientRect();
+                                                                        onMenuOpen({
+                                                                            tripId: actionTrip.id,
+                                                                            x: rect.left,
+                                                                            y: rect.bottom + 4,
+                                                                            direction: actionTrip.direction,
+                                                                            blockId: row.blockId,
+                                                                            stops: actionStops,
+                                                                            rowTripIds,
+                                                                            menuLabel: 'Round-trip actions',
+                                                                            addLabel: 'Add Round Trip After',
+                                                                            deleteLabel: 'Delete Round Trip',
+                                                                            hideTripSpecificActions: true
+                                                                        });
                                                                     }}
                                                                     className="p-1 rounded hover:bg-blue-50 text-gray-600 hover:text-blue-700 transition-colors"
-                                                                    title="Edit trip"
-                                                                    aria-label="Edit trip"
+                                                                    title="Round-trip actions"
+                                                                    aria-label="Round-trip actions"
                                                                 >
                                                                     <Pencil size={12} />
                                                                 </button>
                                                             )}
-                                                            {onDeleteTrip && northTrip && (
+                                                            {onDeleteTrip && rowTripIds.length > 0 && (
                                                                 <button
-                                                                    onClick={() => onDeleteTrip(northTrip.id)}
+                                                                    onClick={() => onDeleteTrip(rowTripIds, { treatAsRoundTrip: true })}
                                                                     className="p-1 rounded hover:bg-red-50 text-gray-600 hover:text-red-600 transition-colors"
-                                                                    title="Delete trip"
-                                                                    aria-label="Delete trip"
+                                                                    title="Delete round trip"
+                                                                    aria-label="Delete round trip"
                                                                 >
                                                                     <Trash2 size={12} />
                                                                 </button>

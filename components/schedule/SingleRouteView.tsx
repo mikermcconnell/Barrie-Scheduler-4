@@ -43,7 +43,7 @@ export interface SingleRouteViewProps {
     onTimeAdjust?: (tripId: string, stopName: string, delta: number) => void;
     onDeleteTrip?: (tripId: string) => void;
     onDuplicateTrip?: (tripId: string) => void;
-    onAddTrip?: (blockId: string, afterTripId: string) => void;
+    onAddTrip?: (afterTripId: string) => void;
     onDirectionChange?: (tableRouteName: string, direction: 'North' | 'South') => void;
     readOnly?: boolean;
     connectionLibrary?: ConnectionLibrary | null;
@@ -225,7 +225,7 @@ export const SingleRouteView: React.FC<SingleRouteViewProps> = ({ table, showSum
                                     <td className="p-3 border-r bg-white group-hover:bg-gray-50 font-mono text-sm font-bold text-center">
                                         <div className="flex flex-col items-center">
                                             <span>{trip.blockId}</span>
-                                            {onAddTrip && <button onClick={() => onAddTrip(trip.blockId, trip.id)} className="opacity-70 group-hover:opacity-100 absolute -right-2 top-1/2 -translate-y-1/2 bg-blue-600 text-white rounded-full p-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"><Plus size={10} /></button>}
+                                            {onAddTrip && <button onClick={() => onAddTrip(trip.id)} className="opacity-70 group-hover:opacity-100 absolute -right-2 top-1/2 -translate-y-1/2 bg-blue-600 text-white rounded-full p-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"><Plus size={10} /></button>}
                                         </div>
                                     </td>
                                     {table.stops.map(stop => {

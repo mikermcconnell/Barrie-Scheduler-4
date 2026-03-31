@@ -263,6 +263,11 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         stopName?: string;
         stopIndex?: number;
         stops: string[];
+        rowTripIds?: string[];
+        menuLabel?: string;
+        addLabel?: string;
+        deleteLabel?: string;
+        hideTripSpecificActions?: boolean;
     } | null>(null);
 
     // Audit Log
@@ -728,24 +733,38 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         handleCellEdit(tripId, isArrivalAdjust ? `${baseStopName}__ARR` : baseStopName, newTime);
     };
 
-    const handleDeleteTrip = (tripId: string) => {
-        if (!confirm("Delete trip?")) return;
+    const handleDeleteTrips = (tripIds: string[], options?: { treatAsRoundTrip?: boolean }) => {
+        const uniqueTripIds = Array.from(new Set(tripIds.filter(Boolean)));
+        if (uniqueTripIds.length === 0) return;
+
+        const confirmMessage = options?.treatAsRoundTrip || uniqueTripIds.length > 1
+            ? 'Delete round trip?'
+            : 'Delete trip?';
+        if (!confirm(confirmMessage)) return;
+
         const newScheds = deepCloneSchedules(schedules);
-        for (const t of newScheds) {
-            const tripToDelete = t.trips.find(x => x.id === tripId);
-            if (tripToDelete) {
-                // Log deletion to audit log
-                logAction('delete', `Deleted trip from Block ${tripToDelete.blockId}`, {
-                    tripId,
-                    blockId: tripToDelete.blockId,
-                    field: 'trip'
-                });
-                t.trips = t.trips.filter(x => x.id !== tripId);
-                validateRouteTable(t);
-                break;
+
+        for (const tripId of uniqueTripIds) {
+            for (const t of newScheds) {
+                const tripToDelete = t.trips.find(x => x.id === tripId);
+                if (tripToDelete) {
+                    logAction('delete', `Deleted trip from Block ${tripToDelete.blockId}`, {
+                        tripId,
+                        blockId: tripToDelete.blockId,
+                        field: 'trip'
+                    });
+                    t.trips = t.trips.filter(x => x.id !== tripId);
+                    validateRouteTable(t);
+                    break;
+                }
             }
         }
+
         onSchedulesChange(newScheds);
+    };
+
+    const handleDeleteTrip = (tripId: string) => {
+        handleDeleteTrips([tripId], { treatAsRoundTrip: false });
     };
 
     // Handle direction change from SingleRouteView dropdown
@@ -784,7 +803,11 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                 handleDeleteTrip(action.tripId);
                 break;
 
-            case 'addTripAfter':
+            case 'deleteRoundTrip':
+                handleDeleteTrips(action.tripIds ?? [action.tripId], { treatAsRoundTrip: true });
+                break;
+
+            case 'addTripAfter': {
                 // Find the trip and open add modal
                 const addResult = findTableAndTrip(schedules, action.tripId);
                 if (addResult) {
@@ -792,6 +815,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                     openAddTripModal(action.tripId, { north: undefined, south: undefined });
                 }
                 break;
+            }
 
             case 'endBlockHere':
                 if (action.stopIndex !== undefined) {
@@ -911,21 +935,43 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
     };
 
     // Menu open handler for kebab button click
-    const handleMenuOpen = (
-        tripId: string,
-        x: number,
-        y: number,
-        tripDirection: 'North' | 'South',
-        blockId: string,
-        stops: string[]
-    ) => {
+    const handleMenuOpen = ({
+        tripId,
+        x,
+        y,
+        direction,
+        blockId,
+        stops,
+        rowTripIds,
+        menuLabel,
+        addLabel,
+        deleteLabel,
+        hideTripSpecificActions
+    }: {
+        tripId: string;
+        x: number;
+        y: number;
+        direction: 'North' | 'South';
+        blockId: string;
+        stops: string[];
+        rowTripIds?: string[];
+        menuLabel?: string;
+        addLabel?: string;
+        deleteLabel?: string;
+        hideTripSpecificActions?: boolean;
+    }) => {
         setContextMenu({
             x,
             y,
             tripId,
-            tripDirection,
+            tripDirection: direction,
             blockId,
-            stops
+            stops,
+            rowTripIds,
+            menuLabel,
+            addLabel,
+            deleteLabel,
+            hideTripSpecificActions
         });
     };
 
@@ -1424,6 +1470,11 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                     currentStopName={contextMenu.stopName}
                     currentStopIndex={contextMenu.stopIndex}
                     stops={contextMenu.stops}
+                    rowTripIds={contextMenu.rowTripIds}
+                    menuLabel={contextMenu.menuLabel}
+                    addLabel={contextMenu.addLabel}
+                    deleteLabel={contextMenu.deleteLabel}
+                    hideTripSpecificActions={contextMenu.hideTripSpecificActions}
                     onAction={handleContextMenuAction}
                     onClose={() => setContextMenu(null)}
                 />
@@ -1544,9 +1595,9 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                                     onRecoveryEdit={readOnly ? undefined : handleRecoveryEdit}
                                     originalSchedules={originalSchedules}
                                     onResetOriginals={onResetOriginals}
-                                    onDeleteTrip={readOnly ? undefined : handleDeleteTrip}
+                                    onDeleteTrip={readOnly ? undefined : handleDeleteTrips}
                                     onDuplicateTrip={readOnly ? undefined : handleDuplicateTrip}
-                                    onAddTrip={readOnly ? undefined : (_, tripId) => openAddTripModal(tripId, {})}
+                                    onAddTrip={readOnly ? undefined : (tripId) => openAddTripModal(tripId, {})}
                                     onTripRightClick={readOnly ? undefined : handleTripRightClick}
                                     onMenuOpen={readOnly ? undefined : handleMenuOpen}
                                     draftName={draftName}
