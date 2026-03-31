@@ -588,7 +588,11 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         return () => {
             isCancelled = true;
         };
-    }, [team?.id, config.routeNumber, dayType, importMode, canonicalDirectionStops, canonicalRouteIdentity, canonicalRouteSource]);
+        // Deliberately do not depend on canonical state here. This effect is responsible
+        // for loading or clearing that state, so depending on the values it sets can
+        // cause a reset/reload loop that makes Step 2 flicker between runtime-derived
+        // and master-derived segment columns.
+    }, [team?.id, config.routeNumber, dayType, importMode]);
 
     // Backfill old generated schedules that used sequential stop IDs (#1, #2, ...)
     // so existing projects immediately get real stop codes for connections.
@@ -1092,10 +1096,10 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         }
     };
 
-    const handleApproveStep2 = useCallback((acknowledgedWarnings: string[]) => {
+    const handleApproveStep2 = useCallback((acknowledgedWarnings: string[], options?: { silent?: boolean }) => {
         if (!step2ReviewResult || !step2ReviewBuilderInput) {
             toast.warning('Approval Failed', 'Step 2 review data is not ready yet.');
-            return;
+            return false;
         }
 
         const contract = createStep2ApprovedRuntimeContract({
@@ -1107,13 +1111,16 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
 
         if (!contract) {
             toast.warning('Approval Failed', 'Review the warnings and try approving the runtime model again.');
-            return;
+            return false;
         }
 
         setApprovedRuntimeContract(contract);
         setLegacyApprovedRuntimeModel(buildStep2ApprovedRuntimeModelFromContract(contract));
         setStep2WarningsAcknowledged(contract.readinessStatus === 'warning');
-        toast.success('Runtime Approved', 'Step 2 is now approved for schedule building.');
+        if (!options?.silent) {
+            toast.success('Runtime Approved', 'Step 2 is now approved for schedule building.');
+        }
+        return true;
     }, [
         step2ReviewBuilderInput,
         step2ReviewResult,
@@ -1324,12 +1331,17 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                 }
             }
         } else if (step === 2) {
-            if (approvalState !== 'approved') {
+            if (step2HealthReport?.status === 'blocked') {
                 toast.warning(
-                    'Step 2 Approval Needed',
-                    'Approve the reviewed runtime model before moving to schedule building.'
+                    'Step 2 Needs Fixes',
+                    'Resolve the Step 2 issues before moving to schedule building.'
                 );
                 return;
+            }
+
+            if (approvalState !== 'approved') {
+                const approved = handleApproveStep2(step2ApprovalWarnings, { silent: true });
+                if (!approved) return;
             }
             // Initialize one block for convenience if empty
             if (config.blocks.length === 0) {
@@ -1650,7 +1662,10 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                 southTable,
                 uploadConfirmation.routeNumber,
                 uploadConfirmation.dayType,
-                'wizard'
+                'wizard',
+                {
+                    cycleMode: config.cycleMode ?? 'Strict',
+                }
             );
 
             toast.success('Uploaded!', `${uploadConfirmation.routeNumber} uploaded to Master Schedule`);
@@ -1865,14 +1880,22 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
 
                         {step === 2 && (
                             <Step2ApprovalFooter
+                                mode="next-step"
+                                title="Next step"
                                 approvalState={approvalState}
                                 readinessStatus={step2HealthReport?.status ?? 'blocked'}
-                                primaryActionVariant={approvalState === 'approved' ? 'continue' : 'approve'}
+                                primaryActionVariant="continue"
                                 approvalRequiresAcknowledgement={step2ApprovalRequiresAcknowledgement}
                                 warningAcknowledged={step2WarningsAcknowledged}
                                 approvedAtLabel={formatFooterTimestamp(approvedRuntimeContract?.approvedAt)}
-                                approvalActionDisabled={step2ApprovalActionDisabled}
-                                continueActionDisabled={approvalState !== 'approved'}
+                                statusLabel={step2HealthReport?.status === 'blocked' ? 'Needs fixes' : 'Ready'}
+                                statusMessage={
+                                    step2HealthReport?.status === 'blocked'
+                                        ? 'Resolve the Step 2 issues before continuing to schedule building.'
+                                        : 'If this looks right, continue to build the schedule.'
+                                }
+                                approvalActionDisabled={false}
+                                continueActionDisabled={step2HealthReport?.status === 'blocked'}
                                 onApproveRuntimeContract={() => handleApproveStep2(step2ApprovalWarnings)}
                                 onContinueToStep3={() => {
                                     void handleNext();

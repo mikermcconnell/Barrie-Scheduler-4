@@ -123,7 +123,7 @@ export const OperationsWorkspace: React.FC = () => {
                 <div className="absolute inset-0">
                     <Suspense fallback={<OperationsSubviewLoading label="Loading operations view..." />}>
                         {viewMode === 'performance' && (
-                            <PerformanceDashboard onClose={() => setViewMode('dashboard')} />
+                            <PerformanceDashboard onClose={() => setViewMode('dashboard')} autoOpen />
                         )}
 
                         {viewMode === 'perf-reports' && (

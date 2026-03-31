@@ -4,29 +4,37 @@ import { createRoot, type Root } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 
 const performanceDashboardRenderSpy = vi.fn();
+const performanceDashboardPropsSpy = vi.fn();
 const reportsWorkspaceRenderSpy = vi.fn();
 
-vi.mock('../components/Performance/PerformanceDashboard', () => ({
-  PerformanceDashboard: (props: { onClose: () => void }) => {
-    performanceDashboardRenderSpy();
-    return React.createElement(
-      'div',
-      null,
-      React.createElement('div', null, 'Mock Performance Dashboard'),
-      React.createElement('button', { type: 'button', onClick: props.onClose }, 'Back from Performance'),
-    );
-  },
-}));
+vi.mock('../utils/lazyWithRetry', () => ({
+  lazyWithRetry: (_loader: unknown, cacheKey: string) => {
+    if (cacheKey === 'operations-performance-dashboard') {
+      return (props: { onClose: () => void; autoOpen?: boolean }) => {
+        performanceDashboardRenderSpy();
+        performanceDashboardPropsSpy(props);
+        return React.createElement(
+          'div',
+          null,
+          React.createElement('div', null, 'Mock Performance Dashboard'),
+          React.createElement('button', { type: 'button', onClick: props.onClose }, 'Back from Performance'),
+        );
+      };
+    }
 
-vi.mock('../components/workspaces/ReportsWorkspace', () => ({
-  ReportsWorkspace: (props: { onClose: () => void }) => {
-    reportsWorkspaceRenderSpy();
-    return React.createElement(
-      'div',
-      null,
-      React.createElement('div', null, 'Mock STREETS Reports'),
-      React.createElement('button', { type: 'button', onClick: props.onClose }, 'Back from Reports'),
-    );
+    if (cacheKey === 'operations-reports-workspace') {
+      return (props: { onClose: () => void }) => {
+        reportsWorkspaceRenderSpy();
+        return React.createElement(
+          'div',
+          null,
+          React.createElement('div', null, 'Mock STREETS Reports'),
+          React.createElement('button', { type: 'button', onClick: props.onClose }, 'Back from Reports'),
+        );
+      };
+    }
+
+    return () => React.createElement('div', null, 'Mock Lazy Component');
   },
 }));
 
@@ -38,6 +46,7 @@ describe('OperationsWorkspace performance shell', () => {
 
   beforeEach(() => {
     performanceDashboardRenderSpy.mockClear();
+    performanceDashboardPropsSpy.mockClear();
     reportsWorkspaceRenderSpy.mockClear();
     container = document.createElement('div');
     document.body.appendChild(container);
@@ -61,5 +70,28 @@ describe('OperationsWorkspace performance shell', () => {
     expect(container.textContent).toContain('STREETS Reports');
     expect(performanceDashboardRenderSpy).not.toHaveBeenCalled();
     expect(reportsWorkspaceRenderSpy).not.toHaveBeenCalled();
+  });
+
+  it('opens the operations dashboard directly when the card is clicked', async () => {
+    flushSync(() => {
+      root.render(<OperationsWorkspace />);
+    });
+
+    const operationsCard = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.includes('Operations Dashboard') && button.textContent?.includes('OTP, ridership, and load profiles'),
+    ) as HTMLButtonElement | undefined;
+
+    expect(operationsCard).toBeTruthy();
+
+    operationsCard?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(performanceDashboardRenderSpy).toHaveBeenCalled();
+    expect(performanceDashboardPropsSpy).toHaveBeenCalled();
+    expect(performanceDashboardPropsSpy.mock.calls[0][0]).toEqual(
+      expect.objectContaining({
+        autoOpen: true,
+      }),
+    );
   });
 });

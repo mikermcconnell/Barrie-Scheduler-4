@@ -47,7 +47,10 @@ export const publishDraft = async ({
         draft.content.southTable,
         routeNumber,
         dayType,
-        'draft'
+        'draft',
+        {
+            cycleMode: draft.content.metadata?.cycleMode,
+        }
     );
 
     const routeIdentity = buildRouteIdentity(routeNumber, dayType);

@@ -6,6 +6,7 @@ import { getMasterSchedule } from '../../../utils/services/masterScheduleService
 import type { RouteIdentity } from '../../../utils/masterScheduleTypes';
 import { resolveBlockStartDirection, shouldShowStartDirectionForRoute, normalizeDirectionHint, inferBlockStartDirection } from '../utils/blockStartDirection';
 import { computeSuggestedStrictCycle } from '../../../utils/schedule/strictCycleSuggestion';
+import { detectMasterCycleMode, type MasterCycleModeDetection } from '../../../utils/schedule/masterCycleMode';
 import { buildStep2ApprovedRuntimeModelFromContract } from '../utils/step2ApprovedRuntimeModelAdapter';
 import type { ApprovedRuntimeContract } from '../utils/step2ReviewTypes';
 import type { ApprovedRuntimeModel } from '../utils/wizardState';
@@ -80,6 +81,7 @@ export const Step3Build: React.FC<Step3Props> = ({
     const [masterStatus, setMasterStatus] = React.useState<'idle' | 'loaded' | 'not-found'>('idle');
     const [usePerBandRecovery, setUsePerBandRecovery] = React.useState(true);
     const [displayBandDefaults, setDisplayBandDefaults] = React.useState<BandRecoveryDefault[]>([]);
+    const [masterCycleModeDetection, setMasterCycleModeDetection] = React.useState<MasterCycleModeDetection | null>(null);
     const configRef = React.useRef(config);
     React.useEffect(() => { configRef.current = config; }, [config]);
 
@@ -274,6 +276,7 @@ export const Step3Build: React.FC<Step3Props> = ({
         const fetchBlocks = async () => {
             setIsLoadingMaster(true);
             setMasterStatus('idle');
+            setMasterCycleModeDetection(null);
             try {
                 const routeIdentity = `${config.routeNumber}-${dayType}` as RouteIdentity;
                 const result = await getMasterSchedule(teamId, routeIdentity);
@@ -290,6 +293,8 @@ export const Step3Build: React.FC<Step3Props> = ({
                 }
 
                 const { content } = result;
+                const cycleModeDetection = detectMasterCycleMode(content);
+                setMasterCycleModeDetection(cycleModeDetection);
                 const allTrips = [
                     ...content.northTable.trips.map(trip => ({ ...trip, stopOrder: content.northTable.stops })),
                     ...content.southTable.trips.map(trip => ({ ...trip, stopOrder: content.southTable.stops }))
@@ -391,6 +396,7 @@ export const Step3Build: React.FC<Step3Props> = ({
                     setConfig({
                         ...configRef.current,
                         blocks,
+                        cycleMode: cycleModeDetection.cycleMode,
                         cycleTime: globalCycleTime,
                         recoveryRatio: globalRecoveryRatio,
                         bandRecoveryDefaults: bandRecoveryDefaults.length > 0 ? bandRecoveryDefaults : undefined
@@ -426,7 +432,7 @@ export const Step3Build: React.FC<Step3Props> = ({
     // Skip when autofill is active — master schedule times are authoritative
     React.useEffect(() => {
         if (config.blocks.length <= 1) return;
-        if (autofillFromMaster && masterStatus === 'loaded') return;
+        if (autofillFromMaster && masterStatus === 'loaded' && config.cycleMode === 'Floating') return;
         if (config.cycleMode === 'Floating' && (!config.cycleTime || config.cycleTime <= 0)) return;
 
         const cycleTime = config.cycleTime;
@@ -449,7 +455,7 @@ export const Step3Build: React.FC<Step3Props> = ({
         if (changed) {
             setConfig({ ...config, blocks: newBlocks });
         }
-    }, [config.cycleTime, config.blocks.length, config.blocks[0]?.startTime, autofillFromMaster, masterStatus]);
+    }, [config.cycleMode, config.cycleTime, config.blocks.length, config.blocks[0]?.startTime, autofillFromMaster, masterStatus]);
 
     const addBlock = () => {
         const nextNum = config.blocks.length + 1;
@@ -595,6 +601,24 @@ export const Step3Build: React.FC<Step3Props> = ({
                                     Floating
                                 </button>
                             </div>
+                            {autofillFromMaster && masterStatus === 'loaded' && masterCycleModeDetection && (
+                                <div className="mb-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2">
+                                    <p className="text-[11px] font-semibold text-blue-800">
+                                        Autofilled from Master: {masterCycleModeDetection.cycleMode}
+                                        <span className="ml-1 font-normal text-blue-600">
+                                            ({masterCycleModeDetection.source === 'metadata' ? 'saved setting' : `${masterCycleModeDetection.confidence}-confidence detection`})
+                                        </span>
+                                    </p>
+                                    <p className="mt-0.5 text-[11px] text-blue-700">
+                                        {masterCycleModeDetection.summary}
+                                    </p>
+                                    {config.cycleMode !== 'Floating' && config.blocks.length > 1 && (
+                                        <p className="mt-1 text-[11px] text-blue-700">
+                                            Strict mode keeps block starts on a fixed clockface grid based on cycle ÷ buses.
+                                        </p>
+                                    )}
+                                </div>
+                            )}
 
                             {config.cycleMode === 'Floating' ? (
                                 <div className="grid grid-cols-2 gap-4 animate-in fade-in slide-in-from-top-2 duration-200">
@@ -702,6 +726,11 @@ export const Step3Build: React.FC<Step3Props> = ({
                     {displayBandDefaults.length > 0 && (
                         <div className={`p-4 rounded-xl flex flex-col gap-2 ${usePerBandRecovery ? 'bg-emerald-50 border border-emerald-100' : 'bg-gray-50 border border-gray-200'}`}>
                             <h3 className={`text-xs font-bold uppercase ${usePerBandRecovery ? 'text-emerald-800' : 'text-gray-500'}`}>Master Recovery Defaults</h3>
+                            {config.cycleMode !== 'Floating' && (
+                                <p className="text-[11px] text-gray-600">
+                                    In Strict mode, the fixed cycle time above controls the clockface. These per-band defaults only affect Floating mode.
+                                </p>
+                            )}
                             <table className="w-full text-left text-xs">
                                 <thead>
                                     <tr className={usePerBandRecovery ? 'text-emerald-600' : 'text-gray-400'}>

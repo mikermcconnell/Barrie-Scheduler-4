@@ -34,6 +34,26 @@ function getStoragePath(teamId: string, timestamp: string) {
     return `teams/${teamId}/performanceData/${timestamp}.json`;
 }
 
+export function mergePerformanceSummaryMetadata(
+    summary: PerformanceDataSummary,
+    metadata: PerformanceMetadata
+): PerformanceDataSummary {
+    return {
+        ...summary,
+        metadata: {
+            ...summary.metadata,
+            importedAt: metadata.importedAt || summary.metadata.importedAt,
+            importedBy: metadata.importedBy || summary.metadata.importedBy,
+            dateRange: metadata.dateRange || summary.metadata.dateRange,
+            dayCount: metadata.dayCount || summary.metadata.dayCount,
+            totalRecords: metadata.totalRecords || summary.metadata.totalRecords,
+            runtimeLogicVersion: metadata.runtimeLogicVersion ?? summary.metadata.runtimeLogicVersion,
+            cleanHistoryStartDate: metadata.cleanHistoryStartDate ?? summary.metadata.cleanHistoryStartDate,
+            storagePath: metadata.storagePath || summary.metadata.storagePath,
+        },
+    };
+}
+
 // ============ SAVE ============
 
 export async function savePerformanceData(
@@ -157,7 +177,7 @@ export async function getPerformanceData(teamId: string): Promise<PerformanceDat
         if (!response.ok) return null;
 
         const summary: PerformanceDataSummary = await response.json();
-        return summary;
+        return mergePerformanceSummaryMetadata(summary, metadata);
     } catch (error) {
         console.error('Error getting performance data:', error);
         return null;

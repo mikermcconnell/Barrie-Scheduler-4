@@ -15,6 +15,7 @@ firebase/
 │
 ├── teams/{teamId}/
 │   ├── members/{userId}                  # Team membership
+│   ├── platformConfig/default            # Team-specific platform / hub configuration
 │   ├── masterSchedules/{routeIdentity}/  # Published schedules
 │   │   ├── versions/{versionId}          # Version history
 │   │   └── connectionConfig/default      # Route connection settings
@@ -133,6 +134,19 @@ interface DraftSchedule {
   createdBy: string;
 }
 ```
+
+### PlatformConfig (`teams/{teamId}/platformConfig/default`)
+
+```typescript
+interface PlatformConfigDocument {
+  hubs: HubConfig[];
+  updatedAt: Timestamp;
+  updatedBy: string;       // userId
+  version: number;
+}
+```
+
+Platform config is read by team members and should only be written by team owners/admins.
 
 ---
 

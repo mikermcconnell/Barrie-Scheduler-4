@@ -3,6 +3,8 @@ import { AlertTriangle, CheckCircle2 } from 'lucide-react';
 import type { Step2ApprovalState, Step2ReadinessStatus } from '../utils/step2ReviewTypes';
 
 export interface Step2ApprovalFooterProps {
+    mode?: 'approval' | 'next-step';
+    title?: string;
     approvalState: Step2ApprovalState;
     readinessStatus: Step2ReadinessStatus;
     primaryActionVariant: 'approve' | 'continue';
@@ -22,9 +24,15 @@ export interface Step2ApprovalFooterProps {
 }
 
 const getStatusToneClasses = (
+    mode: 'approval' | 'next-step',
     approvalState: Step2ApprovalState,
     readinessStatus: Step2ReadinessStatus
 ): string => {
+    if (mode === 'next-step') {
+        if (readinessStatus === 'blocked') return 'border-red-200 bg-red-50/80';
+        return 'border-blue-200 bg-blue-50/80';
+    }
+
     if (approvalState === 'approved') return 'border-emerald-200 bg-emerald-50/80';
     if (approvalState === 'stale') return 'border-amber-200 bg-amber-50/80';
     if (readinessStatus === 'blocked') return 'border-red-200 bg-red-50/80';
@@ -33,9 +41,17 @@ const getStatusToneClasses = (
 };
 
 const getStatusIcon = (
+    mode: 'approval' | 'next-step',
     approvalState: Step2ApprovalState,
     readinessStatus: Step2ReadinessStatus
 ): React.ReactNode => {
+    if (mode === 'next-step') {
+        if (readinessStatus === 'blocked') {
+            return <AlertTriangle className="text-red-600" size={18} />;
+        }
+        return <CheckCircle2 className="text-blue-600" size={18} />;
+    }
+
     if (approvalState === 'approved') {
         return <CheckCircle2 className="text-emerald-600" size={18} />;
     }
@@ -52,6 +68,7 @@ const getStatusIcon = (
 };
 
 const getStatusMessage = (
+    mode: 'approval' | 'next-step',
     approvalState: Step2ApprovalState,
     readinessStatus: Step2ReadinessStatus,
     props: Pick<
@@ -60,6 +77,15 @@ const getStatusMessage = (
     >
 ): string => {
     if (props.statusMessage?.trim()) return props.statusMessage.trim();
+
+    if (mode === 'next-step') {
+        if (readinessStatus === 'blocked') {
+            return props.blockedMessage?.trim()
+                || 'Resolve the Step 2 issues before continuing to schedule building.';
+        }
+
+        return 'If the runtime review looks good, continue to schedule building.';
+    }
 
     if (approvalState === 'approved') {
         return props.approvedMessage?.trim()
@@ -85,12 +111,17 @@ const getStatusMessage = (
 };
 
 const getPrimaryActionLabel = (
+    mode: 'approval' | 'next-step',
     approvalState: Step2ApprovalState,
     readinessStatus: Step2ReadinessStatus,
     primaryActionVariant: 'approve' | 'continue',
     approvalRequiresAcknowledgement?: boolean,
     warningAcknowledged?: boolean
 ): string => {
+    if (mode === 'next-step') {
+        return 'Continue to Step 3';
+    }
+
     if (primaryActionVariant === 'continue') {
         return 'Continue to Step 3';
     }
@@ -102,6 +133,8 @@ const getPrimaryActionLabel = (
 };
 
 export const Step2ApprovalFooter: React.FC<Step2ApprovalFooterProps> = ({
+    mode = 'approval',
+    title,
     approvalState,
     readinessStatus,
     primaryActionVariant,
@@ -120,6 +153,7 @@ export const Step2ApprovalFooter: React.FC<Step2ApprovalFooterProps> = ({
     onContinueToStep3,
 }) => {
     const primaryLabel = getPrimaryActionLabel(
+        mode,
         approvalState,
         readinessStatus,
         primaryActionVariant,
@@ -128,7 +162,7 @@ export const Step2ApprovalFooter: React.FC<Step2ApprovalFooterProps> = ({
     );
 
     const primaryDisabled = primaryActionVariant === 'continue'
-        ? continueActionDisabled || approvalState !== 'approved' || readinessStatus === 'blocked'
+        ? continueActionDisabled || (mode === 'approval' && approvalState !== 'approved') || readinessStatus === 'blocked'
         : approvalActionDisabled
             || readinessStatus === 'blocked'
             || approvalState === 'approved' && !onApproveRuntimeContract;
@@ -145,13 +179,15 @@ export const Step2ApprovalFooter: React.FC<Step2ApprovalFooterProps> = ({
     };
 
     const resolvedStatusLabel = statusLabel?.trim()
-        || (approvalState === 'approved'
+        || (mode === 'next-step'
+            ? (readinessStatus === 'blocked' ? 'Needs fixes' : 'Ready')
+            : approvalState === 'approved'
             ? 'Approved'
             : approvalState === 'stale'
                 ? 'Stale'
                 : readinessStatus);
 
-    const resolvedMessage = getStatusMessage(approvalState, readinessStatus, {
+    const resolvedMessage = getStatusMessage(mode, approvalState, readinessStatus, {
         blockedMessage,
         warningMessage,
         approvedMessage,
@@ -164,17 +200,21 @@ export const Step2ApprovalFooter: React.FC<Step2ApprovalFooterProps> = ({
     return (
         <div
             data-testid="step2-approval-footer"
-            className={`rounded-xl border shadow-sm overflow-hidden ${getStatusToneClasses(approvalState, readinessStatus)}`}
+            className={`rounded-xl border shadow-sm overflow-hidden ${getStatusToneClasses(mode, approvalState, readinessStatus)}`}
         >
             <div className="flex flex-col gap-4 px-5 py-4 md:flex-row md:items-center md:justify-between">
                 <div className="space-y-2">
                     <div className="flex items-center gap-2">
-                        {getStatusIcon(approvalState, readinessStatus)}
-                        <h3 className="font-bold text-gray-900">Step 2 approval</h3>
+                        {getStatusIcon(mode, approvalState, readinessStatus)}
+                        <h3 className="font-bold text-gray-900">{title?.trim() || 'Step 2 approval'}</h3>
                         <span
                             data-testid="step2-approval-footer-status"
                             className={`rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide ${
-                                approvalState === 'approved'
+                                mode === 'next-step'
+                                    ? readinessStatus === 'blocked'
+                                        ? 'bg-red-100 text-red-700'
+                                        : 'bg-blue-100 text-blue-700'
+                                    : approvalState === 'approved'
                                     ? 'bg-emerald-100 text-emerald-700'
                                     : approvalState === 'stale'
                                         ? 'bg-amber-100 text-amber-700'
@@ -217,7 +257,7 @@ export const Step2ApprovalFooter: React.FC<Step2ApprovalFooterProps> = ({
                     >
                         {primaryLabel}
                     </button>
-                    {primaryActionVariant === 'continue' && approvalState !== 'approved' && (
+                    {mode === 'approval' && primaryActionVariant === 'continue' && approvalState !== 'approved' && (
                         <p className="text-xs text-gray-600">
                             Approval must be current before continuing to the next step.
                         </p>

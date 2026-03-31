@@ -160,4 +160,43 @@ describe('Step2ApprovalFooter', () => {
 
         expect(onApprove).toHaveBeenCalledTimes(1);
     });
+
+    it('can render as a simple next-step card without approval language', () => {
+        const onContinue = vi.fn();
+
+        container = document.createElement('div');
+        document.body.appendChild(container);
+        root = createRoot(container);
+
+        flushSync(() => {
+            root?.render(
+                <Step2ApprovalFooter
+                    mode="next-step"
+                    title="Next step"
+                    approvalState="unapproved"
+                    readinessStatus="warning"
+                    primaryActionVariant="continue"
+                    statusLabel="Ready"
+                    statusMessage="If this looks right, continue to build the schedule."
+                    onContinueToStep3={onContinue}
+                />
+            );
+        });
+
+        expect(container.textContent).toContain('Next step');
+        expect(container.textContent).toContain('Ready');
+        expect(container.textContent).toContain('continue to build the schedule');
+        expect(container.textContent).not.toContain('Step 2 approval');
+        expect(container.textContent).not.toContain('Approve runtime model');
+
+        const primary = container.querySelector('[data-testid="step2-approval-footer-primary"]') as HTMLButtonElement | null;
+        expect(primary?.textContent).toContain('Continue to Step 3');
+        expect(primary?.disabled).toBe(false);
+
+        flushSync(() => {
+            primary?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        });
+
+        expect(onContinue).toHaveBeenCalledTimes(1);
+    });
 });

@@ -454,11 +454,9 @@ export const generateSchedule = (
                 tripCycleAllocated = pureTravelTime + totalRecovery;
                 nextTripStart = currentTime + tripCycleAllocated;
             } else {
-                // Strict: Cycle is Fixed. Recovery fills the gap.
-                // Per-band lookup > global config > default 60m
-                const bandId = currentBand?.bandId;
-                const bandDefault = bandId ? config.bandRecoveryDefaults?.find(bd => bd.bandId === bandId) : undefined;
-                const totalCycle = bandDefault?.avgCycleTime ?? config.cycleTime;
+                // Strict: Cycle is fixed from the planner's chosen cycle time.
+                // Do not let per-band master defaults change the clockface grid.
+                const totalCycle = config.cycleTime;
                 const allocated = isRoundTrip ? totalCycle / 2 : totalCycle;
                 tripCycleAllocated = allocated;
 

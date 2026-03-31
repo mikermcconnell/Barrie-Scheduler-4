@@ -193,4 +193,95 @@ describe('scheduleGenerator floating mode defaults', () => {
         expect(tables.length).toBe(1);
         expect(tables[0].trips[0].travelTime).toBe(10);
     });
+
+    it('keeps strict mode on a fixed clockface even when master band defaults contain different cycle values', () => {
+        const config: ScheduleConfig = {
+            routeNumber: '2',
+            cycleMode: 'Strict',
+            cycleTime: 90,
+            bandRecoveryDefaults: [
+                { bandId: 'C', avgCycleTime: 66, avgRecoveryRatio: 15, tripCount: 10 },
+                { bandId: 'D', avgCycleTime: 90, avgRecoveryRatio: 15, tripCount: 10 },
+            ],
+            blocks: [
+                { id: '2-1', startTime: '06:00', endTime: '09:00' },
+                { id: '2-2', startTime: '06:30', endTime: '09:30' },
+                { id: '2-3', startTime: '07:00', endTime: '10:00' },
+            ]
+        };
+
+        const buckets: TripBucketAnalysis[] = [
+            {
+                timeBucket: '06:00 - 06:29',
+                totalP50: 52,
+                totalP80: 55,
+                assignedBand: 'C',
+                isOutlier: false,
+                ignored: false,
+                details: [{ segmentName: 'Terminal to North End', p50: 52, p80: 55, n: 10 }]
+            },
+            {
+                timeBucket: '06:30 - 06:59',
+                totalP50: 52,
+                totalP80: 55,
+                assignedBand: 'D',
+                isOutlier: false,
+                ignored: false,
+                details: [{ segmentName: 'Terminal to North End', p50: 52, p80: 55, n: 10 }]
+            },
+            {
+                timeBucket: '07:00 - 07:29',
+                totalP50: 52,
+                totalP80: 55,
+                assignedBand: 'C',
+                isOutlier: false,
+                ignored: false,
+                details: [{ segmentName: 'Terminal to North End', p50: 52, p80: 55, n: 10 }]
+            }
+        ];
+
+        const bands: TimeBand[] = [
+            { id: 'C', label: 'C', min: 52, max: 52, avg: 52, color: '#eab308', count: 2 },
+            { id: 'D', label: 'D', min: 52, max: 52, avg: 52, color: '#84cc16', count: 1 },
+        ];
+
+        const bandSummary: DirectionBandSummary = {
+            North: [
+                {
+                    bandId: 'C',
+                    color: '#eab308',
+                    avgTotal: 52,
+                    segments: [{ segmentName: 'Terminal to North End', avgTime: 52, totalN: 100 }],
+                    timeSlots: ['06:00', '07:00']
+                },
+                {
+                    bandId: 'D',
+                    color: '#84cc16',
+                    avgTotal: 52,
+                    segments: [{ segmentName: 'Terminal to North End', avgTime: 52, totalN: 100 }],
+                    timeSlots: ['06:30']
+                }
+            ]
+        };
+
+        const segmentsMap: Record<string, SegmentRawData[]> = {
+            North: [
+                {
+                    segmentName: 'Terminal to North End',
+                    timeBuckets: {
+                        '06:00 - 06:29': { p50: 52, p80: 55, n: 10 },
+                        '06:30 - 06:59': { p50: 52, p80: 55, n: 10 },
+                        '07:00 - 07:29': { p50: 52, p80: 55, n: 10 },
+                    }
+                }
+            ]
+        };
+
+        const tables = generateSchedule(config, buckets, bands, bandSummary, segmentsMap, 'Weekday');
+        const starts = tables[0].trips.map(trip => trip.startTime).slice(0, 6);
+        const headways = starts.slice(1).map((start, index) => start - starts[index]);
+
+        expect(headways).toEqual([30, 30, 30, 30, 30]);
+        expect(tables[0].trips.every(trip => trip.cycleTime === 90)).toBe(true);
+    });
 });

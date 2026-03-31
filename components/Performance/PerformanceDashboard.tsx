@@ -9,9 +9,11 @@ import { buildPerformanceMetadataHealth } from '../../utils/performanceImportHea
 
 interface PerformanceDashboardProps {
     onClose: () => void;
+    autoOpen?: boolean;
 }
 
-type PerformanceView = 'landing' | 'import' | 'workspace';
+type PerformanceView = 'landing' | 'import' | 'workspace' | 'loading';
+type ImportReturnTarget = 'landing' | 'workspace' | 'close';
 
 const PerformanceImport = lazyWithRetry(
     () => import('./PerformanceImport').then(module => ({ default: module.PerformanceImport })),
@@ -31,13 +33,14 @@ const DashboardLoadingState: React.FC<{ label: string }> = ({ label }) => (
     </div>
 );
 
-export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onClose }) => {
+export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onClose, autoOpen = false }) => {
     const { team } = useTeam();
     const { user } = useAuth();
-    const [view, setView] = useState<PerformanceView>('landing');
+    const [view, setView] = useState<PerformanceView>(() => (autoOpen ? 'loading' : 'landing'));
+    const [importReturnTarget, setImportReturnTarget] = useState<ImportReturnTarget>(() => (autoOpen ? 'close' : 'landing'));
 
     const metadataQuery = usePerformanceMetadataQuery(team?.id);
-    const hasExistingData = !!metadataQuery.data;
+    const hasExistingData = metadataQuery.data != null;
     const shouldLoadWorkspaceData = view === 'workspace' && hasExistingData;
     const dataQuery = usePerformanceDataQuery(team?.id, shouldLoadWorkspaceData);
     const quickHealth = useMemo(
@@ -46,20 +49,65 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onCl
     );
 
     useEffect(() => {
+        setView(autoOpen ? 'loading' : 'landing');
+        setImportReturnTarget(autoOpen ? 'close' : 'landing');
+    }, [team?.id, autoOpen]);
+
+    useEffect(() => {
+        if (!autoOpen || view !== 'loading' || !team?.id || metadataQuery.isLoading) {
+            return;
+        }
+
+        if (hasExistingData) {
+            setImportReturnTarget('workspace');
+            setView('workspace');
+            return;
+        }
+
+        if (user) {
+            setImportReturnTarget('close');
+            setView('import');
+            return;
+        }
+
         setView('landing');
-    }, [team?.id]);
+    }, [autoOpen, hasExistingData, metadataQuery.isLoading, team?.id, user, view]);
 
     const handleCardClick = () => {
         if (!team?.id) return;
         if (hasExistingData) {
             setView('workspace');
         } else {
+            setImportReturnTarget('landing');
             setView('import');
         }
     };
 
     const handleImportComplete = () => {
         setView('workspace');
+    };
+
+    const handleImportCancel = () => {
+        if (importReturnTarget === 'workspace') {
+            setView('workspace');
+            return;
+        }
+
+        if (importReturnTarget === 'close') {
+            onClose();
+            return;
+        }
+
+        setView('landing');
+    };
+
+    const handleWorkspaceBack = () => {
+        if (autoOpen) {
+            onClose();
+            return;
+        }
+
+        setView('landing');
     };
 
     if (!team) {
@@ -76,6 +124,10 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onCl
         );
     }
 
+    if (view === 'loading') {
+        return <DashboardLoadingState label="Opening operations dashboard..." />;
+    }
+
     if (view === 'import' && user) {
         return (
             <div className="h-full overflow-auto custom-scrollbar p-6">
@@ -84,7 +136,7 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onCl
                         teamId={team.id}
                         userId={user.uid}
                         onImportComplete={handleImportComplete}
-                        onCancel={() => setView('landing')}
+                        onCancel={handleImportCancel}
                     />
                 </Suspense>
             </div>
@@ -102,8 +154,11 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onCl
                     <Suspense fallback={<DashboardLoadingState label="Loading dashboard..." />}>
                         <PerformanceWorkspace
                             data={dataQuery.data}
-                            onReimport={() => setView('import')}
-                            onBack={() => setView('landing')}
+                            onReimport={() => {
+                                setImportReturnTarget('workspace');
+                                setView('import');
+                            }}
+                            onBack={handleWorkspaceBack}
                         />
                     </Suspense>
                 </div>

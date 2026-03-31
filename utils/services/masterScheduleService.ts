@@ -116,7 +116,10 @@ export async function uploadToMasterSchedule(
     southTable: MasterRouteTable,
     routeNumber: string,
     dayType: DayType,
-    source: UploadSource
+    source: UploadSource,
+    options?: {
+        cycleMode?: 'Strict' | 'Floating';
+    }
 ): Promise<MasterScheduleEntry> {
     const routeIdentity = buildRouteIdentity(routeNumber, dayType);
 
@@ -134,7 +137,8 @@ export async function uploadToMasterSchedule(
         metadata: {
             routeNumber,
             dayType,
-            uploadedAt: new Date().toISOString()
+            uploadedAt: new Date().toISOString(),
+            cycleMode: options?.cycleMode,
         }
     };
 
@@ -176,6 +180,7 @@ export async function uploadToMasterSchedule(
             transaction.set(entryRef, {
                 routeNumber,
                 dayType,
+                cycleMode: options?.cycleMode,
                 currentVersion: newVersion,
                 storagePath,
                 tripCount,
@@ -191,6 +196,7 @@ export async function uploadToMasterSchedule(
                 id: routeIdentity,
                 routeNumber,
                 dayType,
+                cycleMode: options?.cycleMode,
                 currentVersion: newVersion,
                 storagePath,
                 tripCount,
@@ -272,6 +278,7 @@ export async function getAllMasterSchedules(
             id: doc.id,
             routeNumber: data.routeNumber,
             dayType: data.dayType,
+            cycleMode: data.cycleMode,
             currentVersion: data.currentVersion,
             storagePath: data.storagePath,
             tripCount: data.tripCount,
@@ -471,6 +478,7 @@ export async function getMasterSchedule(
         id: entrySnap.id,
         routeNumber: data.routeNumber,
         dayType: data.dayType,
+        cycleMode: data.cycleMode,
         currentVersion: data.currentVersion,
         storagePath: data.storagePath,
         tripCount: data.tripCount,
@@ -579,7 +587,10 @@ export async function rollbackToVersion(
         content.southTable,
         content.metadata.routeNumber,
         content.metadata.dayType,
-        'tweaker'  // Rollback is a manual operation
+        'tweaker',  // Rollback is a manual operation
+        {
+            cycleMode: content.metadata.cycleMode,
+        }
     );
 }
 

@@ -49,6 +49,7 @@ export interface MasterScheduleEntry {
     id: string;              // Document ID = RouteIdentity (e.g., "400-Weekday")
     routeNumber: string;
     dayType: DayType;
+    cycleMode?: 'Strict' | 'Floating';
     currentVersion: number;
     storagePath: string;
     tripCount: number;
@@ -83,6 +84,7 @@ export interface MasterScheduleContent {
         routeNumber: string;
         dayType: DayType;
         uploadedAt: string;   // ISO string
+        cycleMode?: 'Strict' | 'Floating';
         effectiveDate?: string;
         notes?: string;
     };

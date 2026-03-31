@@ -21,7 +21,9 @@ import { SystemDraftEditorWorkspace } from './SystemDraftEditorWorkspace';
 import { ReportsDashboard } from '../Reports/ReportsDashboard';
 import { AnalyticsDashboard } from '../Analytics/AnalyticsDashboard';
 import { GTFSImportModal } from '../GTFSImport';
+import { PerformanceImport } from '../Performance/PerformanceImport';
 import { SystemDraftList } from '../layout/SystemDraftList';
+import { TeamManagement } from '../TeamManagement';
 import type { MasterScheduleContent } from '../../utils/masterScheduleTypes';
 import type { DraftBasedOn, DraftSchedule, SystemDraft } from '../../utils/schedule/scheduleTypes';
 import { buildMasterContentFromTables } from '../../utils/schedule/scheduleDraftAdapter';
@@ -35,12 +37,13 @@ import {
 } from '../../utils/workspaces/fixedRouteDraftState';
 import { consumeNetworkConnectionEditorHandoff } from '../../utils/network-connections/networkConnectionHandoff';
 import { useAuth } from '../contexts/AuthContext';
+import { useTeam } from '../contexts/TeamContext';
 import { useToast } from '../contexts/ToastContext';
 
-type FixedRouteViewMode = 'dashboard' | 'editor' | 'new-schedule' | 'master' | 'reports' | 'analytics' | 'drafts' | 'system-editor';
+type FixedRouteViewMode = 'dashboard' | 'editor' | 'new-schedule' | 'master' | 'reports' | 'analytics' | 'drafts' | 'system-editor' | 'performance-import';
 
 const VALID_VIEW_MODES = new Set<string>([
-    'dashboard', 'editor', 'new-schedule', 'master', 'reports', 'analytics', 'drafts', 'system-editor'
+    'dashboard', 'editor', 'new-schedule', 'master', 'reports', 'analytics', 'drafts', 'system-editor', 'performance-import'
 ]);
 
 function parseHashViewMode(): FixedRouteViewMode {
@@ -60,7 +63,8 @@ const VIEW_MODE_LABELS: Record<FixedRouteViewMode, string> = {
     analytics: 'Planning Data',
     editor: 'Schedule Editor',
     drafts: 'Schedule Editor',
-    'system-editor': 'System Draft Editor'
+    'system-editor': 'System Draft Editor',
+    'performance-import': 'Re-import STREETS Data',
 };
 
 interface DashboardCardProps {
@@ -95,6 +99,7 @@ const DashboardCard: React.FC<DashboardCardProps> = ({ onClick, icon, title, des
 
 export const FixedRouteWorkspace: React.FC = () => {
     const { user } = useAuth();
+    const { team } = useTeam();
     const toast = useToast();
     const [viewMode, setViewModeState] = useState<FixedRouteViewMode>(parseHashViewMode);
     const [showGTFSImport, setShowGTFSImport] = useState(false);
@@ -389,15 +394,25 @@ export const FixedRouteWorkspace: React.FC = () => {
     if (viewMode === 'dashboard') {
         return (
             <div className="animate-in fade-in slide-in-from-bottom-2 duration-500 max-w-6xl mx-auto pt-8">
-                <div className="mb-8 px-4">
+                <div className="mb-8 px-4 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                    <div>
+                        <button
+                            onClick={() => { window.location.hash = ''; }}
+                            className="flex items-center gap-1.5 text-gray-400 hover:text-gray-600 text-sm font-medium transition-colors mb-3"
+                        >
+                            <ArrowLeft size={14} /> Back to Main
+                        </button>
+                        <h2 className="text-2xl font-bold text-gray-900 tracking-tight mb-2">Fixed Route Operations</h2>
+                        <p className="text-gray-500">Select a tool to manage schedules or analyze performance.</p>
+                    </div>
+
                     <button
-                        onClick={() => { window.location.hash = ''; }}
-                        className="flex items-center gap-1.5 text-gray-400 hover:text-gray-600 text-sm font-medium transition-colors mb-3"
+                        onClick={() => setViewMode('performance-import')}
+                        className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors self-start"
                     >
-                        <ArrowLeft size={14} /> Back to Main
+                        <RefreshCw size={14} />
+                        Re-import Data
                     </button>
-                    <h2 className="text-2xl font-bold text-gray-900 tracking-tight mb-2">Fixed Route Operations</h2>
-                    <p className="text-gray-500">Select a tool to manage schedules or analyze performance.</p>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 px-4">
@@ -720,6 +735,39 @@ export const FixedRouteWorkspace: React.FC = () => {
 
                     {viewMode === 'analytics' && (
                         <AnalyticsDashboard onClose={() => setViewMode('dashboard')} />
+                    )}
+
+                    {viewMode === 'performance-import' && (
+                        <div className="p-8 h-full overflow-auto custom-scrollbar">
+                            <div className="max-w-4xl mx-auto">
+                                {!user ? (
+                                    <div className="text-center py-16 border-2 border-dashed border-gray-200 rounded-xl">
+                                        <div className="bg-cyan-50 p-6 rounded-full inline-block mb-6">
+                                            <RefreshCw size={48} className="text-cyan-500" />
+                                        </div>
+                                        <h3 className="text-xl font-bold text-gray-900 mb-2">Sign in to re-import data</h3>
+                                        <p className="text-gray-500 max-w-md mx-auto">
+                                            You need to be signed in before uploading STREETS performance data.
+                                        </p>
+                                    </div>
+                                ) : !team ? (
+                                    <div className="max-w-4xl mx-auto">
+                                        <div className="mb-6 text-center">
+                                            <h2 className="text-2xl font-bold text-gray-900 tracking-tight mb-2">Re-import STREETS Data</h2>
+                                            <p className="text-gray-500">Set up or join a team to continue.</p>
+                                        </div>
+                                        <TeamManagement onClose={() => setViewMode('dashboard')} />
+                                    </div>
+                                ) : (
+                                    <PerformanceImport
+                                        teamId={team.id}
+                                        userId={user.uid}
+                                        onImportComplete={() => setViewMode('dashboard')}
+                                        onCancel={() => setViewMode('dashboard')}
+                                    />
+                                )}
+                            </div>
+                        </div>
                     )}
 
                 </div>
