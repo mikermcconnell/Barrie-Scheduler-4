@@ -220,10 +220,46 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
     masterBaseline
 }) => {
     const MIDNIGHT_ROLLOVER_THRESHOLD = 210; // 3:30 AM
+    const stripNumberedStopSuffix = (stopName: string): string => stopName.replace(/\s*\(\d+\)\s*$/, '');
+    const resolveTripStopKey = <T,>(record: Record<string, T> | undefined, stopName: string): string | null => {
+        if (!record) return null;
+        if (record[stopName] !== undefined) return stopName;
+
+        const baseName = stripNumberedStopSuffix(stopName);
+        if (baseName !== stopName && record[baseName] !== undefined) return baseName;
+
+        const normalizedStop = stopName.trim().toLowerCase();
+        const normalizedBase = baseName.trim().toLowerCase();
+
+        for (const key of Object.keys(record)) {
+            const normalizedKey = key.trim().toLowerCase();
+            const normalizedKeyBase = stripNumberedStopSuffix(key).trim().toLowerCase();
+            if (
+                normalizedKey === normalizedStop ||
+                normalizedKey === normalizedBase ||
+                normalizedKeyBase === normalizedBase
+            ) {
+                return key;
+            }
+        }
+
+        return null;
+    };
+    const getTripStopValue = <T,>(record: Record<string, T> | undefined, stopName: string): T | undefined => {
+        const resolvedKey = resolveTripStopKey(record, stopName);
+        return resolvedKey ? record?.[resolvedKey] : undefined;
+    };
+    const setTripStopValue = <T,>(record: Record<string, T> | undefined, stopName: string, value: T): Record<string, T> => {
+        const target = record ?? {};
+        const resolvedKey = resolveTripStopKey(target, stopName) ?? stopName;
+        target[resolvedKey] = value;
+        return target;
+    };
     const [activeRouteIdx, setActiveRouteIdx] = useState(0);
     const [activeDay, setActiveDay] = useState<string>('Weekday');
     const [subView, setSubView] = useState<'editor' | 'matrix' | 'timeline'>('editor');
     const [selectedTripId, setSelectedTripId] = useState<string | null>(null);
+    const [recentlyAddedTripId, setRecentlyAddedTripId] = useState<string | null>(null);
     const [isFullScreen, setIsFullScreen] = useState(false);
     const [showAuditLog, setShowAuditLog] = useState(false);
 
@@ -285,8 +321,24 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
     } = useAddTrip({
         schedules,
         setSchedules: onSchedulesChange,
-        onSuccess: showSuccessToast
+        onSuccess: showSuccessToast,
+        connectionLibrary,
+        onTripsAdded: (tripIds) => {
+            const firstTripId = tripIds[0];
+            if (!firstTripId) return;
+            setRecentlyAddedTripId(firstTripId);
+            setSelectedTripId(firstTripId);
+            setSubView('editor');
+        }
     });
+
+    useEffect(() => {
+        if (!recentlyAddedTripId) return;
+        const timeout = window.setTimeout(() => {
+            setRecentlyAddedTripId(null);
+        }, 4000);
+        return () => window.clearTimeout(timeout);
+    }, [recentlyAddedTripId]);
 
     // Helper to extract the true base route name (handles 2A/2B direction variants)
     const getTrueBaseRoute = (routeName: string): string => {
@@ -434,7 +486,8 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         const stopMinutes: Record<string, number> = {};
 
         cols.forEach(col => {
-            const raw = TimeUtils.toMinutes(trip.stops[col]);
+            const stopKey = resolveTripStopKey(trip.stops, col);
+            const raw = stopKey ? TimeUtils.toMinutes(trip.stops[stopKey]) : null;
             if (raw !== null) {
                 let adjusted = raw;
 
@@ -451,7 +504,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                 if (start === null) start = adjusted;
                 end = adjusted;
                 lastAdjusted = adjusted;
-                stopMinutes[col] = adjusted;
+                stopMinutes[resolveTripStopKey(trip.stopMinutes, col) ?? stopKey ?? col] = adjusted;
             }
         });
 
@@ -501,8 +554,8 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         const stopName = isArrivalEdit ? col.replace('__ARR', '') : col;
 
         const oldValue = isArrivalEdit
-            ? (trip.arrivalTimes?.[stopName] ?? trip.stops[stopName])
-            : trip.stops[stopName];
+            ? (getTripStopValue(trip.arrivalTimes, stopName) ?? getTripStopValue(trip.stops, stopName))
+            : getTripStopValue(trip.stops, stopName);
 
         // Skip no-op edits — prevents onBlur from overwriting a cascaded change
         if (oldValue === val) return;
@@ -523,23 +576,23 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         }
 
         if (isArrivalEdit) {
-            if (!trip.arrivalTimes) trip.arrivalTimes = {};
-            trip.arrivalTimes[stopName] = val;
+            trip.arrivalTimes = setTripStopValue(trip.arrivalTimes, stopName, val);
             // Keep stops in sync so trip timing math (start/end/cycle) reflects ARR edits.
-            trip.stops[stopName] = val;
+            trip.stops = setTripStopValue(trip.stops, stopName, val);
         } else {
-            trip.stops[stopName] = val;
+            trip.stops = setTripStopValue(trip.stops, stopName, val);
             // Keep mirrored arrivalTimes in sync when present; many RoundTrip cells
             // display arrivalTimes first, so stop-only updates can appear as no-op.
-            if (trip.arrivalTimes && trip.arrivalTimes[stopName] !== undefined) {
-                const recovery = trip.recoveryTimes?.[stopName] || 0;
+            const existingArrival = getTripStopValue(trip.arrivalTimes, stopName);
+            if (trip.arrivalTimes && existingArrival !== undefined) {
+                const recovery = getTripStopValue(trip.recoveryTimes, stopName) || 0;
                 if (recovery > 0) {
                     const depMin = TimeUtils.toMinutes(val);
                     if (depMin !== null) {
-                        trip.arrivalTimes[stopName] = TimeUtils.fromMinutes(depMin - recovery);
+                        trip.arrivalTimes = setTripStopValue(trip.arrivalTimes, stopName, TimeUtils.fromMinutes(depMin - recovery));
                     }
                 } else {
-                    trip.arrivalTimes[stopName] = val;
+                    trip.arrivalTimes = setTripStopValue(trip.arrivalTimes, stopName, val);
                 }
             }
         }
@@ -549,23 +602,18 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
             if (delta !== 0) {
                 for (let i = colIdx + 1; i < table.stops.length; i++) {
                     const nextStop = table.stops[i];
-                    const nextArrTime = TimeUtils.toMinutes(trip.arrivalTimes?.[nextStop] ?? trip.stops[nextStop]);
+                    const nextArrTime = TimeUtils.toMinutes(
+                        getTripStopValue(trip.arrivalTimes, nextStop) ?? getTripStopValue(trip.stops, nextStop)
+                    );
                     if (nextArrTime !== null) {
                         const proposedTime = nextArrTime + delta;
-                        // Validate: don't let time go before previous stop (would create negative segment)
-                        const prevStop = table.stops[i - 1];
-                        const prevTime = TimeUtils.toMinutes(trip.arrivalTimes?.[prevStop] ?? trip.stops[prevStop]);
-                        if (prevTime !== null && proposedTime <= prevTime) {
-                            // Skip cascade - would create invalid timing
-                            break;
-                        }
                         // Shift stops (departure) and arrivalTimes (arrival) independently
-                        const depTime = TimeUtils.toMinutes(trip.stops[nextStop]);
+                        const depTime = TimeUtils.toMinutes(getTripStopValue(trip.stops, nextStop));
                         if (depTime !== null) {
-                            trip.stops[nextStop] = TimeUtils.fromMinutes(depTime + delta);
+                            trip.stops = setTripStopValue(trip.stops, nextStop, TimeUtils.fromMinutes(depTime + delta));
                         }
-                        if (trip.arrivalTimes && trip.arrivalTimes[nextStop] !== undefined) {
-                            trip.arrivalTimes[nextStop] = TimeUtils.fromMinutes(proposedTime);
+                        if (trip.arrivalTimes && getTripStopValue(trip.arrivalTimes, nextStop) !== undefined) {
+                            trip.arrivalTimes = setTripStopValue(trip.arrivalTimes, nextStop, TimeUtils.fromMinutes(proposedTime));
                         }
                     }
                 }
@@ -608,13 +656,14 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                     const { trip: nextTrip, table: nextTable } = allBlockTrips[i];
                     // Shift stops (departure) and arrivalTimes (arrival) independently
                     nextTable.stops.forEach(s => {
-                        const stopTime = nextTrip.stops[s];
+                        const stopTime = getTripStopValue(nextTrip.stops, s);
                         if (stopTime !== null && stopTime !== undefined && stopTime !== '') {
-                            nextTrip.stops[s] = TimeUtils.addMinutes(stopTime, deltaEnd);
+                            nextTrip.stops = setTripStopValue(nextTrip.stops, s, TimeUtils.addMinutes(stopTime, deltaEnd));
                         }
-                        if (nextTrip.arrivalTimes && nextTrip.arrivalTimes[s] !== undefined &&
-                            nextTrip.arrivalTimes[s] !== null && nextTrip.arrivalTimes[s] !== '') {
-                            nextTrip.arrivalTimes[s] = TimeUtils.addMinutes(nextTrip.arrivalTimes[s], deltaEnd);
+                        const arrivalTime = getTripStopValue(nextTrip.arrivalTimes, s);
+                        if (nextTrip.arrivalTimes && arrivalTime !== undefined &&
+                            arrivalTime !== null && arrivalTime !== '') {
+                            nextTrip.arrivalTimes = setTripStopValue(nextTrip.arrivalTimes, s, TimeUtils.addMinutes(arrivalTime, deltaEnd));
                         }
                     });
                     recalculateTrip(nextTrip, nextTable.stops);
@@ -635,34 +684,34 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         const stopIdx = table.stops.indexOf(stopName);
         if (stopIdx === -1) return;
 
-        const oldRec = trip.recoveryTimes?.[stopName] || 0;
+        const oldRec = getTripStopValue(trip.recoveryTimes, stopName) || 0;
         // Bound recovery: can't be negative, and can't exceed travel time - 1 (to avoid negative runtime)
         const maxRec = Math.max(0, trip.travelTime - 1);
         const newRec = Math.max(0, Math.min(oldRec + delta, maxRec));
         const actualDelta = newRec - oldRec; // May differ from requested delta if bounds were hit
 
-        if (!trip.recoveryTimes) trip.recoveryTimes = {};
-        trip.recoveryTimes[stopName] = newRec;
+        trip.recoveryTimes = setTripStopValue(trip.recoveryTimes, stopName, newRec);
         trip.recoveryTime = Object.values(trip.recoveryTimes).reduce((sum, v) => sum + (v || 0), 0);
 
         // Update departure time at the modified stop: departure = arrival + recovery
-        const arrivalAtStop = trip.arrivalTimes?.[stopName];
+        const arrivalAtStop = getTripStopValue(trip.arrivalTimes, stopName);
         if (arrivalAtStop) {
             const arrMin = TimeUtils.toMinutes(arrivalAtStop);
             if (arrMin !== null) {
-                trip.stops[stopName] = TimeUtils.fromMinutes(arrMin + newRec);
+                trip.stops = setTripStopValue(trip.stops, stopName, TimeUtils.fromMinutes(arrMin + newRec));
             }
         }
 
         // Cascade time changes to subsequent stops (both stops and arrivalTimes)
         for (let i = stopIdx + 1; i < table.stops.length; i++) {
             const nextStop = table.stops[i];
-            const t = TimeUtils.toMinutes(trip.stops[nextStop]);
-            if (t !== null) trip.stops[nextStop] = TimeUtils.fromMinutes(t + actualDelta);
+            const t = TimeUtils.toMinutes(getTripStopValue(trip.stops, nextStop));
+            if (t !== null) trip.stops = setTripStopValue(trip.stops, nextStop, TimeUtils.fromMinutes(t + actualDelta));
             // Also update arrivalTimes
-            if (trip.arrivalTimes?.[nextStop]) {
-                const arr = TimeUtils.toMinutes(trip.arrivalTimes[nextStop]);
-                if (arr !== null) trip.arrivalTimes[nextStop] = TimeUtils.fromMinutes(arr + actualDelta);
+            const arrivalTime = getTripStopValue(trip.arrivalTimes, nextStop);
+            if (arrivalTime) {
+                const arr = TimeUtils.toMinutes(arrivalTime);
+                if (arr !== null) trip.arrivalTimes = setTripStopValue(trip.arrivalTimes, nextStop, TimeUtils.fromMinutes(arr + actualDelta));
             }
         }
         recalculateTrip(trip, table.stops);
@@ -690,13 +739,14 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                     const { trip: nextTrip, table: nextTable } = allBlockTrips[i];
                     // Shift stops (departure) and arrivalTimes (arrival) independently
                     nextTable.stops.forEach(s => {
-                        const stopTime = nextTrip.stops[s];
+                        const stopTime = getTripStopValue(nextTrip.stops, s);
                         if (stopTime !== null && stopTime !== undefined && stopTime !== '') {
-                            nextTrip.stops[s] = TimeUtils.addMinutes(stopTime, actualDelta);
+                            nextTrip.stops = setTripStopValue(nextTrip.stops, s, TimeUtils.addMinutes(stopTime, actualDelta));
                         }
-                        if (nextTrip.arrivalTimes && nextTrip.arrivalTimes[s] !== undefined &&
-                            nextTrip.arrivalTimes[s] !== null && nextTrip.arrivalTimes[s] !== '') {
-                            nextTrip.arrivalTimes[s] = TimeUtils.addMinutes(nextTrip.arrivalTimes[s], actualDelta);
+                        const arrivalTime = getTripStopValue(nextTrip.arrivalTimes, s);
+                        if (nextTrip.arrivalTimes && arrivalTime !== undefined &&
+                            arrivalTime !== null && arrivalTime !== '') {
+                            nextTrip.arrivalTimes = setTripStopValue(nextTrip.arrivalTimes, s, TimeUtils.addMinutes(arrivalTime, actualDelta));
                         }
                     });
                     recalculateTrip(nextTrip, nextTable.stops);
@@ -717,15 +767,15 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         const isArrivalAdjust = stopName.endsWith('__ARR');
         const baseStopName = isArrivalAdjust ? stopName.replace('__ARR', '') : stopName;
         const departureAtStop = (() => {
-            const dep = trip.stops[baseStopName];
+            const dep = getTripStopValue(trip.stops, baseStopName);
             if (dep) return dep;
-            const arr = trip.arrivalTimes?.[baseStopName];
+            const arr = getTripStopValue(trip.arrivalTimes, baseStopName);
             if (!arr) return '';
-            const recovery = trip.recoveryTimes?.[baseStopName] || 0;
+            const recovery = getTripStopValue(trip.recoveryTimes, baseStopName) || 0;
             return recovery === 0 ? arr : TimeUtils.addMinutes(arr, recovery);
         })();
         const currentTime = isArrivalAdjust
-            ? (trip.arrivalTimes?.[baseStopName] ?? trip.stops[baseStopName])
+            ? (getTripStopValue(trip.arrivalTimes, baseStopName) ?? getTripStopValue(trip.stops, baseStopName))
             : departureAtStop;
         if (!currentTime) return;
 
@@ -1608,6 +1658,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                                     connectionLibrary={connectionLibrary}
                                     dayType={activeDay as DayType}
                                     masterBaseline={masterBaseline}
+                                    highlightedTripId={recentlyAddedTripId}
                                 />
                             </>
                         )}

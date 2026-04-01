@@ -6,15 +6,14 @@
  */
 
 import { useState, useCallback } from 'react';
-import { MasterRouteTable, MasterTrip, validateRouteTable } from '../utils/parsers/masterScheduleParser';
-import { TimeUtils } from '../utils/timeUtils';
-import { getDayTypeSuffix, getDayTypeLabel, parseBlockId } from '../utils/config/routeNameParser';
-import type { AddTripModalContext, AddTripResult } from '../components/modals/AddTripModal';
-
-// Deep clone helper
-const deepCloneSchedules = (schedules: MasterRouteTable[]): MasterRouteTable[] => {
-    return JSON.parse(JSON.stringify(schedules));
-};
+import { MasterRouteTable, type MasterTrip } from '../utils/parsers/masterScheduleParser';
+import type { ConnectionLibrary } from '../utils/connections/connectionTypes';
+import {
+    applyAddTripResultToSchedules,
+    stripScheduleDecorators,
+    type AddTripModalContext,
+    type AddTripResult
+} from '../utils/schedule/addTripPlanner';
 
 // Find table and trip by ID
 const findTableAndTrip = (
@@ -32,6 +31,8 @@ interface UseAddTripOptions {
     schedules: MasterRouteTable[];
     setSchedules: (schedules: MasterRouteTable[]) => void;
     onSuccess?: (message: string) => void;
+    onTripsAdded?: (tripIds: string[]) => void;
+    connectionLibrary?: ConnectionLibrary | null;
 }
 
 interface UseAddTripReturn {
@@ -44,7 +45,9 @@ interface UseAddTripReturn {
 export const useAddTrip = ({
     schedules,
     setSchedules,
-    onSuccess
+    onSuccess,
+    onTripsAdded,
+    connectionLibrary
 }: UseAddTripOptions): UseAddTripReturn => {
     const [modalContext, setModalContext] = useState<AddTripModalContext | null>(null);
 
@@ -72,18 +75,17 @@ export const useAddTrip = ({
         const nextTrip = refIdx >= 0 && refIdx < sortedTrips.length - 1 ? sortedTrips[refIdx + 1] : null;
 
         // Get route base name for block ID generation
-        const routeBaseName = targetTable.routeName
-            .replace(/ \(North\).*$/, '')
-            .replace(/ \(South\).*$/, '');
+        const routeBaseName = stripScheduleDecorators(targetTable.routeName);
 
         setModalContext({
             referenceTrip,
             nextTrip,
             targetTable,
             allSchedules: schedules,
-            routeBaseName
+            routeBaseName,
+            connectionLibrary: connectionLibrary ?? null
         });
-    }, [schedules]);
+    }, [connectionLibrary, schedules]);
 
     /**
      * Close the modal
@@ -101,109 +103,40 @@ export const useAddTrip = ({
             return;
         }
 
-        const { referenceTrip, targetTable: origTable, routeBaseName } = modalContext;
-        const { startTime, tripCount, newBlockId } = modalResult;
+        const { startTime, tripCount, blockId, blockMode, targetDirection, targetRouteName, startStopName, endStopName } = modalResult;
 
-        // Deep clone for undo/redo integrity
-        const newScheds = deepCloneSchedules(schedules);
-
-        // Find the cloned version of the original target table
-        const clonedOrigTable = newScheds.find(t => t.routeName === origTable.routeName);
-        if (!clonedOrigTable) {
-            console.error('Could not find cloned target table with name:', origTable.routeName);
-            setModalContext(null);
-            return;
-        }
-
-        // Find related tables in cloned schedules (for bidirectional routes)
-        const baseName = routeBaseName;
-        const northTable = newScheds.find(t => t.routeName === baseName + ' (North)');
-        const southTable = newScheds.find(t => t.routeName === baseName + ' (South)');
-        const isBidirectional = northTable && southTable;
-
-        // Create trips
-        const travelTime = referenceTrip.travelTime || 30;
-        const recoveryTime = referenceTrip.recoveryTime || 0;
-        let currentTime = startTime;
-        let currentDirection = referenceTrip.direction || 'North';
-
-        // Calculate stop-to-stop intervals from reference trip
-        const getStopIntervals = (refTrip: MasterTrip, stops: string[]): number[] => {
-            const intervals: number[] = [];
-            for (let i = 0; i < stops.length - 1; i++) {
-                const currentStopTime = TimeUtils.toMinutes(refTrip.stops[stops[i]]);
-                const nextStopTime = TimeUtils.toMinutes(refTrip.stops[stops[i + 1]]);
-                if (currentStopTime !== null && nextStopTime !== null) {
-                    intervals.push(nextStopTime - currentStopTime);
-                } else {
-                    intervals.push(Math.round(travelTime / Math.max(stops.length - 1, 1)));
-                }
+        const { schedules: newScheds, createdTripIds } = applyAddTripResultToSchedules(
+            schedules,
+            modalContext,
+            {
+                startTime,
+                tripCount,
+                blockMode,
+                blockId,
+                targetDirection,
+                targetRouteName,
+                startStopName,
+                endStopName
             }
-            return intervals;
-        };
-
-        for (let i = 0; i < tripCount; i++) {
-            // Determine target table based on direction
-            let targetTable: MasterRouteTable | undefined;
-            if (isBidirectional) {
-                targetTable = currentDirection === 'North' ? northTable : southTable;
-            } else {
-                targetTable = clonedOrigTable;
-            }
-            if (!targetTable) {
-                console.error('No target table found for trip', i);
-                continue;
-            }
-
-            const tripEndTime = currentTime + travelTime;
-
-            // Use reference trip's stop intervals for more accurate times
-            const stopIntervals = getStopIntervals(referenceTrip, targetTable.stops);
-            const newStops: Record<string, string> = {};
-            let stopTime = currentTime;
-            targetTable.stops.forEach((stop, idx) => {
-                newStops[stop] = TimeUtils.fromMinutes(stopTime);
-                if (idx < stopIntervals.length) {
-                    stopTime += stopIntervals[idx];
-                }
-            });
-
-            const newTrip: MasterTrip = {
-                id: `trip_${Date.now()}_${Math.floor(Math.random() * 10000)}_${i}`,
-                rowId: Date.now() + i,
-                blockId: newBlockId,
-                direction: currentDirection,
-                tripNumber: i + 1,
-                startTime: currentTime,
-                endTime: tripEndTime,
-                travelTime: travelTime,
-                recoveryTime: recoveryTime,
-                stops: newStops,
-                cycleTime: travelTime + recoveryTime
-            };
-
-            targetTable.trips.push(newTrip);
-            targetTable.trips.sort((a, b) => a.startTime - b.startTime);
-            validateRouteTable(targetTable);
-
-            // Setup for next trip
-            currentTime = tripEndTime + recoveryTime;
-            if (isBidirectional) {
-                currentDirection = currentDirection === 'North' ? 'South' : 'North';
-            }
-        }
+        );
 
         setSchedules(newScheds);
+        onTripsAdded?.(createdTripIds);
 
         // Show success message
         if (onSuccess) {
-            const routeNum = routeBaseName.split(' ')[0];
-            const dayLabel = getDayTypeLabel(routeBaseName);
-            onSuccess(`✓ Added ${tripCount} trip${tripCount > 1 ? 's' : ''} to Route ${routeNum} (${dayLabel}) as block ${newBlockId}`);
+            const routeNum = modalContext.routeBaseName.split(' ')[0];
+            const dayLabel = modalContext.targetTable.routeName.includes('(Saturday)')
+                ? 'Saturday'
+                : modalContext.targetTable.routeName.includes('(Sunday)')
+                    ? 'Sunday'
+                    : 'Weekday';
+            const directionLabel = targetDirection === 'North' ? 'northbound' : 'southbound';
+            onSuccess(`✓ Added ${tripCount} ${directionLabel} trip${tripCount > 1 ? 's' : ''} to Route ${routeNum} (${dayLabel}) as block ${blockId}`);
         }
 
         setModalContext(null);
-    }, [modalContext, schedules, setSchedules, onSuccess]);
+    }, [modalContext, schedules, setSchedules, onSuccess, onTripsAdded]);
 
     return {
         modalContext,
