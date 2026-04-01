@@ -79,7 +79,7 @@ export function buildFeatureFlags(env: Record<string, unknown> = import.meta.env
         const definition = FEATURE_DEFINITIONS[feature];
         const override = parseOptionalBoolean(env[getFeatureOverrideEnvVar(feature)]);
 
-        let enabled = definition.defaultEnabled;
+        let enabled: boolean = definition.defaultEnabled;
         if (demoMode && definition.hideInDemoMode && !showExperimentalInDemo) {
             enabled = false;
         }
