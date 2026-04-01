@@ -11,6 +11,7 @@ const {
   onSaveVersionMock,
   onSchedulesChangeMock,
   timelineChangeMock,
+  roundTripAdjustMock,
 } = vi.hoisted(() => ({
   getConnectionLibraryMock: vi.fn().mockResolvedValue(null),
   reassignBlocksForTablesMock: vi.fn(),
@@ -18,6 +19,7 @@ const {
   onSaveVersionMock: vi.fn(),
   onSchedulesChangeMock: vi.fn(),
   timelineChangeMock: vi.fn((): [string, number, number] => ['north-trip', 430, 30]),
+  roundTripAdjustMock: vi.fn((): null | { tripId: string; stopName: string; delta: number } => null),
 }));
 
 vi.mock('../utils/parsers/masterScheduleParser', async () => {
@@ -87,7 +89,21 @@ vi.mock('../components/layout/WorkspaceHeader', () => ({
 }));
 
 vi.mock('../components/schedule/RoundTripTableView', () => ({
-  RoundTripTableView: () => <div data-testid="round-trip-table" />
+  RoundTripTableView: (props: { onTimeAdjust?: (tripId: string, stopName: string, delta: number) => void }) => {
+    const adjustment = roundTripAdjustMock();
+    return (
+      <div data-testid="round-trip-table">
+        {adjustment && (
+          <button
+            data-testid="round-trip-adjust"
+            onClick={() => props.onTimeAdjust?.(adjustment.tripId, adjustment.stopName, adjustment.delta)}
+          >
+            Trigger round trip adjust
+          </button>
+        )}
+      </div>
+    );
+  }
 }));
 
 vi.mock('../components/TravelTimeGrid', () => ({
@@ -210,6 +226,8 @@ describe('ScheduleEditor interactions', () => {
     onSchedulesChangeMock.mockReset();
     timelineChangeMock.mockReset();
     timelineChangeMock.mockReturnValue(['north-trip', 430, 30]);
+    roundTripAdjustMock.mockReset();
+    roundTripAdjustMock.mockReturnValue(null);
     consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
@@ -353,6 +371,120 @@ describe('ScheduleEditor interactions', () => {
     expect(updatedTrip?.endTime).toBe(1480);
     expect(updatedTrip?.stopMinutes?.['Stop 1']).toBe(1450);
     expect(updatedTrip?.stopMinutes?.['Stop 2']).toBe(1480);
+  });
+
+  it('cascades large negative Step 4 edits through suffixed downstream stops', async () => {
+    roundTripAdjustMock.mockReturnValue({
+      tripId: 'north-trip',
+      stopName: 'Stop 2',
+      delta: -30
+    });
+
+    const suffixedSchedules = [
+      {
+        routeName: '10 (Weekday) (North)',
+        stops: ['Stop 1', 'Stop 2', 'Stop 3 (2)', 'Stop 4 (2)'],
+        stopIds: {},
+        trips: [
+          {
+            id: 'north-trip',
+            blockId: '10-1',
+            direction: 'North',
+            tripNumber: 1,
+            rowId: 1,
+            startTime: 480,
+            endTime: 540,
+            recoveryTime: 0,
+            travelTime: 60,
+            cycleTime: 60,
+            stopMinutes: {
+              'Stop 1': 480,
+              'Stop 2': 500,
+              'Stop 3': 520,
+              'Stop 4': 540,
+            },
+            stops: {
+              'Stop 1': '8:00 AM',
+              'Stop 2': '8:20 AM',
+              'Stop 3': '8:40 AM',
+              'Stop 4': '9:00 AM'
+            },
+            arrivalTimes: {
+              'Stop 1': '8:00 AM',
+              'Stop 2': '8:20 AM',
+              'Stop 3': '8:40 AM',
+              'Stop 4': '9:00 AM'
+            }
+          }
+        ]
+      },
+      {
+        routeName: '10 (Weekday) (South)',
+        stops: ['South 1', 'South 2'],
+        stopIds: {},
+        trips: [
+          {
+            id: 'south-trip',
+            blockId: '10-1',
+            direction: 'South',
+            tripNumber: 2,
+            rowId: 2,
+            startTime: 545,
+            endTime: 575,
+            recoveryTime: 0,
+            travelTime: 30,
+            cycleTime: 30,
+            stopMinutes: {
+              'South 1': 545,
+              'South 2': 575,
+            },
+            stops: {
+              'South 1': '9:05 AM',
+              'South 2': '9:35 AM'
+            },
+            arrivalTimes: {
+              'South 1': '9:05 AM',
+              'South 2': '9:35 AM'
+            }
+          }
+        ]
+      }
+    ] as any;
+
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    flushSync(() => {
+      root?.render(
+        <ScheduleEditor
+          schedules={suffixedSchedules}
+          teamId="team-1"
+          userId="user-1"
+          onSchedulesChange={onSchedulesChangeMock}
+          onSaveVersion={onSaveVersionMock}
+          showSuccessToast={showSuccessToastMock}
+        />
+      );
+    });
+
+    await flushPromises();
+
+    const adjustButton = container?.querySelector('[data-testid="round-trip-adjust"]');
+    flushSync(() => {
+      adjustButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const updatedSchedules = onSchedulesChangeMock.mock.calls.at(-1)?.[0];
+    const updatedNorthTrip = updatedSchedules?.[0]?.trips?.[0];
+    const updatedSouthTrip = updatedSchedules?.[1]?.trips?.[0];
+
+    expect(updatedNorthTrip?.stops?.['Stop 2']).toBe('7:50 AM');
+    expect(updatedNorthTrip?.stops?.['Stop 3']).toBe('8:10 AM');
+    expect(updatedNorthTrip?.stops?.['Stop 4']).toBe('8:30 AM');
+    expect(updatedNorthTrip?.endTime).toBe(510);
+    expect(updatedSouthTrip?.startTime).toBe(515);
+    expect(updatedSouthTrip?.stops?.['South 1']).toBe('8:35 AM');
   });
 
   it('shows save success only after Ctrl+S save resolves', async () => {

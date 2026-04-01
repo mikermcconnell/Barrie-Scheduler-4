@@ -5,7 +5,12 @@ import { parseSTREETSCSV } from './parser';
 export { sendDailyReport, testDailyReport } from './dailyReport';
 export { optimizeSchedule } from './optimize';
 import { aggregateDailySummaries } from './aggregator';
-import { PerformanceDataSummary, PERFORMANCE_RUNTIME_LOGIC_VERSION, PERFORMANCE_SCHEMA_VERSION } from './types';
+import {
+  PerformanceDataSummary,
+  PerformanceMetadata,
+  PERFORMANCE_RUNTIME_LOGIC_VERSION,
+  PERFORMANCE_SCHEMA_VERSION,
+} from './types';
 
 admin.initializeApp();
 
@@ -30,6 +35,13 @@ interface PerformanceImportRunRecord {
   warningCount?: number;
   contentLength?: number;
   contentType?: string;
+}
+
+interface ExistingPerformanceSummaryLoad {
+  summary: PerformanceDataSummary | null;
+  storagePath: string | null;
+  metadata: Partial<PerformanceMetadata> | null;
+  readError?: Error;
 }
 
 function parseBooleanFlag(value: unknown, fallback = false): boolean {
@@ -142,6 +154,69 @@ function resolveCleanHistoryStartDate(
   return importedDates[0];
 }
 
+export function mergeStoredPerformanceRuntimeMetadata(
+  summaryMetadata?: Partial<PerformanceMetadata> | null,
+  firestoreMetadata?: Partial<PerformanceMetadata> | null,
+): Pick<PerformanceMetadata, 'runtimeLogicVersion' | 'cleanHistoryStartDate'> {
+  const firestoreCleanHistoryStartDate = normalizeDateString(firestoreMetadata?.cleanHistoryStartDate) ?? undefined;
+  const summaryCleanHistoryStartDate = normalizeDateString(summaryMetadata?.cleanHistoryStartDate) ?? undefined;
+  const firestoreRuntimeLogicVersion =
+    typeof firestoreMetadata?.runtimeLogicVersion === 'number'
+      ? firestoreMetadata.runtimeLogicVersion
+      : undefined;
+  const summaryRuntimeLogicVersion =
+    typeof summaryMetadata?.runtimeLogicVersion === 'number'
+      ? summaryMetadata.runtimeLogicVersion
+      : undefined;
+
+  return {
+    runtimeLogicVersion: firestoreRuntimeLogicVersion ?? summaryRuntimeLogicVersion,
+    cleanHistoryStartDate: firestoreCleanHistoryStartDate ?? summaryCleanHistoryStartDate,
+  };
+}
+
+function looksLikeCsvText(value: string): boolean {
+  const sample = value.slice(0, 4000);
+  if (!sample.includes(',') || !/[\r\n]/.test(sample)) return false;
+  return /(VehicleID|RouteID|TripName|StopName|ObservedArrivalTime|TerminalDepartureTime)/i.test(sample);
+}
+
+function looksLikeBase64(value: string): boolean {
+  const compact = value.replace(/\s+/g, '');
+  if (compact.length < 64 || compact.length % 4 !== 0) return false;
+  return /^[A-Za-z0-9+/=]+$/.test(compact);
+}
+
+export function decodeCsvBodyText(rawBody: unknown): string {
+  const rawText =
+    typeof rawBody === 'string'
+      ? rawBody
+      : Buffer.isBuffer(rawBody)
+        ? rawBody.toString('utf-8')
+        : rawBody == null
+          ? ''
+          : String(rawBody);
+
+  if (looksLikeCsvText(rawText)) return rawText;
+
+  const trimmed = rawText.trim();
+  if (!looksLikeBase64(trimmed)) return rawText;
+
+  try {
+    const decoded = Buffer.from(trimmed, 'base64').toString('utf-8');
+    return looksLikeCsvText(decoded) ? decoded : rawText;
+  } catch {
+    return rawText;
+  }
+}
+
+export function shouldAbortPerformanceSummaryOverwrite(
+  storagePath: string | null,
+  summary: PerformanceDataSummary | null,
+): boolean {
+  return !!storagePath && !summary;
+}
+
 function buildPerformanceSummary(
   dailySummaries: PerformanceDataSummary['dailySummaries'],
   importedBy: string,
@@ -215,27 +290,43 @@ export function mergeRebuiltDailySummaries(
   return merged.sort((a, b) => a.date.localeCompare(b.date));
 }
 
-async function loadExistingPerformanceSummary(teamId: string): Promise<{
-  summary: PerformanceDataSummary | null;
-  storagePath: string | null;
-}> {
+async function loadExistingPerformanceSummary(teamId: string): Promise<ExistingPerformanceSummaryLoad> {
   const metadataRef = getPerformanceMetadataRef(teamId);
   const metadataSnap = await metadataRef.get();
 
   if (!metadataSnap.exists) {
-    return { summary: null, storagePath: null };
+    return { summary: null, storagePath: null, metadata: null };
   }
 
   const meta = metadataSnap.data() || {};
   const storagePath = typeof meta.storagePath === 'string' ? meta.storagePath : null;
+  const metadata: Partial<PerformanceMetadata> = {
+    importedAt: meta.importedAt?.toDate?.()?.toISOString?.(),
+    importedBy: typeof meta.importedBy === 'string' ? meta.importedBy : undefined,
+    dateRange: meta.dateRange,
+    dayCount: typeof meta.dayCount === 'number' ? meta.dayCount : undefined,
+    totalRecords: typeof meta.totalRecords === 'number' ? meta.totalRecords : undefined,
+    runtimeLogicVersion: typeof meta.runtimeLogicVersion === 'number' ? meta.runtimeLogicVersion : undefined,
+    cleanHistoryStartDate: normalizeDateString(meta.cleanHistoryStartDate) ?? undefined,
+    storagePath: storagePath ?? undefined,
+  };
   if (!storagePath) {
-    return { summary: null, storagePath: null };
+    return { summary: null, storagePath: null, metadata };
   }
 
-  const file = getBucket().file(storagePath);
-  const [content] = await file.download();
-  const summary: PerformanceDataSummary = JSON.parse(content.toString('utf-8'));
-  return { summary, storagePath };
+  try {
+    const file = getBucket().file(storagePath);
+    const [content] = await file.download();
+    const summary: PerformanceDataSummary = JSON.parse(content.toString('utf-8'));
+    return { summary, storagePath, metadata };
+  } catch (error) {
+    return {
+      summary: null,
+      storagePath,
+      metadata,
+      readError: error instanceof Error ? error : new Error(String(error)),
+    };
+  }
 }
 
 function sanitizeNumericField(obj: Record<string, unknown> | undefined, key: string, cap: number, stats: {
@@ -439,7 +530,7 @@ export const ingestPerformanceData = onRequest(
     const contentType = req.headers['content-type'] || '';
     if (contentType.includes('text/csv') || contentType.includes('text/plain')) {
       // Raw CSV in the body
-      csvText = typeof req.body === 'string' ? req.body : req.body.toString('utf-8');
+      csvText = decodeCsvBodyText(req.body);
     } else if (contentType.includes('application/json')) {
       // JSON wrapper: { "csv": "...csv text..." }
       const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
@@ -448,13 +539,10 @@ export const ingestPerformanceData = onRequest(
         res.status(400).json({ error: 'JSON body must include a "csv" field' });
         return;
       }
+      csvText = decodeCsvBodyText(csvText);
     } else {
       // Try raw body as fallback (Power Automate sometimes sends odd content types)
-      csvText = typeof req.body === 'string'
-        ? req.body
-        : Buffer.isBuffer(req.body)
-          ? req.body.toString('utf-8')
-          : '';
+      csvText = decodeCsvBodyText(req.body);
     }
 
     if (!csvText || csvText.length < 100) {
@@ -503,14 +591,29 @@ export const ingestPerformanceData = onRequest(
 
       try {
         const existing = await loadExistingPerformanceSummary(teamId);
+        if (shouldAbortPerformanceSummaryOverwrite(existing.storagePath, existing.summary)) {
+          console.error('Aborting ingest because the existing performance summary could not be read:', existing.readError);
+          res.status(500).json({
+            error: 'Could not read the existing saved performance history, so the import was aborted to avoid overwriting it.',
+          });
+          return;
+        }
+
         existingSummaries = existing.summary?.dailySummaries || [];
         oldStoragePath = existing.storagePath;
-        existingCleanHistoryStartDate = existing.summary?.metadata?.cleanHistoryStartDate;
+        existingCleanHistoryStartDate = mergeStoredPerformanceRuntimeMetadata(
+          existing.summary?.metadata,
+          existing.metadata,
+        ).cleanHistoryStartDate;
         if (existingSummaries.length > 0) {
           console.log(`Loaded ${existingSummaries.length} existing day(s)`);
         }
       } catch (err) {
-        console.warn('Could not load existing data, starting fresh:', err);
+        console.error('Could not load existing data, aborting ingest to avoid overwriting history:', err);
+        res.status(500).json({
+          error: 'Could not read the existing saved performance history, so the import was aborted to avoid overwriting it.',
+        });
+        return;
       }
 
       const mergedSummaries = mergeDailySummaries(existingSummaries, newSummaries);
@@ -680,6 +783,12 @@ export const rebuildPerformanceHistory = onRequest(
       }
 
       const existing = await loadExistingPerformanceSummary(teamId);
+      if (shouldAbortPerformanceSummaryOverwrite(existing.storagePath, existing.summary)) {
+        res.status(500).json({
+          error: `The existing performance summary for team ${teamId} could not be read, so the rebuild was aborted to avoid overwriting it.`,
+        });
+        return;
+      }
       if (!existing.summary) {
         res.status(404).json({ error: `No existing performance summary found for team ${teamId}.` });
         return;
@@ -695,7 +804,10 @@ export const rebuildPerformanceHistory = onRequest(
         mergedSummaries,
         'history-rebuild',
         resolveCleanHistoryStartDate(
-          existing.summary?.metadata?.cleanHistoryStartDate,
+          mergeStoredPerformanceRuntimeMetadata(
+            existing.summary?.metadata,
+            existing.metadata,
+          ).cleanHistoryStartDate,
           rebuiltSummaries,
           PERFORMANCE_RUNTIME_LOGIC_VERSION,
         ),

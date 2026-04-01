@@ -216,8 +216,8 @@ export const ConnectionAddChooser: React.FC<ConnectionAddChooserProps> = ({
     const cacheMeta = getCachedData();
 
     return (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[200]">
-            <div className="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden">
+        <div className="fixed inset-0 z-[200] flex items-start justify-center overflow-y-auto bg-black bg-opacity-50 p-4 sm:items-center">
+            <div className="my-auto flex max-h-[calc(100vh-2rem)] w-full max-w-md flex-col overflow-hidden rounded-xl bg-white shadow-xl">
                 {/* Header */}
                 <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
                     <h2 className="text-lg font-semibold text-gray-900">
@@ -232,7 +232,7 @@ export const ConnectionAddChooser: React.FC<ConnectionAddChooserProps> = ({
                 </div>
 
                 {/* Options */}
-                <div className="p-4 space-y-3">
+                <div className="min-h-0 flex-1 overflow-y-auto p-4 space-y-3">
                     {/* Quick Templates Section */}
                     <div className="space-y-2">
                         <p className="text-xs font-medium text-gray-500 uppercase tracking-wide px-1">

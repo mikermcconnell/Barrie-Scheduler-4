@@ -8,7 +8,18 @@ import { TimeUtils } from '../timeUtils';
 import { compareBlockIds } from './scheduleEditorUtils';
 
 export type AddTripBlockMode = 'new' | 'reference' | 'existing';
-export type AddTripStartPreset = 'midpoint' | 'target-headway' | 'copy-previous' | 'copy-next' | 'first-trip' | 'last-trip' | 'manual';
+export type AddTripStartPreset =
+  | 'plus-30'
+  | 'minus-30'
+  | 'plus-60'
+  | 'minus-60'
+  | 'midpoint'
+  | 'target-headway'
+  | 'copy-previous'
+  | 'copy-next'
+  | 'first-trip'
+  | 'last-trip'
+  | 'manual';
 
 export interface AddTripModalContext {
   referenceTrip: MasterTrip;
@@ -263,7 +274,8 @@ const getPresetStartTimes = (
   trips: MasterTrip[],
   nearbyTrips: { previous: MasterTrip | null; next: MasterTrip | null },
   templateTrip: MasterTrip | null,
-  referenceTime: number
+  anchorTime: number,
+  currentStartTime: number
 ): AddTripPresetOption[] => {
   const targetHeadway = getTargetHeadway(trips);
   const firstTrip = trips[0] ?? null;
@@ -272,9 +284,9 @@ const getPresetStartTimes = (
     ? Math.round((nearbyTrips.previous.startTime + nearbyTrips.next.startTime) / 2)
     : nearbyTrips.previous
       ? nearbyTrips.previous.endTime
-      : nearbyTrips.next
+        : nearbyTrips.next
         ? nearbyTrips.next.startTime
-        : (templateTrip?.startTime ?? referenceTime);
+        : (templateTrip?.startTime ?? currentStartTime);
 
   const copyPrevious = (() => {
     if (nearbyTrips.previous) {
@@ -284,7 +296,7 @@ const getPresetStartTimes = (
       }
       return nearbyTrips.previous.startTime + (targetHeadway ?? Math.max(nearbyTrips.previous.travelTime, 30));
     }
-    return templateTrip?.startTime ?? referenceTime;
+    return templateTrip?.startTime ?? currentStartTime;
   })();
 
   const copyNext = (() => {
@@ -295,17 +307,21 @@ const getPresetStartTimes = (
       }
       return nearbyTrips.next.startTime - (targetHeadway ?? Math.max(nearbyTrips.next.travelTime, 30));
     }
-    return templateTrip?.startTime ?? referenceTime;
+    return templateTrip?.startTime ?? currentStartTime;
   })();
 
   return [
+    { preset: 'plus-30', label: `+30 min (${TimeUtils.fromMinutes(anchorTime + 30)})`, startTime: anchorTime + 30 },
+    { preset: 'minus-30', label: `-30 min (${TimeUtils.fromMinutes(anchorTime - 30)})`, startTime: anchorTime - 30 },
+    { preset: 'plus-60', label: `+60 min (${TimeUtils.fromMinutes(anchorTime + 60)})`, startTime: anchorTime + 60 },
+    { preset: 'minus-60', label: `-60 min (${TimeUtils.fromMinutes(anchorTime - 60)})`, startTime: anchorTime - 60 },
     { preset: 'midpoint', label: `Midpoint ${TimeUtils.fromMinutes(midpoint)}`, startTime: midpoint },
     { preset: 'target-headway', label: `Target headway ${targetHeadway !== null ? `${targetHeadway} min` : 'auto'}`, startTime: targetHeadway !== null && nearbyTrips.previous ? nearbyTrips.previous.startTime + targetHeadway : midpoint },
     { preset: 'copy-previous', label: `Copy previous pattern ${TimeUtils.fromMinutes(copyPrevious)}`, startTime: copyPrevious },
     { preset: 'copy-next', label: `Copy next pattern ${TimeUtils.fromMinutes(copyNext)}`, startTime: copyNext },
     { preset: 'first-trip', label: `First trip ${firstTrip ? TimeUtils.fromMinutes(firstTrip.startTime) : '-'}`, startTime: firstTrip?.startTime ?? null },
     { preset: 'last-trip', label: `Last trip ${lastTrip ? TimeUtils.fromMinutes(lastTrip.startTime) : '-'}`, startTime: lastTrip?.startTime ?? null },
-    { preset: 'manual', label: 'Custom time', startTime: templateTrip?.startTime ?? referenceTime }
+    { preset: 'manual', label: 'Custom time', startTime: templateTrip?.startTime ?? currentStartTime }
   ];
 };
 
@@ -488,7 +504,7 @@ export const buildAddTripPresets = (
   const trips = getDirectionTrips(selectedTargetTable, selectedDirection);
   const nearbyTrips = getNearbyTrips(trips, startTime);
   const templateTrip = getTemplate(trips, startTime, selectedTargetTable, selectedDirection);
-  return getPresetStartTimes(trips, nearbyTrips, templateTrip, startTime);
+  return getPresetStartTimes(trips, nearbyTrips, templateTrip, context.referenceTrip.startTime, startTime);
 };
 
 export const buildAddTripSuggestions = (
@@ -513,7 +529,7 @@ export const buildAddTripSuggestions = (
   const directionTrips = getDirectionTrips(selectedTargetTable, selectedDirection);
   const nearbyTrips = getNearbyTrips(directionTrips, startTime);
   const templateTrip = getTemplate(directionTrips, startTime, selectedTargetTable, selectedDirection);
-  const presetOptions = getPresetStartTimes(directionTrips, nearbyTrips, templateTrip, startTime);
+  const presetOptions = getPresetStartTimes(directionTrips, nearbyTrips, templateTrip, context.referenceTrip.startTime, startTime);
   const { choices: blockChoices, newBlockId } = collectBlockChoices(context);
   const resolvedRange = resolveStopRange(
     selectedTargetTable,

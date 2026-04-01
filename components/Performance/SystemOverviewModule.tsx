@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
     LineChart, Line, PieChart, Pie, Cell, ReferenceLine, ComposedChart,
@@ -10,8 +10,9 @@ import {
 import { MetricCard, ChartCard } from '../Analytics/AnalyticsShared';
 import type { PerformanceDataSummary, DayType, DataQuality } from '../../utils/performanceDataTypes';
 import {
-    computeMissedTripsForDay, hasGtfsCoverage,
-} from '../../utils/gtfs/gtfsScheduleIndex';
+    aggregateStoredMissedTrips,
+    computeAggregatedMissedTrips,
+} from '../../utils/performanceMissedTrips';
 import { compareDateStrings, normalizeToISODate, shortDateLabel } from '../../utils/performanceDateUtils';
 import { PerformanceScopeProvider } from './performanceScope';
 import type { PerformanceDataScope } from '../../utils/performanceDataScope';
@@ -160,6 +161,8 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
     const filtered = data.dailySummaries;
     const [routeScoreSortKey, setRouteScoreSortKey] = React.useState<RouteScoreSortKey>('avgOtp');
     const [routeScoreSortDir, setRouteScoreSortDir] = React.useState<SortDir>('desc');
+    const [computedMissedTrips, setComputedMissedTrips] = useState<ReturnType<typeof aggregateStoredMissedTrips> | null>(null);
+    const [isLoadingMissedTripsFallback, setIsLoadingMissedTripsFallback] = useState(false);
 
     // ── Peer days (same day type for trend context in Action Queue) ───
     const peerDays = useMemo(() => {
@@ -386,64 +389,47 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
         return { items, peerDayType, peerCount };
     }, [peerDays]);
 
-    // ── Missed trips (GTFS vs STREETS cross-reference) ────────────
-    // 1. Only count routes that have ≥1 observed trip in STREETS (route-scoping).
-    //    Routes absent from STREETS weren't extracted — not "missed."
-    // Core logic is centralized in computeMissedTripsForDay.
-    const missedTrips = useMemo(() => {
-        let totalScheduled = 0;
-        let totalMatched = 0;
-        const missedByRoute = new Map<string, {
-            routeId: string;
-            count: number;
-            earliestDep: string;
-            trips: {
-                tripId: string;
-                routeId: string;
-                departure: string;
-                headsign: string;
-                blockId: string;
-                serviceId: string;
-                missType: 'not_performed' | 'late_over_15';
-                lateByMinutes?: number;
-            }[];
-        }>();
-        let hasCoverage = false;
-        let skippedDays = 0;
+    const storedMissedTrips = useMemo(() => aggregateStoredMissedTrips(filtered), [filtered]);
+    const shouldLoadMissedTripsFallback = filtered.length > 0 && storedMissedTrips.missingStoredDays > 0;
 
-        for (const day of filtered) {
-            if (!hasGtfsCoverage(day.date)) continue;
-            hasCoverage = true;
+    useEffect(() => {
+        let cancelled = false;
 
-            const dayMissed = computeMissedTripsForDay(day.date, day.dayType, day.byTrip);
-            if (!dayMissed) {
-                skippedDays++;
-                continue;
-            }
-
-            totalScheduled += dayMissed.totalScheduled;
-            totalMatched += dayMissed.totalMatched;
-
-            for (const t of dayMissed.trips) {
-                const existing = missedByRoute.get(t.routeId);
-                if (existing) {
-                    existing.count++;
-                    existing.trips.push(t);
-                    if (t.departure < existing.earliestDep) existing.earliestDep = t.departure;
-                } else {
-                    missedByRoute.set(t.routeId, { routeId: t.routeId, count: 1, earliestDep: t.departure, trips: [t] });
-                }
-            }
+        if (!shouldLoadMissedTripsFallback) {
+            setComputedMissedTrips(null);
+            setIsLoadingMissedTripsFallback(false);
+            return () => {
+                cancelled = true;
+            };
         }
 
-        const totalMissed = totalScheduled - totalMatched;
-        const missedPct = totalScheduled > 0 ? (totalMissed / totalScheduled) * 100 : 0;
-        const routesMissed = Array.from(missedByRoute.values())
-            .map(r => ({ ...r, trips: r.trips.sort((a, b) => a.departure.localeCompare(b.departure)) }))
-            .sort((a, b) => b.count - a.count);
+        setIsLoadingMissedTripsFallback(true);
 
-        return { hasCoverage, totalScheduled, totalObserved: totalMatched, totalMissed, missedPct, routesMissed, skippedDays };
-    }, [filtered]);
+        void import('../../utils/gtfs/gtfsScheduleIndex')
+            .then(({ computeMissedTripsForDay, hasGtfsCoverage }) => {
+                if (cancelled) return;
+                setComputedMissedTrips(
+                    computeAggregatedMissedTrips(filtered, {
+                        computeMissedTripsForDay,
+                        hasGtfsCoverage,
+                    }),
+                );
+            })
+            .catch((error) => {
+                console.error('Failed to load GTFS missed-trip helpers for overview fallback:', error);
+                if (!cancelled) setComputedMissedTrips(null);
+            })
+            .finally(() => {
+                if (!cancelled) setIsLoadingMissedTripsFallback(false);
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [filtered, shouldLoadMissedTripsFallback]);
+
+    const missedTrips = computedMissedTrips ?? storedMissedTrips;
+    const isCheckingLegacyMissedTrips = shouldLoadMissedTripsFallback && isLoadingMissedTripsFallback && !computedMissedTrips;
 
     const missedCountByRoute = useMemo(() => {
         const map = new Map<string, number>();
@@ -708,14 +694,20 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                 <MetricCard
                     icon={<ClipboardList size={18} />}
                     label="Trips Operated"
-                    value={missedTrips.totalScheduled > 0
+                    value={isCheckingLegacyMissedTrips && !storedMissedTrips.hasCoverage
+                        ? 'Checking...'
+                        : missedTrips.totalScheduled > 0
                         ? `${missedTrips.totalObserved} / ${missedTrips.totalScheduled}`
                         : 'N/A'}
-                    color={missedTrips.totalScheduled === 0 ? 'cyan'
+                    color={isCheckingLegacyMissedTrips && !storedMissedTrips.hasCoverage
+                        ? 'cyan'
+                        : missedTrips.totalScheduled === 0 ? 'cyan'
                         : missedTrips.missedPct < 2 ? 'emerald'
                         : missedTrips.missedPct < 5 ? 'amber'
                         : 'red'}
-                    subValue={missedTrips.totalScheduled === 0
+                    subValue={isCheckingLegacyMissedTrips
+                        ? 'Checking missed trips for older import...'
+                        : missedTrips.totalScheduled === 0
                         ? (missedTrips.skippedDays > 0
                             ? `${missedTrips.skippedDays} day(s) skipped (holiday?)`
                             : 'GTFS data not available')

@@ -33,6 +33,55 @@ const DashboardLoadingState: React.FC<{ label: string }> = ({ label }) => (
     </div>
 );
 
+const PerformanceWorkspaceLoading: React.FC<{
+    importedAt?: string;
+    dateRange?: { start: string; end: string };
+    dayCount?: number;
+}> = ({ importedAt, dateRange, dayCount }) => (
+    <div className="rounded-3xl border-2 border-cyan-100 bg-gradient-to-br from-cyan-50 via-white to-amber-50 p-6 shadow-sm">
+        <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+            <div className="max-w-2xl">
+                <div className="inline-flex items-center gap-2 rounded-full border border-cyan-200 bg-white/80 px-3 py-1 text-[11px] font-bold uppercase tracking-wide text-cyan-700">
+                    <Loader2 size={12} className="animate-spin" />
+                    Loading detailed dashboard data
+                </div>
+                <h3 className="mt-4 text-2xl font-bold text-gray-900">Operations dashboard is opening</h3>
+                <p className="mt-2 text-sm leading-relaxed text-gray-600">
+                    We already found the latest performance import. The full history file is loading in the background so the route, trip, and ridership views can open.
+                </p>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-3 lg:min-w-[420px]">
+                <div className="rounded-xl border border-gray-200 bg-white p-4">
+                    <div className="text-[11px] font-bold uppercase tracking-wide text-gray-400">Latest import</div>
+                    <div className="mt-2 text-sm font-semibold text-gray-900">
+                        {importedAt
+                            ? new Date(importedAt).toLocaleString('en-US', {
+                                month: 'short',
+                                day: 'numeric',
+                                hour: 'numeric',
+                                minute: '2-digit',
+                            })
+                            : 'Unknown'}
+                    </div>
+                </div>
+                <div className="rounded-xl border border-gray-200 bg-white p-4">
+                    <div className="text-[11px] font-bold uppercase tracking-wide text-gray-400">Date range</div>
+                    <div className="mt-2 text-sm font-semibold text-gray-900">
+                        {dateRange?.start && dateRange?.end ? `${dateRange.start} → ${dateRange.end}` : 'Unknown'}
+                    </div>
+                </div>
+                <div className="rounded-xl border border-gray-200 bg-white p-4">
+                    <div className="text-[11px] font-bold uppercase tracking-wide text-gray-400">Days available</div>
+                    <div className="mt-2 text-sm font-semibold text-gray-900">
+                        {typeof dayCount === 'number' ? dayCount.toLocaleString() : 'Unknown'}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+);
+
 export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onClose, autoOpen = false }) => {
     const { team } = useTeam();
     const { user } = useAuth();
@@ -41,8 +90,8 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onCl
 
     const metadataQuery = usePerformanceMetadataQuery(team?.id);
     const hasExistingData = metadataQuery.data != null;
-    const shouldLoadWorkspaceData = view === 'workspace' && hasExistingData;
-    const dataQuery = usePerformanceDataQuery(team?.id, shouldLoadWorkspaceData);
+    const shouldLoadWorkspaceData = hasExistingData && (view === 'workspace' || (autoOpen && view === 'loading'));
+    const dataQuery = usePerformanceDataQuery(team?.id, shouldLoadWorkspaceData, metadataQuery.data);
     const quickHealth = useMemo(
         () => buildPerformanceMetadataHealth(metadataQuery.data),
         [metadataQuery.data],
@@ -144,23 +193,31 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onCl
     }
 
     if (view === 'workspace') {
-        if (metadataQuery.isLoading || !hasExistingData || dataQuery.isLoading || !dataQuery.data) {
+        if (metadataQuery.isLoading || !hasExistingData) {
             return <DashboardLoadingState label="Loading performance data..." />;
         }
 
         return (
             <div className="h-full overflow-auto custom-scrollbar p-6">
                 <div className="max-w-7xl mx-auto">
-                    <Suspense fallback={<DashboardLoadingState label="Loading dashboard..." />}>
-                        <PerformanceWorkspace
-                            data={dataQuery.data}
-                            onReimport={() => {
-                                setImportReturnTarget('workspace');
-                                setView('import');
-                            }}
-                            onBack={handleWorkspaceBack}
+                    {dataQuery.data ? (
+                        <Suspense fallback={<DashboardLoadingState label="Loading dashboard..." />}>
+                            <PerformanceWorkspace
+                                data={dataQuery.data}
+                                onReimport={() => {
+                                    setImportReturnTarget('workspace');
+                                    setView('import');
+                                }}
+                                onBack={handleWorkspaceBack}
+                            />
+                        </Suspense>
+                    ) : (
+                        <PerformanceWorkspaceLoading
+                            importedAt={metadataQuery.data.importedAt}
+                            dateRange={metadataQuery.data.dateRange}
+                            dayCount={metadataQuery.data.dayCount}
                         />
-                    </Suspense>
+                    )}
                 </div>
             </div>
         );

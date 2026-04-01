@@ -24,6 +24,7 @@ import { ShuttlePlannerWorkspace } from './ShuttlePlannerWorkspace';
 import { RoutePlannerWorkspace } from './RoutePlannerWorkspace';
 import { NetworkConnectionsWorkspace } from './NetworkConnectionsWorkspace';
 import { usePerformanceMetadataQuery } from '../../hooks/usePerformanceData';
+import { isFeatureEnabled } from '../../utils/features';
 import type { TransitAppDataSummary } from '../../utils/transit-app/transitAppTypes';
 import type { ODMatrixDataSummary, GeocodeCache } from '../../utils/od-matrix/odMatrixTypes';
 
@@ -103,6 +104,25 @@ type AnalyticsView =
     | 'network-connections'
     | 'shuttle-planner';
 
+const ANALYTICS_VIEW_FEATURES: Partial<Record<AnalyticsView, Parameters<typeof isFeatureEnabled>[0]>> = {
+    import: 'analyticsTransitApp',
+    'transit-data': 'analyticsTransitApp',
+    'od-import': 'analyticsOdMatrix',
+    'od-fix-coords': 'analyticsOdMatrix',
+    'od-workspace': 'analyticsOdMatrix',
+    'headway-map': 'analyticsCorridorHeadway',
+    'corridor-speed': 'analyticsCorridorSpeed',
+    'student-pass': 'analyticsStudentPass',
+    'route-planner': 'analyticsRoutePlanner',
+    'network-connections': 'analyticsNetworkConnections',
+    'shuttle-planner': 'analyticsShuttlePlanner',
+};
+
+const isAnalyticsViewEnabled = (view: AnalyticsView): boolean => {
+    const feature = ANALYTICS_VIEW_FEATURES[view];
+    return feature ? isFeatureEnabled(feature) : true;
+};
+
 export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose }) => {
     const { team } = useTeam();
     const { user } = useAuth();
@@ -115,6 +135,12 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
     const [hasODData, setHasODData] = useState(false);
     const performanceMetadataQuery = usePerformanceMetadataQuery(team?.id);
     const hasPerformanceData = !!performanceMetadataQuery.data;
+
+    useEffect(() => {
+        if (view !== 'dashboard' && !isAnalyticsViewEnabled(view)) {
+            setView('dashboard');
+        }
+    }, [view]);
 
     // Check for existing data on mount
     useEffect(() => {
@@ -418,62 +444,76 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    <AnalyticsCard
-                        color="cyan"
-                        icon={<Smartphone size={20} />}
-                        title="Transit App Data"
-                        description="Import and analyze rider demand, trip patterns, and route engagement from Transit App."
-                        hasData={hasExistingData}
-                        onClick={handleTransitAppClick}
-                    />
-                    <AnalyticsCard
-                        color="violet"
-                        icon={<Network size={20} />}
-                        title="Ontario Northland"
-                        description="Import origin-destination ridership matrices, visualize travel patterns, and analyze station connectivity."
-                        hasData={hasODData}
-                        onClick={handleODMatrixClick}
-                    />
-                    <AnalyticsCard
-                        color="teal"
-                        icon={<Map size={20} />}
-                        title="Corridor Speed"
-                        description="Compare observed STREETS travel times to GTFS schedule by roadway corridor, period, and direction."
-                        hasData={hasPerformanceData}
-                        onClick={() => setView('corridor-speed')}
-                    />
-                    <AnalyticsCard
-                        color="teal"
-                        icon={<Map size={20} />}
-                        title="Corridor Headway"
-                        description="Visualize combined service headway where multiple routes share corridors. Identify high-frequency spines and coverage gaps."
-                        hasData={false}
-                        onClick={() => setView('headway-map')}
-                    />
-                    <AnalyticsCard
-                        color="amber"
-                        icon={<GraduationCap size={20} />}
-                        title="Student Transit Pass"
-                        description="Generate one-page transit flyers for students showing how to reach school by bus from any residential zone."
-                        hasData={false}
-                        onClick={() => setView('student-pass')}
-                    />
-                    <AnalyticsCard
-                        color="violet"
-                        icon={<GitBranch size={20} />}
-                        title="Network Connections"
-                        description="Map-first transfer hub analysis using published master schedules. See where routes really connect, where they miss, and which hubs deserve protection."
-                        hasData={false}
-                        onClick={() => setView('network-connections')}
-                    />
-                    <AnalyticsCard
-                        color="cyan"
-                        icon={<Route size={20} />}
-                        title="Route Planner"
-                        description="Test route concepts in a Friendly planning workspace. Shuttle Concept mode is live first, with existing-route tweaks and broader route planning to follow."
-                        hasData={false}
-                        onClick={() => setView('route-planner')}
-                    />
+                    {isFeatureEnabled('analyticsTransitApp') && (
+                        <AnalyticsCard
+                            color="cyan"
+                            icon={<Smartphone size={20} />}
+                            title="Transit App Data"
+                            description="Import and analyze rider demand, trip patterns, and route engagement from Transit App."
+                            hasData={hasExistingData}
+                            onClick={handleTransitAppClick}
+                        />
+                    )}
+                    {isFeatureEnabled('analyticsOdMatrix') && (
+                        <AnalyticsCard
+                            color="violet"
+                            icon={<Network size={20} />}
+                            title="Ontario Northland"
+                            description="Import origin-destination ridership matrices, visualize travel patterns, and analyze station connectivity."
+                            hasData={hasODData}
+                            onClick={handleODMatrixClick}
+                        />
+                    )}
+                    {isFeatureEnabled('analyticsCorridorSpeed') && (
+                        <AnalyticsCard
+                            color="teal"
+                            icon={<Map size={20} />}
+                            title="Corridor Speed"
+                            description="Compare observed STREETS travel times to GTFS schedule by roadway corridor, period, and direction."
+                            hasData={hasPerformanceData}
+                            onClick={() => setView('corridor-speed')}
+                        />
+                    )}
+                    {isFeatureEnabled('analyticsCorridorHeadway') && (
+                        <AnalyticsCard
+                            color="teal"
+                            icon={<Map size={20} />}
+                            title="Corridor Headway"
+                            description="Visualize combined service headway where multiple routes share corridors. Identify high-frequency spines and coverage gaps."
+                            hasData={false}
+                            onClick={() => setView('headway-map')}
+                        />
+                    )}
+                    {isFeatureEnabled('analyticsStudentPass') && (
+                        <AnalyticsCard
+                            color="amber"
+                            icon={<GraduationCap size={20} />}
+                            title="Student Transit Pass"
+                            description="Generate one-page transit flyers for students showing how to reach school by bus from any residential zone."
+                            hasData={false}
+                            onClick={() => setView('student-pass')}
+                        />
+                    )}
+                    {isFeatureEnabled('analyticsNetworkConnections') && (
+                        <AnalyticsCard
+                            color="violet"
+                            icon={<GitBranch size={20} />}
+                            title="Network Connections"
+                            description="Map-first transfer hub analysis using published master schedules. See where routes really connect, where they miss, and which hubs deserve protection."
+                            hasData={false}
+                            onClick={() => setView('network-connections')}
+                        />
+                    )}
+                    {isFeatureEnabled('analyticsRoutePlanner') && (
+                        <AnalyticsCard
+                            color="cyan"
+                            icon={<Route size={20} />}
+                            title="Route Planner"
+                            description="Test route concepts in a Friendly planning workspace. Shuttle Concept mode is live first, with existing-route tweaks and broader route planning to follow."
+                            hasData={false}
+                            onClick={() => setView('route-planner')}
+                        />
+                    )}
                 </div>
             </div>
         </div>

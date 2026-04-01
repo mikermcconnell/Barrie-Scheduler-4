@@ -38,7 +38,7 @@ export const ReportsWorkspace: React.FC<ReportsWorkspaceProps> = ({ onClose }) =
     const metadataQuery = usePerformanceMetadataQuery(team?.id);
     const hasExistingData = !!metadataQuery.data;
     const shouldLoadWorkspaceData = view === 'workspace' && hasExistingData;
-    const dataQuery = usePerformanceDataQuery(team?.id, shouldLoadWorkspaceData);
+    const dataQuery = usePerformanceDataQuery(team?.id, shouldLoadWorkspaceData, metadataQuery.data);
 
     useEffect(() => {
         setView('landing');

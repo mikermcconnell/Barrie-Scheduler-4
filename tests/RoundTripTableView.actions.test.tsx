@@ -56,7 +56,7 @@ describe('RoundTripTableView row actions', () => {
     });
   };
 
-  it('uses the last trip in the row when adding a trip', () => {
+  it('uses the row northbound trip when adding from the combined row', () => {
     const onAddTrip = vi.fn();
 
     render(
@@ -109,12 +109,12 @@ describe('RoundTripTableView row actions', () => {
       { onAddTrip }
     );
 
-    const addButton = container?.querySelector('button[aria-label="Add round trip"]') as HTMLButtonElement | null;
+    const addButton = container?.querySelector('button[aria-label="Add trip"]') as HTMLButtonElement | null;
     expect(addButton).not.toBeNull();
 
     addButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
-    expect(onAddTrip).toHaveBeenCalledWith('south-trip');
+    expect(onAddTrip).toHaveBeenCalledWith('north-trip');
   });
 
   it('shows the row actions menu button even on south-only rows', () => {

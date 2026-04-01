@@ -339,6 +339,7 @@ export interface RoundTripTableViewProps {
     connectionLibrary?: ConnectionLibrary | null;
     dayType?: DayType;
     masterBaseline?: MasterRouteTable[] | null;
+    highlightedTripId?: string | null;
 }
 
 // --- Component ---
@@ -370,7 +371,8 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
     readOnly = false,
     connectionLibrary,
     dayType = 'Weekday',
-    masterBaseline
+    masterBaseline,
+    highlightedTripId
 }) => {
     // Sort state: 'blockFlow' (default), 'blockId', 'endTime', 'startTime' (first departure), or a stop name
     const [sortColumn, setSortColumn] = useState<string>('blockFlow');
@@ -382,6 +384,14 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
     const [showActionsCol, setShowActionsCol] = useState(true);
     const [showRowNumberCol, setShowRowNumberCol] = useState(false);
     const [showDeltas, setShowDeltas] = useState(true);
+
+    useEffect(() => {
+        if (!highlightedTripId) return;
+        const highlightedRow = document.querySelector('tr[data-highlighted-row="true"]');
+        if (highlightedRow instanceof HTMLElement) {
+            highlightedRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    }, [highlightedTripId, schedules]);
 
     const isMasterMode = !!masterBaseline && masterBaseline.length > 0;
 
@@ -1296,6 +1306,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                         const northTrip = row.trips.find(t => t.direction === 'North');
                                         const southTrip = row.trips.find(t => t.direction === 'South');
                                         const lastTrip = [...row.trips].sort((a, b) => a.startTime - b.startTime).pop();
+                                        const addTripReference = northTrip ?? lastTrip ?? southTrip;
                                         const actionTrip = lastTrip ?? northTrip ?? southTrip;
                                         const actionStops = actionTrip?.direction === 'South' ? combined.southStops : combined.northStops;
                                         const rowTripIds = row.trips.map(trip => trip.id);
@@ -1337,6 +1348,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                         const grayOutClass = isGrayedOut ? 'opacity-40' : '';
                                         const filterHighlightClass = isHighlighted ? 'bg-amber-50 ring-2 ring-inset ring-amber-200' : '';
                                         const searchHideClass = !matchesSearchFilter ? 'hidden' : '';
+                                        const isRecentlyAddedRow = !!highlightedTripId && row.trips.some(trip => trip.id === highlightedTripId);
 
                                         // Calculate the display row number (1-indexed)
                                         const displayRowNum = rowIdx + 1;
@@ -1387,7 +1399,8 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                         return (
                                             <tr
                                                 key={uniqueRowKey}
-                                                className={`group hover:bg-blue-50/50 ${rowBg} ${grayOutClass} ${filterHighlightClass} ${searchHideClass} ${isNewTrip ? 'ring-2 ring-inset ring-green-300 bg-green-50/30' : ''} ${gridNav.isRowActive(rowIdx) ? 'bg-blue-50/30' : ''}`}
+                                                className={`group hover:bg-blue-50/50 ${rowBg} ${grayOutClass} ${filterHighlightClass} ${searchHideClass} ${isNewTrip ? 'ring-2 ring-inset ring-green-300 bg-green-50/30' : ''} ${isRecentlyAddedRow ? 'ring-2 ring-inset ring-emerald-400 bg-emerald-50/60' : ''} ${gridNav.isRowActive(rowIdx) ? 'bg-blue-50/30' : ''}`}
+                                                data-highlighted-row={isRecentlyAddedRow ? 'true' : 'false'}
                                                 onContextMenu={(e) => {
                                                     if (onTripRightClick && actionTrip) {
                                                         onTripRightClick(e, actionTrip.id, actionTrip.direction, row.blockId, actionStops);
@@ -1407,12 +1420,12 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                 {showActions && (
                                                     <td className="p-1 border-r border-gray-100 bg-white group-hover:bg-gray-100 z-20">
                                                         <div className="flex items-center justify-center gap-0.5">
-                                                            {onAddTrip && lastTrip && (
+                                                            {onAddTrip && addTripReference && (
                                                                 <button
-                                                                    onClick={() => onAddTrip(lastTrip.id)}
+                                                                    onClick={() => onAddTrip(addTripReference.id)}
                                                                     className="p-1 rounded hover:bg-green-50 text-gray-600 hover:text-green-700 transition-colors"
-                                                                    title="Add round trip after this row"
-                                                                    aria-label="Add round trip"
+                                                                    title="Add trip near this row"
+                                                                    aria-label="Add trip"
                                                                 >
                                                                     <Plus size={12} />
                                                                 </button>
@@ -1422,7 +1435,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                     onClick={(e) => {
                                                                         const rect = e.currentTarget.getBoundingClientRect();
                                                                         onMenuOpen({
-                                                                            tripId: actionTrip.id,
+                                                                            tripId: addTripReference?.id ?? actionTrip.id,
                                                                             x: rect.left,
                                                                             y: rect.bottom + 4,
                                                                             direction: actionTrip.direction,
@@ -1430,7 +1443,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                             stops: actionStops,
                                                                             rowTripIds,
                                                                             menuLabel: 'Round-trip actions',
-                                                                            addLabel: 'Add Round Trip After',
+                                                                            addLabel: 'Add Trip',
                                                                             deleteLabel: 'Delete Round Trip',
                                                                             hideTripSpecificActions: true
                                                                         });

@@ -98,8 +98,9 @@ describe('PerformanceDashboard', () => {
   });
 
   it('opens the workspace directly when auto-open is enabled and data already exists', async () => {
+    const metadata = { lastUpdated: '2026-03-31T12:00:00Z', storagePath: 'teams/team-1/performanceData/latest.json' };
     usePerformanceMetadataQueryMock.mockReturnValue({
-      data: { lastUpdated: '2026-03-31T12:00:00Z' },
+      data: metadata,
       isLoading: false,
     });
     usePerformanceDataQueryMock.mockReturnValue({
@@ -118,9 +119,35 @@ describe('PerformanceDashboard', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 0));
 
+    expect(usePerformanceDataQueryMock).toHaveBeenCalledWith('team-1', true, metadata);
     expect(container.textContent).toContain('Mock Performance Workspace');
     expect(container.textContent).not.toContain('STREETS AVL Data');
     expect(container.textContent).not.toContain('Mock Performance Import');
+  });
+
+  it('shows the workspace loading shell while the full dataset is still downloading', async () => {
+    usePerformanceMetadataQueryMock.mockReturnValue({
+      data: {
+        importedAt: '2026-03-31T12:00:00Z',
+        dateRange: { start: '2026-03-01', end: '2026-03-31' },
+        dayCount: 31,
+      },
+      isLoading: false,
+    });
+    usePerformanceDataQueryMock.mockReturnValue({
+      data: null,
+      isLoading: true,
+    });
+
+    flushSync(() => {
+      root.render(<PerformanceDashboard onClose={onCloseSpy} autoOpen />);
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(container.textContent).toContain('Operations dashboard is opening');
+    expect(container.textContent).toContain('2026-03-01 → 2026-03-31');
+    expect(container.textContent).not.toContain('Mock Performance Workspace');
   });
 
   it('goes straight to import when auto-open is enabled but no data exists', async () => {

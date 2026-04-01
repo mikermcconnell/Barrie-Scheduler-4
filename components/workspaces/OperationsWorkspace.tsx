@@ -1,8 +1,19 @@
 import React, { Suspense, useState, useCallback, useEffect } from 'react';
 import { ArrowRight, ArrowLeft, Clock, FileText, Loader2 } from 'lucide-react';
 import { lazyWithRetry } from '../../utils/lazyWithRetry';
+import { isFeatureEnabled } from '../../utils/features';
 
 type OperationsViewMode = 'dashboard' | 'performance' | 'perf-reports';
+
+const OPERATIONS_VIEW_FEATURES: Partial<Record<OperationsViewMode, Parameters<typeof isFeatureEnabled>[0]>> = {
+    performance: 'operationsPerformanceDashboard',
+    'perf-reports': 'operationsPerfReports',
+};
+
+const isOperationsViewEnabled = (viewMode: OperationsViewMode): boolean => {
+    const feature = OPERATIONS_VIEW_FEATURES[viewMode];
+    return feature ? isFeatureEnabled(feature) : true;
+};
 
 const VIEW_MODE_LABELS: Record<OperationsViewMode, string> = {
     dashboard: '',
@@ -23,7 +34,7 @@ function parseHashViewMode(): OperationsViewMode {
     const hash = window.location.hash.slice(1);
     const parts = hash.split('/');
     if (parts[0] === 'operations' && parts[1]) {
-        if (parts[1] === 'performance' || parts[1] === 'perf-reports') return parts[1];
+        if ((parts[1] === 'performance' || parts[1] === 'perf-reports') && isOperationsViewEnabled(parts[1])) return parts[1];
     }
     return 'dashboard';
 }
@@ -68,15 +79,29 @@ export const OperationsWorkspace: React.FC = () => {
     const [viewMode, setViewModeState] = useState<OperationsViewMode>(parseHashViewMode);
 
     const setViewMode = useCallback((mode: OperationsViewMode) => {
-        setViewModeState(mode);
-        window.location.hash = mode === 'dashboard' ? 'operations' : `operations/${mode}`;
+        const safeMode = isOperationsViewEnabled(mode) ? mode : 'dashboard';
+        setViewModeState(safeMode);
+        window.location.hash = safeMode === 'dashboard' ? 'operations' : `operations/${safeMode}`;
     }, []);
 
     useEffect(() => {
-        const handler = () => setViewModeState(parseHashViewMode());
+        const handler = () => {
+            const nextMode = parseHashViewMode();
+            setViewModeState(nextMode);
+            if (nextMode === 'dashboard' && window.location.hash && window.location.hash !== '#operations') {
+                window.location.hash = 'operations';
+            }
+        };
+        handler();
         window.addEventListener('hashchange', handler);
         return () => window.removeEventListener('hashchange', handler);
     }, []);
+
+    useEffect(() => {
+        if (viewMode !== 'dashboard' && !isOperationsViewEnabled(viewMode)) {
+            setViewMode('dashboard');
+        }
+    }, [setViewMode, viewMode]);
 
     if (viewMode === 'dashboard') {
         return (
@@ -94,11 +119,15 @@ export const OperationsWorkspace: React.FC = () => {
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 px-4 max-w-3xl">
-                    <DashboardCard onClick={() => setViewMode('performance')} icon={<Clock size={20} />} color="amber"
-                        title="Operations Dashboard" description="OTP, ridership, and load profiles from STREETS AVL/APC data." />
+                    {isFeatureEnabled('operationsPerformanceDashboard') && (
+                        <DashboardCard onClick={() => setViewMode('performance')} icon={<Clock size={20} />} color="amber"
+                            title="Operations Dashboard" description="OTP, ridership, and load profiles from STREETS AVL/APC data." />
+                    )}
 
-                    <DashboardCard onClick={() => setViewMode('perf-reports')} icon={<FileText size={20} />} color="cyan"
-                        title="STREETS Reports" description="Weekly summaries, route deep-dives, and AI-powered analysis of STREETS data." />
+                    {isFeatureEnabled('operationsPerfReports') && (
+                        <DashboardCard onClick={() => setViewMode('perf-reports')} icon={<FileText size={20} />} color="cyan"
+                            title="STREETS Reports" description="Weekly summaries, route deep-dives, and AI-powered analysis of STREETS data." />
+                    )}
                 </div>
             </div>
         );

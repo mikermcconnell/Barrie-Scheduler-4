@@ -9,6 +9,7 @@ import { PerformanceScopeProvider } from './performanceScope';
 import { resolveFilteredScope } from '../../utils/performanceDataScope';
 import { lazyWithRetry } from '../../utils/lazyWithRetry';
 import { PerformanceImportHealthPanel } from './PerformanceImportHealthPanel';
+import { isFeatureEnabled } from '../../utils/features';
 
 interface PerformanceWorkspaceProps {
     data: PerformanceDataSummary;
@@ -31,6 +32,16 @@ const TAB_CONFIG: TabConfig[] = [
     { id: 'load-profiles', label: 'Load Profiles', icon: BarChart3, status: 'complete', badge: 'Testing' },
     { id: 'operator-dwell', label: 'Operator Dwell', icon: Timer, status: 'complete', badge: 'Testing' },
 ];
+
+const PERFORMANCE_TAB_FEATURES: Partial<Record<PerformanceTab, Parameters<typeof isFeatureEnabled>[0]>> = {
+    'load-profiles': 'operationsLoadProfiles',
+    'operator-dwell': 'operationsOperatorDwell',
+};
+
+const isPerformanceTabVisible = (tabId: PerformanceTab): boolean => {
+    const feature = PERFORMANCE_TAB_FEATURES[tabId];
+    return feature ? isFeatureEnabled(feature) : true;
+};
 const DAY_TYPE_LABELS: Record<DayType, string> = { weekday: 'Weekday', saturday: 'Saturday', sunday: 'Sunday' };
 
 const LOCALHOST_HOSTNAMES = new Set(['localhost', '127.0.0.1', '::1']);
@@ -69,7 +80,9 @@ const PerformancePanelLoading: React.FC<{ label: string }> = ({ label }) => (
 export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data, onReimport, onBack }) => {
     const allowIncompleteTabs = import.meta.env.DEV || isLocalhost();
     const tabs = useMemo(
-        () => TAB_CONFIG.map(tab => ({ ...tab, enabled: tab.status === 'complete' || allowIncompleteTabs })),
+        () => TAB_CONFIG
+            .filter(tab => isPerformanceTabVisible(tab.id))
+            .map(tab => ({ ...tab, enabled: tab.status === 'complete' || allowIncompleteTabs })),
         [allowIncompleteTabs]
     );
     const [activeTab, setActiveTab] = useState<PerformanceTab>('overview');
@@ -110,6 +123,11 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data
         if (selectedDate && availableDates.includes(selectedDate)) return;
         setSelectedDate(latestAvailableDate);
     }, [timeRange, selectedDate, availableDates, latestAvailableDate]);
+
+    useEffect(() => {
+        if (tabs.some(tab => tab.id === activeTab)) return;
+        setActiveTab(tabs[0]?.id ?? 'overview');
+    }, [activeTab, tabs]);
 
     const handleNavigate = (tabId: string) => {
         const tab = tabs.find(t => t.id === tabId);
@@ -208,7 +226,9 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data
                 </button>
             </div>
 
-            <PerformanceImportHealthPanel data={data} />
+            {isFeatureEnabled('operationsImportHealth') && (
+                <PerformanceImportHealthPanel data={data} />
+            )}
 
             {/* Tab Bar */}
             <div className="border-b border-gray-200 bg-gray-50/50 rounded-t-lg">

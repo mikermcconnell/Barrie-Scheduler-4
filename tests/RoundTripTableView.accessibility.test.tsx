@@ -172,7 +172,7 @@ describe('RoundTripTableView accessibility polish', () => {
     });
 
     const addTripButtons = Array.from(
-      container?.querySelectorAll('button[aria-label="Add round trip"]') ?? [],
+      container?.querySelectorAll('button[aria-label="Add trip"]') ?? [],
     );
     expect(addTripButtons.length).toBeGreaterThan(0);
   });

@@ -7,7 +7,7 @@ import { Step3Build, ScheduleConfig } from './steps/Step3Build';
 import { Step4Schedule } from './steps/Step4Schedule';
 import { Step2ApprovalFooter } from './step2/Step2ApprovalFooter';
 import { parseRuntimeCSV, RuntimeData, SegmentRawData } from './utils/csvParser';
-import { usePerformanceDataQuery } from '../../hooks/usePerformanceData';
+import { usePerformanceDataQuery, usePerformanceMetadataQuery } from '../../hooks/usePerformanceData';
 import {
     computeRuntimesFromPerformance,
     getAvailableRuntimeRoutes,
@@ -217,7 +217,8 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
     const [showProjectManager, setShowProjectManager] = useState(false);
 
     // Performance data (lazy-loaded only when performance mode is selected)
-    const perfQuery = usePerformanceDataQuery(team?.id, importMode === 'performance');
+    const performanceMetadataQuery = usePerformanceMetadataQuery(team?.id);
+    const perfQuery = usePerformanceDataQuery(team?.id, importMode === 'performance', performanceMetadataQuery.data);
     const perfData = perfQuery.data;
     const cleanStep2PerfData = useMemo(
         () => getStep2CleanPerformanceSummary(perfData),

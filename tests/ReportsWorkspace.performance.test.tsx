@@ -78,5 +78,6 @@ describe('ReportsWorkspace performance landing', () => {
     expect(reportsModuleRenderSpy).not.toHaveBeenCalled();
     expect(usePerformanceDataQuerySpy).toHaveBeenCalledTimes(1);
     expect(usePerformanceDataQuerySpy.mock.calls[0]?.[1]).toBe(false);
+    expect(usePerformanceDataQuerySpy.mock.calls[0]?.[2]).toBeNull();
   });
 });

@@ -36,20 +36,33 @@ import {
     type SiblingDraftCandidate,
 } from '../../utils/workspaces/fixedRouteDraftState';
 import { consumeNetworkConnectionEditorHandoff } from '../../utils/network-connections/networkConnectionHandoff';
+import { isFeatureEnabled } from '../../utils/features';
 import { useAuth } from '../contexts/AuthContext';
 import { useTeam } from '../contexts/TeamContext';
 import { useToast } from '../contexts/ToastContext';
 
 type FixedRouteViewMode = 'dashboard' | 'editor' | 'new-schedule' | 'master' | 'reports' | 'analytics' | 'drafts' | 'system-editor' | 'performance-import';
 
-const VALID_VIEW_MODES = new Set<string>([
-    'dashboard', 'editor', 'new-schedule', 'master', 'reports', 'analytics', 'drafts', 'system-editor', 'performance-import'
-]);
+const FIXED_ROUTE_VIEW_FEATURES: Partial<Record<FixedRouteViewMode, Parameters<typeof isFeatureEnabled>[0]>> = {
+    editor: 'fixedEditor',
+    'new-schedule': 'fixedNewSchedule',
+    master: 'fixedMasterSchedule',
+    reports: 'fixedReports',
+    analytics: 'fixedAnalytics',
+    drafts: 'fixedDrafts',
+    'system-editor': 'fixedSystemEditor',
+    'performance-import': 'fixedPerformanceImport',
+};
+
+const isFixedRouteViewEnabled = (viewMode: FixedRouteViewMode): boolean => {
+    const feature = FIXED_ROUTE_VIEW_FEATURES[viewMode];
+    return feature ? isFeatureEnabled(feature) : true;
+};
 
 function parseHashViewMode(): FixedRouteViewMode {
     const hash = window.location.hash.slice(1);
     const parts = hash.split('/');
-    if (parts[0] === 'fixed' && parts[1] && VALID_VIEW_MODES.has(parts[1])) {
+    if (parts[0] === 'fixed' && parts[1] && isFixedRouteViewEnabled(parts[1] as FixedRouteViewMode)) {
         return parts[1] as FixedRouteViewMode;
     }
     return 'dashboard';
@@ -106,16 +119,30 @@ export const FixedRouteWorkspace: React.FC = () => {
 
     // Wrap navigation to sync URL hash
     const setViewMode = useCallback((mode: FixedRouteViewMode) => {
-        setViewModeState(mode);
-        window.location.hash = mode === 'dashboard' ? 'fixed' : `fixed/${mode}`;
+        const safeMode = isFixedRouteViewEnabled(mode) ? mode : 'dashboard';
+        setViewModeState(safeMode);
+        window.location.hash = safeMode === 'dashboard' ? 'fixed' : `fixed/${safeMode}`;
     }, []);
 
     // Handle browser back/forward
     useEffect(() => {
-        const handler = () => setViewModeState(parseHashViewMode());
+        const handler = () => {
+            const nextMode = parseHashViewMode();
+            setViewModeState(nextMode);
+            if (nextMode === 'dashboard' && window.location.hash && window.location.hash !== '#fixed') {
+                window.location.hash = 'fixed';
+            }
+        };
+        handler();
         window.addEventListener('hashchange', handler);
         return () => window.removeEventListener('hashchange', handler);
     }, []);
+
+    useEffect(() => {
+        if (viewMode !== 'dashboard' && !isFixedRouteViewEnabled(viewMode)) {
+            setViewMode('dashboard');
+        }
+    }, [setViewMode, viewMode]);
 
     const [editorInitialContent, setEditorInitialContent] = useState<MasterScheduleContent | null>(null);
 
@@ -406,34 +433,48 @@ export const FixedRouteWorkspace: React.FC = () => {
                         <p className="text-gray-500">Select a tool to manage schedules or analyze performance.</p>
                     </div>
 
-                    <button
-                        onClick={() => setViewMode('performance-import')}
-                        className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors self-start"
-                    >
-                        <RefreshCw size={14} />
-                        Re-import Data
-                    </button>
+                    {isFeatureEnabled('fixedPerformanceImport') && (
+                        <button
+                            onClick={() => setViewMode('performance-import')}
+                            className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors self-start"
+                        >
+                            <RefreshCw size={14} />
+                            Re-import Data
+                        </button>
+                    )}
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 px-4">
-                    <DashboardCard onClick={handleOpenMasterSchedule} icon={<FileSpreadsheet size={20} />} color="purple"
-                        title="Master Schedule" description="Browse Barrie Transits Current Schedule." />
+                    {isFeatureEnabled('fixedMasterSchedule') && (
+                        <DashboardCard onClick={handleOpenMasterSchedule} icon={<FileSpreadsheet size={20} />} color="purple"
+                            title="Master Schedule" description="Browse Barrie Transits Current Schedule." />
+                    )}
 
-                    <DashboardCard onClick={() => setViewMode('drafts')} icon={<Edit3 size={20} />} color="indigo"
-                        title="Schedule Editor" description="Edit drafts and publish to Master Schedule. The main workflow for schedule changes." />
+                    {isFeatureEnabled('fixedDrafts') && (
+                        <DashboardCard onClick={() => setViewMode('drafts')} icon={<Edit3 size={20} />} color="indigo"
+                            title="Schedule Editor" description="Edit drafts and publish to Master Schedule. The main workflow for schedule changes." />
+                    )}
 
-                    <DashboardCard onClick={handleOpenNewSchedule} icon={<CalendarPlus size={20} />} color="emerald"
-                        title="New Schedules" description="Generate optimized schedules from scratch using Transify data." />
+                    {isFeatureEnabled('fixedNewSchedule') && (
+                        <DashboardCard onClick={handleOpenNewSchedule} icon={<CalendarPlus size={20} />} color="emerald"
+                            title="New Schedules" description="Generate optimized schedules from scratch using Transify data." />
+                    )}
 
-                    <DashboardCard onClick={() => user ? setShowGTFSImport(true) : toast.warning('Sign In Required', 'Please sign in to import from GTFS')}
-                        icon={<Database size={20} />} color="indigo"
-                        title="Import from GTFS" description="Import existing Barrie Transit schedules from the GTFS feed." />
+                    {isFeatureEnabled('fixedGtfsImport') && (
+                        <DashboardCard onClick={() => user ? setShowGTFSImport(true) : toast.warning('Sign In Required', 'Please sign in to import from GTFS')}
+                            icon={<Database size={20} />} color="indigo"
+                            title="Import from GTFS" description="Import existing Barrie Transit schedules from the GTFS feed." />
+                    )}
 
-                    <DashboardCard onClick={() => setViewMode('reports')} icon={<FileText size={20} />} color="amber"
-                        title="Timetable Publisher" description="Generate public timetables and GTFS exports." />
+                    {isFeatureEnabled('fixedReports') && (
+                        <DashboardCard onClick={() => setViewMode('reports')} icon={<FileText size={20} />} color="amber"
+                            title="Timetable Publisher" description="Generate public timetables and GTFS exports." />
+                    )}
 
-                    <DashboardCard onClick={() => setViewMode('analytics')} icon={<GitBranch size={20} />} color="cyan"
-                        title="Planning Data" description="Analyze rider demand, route performance, and connections from Transit App data." />
+                    {isFeatureEnabled('fixedAnalytics') && (
+                        <DashboardCard onClick={() => setViewMode('analytics')} icon={<GitBranch size={20} />} color="cyan"
+                            title="Planning Data" description="Analyze rider demand, route performance, and connections from Transit App data." />
+                    )}
                 </div>
 
                 {/* GTFS Import Modal */}
@@ -612,12 +653,14 @@ export const FixedRouteWorkspace: React.FC = () => {
                                                 </button>
                                             )
                                         )}
-                                        <button
-                                            onClick={() => setViewMode('master')}
-                                            className="px-4 py-2 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 transition-colors"
-                                        >
-                                            + New Draft
-                                        </button>
+                                        {isFeatureEnabled('fixedMasterSchedule') && (
+                                            <button
+                                                onClick={() => setViewMode('master')}
+                                                className="px-4 py-2 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 transition-colors"
+                                            >
+                                                + New Draft
+                                            </button>
+                                        )}
                                     </div>
                                 </div>
 
@@ -640,18 +683,22 @@ export const FixedRouteWorkspace: React.FC = () => {
                                             Create a draft from the Master Schedule or import from GTFS.
                                         </p>
                                         <div className="flex items-center justify-center gap-3">
-                                            <button
-                                                onClick={() => setViewMode('master')}
-                                                className="px-6 py-3 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-700 transition-colors"
-                                            >
-                                                Browse Master Schedule
-                                            </button>
-                                            <button
-                                                onClick={() => user ? setShowGTFSImport(true) : toast.warning('Sign In Required', 'Please sign in to import from GTFS')}
-                                                className="px-6 py-3 bg-white border border-gray-300 text-gray-700 font-bold rounded-lg hover:bg-gray-50 transition-colors"
-                                            >
-                                                Import from GTFS
-                                            </button>
+                                            {isFeatureEnabled('fixedMasterSchedule') && (
+                                                <button
+                                                    onClick={() => setViewMode('master')}
+                                                    className="px-6 py-3 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-700 transition-colors"
+                                                >
+                                                    Browse Master Schedule
+                                                </button>
+                                            )}
+                                            {isFeatureEnabled('fixedGtfsImport') && (
+                                                <button
+                                                    onClick={() => user ? setShowGTFSImport(true) : toast.warning('Sign In Required', 'Please sign in to import from GTFS')}
+                                                    className="px-6 py-3 bg-white border border-gray-300 text-gray-700 font-bold rounded-lg hover:bg-gray-50 transition-colors"
+                                                >
+                                                    Import from GTFS
+                                                </button>
+                                            )}
                                         </div>
                                     </div>
                                 )}

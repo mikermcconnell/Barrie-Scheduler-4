@@ -72,7 +72,7 @@ export const CorridorSpeedMap: React.FC<CorridorSpeedMapProps> = ({ onBack, team
 
     const metadataQuery = usePerformanceMetadataQuery(teamId);
     const hasPerformanceData = !!metadataQuery.data;
-    const dataQuery = usePerformanceDataQuery(teamId, hasPerformanceData);
+    const dataQuery = usePerformanceDataQuery(teamId, hasPerformanceData, metadataQuery.data);
 
     const hasLegacySegmentRuntimeData = useMemo(
         () => dataQuery.data?.dailySummaries.some(day => (day.segmentRuntimes?.entries.length ?? 0) > 0) ?? false,

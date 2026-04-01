@@ -292,7 +292,7 @@ function PlannedModePanel({
     const [analysisPeriod, setAnalysisPeriod] = useState<TimePeriod>('full-day');
     const metadataQuery = usePerformanceMetadataQuery(teamId ?? undefined);
     const hasPerformanceData = Boolean(metadataQuery.data);
-    const dataQuery = usePerformanceDataQuery(teamId ?? undefined, hasPerformanceData);
+    const dataQuery = usePerformanceDataQuery(teamId ?? undefined, hasPerformanceData, metadataQuery.data);
     const hasStopSegmentRuntimeData = useMemo(
         () => dataQuery.data?.dailySummaries.some((day) => (day.stopSegmentRuntimes?.entries.length ?? 0) > 0) ?? false,
         [dataQuery.data],

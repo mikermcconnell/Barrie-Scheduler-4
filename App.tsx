@@ -11,17 +11,29 @@ import { LayoutDashboard, Bus, ArrowRight, Map, Loader2, BarChart2 } from 'lucid
 import { Header, View } from './components/layout/Header';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { lazyWithRetry } from './utils/lazyWithRetry';
+import { isFeatureEnabled } from './utils/features';
 
 const queryClient = new QueryClient();
 const OnDemandWorkspace = lazyWithRetry(() => import('./components/workspaces/OnDemandWorkspace').then(module => ({ default: module.OnDemandWorkspace })), 'ondemand-workspace');
 const FixedRouteWorkspace = lazyWithRetry(() => import('./components/workspaces/FixedRouteWorkspace').then(module => ({ default: module.FixedRouteWorkspace })), 'fixed-workspace');
 const OperationsWorkspace = lazyWithRetry(() => import('./components/workspaces/OperationsWorkspace').then(module => ({ default: module.OperationsWorkspace })), 'operations-workspace');
 
+const APP_VIEW_FEATURES: Partial<Record<View, Parameters<typeof isFeatureEnabled>[0]>> = {
+  ondemand: 'workspaceOndemand',
+  fixed: 'workspaceFixedRoute',
+  operations: 'workspaceOperations',
+};
+
+const isAppViewEnabled = (view: View): boolean => {
+  const feature = APP_VIEW_FEATURES[view];
+  return feature ? isFeatureEnabled(feature) : true;
+};
+
 function parseHashView(): View {
   const hash = window.location.hash.slice(1);
-  if (hash.startsWith('fixed')) return 'fixed';
-  if (hash.startsWith('ondemand')) return 'ondemand';
-  if (hash.startsWith('operations')) return 'operations';
+  if (hash.startsWith('fixed') && isAppViewEnabled('fixed')) return 'fixed';
+  if (hash.startsWith('ondemand') && isAppViewEnabled('ondemand')) return 'ondemand';
+  if (hash.startsWith('operations') && isAppViewEnabled('operations')) return 'operations';
   return 'home';
 }
 
@@ -36,13 +48,21 @@ const AppContent: React.FC = () => {
 
   // Wrap navigation to sync URL hash
   const setCurrentView = useCallback((view: View) => {
-    setCurrentViewState(view);
-    window.location.hash = view === 'home' ? '' : view;
+    const safeView = isAppViewEnabled(view) ? view : 'home';
+    setCurrentViewState(safeView);
+    window.location.hash = safeView === 'home' ? '' : safeView;
   }, []);
 
   // Handle browser back/forward
   useEffect(() => {
-    const handler = () => setCurrentViewState(parseHashView());
+    const handler = () => {
+      const nextView = parseHashView();
+      setCurrentViewState(nextView);
+      if (nextView === 'home' && window.location.hash) {
+        window.location.hash = '';
+      }
+    };
+    handler();
     window.addEventListener('hashchange', handler);
     return () => window.removeEventListener('hashchange', handler);
   }, []);
@@ -106,64 +126,70 @@ const AppContent: React.FC = () => {
 
             <div className="grid grid-cols-1 gap-8 md:grid-cols-2 xl:grid-cols-3 max-w-6xl mx-auto pb-12">
               {/* On Demand Card */}
-              <button
-                onClick={() => setCurrentView('ondemand')}
-                className="group relative bg-white rounded-3xl border-b-8 border-gray-200 p-8 hover:border-brand-blue hover:-translate-y-1 transition-all duration-200 text-left overflow-hidden"
-              >
-                <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:opacity-20 transition-opacity">
-                  <Map size={120} />
-                </div>
-                <div className="bg-blue-100 w-16 h-16 rounded-2xl flex items-center justify-center text-brand-blue mb-6 group-hover:scale-110 transition-transform">
-                  <LayoutDashboard size={32} />
-                </div>
-                <h3 className="text-2xl font-extrabold text-gray-800 mb-2 group-hover:text-brand-blue transition-colors">Transit On-Demand</h3>
-                <p className="text-gray-500 font-bold mb-6">
-                  Manage driver shifts, analyze coverage gaps, and optimize 15-minute increments for dynamic demand.
-                </p>
-                <div className="flex items-center gap-2 text-brand-blue font-extrabold uppercase tracking-wide text-sm">
-                  Enter Workspace <ArrowRight size={16} />
-                </div>
-              </button>
+              {isAppViewEnabled('ondemand') && (
+                <button
+                  onClick={() => setCurrentView('ondemand')}
+                  className="group relative bg-white rounded-3xl border-b-8 border-gray-200 p-8 hover:border-brand-blue hover:-translate-y-1 transition-all duration-200 text-left overflow-hidden"
+                >
+                  <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:opacity-20 transition-opacity">
+                    <Map size={120} />
+                  </div>
+                  <div className="bg-blue-100 w-16 h-16 rounded-2xl flex items-center justify-center text-brand-blue mb-6 group-hover:scale-110 transition-transform">
+                    <LayoutDashboard size={32} />
+                  </div>
+                  <h3 className="text-2xl font-extrabold text-gray-800 mb-2 group-hover:text-brand-blue transition-colors">Transit On-Demand</h3>
+                  <p className="text-gray-500 font-bold mb-6">
+                    Manage driver shifts, analyze coverage gaps, and optimize 15-minute increments for dynamic demand.
+                  </p>
+                  <div className="flex items-center gap-2 text-brand-blue font-extrabold uppercase tracking-wide text-sm">
+                    Enter Workspace <ArrowRight size={16} />
+                  </div>
+                </button>
+              )}
 
               {/* Fixed Route Card */}
-              <button
-                onClick={() => setCurrentView('fixed')}
-                className="group relative bg-white rounded-3xl border-b-8 border-gray-200 p-8 hover:border-brand-green hover:-translate-y-1 transition-all duration-200 text-left overflow-hidden"
-              >
-                <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:opacity-20 transition-opacity">
-                  <Bus size={120} />
-                </div>
-                <div className="bg-green-100 w-16 h-16 rounded-2xl flex items-center justify-center text-brand-green mb-6 group-hover:scale-110 transition-transform">
-                  <Bus size={32} />
-                </div>
-                <h3 className="text-2xl font-extrabold text-gray-800 mb-2 group-hover:text-brand-green transition-colors">Scheduled Transit</h3>
-                <p className="text-gray-500 font-bold mb-6">
-                  Plan and manage route schedules — from CSV import and runtime analysis to published timetables and public brochures.
-                </p>
-                <div className="flex items-center gap-2 text-brand-green font-extrabold uppercase tracking-wide text-sm">
-                  Enter Workspace <ArrowRight size={16} />
-                </div>
-              </button>
+              {isAppViewEnabled('fixed') && (
+                <button
+                  onClick={() => setCurrentView('fixed')}
+                  className="group relative bg-white rounded-3xl border-b-8 border-gray-200 p-8 hover:border-brand-green hover:-translate-y-1 transition-all duration-200 text-left overflow-hidden"
+                >
+                  <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:opacity-20 transition-opacity">
+                    <Bus size={120} />
+                  </div>
+                  <div className="bg-green-100 w-16 h-16 rounded-2xl flex items-center justify-center text-brand-green mb-6 group-hover:scale-110 transition-transform">
+                    <Bus size={32} />
+                  </div>
+                  <h3 className="text-2xl font-extrabold text-gray-800 mb-2 group-hover:text-brand-green transition-colors">Scheduled Transit</h3>
+                  <p className="text-gray-500 font-bold mb-6">
+                    Plan and manage route schedules — from CSV import and runtime analysis to published timetables and public brochures.
+                  </p>
+                  <div className="flex items-center gap-2 text-brand-green font-extrabold uppercase tracking-wide text-sm">
+                    Enter Workspace <ArrowRight size={16} />
+                  </div>
+                </button>
+              )}
 
               {/* Dashboard & Reporting Card */}
-              <button
-                onClick={() => setCurrentView('operations')}
-                className="group relative bg-white rounded-3xl border-b-8 border-gray-200 p-8 hover:border-amber-500 hover:-translate-y-1 transition-all duration-200 text-left overflow-hidden"
-              >
-                <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:opacity-20 transition-opacity">
-                  <BarChart2 size={120} />
-                </div>
-                <div className="bg-amber-100 w-16 h-16 rounded-2xl flex items-center justify-center text-amber-600 mb-6 group-hover:scale-110 transition-transform">
-                  <BarChart2 size={32} />
-                </div>
-                <h3 className="text-2xl font-extrabold text-gray-800 mb-2 group-hover:text-amber-600 transition-colors">Dashboard & Reporting</h3>
-                <p className="text-gray-500 font-bold mb-6">
-                  OTP analysis, ridership dashboards, and STREETS reporting for scheduled transit operations.
-                </p>
-                <div className="flex items-center gap-2 text-amber-600 font-extrabold uppercase tracking-wide text-sm">
-                  Enter Workspace <ArrowRight size={16} />
-                </div>
-              </button>
+              {isAppViewEnabled('operations') && (
+                <button
+                  onClick={() => setCurrentView('operations')}
+                  className="group relative bg-white rounded-3xl border-b-8 border-gray-200 p-8 hover:border-amber-500 hover:-translate-y-1 transition-all duration-200 text-left overflow-hidden"
+                >
+                  <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:opacity-20 transition-opacity">
+                    <BarChart2 size={120} />
+                  </div>
+                  <div className="bg-amber-100 w-16 h-16 rounded-2xl flex items-center justify-center text-amber-600 mb-6 group-hover:scale-110 transition-transform">
+                    <BarChart2 size={32} />
+                  </div>
+                  <h3 className="text-2xl font-extrabold text-gray-800 mb-2 group-hover:text-amber-600 transition-colors">Dashboard & Reporting</h3>
+                  <p className="text-gray-500 font-bold mb-6">
+                    OTP analysis, ridership dashboards, and STREETS reporting for scheduled transit operations.
+                  </p>
+                  <div className="flex items-center gap-2 text-amber-600 font-extrabold uppercase tracking-wide text-sm">
+                    Enter Workspace <ArrowRight size={16} />
+                  </div>
+                </button>
+              )}
 
             </div>
 

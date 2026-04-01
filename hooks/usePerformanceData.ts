@@ -1,6 +1,9 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getPerformanceData, getPerformanceMetadata, savePerformanceData } from '../utils/performanceDataService';
-import type { PerformanceDataSummary } from '../utils/performanceDataTypes';
+import type { PerformanceDataSummary, PerformanceMetadata } from '../utils/performanceDataTypes';
+
+const PERFORMANCE_QUERY_STALE_MS = 1000 * 60 * 30;
+const PERFORMANCE_QUERY_GC_MS = 1000 * 60 * 60;
 
 // Fetch Metadata
 export function usePerformanceMetadataQuery(teamId: string | undefined) {
@@ -11,20 +14,28 @@ export function usePerformanceMetadataQuery(teamId: string | undefined) {
             return await getPerformanceMetadata(teamId);
         },
         enabled: !!teamId,
-        staleTime: 1000 * 60 * 5, // Cache for 5 mins
+        staleTime: PERFORMANCE_QUERY_STALE_MS,
+        gcTime: PERFORMANCE_QUERY_GC_MS,
+        refetchOnWindowFocus: false,
     });
 }
 
 // Fetch Full Data
-export function usePerformanceDataQuery(teamId: string | undefined, enabled = true) {
+export function usePerformanceDataQuery(
+    teamId: string | undefined,
+    enabled = true,
+    metadata?: PerformanceMetadata | null,
+) {
     return useQuery({
-        queryKey: ['performanceData', teamId],
+        queryKey: ['performanceData', teamId, metadata?.storagePath ?? null],
         queryFn: async () => {
             if (!teamId) return null;
-            return await getPerformanceData(teamId);
+            return await getPerformanceData(teamId, metadata);
         },
         enabled: !!teamId && enabled,
-        staleTime: 1000 * 60 * 5, // Cache for 5 mins
+        staleTime: PERFORMANCE_QUERY_STALE_MS,
+        gcTime: PERFORMANCE_QUERY_GC_MS,
+        refetchOnWindowFocus: false,
     });
 }
 

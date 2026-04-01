@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildAddTripPresets,
   applyAddTripResultToSchedules,
   buildAddTripSuggestions,
   type AddTripModalContext,
@@ -146,6 +147,18 @@ const buildContext = (): AddTripModalContext => ({
 });
 
 describe('addTripPlanner', () => {
+  it('uses fixed quick-offset presets from the selected row start time', () => {
+    const context = buildContext();
+    const presets = buildAddTripPresets(context, 'North', 390);
+
+    expect(presets.slice(0, 4).map(preset => preset.label)).toEqual([
+      '+30 min (6:30 AM)',
+      '-30 min (5:30 AM)',
+      '+60 min (7:00 AM)',
+      '-60 min (5:00 AM)'
+    ]);
+  });
+
   it('builds alternating preview items against the correct direction tables', () => {
     const suggestions = buildAddTripSuggestions(
       buildContext(),

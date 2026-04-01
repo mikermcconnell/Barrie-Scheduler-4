@@ -182,8 +182,8 @@ export const ImportRouteModal: React.FC<ImportRouteModalProps> = ({
     };
 
     return (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[200]">
-            <div className="bg-white rounded-xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-hidden">
+        <div className="fixed inset-0 z-[200] flex items-start justify-center overflow-y-auto bg-black bg-opacity-50 p-4 sm:items-center">
+            <div className="my-auto flex max-h-[calc(100vh-2rem)] w-full max-w-lg flex-col overflow-hidden rounded-xl bg-white shadow-xl">
                 {/* Header */}
                 <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
                     <h2 className="text-lg font-semibold text-gray-900">
@@ -198,7 +198,7 @@ export const ImportRouteModal: React.FC<ImportRouteModalProps> = ({
                 </div>
 
                 {/* Content */}
-                <div className="p-6 space-y-4 max-h-[60vh] overflow-y-auto">
+                <div className="min-h-0 flex-1 overflow-y-auto p-6 space-y-4">
                     {/* Error */}
                     {error && (
                         <div className="flex items-center gap-2 p-3 bg-red-50 text-red-700 rounded-lg text-sm">

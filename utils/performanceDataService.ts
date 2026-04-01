@@ -166,9 +166,12 @@ export async function getPerformanceMetadata(teamId: string): Promise<Performanc
     }
 }
 
-export async function getPerformanceData(teamId: string): Promise<PerformanceDataSummary | null> {
+export async function getPerformanceData(
+    teamId: string,
+    metadataOverride?: PerformanceMetadata | null,
+): Promise<PerformanceDataSummary | null> {
     try {
-        const metadata = await getPerformanceMetadata(teamId);
+        const metadata = metadataOverride ?? await getPerformanceMetadata(teamId);
         if (!metadata?.storagePath) return null;
 
         const storageRef = ref(storage, metadata.storagePath);

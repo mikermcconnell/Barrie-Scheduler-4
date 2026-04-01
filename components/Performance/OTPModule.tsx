@@ -7,8 +7,8 @@ import {
 import { ChartCard } from '../Analytics/AnalyticsShared';
 import type { PerformanceDataSummary, RouteStopDeviationProfile } from '../../utils/performanceDataTypes';
 import {
-    computeMissedTripsForDay, hasGtfsCoverage,
-} from '../../utils/gtfs/gtfsScheduleIndex';
+    getLatestStoredMissedTrips,
+} from '../../utils/performanceMissedTrips';
 import { ArrowUpDown, ChevronDown, ChevronUp } from 'lucide-react';
 
 interface OTPModuleProps {
@@ -333,33 +333,9 @@ export const OTPModule: React.FC<OTPModuleProps> = ({ data }) => {
 
     // ── Missed trips (GTFS vs STREETS route+time cross-reference) ────
     // Only show missed trips for the most recent day in the dataset (operations = current day focus)
-    const missedTripsDay = useMemo(() => {
-        if (filtered.length === 0) return null;
-        return filtered.reduce((latest, d) => d.date > latest.date ? d : latest, filtered[0]);
-    }, [filtered]);
-
-    const missedTrips = useMemo(() => {
-        if (!missedTripsDay || !hasGtfsCoverage(missedTripsDay.date)) return [];
-
-        const dayMissed = computeMissedTripsForDay(missedTripsDay.date, missedTripsDay.dayType, missedTripsDay.byTrip);
-        if (!dayMissed) return [];
-
-        return dayMissed.trips
-            .map(s => ({
-                date: missedTripsDay.date,
-                routeId: s.routeId,
-                departure: s.departure,
-                headsign: s.headsign,
-                blockId: s.blockId,
-                missType: s.missType as 'not_performed' | 'late_over_15',
-                lateByMinutes: s.lateByMinutes,
-            }))
-            .sort((a, b) => {
-                const r = a.routeId.localeCompare(b.routeId, undefined, { numeric: true });
-                if (r !== 0) return r;
-                return a.departure.localeCompare(b.departure);
-            });
-    }, [missedTripsDay]);
+    const latestStoredMissedTrips = useMemo(() => getLatestStoredMissedTrips(filtered), [filtered]);
+    const missedTripsDay = latestStoredMissedTrips?.date ?? null;
+    const missedTrips = latestStoredMissedTrips?.trips ?? [];
 
     const sortedMissedTrips = useMemo(() => {
         const rows = [...missedTrips];
@@ -547,7 +523,7 @@ export const OTPModule: React.FC<OTPModuleProps> = ({ data }) => {
         <div className="space-y-6">
             {/* Missed Trips Table */}
             {missedTrips.length > 0 && (
-                <ChartCard title="Missed Trips" subtitle={`${missedTripsDay?.date} — ${missedTrips.length} trips either not performed or over 15 min late`}>
+                <ChartCard title="Missed Trips" subtitle={`${missedTripsDay ?? 'Latest day'} — ${missedTrips.length} trips either not performed or over 15 min late`}>
                     <p className="text-xs text-gray-500 mb-3">
                         <span className="font-medium text-amber-700">These are suspected missed trips for further investigation.</span>
                         <br />
