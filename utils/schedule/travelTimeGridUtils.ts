@@ -53,11 +53,11 @@ const getTripGridMinutes = (
     return TimeUtils.toMinutes(timeStr);
 };
 
-export const calculateGridTravelMinutes = (
+export const resolveGridSegmentTimes = (
     trip: MasterTrip,
     fromStop: string,
     toStop: string
-): number | null => {
+): { departure: number; arrival: number; travelMinutes: number } | null => {
     const rawDeparture = getTripGridMinutes(trip, fromStop, 'departure');
     const rawArrival = getTripGridMinutes(trip, toStop, 'arrival');
 
@@ -75,5 +75,14 @@ export const calculateGridTravelMinutes = (
         return null;
     }
 
-    return travelMinutes;
+    return { departure, arrival, travelMinutes };
+};
+
+export const calculateGridTravelMinutes = (
+    trip: MasterTrip,
+    fromStop: string,
+    toStop: string
+): number | null => {
+    const segment = resolveGridSegmentTimes(trip, fromStop, toStop);
+    return segment?.travelMinutes ?? null;
 };

@@ -55,7 +55,7 @@ describe('TravelTimeGrid', () => {
     container = null;
   });
 
-  it('renders post-midnight rows instead of dropping them', () => {
+  it('renders post-midnight rows using the first displayed segment hour', () => {
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -64,7 +64,7 @@ describe('TravelTimeGrid', () => {
       root?.render(<TravelTimeGrid schedules={schedules} />);
     });
 
-    expect(container?.textContent).toContain('24:00');
+    expect(container?.textContent).toContain('25:00');
     expect(container?.textContent).toContain('30');
   });
 
@@ -164,6 +164,59 @@ describe('TravelTimeGrid', () => {
     const firstRow = container?.querySelector('tbody tr') as HTMLTableRowElement | null;
     expect(firstRow?.textContent).toContain('13');
     expect(firstRow?.textContent).not.toContain('29');
-    expect(container?.textContent).toContain('First trip with data in hour');
+    expect(container?.textContent).toContain('First displayed segment data in hour');
+  });
+
+  it('buckets by the first displayed segment data hour instead of the raw trip start time', () => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    flushSync(() => {
+      root?.render(
+        <TravelTimeGrid
+          schedules={[
+            {
+              routeName: '2 (Weekday) (North)',
+              stops: ['Depot', 'Depot (Platform)', 'Main'],
+              stopIds: {},
+              trips: [
+                {
+                  id: 'trip-boundary',
+                  blockId: '2-1',
+                  direction: 'North',
+                  tripNumber: 1,
+                  rowId: 1,
+                  startTime: 415, // 6:55 AM
+                  endTime: 430,
+                  recoveryTime: 0,
+                  travelTime: 15,
+                  cycleTime: 15,
+                  stops: {
+                    Depot: '6:55 AM',
+                    'Depot (Platform)': '7:00 AM',
+                    Main: '7:10 AM'
+                  },
+                  arrivalTimes: {
+                    Depot: '6:55 AM',
+                    'Depot (Platform)': '7:00 AM',
+                    Main: '7:10 AM'
+                  },
+                  stopMinutes: {
+                    Depot: 415,
+                    'Depot (Platform)': 420,
+                    Main: 430
+                  }
+                }
+              ]
+            }
+          ] as any}
+        />
+      );
+    });
+
+    expect(container?.textContent).not.toContain('6 AM');
+    expect(container?.textContent).toContain('7 AM');
+    expect(container?.textContent).toContain('10');
   });
 });

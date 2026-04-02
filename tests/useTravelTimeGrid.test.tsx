@@ -225,4 +225,85 @@ describe('useTravelTimeGrid', () => {
     expect(trip.stopMinutes.C).toBe(485);
     expect(calculateGridTravelMinutes(trip, 'A', 'B')).toBe(35);
   });
+
+  it('applies bulk travel adjustments with the same destination-forward shift behavior as single-trip edits', () => {
+    const schedules = buildSchedules();
+    schedules[0].trips.push({
+      id: 'north-trip-2',
+      blockId: '2-2',
+      direction: 'North',
+      tripNumber: 2,
+      rowId: 3,
+      startTime: 450,
+      endTime: 510,
+      recoveryTime: 2,
+      recoveryTimes: { B: 2 },
+      travelTime: 58,
+      cycleTime: 60,
+      stops: {
+        A: '7:30 AM',
+        B: '8:02 AM',
+        C: '8:30 AM'
+      },
+      arrivalTimes: {
+        A: '7:30 AM',
+        B: '8:00 AM',
+        C: '8:30 AM'
+      },
+      stopMinutes: {
+        A: 450,
+        B: 482,
+        C: 510
+      }
+    });
+
+    let latest: any[] | null = null;
+    let api: HarnessApi | null = null;
+
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    flushSync(() => {
+      root?.render(
+        <Harness
+          schedules={schedules}
+          onChange={next => {
+            latest = next;
+          }}
+          onReady={value => {
+            api = value;
+          }}
+        />
+      );
+    });
+
+    expect(api).not.toBeNull();
+
+    flushSync(() => {
+      api!.handleBulkAdjustTravelTime('A', 'B', 5, '2 (Weekday) (North)');
+    });
+
+    expect(validateRouteTableMock).toHaveBeenCalledTimes(2);
+    expect(reassignBlocksForTablesMock).toHaveBeenCalledTimes(1);
+
+    const updatedNorth = latest?.find(table => table.routeName === '2 (Weekday) (North)');
+    const [firstTrip, secondTrip] = updatedNorth?.trips ?? [];
+
+    expect(firstTrip.stops.A).toBe('7:00 AM');
+    expect(firstTrip.stops.B).toBe('7:38 AM');
+    expect(firstTrip.arrivalTimes.B).toBe('7:35 AM');
+    expect(firstTrip.stops.C).toBe('8:05 AM');
+    expect(firstTrip.stopMinutes.B).toBe(458);
+    expect(firstTrip.stopMinutes.C).toBe(485);
+    expect(calculateGridTravelMinutes(firstTrip, 'A', 'B')).toBe(35);
+
+    expect(secondTrip.stops.A).toBe('7:30 AM');
+    expect(secondTrip.stops.B).toBe('8:07 AM');
+    expect(secondTrip.arrivalTimes.B).toBe('8:05 AM');
+    expect(secondTrip.stops.C).toBe('8:35 AM');
+    expect(secondTrip.stopMinutes.B).toBe(487);
+    expect(secondTrip.stopMinutes.C).toBe(515);
+    expect(calculateGridTravelMinutes(secondTrip, 'A', 'B')).toBe(35);
+  });
 });

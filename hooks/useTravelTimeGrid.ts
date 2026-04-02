@@ -18,7 +18,7 @@ import { deepCloneSchedules } from '../utils/schedule/scheduleEditorUtils';
 
 export interface UseTravelTimeGridResult {
     handleBulkAdjustTravelTime: (fromStop: string, toStop: string, delta: number, routeName: string) => void;
-    handleSingleTripTravelAdjust: (tripId: string, fromStop: string, delta: number, routeName: string) => void;
+    handleSingleTripTravelAdjust: (tripId: string, toStop: string, delta: number, routeName: string) => void;
     handleBulkAdjustRecoveryTime: (stopName: string, delta: number, routeName: string) => void;
     handleSingleRecoveryAdjust: (tripId: string, stopName: string, delta: number, routeName: string) => void;
 }
@@ -145,11 +145,11 @@ export function useTravelTimeGrid(
 
     /**
      * Adjust travel time for a single trip
-     * Shifts all stops from fromStop onwards by delta minutes
+     * Shifts the destination stop and all subsequent stops by delta minutes
      */
     const handleSingleTripTravelAdjust = useCallback((
         tripId: string,
-        fromStop: string,
+        toStop: string,
         delta: number,
         routeName: string
     ) => {
@@ -160,11 +160,11 @@ export function useTravelTimeGrid(
         const trip = targetTable.trips.find(t => t.id === tripId);
         if (!trip) return;
 
-        const fromIdx = targetTable.stops.indexOf(fromStop);
-        if (fromIdx === -1) return;
+        const toIdx = targetTable.stops.indexOf(toStop);
+        if (toIdx === -1) return;
 
-        // Adjust this stop and all subsequent stops for this trip only
-        for (let i = fromIdx; i < targetTable.stops.length; i++) {
+        // Adjust the destination stop and all subsequent stops for this trip only
+        for (let i = toIdx; i < targetTable.stops.length; i++) {
             const stop = targetTable.stops[i];
             const t = TimeUtils.toMinutes(trip.stops[stop]);
             if (t !== null) {

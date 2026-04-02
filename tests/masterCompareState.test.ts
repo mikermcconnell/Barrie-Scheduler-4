@@ -4,15 +4,16 @@ import {
     extractMasterCompareBaseline,
     shouldClearMasterCompare,
 } from '../components/NewSchedule/utils/masterCompareState';
+import type { MasterRouteTable } from '../utils/parsers/masterScheduleParser';
 
-const northTable = {
+const northTable: MasterRouteTable = {
     routeName: '10 (North)',
     stops: ['Terminal'],
     stopIds: {},
     trips: [],
 };
 
-const southTable = {
+const southTable: MasterRouteTable = {
     routeName: '10 (South)',
     stops: ['Terminal'],
     stopIds: {},

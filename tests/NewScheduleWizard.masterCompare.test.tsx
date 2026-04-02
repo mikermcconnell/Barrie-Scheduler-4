@@ -4,6 +4,13 @@ import { createRoot, type Root } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { NewScheduleWizard } from '../components/NewSchedule/NewScheduleWizard';
 import { getAllStopsWithCodes, getMasterSchedule } from '../utils/services/masterScheduleService';
+import type { NewScheduleProject } from '../utils/services/newScheduleProjectService';
+import type { MasterRouteTable } from '../utils/parsers/masterScheduleParser';
+import type { TripBucketAnalysis, TimeBand } from '../utils/ai/runtimeAnalysis';
+import type { ScheduleConfig } from '../components/NewSchedule/steps/Step3Build';
+import type { RuntimeData } from '../components/NewSchedule/utils/csvParser';
+import type { ApprovedRuntimeContract } from '../components/NewSchedule/utils/step2ReviewTypes';
+import type { OrderedSegmentColumn } from '../components/NewSchedule/utils/wizardState';
 
 const {
     toast,
@@ -14,7 +21,14 @@ const {
     generatedProject,
     completeMasterResult,
 } = vi.hoisted(() => {
-    const baseTable = (routeName: string) => ({
+    const emptyBlocks: ScheduleConfig['blocks'] = [];
+    const emptyAnalysis: TripBucketAnalysis[] = [];
+    const emptyBands: TimeBand[] = [];
+    const emptyParsedData: RuntimeData[] = [];
+    const emptySegmentColumns: OrderedSegmentColumn[] = [];
+    const emptyStrings: string[] = [];
+
+    const baseTable = (routeName: string): MasterRouteTable => ({
         routeName,
         stops: ['Terminal'],
         stopIds: {},
@@ -41,7 +55,7 @@ const {
                 routeNumber: '10',
                 cycleTime: 60,
                 recoveryRatio: 15,
-                blocks: [],
+                blocks: emptyBlocks,
             },
             generatedSchedules: [
                 baseTable('10 (Weekday) (North)'),
@@ -51,9 +65,9 @@ const {
                 baseTable('10 (Weekday) (North)'),
                 baseTable('10 (Weekday) (South)'),
             ],
-            analysis: [],
-            bands: [],
-            parsedData: [],
+            analysis: emptyAnalysis,
+            bands: emptyBands,
+            parsedData: emptyParsedData,
             approvedRuntimeContract: {
                 schemaVersion: 1,
                 routeIdentity: '10-Weekday',
@@ -68,24 +82,24 @@ const {
                 planning: {
                     chartBasis: 'observed-cycle',
                     generationBasis: 'direction-band-summary',
-                    buckets: [],
-                    bands: [],
+                    buckets: emptyAnalysis,
+                    bands: emptyBands,
                     directionBandSummary: {},
-                    segmentColumns: [],
+                    segmentColumns: emptySegmentColumns,
                     usableBucketCount: 0,
                     ignoredBucketCount: 0,
                     usableBandCount: 0,
-                    directions: [],
+                    directions: emptyStrings,
                 },
                 healthSnapshot: {
                     status: 'ready',
-                    blockers: [],
-                    warnings: [],
+                    blockers: emptyStrings,
+                    warnings: emptyStrings,
                     expectedDirections: 0,
-                    matchedDirections: [],
+                    matchedDirections: emptyStrings,
                     expectedSegmentCount: 0,
                     matchedSegmentCount: 0,
-                    missingSegments: [],
+                    missingSegments: emptyStrings,
                     availableBucketCount: 0,
                     completeBucketCount: 0,
                     incompleteBucketCount: 0,
@@ -94,8 +108,10 @@ const {
                     confidenceThreshold: 5,
                     usesLegacyRuntimeLogic: false,
                 },
-            },
-        },
+            } satisfies ApprovedRuntimeContract,
+            createdAt: new Date('2026-04-01T00:00:00.000Z'),
+            updatedAt: new Date('2026-04-01T00:00:00.000Z'),
+        } satisfies NewScheduleProject,
         completeMasterResult: {
             content: {
                 northTable: baseTable('10 (North)'),

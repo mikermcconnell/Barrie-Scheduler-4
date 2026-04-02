@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { Timer, ArrowRight, Plus, Minus, Info, Clock, TrendingUp, Pause, Maximize2, Minimize2, ChevronUp, ChevronDown } from 'lucide-react';
 import { MasterRouteTable } from '../utils/parsers/masterScheduleParser';
 import { getRouteColor, getRouteTextColor } from '../utils/config/routeColors';
-import { calculateGridTravelMinutes, isSamePhysicalStop, isStationaryTravelSegment } from '../utils/schedule/travelTimeGridUtils';
+import { isSamePhysicalStop, isStationaryTravelSegment, resolveGridSegmentTimes } from '../utils/schedule/travelTimeGridUtils';
 
 // Time Band type
 interface TimeBandDisplay {
@@ -29,7 +29,7 @@ interface TravelTimeGridProps {
     schedules: MasterRouteTable[];
     onBulkAdjust?: (fromStop: string, toStop: string, delta: number, routeName: string) => void;
     onRecoveryAdjust?: (stopName: string, delta: number, routeName: string) => void;
-    onSingleTripAdjust?: (tripId: string, fromStop: string, delta: number, routeName: string) => void;
+    onSingleTripAdjust?: (tripId: string, toStop: string, delta: number, routeName: string) => void;
     onSingleRecoveryAdjust?: (tripId: string, stopName: string, delta: number, routeName: string) => void;
     bands?: TimeBandDisplay[];
     analysis?: TripBucketAnalysisDisplay[];
@@ -80,25 +80,48 @@ export const TravelTimeGrid: React.FC<TravelTimeGridProps> = ({ schedules, onBul
 
             const orderedTrips = [...table.trips].sort((a, b) => a.startTime - b.startTime);
             const selectedHourSources: Record<number, string> = {};
+            const tripsWithVisibleGridData = orderedTrips
+                .map(trip => {
+                    const tripRowData: Record<number, { travel: number; recovery: number; tripId: string }> = {};
+                    let firstVisibleDataMinute: number | null = null;
 
-            orderedTrips.forEach(trip => {
-                const hour = Math.floor(trip.startTime / 60);
+                    stopPairs.forEach((pair, filteredIdx) => {
+                        const segment = resolveGridSegmentTimes(trip, pair.from, pair.to);
+                        if (!segment) return;
+
+                        const recovery = trip.recoveryTimes?.[pair.to] || 0;
+                        tripRowData[filteredIdx] = { travel: segment.travelMinutes, recovery, tripId: trip.id };
+                        firstVisibleDataMinute = firstVisibleDataMinute === null
+                            ? segment.arrival
+                            : Math.min(firstVisibleDataMinute, segment.arrival);
+                    });
+
+                    if (Object.keys(tripRowData).length === 0 || firstVisibleDataMinute === null) {
+                        return null;
+                    }
+
+                    return {
+                        trip,
+                        tripRowData,
+                        firstVisibleDataMinute
+                    };
+                })
+                .filter((entry): entry is {
+                    trip: typeof orderedTrips[number];
+                    tripRowData: Record<number, { travel: number; recovery: number; tripId: string }>;
+                    firstVisibleDataMinute: number;
+                } => !!entry)
+                .sort((a, b) => (
+                    a.firstVisibleDataMinute - b.firstVisibleDataMinute ||
+                    a.trip.startTime - b.trip.startTime
+                ));
+
+            tripsWithVisibleGridData.forEach(({ trip, tripRowData, firstVisibleDataMinute }) => {
+                const hour = Math.floor(firstVisibleDataMinute / 60);
                 if (selectedHourSources[hour]) return;
 
-                const tripRowData: Record<number, { travel: number; recovery: number; tripId: string }> = {};
-
-                stopPairs.forEach((pair, filteredIdx) => {
-                    const travel = calculateGridTravelMinutes(trip, pair.from, pair.to);
-                    if (travel === null) return;
-
-                    const recovery = trip.recoveryTimes?.[pair.to] || 0;
-                    tripRowData[filteredIdx] = { travel, recovery, tripId: trip.id };
-                });
-
-                if (Object.keys(tripRowData).length > 0) {
-                    selectedHourSources[hour] = trip.id;
-                    hourlyData[hour] = tripRowData;
-                }
+                selectedHourSources[hour] = trip.id;
+                hourlyData[hour] = tripRowData;
             });
 
             // Extract base route name for color
@@ -334,7 +357,7 @@ export const TravelTimeGrid: React.FC<TravelTimeGridProps> = ({ schedules, onBul
                                 <h3 className="text-sm font-bold">{grid.routeName}</h3>
                                 <span className="text-[10px] opacity-70 uppercase">Travel Matrix</span>
                             </div>
-                            <span className="text-[10px] opacity-80">First trip with data in hour</span>
+                            <span className="text-[10px] opacity-80">First displayed segment data in hour</span>
                         </div>
 
                         {/* Table Container */}

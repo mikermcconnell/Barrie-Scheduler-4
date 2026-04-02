@@ -213,6 +213,70 @@ const schedules = [
   }
 ] as any;
 
+const buildRecoverySchedules = (arrival: string, departure: string, recovery: number) => [
+  {
+    routeName: '10 (Weekday) (North)',
+    stops: ['Stop 1', 'Stop 2', 'Stop 3'],
+    stopIds: {},
+    trips: [
+      {
+        id: 'north-trip',
+        blockId: '10-1',
+        direction: 'North',
+        tripNumber: 1,
+        rowId: 1,
+        startTime: 420,
+        endTime: 480,
+        recoveryTime: recovery,
+        travelTime: 60,
+        cycleTime: 60,
+        recoveryTimes: {
+          'Stop 2': recovery
+        },
+        stops: {
+          'Stop 1': '7:00 AM',
+          'Stop 2': departure,
+          'Stop 3': '8:00 AM'
+        },
+        arrivalTimes: {
+          'Stop 1': '7:00 AM',
+          'Stop 2': arrival,
+          'Stop 3': '8:00 AM'
+        }
+      }
+    ]
+  },
+  {
+    routeName: '10 (Weekday) (South)',
+    stops: ['Stop 1', 'Stop 2', 'Stop 3'],
+    stopIds: {},
+    trips: [
+      {
+        id: 'south-trip',
+        blockId: '10-1',
+        direction: 'South',
+        tripNumber: 2,
+        rowId: 2,
+        startTime: 485,
+        endTime: 545,
+        recoveryTime: 0,
+        travelTime: 60,
+        cycleTime: 60,
+        stops: {
+          'Stop 1': '8:05 AM',
+          'Stop 2': '8:35 AM',
+          'Stop 3': '9:05 AM'
+        },
+        arrivalTimes: {
+          'Stop 1': '8:05 AM',
+          'Stop 2': '8:35 AM',
+          'Stop 3': '9:05 AM'
+        }
+      }
+    ]
+  }
+] as any;
+
 describe('ScheduleEditor interactions', () => {
   let container: HTMLDivElement | null = null;
   let root: Root | null = null;
@@ -485,6 +549,71 @@ describe('ScheduleEditor interactions', () => {
     expect(updatedNorthTrip?.endTime).toBe(510);
     expect(updatedSouthTrip?.startTime).toBe(515);
     expect(updatedSouthTrip?.stops?.['South 1']).toBe('8:35 AM');
+  });
+
+  it('keeps arrival fixed when nudging a departure at a stop with recovery time', async () => {
+    const cases = [
+      {
+        delta: -1,
+        departure: '7:34 AM',
+        recovery: 4
+      },
+      {
+        delta: 1,
+        departure: '7:36 AM',
+        recovery: 6
+      }
+    ] as const;
+
+    for (const testCase of cases) {
+      onSchedulesChangeMock.mockReset();
+      roundTripAdjustMock.mockReset();
+      roundTripAdjustMock.mockReturnValue({
+        tripId: 'north-trip',
+        stopName: 'Stop 2',
+        delta: testCase.delta
+      });
+
+      const recoverySchedules = buildRecoverySchedules('7:30 AM', '7:35 AM', 5);
+
+      container = document.createElement('div');
+      document.body.appendChild(container);
+      root = createRoot(container);
+
+      flushSync(() => {
+        root?.render(
+          <ScheduleEditor
+            schedules={recoverySchedules}
+            teamId="team-1"
+            userId="user-1"
+            onSchedulesChange={onSchedulesChangeMock}
+            onSaveVersion={onSaveVersionMock}
+            showSuccessToast={showSuccessToastMock}
+          />
+        );
+      });
+
+      await flushPromises();
+
+      const adjustButton = container?.querySelector('[data-testid="round-trip-adjust"]');
+      flushSync(() => {
+        adjustButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      });
+
+      const updatedSchedules = onSchedulesChangeMock.mock.calls.at(-1)?.[0];
+      const updatedNorthTrip = updatedSchedules?.[0]?.trips?.[0];
+
+      expect(updatedNorthTrip?.arrivalTimes?.['Stop 2']).toBe('7:30 AM');
+      expect(updatedNorthTrip?.stops?.['Stop 2']).toBe(testCase.departure);
+      expect(updatedNorthTrip?.recoveryTimes?.['Stop 2']).toBe(testCase.recovery);
+
+      flushSync(() => {
+        root?.unmount();
+      });
+      container?.remove();
+      root = null;
+      container = null;
+    }
   });
 
   it('shows save success only after Ctrl+S save resolves', async () => {

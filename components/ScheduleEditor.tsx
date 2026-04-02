@@ -583,15 +583,20 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
             trip.stops = setTripStopValue(trip.stops, stopName, val);
         } else {
             trip.stops = setTripStopValue(trip.stops, stopName, val);
-            // Keep mirrored arrivalTimes in sync when present; many RoundTrip cells
-            // display arrivalTimes first, so stop-only updates can appear as no-op.
+            // For recovery-bearing stops, preserve arrival and absorb departure nudges
+            // into the recovery gap instead of moving the arrival earlier/later.
             const existingArrival = getTripStopValue(trip.arrivalTimes, stopName);
+            const existingRecovery = getTripStopValue(trip.recoveryTimes, stopName) || 0;
             if (trip.arrivalTimes && existingArrival !== undefined) {
-                const recovery = getTripStopValue(trip.recoveryTimes, stopName) || 0;
-                if (recovery > 0) {
+                if (existingRecovery > 0) {
+                    const arrivalMin = TimeUtils.toMinutes(existingArrival);
                     const depMin = TimeUtils.toMinutes(val);
-                    if (depMin !== null) {
-                        trip.arrivalTimes = setTripStopValue(trip.arrivalTimes, stopName, TimeUtils.fromMinutes(depMin - recovery));
+                    if (arrivalMin !== null && depMin !== null) {
+                        const maxRec = Math.max(0, trip.travelTime - 1);
+                        const newRecovery = Math.max(0, Math.min(depMin - arrivalMin, maxRec));
+                        trip.recoveryTimes = setTripStopValue(trip.recoveryTimes, stopName, newRecovery);
+                        trip.recoveryTime = Object.values(trip.recoveryTimes).reduce((sum, v) => sum + (v || 0), 0);
+                        trip.stops = setTripStopValue(trip.stops, stopName, TimeUtils.fromMinutes(arrivalMin + newRecovery));
                     }
                 } else {
                     trip.arrivalTimes = setTripStopValue(trip.arrivalTimes, stopName, val);
