@@ -201,6 +201,7 @@ describe('addTripPlanner', () => {
     expect(applied.createdTripIds).toHaveLength(1);
     expect(newTrip?.blockId).toBe('2-WD-2');
     expect(newTrip?.direction).toBe('South');
+    expect(newTrip?.lineageId).toBeTruthy();
     expect(Object.keys(newTrip?.stops ?? {})).toEqual(['Downtown']);
     expect(newTrip?.endStopIndex).toBe(0);
     expect(newTrip?.recoveryTime).toBe(0);

@@ -159,6 +159,7 @@ describe('Step4Schedule', () => {
         });
 
         const latestCall = scheduleEditorSpy.mock.calls.at(-1)?.[0];
+        expect(latestCall?.useAuthoritativeTimepoints).toBe(true);
         expect(latestCall?.bands).toEqual([
             { id: 'A', label: 'Band A', min: 35, max: 45, avg: 40, color: '#2563eb', count: 1 },
         ]);
@@ -246,6 +247,7 @@ describe('Step4Schedule', () => {
         });
 
         const latestCall = scheduleEditorSpy.mock.calls.at(-1)?.[0];
+        expect(latestCall?.useAuthoritativeTimepoints).toBe(true);
         expect(latestCall?.bands).toEqual([
             { id: 'Z', label: 'Legacy', min: 1, max: 2, avg: 1, color: '#999999', count: 1 },
         ]);
@@ -263,4 +265,5 @@ describe('Step4Schedule', () => {
         expect(latestCall?.segmentNames).toEqual(['Live Step 4 Segment']);
         expect(container.textContent).not.toContain('Approved runtime contract');
     });
+
 });

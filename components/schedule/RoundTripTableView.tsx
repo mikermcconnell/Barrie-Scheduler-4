@@ -52,7 +52,16 @@ import { getConnectionsForStop } from '../../utils/connections/connectionUtils';
 import { ConnectionIndicator } from './ConnectionIndicator';
 import { useGridNavigation, GridColumn, GridRowInfo } from '../../hooks/useGridNavigation';
 import { getRowInsights, type ScheduleInsight } from '../../utils/schedule/scheduleInsights';
-import { buildMasterComparison } from '../../utils/schedule/masterComparison';
+import {
+    buildDetailedMasterComparison,
+    buildTripKey,
+    type CurrentTripComparisonEntry,
+} from '../../utils/schedule/masterComparison';
+import { getTripLineageLookupKey } from '../../utils/schedule/tripLineage';
+import {
+    MasterCompareReviewPanel,
+    type MasterCompareReviewItem
+} from './MasterCompareReviewPanel';
 import {
     compareRoundTripBlockFlowRows,
     getRoundTripDisplayedCycleTime,
@@ -158,8 +167,12 @@ const isMajorTimepointStop = (stopName: string, index: number, stops: string[]):
     );
 };
 
-const pickDisplayStops = (stops: string[], timepointOnly: boolean): string[] => {
-    if (!timepointOnly || stops.length <= 3) return stops;
+const pickDisplayStops = (
+    stops: string[],
+    timepointOnly: boolean,
+    useAuthoritativeTimepoints: boolean
+): string[] => {
+    if (!timepointOnly || stops.length <= 3 || useAuthoritativeTimepoints) return stops;
     const filtered = stops.filter((s, i) => isMajorTimepointStop(s, i, stops));
     if (filtered.length >= 3) return filtered;
     const midpoint = stops[Math.floor(stops.length / 2)];
@@ -301,6 +314,7 @@ const getRoundTripGridCellLabel = ({
 
 export interface RoundTripTableViewProps {
     schedules: MasterRouteTable[];
+    useAuthoritativeTimepoints?: boolean;
     onCellEdit?: (tripId: string, col: string, val: string) => void;
     onTimeAdjust?: (tripId: string, stopName: string, delta: number) => void;
     onRecoveryEdit?: (tripId: string, stopName: string, delta: number) => void;
@@ -354,6 +368,7 @@ type RoundTripPair = {
 
 export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
     schedules,
+    useAuthoritativeTimepoints = false,
     onCellEdit,
     onTimeAdjust,
     onRecoveryEdit,
@@ -384,6 +399,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
     const [showActionsCol, setShowActionsCol] = useState(true);
     const [showRowNumberCol, setShowRowNumberCol] = useState(false);
     const [showDeltas, setShowDeltas] = useState(true);
+    const [compareReviewFocusTripId, setCompareReviewFocusTripId] = useState<string | null>(null);
 
     useEffect(() => {
         if (!highlightedTripId) return;
@@ -404,18 +420,86 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
         const lookup = new Map<string, MasterTrip>();
         (originalSchedules || []).forEach(table => {
             table.trips.forEach(trip => {
-                lookup.set(`${table.routeName}::${trip.id}`, trip);
+                lookup.set(getTripLineageLookupKey(table.routeName, trip), trip);
             });
         });
         return lookup;
     }, [originalSchedules]);
 
-    const getOriginalTrip = (routeName: string, tripId: string): MasterTrip | undefined =>
-        originalTripLookup.get(`${routeName}::${tripId}`);
+    const getOriginalTrip = (
+        routeName: string,
+        trip: MasterTrip
+    ): MasterTrip | undefined => originalTripLookup.get(getTripLineageLookupKey(routeName, trip));
 
-    const { masterMatchMap, unmatchedMasterTrips, masterShiftByDir } = useMemo(() => {
-        return buildMasterComparison(isMasterMode ? schedules : [], isMasterMode ? masterBaseline : null);
+    const currentTripLookup = useMemo(() => {
+        const lookup = new Map<string, { trip: MasterTrip; routeName: string }>();
+        schedules.forEach(table => {
+            const direction = (extractDirectionFromName(table.routeName) || 'North') as 'North' | 'South';
+            table.trips.forEach(trip => {
+                lookup.set(buildTripKey(direction, trip.id), {
+                    trip,
+                    routeName: table.routeName,
+                });
+            });
+        });
+        return lookup;
+    }, [schedules]);
+
+    const { currentTripComparisons, removedMasterTrips, masterShiftByDir } = useMemo(() => {
+        return buildDetailedMasterComparison(isMasterMode ? schedules : [], isMasterMode ? masterBaseline : null);
     }, [masterBaseline, schedules, isMasterMode]);
+
+    const compareReviewItems = useMemo<MasterCompareReviewItem[]>(() => {
+        if (!isMasterMode) return [];
+
+        return Array.from(currentTripComparisons.values())
+            .filter((entry): entry is Extract<CurrentTripComparisonEntry, { status: 'ambiguous' }> => entry.status === 'ambiguous')
+            .map(entry => {
+                const tripContext = currentTripLookup.get(buildTripKey(entry.direction, entry.currentTripId));
+                const currentTrip = tripContext?.trip;
+
+                return {
+                    currentTripId: entry.currentTripId,
+                    routeName: tripContext?.routeName || entry.direction,
+                    direction: entry.direction,
+                    blockId: currentTrip?.blockId,
+                    startTime: currentTrip?.startTime ?? 0,
+                    endTime: currentTrip?.endTime ?? 0,
+                    reason: entry.reason,
+                    shiftMinutes: entry.shiftMinutes,
+                    candidates: entry.candidates.map(candidate => ({
+                        masterTripId: candidate.masterTrip.id,
+                        blockId: candidate.masterTrip.blockId,
+                        startTime: candidate.masterTrip.startTime,
+                        endTime: candidate.masterTrip.endTime,
+                        diffMinutes: candidate.diffMinutes,
+                    })),
+                };
+            })
+            .sort((a, b) => a.startTime - b.startTime);
+    }, [currentTripComparisons, currentTripLookup, isMasterMode]);
+
+    useEffect(() => {
+        if (compareReviewItems.length === 0) {
+            setCompareReviewFocusTripId(null);
+            return;
+        }
+
+        if (compareReviewFocusTripId && compareReviewItems.some(item => item.currentTripId === compareReviewFocusTripId)) {
+            return;
+        }
+
+        setCompareReviewFocusTripId(compareReviewItems[0].currentTripId);
+    }, [compareReviewFocusTripId, compareReviewItems]);
+
+    useEffect(() => {
+        if (!compareReviewFocusTripId) return;
+        const selector = `tr[data-row-trip-ids*="|${compareReviewFocusTripId}|"]`;
+        const focusedRow = document.querySelector(selector);
+        if (focusedRow instanceof HTMLElement && typeof focusedRow.scrollIntoView === 'function') {
+            focusedRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    }, [compareReviewFocusTripId, schedules]);
 
     const masterShiftLabel = useMemo(() => {
         if (!isMasterMode) return null;
@@ -435,9 +519,14 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
         return `Auto-align ${parts.join(' | ')}`;
     }, [isMasterMode, masterShiftByDir]);
 
-    const getMasterMatchedTrip = useCallback((direction: 'North' | 'South', tripId: string): MasterTrip | undefined => (
-        masterMatchMap.get(`${direction}::${tripId}`)
-    ), [masterMatchMap]);
+    const getTripComparison = useCallback((direction: 'North' | 'South', tripId: string): CurrentTripComparisonEntry | undefined => (
+        currentTripComparisons.get(buildTripKey(direction, tripId))
+    ), [currentTripComparisons]);
+
+    const getMasterMatchedTrip = useCallback((direction: 'North' | 'South', tripId: string): MasterTrip | undefined => {
+        const comparison = getTripComparison(direction, tripId);
+        return comparison?.status === 'matched' ? comparison.masterTrip : undefined;
+    }, [getTripComparison]);
 
     const roundTripData = useMemo(() => {
         const pairs: RoundTripPair[] = [];
@@ -653,8 +742,8 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
             });
         });
 
-        const nDisplayStops = pickDisplayStops(combined.northStops, timepointOnly);
-        const sDisplayStops = pickDisplayStops(combined.southStops, timepointOnly);
+        const nDisplayStops = pickDisplayStops(combined.northStops, timepointOnly, useAuthoritativeTimepoints);
+        const sDisplayStops = pickDisplayStops(combined.southStops, timepointOnly, useAuthoritativeTimepoints);
         const lastNorthStop = combined.northStops[combined.northStops.length - 1];
         const firstSouthStop = combined.southStops[0];
         const merged = lastNorthStop && firstSouthStop &&
@@ -685,7 +774,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
         });
 
         return columns;
-    }, [primaryPair, timepointOnly]);
+    }, [primaryPair, timepointOnly, useAuthoritativeTimepoints]);
 
     // Sort rows for grid navigation (mirrors render sort order)
     const gridSortedRows = useMemo(() => {
@@ -829,6 +918,9 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
             {roundTripData.map(({ combined, north, south, northTripOrder, southTripOrder }) => {
                 const allNorthTrips = north?.trips || [];
                 const allSouthTrips = south?.trips || [];
+                const routeCompareReviewItems = compareReviewItems.filter(item => (
+                    item.routeName === north.routeName || item.routeName === south.routeName
+                ));
                 const headways = calculateHeadways([...allNorthTrips, ...allSouthTrips]);
                 const northStopsWithRecovery = new Set<string>();
                 const southStopsWithRecovery = new Set<string>();
@@ -863,8 +955,8 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                 const firstSouthStop = combined.southStops[0];
                 const hasMergedTerminus = lastNorthStop && firstSouthStop &&
                     lastNorthStop.toLowerCase() === firstSouthStop.toLowerCase();
-                const northDisplayStops = pickDisplayStops(combined.northStops, timepointOnly);
-                const southDisplayStops = pickDisplayStops(combined.southStops, timepointOnly);
+                const northDisplayStops = pickDisplayStops(combined.northStops, timepointOnly, useAuthoritativeTimepoints);
+                const southDisplayStops = pickDisplayStops(combined.southStops, timepointOnly, useAuthoritativeTimepoints);
                 const lastNorthStopIdx = northDisplayStops.length - 1;
                 const showActions = !readOnly && showActionsCol;
                 const showRowNum = showRowNumberCol;
@@ -1091,6 +1183,16 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                 )}
                             </div>
                         </div>
+
+                        {isMasterMode && routeCompareReviewItems.length > 0 && (
+                            <div className="px-3 pb-3">
+                                <MasterCompareReviewPanel
+                                    items={routeCompareReviewItems}
+                                    activeTripId={compareReviewFocusTripId}
+                                    onSelectTrip={setCompareReviewFocusTripId}
+                                />
+                            </div>
+                        )}
 
                         {/* Direction Info Row */}
                         {showDirectionLegend && (() => {
@@ -1329,15 +1431,37 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                         const southIndex = southTrip ? southTripOrder.get(southTrip.id) : undefined;
                                         const routeTripNumber = northIndex ?? southIndex ?? rowIdx + 1;
                                         const rowBg = rowIdx % 2 === 0 ? 'bg-white' : 'bg-gray-50/50';
+                                        const northComparison = northTrip ? getTripComparison('North', northTrip.id) : undefined;
+                                        const southComparison = southTrip ? getTripComparison('South', southTrip.id) : undefined;
                                         const originalNorthTrip = northTrip
-                                            ? (isMasterMode ? getMasterMatchedTrip('North', northTrip.id) : getOriginalTrip(north.routeName, northTrip.id))
+                                            ? (isMasterMode ? getMasterMatchedTrip('North', northTrip.id) : getOriginalTrip(north.routeName, northTrip))
                                             : undefined;
                                         const originalSouthTrip = southTrip
-                                            ? (isMasterMode ? getMasterMatchedTrip('South', southTrip.id) : getOriginalTrip(south.routeName, southTrip.id))
+                                            ? (isMasterMode ? getMasterMatchedTrip('South', southTrip.id) : getOriginalTrip(south.routeName, southTrip))
                                             : undefined;
 
                                         // NEW trip: exists in current schedule but not matched to any master trip
-                                        const isNewTrip = isMasterMode && !originalNorthTrip && !originalSouthTrip;
+                                        const isNewTrip = isMasterMode
+                                            && (
+                                                northComparison?.status === 'new'
+                                                || southComparison?.status === 'new'
+                                            )
+                                            && northComparison?.status !== 'ambiguous'
+                                            && southComparison?.status !== 'ambiguous'
+                                            && !originalNorthTrip
+                                            && !originalSouthTrip;
+                                        const isReviewTrip = isMasterMode
+                                            && (
+                                                northComparison?.status === 'ambiguous'
+                                                || southComparison?.status === 'ambiguous'
+                                            );
+                                        const compareReason = isMasterMode
+                                            ? [northComparison?.reason, southComparison?.reason].filter(Boolean).join(' ')
+                                            : undefined;
+                                        const matchMethodLabel = isMasterMode
+                                            ? [northComparison, southComparison]
+                                                .find(entry => entry?.status === 'matched' && entry.matchMethod === 'time-shift')
+                                            : undefined;
 
                                         const tripStartTime = northTrip?.startTime || southTrip?.startTime || 0;
                                         const tripEndTime = northTrip?.endTime || southTrip?.endTime || 0;
@@ -1349,6 +1473,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                         const filterHighlightClass = isHighlighted ? 'bg-amber-50 ring-2 ring-inset ring-amber-200' : '';
                                         const searchHideClass = !matchesSearchFilter ? 'hidden' : '';
                                         const isRecentlyAddedRow = !!highlightedTripId && row.trips.some(trip => trip.id === highlightedTripId);
+                                        const isCompareReviewFocusedRow = !!compareReviewFocusTripId && row.trips.some(trip => trip.id === compareReviewFocusTripId);
 
                                         // Calculate the display row number (1-indexed)
                                         const displayRowNum = rowIdx + 1;
@@ -1399,8 +1524,10 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                         return (
                                             <tr
                                                 key={uniqueRowKey}
-                                                className={`group hover:bg-blue-50/50 ${rowBg} ${grayOutClass} ${filterHighlightClass} ${searchHideClass} ${isNewTrip ? 'ring-2 ring-inset ring-green-300 bg-green-50/30' : ''} ${isRecentlyAddedRow ? 'ring-2 ring-inset ring-emerald-400 bg-emerald-50/60' : ''} ${gridNav.isRowActive(rowIdx) ? 'bg-blue-50/30' : ''}`}
+                                                className={`group hover:bg-blue-50/50 ${rowBg} ${grayOutClass} ${filterHighlightClass} ${searchHideClass} ${isReviewTrip ? 'ring-2 ring-inset ring-amber-300 bg-amber-50/40' : ''} ${isNewTrip ? 'ring-2 ring-inset ring-green-300 bg-green-50/30' : ''} ${isRecentlyAddedRow ? 'ring-2 ring-inset ring-emerald-400 bg-emerald-50/60' : ''} ${isCompareReviewFocusedRow ? 'ring-2 ring-inset ring-amber-400 bg-amber-50/70' : ''} ${gridNav.isRowActive(rowIdx) ? 'bg-blue-50/30' : ''}`}
                                                 data-highlighted-row={isRecentlyAddedRow ? 'true' : 'false'}
+                                                data-row-trip-ids={`|${rowTripIds.join('|')}|`}
+                                                title={compareReason}
                                                 onContextMenu={(e) => {
                                                     if (onTripRightClick && actionTrip) {
                                                         onTripRightClick(e, actionTrip.id, actionTrip.direction, row.blockId, actionStops);
@@ -1470,11 +1597,17 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                 )}
 
                                                 {/* Block ID */}
-                                                <td className={`p-2 border-r border-gray-100 ${isNewTrip ? 'bg-green-50' : 'bg-white'} group-hover:bg-gray-100 font-medium text-xs text-gray-700 text-center`}>
+                                                <td className={`p-2 border-r border-gray-100 ${isReviewTrip ? 'bg-amber-50' : isNewTrip ? 'bg-green-50' : 'bg-white'} group-hover:bg-gray-100 font-medium text-xs text-gray-700 text-center`}>
                                                     <div className="flex flex-col items-center gap-0.5">
                                                         <span>{row.blockId}</span>
-                                                        {isNewTrip && (
-                                                            <span className="text-[9px] text-green-700 bg-green-100 px-1 rounded font-bold">NEW</span>
+                                                        {isReviewTrip && (
+                                                            <span className="text-[9px] text-amber-800 bg-amber-100 px-1 rounded font-bold" title={compareReason}>REVIEW</span>
+                                                        )}
+                                                        {!isReviewTrip && !isNewTrip && matchMethodLabel && (
+                                                            <span className="text-[9px] text-indigo-700 bg-indigo-100 px-1 rounded font-bold" title={matchMethodLabel.reason}>ALIGNED</span>
+                                                        )}
+                                                        {!isReviewTrip && isNewTrip && (
+                                                            <span className="text-[9px] text-green-700 bg-green-100 px-1 rounded font-bold" title={compareReason}>NEW</span>
                                                         )}
                                                         {lastTrip?.isBlockEnd && (
                                                             <span className="text-[9px] text-orange-600 font-bold">END</span>
@@ -2137,10 +2270,10 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                     });
                                     })()}
                                     {/* REMOVED trip ghost rows - master-only trips not matched to current schedule */}
-                                    {isMasterMode && unmatchedMasterTrips.length > 0 && unmatchedMasterTrips.map((masterTrip) => {
+                                    {isMasterMode && removedMasterTrips.length > 0 && removedMasterTrips.map(({ masterTrip, reason }) => {
                                         const totalColCount = columnMapping.length;
                                         return (
-                                            <tr key={`removed-${masterTrip.id}`} className="bg-red-50/70 opacity-60">
+                                            <tr key={`removed-${masterTrip.id}`} className="bg-red-50/70 opacity-60" title={reason}>
                                                 <td className="p-2 border-r border-gray-100 bg-red-50 font-medium text-xs text-center">
                                                     <div className="flex flex-col items-center gap-0.5">
                                                         <span className="text-gray-400">{masterTrip.blockId || '—'}</span>

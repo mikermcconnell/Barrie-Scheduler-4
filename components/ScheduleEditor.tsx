@@ -125,6 +125,7 @@ interface TripBucketAnalysisDisplay {
 
 export interface ScheduleEditorProps {
     schedules: MasterRouteTable[];
+    useAuthoritativeTimepoints?: boolean;
     // Optional schedule scope used by Connections library validation/resolution.
     // If omitted, defaults to the currently edited schedules.
     connectionScopeSchedules?: MasterRouteTable[];
@@ -187,6 +188,7 @@ export interface ScheduleEditorProps {
 
 export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
     schedules,
+    useAuthoritativeTimepoints = false,
     connectionScopeSchedules,
     onSchedulesChange,
     originalSchedules,
@@ -1640,6 +1642,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                             <>
                                 <RoundTripTableView
                                     schedules={schedules}
+                                    useAuthoritativeTimepoints={useAuthoritativeTimepoints}
                                     onCellEdit={readOnly ? undefined : handleCellEdit}
                                     onTimeAdjust={readOnly ? undefined : handleTimeAdjust}
                                     onRecoveryEdit={readOnly ? undefined : handleRecoveryEdit}

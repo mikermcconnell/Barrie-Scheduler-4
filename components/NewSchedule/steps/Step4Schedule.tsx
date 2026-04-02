@@ -116,6 +116,7 @@ export const Step4Schedule: React.FC<Step4ScheduleProps> = ({
             <div className="flex-grow min-h-0 overflow-hidden">
                 <ScheduleEditor
                     schedules={schedules}
+                    useAuthoritativeTimepoints={true}
                     onSchedulesChange={setSchedules}
                     originalSchedules={originalSnapshot}
                     onResetOriginals={handleResetOriginals}

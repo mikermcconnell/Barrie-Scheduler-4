@@ -6,6 +6,7 @@ import type { RuntimeData, SegmentRawData } from './csvParser';
 import type { WizardProgress } from '../../../hooks/useWizardProgress';
 import type { ApprovedRuntimeModel } from './wizardState';
 import type { ApprovedRuntimeContract } from './step2ReviewTypes';
+import { normalizeScheduleBaselinesForLineage } from '../../../utils/schedule/tripLineage';
 import { resolveWizardPersistenceStep } from './wizardPersistence';
 import {
     buildSegmentsMapFromParsedData,
@@ -196,6 +197,10 @@ export const normalizeRestoredWizardState = (
         input.generatedSchedules,
         input.originalGeneratedSchedules
     );
+    const normalizedBaselines = normalizeScheduleBaselinesForLineage(
+        baselines.generatedSchedules,
+        baselines.originalGeneratedSchedules
+    );
 
     return {
         dayType: input.dayType || 'Weekday',
@@ -205,8 +210,8 @@ export const normalizeRestoredWizardState = (
         analysis,
         bands: input.bands && input.bands.length > 0 ? input.bands : [],
         config: input.config || createDefaultScheduleConfig(),
-        generatedSchedules: baselines.generatedSchedules,
-        originalGeneratedSchedules: baselines.originalGeneratedSchedules,
+        generatedSchedules: normalizedBaselines.generatedSchedules,
+        originalGeneratedSchedules: normalizedBaselines.originalGeneratedSchedules,
         parsedData,
         approvedRuntimeContract: input.approvedRuntimeContract,
         approvedRuntimeModel: input.approvedRuntimeModel,

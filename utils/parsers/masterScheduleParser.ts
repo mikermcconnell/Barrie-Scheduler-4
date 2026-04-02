@@ -17,6 +17,7 @@ export interface TripPoint {
 
 export interface MasterTrip {
     id: string; // Unique ID
+    lineageId?: string; // Durable logical trip identity for compare/delta workflows
     blockId: string; // "101", "102" etc.
     direction: 'North' | 'South';
     tripNumber: number; // Sequence in block

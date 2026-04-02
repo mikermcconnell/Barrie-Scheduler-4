@@ -16,6 +16,7 @@ import { TimeUtils } from '../utils/timeUtils';
 import { deepCloneSchedules, findTableAndTrip } from '../utils/schedule/scheduleEditorUtils';
 import { reassignBlocksForTables, MatchConfigPresets } from '../utils/blocks/blockAssignmentCore';
 import { parseRouteInfo } from '../utils/config/routeDirectionConfig';
+import { createTripLineageId } from '../utils/schedule/tripLineage';
 
 export type CascadeMode = 'always' | 'within-trip' | 'none';
 
@@ -311,6 +312,7 @@ export function useScheduleEditing(
         const newTrip: MasterTrip = {
             ...JSON.parse(JSON.stringify(trip)),
             id: `${trip.id}-dup-${Date.now()}`,
+            lineageId: createTripLineageId(),
             tripNumber: 0, // Will be set by renumbering after sort
             blockId: '', // Clear blockId - let block reassignment handle it
             startTime: trip.startTime + 1,

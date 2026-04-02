@@ -5,6 +5,7 @@ import { TimeBand, TripBucketAnalysis, BandSummary, DirectionBandSummary, MIN_RE
 import { SegmentRawData, extractTimepointsFromSegments } from '../../components/NewSchedule/utils/csvParser';
 import { getOperationalSortTime, reassignBlocksForTables } from '../blocks/blockAssignmentCore';
 import { normalizeSegmentStopKey } from '../runtimeSegmentMatching';
+import { createTripLineageId } from './tripLineage';
 
 const normalizeStopLookupKey = (value: string): string => {
     return value
@@ -533,6 +534,7 @@ export const generateSchedule = (
             // Create MasterTrip with full time breakdown
             const newTrip: MasterTrip = {
                 id: `${block.id}-${tripSequence}`,
+                lineageId: createTripLineageId(),
                 blockId: block.id,
                 direction: currentDir as 'North' | 'South',
                 startTime: currentTime,

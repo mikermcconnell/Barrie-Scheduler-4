@@ -1,5 +1,5 @@
-import React, { useMemo } from 'react';
-import { AlertTriangle, CheckCircle2, ShieldAlert, Clock3, Database, CalendarDays, Route } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { AlertTriangle, CheckCircle2, ShieldAlert, Clock3, Database, CalendarDays, Route, ChevronDown, ChevronUp } from 'lucide-react';
 import type { PerformanceDataSummary } from '../../utils/performanceDataTypes';
 import { buildPerformanceImportHealth, type ImportHealthStatus } from '../../utils/performanceImportHealth';
 
@@ -45,18 +45,29 @@ const CHECK_STATUS_STYLES: Record<ImportHealthStatus, string> = {
 
 export const PerformanceImportHealthPanel: React.FC<PerformanceImportHealthPanelProps> = ({ data }) => {
   const health = useMemo(() => buildPerformanceImportHealth(data), [data]);
+  const [isExpanded, setIsExpanded] = useState(false);
   const statusStyle = STATUS_STYLES[health.overallStatus];
   const StatusIcon = statusStyle.icon;
+  const ToggleIcon = isExpanded ? ChevronUp : ChevronDown;
 
   return (
     <div className={`mb-4 rounded-xl border p-4 ${statusStyle.panel}`}>
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+      <button
+        type="button"
+        onClick={() => setIsExpanded((current) => !current)}
+        aria-expanded={isExpanded}
+        className="flex w-full flex-col gap-4 text-left lg:flex-row lg:items-start lg:justify-between"
+      >
         <div className="min-w-0">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <StatusIcon size={18} className="shrink-0" />
             <h3 className="text-sm font-bold text-gray-900">Import health</h3>
             <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide ${statusStyle.badge}`}>
               {health.headline}
+            </span>
+            <span className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white/80 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-gray-600">
+              {isExpanded ? 'Hide details' : 'Show details'}
+              <ToggleIcon size={12} />
             </span>
           </div>
           <p className="mt-2 text-sm text-gray-700">
@@ -64,7 +75,7 @@ export const PerformanceImportHealthPanel: React.FC<PerformanceImportHealthPanel
           </p>
         </div>
 
-        <div className="grid gap-2 text-xs text-gray-600 sm:grid-cols-2">
+        <div className="grid gap-2 text-xs text-gray-600 sm:grid-cols-2 lg:text-right">
           <div>
             <span className="font-semibold text-gray-700">Latest import:</span>{' '}
             {health.latestImportAt ? new Date(health.latestImportAt).toLocaleString('en-CA') : 'Unknown'}
@@ -74,34 +85,36 @@ export const PerformanceImportHealthPanel: React.FC<PerformanceImportHealthPanel
             {health.latestServiceDate ?? 'Unknown'}
           </div>
         </div>
-      </div>
+      </button>
 
-      <div className="mt-4 grid gap-2 lg:grid-cols-2">
-        {health.checks.map((check) => {
-          const CheckIcon = CHECK_ICONS[check.id] ?? AlertTriangle;
-          return (
-            <div
-              key={check.id}
-              className="rounded-lg border border-white/70 bg-white/80 p-3 shadow-sm"
-            >
-              <div className="flex items-start gap-3">
-                <div className="mt-0.5 rounded-md bg-gray-100 p-2 text-gray-600">
-                  <CheckIcon size={14} />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-sm font-semibold text-gray-900">{check.label}</span>
-                    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${CHECK_STATUS_STYLES[check.status]}`}>
-                      {check.status}
-                    </span>
+      {isExpanded && (
+        <div className="mt-4 grid gap-2 lg:grid-cols-2">
+          {health.checks.map((check) => {
+            const CheckIcon = CHECK_ICONS[check.id] ?? AlertTriangle;
+            return (
+              <div
+                key={check.id}
+                className="rounded-lg border border-white/70 bg-white/80 p-3 shadow-sm"
+              >
+                <div className="flex items-start gap-3">
+                  <div className="mt-0.5 rounded-md bg-gray-100 p-2 text-gray-600">
+                    <CheckIcon size={14} />
                   </div>
-                  <p className="mt-1 text-sm leading-relaxed text-gray-600">{check.summary}</p>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm font-semibold text-gray-900">{check.label}</span>
+                      <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${CHECK_STATUS_STYLES[check.status]}`}>
+                        {check.status}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-sm leading-relaxed text-gray-600">{check.summary}</p>
+                  </div>
                 </div>
               </div>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 };

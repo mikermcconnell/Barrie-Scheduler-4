@@ -6,6 +6,7 @@ import { matchStopToHub, getPlatformForRoute } from '../platform/platformConfig'
 import { validateRouteTable, type MasterRouteTable, type MasterTrip } from '../parsers/masterScheduleParser';
 import { TimeUtils } from '../timeUtils';
 import { compareBlockIds } from './scheduleEditorUtils';
+import { createTripLineageId } from './tripLineage';
 
 export type AddTripBlockMode = 'new' | 'reference' | 'existing';
 export type AddTripStartPreset =
@@ -757,6 +758,7 @@ export const applyAddTripResultToSchedules = (
     const newTrip: MasterTrip = {
       ...JSON.parse(JSON.stringify(templateTrip)),
       id: `trip_${Date.now()}_${Math.floor(Math.random() * 10000)}_${i}`,
+      lineageId: createTripLineageId(),
       rowId: Date.now() + i,
       blockId,
       direction: targetDirection,

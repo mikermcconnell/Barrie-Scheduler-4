@@ -24,17 +24,19 @@ interface PerformanceFilterBarProps {
     onDayTypeChange: (dt: DayType | 'all') => void;
     availableDayTypes: DayType[];
     filteredDayCount?: number;
+    allowedTimeRanges?: TimeRange[];
 }
 
 export const PerformanceFilterBar: React.FC<PerformanceFilterBarProps> = ({
     timeRange, onTimeRangeChange, selectedDate, onSelectedDateChange, availableDates,
     dayTypeFilter, onDayTypeChange, availableDayTypes, filteredDayCount,
+    allowedTimeRanges,
 }) => (
     <div className="flex items-center gap-6 flex-wrap px-1 py-3">
         <div className="flex items-center gap-2">
             <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Time Range:</span>
             <div className="flex gap-1">
-                {(Object.keys(TIME_RANGE_LABELS) as TimeRange[]).map(tr => (
+                {(allowedTimeRanges ?? (Object.keys(TIME_RANGE_LABELS) as TimeRange[])).map(tr => (
                     <FilterPill key={tr} active={timeRange === tr} onClick={() => onTimeRangeChange(tr)}>
                         {TIME_RANGE_LABELS[tr]}
                     </FilterPill>

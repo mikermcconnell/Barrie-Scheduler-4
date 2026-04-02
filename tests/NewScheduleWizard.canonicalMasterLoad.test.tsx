@@ -53,6 +53,10 @@ vi.mock('../components/NewSchedule/step2/Step2ApprovalFooter', () => ({
 }));
 
 vi.mock('../hooks/usePerformanceData', () => ({
+    usePerformanceMetadataQuery: (): { data: null; isLoading: boolean } => ({
+        data: null,
+        isLoading: false,
+    }),
     usePerformanceDataQuery: (): { data: null; isLoading: boolean } => ({
         data: null,
         isLoading: false,
