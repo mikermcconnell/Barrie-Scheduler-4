@@ -1,5 +1,6 @@
 import type { ODPairRecord } from './odMatrixTypes';
 import type { MatchConfidence, ODPairRouteMatch, ODRouteEstimationResult } from './odRouteEstimation';
+import type { ODDirectionFilter } from './odFlowMapMetrics';
 
 export interface StopRouteSummaryRow {
     rank: number;
@@ -51,6 +52,7 @@ export function buildStopRouteSummaryRows(args: {
     isolatedStation: string | null;
     pairs: ODPairRecord[];
     minJourneys: number;
+    directionFilter?: ODDirectionFilter;
     routeEstimation?: ODRouteEstimationResult | null;
     routeEstimationLoading?: boolean;
 }): StopRouteSummaryRow[] {
@@ -58,6 +60,7 @@ export function buildStopRouteSummaryRows(args: {
         isolatedStation,
         pairs,
         minJourneys,
+        directionFilter = 'all',
         routeEstimation,
         routeEstimationLoading = false,
     } = args;
@@ -74,6 +77,11 @@ export function buildStopRouteSummaryRows(args: {
             pair.journeys >= minJourneys
             && (pair.origin === isolatedStation || pair.destination === isolatedStation)
         ))
+        .filter(pair => {
+            if (directionFilter === 'outbound') return pair.origin === isolatedStation;
+            if (directionFilter === 'inbound') return pair.destination === isolatedStation;
+            return true;
+        })
         .sort((a, b) => b.journeys - a.journeys);
 
     const stopTrips = matchingPairs.reduce((sum, pair) => sum + pair.journeys, 0);

@@ -219,4 +219,187 @@ describe('TravelTimeGrid', () => {
     expect(container?.textContent).toContain('7 AM');
     expect(container?.textContent).toContain('10');
   });
+
+  it('shows original travel and recovery deltas using the schedule tab pattern', () => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const onResetOriginals = vi.fn();
+
+    flushSync(() => {
+      root?.render(
+        <TravelTimeGrid
+          schedules={[
+            {
+              routeName: '2 (Weekday) (North)',
+              stops: ['A', 'B'],
+              stopIds: {},
+              trips: [
+                {
+                  id: 'trip-1',
+                  lineageId: 'ln:trip-1',
+                  blockId: '2-1',
+                  direction: 'North',
+                  tripNumber: 1,
+                  rowId: 1,
+                  startTime: 420,
+                  endTime: 455,
+                  recoveryTime: 4,
+                  recoveryTimes: { B: 4 },
+                  travelTime: 31,
+                  cycleTime: 35,
+                  stops: {
+                    A: '7:00 AM',
+                    B: '7:35 AM'
+                  },
+                  arrivalTimes: {
+                    A: '7:00 AM',
+                    B: '7:31 AM'
+                  },
+                  stopMinutes: {
+                    A: 420,
+                    B: 455
+                  }
+                }
+              ]
+            }
+          ] as any}
+          originalSchedules={[
+            {
+              routeName: '2 (Weekday) (North)',
+              stops: ['A', 'B'],
+              stopIds: {},
+              trips: [
+                {
+                  id: 'trip-1',
+                  lineageId: 'ln:trip-1',
+                  blockId: '2-1',
+                  direction: 'North',
+                  tripNumber: 1,
+                  rowId: 1,
+                  startTime: 420,
+                  endTime: 453,
+                  recoveryTime: 3,
+                  recoveryTimes: { B: 3 },
+                  travelTime: 30,
+                  cycleTime: 33,
+                  stops: {
+                    A: '7:00 AM',
+                    B: '7:33 AM'
+                  },
+                  arrivalTimes: {
+                    A: '7:00 AM',
+                    B: '7:30 AM'
+                  },
+                  stopMinutes: {
+                    A: 420,
+                    B: 453
+                  }
+                }
+              ]
+            }
+          ] as any}
+          onResetOriginals={onResetOriginals}
+        />
+      );
+    });
+
+    expect(container?.textContent).toContain('+/- Deltas');
+    expect(container?.textContent).toContain('Reset Deltas');
+    expect(container?.textContent).toContain('+1');
+
+    const toggleButton = Array.from(container?.querySelectorAll('button') || []).find(button => button.textContent?.includes('+/- Deltas')) as HTMLButtonElement | undefined;
+    expect(toggleButton).toBeTruthy();
+
+    flushSync(() => {
+      toggleButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(container?.textContent).not.toContain('Reset Deltas');
+  });
+
+  it('keeps a removed recovery visible as a delta even when current recovery is zero', () => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    flushSync(() => {
+      root?.render(
+        <TravelTimeGrid
+          schedules={[
+            {
+              routeName: '2 (Weekday) (North)',
+              stops: ['A', 'B'],
+              stopIds: {},
+              trips: [
+                {
+                  id: 'trip-1',
+                  lineageId: 'ln:trip-1',
+                  blockId: '2-1',
+                  direction: 'North',
+                  tripNumber: 1,
+                  rowId: 1,
+                  startTime: 420,
+                  endTime: 450,
+                  recoveryTime: 0,
+                  recoveryTimes: { B: 0 },
+                  travelTime: 30,
+                  cycleTime: 30,
+                  stops: {
+                    A: '7:00 AM',
+                    B: '7:30 AM'
+                  },
+                  arrivalTimes: {
+                    A: '7:00 AM',
+                    B: '7:30 AM'
+                  },
+                  stopMinutes: {
+                    A: 420,
+                    B: 450
+                  }
+                }
+              ]
+            }
+          ] as any}
+          originalSchedules={[
+            {
+              routeName: '2 (Weekday) (North)',
+              stops: ['A', 'B'],
+              stopIds: {},
+              trips: [
+                {
+                  id: 'trip-1',
+                  lineageId: 'ln:trip-1',
+                  blockId: '2-1',
+                  direction: 'North',
+                  tripNumber: 1,
+                  rowId: 1,
+                  startTime: 420,
+                  endTime: 451,
+                  recoveryTime: 1,
+                  recoveryTimes: { B: 1 },
+                  travelTime: 30,
+                  cycleTime: 31,
+                  stops: {
+                    A: '7:00 AM',
+                    B: '7:31 AM'
+                  },
+                  arrivalTimes: {
+                    A: '7:00 AM',
+                    B: '7:30 AM'
+                  },
+                  stopMinutes: {
+                    A: 420,
+                    B: 451
+                  }
+                }
+              ]
+            }
+          ] as any}
+        />
+      );
+    });
+
+    expect(container?.textContent).toContain('0r');
+    expect(container?.textContent).toContain('-1');
+  });
 });

@@ -257,6 +257,24 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         target[resolvedKey] = value;
         return target;
     };
+    const getDisplayedDepartureAtStop = (trip: MasterTrip, stopName: string): string => {
+        const arrival = getTripStopValue(trip.arrivalTimes, stopName);
+        const recoveryAtStop = getTripStopValue(trip.recoveryTimes, stopName);
+
+        if (arrival !== undefined && arrival !== null && arrival !== '' && recoveryAtStop !== undefined) {
+            return recoveryAtStop > 0 ? TimeUtils.addMinutes(arrival, recoveryAtStop) : arrival;
+        }
+
+        const dep = getTripStopValue(trip.stops, stopName);
+        if (dep !== undefined && dep !== null && dep !== '') return dep;
+
+        if (arrival !== undefined && arrival !== null && arrival !== '') {
+            const recovery = recoveryAtStop || 0;
+            return recovery > 0 ? TimeUtils.addMinutes(arrival, recovery) : arrival;
+        }
+
+        return '';
+    };
     const [activeRouteIdx, setActiveRouteIdx] = useState(0);
     const [activeDay, setActiveDay] = useState<string>('Weekday');
     const [subView, setSubView] = useState<'editor' | 'matrix' | 'timeline'>('editor');
@@ -557,7 +575,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
 
         const oldValue = isArrivalEdit
             ? (getTripStopValue(trip.arrivalTimes, stopName) ?? getTripStopValue(trip.stops, stopName))
-            : getTripStopValue(trip.stops, stopName);
+            : getDisplayedDepartureAtStop(trip, stopName);
 
         // Skip no-op edits — prevents onBlur from overwriting a cascaded change
         if (oldValue === val) return;
@@ -773,14 +791,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
 
         const isArrivalAdjust = stopName.endsWith('__ARR');
         const baseStopName = isArrivalAdjust ? stopName.replace('__ARR', '') : stopName;
-        const departureAtStop = (() => {
-            const dep = getTripStopValue(trip.stops, baseStopName);
-            if (dep) return dep;
-            const arr = getTripStopValue(trip.arrivalTimes, baseStopName);
-            if (!arr) return '';
-            const recovery = getTripStopValue(trip.recoveryTimes, baseStopName) || 0;
-            return recovery === 0 ? arr : TimeUtils.addMinutes(arr, recovery);
-        })();
+        const departureAtStop = getDisplayedDepartureAtStop(trip, baseStopName);
         const currentTime = isArrivalAdjust
             ? (getTripStopValue(trip.arrivalTimes, baseStopName) ?? getTripStopValue(trip.stops, baseStopName))
             : departureAtStop;
@@ -1632,6 +1643,11 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                                 onRecoveryAdjust={gridHandlers.handleBulkAdjustRecoveryTime}
                                 onSingleTripAdjust={gridHandlers.handleSingleTripTravelAdjust}
                                 onSingleRecoveryAdjust={gridHandlers.handleSingleRecoveryAdjust}
+                                originalSchedules={originalSchedules?.filter(table => (
+                                    table.routeName === activeRoute.north?.routeName ||
+                                    table.routeName === activeRoute.south?.routeName
+                                ))}
+                                onResetOriginals={onResetOriginals}
                                 bands={bands}
                                 analysis={analysis}
                                 segmentNames={segmentNames}

@@ -134,4 +134,24 @@ describe('odStopRouteSummary', () => {
             confidence: 'loading',
         });
     });
+
+    it('applies the direction filter to stop-focused rows', () => {
+        const rows = buildStopRouteSummaryRows({
+            isolatedStation: 'Sudbury',
+            pairs: [
+                { origin: 'Barrie', destination: 'Sudbury', journeys: 42 },
+                { origin: 'Sudbury', destination: 'Barrie', journeys: 12 },
+            ],
+            minJourneys: 1,
+            directionFilter: 'outbound',
+            routeEstimation,
+        });
+
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({
+            direction: 'Outbound',
+            counterpart: 'Barrie',
+            journeys: 12,
+        });
+    });
 });

@@ -4,7 +4,7 @@
  * Summary dashboard with metric cards, OD map, and import metadata.
  */
 
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
     Network,
     MapPin,
@@ -15,6 +15,13 @@ import { MetricCard, fmt } from './AnalyticsShared';
 import type { ODMatrixDataSummary, GeocodeCache } from '../../utils/od-matrix/odMatrixTypes';
 import type { ODRouteEstimationResult } from '../../utils/od-matrix/odRouteEstimation';
 import { ODFlowMapModule } from './ODFlowMapModule';
+import {
+    buildScopedGeoLookup,
+    buildVisibleStopMetrics,
+    filterODPairs,
+    getGeocodedPairs,
+    type ODDirectionFilter,
+} from '../../utils/od-matrix/odFlowMapMetrics';
 
 interface ODOverviewPanelProps {
     data: ODMatrixDataSummary;
@@ -39,6 +46,13 @@ export const ODOverviewPanel: React.FC<ODOverviewPanelProps> = ({
     routeEstimation,
     routeEstimationLoading,
 }) => {
+    const [minJourneys, setMinJourneys] = useState(1);
+    const [directionFilter, setDirectionFilter] = useState<ODDirectionFilter>('all');
+
+    useEffect(() => {
+        if (!isolatedStation) setDirectionFilter('all');
+    }, [isolatedStation]);
+
     const topOrigin = useMemo(() => {
         const sorted = [...data.stations].sort((a, b) => b.totalOrigin - a.totalOrigin);
         return sorted[0];
@@ -49,24 +63,37 @@ export const ODOverviewPanel: React.FC<ODOverviewPanelProps> = ({
         return sorted[0];
     }, [data.stations]);
 
+    const { geoLookup } = useMemo(
+        () => buildScopedGeoLookup(data.stations, geocodeCache),
+        [data.stations, geocodeCache],
+    );
+
+    const geocodedPairs = useMemo(
+        () => getGeocodedPairs(data.pairs, geoLookup),
+        [data.pairs, geoLookup],
+    );
+
+    const visibleStopPairs = useMemo(() => filterODPairs({
+        pairs: geocodedPairs,
+        isolatedStation: isolatedStation ?? null,
+        directionFilter,
+        minJourneys,
+    }), [geocodedPairs, isolatedStation, directionFilter, minJourneys]);
+
     // Stop-focused metrics when a station is isolated
     const stopMetrics = useMemo(() => {
-        if (!isolatedStation) return null;
-        const pairs = data.pairs.filter(
-            p => p.origin === isolatedStation || p.destination === isolatedStation,
-        );
-        const totalJourneys = pairs.reduce((sum, p) => sum + p.journeys, 0);
-        const connectedStations = new Set(
-            pairs.flatMap(p => [p.origin, p.destination].filter(s => s !== isolatedStation)),
-        );
-        const topOrig = pairs
-            .filter(p => p.origin === isolatedStation)
-            .sort((a, b) => b.journeys - a.journeys)[0];
-        const topDest = pairs
-            .filter(p => p.destination === isolatedStation)
-            .sort((a, b) => b.journeys - a.journeys)[0];
-        return { totalJourneys, connections: connectedStations.size, topOrig, topDest };
-    }, [data.pairs, isolatedStation]);
+        return buildVisibleStopMetrics(visibleStopPairs, isolatedStation ?? null);
+    }, [visibleStopPairs, isolatedStation]);
+
+    const stopMetricSubValue = useMemo(() => {
+        if (!isolatedStation) return undefined;
+        const directionLabel = directionFilter === 'all'
+            ? 'all directions'
+            : directionFilter === 'outbound'
+                ? 'outbound only'
+                : 'inbound only';
+        return `${fmt(data.totalJourneys)} network-wide · mapped pairs · ${directionLabel}`;
+    }, [data.totalJourneys, directionFilter, isolatedStation]);
 
     return (
         <div className="space-y-6">
@@ -83,14 +110,14 @@ export const ODOverviewPanel: React.FC<ODOverviewPanelProps> = ({
                     label={stopMetrics ? 'Stop Journeys' : 'Total Journeys'}
                     value={fmt(stopMetrics ? stopMetrics.totalJourneys : data.totalJourneys)}
                     color="indigo"
-                    subValue={stopMetrics ? `${fmt(data.totalJourneys)} network-wide` : undefined}
+                    subValue={stopMetrics ? stopMetricSubValue : undefined}
                 />
                 <MetricCard
                     icon={<MapPin size={18} />}
                     label={stopMetrics ? 'Connections' : 'Stations'}
                     value={fmt(stopMetrics ? stopMetrics.connections : data.stationCount)}
                     color="cyan"
-                    subValue={stopMetrics ? `of ${fmt(data.stationCount)} stations` : undefined}
+                    subValue={stopMetrics ? `mapped pairs · of ${fmt(data.stationCount)} stations` : undefined}
                 />
                 <MetricCard
                     icon={<ArrowUpRight size={18} />}
@@ -123,6 +150,11 @@ export const ODOverviewPanel: React.FC<ODOverviewPanelProps> = ({
                 onFixMissingCoordinates={onFixCoordinates}
                 onMapReady={onMapElReady}
                 onIsolatedStationChange={onIsolatedStationChange}
+                isolatedStation={isolatedStation ?? null}
+                minJourneys={minJourneys}
+                onMinJourneysChange={setMinJourneys}
+                directionFilter={directionFilter}
+                onDirectionFilterChange={setDirectionFilter}
                 routeEstimation={routeEstimation}
                 routeEstimationLoading={routeEstimationLoading}
             />

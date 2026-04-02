@@ -1,8 +1,9 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Timer, ArrowRight, Plus, Minus, Info, Clock, TrendingUp, Pause, Maximize2, Minimize2, ChevronUp, ChevronDown } from 'lucide-react';
-import { MasterRouteTable } from '../utils/parsers/masterScheduleParser';
+import { MasterRouteTable, MasterTrip } from '../utils/parsers/masterScheduleParser';
 import { getRouteColor, getRouteTextColor } from '../utils/config/routeColors';
 import { isSamePhysicalStop, isStationaryTravelSegment, resolveGridSegmentTimes } from '../utils/schedule/travelTimeGridUtils';
+import { getTripLineageLookupKey } from '../utils/schedule/tripLineage';
 
 // Time Band type
 interface TimeBandDisplay {
@@ -31,6 +32,8 @@ interface TravelTimeGridProps {
     onRecoveryAdjust?: (stopName: string, delta: number, routeName: string) => void;
     onSingleTripAdjust?: (tripId: string, toStop: string, delta: number, routeName: string) => void;
     onSingleRecoveryAdjust?: (tripId: string, stopName: string, delta: number, routeName: string) => void;
+    originalSchedules?: MasterRouteTable[];
+    onResetOriginals?: () => void;
     bands?: TimeBandDisplay[];
     analysis?: TripBucketAnalysisDisplay[];
     segmentNames?: string[];
@@ -46,13 +49,42 @@ const getTravelColor = (minutes: number): string => {
     return 'bg-rose-50 text-rose-700';
 };
 
-export const TravelTimeGrid: React.FC<TravelTimeGridProps> = ({ schedules, onBulkAdjust, onRecoveryAdjust, onSingleTripAdjust, onSingleRecoveryAdjust, bands, analysis, segmentNames }) => {
+const getDeltaMinutes = (currentValue: number, originalValue?: number | null): number | null => {
+    if (originalValue === null || originalValue === undefined) return null;
+    const diff = currentValue - originalValue;
+    return diff === 0 ? null : diff;
+};
+
+const DeltaBadge: React.FC<{ diff: number }> = ({ diff }) => (
+    <span className={`text-[9px] font-bold px-0.5 rounded ${diff > 0 ? 'text-green-600 bg-green-50' : 'text-red-600 bg-red-50'}`}>
+        {diff > 0 ? '+' : ''}{diff}
+    </span>
+);
+
+export const TravelTimeGrid: React.FC<TravelTimeGridProps> = ({ schedules, onBulkAdjust, onRecoveryAdjust, onSingleTripAdjust, onSingleRecoveryAdjust, originalSchedules, onResetOriginals, bands, analysis, segmentNames }) => {
     const [expandedRoute, setExpandedRoute] = useState<string | null>(null);
     const [isFullScreen, setIsFullScreen] = useState(false);
+    const [showDeltas, setShowDeltas] = useState(true);
     const displaySegmentNames = useMemo(
         () => (segmentNames || []).filter(segmentName => !isStationaryTravelSegment(segmentName)),
         [segmentNames]
     );
+    const hasOriginalSchedules = !!originalSchedules?.length;
+
+    useEffect(() => {
+        if (hasOriginalSchedules) setShowDeltas(true);
+    }, [hasOriginalSchedules]);
+
+    const originalTripLookup = useMemo(() => {
+        const lookup = new Map<string, MasterTrip>();
+        (originalSchedules || []).forEach(table => {
+            table.trips.forEach(trip => {
+                lookup.set(getTripLineageLookupKey(table.routeName, trip), trip);
+            });
+        });
+        return lookup;
+    }, [originalSchedules]);
+
     const formatHourLabel = (hour: number) => {
         if (hour >= 24) return `${hour}:00`;
 
@@ -76,21 +108,30 @@ export const TravelTimeGrid: React.FC<TravelTimeGridProps> = ({ schedules, onBul
             const stopPairs = rawPairs.filter(p => !p.isStationary);
 
             // hour -> stopPairIndex -> first trip found
-            const hourlyData: Record<number, Record<number, { travel: number; recovery: number; tripId: string }>> = {};
+            const hourlyData: Record<number, Record<number, { travel: number; recovery: number; tripId: string; travelDelta: number | null; recoveryDelta: number | null }>> = {};
 
             const orderedTrips = [...table.trips].sort((a, b) => a.startTime - b.startTime);
             const selectedHourSources: Record<number, string> = {};
             const tripsWithVisibleGridData = orderedTrips
                 .map(trip => {
-                    const tripRowData: Record<number, { travel: number; recovery: number; tripId: string }> = {};
+                    const tripRowData: Record<number, { travel: number; recovery: number; tripId: string; travelDelta: number | null; recoveryDelta: number | null }> = {};
                     let firstVisibleDataMinute: number | null = null;
+                    const originalTrip = originalTripLookup.get(getTripLineageLookupKey(table.routeName, trip));
 
                     stopPairs.forEach((pair, filteredIdx) => {
                         const segment = resolveGridSegmentTimes(trip, pair.from, pair.to);
                         if (!segment) return;
 
                         const recovery = trip.recoveryTimes?.[pair.to] || 0;
-                        tripRowData[filteredIdx] = { travel: segment.travelMinutes, recovery, tripId: trip.id };
+                        const originalSegment = originalTrip ? resolveGridSegmentTimes(originalTrip, pair.from, pair.to) : null;
+                        const originalRecovery = originalTrip?.recoveryTimes?.[pair.to] ?? 0;
+                        tripRowData[filteredIdx] = {
+                            travel: segment.travelMinutes,
+                            recovery,
+                            tripId: trip.id,
+                            travelDelta: getDeltaMinutes(segment.travelMinutes, originalSegment?.travelMinutes),
+                            recoveryDelta: getDeltaMinutes(recovery, originalTrip ? originalRecovery : null)
+                        };
                         firstVisibleDataMinute = firstVisibleDataMinute === null
                             ? segment.arrival
                             : Math.min(firstVisibleDataMinute, segment.arrival);
@@ -108,7 +149,7 @@ export const TravelTimeGrid: React.FC<TravelTimeGridProps> = ({ schedules, onBul
                 })
                 .filter((entry): entry is {
                     trip: typeof orderedTrips[number];
-                    tripRowData: Record<number, { travel: number; recovery: number; tripId: string }>;
+                    tripRowData: Record<number, { travel: number; recovery: number; tripId: string; travelDelta: number | null; recoveryDelta: number | null }>;
                     firstVisibleDataMinute: number;
                 } => !!entry)
                 .sort((a, b) => (
@@ -141,7 +182,7 @@ export const TravelTimeGrid: React.FC<TravelTimeGridProps> = ({ schedules, onBul
                 )
             };
         });
-    }, [schedules]);
+    }, [originalTripLookup, schedules]);
 
     // Calculate band summary with segment breakdowns (p50 and p80)
     const bandSummary = useMemo(() => {
@@ -332,13 +373,35 @@ export const TravelTimeGrid: React.FC<TravelTimeGridProps> = ({ schedules, onBul
                         <span className="text-indigo-600">Recovery</span>
                     </div>
                 </div>
-                <button
-                    onClick={() => setIsFullScreen(!isFullScreen)}
-                    className="flex items-center gap-1.5 px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded text-xs font-medium text-gray-600 transition-colors"
-                >
-                    {isFullScreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-                    {isFullScreen ? 'Exit' : 'Fullscreen'}
-                </button>
+                <div className="flex items-center gap-2">
+                    {hasOriginalSchedules && (
+                        <>
+                            <button
+                                onClick={() => setShowDeltas(v => !v)}
+                                className={`px-2 py-1 rounded text-xs font-semibold border ${showDeltas ? 'bg-green-50 text-green-700 border-green-200' : 'bg-white text-gray-700 border-gray-300'}`}
+                                title="Show travel and recovery differences from original"
+                            >
+                                +/- Deltas
+                            </button>
+                            {showDeltas && onResetOriginals && (
+                                <button
+                                    onClick={onResetOriginals}
+                                    className="px-2 py-1 rounded text-xs font-semibold border bg-white text-gray-700 border-gray-300 hover:bg-red-50 hover:text-red-700 hover:border-red-200"
+                                    title="Revert schedule to original travel and recovery values"
+                                >
+                                    Reset Deltas
+                                </button>
+                            )}
+                        </>
+                    )}
+                    <button
+                        onClick={() => setIsFullScreen(!isFullScreen)}
+                        className="flex items-center gap-1.5 px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded text-xs font-medium text-gray-600 transition-colors"
+                    >
+                        {isFullScreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+                        {isFullScreen ? 'Exit' : 'Fullscreen'}
+                    </button>
+                </div>
             </div>
 
             {routeGrids.map((grid, gridIdx) => {
@@ -444,6 +507,9 @@ export const TravelTimeGrid: React.FC<TravelTimeGridProps> = ({ schedules, onBul
                                                                         <span className="text-sm font-bold text-gray-800 min-w-[20px]">
                                                                             {data.travel}
                                                                         </span>
+                                                                        {showDeltas && data.travelDelta !== null && (
+                                                                            <DeltaBadge diff={data.travelDelta} />
+                                                                        )}
                                                                         <button
                                                                             onClick={() => onSingleTripAdjust?.(data.tripId, pair.to, 1, grid.routeName)}
                                                                             className="opacity-0 group-hover/cell:opacity-100 group-focus-within/cell:opacity-100 focus:opacity-100 p-0.5 hover:bg-gray-100 text-gray-400 hover:text-gray-700 rounded transition-opacity"
@@ -453,7 +519,7 @@ export const TravelTimeGrid: React.FC<TravelTimeGridProps> = ({ schedules, onBul
                                                                         </button>
                                                                     </div>
                                                                     {/* Recovery Time Row */}
-                                                                    {data.recovery > 0 && (
+                                                                    {(data.recovery > 0 || (showDeltas && data.recoveryDelta !== null)) && (
                                                                         <div className="flex items-center gap-0.5">
                                                                             <button
                                                                                 onClick={() => onSingleRecoveryAdjust?.(data.tripId, pair.to, -1, grid.routeName)}
@@ -463,8 +529,11 @@ export const TravelTimeGrid: React.FC<TravelTimeGridProps> = ({ schedules, onBul
                                                                                 <ChevronDown size={8} />
                                                                             </button>
                                                                             <span className="text-[10px] font-bold text-indigo-600">
-                                                                                +{data.recovery}r
+                                                                                {data.recovery > 0 ? `+${data.recovery}r` : '0r'}
                                                                             </span>
+                                                                            {showDeltas && data.recoveryDelta !== null && (
+                                                                                <DeltaBadge diff={data.recoveryDelta} />
+                                                                            )}
                                                                             <button
                                                                                 onClick={() => onSingleRecoveryAdjust?.(data.tripId, pair.to, 1, grid.routeName)}
                                                                                 className="opacity-0 group-hover/cell:opacity-100 group-focus-within/cell:opacity-100 focus:opacity-100 p-0.5 hover:bg-indigo-100 text-indigo-400 hover:text-indigo-700 rounded transition-opacity"

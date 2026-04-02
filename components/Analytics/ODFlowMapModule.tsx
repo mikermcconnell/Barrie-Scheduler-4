@@ -15,9 +15,14 @@ import { AlertTriangle, Download, Search } from 'lucide-react';
 import { ChartCard } from './AnalyticsShared';
 import type { ODMatrixDataSummary, GeocodeCache, GeocodedLocation } from '../../utils/od-matrix/odMatrixTypes';
 import type { ODRouteEstimationResult } from '../../utils/od-matrix/odRouteEstimation';
-import { isWithinCanada } from '../../utils/od-matrix/odMatrixGeocoder';
 import { exportStopReportExcel } from '../../utils/od-matrix/odReportExporter';
 import { buildStopRouteSummaryRows, getRoutePathLabel, getViaStopsLabel } from '../../utils/od-matrix/odStopRouteSummary';
+import {
+    buildScopedGeoLookup,
+    filterODPairs,
+    getGeocodedPairs,
+    type ODDirectionFilter,
+} from '../../utils/od-matrix/odFlowMapMetrics';
 import { ArcLayer, MapBase, quadraticBezierArc } from '../shared';
 
 interface ODFlowMapModuleProps {
@@ -25,14 +30,18 @@ interface ODFlowMapModuleProps {
     geocodeCache: GeocodeCache | null;
     onFixMissingCoordinates?: () => void;
     onMapReady?: (el: HTMLDivElement) => void;
+    isolatedStation: string | null;
     onIsolatedStationChange?: (station: string | null) => void;
+    minJourneys: number;
+    onMinJourneysChange?: (value: number) => void;
+    directionFilter: ODDirectionFilter;
+    onDirectionFilterChange?: (value: ODDirectionFilter) => void;
     routeEstimation?: ODRouteEstimationResult | null;
     routeEstimationLoading?: boolean;
 }
 
 type ViewMode = 'map' | 'table';
 type TopNOption = 10 | 25 | 50 | 100 | 'all' | 'low10' | 'low25';
-type DirectionFilter = 'all' | 'inbound' | 'outbound';
 
 const TOP_N_OPTIONS: { value: TopNOption; label: string }[] = [
     { value: 10, label: 'Top 10' },
@@ -382,7 +391,12 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
     geocodeCache,
     onFixMissingCoordinates,
     onMapReady,
+    isolatedStation,
     onIsolatedStationChange,
+    minJourneys,
+    onMinJourneysChange,
+    directionFilter,
+    onDirectionFilterChange,
     routeEstimation,
     routeEstimationLoading = false,
 }) => {
@@ -391,9 +405,6 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
 
     const [viewMode, setViewMode] = useState<ViewMode>('map');
     const [topNOption, setTopNOption] = useState<TopNOption>(25);
-    const [minJourneys, setMinJourneys] = useState(1);
-    const [isolatedStation, setIsolatedStation] = useState<string | null>(null);
-    const [directionFilter, setDirectionFilter] = useState<DirectionFilter>('all');
     const [isFullscreen, setIsFullscreen] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [showDropdown, setShowDropdown] = useState(false);
@@ -409,57 +420,28 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
     // Suppress unused state warning — showLabels is a UI toggle kept for future use
     void showLabels;
 
-    useEffect(() => {
-        onIsolatedStationChange?.(isolatedStation);
-    }, [isolatedStation, onIsolatedStationChange]);
-
     const { geoLookup, outsideCanadaStations } = useMemo((): {
         geoLookup: Record<string, GeocodedLocation>;
         outsideCanadaStations: string[];
-    } => {
-        const lookup: Record<string, GeocodedLocation> = {};
-        const outside = new Set<string>();
+    } => buildScopedGeoLookup(data.stations, geocodeCache), [data.stations, geocodeCache]);
 
-        if (geocodeCache?.stations) {
-            Object.entries(geocodeCache.stations).forEach(([name, loc]) => {
-                if (isWithinCanada(loc.lat, loc.lon)) lookup[name] = loc;
-                else outside.add(name);
-            });
-        }
-
-        data.stations.forEach((station) => {
-            if (!station.geocode) return;
-            if (isWithinCanada(station.geocode.lat, station.geocode.lon)) lookup[station.name] = station.geocode;
-            else outside.add(station.name);
-        });
-
-        return {
-            geoLookup: lookup,
-            outsideCanadaStations: Array.from(outside).sort(),
-        };
-    }, [data.stations, geocodeCache]);
-
-    const geocodedCount = useMemo(() => Object.keys(geoLookup).length, [geoLookup]);
+    const geocodedCount = useMemo(
+        () => data.stations.filter(station => !!geoLookup[station.name]).length,
+        [data.stations, geoLookup],
+    );
     const ungeocodedCount = Math.max(0, data.stationCount - geocodedCount);
 
-    const geocodedPairs = useMemo(() => (
-        data.pairs
-            .filter(pair => geoLookup[pair.origin] && geoLookup[pair.destination])
-            .sort((a, b) => b.journeys - a.journeys)
-    ), [data.pairs, geoLookup]);
+    const geocodedPairs = useMemo(
+        () => getGeocodedPairs(data.pairs, geoLookup),
+        [data.pairs, geoLookup],
+    );
 
-    const filteredPairs = useMemo(() => {
-        let pairs = geocodedPairs.filter(pair => pair.journeys >= minJourneys);
-        if (isolatedStation) {
-            pairs = pairs.filter(pair => pair.origin === isolatedStation || pair.destination === isolatedStation);
-            if (directionFilter === 'outbound') {
-                pairs = pairs.filter(pair => pair.origin === isolatedStation);
-            } else if (directionFilter === 'inbound') {
-                pairs = pairs.filter(pair => pair.destination === isolatedStation);
-            }
-        }
-        return pairs;
-    }, [geocodedPairs, minJourneys, isolatedStation, directionFilter]);
+    const filteredPairs = useMemo(() => filterODPairs({
+        pairs: geocodedPairs,
+        isolatedStation,
+        directionFilter,
+        minJourneys,
+    }), [geocodedPairs, isolatedStation, directionFilter, minJourneys]);
 
     const displayedPairs = useMemo(() => {
         if (topNOption === 'all') return filteredPairs;
@@ -478,7 +460,12 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
         ? (displayedTrips / data.totalJourneys) * 100
         : 0;
     const pairsMeetingThreshold = useMemo(
-        () => geocodedPairs.filter(pair => pair.journeys >= minJourneys).length,
+        () => filterODPairs({
+            pairs: geocodedPairs,
+            isolatedStation: null,
+            directionFilter: 'all',
+            minJourneys,
+        }).length,
         [geocodedPairs, minJourneys]
     );
     const routeMatchLookup = useMemo(() => {
@@ -493,10 +480,11 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
             isolatedStation,
             pairs: geocodedPairs,
             minJourneys,
+            directionFilter,
             routeEstimation,
             routeEstimationLoading,
         })
-    ), [isolatedStation, geocodedPairs, minJourneys, routeEstimation, routeEstimationLoading]);
+    ), [isolatedStation, geocodedPairs, minJourneys, directionFilter, routeEstimation, routeEstimationLoading]);
 
     const searchResults = useMemo(() => {
         if (!searchQuery.trim()) return [];
@@ -528,10 +516,6 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
         document.addEventListener('mousedown', onClickOutside);
         return () => document.removeEventListener('mousedown', onClickOutside);
     }, []);
-
-    useEffect(() => {
-        if (!isolatedStation) setDirectionFilter('all');
-    }, [isolatedStation]);
 
     const zoneStats = useMemo(() => {
         const stats = new Map<string, { originTrips: number; destinationTrips: number }>();
@@ -846,7 +830,7 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
                             max={Math.max(1, Math.min(2000, geocodedPairs[0]?.journeys || 1))}
                             step={1}
                             value={minJourneys}
-                            onChange={(e) => setMinJourneys(Number(e.target.value))}
+                            onChange={(e) => onMinJourneysChange?.(Number(e.target.value))}
                             className="w-28 accent-gray-900"
                         />
                         <span className="text-sm font-medium text-gray-700 w-14 text-right">{minJourneys.toLocaleString()}</span>
@@ -856,7 +840,7 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
                         {(['all', 'outbound', 'inbound'] as const).map(dir => (
                             <button
                                 key={dir}
-                                onClick={() => setDirectionFilter(dir)}
+                                onClick={() => onDirectionFilterChange?.(dir)}
                                 disabled={!isolatedStation}
                                 className={`px-2.5 py-1.5 text-xs font-medium transition-colors ${
                                     directionFilter === dir
@@ -891,7 +875,8 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
                                     <button
                                         key={name}
                                         onClick={() => {
-                                            setIsolatedStation(name);
+                                            onIsolatedStationChange?.(name);
+                                            onDirectionFilterChange?.('all');
                                             setSearchQuery('');
                                             setShowDropdown(false);
                                         }}
@@ -928,7 +913,10 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
                                 Filtered stop: {isolatedStation}
                             </span>
                             <button
-                                onClick={() => setIsolatedStation(null)}
+                                onClick={() => {
+                                    onIsolatedStationChange?.(null);
+                                    onDirectionFilterChange?.('all');
+                                }}
                                 className="px-2.5 py-0.5 rounded-md bg-violet-700 text-white font-semibold hover:bg-violet-800"
                             >
                                 Clear stop filter
@@ -1029,7 +1017,10 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
                                         <Marker key={`bg-${name}`} longitude={geo.lon} latitude={geo.lat} anchor="center">
                                             <button
                                                 type="button"
-                                                onClick={() => setIsolatedStation((prev) => prev === name ? null : name)}
+                                                onClick={() => {
+                                                    onIsolatedStationChange?.(isolatedStation === name ? null : name);
+                                                    onDirectionFilterChange?.('all');
+                                                }}
                                                 onContextMenu={(event) => handleStationContextMenu(event, name)}
                                                 className="border-0 bg-transparent p-0"
                                                 title={name}
@@ -1059,7 +1050,7 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
                                                     type="button"
                                                     onClick={() => {
                                                         if (isSingleStation) {
-                                                            setIsolatedStation((prev) => (prev === stationName ? null : stationName));
+                                                            onIsolatedStationChange?.(isolatedStation === stationName ? null : stationName);
                                                             return;
                                                         }
                                                         const zoom = mapRef.current?.getMap().getZoom() ?? 8;
@@ -1135,8 +1126,8 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
                                     </div>
                                     <button
                                         onClick={() => {
-                                            setIsolatedStation(contextMenu.station);
-                                            setDirectionFilter('outbound');
+                                            onIsolatedStationChange?.(contextMenu.station);
+                                            onDirectionFilterChange?.('outbound');
                                             setContextMenu(null);
                                         }}
                                         className="w-full text-left px-3 py-1.5 text-gray-600 hover:bg-gray-50"
@@ -1145,8 +1136,8 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
                                     </button>
                                     <button
                                         onClick={() => {
-                                            setIsolatedStation(contextMenu.station);
-                                            setDirectionFilter('inbound');
+                                            onIsolatedStationChange?.(contextMenu.station);
+                                            onDirectionFilterChange?.('inbound');
                                             setContextMenu(null);
                                         }}
                                         className="w-full text-left px-3 py-1.5 text-gray-600 hover:bg-gray-50"
@@ -1155,8 +1146,8 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
                                     </button>
                                     <button
                                         onClick={() => {
-                                            setIsolatedStation(null);
-                                            setDirectionFilter('all');
+                                            onIsolatedStationChange?.(null);
+                                            onDirectionFilterChange?.('all');
                                             setContextMenu(null);
                                         }}
                                         className="w-full text-left px-3 py-1.5 text-gray-600 hover:bg-gray-50"

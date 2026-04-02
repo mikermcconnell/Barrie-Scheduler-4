@@ -616,6 +616,57 @@ describe('ScheduleEditor interactions', () => {
     }
   });
 
+  it('uses the displayed departure, not a stale stored stop value, when nudging a recovery stop', async () => {
+    onSchedulesChangeMock.mockReset();
+    roundTripAdjustMock.mockReset();
+    roundTripAdjustMock.mockReturnValue({
+      tripId: 'north-trip',
+      stopName: 'Stop 2',
+      delta: 1
+    });
+
+    const recoverySchedules = buildRecoverySchedules('7:30 AM', '7:31 AM', 5);
+
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    flushSync(() => {
+      root?.render(
+        <ScheduleEditor
+          schedules={recoverySchedules}
+          teamId="team-1"
+          userId="user-1"
+          onSchedulesChange={onSchedulesChangeMock}
+          onSaveVersion={onSaveVersionMock}
+          showSuccessToast={showSuccessToastMock}
+        />
+      );
+    });
+
+    await flushPromises();
+
+    const adjustButton = container?.querySelector('[data-testid="round-trip-adjust"]');
+    flushSync(() => {
+      adjustButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const updatedSchedules = onSchedulesChangeMock.mock.calls.at(-1)?.[0];
+    const updatedNorthTrip = updatedSchedules?.[0]?.trips?.[0];
+
+    expect(updatedNorthTrip?.arrivalTimes?.['Stop 2']).toBe('7:30 AM');
+    expect(updatedNorthTrip?.stops?.['Stop 2']).toBe('7:36 AM');
+    expect(updatedNorthTrip?.recoveryTimes?.['Stop 2']).toBe(6);
+    expect(updatedNorthTrip?.stops?.['Stop 3']).toBe('8:01 AM');
+
+    flushSync(() => {
+      root?.unmount();
+    });
+    container?.remove();
+    root = null;
+    container = null;
+  });
+
   it('shows save success only after Ctrl+S save resolves', async () => {
     onSaveVersionMock.mockResolvedValue(undefined);
     renderEditor();
