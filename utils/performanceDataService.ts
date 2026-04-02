@@ -22,6 +22,7 @@ import {
 import { db, storage } from './firebase';
 import type { PerformanceDataSummary, PerformanceMetadata } from './performanceDataTypes';
 import { aggregateMonthlySnapshots } from './performanceDataAggregator';
+import { buildPerformanceOverviewSummary } from './performanceOverviewSummary';
 import { saveMonthlySnapshots } from './performanceSnapshotService';
 
 // ============ HELPERS ============
@@ -32,6 +33,10 @@ function getMetadataRef(teamId: string) {
 
 function getStoragePath(teamId: string, timestamp: string) {
     return `teams/${teamId}/performanceData/${timestamp}.json`;
+}
+
+function getOverviewStoragePath(teamId: string, timestamp: string) {
+    return `teams/${teamId}/performanceData/${timestamp}-overview.json`;
 }
 
 export function mergePerformanceSummaryMetadata(
@@ -50,6 +55,25 @@ export function mergePerformanceSummaryMetadata(
             runtimeLogicVersion: metadata.runtimeLogicVersion ?? summary.metadata.runtimeLogicVersion,
             cleanHistoryStartDate: metadata.cleanHistoryStartDate ?? summary.metadata.cleanHistoryStartDate,
             storagePath: metadata.storagePath || summary.metadata.storagePath,
+            overviewStoragePath: metadata.overviewStoragePath || summary.metadata.overviewStoragePath,
+        },
+    };
+}
+
+export function mergePerformanceOverviewMetadata(
+    summary: PerformanceDataSummary,
+    metadata: PerformanceMetadata,
+): PerformanceDataSummary {
+    return {
+        ...summary,
+        metadata: {
+            ...summary.metadata,
+            importedAt: metadata.importedAt || summary.metadata.importedAt,
+            importedBy: metadata.importedBy || summary.metadata.importedBy,
+            runtimeLogicVersion: metadata.runtimeLogicVersion ?? summary.metadata.runtimeLogicVersion,
+            cleanHistoryStartDate: metadata.cleanHistoryStartDate ?? summary.metadata.cleanHistoryStartDate,
+            storagePath: metadata.storagePath || summary.metadata.storagePath,
+            overviewStoragePath: metadata.overviewStoragePath || summary.metadata.overviewStoragePath,
         },
     };
 }
@@ -63,12 +87,14 @@ export async function savePerformanceData(
 ): Promise<void> {
     const timestamp = Date.now().toString();
     const storagePath = getStoragePath(teamId, timestamp);
+    const overviewStoragePath = getOverviewStoragePath(teamId, timestamp);
     const metadataRef = getMetadataRef(teamId);
 
     // Merge with existing data — new days replace old, existing days are kept
     let merged = summary;
     const existing = await getDoc(metadataRef);
     const oldPath: string | null = existing.exists() ? existing.data().storagePath || null : null;
+    const oldOverviewPath: string | null = existing.exists() ? existing.data().overviewStoragePath || null : null;
     if (oldPath) {
         try {
             const oldRef = ref(storage, oldPath);
@@ -114,9 +140,14 @@ export async function savePerformanceData(
         }
     }
 
+    const overviewSummary = buildPerformanceOverviewSummary(merged);
+
     // Upload merged summary JSON to Storage
     const storageRef = ref(storage, storagePath);
     await uploadString(storageRef, JSON.stringify(merged), 'raw', {
+        contentType: 'application/json',
+    });
+    await uploadString(ref(storage, overviewStoragePath), JSON.stringify(overviewSummary), 'raw', {
         contentType: 'application/json',
     });
 
@@ -125,6 +156,7 @@ export async function savePerformanceData(
         importedAt: serverTimestamp(),
         importedBy: userId,
         storagePath,
+        overviewStoragePath,
         dateRange: merged.metadata.dateRange,
         dayCount: merged.metadata.dayCount,
         totalRecords: merged.metadata.totalRecords,
@@ -138,6 +170,13 @@ export async function savePerformanceData(
             await deleteObject(ref(storage, oldPath));
         } catch {
             // Old file may already be gone — ignore
+        }
+    }
+    if (oldOverviewPath && oldOverviewPath !== overviewStoragePath) {
+        try {
+            await deleteObject(ref(storage, oldOverviewPath));
+        } catch {
+            // Old overview file may already be gone — ignore
         }
     }
 }
@@ -159,6 +198,7 @@ export async function getPerformanceMetadata(teamId: string): Promise<Performanc
             runtimeLogicVersion: typeof data.runtimeLogicVersion === 'number' ? data.runtimeLogicVersion : undefined,
             cleanHistoryStartDate: typeof data.cleanHistoryStartDate === 'string' ? data.cleanHistoryStartDate : undefined,
             storagePath: data.storagePath || '',
+            overviewStoragePath: data.overviewStoragePath || '',
         };
     } catch (error) {
         console.error('Error getting performance metadata:', error);
@@ -187,6 +227,32 @@ export async function getPerformanceData(
     }
 }
 
+export async function getPerformanceOverviewData(
+    teamId: string,
+    metadataOverride?: PerformanceMetadata | null,
+): Promise<PerformanceDataSummary | null> {
+    try {
+        const metadata = metadataOverride ?? await getPerformanceMetadata(teamId);
+        if (!metadata) return null;
+
+        if (!metadata.overviewStoragePath) {
+            const fullSummary = await getPerformanceData(teamId, metadata);
+            return fullSummary ? buildPerformanceOverviewSummary(fullSummary) : null;
+        }
+
+        const storageRef = ref(storage, metadata.overviewStoragePath);
+        const url = await getDownloadURL(storageRef);
+        const response = await fetch(url);
+        if (!response.ok) return null;
+
+        const summary: PerformanceDataSummary = await response.json();
+        return mergePerformanceOverviewMetadata(summary, metadata);
+    } catch (error) {
+        console.error('Error getting performance overview data:', error);
+        return null;
+    }
+}
+
 // ============ DELETE ============
 
 export async function deletePerformanceData(teamId: string): Promise<void> {
@@ -195,9 +261,17 @@ export async function deletePerformanceData(teamId: string): Promise<void> {
 
     if (docSnap.exists()) {
         const storagePath = docSnap.data().storagePath;
+        const overviewStoragePath = docSnap.data().overviewStoragePath;
         if (storagePath) {
             try {
                 await deleteObject(ref(storage, storagePath));
+            } catch {
+                // File may already be gone
+            }
+        }
+        if (overviewStoragePath) {
+            try {
+                await deleteObject(ref(storage, overviewStoragePath));
             } catch {
                 // File may already be gone
             }

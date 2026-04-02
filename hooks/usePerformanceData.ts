@@ -1,5 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getPerformanceData, getPerformanceMetadata, savePerformanceData } from '../utils/performanceDataService';
+import {
+    getPerformanceData,
+    getPerformanceMetadata,
+    getPerformanceOverviewData,
+    savePerformanceData,
+} from '../utils/performanceDataService';
 import type { PerformanceDataSummary, PerformanceMetadata } from '../utils/performanceDataTypes';
 
 const PERFORMANCE_QUERY_STALE_MS = 1000 * 60 * 30;
@@ -39,6 +44,25 @@ export function usePerformanceDataQuery(
     });
 }
 
+// Fetch lightweight overview data
+export function usePerformanceOverviewQuery(
+    teamId: string | undefined,
+    enabled = true,
+    metadata?: PerformanceMetadata | null,
+) {
+    return useQuery({
+        queryKey: ['performanceOverview', teamId, metadata?.overviewStoragePath ?? metadata?.storagePath ?? null],
+        queryFn: async () => {
+            if (!teamId) return null;
+            return await getPerformanceOverviewData(teamId, metadata);
+        },
+        enabled: !!teamId && enabled,
+        staleTime: PERFORMANCE_QUERY_STALE_MS,
+        gcTime: PERFORMANCE_QUERY_GC_MS,
+        refetchOnWindowFocus: false,
+    });
+}
+
 // Mutation for saving new data (to invalidate queries)
 export function useSavePerformanceData(teamId: string | undefined) {
     const queryClient = useQueryClient();
@@ -51,6 +75,7 @@ export function useSavePerformanceData(teamId: string | undefined) {
         onSuccess: () => {
             if (teamId) {
                 queryClient.invalidateQueries({ queryKey: ['performanceMetadata', teamId] });
+                queryClient.invalidateQueries({ queryKey: ['performanceOverview', teamId] });
                 queryClient.invalidateQueries({ queryKey: ['performanceData', teamId] });
             }
         }

@@ -3,7 +3,11 @@ import { ArrowRight, Loader2, Activity, AlertTriangle, CheckCircle2, ShieldAlert
 import { useTeam } from '../contexts/TeamContext';
 import { useAuth } from '../contexts/AuthContext';
 import { TeamManagement } from '../TeamManagement';
-import { usePerformanceMetadataQuery, usePerformanceDataQuery } from '../../hooks/usePerformanceData';
+import {
+    usePerformanceMetadataQuery,
+    usePerformanceDataQuery,
+    usePerformanceOverviewQuery,
+} from '../../hooks/usePerformanceData';
 import { lazyWithRetry } from '../../utils/lazyWithRetry';
 import { buildPerformanceMetadataHealth } from '../../utils/performanceImportHealth';
 
@@ -90,8 +94,10 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onCl
 
     const metadataQuery = usePerformanceMetadataQuery(team?.id);
     const hasExistingData = metadataQuery.data != null;
-    const shouldLoadWorkspaceData = hasExistingData && (view === 'workspace' || (autoOpen && view === 'loading'));
-    const dataQuery = usePerformanceDataQuery(team?.id, shouldLoadWorkspaceData, metadataQuery.data);
+    const shouldLoadOverviewData = hasExistingData && (view === 'workspace' || (autoOpen && view === 'loading'));
+    const shouldLoadFullData = hasExistingData && view === 'workspace' && !!metadataQuery.data?.overviewStoragePath;
+    const overviewQuery = usePerformanceOverviewQuery(team?.id, shouldLoadOverviewData, metadataQuery.data);
+    const dataQuery = usePerformanceDataQuery(team?.id, shouldLoadFullData, metadataQuery.data);
     const quickHealth = useMemo(
         () => buildPerformanceMetadataHealth(metadataQuery.data),
         [metadataQuery.data],
@@ -197,13 +203,17 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onCl
             return <DashboardLoadingState label="Loading performance data..." />;
         }
 
+        const workspaceData = dataQuery.data ?? overviewQuery.data;
+        const detailsReady = !!dataQuery.data || !metadataQuery.data.overviewStoragePath;
+
         return (
             <div className="h-full overflow-auto custom-scrollbar p-6">
                 <div className="max-w-7xl mx-auto">
-                    {dataQuery.data ? (
+                    {workspaceData ? (
                         <Suspense fallback={<DashboardLoadingState label="Loading dashboard..." />}>
                             <PerformanceWorkspace
-                                data={dataQuery.data}
+                                data={workspaceData}
+                                detailsReady={detailsReady}
                                 onReimport={() => {
                                     setImportReturnTarget('workspace');
                                     setView('import');

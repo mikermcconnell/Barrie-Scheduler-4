@@ -539,6 +539,7 @@ export interface PerformanceMetadata {
   runtimeLogicVersion?: number;
   cleanHistoryStartDate?: string;
   storagePath?: string;
+  overviewStoragePath?: string;
 }
 
 // ─── Import State (ephemeral, not stored) ───────────────────────────

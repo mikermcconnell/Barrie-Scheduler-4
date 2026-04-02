@@ -15,6 +15,7 @@ interface PerformanceWorkspaceProps {
     data: PerformanceDataSummary;
     onReimport: () => void;
     onBack: () => void;
+    detailsReady?: boolean;
 }
 
 interface TabConfig {
@@ -77,13 +78,20 @@ const PerformancePanelLoading: React.FC<{ label: string }> = ({ label }) => (
     </div>
 );
 
-export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data, onReimport, onBack }) => {
+const OVERVIEW_ONLY_TIME_RANGES: TimeRange[] = ['past-week', 'single-day'];
+
+export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data, onReimport, onBack, detailsReady = true }) => {
     const allowIncompleteTabs = import.meta.env.DEV || isLocalhost();
     const tabs = useMemo(
         () => TAB_CONFIG
             .filter(tab => isPerformanceTabVisible(tab.id))
-            .map(tab => ({ ...tab, enabled: tab.status === 'complete' || allowIncompleteTabs })),
-        [allowIncompleteTabs]
+            .map(tab => ({
+                ...tab,
+                enabled: tab.id === 'overview'
+                    ? true
+                    : detailsReady && (tab.status === 'complete' || allowIncompleteTabs),
+            })),
+        [allowIncompleteTabs, detailsReady]
     );
     const [activeTab, setActiveTab] = useState<PerformanceTab>('overview');
     const [timeRanges, setTimeRanges] = useState<Partial<Record<PerformanceTab, TimeRange>>>({});
@@ -92,6 +100,7 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data
 
     const timeRange = timeRanges[activeTab] ?? 'past-week';
     const tabBarRef = useRef<HTMLDivElement>(null);
+    const allowedTimeRanges = detailsReady ? undefined : OVERVIEW_ONLY_TIME_RANGES;
 
     const availableDayTypes = useMemo(() => {
         const types = new Set(data.dailySummaries.map(d => d.dayType));
@@ -123,6 +132,17 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data
         if (selectedDate && availableDates.includes(selectedDate)) return;
         setSelectedDate(latestAvailableDate);
     }, [timeRange, selectedDate, availableDates, latestAvailableDate]);
+
+    useEffect(() => {
+        if (detailsReady) return;
+        if (activeTab !== 'overview') {
+            setActiveTab('overview');
+        }
+        if (!OVERVIEW_ONLY_TIME_RANGES.includes(timeRange)) {
+            setTimeRanges(prev => ({ ...prev, overview: 'past-week' }));
+            setSelectedDate(null);
+        }
+    }, [activeTab, detailsReady, timeRange]);
 
     useEffect(() => {
         if (tabs.some(tab => tab.id === activeTab)) return;
@@ -226,8 +246,14 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data
                 </button>
             </div>
 
-            {isFeatureEnabled('operationsImportHealth') && (
+            {detailsReady && isFeatureEnabled('operationsImportHealth') && (
                 <PerformanceImportHealthPanel data={data} />
+            )}
+
+            {!detailsReady && (
+                <div className="mb-3 rounded-xl border border-cyan-200 bg-cyan-50/70 px-4 py-3 text-sm text-cyan-800">
+                    Showing the most recent 7 days on Overview first. Detailed tabs are still loading in the background.
+                </div>
             )}
 
             {/* Tab Bar */}
@@ -252,6 +278,9 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data
                             >
                                 <Icon size={15} />
                                 {tab.label}
+                                {!detailsReady && tab.id !== 'overview' && (
+                                    <span className="ml-1 px-1.5 py-0.5 text-[9px] font-bold bg-cyan-100 text-cyan-700 border border-cyan-200 rounded-full uppercase">Loading</span>
+                                )}
                                 {tab.badge && (
                                     <span className="ml-1 px-1.5 py-0.5 text-[9px] font-bold bg-amber-100 text-amber-700 border border-amber-200 rounded-full uppercase">{tab.badge}</span>
                                 )}
@@ -284,14 +313,15 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data
                         onTimeRangeChange={setTimeRange}
                         selectedDate={selectedDate}
                         onSelectedDateChange={setSelectedDate}
-                        availableDates={availableDates}
-                        dayTypeFilter={dayTypeFilter}
-                        onDayTypeChange={setDayTypeFilter}
-                        availableDayTypes={availableDayTypes}
-                        filteredDayCount={filteredData.dailySummaries.length}
-                    />
-                </div>
-            )}
+                            availableDates={availableDates}
+                            dayTypeFilter={dayTypeFilter}
+                            onDayTypeChange={setDayTypeFilter}
+                            availableDayTypes={availableDayTypes}
+                            filteredDayCount={filteredData.dailySummaries.length}
+                            allowedTimeRanges={allowedTimeRanges}
+                        />
+                    </div>
+                )}
 
             {/* Panel */}
             <div className="bg-white border border-t-0 border-gray-200 rounded-b-lg p-5 min-h-[500px]">

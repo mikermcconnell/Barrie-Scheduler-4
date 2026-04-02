@@ -25,6 +25,7 @@ describe('performanceDataService metadata merge', () => {
             runtimeLogicVersion: 3,
             cleanHistoryStartDate: '2026-03-22',
             storagePath: 'teams/team-1/performanceData/latest.json',
+            overviewStoragePath: 'teams/team-1/performanceData/latest-overview.json',
         };
 
         const merged = mergePerformanceSummaryMetadata(summary, metadata);
@@ -37,6 +38,7 @@ describe('performanceDataService metadata merge', () => {
         expect(merged.metadata.runtimeLogicVersion).toBe(3);
         expect(merged.metadata.cleanHistoryStartDate).toBe('2026-03-22');
         expect(merged.metadata.storagePath).toBe('teams/team-1/performanceData/latest.json');
+        expect(merged.metadata.overviewStoragePath).toBe('teams/team-1/performanceData/latest-overview.json');
     });
 
     it('keeps existing summary metadata when Firestore metadata omits optional runtime fields', () => {

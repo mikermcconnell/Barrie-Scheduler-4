@@ -6,6 +6,7 @@ import { flushSync } from 'react-dom';
 const useTeamMock = vi.fn();
 const useAuthMock = vi.fn();
 const usePerformanceMetadataQueryMock = vi.fn();
+const usePerformanceOverviewQueryMock = vi.fn();
 const usePerformanceDataQueryMock = vi.fn();
 const buildPerformanceMetadataHealthMock = vi.fn();
 const onCloseSpy = vi.fn();
@@ -20,6 +21,7 @@ vi.mock('../components/contexts/AuthContext', () => ({
 
 vi.mock('../hooks/usePerformanceData', () => ({
   usePerformanceMetadataQuery: (...args: unknown[]) => usePerformanceMetadataQueryMock(...args),
+  usePerformanceOverviewQuery: (...args: unknown[]) => usePerformanceOverviewQueryMock(...args),
   usePerformanceDataQuery: (...args: unknown[]) => usePerformanceDataQueryMock(...args),
 }));
 
@@ -41,11 +43,12 @@ vi.mock('../utils/lazyWithRetry', () => ({
     }
 
     if (cacheKey === 'performance-dashboard-workspace') {
-      return (props: { onBack: () => void; onReimport: () => void }) =>
+      return (props: { onBack: () => void; onReimport: () => void; detailsReady?: boolean }) =>
         React.createElement(
           'div',
           null,
           React.createElement('div', null, 'Mock Performance Workspace'),
+          React.createElement('div', null, props.detailsReady === false ? 'Overview Only' : 'Full Details Ready'),
           React.createElement('button', { type: 'button', onClick: props.onBack }, 'Back From Workspace'),
           React.createElement('button', { type: 'button', onClick: props.onReimport }, 'Re-import From Workspace'),
         );
@@ -66,6 +69,10 @@ describe('PerformanceDashboard', () => {
     useTeamMock.mockReturnValue({ team: { id: 'team-1' } });
     useAuthMock.mockReturnValue({ user: { uid: 'user-1' } });
     usePerformanceMetadataQueryMock.mockReturnValue({
+      data: null,
+      isLoading: false,
+    });
+    usePerformanceOverviewQueryMock.mockReturnValue({
       data: null,
       isLoading: false,
     });
@@ -98,9 +105,17 @@ describe('PerformanceDashboard', () => {
   });
 
   it('opens the workspace directly when auto-open is enabled and data already exists', async () => {
-    const metadata = { lastUpdated: '2026-03-31T12:00:00Z', storagePath: 'teams/team-1/performanceData/latest.json' };
+    const metadata = {
+      lastUpdated: '2026-03-31T12:00:00Z',
+      storagePath: 'teams/team-1/performanceData/latest.json',
+      overviewStoragePath: 'teams/team-1/performanceData/latest-overview.json',
+    };
     usePerformanceMetadataQueryMock.mockReturnValue({
       data: metadata,
+      isLoading: false,
+    });
+    usePerformanceOverviewQueryMock.mockReturnValue({
+      data: { rows: ['overview'] },
       isLoading: false,
     });
     usePerformanceDataQueryMock.mockReturnValue({
@@ -120,23 +135,59 @@ describe('PerformanceDashboard', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(usePerformanceDataQueryMock).toHaveBeenCalledWith('team-1', true, metadata);
+    expect(usePerformanceOverviewQueryMock).toHaveBeenCalledWith('team-1', true, metadata);
     expect(container.textContent).toContain('Mock Performance Workspace');
+    expect(container.textContent).toContain('Full Details Ready');
     expect(container.textContent).not.toContain('STREETS AVL Data');
     expect(container.textContent).not.toContain('Mock Performance Import');
   });
 
-  it('shows the workspace loading shell while the full dataset is still downloading', async () => {
+  it('opens the workspace from the lightweight overview while detailed tabs keep loading', async () => {
     usePerformanceMetadataQueryMock.mockReturnValue({
       data: {
         importedAt: '2026-03-31T12:00:00Z',
         dateRange: { start: '2026-03-01', end: '2026-03-31' },
         dayCount: 31,
+        overviewStoragePath: 'teams/team-1/performanceData/latest-overview.json',
       },
+      isLoading: false,
+    });
+    usePerformanceOverviewQueryMock.mockReturnValue({
+      data: { rows: ['overview'] },
       isLoading: false,
     });
     usePerformanceDataQueryMock.mockReturnValue({
       data: null,
       isLoading: true,
+    });
+
+    flushSync(() => {
+      root.render(<PerformanceDashboard onClose={onCloseSpy} autoOpen />);
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(container.textContent).toContain('Mock Performance Workspace');
+    expect(container.textContent).toContain('Overview Only');
+  });
+
+  it('shows the loading shell while even the lightweight overview is still downloading', async () => {
+    usePerformanceMetadataQueryMock.mockReturnValue({
+      data: {
+        importedAt: '2026-03-31T12:00:00Z',
+        dateRange: { start: '2026-03-01', end: '2026-03-31' },
+        dayCount: 31,
+        overviewStoragePath: 'teams/team-1/performanceData/latest-overview.json',
+      },
+      isLoading: false,
+    });
+    usePerformanceOverviewQueryMock.mockReturnValue({
+      data: null,
+      isLoading: true,
+    });
+    usePerformanceDataQueryMock.mockReturnValue({
+      data: null,
+      isLoading: false,
     });
 
     flushSync(() => {
@@ -155,6 +206,10 @@ describe('PerformanceDashboard', () => {
       data: null,
       isLoading: false,
     });
+    usePerformanceOverviewQueryMock.mockReturnValue({
+      data: null,
+      isLoading: false,
+    });
 
     flushSync(() => {
       root.render(<PerformanceDashboard onClose={onCloseSpy} autoOpen />);
@@ -170,6 +225,10 @@ describe('PerformanceDashboard', () => {
   it('returns to the outer workspace when backing out of an auto-opened dashboard', async () => {
     usePerformanceMetadataQueryMock.mockReturnValue({
       data: { lastUpdated: '2026-03-31T12:00:00Z' },
+      isLoading: false,
+    });
+    usePerformanceOverviewQueryMock.mockReturnValue({
+      data: { rows: ['overview'] },
       isLoading: false,
     });
     usePerformanceDataQueryMock.mockReturnValue({
@@ -197,6 +256,10 @@ describe('PerformanceDashboard', () => {
       data: null,
       isLoading: false,
     });
+    usePerformanceOverviewQueryMock.mockReturnValue({
+      data: null,
+      isLoading: false,
+    });
 
     flushSync(() => {
       root.render(<PerformanceDashboard onClose={onCloseSpy} autoOpen />);
@@ -216,6 +279,10 @@ describe('PerformanceDashboard', () => {
   it('returns from re-import to the workspace instead of closing the outer workspace', async () => {
     usePerformanceMetadataQueryMock.mockReturnValue({
       data: { lastUpdated: '2026-03-31T12:00:00Z' },
+      isLoading: false,
+    });
+    usePerformanceOverviewQueryMock.mockReturnValue({
+      data: { rows: ['overview'] },
       isLoading: false,
     });
     usePerformanceDataQueryMock.mockReturnValue({
