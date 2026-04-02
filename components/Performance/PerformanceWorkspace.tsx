@@ -82,6 +82,9 @@ const OVERVIEW_ONLY_TIME_RANGES: TimeRange[] = ['past-week', 'single-day'];
 
 export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data, onReimport, onBack, detailsReady = true }) => {
     const allowIncompleteTabs = import.meta.env.DEV || isLocalhost();
+    const showImportHealthPanel = !import.meta.env.PROD
+        && detailsReady
+        && isFeatureEnabled('operationsImportHealth');
     const tabs = useMemo(
         () => TAB_CONFIG
             .filter(tab => isPerformanceTabVisible(tab.id))
@@ -246,7 +249,7 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data
                 </button>
             </div>
 
-            {detailsReady && isFeatureEnabled('operationsImportHealth') && (
+            {showImportHealthPanel && (
                 <PerformanceImportHealthPanel data={data} />
             )}
 
