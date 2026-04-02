@@ -24,7 +24,7 @@ import { ShuttlePlannerWorkspace } from './ShuttlePlannerWorkspace';
 import { RoutePlannerWorkspace } from './RoutePlannerWorkspace';
 import { NetworkConnectionsWorkspace } from './NetworkConnectionsWorkspace';
 import { usePerformanceMetadataQuery } from '../../hooks/usePerformanceData';
-import { isFeatureEnabled } from '../../utils/features';
+import { isFeatureEnabled, isFeatureUnderConstruction } from '../../utils/features';
 import type { TransitAppDataSummary } from '../../utils/transit-app/transitAppTypes';
 import type { ODMatrixDataSummary, GeocodeCache } from '../../utils/od-matrix/odMatrixTypes';
 
@@ -34,6 +34,7 @@ interface AnalyticsCardProps {
     title: string;
     description: string;
     hasData: boolean;
+    underConstruction?: boolean;
     onClick: () => void;
 }
 
@@ -60,7 +61,7 @@ const cardStyles = {
     },
 };
 
-const AnalyticsCard: React.FC<AnalyticsCardProps> = ({ color, icon, title, description, hasData, onClick }) => {
+const AnalyticsCard: React.FC<AnalyticsCardProps> = ({ color, icon, title, description, hasData, underConstruction = false, onClick }) => {
     const s = cardStyles[color];
     return (
         <button
@@ -72,6 +73,11 @@ const AnalyticsCard: React.FC<AnalyticsCardProps> = ({ color, icon, title, descr
                     {icon}
                 </div>
                 <div className="flex items-center gap-2">
+                    {underConstruction && (
+                        <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-[10px] font-semibold rounded-full">
+                            Under Construction
+                        </span>
+                    )}
                     {hasData && (
                         <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-[10px] font-semibold rounded-full">
                             Data Loaded
@@ -121,6 +127,19 @@ const ANALYTICS_VIEW_FEATURES: Partial<Record<AnalyticsView, Parameters<typeof i
 const isAnalyticsViewEnabled = (view: AnalyticsView): boolean => {
     const feature = ANALYTICS_VIEW_FEATURES[view];
     return feature ? isFeatureEnabled(feature) : true;
+};
+
+const AnalyticsFeatureNotice: React.FC<{ feature: Parameters<typeof isFeatureEnabled>[0] }> = ({ feature }) => {
+    if (!isFeatureUnderConstruction(feature)) return null;
+
+    return (
+        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            <div className="font-semibold">Under construction</div>
+            <div className="mt-1 text-amber-800">
+                This feature is available in demo mode for preview, but it is still being refined and may change.
+            </div>
+        </div>
+    );
 };
 
 export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose }) => {
@@ -312,6 +331,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
         return (
             <div className="h-full overflow-auto custom-scrollbar p-6">
                 <div className="max-w-7xl mx-auto">
+                    <AnalyticsFeatureNotice feature="analyticsTransitApp" />
                     <TransitAppWorkspace
                         data={transitData}
                         onReimport={() => setView('import')}
@@ -341,6 +361,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
         return (
             <div className="h-full overflow-auto custom-scrollbar p-6">
                 <div className="max-w-7xl mx-auto">
+                    <AnalyticsFeatureNotice feature="analyticsOdMatrix" />
                     <ODMatrixWorkspace
                         key={odData.metadata.importId ?? 'default'}
                         data={odData}
@@ -374,8 +395,13 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
     // Student Transit Pass
     if (view === 'student-pass') {
         return (
-            <div className="h-full overflow-hidden">
-                <StudentPassModule onBack={() => setView('dashboard')} teamId={team.id} />
+            <div className="flex h-full flex-col overflow-hidden">
+                <div className="px-6 pt-6 shrink-0">
+                    <AnalyticsFeatureNotice feature="analyticsStudentPass" />
+                </div>
+                <div className="min-h-0 flex-1 overflow-hidden">
+                    <StudentPassModule onBack={() => setView('dashboard')} teamId={team.id} />
+                </div>
             </div>
         );
     }
@@ -383,53 +409,78 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
     // Corridor Headway Map
     if (view === 'headway-map') {
         return (
-            <div className="h-full overflow-hidden">
-                <HeadwayMap onBack={() => setView('dashboard')} />
+            <div className="flex h-full flex-col overflow-hidden">
+                <div className="px-6 pt-6 shrink-0">
+                    <AnalyticsFeatureNotice feature="analyticsCorridorHeadway" />
+                </div>
+                <div className="min-h-0 flex-1 overflow-hidden">
+                    <HeadwayMap onBack={() => setView('dashboard')} />
+                </div>
             </div>
         );
     }
 
     if (view === 'corridor-speed') {
         return (
-            <div className="h-full overflow-hidden">
-                <CorridorSpeedMap onBack={() => setView('dashboard')} teamId={team.id} />
+            <div className="flex h-full flex-col overflow-hidden">
+                <div className="px-6 pt-6 shrink-0">
+                    <AnalyticsFeatureNotice feature="analyticsCorridorSpeed" />
+                </div>
+                <div className="min-h-0 flex-1 overflow-hidden">
+                    <CorridorSpeedMap onBack={() => setView('dashboard')} teamId={team.id} />
+                </div>
             </div>
         );
     }
 
     if (view === 'route-planner') {
         return (
-            <div className="h-full overflow-hidden">
-                <RoutePlannerWorkspace
-                    onBack={() => setView('dashboard')}
-                    userId={user?.uid ?? null}
-                    teamId={team.id}
-                />
+            <div className="flex h-full flex-col overflow-hidden">
+                <div className="px-6 pt-6 shrink-0">
+                    <AnalyticsFeatureNotice feature="analyticsRoutePlanner" />
+                </div>
+                <div className="min-h-0 flex-1 overflow-hidden">
+                    <RoutePlannerWorkspace
+                        onBack={() => setView('dashboard')}
+                        userId={user?.uid ?? null}
+                        teamId={team.id}
+                    />
+                </div>
             </div>
         );
     }
 
     if (view === 'network-connections') {
         return (
-            <div className="h-full overflow-hidden">
-                <NetworkConnectionsWorkspace
-                    onBack={() => setView('dashboard')}
-                    teamId={team.id}
-                    userId={user?.uid ?? null}
-                    observedTransitData={transitData}
-                />
+            <div className="flex h-full flex-col overflow-hidden">
+                <div className="px-6 pt-6 shrink-0">
+                    <AnalyticsFeatureNotice feature="analyticsNetworkConnections" />
+                </div>
+                <div className="min-h-0 flex-1 overflow-hidden">
+                    <NetworkConnectionsWorkspace
+                        onBack={() => setView('dashboard')}
+                        teamId={team.id}
+                        userId={user?.uid ?? null}
+                        observedTransitData={transitData}
+                    />
+                </div>
             </div>
         );
     }
 
     if (view === 'shuttle-planner') {
         return (
-            <div className="h-full overflow-hidden">
-                <ShuttlePlannerWorkspace
-                    onBack={() => setView('dashboard')}
-                    userId={user?.uid ?? null}
-                    teamId={team.id}
-                />
+            <div className="flex h-full flex-col overflow-hidden">
+                <div className="px-6 pt-6 shrink-0">
+                    <AnalyticsFeatureNotice feature="analyticsShuttlePlanner" />
+                </div>
+                <div className="min-h-0 flex-1 overflow-hidden">
+                    <ShuttlePlannerWorkspace
+                        onBack={() => setView('dashboard')}
+                        userId={user?.uid ?? null}
+                        teamId={team.id}
+                    />
+                </div>
             </div>
         );
     }
@@ -451,6 +502,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
                             title="Transit App Data"
                             description="Import and analyze rider demand, trip patterns, and route engagement from Transit App."
                             hasData={hasExistingData}
+                            underConstruction={isFeatureUnderConstruction('analyticsTransitApp')}
                             onClick={handleTransitAppClick}
                         />
                     )}
@@ -461,6 +513,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
                             title="Ontario Northland"
                             description="Import origin-destination ridership matrices, visualize travel patterns, and analyze station connectivity."
                             hasData={hasODData}
+                            underConstruction={isFeatureUnderConstruction('analyticsOdMatrix')}
                             onClick={handleODMatrixClick}
                         />
                     )}
@@ -471,6 +524,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
                             title="Corridor Speed"
                             description="Compare observed STREETS travel times to GTFS schedule by roadway corridor, period, and direction."
                             hasData={hasPerformanceData}
+                            underConstruction={isFeatureUnderConstruction('analyticsCorridorSpeed')}
                             onClick={() => setView('corridor-speed')}
                         />
                     )}
@@ -481,6 +535,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
                             title="Corridor Headway"
                             description="Visualize combined service headway where multiple routes share corridors. Identify high-frequency spines and coverage gaps."
                             hasData={false}
+                            underConstruction={isFeatureUnderConstruction('analyticsCorridorHeadway')}
                             onClick={() => setView('headway-map')}
                         />
                     )}
@@ -491,6 +546,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
                             title="Student Transit Pass"
                             description="Generate one-page transit flyers for students showing how to reach school by bus from any residential zone."
                             hasData={false}
+                            underConstruction={isFeatureUnderConstruction('analyticsStudentPass')}
                             onClick={() => setView('student-pass')}
                         />
                     )}
@@ -501,6 +557,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
                             title="Network Connections"
                             description="Map-first transfer hub analysis using published master schedules. See where routes really connect, where they miss, and which hubs deserve protection."
                             hasData={false}
+                            underConstruction={isFeatureUnderConstruction('analyticsNetworkConnections')}
                             onClick={() => setView('network-connections')}
                         />
                     )}
@@ -511,6 +568,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
                             title="Route Planner"
                             description="Test route concepts in a Friendly planning workspace. Shuttle Concept mode is live first, with existing-route tweaks and broader route planning to follow."
                             hasData={false}
+                            underConstruction={isFeatureUnderConstruction('analyticsRoutePlanner')}
                             onClick={() => setView('route-planner')}
                         />
                     )}

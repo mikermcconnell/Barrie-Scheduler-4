@@ -9,7 +9,7 @@ import { PerformanceScopeProvider } from './performanceScope';
 import { resolveFilteredScope } from '../../utils/performanceDataScope';
 import { lazyWithRetry } from '../../utils/lazyWithRetry';
 import { PerformanceImportHealthPanel } from './PerformanceImportHealthPanel';
-import { isFeatureEnabled } from '../../utils/features';
+import { isFeatureEnabled, isFeatureUnderConstruction } from '../../utils/features';
 
 interface PerformanceWorkspaceProps {
     data: PerformanceDataSummary;
@@ -24,14 +24,15 @@ interface TabConfig {
     icon: React.FC<{ size?: number }>;
     status: 'complete' | 'partial' | 'not-started';
     badge?: string;
+    feature?: Parameters<typeof isFeatureEnabled>[0];
 }
 
 const TAB_CONFIG: TabConfig[] = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard, status: 'complete' },
     { id: 'otp', label: 'OTP Analysis', icon: Clock, status: 'complete' },
     { id: 'ridership', label: 'Ridership', icon: TrendingUp, status: 'complete' },
-    { id: 'load-profiles', label: 'Load Profiles', icon: BarChart3, status: 'complete', badge: 'Testing' },
-    { id: 'operator-dwell', label: 'Operator Dwell', icon: Timer, status: 'complete', badge: 'Testing' },
+    { id: 'load-profiles', label: 'Load Profiles', icon: BarChart3, status: 'complete', badge: 'Testing', feature: 'operationsLoadProfiles' },
+    { id: 'operator-dwell', label: 'Operator Dwell', icon: Timer, status: 'complete', badge: 'Testing', feature: 'operationsOperatorDwell' },
 ];
 
 const PERFORMANCE_TAB_FEATURES: Partial<Record<PerformanceTab, Parameters<typeof isFeatureEnabled>[0]>> = {
@@ -100,6 +101,8 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data
     const [timeRanges, setTimeRanges] = useState<Partial<Record<PerformanceTab, TimeRange>>>({});
     const [selectedDate, setSelectedDate] = useState<string | null>(null);
     const [dayTypeFilter, setDayTypeFilter] = useState<DayType | 'all'>('all');
+    const activeTabConfig = tabs.find(tab => tab.id === activeTab);
+    const showUnderConstructionNotice = !!activeTabConfig?.feature && isFeatureUnderConstruction(activeTabConfig.feature);
 
     const timeRange = timeRanges[activeTab] ?? 'past-week';
     const tabBarRef = useRef<HTMLDivElement>(null);
@@ -250,12 +253,31 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data
             </div>
 
             {showImportHealthPanel && (
-                <PerformanceImportHealthPanel data={data} />
+                <>
+                    {isFeatureUnderConstruction('operationsImportHealth') && (
+                        <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                            <div className="font-semibold">Under construction</div>
+                            <div className="mt-1 text-amber-800">
+                                This import-health panel is available in demo mode for preview, but it is still being refined and may change.
+                            </div>
+                        </div>
+                    )}
+                    <PerformanceImportHealthPanel data={data} />
+                </>
             )}
 
             {!detailsReady && (
                 <div className="mb-3 rounded-xl border border-cyan-200 bg-cyan-50/70 px-4 py-3 text-sm text-cyan-800">
                     Showing the most recent 7 days on Overview first. Detailed tabs are still loading in the background.
+                </div>
+            )}
+
+            {showUnderConstructionNotice && (
+                <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                    <div className="font-semibold">Under construction</div>
+                    <div className="mt-1 text-amber-800">
+                        This tab is available in demo mode for preview, but it is still being refined and may change.
+                    </div>
                 </div>
             )}
 
@@ -286,6 +308,9 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data
                                 )}
                                 {tab.badge && (
                                     <span className="ml-1 px-1.5 py-0.5 text-[9px] font-bold bg-amber-100 text-amber-700 border border-amber-200 rounded-full uppercase">{tab.badge}</span>
+                                )}
+                                {tab.feature && isFeatureUnderConstruction(tab.feature) && (
+                                    <span className="ml-1 px-1.5 py-0.5 text-[9px] font-bold bg-amber-100 text-amber-700 border border-amber-200 rounded-full uppercase">Under Construction</span>
                                 )}
                                 {tab.status === 'not-started' && tab.enabled && (
                                     <span className="ml-1 px-1.5 py-0.5 text-[9px] font-bold bg-gray-200 text-gray-500 rounded-full uppercase">Soon</span>

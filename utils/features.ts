@@ -68,7 +68,7 @@ export function buildFeatureFlags(env: Record<string, unknown> = import.meta.env
     const demoMode = parseOptionalBoolean(env.VITE_DEMO_MODE) ?? false;
     const showExperimentalInDemo = parseOptionalBoolean(env.VITE_SHOW_EXPERIMENTAL_IN_DEMO)
         ?? parseOptionalBoolean(env.VITE_SHOW_ALL_FEATURES)
-        ?? false;
+        ?? demoMode;
 
     const flags = {
         demoMode,
@@ -97,4 +97,8 @@ export const featureFlags = buildFeatureFlags();
 
 export function isFeatureEnabled(feature: FeatureKey, flags: FeatureFlags = featureFlags): boolean {
     return flags[feature];
+}
+
+export function isFeatureUnderConstruction(feature: FeatureKey, flags: FeatureFlags = featureFlags): boolean {
+    return flags.demoMode && FEATURE_DEFINITIONS[feature].hideInDemoMode;
 }
