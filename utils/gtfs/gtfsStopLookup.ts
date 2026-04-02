@@ -25,11 +25,24 @@ function normalizeStopLookupKey(value: string): string {
     const trimmed = value.trim().toLowerCase();
     if (!trimmed) return '';
 
-    if (/^\d+$/.test(trimmed)) {
+    if (/^\d+(?:\.0+)?$/.test(trimmed)) {
         return String(Number(trimmed));
     }
 
     return trimmed.replace(/\s+/g, ' ');
+}
+
+function canonicalizeStopName(value: string): string {
+    const lowered = value.trim().toLowerCase();
+    if (!lowered) return '';
+
+    return lowered
+        .replace(/&/g, ' and ')
+        .replace(/@/g, ' at ')
+        .replace(/\b(at|and)\b/g, ' ')
+        .replace(/[^a-z0-9]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
 }
 
 function parseCsvRow(line: string): string[] {
@@ -157,10 +170,15 @@ function getStopCoordsLookup(): Map<string, { lat: number; lon: number }> {
 
     const lookup = new Map<string, { lat: number; lon: number }>();
     for (const stop of getAllStopsWithCoords()) {
-        for (const rawKey of [stop.stop_id, stop.stop_code, stop.stop_name]) {
-            if (!rawKey) continue;
-            const key = normalizeStopLookupKey(rawKey);
-            if (!key || lookup.has(key)) continue;
+        const candidateKeys = [
+            normalizeStopLookupKey(stop.stop_id),
+            normalizeStopLookupKey(stop.stop_code),
+            normalizeStopLookupKey(stop.stop_name),
+            canonicalizeStopName(stop.stop_name),
+        ].filter(Boolean);
+
+        for (const key of candidateKeys) {
+            if (lookup.has(key)) continue;
             lookup.set(key, { lat: stop.lat, lon: stop.lon });
         }
     }
@@ -172,10 +190,13 @@ function getStopCoordsLookup(): Map<string, { lat: number; lon: number }> {
 export function findStopCoords(stopId?: string | null, stopName?: string | null): { lat: number; lon: number } | null {
     const lookup = getStopCoordsLookup();
 
-    for (const rawKey of [stopId, stopName]) {
-        if (!rawKey) continue;
-        const key = normalizeStopLookupKey(rawKey);
-        if (!key) continue;
+    const candidateKeys = [
+        stopId ? normalizeStopLookupKey(stopId) : '',
+        stopName ? normalizeStopLookupKey(stopName) : '',
+        stopName ? canonicalizeStopName(stopName) : '',
+    ].filter(Boolean);
+
+    for (const key of candidateKeys) {
         const coords = lookup.get(key);
         if (coords) return coords;
     }

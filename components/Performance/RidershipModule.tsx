@@ -7,7 +7,7 @@ import { ChartCard } from '../Analytics/AnalyticsShared';
 import { RidershipHeatmapSection } from './RidershipHeatmapSection';
 import { StopActivityMap } from './StopActivityMap';
 import type { PerformanceDataSummary } from '../../utils/performanceDataTypes';
-import { compareDateStrings, shortDateLabel } from '../../utils/performanceDateUtils';
+import { compareDateStrings, longWeekdayDateLabel, shortDateLabel, shortWeekdayDateLabel } from '../../utils/performanceDateUtils';
 import { aggregateStopActivity } from '../../utils/performanceStopActivity';
 import { ArrowUpDown, ChevronDown, ChevronUp } from 'lucide-react';
 
@@ -82,6 +82,7 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({ data }) => {
     const dailyTrend = useMemo(() =>
         filtered.map(d => ({
             date: shortDateLabel(d.date),
+            weekdayDate: shortWeekdayDateLabel(d.date),
             fullDate: d.date,
             ridership: d.system.totalRidership,
             boardings: d.system.totalBoardings,
@@ -209,7 +210,12 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({ data }) => {
         }
         const dates = Array.from(dateMap.keys()).sort(compareDateStrings);
         return {
-            data: dates.map(date => ({ ...dateMap.get(date), date: shortDateLabel(date), fullDate: date })),
+            data: dates.map(date => ({
+                ...dateMap.get(date),
+                date: shortDateLabel(date),
+                weekdayDate: shortWeekdayDateLabel(date),
+                fullDate: date,
+            })),
             routeIds: Array.from(routeIds).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
         };
     }, [filtered]);
@@ -227,9 +233,15 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({ data }) => {
                     <ResponsiveContainer width="100%" height={250}>
                         <BarChart data={dailyTrend} margin={{ top: 5, right: 10, bottom: 5, left: -10 }}>
                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
-                            <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#9CA3AF' }} interval="preserveStartEnd" />
+                            <XAxis dataKey="weekdayDate" tick={{ fontSize: 10, fill: '#9CA3AF' }} interval="preserveStartEnd" />
                             <YAxis tick={{ fontSize: 10, fill: '#9CA3AF' }} />
-                            <Tooltip formatter={(v: number) => [v.toLocaleString(), 'Boardings']} />
+                            <Tooltip
+                                labelFormatter={(_, payload) => {
+                                    const row = payload?.[0]?.payload as { fullDate?: string; weekdayDate?: string } | undefined;
+                                    return row?.fullDate ? longWeekdayDateLabel(row.fullDate) : (row?.weekdayDate || '');
+                                }}
+                                formatter={(v: number) => [v.toLocaleString(), 'Boardings']}
+                            />
                             <Bar dataKey="ridership" fill="#06b6d4" radius={[4, 4, 0, 0]} />
                         </BarChart>
                     </ResponsiveContainer>
@@ -237,9 +249,15 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({ data }) => {
                     <ResponsiveContainer width="100%" height={250}>
                         <BarChart data={dailyTrend} margin={{ top: 5, right: 10, bottom: 5, left: -10 }}>
                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
-                            <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#9CA3AF' }} />
+                            <XAxis dataKey="weekdayDate" tick={{ fontSize: 10, fill: '#9CA3AF' }} />
                             <YAxis tick={{ fontSize: 10, fill: '#9CA3AF' }} />
-                            <Tooltip formatter={(v: number) => [v.toLocaleString(), 'Boardings']} />
+                            <Tooltip
+                                labelFormatter={(_, payload) => {
+                                    const row = payload?.[0]?.payload as { fullDate?: string; weekdayDate?: string } | undefined;
+                                    return row?.fullDate ? longWeekdayDateLabel(row.fullDate) : (row?.weekdayDate || '');
+                                }}
+                                formatter={(v: number) => [v.toLocaleString(), 'Boardings']}
+                            />
                             <Bar dataKey="ridership" fill="#06b6d4" radius={[4, 4, 0, 0]} />
                         </BarChart>
                     </ResponsiveContainer>
@@ -296,12 +314,12 @@ export const RidershipModule: React.FC<RidershipModuleProps> = ({ data }) => {
                     <ResponsiveContainer width="100%" height={300}>
                         <LineChart data={routeDailyTrend.data} margin={{ top: 5, right: 10, bottom: 5, left: -10 }}>
                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
-                            <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#9CA3AF' }} interval="preserveStartEnd" />
+                            <XAxis dataKey="weekdayDate" tick={{ fontSize: 10, fill: '#9CA3AF' }} interval="preserveStartEnd" />
                             <YAxis tick={{ fontSize: 10, fill: '#9CA3AF' }} />
                             <Tooltip
                                 labelFormatter={(_, payload) => {
-                                    const row = payload?.[0]?.payload as { fullDate?: string; date?: string } | undefined;
-                                    return row?.fullDate || row?.date || '';
+                                    const row = payload?.[0]?.payload as { fullDate?: string; date?: string; weekdayDate?: string } | undefined;
+                                    return row?.fullDate ? longWeekdayDateLabel(row.fullDate) : (row?.weekdayDate || row?.date || '');
                                 }}
                                 formatter={(v: number, name: string) => [v.toLocaleString(), `Route ${name}`]}
                             />

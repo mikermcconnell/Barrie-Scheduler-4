@@ -15,7 +15,13 @@ import { HeatmapDotLayer, LassoControl, MapBase, RouteOverlay, toGeoJSON, pointI
 
 interface StopActivityMapProps { stops: StopMetrics[]; }
 type ViewMode = 'total' | 'boardings' | 'alightings';
-interface EnrichedStop extends StopMetrics { activity: number; filteredBoardings: number; filteredAlightings: number; }
+type CoordinateSource = 'gtfs' | 'streets' | 'none';
+interface EnrichedStop extends StopMetrics {
+  activity: number;
+  filteredBoardings: number;
+  filteredAlightings: number;
+  coordSource: CoordinateSource;
+}
 interface RenderedStop extends EnrichedStop { bin: number; sortKey: number; }
 interface HoverInfo { stopId: string; latitude: number; longitude: number; }
 
@@ -119,26 +125,30 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({ stops }) => {
   const enrichedStops = useMemo(() => stops.map((stop) => {
     const gtfs = findStopCoords(stop.stopId, stop.stopName);
     if (gtfs) {
-      return { ...stop, lat: gtfs.lat, lon: gtfs.lon };
+      return { ...stop, lat: gtfs.lat, lon: gtfs.lon, coordSource: 'gtfs' as const };
     }
 
     if (hasUsableBarrieCoords(stop.lat, stop.lon)) {
-      return stop;
+      return { ...stop, coordSource: 'streets' as const };
     }
 
-    return { ...stop, lat: Number.NaN, lon: Number.NaN };
+    return { ...stop, lat: Number.NaN, lon: Number.NaN, coordSource: 'none' as const };
   }), [stops]);
   const hasHourlyData = useMemo(() => hasHourlyDataForStops(enrichedStops), [enrichedStops]);
   const availableRoutes = useMemo(() => Array.from(new Set(enrichedStops.flatMap((stop) => stop.routes || []))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })), [enrichedStops]);
   const routeShapes = useMemo(() => { try { return loadGtfsRouteShapes(); } catch { return []; } }, []);
-  const filteredStops = useMemo(() => {
-    let result = enrichedStops.filter((stop) => hasUsableBarrieCoords(stop.lat, stop.lon));
+  const routeFilteredStops = useMemo(() => {
+    let result = enrichedStops;
     if (selectedRoute !== 'all') result = result.filter((stop) => stop.routes?.includes(selectedRoute));
+    return result;
+  }, [enrichedStops, selectedRoute]);
+  const filteredStops = useMemo(() => {
+    let result = routeFilteredStops.filter((stop) => hasUsableBarrieCoords(stop.lat, stop.lon));
     return result.map((stop) => {
       const filtered = getStopActivityBreakdown(stop, activeHours);
       return { ...stop, filteredBoardings: filtered.boardings, filteredAlightings: filtered.alightings, activity: getStopActivityValue(stop, viewMode, activeHours) };
     }) as EnrichedStop[];
-  }, [activeHours, enrichedStops, selectedRoute, viewMode]);
+  }, [activeHours, routeFilteredStops, viewMode]);
   const displayedStops = useMemo(() => bottomNFilter === null ? filteredStops : [...filteredStops.filter((stop) => stop.activity > 0)].sort((a, b) => a.activity - b.activity).slice(0, bottomNFilter), [bottomNFilter, filteredStops]);
   const rankedDisplayedStops = useMemo(() => [...displayedStops].sort((a, b) => b.activity - a.activity), [displayedStops]);
   const searchResults = useMemo(() => !searchQuery.trim() ? [] : filteredStops.filter((stop) => matchesStopSearch(stop, searchQuery)).sort((a, b) => b.activity - a.activity).slice(0, 8), [filteredStops, searchQuery]);
@@ -147,6 +157,25 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({ stops }) => {
     return displayedStops.map((stop, index) => ({ ...stop, bin: bins[index], sortKey: index })).sort((a, b) => a.bin - b.bin) as RenderedStop[];
   }, [displayedStops]);
   const renderedStopMap = useMemo(() => new Map(renderedStops.map((stop) => [stop.stopId, stop])), [renderedStops]);
+  const coordinateDiagnostics = useMemo(() => {
+    const total = routeFilteredStops.length;
+    const gtfsMatched = routeFilteredStops.filter((stop) => stop.coordSource === 'gtfs').length;
+    const streetsCoords = routeFilteredStops.filter((stop) => stop.coordSource === 'streets').length;
+    const missingCoords = routeFilteredStops.filter((stop) => stop.coordSource === 'none').length;
+    const sampleUnmapped = routeFilteredStops
+      .filter((stop) => stop.coordSource === 'none')
+      .slice(0, 3)
+      .map((stop) => `${stop.stopName} (${stop.stopId})`);
+
+    return {
+      total,
+      gtfsMatched,
+      streetsCoords,
+      missingCoords,
+      mappable: filteredStops.length,
+      sampleUnmapped,
+    };
+  }, [filteredStops.length, routeFilteredStops]);
   const stopGeoJSON = useMemo((): GeoJSON.FeatureCollection => ({ type: 'FeatureCollection', features: renderedStops.map((stop) => ({ type: 'Feature', properties: { id: stop.stopId, name: stop.stopName, bin: stop.bin, sortKey: stop.sortKey }, geometry: { type: 'Point', coordinates: toGeoJSON([stop.lat, stop.lon]) } })) }), [renderedStops]);
   const routeShapesForDisplay = useMemo(() => !showRouteLines ? [] : selectedRoute === 'all' ? routeShapes : routeShapes.filter((shape) => shape.routeId === selectedRoute || shape.routeShortName === selectedRoute), [routeShapes, selectedRoute, showRouteLines]);
   const hoveredStop = hoverInfo ? renderedStopMap.get(hoverInfo.stopId) ?? null : null;
@@ -258,6 +287,25 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({ stops }) => {
           <LassoControl active={lassoMode} onComplete={handleLassoComplete} onClear={clearLassoSelection} />
           {hoveredStop && !lassoMode && <Popup longitude={hoverInfo?.longitude ?? hoveredStop.lon} latitude={hoverInfo?.latitude ?? hoveredStop.lat} closeButton={false} closeOnClick={false} anchor="bottom" offset={8}><div style={{ fontSize: 12, lineHeight: 1.4 }}><strong>{hoveredStop.stopName}</strong> <span style={{ color: '#9ca3af' }}>({hoveredStop.stopId})</span><br />Boardings: {hoveredStop.filteredBoardings.toLocaleString()}<br />Alightings: {hoveredStop.filteredAlightings.toLocaleString()}<br />Activity: {(hoveredStop.filteredBoardings + hoveredStop.filteredAlightings).toLocaleString()}</div></Popup>}
         </MapBase>
+        {routeFilteredStops.length > 0 && filteredStops.length === 0 && (
+          <div className="absolute inset-x-6 bottom-6 z-[1000] rounded-xl border border-amber-200 bg-white/95 p-4 shadow-lg">
+            <div className="text-sm font-bold text-amber-900">No mappable stops found for the ridership map</div>
+            <p className="mt-1 text-sm text-amber-800">
+              The ridership data loaded, but none of the stops could be placed on the map for the current route filter.
+            </p>
+            <div className="mt-3 grid gap-2 text-xs text-amber-900 sm:grid-cols-4">
+              <div><span className="font-semibold">Stops in data:</span> {coordinateDiagnostics.total}</div>
+              <div><span className="font-semibold">Matched to GTFS:</span> {coordinateDiagnostics.gtfsMatched}</div>
+              <div><span className="font-semibold">Used STREETS coords:</span> {coordinateDiagnostics.streetsCoords}</div>
+              <div><span className="font-semibold">Missing coords:</span> {coordinateDiagnostics.missingCoords}</div>
+            </div>
+            {coordinateDiagnostics.sampleUnmapped.length > 0 && (
+              <p className="mt-2 text-xs text-amber-800">
+                Examples: {coordinateDiagnostics.sampleUnmapped.join(', ')}
+              </p>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

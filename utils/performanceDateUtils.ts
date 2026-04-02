@@ -117,6 +117,31 @@ export function shortDateLabel(dateStr: string): string {
   return iso ? iso.slice(5) : dateStr;
 }
 
+export function shortWeekdayDateLabel(dateStr: string): string {
+  const parsed = parseIsoDateParts(dateStr);
+  if (!parsed) return dateStr;
+  const date = new Date(Date.UTC(parsed.year, parsed.month - 1, parsed.day, 12));
+  return date.toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'numeric',
+    day: 'numeric',
+    timeZone: 'UTC',
+  });
+}
+
+export function longWeekdayDateLabel(dateStr: string): string {
+  const parsed = parseIsoDateParts(dateStr);
+  if (!parsed) return dateStr;
+  const date = new Date(Date.UTC(parsed.year, parsed.month - 1, parsed.day, 12));
+  return date.toLocaleDateString('en-US', {
+    weekday: 'long',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
+}
+
 export function addDaysToISODate(dateStr: string, days: number): string | null {
   if (!Number.isFinite(days)) return null;
   const parsed = parseIsoDateParts(dateStr);

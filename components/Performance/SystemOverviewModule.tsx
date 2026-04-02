@@ -13,7 +13,7 @@ import {
     aggregateStoredMissedTrips,
     computeAggregatedMissedTrips,
 } from '../../utils/performanceMissedTrips';
-import { compareDateStrings, normalizeToISODate, shortDateLabel } from '../../utils/performanceDateUtils';
+import { compareDateStrings, longWeekdayDateLabel, normalizeToISODate, shortDateLabel, shortWeekdayDateLabel } from '../../utils/performanceDateUtils';
 import { PerformanceScopeProvider } from './performanceScope';
 import type { PerformanceDataScope } from '../../utils/performanceDataScope';
 
@@ -441,6 +441,7 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
     const otpTrend = useMemo(() =>
         data.dailySummaries.map(d => ({
             date: shortDateLabel(d.date),
+            weekdayDate: shortWeekdayDateLabel(d.date),
             fullDate: d.date,
             otp: d.system.otp.onTimePercent,
             ridership: d.system.totalRidership,
@@ -922,9 +923,15 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                         <ResponsiveContainer width="100%" height={250}>
                             <BarChart data={otpTrend} margin={{ top: 5, right: 10, bottom: 5, left: -10 }}>
                                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
-                                <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#9CA3AF' }} interval="preserveStartEnd" />
+                                <XAxis dataKey="weekdayDate" tick={{ fontSize: 10, fill: '#9CA3AF' }} interval="preserveStartEnd" />
                                 <YAxis tick={{ fontSize: 10, fill: '#9CA3AF' }} tickFormatter={v => v.toLocaleString()} />
-                                <Tooltip formatter={(v: number) => [v.toLocaleString(), 'Boardings']} />
+                                <Tooltip
+                                    labelFormatter={(_, payload) => {
+                                        const row = payload?.[0]?.payload as { fullDate?: string; weekdayDate?: string } | undefined;
+                                        return row?.fullDate ? longWeekdayDateLabel(row.fullDate) : (row?.weekdayDate || '');
+                                    }}
+                                    formatter={(v: number) => [v.toLocaleString(), 'Boardings']}
+                                />
                                 <Bar dataKey="ridership" fill="#06b6d4" radius={[4, 4, 0, 0]} />
                             </BarChart>
                         </ResponsiveContainer>
