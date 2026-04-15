@@ -36,6 +36,7 @@ import type {
     SystemDraftBasedOn
 } from '../schedule/scheduleTypes';
 import { downloadFileContent } from './dataService';
+import { buildDuplicateDraftName } from './draftNaming';
 
 const SYSTEM_DRAFTS_COLLECTION = 'systemDrafts';
 
@@ -48,6 +49,12 @@ const timestampToDate = (value?: Timestamp | Date): Date => {
     if (!value) return new Date();
     return value instanceof Date ? value : value.toDate();
 };
+
+const isStorageObjectMissing = (error: unknown): boolean =>
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { code?: string }).code === 'storage/object-not-found';
 
 // ============ CRUD OPERATIONS ============
 
@@ -71,6 +78,14 @@ export const saveSystemDraft = async (
     const isUpdate = !!draft.id;
     const draftRef = draft.id ? doc(draftsRef, draft.id) : doc(draftsRef);
     const draftId = draftRef.id;
+    let previousStoragePath = draft.storagePath;
+
+    if (isUpdate) {
+        const existingSnapshot = await getDoc(draftRef);
+        if (existingSnapshot.exists()) {
+            previousStoragePath = existingSnapshot.data().storagePath;
+        }
+    }
 
     // Upload content to Firebase Storage
     const timestamp = Date.now();
@@ -111,11 +126,13 @@ export const saveSystemDraft = async (
     await setDoc(draftRef, docData, { merge: true });
 
     // Clean up old storage file if updating
-    if (isUpdate && draft.storagePath && draft.storagePath !== storagePath) {
+    if (isUpdate && previousStoragePath && previousStoragePath !== storagePath) {
         try {
-            await deleteObject(ref(storage, draft.storagePath));
+            await deleteObject(ref(storage, previousStoragePath));
         } catch (error) {
-            console.warn('Failed to delete old system draft storage file:', error);
+            if (!isStorageObjectMissing(error)) {
+                console.warn('Failed to delete old system draft storage file:', error);
+            }
         }
     }
 
@@ -243,12 +260,34 @@ export const deleteSystemDraft = async (
             try {
                 await deleteObject(ref(storage, data.storagePath));
             } catch (error) {
-                console.warn('Failed to delete system draft storage file:', error);
+                if (!isStorageObjectMissing(error)) {
+                    console.warn('Failed to delete system draft storage file:', error);
+                }
             }
         }
     }
 
     await deleteDoc(draftRef);
+};
+
+export const duplicateSystemDraft = async (
+    userId: string,
+    draftId: string,
+    overrideName?: string
+): Promise<string> => {
+    const existingDraft = await getSystemDraft(userId, draftId);
+    if (!existingDraft) {
+        throw new Error('System draft not found');
+    }
+
+    return saveSystemDraft(userId, {
+        name: overrideName || buildDuplicateDraftName(existingDraft.name),
+        dayType: existingDraft.dayType,
+        routes: existingDraft.routes,
+        status: 'draft',
+        createdBy: userId,
+        basedOn: existingDraft.basedOn
+    });
 };
 
 // ============ UTILITY FUNCTIONS ============

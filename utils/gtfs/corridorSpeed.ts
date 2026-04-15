@@ -1,4 +1,4 @@
-import stopTimesRaw from '../../gtfs/stop_times.txt?raw';
+import { bundledStopTimesText as stopTimesRaw } from './bundledStopTimes';
 import tripsRaw from '../../gtfs/trips.txt?raw';
 import shapesRaw from '../../gtfs/shapes.txt?raw';
 import { DAY_TYPES, TIME_PERIODS, matchSegmentStopsInTrip, type DayType, type TimePeriod } from './corridorHeadway';

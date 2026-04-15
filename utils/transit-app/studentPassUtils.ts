@@ -5,7 +5,7 @@
  * Finds direct and 1-transfer routes from a school zone to a school.
  */
 
-import stopTimesRaw from '../../gtfs/stop_times.txt?raw';
+import { bundledStopTimesText as stopTimesRaw } from '../gtfs/bundledStopTimes';
 import tripsRaw from '../../gtfs/trips.txt?raw';
 import routesRaw from '../../gtfs/routes.txt?raw';
 import calendarRaw from '../../gtfs/calendar.txt?raw';

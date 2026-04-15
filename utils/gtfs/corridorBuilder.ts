@@ -12,7 +12,7 @@
  * 5. Attach shape geometry by snapping stops to the nearest route polyline
  */
 
-import stopTimesRaw from '../../gtfs/stop_times.txt?raw';
+import { bundledStopTimesText as stopTimesRaw } from './bundledStopTimes';
 import tripsRaw from '../../gtfs/trips.txt?raw';
 import routesRaw from '../../gtfs/routes.txt?raw';
 import {

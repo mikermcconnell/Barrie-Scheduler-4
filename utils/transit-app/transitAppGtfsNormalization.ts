@@ -1,7 +1,7 @@
 import routesRaw from '../../gtfs/routes.txt?raw';
 import tripsRaw from '../../gtfs/trips.txt?raw';
 import calendarRaw from '../../gtfs/calendar.txt?raw';
-import stopTimesRaw from '../../gtfs/stop_times.txt?raw';
+import { bundledStopTimesText as stopTimesRaw } from '../gtfs/bundledStopTimes';
 import type { RouteSupplyProfile, TransferDayType } from './transitAppTypes';
 
 type DayTypeBucket = 'weekday' | 'saturday' | 'sunday';

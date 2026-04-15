@@ -6,7 +6,7 @@
  * Uses stop_times.txt departure times matched against corridor segment stop pairs.
  */
 
-import stopTimesRaw from '../../gtfs/stop_times.txt?raw';
+import { bundledStopTimesText as stopTimesRaw } from './bundledStopTimes';
 import {
     parseCsvRow,
     buildHeaderIndex,

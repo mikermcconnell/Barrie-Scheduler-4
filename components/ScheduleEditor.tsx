@@ -48,6 +48,7 @@ import {
     buildRoundTripView
 } from '../utils/parsers/masterScheduleParser';
 import { ConnectionsPanel } from './connections/ConnectionsPanel';
+import { AIReviewPanel } from './ai/AIReviewPanel';
 import type { ConnectionLibrary } from '../utils/connections/connectionTypes';
 import { getConnectionLibrary } from '../utils/connections/connectionLibraryService';
 import { RouteSummary } from './RouteSummary';
@@ -56,6 +57,7 @@ import { AutoSaveStatus } from '../hooks/useAutoSave';
 import { TimeUtils } from '../utils/timeUtils';
 import { getRouteColor, getRouteTextColor } from '../utils/config/routeColors';
 import { AddTripModal, AddTripModalContext } from './modals/AddTripModal';
+import { ExtendTripModal } from './modals/ExtendTripModal';
 import { useAddTrip } from '../hooks/useAddTrip';
 import { TravelTimeGrid } from './TravelTimeGrid';
 import { AuditLogPanel, useAuditLog } from './AuditLogPanel';
@@ -96,10 +98,18 @@ import { StackedTimeCell, StackedTimeInput } from './ui/StackedTimeInput';
 import { RoundTripTableView } from './schedule/RoundTripTableView';
 import { getRouteConfig, extractDirectionFromName, parseRouteInfo } from '../utils/config/routeDirectionConfig';
 import { reassignBlocksForTables, MatchConfigPresets } from '../utils/blocks/blockAssignmentCore';
-import type { CascadeMode } from '../hooks/useScheduleEditing';
+import { useScheduleEditing, type CascadeMode } from '../hooks/useScheduleEditing';
 import { useTravelTimeGrid } from '../hooks/useTravelTimeGrid';
 import { CascadeModeSelector } from './ui/CascadeModeSelector';
 import { isEditableEventTarget } from '../utils/domUtils';
+import { isFeatureEnabled } from '../utils/features';
+import { buildScheduleReviewSnapshot } from '../utils/ai/scheduleReviewContext';
+import {
+    applyExtendTripResultToSchedules,
+    buildExtendTripModalContext,
+    type ExtendTripModalContext,
+    type ExtendTripResult
+} from '../utils/schedule/extendTripPlanner';
 // --- Main Editor Component ---
 
 // Time Band type for display
@@ -136,10 +146,12 @@ export interface ScheduleEditorProps {
     onRenameDraft?: (name: string) => void;
     autoSaveStatus?: AutoSaveStatus;
     lastSaved?: Date | null;
+    hasUnsavedChanges?: boolean;
     onSaveVersion?: (label?: string) => Promise<void>;
     onClose?: () => void;
     onNewDraft?: () => void;
     onOpenDrafts?: () => void;
+    onDuplicateDraft?: () => void;
 
     // Undo/Redo
     canUndo?: boolean;
@@ -197,10 +209,12 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
     onRenameDraft,
     autoSaveStatus,
     lastSaved,
+    hasUnsavedChanges,
     onSaveVersion,
     onClose,
     onNewDraft,
     onOpenDrafts,
+    onDuplicateDraft,
     canUndo = false, canRedo = false, undo, redo,
     showSuccessToast,
     bands,
@@ -222,6 +236,9 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
     masterBaseline
 }) => {
     const MIDNIGHT_ROLLOVER_THRESHOLD = 210; // 3:30 AM
+    const effectiveHasUnsavedChanges = readOnly
+        ? false
+        : (hasUnsavedChanges ?? schedules.length > 0);
     const stripNumberedStopSuffix = (stopName: string): string => stopName.replace(/\s*\(\d+\)\s*$/, '');
     const resolveTripStopKey = <T,>(record: Record<string, T> | undefined, stopName: string): string | null => {
         if (!record) return null;
@@ -282,11 +299,14 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
     const [recentlyAddedTripId, setRecentlyAddedTripId] = useState<string | null>(null);
     const [isFullScreen, setIsFullScreen] = useState(false);
     const [showAuditLog, setShowAuditLog] = useState(false);
+    const [extendTripModalContext, setExtendTripModalContext] = useState<ExtendTripModalContext | null>(null);
 
     // Connections Panel State
     const [showConnectionsPanel, setShowConnectionsPanel] = useState(false);
+    const [showAiReviewPanel, setShowAiReviewPanel] = useState(false);
     const [connectionLibrary, setConnectionLibrary] = useState<ConnectionLibrary | null>(null);
     void uploaderName;
+    const aiReviewEnabled = isFeatureEnabled('fixedLocalAiReview');
 
     // Load connection library when teamId is available
     useEffect(() => {
@@ -319,11 +339,15 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         stopName?: string;
         stopIndex?: number;
         stops: string[];
+        beforeTripId?: string;
+        afterTripId?: string;
         rowTripIds?: string[];
+        tripOptions?: Array<{ id: string; direction: 'North' | 'South' }>;
         menuLabel?: string;
         addLabel?: string;
         deleteLabel?: string;
         hideTripSpecificActions?: boolean;
+        quickAddActionsOnly?: boolean;
     } | null>(null);
 
     // Audit Log
@@ -559,247 +583,29 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
 
         if (relatedTables.length === 0) return;
 
-        // Use the core module for block reassignment (exact time match, no location check)
-        reassignBlocksForTables(relatedTables, baseName, MatchConfigPresets.editor);
+        const routeConfig = getRouteConfig(baseName);
+        const directions = new Set(
+            relatedTables.flatMap(table => table.trips.map(trip => trip.direction))
+        );
+        const hasBidirectionalService = directions.has('North') && directions.has('South');
+        const reassignmentConfig =
+            routeConfig?.segments.length === 2 && hasBidirectionalService
+                ? MatchConfigPresets.merged
+                : MatchConfigPresets.editor;
+
+        // For paired North/South routes, preserve block continuity by chaining on actual gap.
+        reassignBlocksForTables(relatedTables, baseName, reassignmentConfig);
     };
 
-    const handleCellEdit = (tripId: string, col: string, val: string) => {
-        const newScheds = deepCloneSchedules(schedules);
-        const result = findTableAndTrip(newScheds, tripId);
-        if (!result) return;
-        const { table, trip } = result;
-
-        // Handle arrival time edits (col ends with __ARR)
-        const isArrivalEdit = col.endsWith('__ARR');
-        const stopName = isArrivalEdit ? col.replace('__ARR', '') : col;
-
-        const oldValue = isArrivalEdit
-            ? (getTripStopValue(trip.arrivalTimes, stopName) ?? getTripStopValue(trip.stops, stopName))
-            : getDisplayedDepartureAtStop(trip, stopName);
-
-        // Skip no-op edits — prevents onBlur from overwriting a cascaded change
-        if (oldValue === val) return;
-
-        const oldTime = TimeUtils.toMinutes(oldValue);
-        const newTime = TimeUtils.toMinutes(val);
-        const colIdx = table.stops.indexOf(stopName);
-
-        // Log the edit to audit log
-        if (oldValue !== val) {
-            logAction('edit', `Edited ${stopName}${isArrivalEdit ? ' (arrival)' : ''} time`, {
-                tripId,
-                blockId: trip.blockId,
-                field: stopName,
-                oldValue: oldValue || '-',
-                newValue: val || '-'
-            });
-        }
-
-        if (isArrivalEdit) {
-            trip.arrivalTimes = setTripStopValue(trip.arrivalTimes, stopName, val);
-            // Keep stops in sync so trip timing math (start/end/cycle) reflects ARR edits.
-            trip.stops = setTripStopValue(trip.stops, stopName, val);
-        } else {
-            trip.stops = setTripStopValue(trip.stops, stopName, val);
-            // For recovery-bearing stops, preserve arrival and absorb departure nudges
-            // into the recovery gap instead of moving the arrival earlier/later.
-            const existingArrival = getTripStopValue(trip.arrivalTimes, stopName);
-            const existingRecovery = getTripStopValue(trip.recoveryTimes, stopName) || 0;
-            if (trip.arrivalTimes && existingArrival !== undefined) {
-                if (existingRecovery > 0) {
-                    const arrivalMin = TimeUtils.toMinutes(existingArrival);
-                    const depMin = TimeUtils.toMinutes(val);
-                    if (arrivalMin !== null && depMin !== null) {
-                        const maxRec = Math.max(0, trip.travelTime - 1);
-                        const newRecovery = Math.max(0, Math.min(depMin - arrivalMin, maxRec));
-                        trip.recoveryTimes = setTripStopValue(trip.recoveryTimes, stopName, newRecovery);
-                        trip.recoveryTime = Object.values(trip.recoveryTimes).reduce((sum, v) => sum + (v || 0), 0);
-                        trip.stops = setTripStopValue(trip.stops, stopName, TimeUtils.fromMinutes(arrivalMin + newRecovery));
-                    }
-                } else {
-                    trip.arrivalTimes = setTripStopValue(trip.arrivalTimes, stopName, val);
-                }
-            }
-        }
-
-        if (cascadeMode !== 'none' && oldTime !== null && newTime !== null && colIdx !== -1) {
-            const delta = newTime - oldTime;
-            if (delta !== 0) {
-                for (let i = colIdx + 1; i < table.stops.length; i++) {
-                    const nextStop = table.stops[i];
-                    const nextArrTime = TimeUtils.toMinutes(
-                        getTripStopValue(trip.arrivalTimes, nextStop) ?? getTripStopValue(trip.stops, nextStop)
-                    );
-                    if (nextArrTime !== null) {
-                        const proposedTime = nextArrTime + delta;
-                        // Shift stops (departure) and arrivalTimes (arrival) independently
-                        const depTime = TimeUtils.toMinutes(getTripStopValue(trip.stops, nextStop));
-                        if (depTime !== null) {
-                            trip.stops = setTripStopValue(trip.stops, nextStop, TimeUtils.fromMinutes(depTime + delta));
-                        }
-                        if (trip.arrivalTimes && getTripStopValue(trip.arrivalTimes, nextStop) !== undefined) {
-                            trip.arrivalTimes = setTripStopValue(trip.arrivalTimes, nextStop, TimeUtils.fromMinutes(proposedTime));
-                        }
-                    }
-                }
-            }
-        }
-
-        const oldEndTime = trip.endTime;
-        recalculateTrip(trip, table.stops);
-        const newEndTime = trip.endTime;
-        const deltaEnd = newEndTime - oldEndTime;
-
-        if (cascadeMode === 'always' && deltaEnd !== 0) {
-            // Ripple to subsequent trips in the same block
-            // Extract base route name using getTrueBaseRoute (handles 2A/2B direction variants)
-            const baseName = getTrueBaseRoute(table.routeName);
-
-            // Find all tables for this route (both directions if bidirectional)
-            const relatedTables = newScheds.filter(t => {
-                const tBase = getTrueBaseRoute(t.routeName);
-                return tBase === baseName;
-            });
-
-            // Collect all trips in this block from all related tables
-            const allBlockTrips: { trip: MasterTrip; table: MasterRouteTable }[] = [];
-            relatedTables.forEach(t => {
-                t.trips.filter(tr => tr.blockId === trip.blockId).forEach(tr => {
-                    allBlockTrips.push({ trip: tr, table: t });
-                });
-            });
-
-            // Sort by tripNumber to maintain proper sequence
-            allBlockTrips.sort((a, b) => a.trip.tripNumber - b.trip.tripNumber);
-
-            // Find where the edited trip is in the sequence
-            const startIdx = allBlockTrips.findIndex(item => item.trip.id === trip.id);
-
-            if (startIdx !== -1) {
-                // Ripple changes to all subsequent trips in the block
-                for (let i = startIdx + 1; i < allBlockTrips.length; i++) {
-                    const { trip: nextTrip, table: nextTable } = allBlockTrips[i];
-                    // Shift stops (departure) and arrivalTimes (arrival) independently
-                    nextTable.stops.forEach(s => {
-                        const stopTime = getTripStopValue(nextTrip.stops, s);
-                        if (stopTime !== null && stopTime !== undefined && stopTime !== '') {
-                            nextTrip.stops = setTripStopValue(nextTrip.stops, s, TimeUtils.addMinutes(stopTime, deltaEnd));
-                        }
-                        const arrivalTime = getTripStopValue(nextTrip.arrivalTimes, s);
-                        if (nextTrip.arrivalTimes && arrivalTime !== undefined &&
-                            arrivalTime !== null && arrivalTime !== '') {
-                            nextTrip.arrivalTimes = setTripStopValue(nextTrip.arrivalTimes, s, TimeUtils.addMinutes(arrivalTime, deltaEnd));
-                        }
-                    });
-                    recalculateTrip(nextTrip, nextTable.stops);
-                }
-            }
-        }
-
-        newScheds.forEach(t => validateRouteTable(t));
-
-        onSchedulesChange(newScheds);
-    };
-
-    const handleRecoveryEdit = (tripId: string, stopName: string, delta: number) => {
-        const newScheds = deepCloneSchedules(schedules);
-        const result = findTableAndTrip(newScheds, tripId);
-        if (!result) return;
-        const { table, trip } = result;
-        const stopIdx = table.stops.indexOf(stopName);
-        if (stopIdx === -1) return;
-
-        const oldRec = getTripStopValue(trip.recoveryTimes, stopName) || 0;
-        // Bound recovery: can't be negative, and can't exceed travel time - 1 (to avoid negative runtime)
-        const maxRec = Math.max(0, trip.travelTime - 1);
-        const newRec = Math.max(0, Math.min(oldRec + delta, maxRec));
-        const actualDelta = newRec - oldRec; // May differ from requested delta if bounds were hit
-
-        trip.recoveryTimes = setTripStopValue(trip.recoveryTimes, stopName, newRec);
-        trip.recoveryTime = Object.values(trip.recoveryTimes).reduce((sum, v) => sum + (v || 0), 0);
-
-        // Update departure time at the modified stop: departure = arrival + recovery
-        const arrivalAtStop = getTripStopValue(trip.arrivalTimes, stopName);
-        if (arrivalAtStop) {
-            const arrMin = TimeUtils.toMinutes(arrivalAtStop);
-            if (arrMin !== null) {
-                trip.stops = setTripStopValue(trip.stops, stopName, TimeUtils.fromMinutes(arrMin + newRec));
-            }
-        }
-
-        // Cascade time changes to subsequent stops (both stops and arrivalTimes)
-        for (let i = stopIdx + 1; i < table.stops.length; i++) {
-            const nextStop = table.stops[i];
-            const t = TimeUtils.toMinutes(getTripStopValue(trip.stops, nextStop));
-            if (t !== null) trip.stops = setTripStopValue(trip.stops, nextStop, TimeUtils.fromMinutes(t + actualDelta));
-            // Also update arrivalTimes
-            const arrivalTime = getTripStopValue(trip.arrivalTimes, nextStop);
-            if (arrivalTime) {
-                const arr = TimeUtils.toMinutes(arrivalTime);
-                if (arr !== null) trip.arrivalTimes = setTripStopValue(trip.arrivalTimes, nextStop, TimeUtils.fromMinutes(arr + actualDelta));
-            }
-        }
-        recalculateTrip(trip, table.stops);
-        validateRouteTable(table);
-
-        if (cascadeMode === 'always' && actualDelta !== 0) {
-            const baseName = getTrueBaseRoute(table.routeName);
-            const relatedTables = newScheds.filter(t => {
-                const tBase = getTrueBaseRoute(t.routeName);
-                return tBase === baseName;
-            });
-
-            const allBlockTrips: { trip: MasterTrip; table: MasterRouteTable }[] = [];
-            relatedTables.forEach(t => {
-                t.trips.filter(tr => tr.blockId === trip.blockId).forEach(tr => {
-                    allBlockTrips.push({ trip: tr, table: t });
-                });
-            });
-
-            allBlockTrips.sort((a, b) => a.trip.tripNumber - b.trip.tripNumber);
-            const startIdx = allBlockTrips.findIndex(item => item.trip.id === trip.id);
-
-            if (startIdx !== -1) {
-                for (let i = startIdx + 1; i < allBlockTrips.length; i++) {
-                    const { trip: nextTrip, table: nextTable } = allBlockTrips[i];
-                    // Shift stops (departure) and arrivalTimes (arrival) independently
-                    nextTable.stops.forEach(s => {
-                        const stopTime = getTripStopValue(nextTrip.stops, s);
-                        if (stopTime !== null && stopTime !== undefined && stopTime !== '') {
-                            nextTrip.stops = setTripStopValue(nextTrip.stops, s, TimeUtils.addMinutes(stopTime, actualDelta));
-                        }
-                        const arrivalTime = getTripStopValue(nextTrip.arrivalTimes, s);
-                        if (nextTrip.arrivalTimes && arrivalTime !== undefined &&
-                            arrivalTime !== null && arrivalTime !== '') {
-                            nextTrip.arrivalTimes = setTripStopValue(nextTrip.arrivalTimes, s, TimeUtils.addMinutes(arrivalTime, actualDelta));
-                        }
-                    });
-                    recalculateTrip(nextTrip, nextTable.stops);
-                }
-            }
-        }
-
-        reassignBlocksForRelatedTables(newScheds, getTrueBaseRoute(table.routeName));
-        onSchedulesChange(newScheds);
-    };
-
-    const handleTimeAdjust = (tripId: string, stopName: string, delta: number) => {
-        const newScheds = deepCloneSchedules(schedules);
-        const result = findTableAndTrip(newScheds, tripId);
-        if (!result) return;
-        const { trip } = result;
-
-        const isArrivalAdjust = stopName.endsWith('__ARR');
-        const baseStopName = isArrivalAdjust ? stopName.replace('__ARR', '') : stopName;
-        const departureAtStop = getDisplayedDepartureAtStop(trip, baseStopName);
-        const currentTime = isArrivalAdjust
-            ? (getTripStopValue(trip.arrivalTimes, baseStopName) ?? getTripStopValue(trip.stops, baseStopName))
-            : departureAtStop;
-        if (!currentTime) return;
-
-        const newTime = TimeUtils.addMinutes(currentTime, delta);
-        handleCellEdit(tripId, isArrivalAdjust ? `${baseStopName}__ARR` : baseStopName, newTime);
-    };
+    const {
+        handleCellEdit,
+        handleRecoveryEdit,
+        handleTimeAdjust,
+    } = useScheduleEditing(schedules, onSchedulesChange ?? (() => {}), {
+        cascadeMode,
+        logAction,
+        showSuccessToast,
+    });
 
     const handleDeleteTrips = (tripIds: string[], options?: { treatAsRoundTrip?: boolean }) => {
         const uniqueTripIds = Array.from(new Set(tripIds.filter(Boolean)));
@@ -875,12 +681,19 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                 handleDeleteTrips(action.tripIds ?? [action.tripId], { treatAsRoundTrip: true });
                 break;
 
+            case 'addTripBefore': {
+                const addResult = findTableAndTrip(schedules, action.tripId);
+                if (addResult) {
+                    openAddTripModal(action.tripId, { north: activeRoute.north, south: activeRoute.south }, 'before');
+                }
+                break;
+            }
+
             case 'addTripAfter': {
                 // Find the trip and open add modal
                 const addResult = findTableAndTrip(schedules, action.tripId);
                 if (addResult) {
-                    // openModal expects (afterTripId, routeData)
-                    openAddTripModal(action.tripId, { north: undefined, south: undefined });
+                    openAddTripModal(action.tripId, { north: activeRoute.north, south: activeRoute.south }, 'after');
                 }
                 break;
             }
@@ -922,6 +735,14 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
             case 'duplicateTrip':
                 handleDuplicateTrip(action.tripId);
                 break;
+
+            case 'extendTrip': {
+                const extendContext = buildExtendTripModalContext(schedules, action.tripId);
+                if (extendContext) {
+                    setExtendTripModalContext(extendContext);
+                }
+                break;
+            }
         }
         setContextMenu(null);
     };
@@ -987,7 +808,8 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         blockId: string,
         stops: string[],
         stopName?: string,
-        stopIndex?: number
+        stopIndex?: number,
+        tripOptions?: Array<{ id: string; direction: 'North' | 'South' }>
     ) => {
         e.preventDefault();
         setContextMenu({
@@ -998,7 +820,8 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
             blockId,
             stopName,
             stopIndex,
-            stops
+            stops,
+            tripOptions
         });
     };
 
@@ -1010,11 +833,15 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         direction,
         blockId,
         stops,
+        beforeTripId,
+        afterTripId,
         rowTripIds,
+        tripOptions,
         menuLabel,
         addLabel,
         deleteLabel,
-        hideTripSpecificActions
+        hideTripSpecificActions,
+        quickAddActionsOnly
     }: {
         tripId: string;
         x: number;
@@ -1022,11 +849,15 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         direction: 'North' | 'South';
         blockId: string;
         stops: string[];
+        beforeTripId?: string;
+        afterTripId?: string;
         rowTripIds?: string[];
+        tripOptions?: Array<{ id: string; direction: 'North' | 'South' }>;
         menuLabel?: string;
         addLabel?: string;
         deleteLabel?: string;
         hideTripSpecificActions?: boolean;
+        quickAddActionsOnly?: boolean;
     }) => {
         setContextMenu({
             x,
@@ -1035,12 +866,49 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
             tripDirection: direction,
             blockId,
             stops,
+            beforeTripId,
+            afterTripId,
             rowTripIds,
+            tripOptions,
             menuLabel,
             addLabel,
             deleteLabel,
-            hideTripSpecificActions
+            hideTripSpecificActions,
+            quickAddActionsOnly
         });
+    };
+
+    const handleExtendTripFromModal = (result: ExtendTripResult, modalContext: ExtendTripModalContext) => {
+        const { schedules: nextSchedules, updatedTripId, blockConflict } = applyExtendTripResultToSchedules(schedules, modalContext, result);
+
+        if (blockConflict) {
+            showSuccessToast(`Cannot extend trip: block ${blockConflict.blockId} already has overlapping work on ${blockConflict.routeName}.`);
+            return;
+        }
+
+        const found = nextSchedules.flatMap(table => table.trips).find(trip => trip.id === updatedTripId) ?? null;
+        onSchedulesChange(nextSchedules);
+        setExtendTripModalContext(null);
+        setSelectedTripId(updatedTripId);
+        setSubView('editor');
+
+        if (found) {
+            const stopLabel = result.stopName;
+            const directionLabel = found.direction.toLowerCase();
+            logAction('edit', `Extended ${directionLabel}bound trip to ${stopLabel}`, {
+                tripId: updatedTripId,
+                blockId: found.blockId,
+                field: result.mode === 'earlier' ? 'startStopIndex' : 'endStopIndex',
+                newValue: stopLabel
+            });
+            showSuccessToast(`✓ Extended ${directionLabel}bound trip to ${stopLabel}`);
+        }
+    };
+
+    const handleOpenExtendTripModal = (tripId: string) => {
+        const extendContext = buildExtendTripModalContext(schedules, tripId);
+        if (!extendContext) return;
+        setExtendTripModalContext(extendContext);
     };
 
     // Timeline drag handler - updates trip times from timeline view
@@ -1513,7 +1381,35 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         if (!activeRoute) return { routeName: 'Unknown', trips: [], stops: [], stopIds: {} };
         if (activeRoute.combined) return { routeName: activeRouteGroup.name, trips: [...(activeRoute.north?.trips || []), ...(activeRoute.south?.trips || [])], stops: [], stopIds: {} };
         return activeRoute.north || activeRoute.south || { routeName: 'Unknown', trips: [], stops: [], stopIds: {} };
-    }, [activeRoute]);
+    }, [activeRoute, activeRouteGroup?.name]);
+    const activeRouteTables = useMemo(() => (
+        [activeRoute?.north, activeRoute?.south].filter((table): table is MasterRouteTable => !!table)
+    ), [activeRoute?.north, activeRoute?.south]);
+    const activeRouteMasterBaseline = useMemo(() => (
+        (masterBaseline || []).filter(table => activeRouteTables.some(routeTable => routeTable.routeName === table.routeName))
+    ), [activeRouteTables, masterBaseline]);
+    const aiReviewSnapshot = useMemo(() => {
+        if (!activeRouteGroup || !activeRoute || activeRouteTables.length === 0) return null;
+        return buildScheduleReviewSnapshot({
+            draftName,
+            routeGroupName: activeRouteGroup.name,
+            dayType: activeDay as DayType,
+            routeIdentity: `${activeRouteGroup.name}-${activeDay}`,
+            routeTables: activeRouteTables,
+            targetHeadwayMinutes: targetHeadway,
+            targetCycleMinutes: targetCycleTime,
+            masterBaseline: activeRouteMasterBaseline,
+        });
+    }, [
+        activeDay,
+        activeRoute,
+        activeRouteGroup,
+        activeRouteMasterBaseline,
+        activeRouteTables,
+        draftName,
+        targetCycleTime,
+        targetHeadway,
+    ]);
 
     if (!activeRouteGroup || !activeRoute) return <div className="p-8 text-center text-gray-600">No Routes Loaded</div>;
 
@@ -1524,6 +1420,14 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                     context={addTripModalContext}
                     onCancel={closeAddTripModal}
                     onConfirm={handleAddTripFromModal}
+                />
+            )}
+
+            {extendTripModalContext && (
+                <ExtendTripModal
+                    context={extendTripModalContext}
+                    onCancel={() => setExtendTripModalContext(null)}
+                    onConfirm={handleExtendTripFromModal}
                 />
             )}
 
@@ -1538,11 +1442,15 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                     currentStopName={contextMenu.stopName}
                     currentStopIndex={contextMenu.stopIndex}
                     stops={contextMenu.stops}
+                    beforeTripId={contextMenu.beforeTripId}
+                    afterTripId={contextMenu.afterTripId}
                     rowTripIds={contextMenu.rowTripIds}
+                    tripOptions={contextMenu.tripOptions}
                     menuLabel={contextMenu.menuLabel}
                     addLabel={contextMenu.addLabel}
                     deleteLabel={contextMenu.deleteLabel}
                     hideTripSpecificActions={contextMenu.hideTripSpecificActions}
+                    quickAddActionsOnly={contextMenu.quickAddActionsOnly}
                     onAction={handleContextMenuAction}
                     onClose={() => setContextMenu(null)}
                 />
@@ -1560,12 +1468,13 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                         onSaveVersion={readOnly ? undefined : onSaveVersion}
                         autoSaveStatus={readOnly ? undefined : autoSaveStatus}
                         lastSaved={readOnly ? undefined : lastSaved}
-                        hasUnsavedChanges={!readOnly && schedules.length > 0}
+                        hasUnsavedChanges={effectiveHasUnsavedChanges}
                         summaryTable={summaryTable}
                         draftName={readOnly ? 'Master Schedule' : draftName}
                         onRenameDraft={readOnly ? undefined : onRenameDraft}
                         onOpenDrafts={readOnly ? undefined : onOpenDrafts}
                         onNewDraft={readOnly ? undefined : onNewDraft}
+                        onDuplicateDraft={readOnly ? undefined : onDuplicateDraft}
                         onClose={onClose}
                         onExport={handleExport}
                         isFullScreen={isFullScreen}
@@ -1580,7 +1489,14 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                         publishLabel={publishLabel}
                         isPublishing={isPublishing}
                         publishDisabled={publishDisabled}
-                        onOpenConnections={teamId && userId && !readOnly ? () => setShowConnectionsPanel(true) : undefined}
+                        onOpenConnections={teamId && userId && !readOnly ? () => {
+                            setShowAiReviewPanel(false);
+                            setShowConnectionsPanel(true);
+                        } : undefined}
+                        onOpenAiReview={aiReviewEnabled && !readOnly && aiReviewSnapshot ? () => {
+                            setShowConnectionsPanel(false);
+                            setShowAiReviewPanel(true);
+                        } : undefined}
                     />
                 )}
 
@@ -1671,7 +1587,8 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                                     onResetOriginals={onResetOriginals}
                                     onDeleteTrip={readOnly ? undefined : handleDeleteTrips}
                                     onDuplicateTrip={readOnly ? undefined : handleDuplicateTrip}
-                                    onAddTrip={readOnly ? undefined : (tripId) => openAddTripModal(tripId, {})}
+                                    onAddTrip={readOnly ? undefined : (tripId, placement) => openAddTripModal(tripId, { north: activeRoute.north, south: activeRoute.south }, placement)}
+                                    onExtendTrip={readOnly ? undefined : handleOpenExtendTripModal}
                                     onTripRightClick={readOnly ? undefined : handleTripRightClick}
                                     onMenuOpen={readOnly ? undefined : handleMenuOpen}
                                     draftName={draftName}
@@ -1698,6 +1615,13 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                             userId={userId}
                             onLibraryChanged={setConnectionLibrary}
                             onClose={() => setShowConnectionsPanel(false)}
+                        />
+                    )}
+
+                    {showAiReviewPanel && aiReviewSnapshot && (
+                        <AIReviewPanel
+                            snapshot={aiReviewSnapshot}
+                            onClose={() => setShowAiReviewPanel(false)}
                         />
                     )}
                 </div>

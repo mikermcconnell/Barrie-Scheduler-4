@@ -11,6 +11,7 @@ import {
     Calendar,
     Clock,
     Trash2,
+    Copy,
     ChevronRight,
     Loader2,
     AlertCircle,
@@ -24,12 +25,14 @@ import { getAllSystemDrafts, getSystemDraft, deleteSystemDraft } from '../../uti
 
 interface SystemDraftListProps {
     onSelectDraft: (draft: SystemDraft) => void;
+    onDuplicateDraft?: (draftId: string) => void;
     onRefresh?: () => void;
     className?: string;
 }
 
 export const SystemDraftList: React.FC<SystemDraftListProps> = ({
     onSelectDraft,
+    onDuplicateDraft,
     onRefresh,
     className = ''
 }) => {
@@ -212,6 +215,18 @@ export const SystemDraftList: React.FC<SystemDraftListProps> = ({
                                 {/* Actions */}
                                 <div className="flex items-center gap-2 ml-4">
                                     {/* Delete Button */}
+                                    {onDuplicateDraft && (
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                onDuplicateDraft(draft.id);
+                                            }}
+                                            className="p-2 text-gray-400 hover:text-indigo-500 hover:bg-indigo-50 rounded-lg opacity-0 group-hover:opacity-100 transition-all"
+                                            title="Duplicate draft"
+                                        >
+                                            <Copy size={16} />
+                                        </button>
+                                    )}
                                     <button
                                         onClick={(e) => handleDeleteDraft(draft.id, e)}
                                         disabled={deletingId === draft.id}

@@ -1,0 +1,411 @@
+import React from 'react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createRoot, type Root } from 'react-dom/client';
+import { flushSync } from 'react-dom';
+import type { MasterRouteTable } from '../utils/parsers/masterScheduleParser';
+
+const {
+  getConnectionLibraryMock,
+  writeBufferMock,
+  linkClickMock,
+  createObjectUrlMock,
+  undoMock,
+  redoMock,
+} = vi.hoisted(() => ({
+  getConnectionLibraryMock: vi.fn().mockResolvedValue(null),
+  writeBufferMock: vi.fn().mockResolvedValue(new ArrayBuffer(8)),
+  linkClickMock: vi.fn(),
+  createObjectUrlMock: vi.fn(() => 'blob:mock-export'),
+  undoMock: vi.fn(),
+  redoMock: vi.fn(),
+}));
+
+const createCell = () => ({
+  value: undefined as unknown,
+  font: undefined as unknown,
+  fill: undefined as unknown,
+  alignment: undefined as unknown,
+  border: undefined as unknown,
+});
+
+const createRow = (data: unknown[]) => {
+  const cells = data.map(() => createCell());
+  return {
+    height: undefined as number | undefined,
+    getCell(index: number) {
+      while (cells.length < index) {
+        cells.push(createCell());
+      }
+      return cells[index - 1];
+    },
+    eachCell(callback: (cell: ReturnType<typeof createCell>, col: number) => void) {
+      cells.forEach((cell, idx) => callback(cell, idx + 1));
+    },
+  };
+};
+
+const createWorksheet = () => {
+  const columnMap = new Map<number, { width?: number }>();
+  return {
+    addRow(data: unknown[]) {
+      return createRow(data);
+    },
+    mergeCells: vi.fn(),
+    getCell: vi.fn(() => createCell()),
+    getColumn(index: number) {
+      if (!columnMap.has(index)) {
+        columnMap.set(index, {});
+      }
+      return columnMap.get(index)!;
+    },
+  };
+};
+
+vi.mock('exceljs', () => {
+  class MockWorkbook {
+    creator = '';
+    created: Date | null = null;
+    addWorksheet = vi.fn(() => createWorksheet());
+    xlsx = {
+      writeBuffer: writeBufferMock,
+    };
+  }
+
+  return {
+    default: {
+      Workbook: MockWorkbook,
+    },
+  };
+});
+
+vi.mock('xlsx', () => ({}));
+
+vi.mock('../utils/parsers/masterScheduleParser', async () => {
+  const actual = await vi.importActual<typeof import('../utils/parsers/masterScheduleParser')>(
+    '../utils/parsers/masterScheduleParser',
+  );
+
+  return {
+    ...actual,
+    buildRoundTripView: vi.fn((
+      north?: Pick<MasterRouteTable, 'stops' | 'stopIds' | 'trips'> | null,
+      south?: Pick<MasterRouteTable, 'stops' | 'stopIds' | 'trips'> | null,
+    ) => ({
+      routeName: '10',
+      northStops: north?.stops ?? [],
+      southStops: south?.stops ?? [],
+      northStopIds: north?.stopIds ?? {},
+      southStopIds: south?.stopIds ?? {},
+      rows: [
+        {
+          blockId: '10-1',
+          trips: [...(north?.trips ?? []), ...(south?.trips ?? [])],
+          totalTravelTime: 60,
+          totalRecoveryTime: 0,
+          totalCycleTime: 60,
+          pairIndex: 0,
+        },
+      ],
+    })),
+    validateRouteTable: vi.fn(() => []),
+  };
+});
+
+vi.mock('../utils/connections/connectionLibraryService', () => ({
+  getConnectionLibrary: getConnectionLibraryMock,
+}));
+
+vi.mock('../hooks/useAddTrip', () => ({
+  useAddTrip: () => ({
+    modalContext: null,
+    openModal: vi.fn(),
+    closeModal: vi.fn(),
+    handleConfirm: vi.fn(),
+  }),
+}));
+
+vi.mock('../hooks/useTravelTimeGrid', () => ({
+  useTravelTimeGrid: () => ({
+    handleBulkAdjustTravelTime: vi.fn(),
+    handleBulkAdjustRecoveryTime: vi.fn(),
+    handleSingleTripTravelAdjust: vi.fn(),
+    handleSingleRecoveryAdjust: vi.fn(),
+  }),
+}));
+
+vi.mock('../components/layout/WorkspaceHeader', () => ({
+  WorkspaceHeader: (props: {
+    onUndo?: () => void;
+    onRedo?: () => void;
+    onToggleFullScreen?: () => void;
+    onOpenConnections?: () => void;
+    onExport?: () => void;
+    hasUnsavedChanges?: boolean;
+  }) => (
+    <div data-testid="workspace-header" data-unsaved={String(props.hasUnsavedChanges ?? false)}>
+      <button data-testid="undo" onClick={props.onUndo}>Undo</button>
+      <button data-testid="redo" onClick={props.onRedo}>Redo</button>
+      <button data-testid="toggle-fullscreen" onClick={props.onToggleFullScreen}>Fullscreen</button>
+      <button data-testid="open-connections" onClick={props.onOpenConnections}>Connections</button>
+      <button data-testid="export" onClick={props.onExport}>Export</button>
+      <input data-testid="typing-input" />
+    </div>
+  ),
+}));
+
+vi.mock('../components/schedule/RoundTripTableView', () => ({
+  RoundTripTableView: () => <div data-testid="round-trip-table" />,
+}));
+
+vi.mock('../components/TravelTimeGrid', () => ({
+  TravelTimeGrid: () => <div data-testid="travel-time-grid" />,
+}));
+
+vi.mock('../components/NewSchedule/TimelineView', () => ({
+  TimelineView: () => <div data-testid="timeline-view" />,
+}));
+
+vi.mock('../components/connections/ConnectionsPanel', () => ({
+  ConnectionsPanel: (props: { onClose?: () => void }) => (
+    <div data-testid="connections-panel">
+      <button data-testid="close-connections" onClick={props.onClose}>Close</button>
+    </div>
+  ),
+}));
+
+vi.mock('../components/RouteSummary', () => ({
+  RouteSummary: () => <div data-testid="route-summary" />,
+}));
+
+vi.mock('../components/AuditLogPanel', () => ({
+  useAuditLog: () => ({ entries: [], logAction: vi.fn() }),
+  AuditLogPanel: () => null,
+}));
+
+vi.mock('../components/modals/AddTripModal', () => ({
+  AddTripModal: () => null,
+}));
+
+vi.mock('../components/NewSchedule/TripContextMenu', () => ({
+  TripContextMenu: () => null,
+}));
+
+vi.mock('../components/ui/CascadeModeSelector', () => ({
+  CascadeModeSelector: () => null,
+}));
+
+import { ScheduleEditor } from '../components/ScheduleEditor';
+
+async function flushPromises() {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+const schedules = [
+  {
+    routeName: '10 (Weekday) (North)',
+    stops: ['Stop 1', 'Stop 2'],
+    stopIds: {},
+    trips: [
+      {
+        id: 'north-trip',
+        blockId: '10-1',
+        direction: 'North',
+        tripNumber: 1,
+        rowId: 1,
+        startTime: 420,
+        endTime: 450,
+        recoveryTime: 0,
+        travelTime: 30,
+        cycleTime: 30,
+        stops: { 'Stop 1': '7:00 AM', 'Stop 2': '7:30 AM' },
+        arrivalTimes: { 'Stop 1': '7:00 AM', 'Stop 2': '7:30 AM' },
+      },
+    ],
+  },
+  {
+    routeName: '10 (Weekday) (South)',
+    stops: ['Stop 1', 'Stop 2'],
+    stopIds: {},
+    trips: [
+      {
+        id: 'south-trip',
+        blockId: '10-1',
+        direction: 'South',
+        tripNumber: 2,
+        rowId: 2,
+        startTime: 455,
+        endTime: 485,
+        recoveryTime: 0,
+        travelTime: 30,
+        cycleTime: 30,
+        stops: { 'Stop 1': '7:35 AM', 'Stop 2': '8:05 AM' },
+        arrivalTimes: { 'Stop 1': '7:35 AM', 'Stop 2': '8:05 AM' },
+      },
+    ],
+  },
+] as any;
+
+describe('ScheduleEditor shell behavior', () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+  let originalCreateObjectURL: typeof URL.createObjectURL;
+
+  beforeEach(() => {
+    getConnectionLibraryMock.mockClear();
+    writeBufferMock.mockClear();
+    linkClickMock.mockClear();
+    createObjectUrlMock.mockClear();
+    undoMock.mockClear();
+    redoMock.mockClear();
+    originalCreateObjectURL = URL.createObjectURL;
+    URL.createObjectURL = createObjectUrlMock;
+  });
+
+  afterEach(() => {
+    URL.createObjectURL = originalCreateObjectURL;
+
+    if (root) {
+      flushSync(() => {
+        root?.unmount();
+      });
+    }
+
+    container?.remove();
+    root = null;
+    container = null;
+    vi.restoreAllMocks();
+  });
+
+  const renderEditor = () => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    flushSync(() => {
+      root?.render(
+        <ScheduleEditor
+          schedules={schedules}
+          teamId="team-1"
+          userId="user-1"
+          onSchedulesChange={vi.fn()}
+          canUndo
+          canRedo
+          undo={undoMock}
+          redo={redoMock}
+        />,
+      );
+    });
+  };
+
+  it('fires undo and redo shortcuts unless the user is typing into an input', async () => {
+    renderEditor();
+    await flushPromises();
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'y', ctrlKey: true, bubbles: true }));
+
+    expect(undoMock).toHaveBeenCalledTimes(1);
+    expect(redoMock).toHaveBeenCalledTimes(1);
+
+    const typingInput = container?.querySelector('[data-testid="typing-input"]') as HTMLInputElement | null;
+    typingInput?.focus();
+
+    flushSync(() => {
+      typingInput?.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }));
+      typingInput?.dispatchEvent(new KeyboardEvent('keydown', { key: 'y', ctrlKey: true, bubbles: true }));
+    });
+
+    expect(undoMock).toHaveBeenCalledTimes(1);
+    expect(redoMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('enters fullscreen from the header and exits it on Escape', async () => {
+    renderEditor();
+    await flushPromises();
+
+    const fullscreenButton = container?.querySelector('[data-testid="toggle-fullscreen"]');
+
+    flushSync(() => {
+      fullscreenButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(container?.querySelector('.fixed.inset-0')).not.toBeNull();
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await flushPromises();
+
+    expect(container?.querySelector('.fixed.inset-0')).toBeNull();
+  });
+
+  it('opens and closes the connections panel from header wiring', async () => {
+    renderEditor();
+    await flushPromises();
+
+    const openButton = container?.querySelector('[data-testid="open-connections"]');
+
+    flushSync(() => {
+      openButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(container?.querySelector('[data-testid="connections-panel"]')).not.toBeNull();
+
+    const closeButton = container?.querySelector('[data-testid="close-connections"]');
+    flushSync(() => {
+      closeButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(container?.querySelector('[data-testid="connections-panel"]')).toBeNull();
+  });
+
+  it('passes explicit unsaved state to the workspace header', async () => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    flushSync(() => {
+      root?.render(
+        <ScheduleEditor
+          schedules={schedules}
+          hasUnsavedChanges={false}
+        />,
+      );
+    });
+
+    await flushPromises();
+
+    const header = container?.querySelector('[data-testid="workspace-header"]');
+    expect(header?.getAttribute('data-unsaved')).toBe('false');
+  });
+
+  it('runs the export workflow and clicks a generated download link', async () => {
+    renderEditor();
+    await flushPromises();
+
+    const originalCreateElement = document.createElement.bind(document);
+    const createElementSpy = vi.spyOn(document, 'createElement').mockImplementation((tagName: string) => {
+      const element = originalCreateElement(tagName);
+      if (tagName.toLowerCase() === 'a') {
+        Object.defineProperty(element, 'click', {
+          configurable: true,
+          value: linkClickMock,
+        });
+      }
+      return element;
+    });
+
+    const exportButton = container?.querySelector('[data-testid="export"]');
+
+    flushSync(() => {
+      exportButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    await flushPromises();
+    await flushPromises();
+
+    expect(writeBufferMock).toHaveBeenCalledTimes(1);
+    expect(createObjectUrlMock).toHaveBeenCalledTimes(1);
+    expect(linkClickMock).toHaveBeenCalledTimes(1);
+    createElementSpy.mockRestore();
+  });
+});

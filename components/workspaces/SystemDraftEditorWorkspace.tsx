@@ -22,12 +22,15 @@ import type { MasterRouteTable } from '../../utils/parsers/masterScheduleParser'
 import type { DayType } from '../../utils/masterScheduleTypes';
 import type { SystemDraft, SystemDraftRoute, SystemDraftBasedOn } from '../../utils/schedule/scheduleTypes';
 import { saveSystemDraft, getSystemDraftRouteNumbers } from '../../utils/services/systemDraftService';
+import { buildDuplicateDraftName } from '../../utils/services/draftNaming';
 import { publishSystemDraft } from '../../utils/services/publishService';
 
 interface SystemDraftEditorWorkspaceProps {
     systemDraft: SystemDraft;
     onClose: () => void;
     onDraftUpdated?: (draft: SystemDraft) => void;
+    onOpenDrafts?: () => void;
+    onNewDraft?: () => void;
 }
 
 /**
@@ -122,11 +125,14 @@ const updateRoutesFromTables = (
 export const SystemDraftEditorWorkspace: React.FC<SystemDraftEditorWorkspaceProps> = ({
     systemDraft: initialDraft,
     onClose,
-    onDraftUpdated
+    onDraftUpdated,
+    onOpenDrafts,
+    onNewDraft
 }) => {
     const { user } = useAuth();
     const { team } = useTeam();
     const toast = useToast();
+    const userId = user?.uid ?? null;
 
     // System-level state
     const [draftId, setDraftId] = useState<string>(initialDraft.id);
@@ -151,7 +157,8 @@ export const SystemDraftEditorWorkspace: React.FC<SystemDraftEditorWorkspaceProp
 
     // Auto-save state
     const [autoSaveStatus, setAutoSaveStatus] = useState<AutoSaveStatus>('idle');
-    const [lastSaved, setLastSaved] = useState<Date | null>(null);
+    const [lastSaved, setLastSaved] = useState<Date | null>(initialDraft.updatedAt || null);
+    const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
     const [isPublishing, setIsPublishing] = useState(false);
     const [storagePath, setStoragePath] = useState<string | undefined>(initialDraft.storagePath);
     const originalRoutesSnapshotRef = useRef<SystemDraftRoute[]>(initialDraft.routes);
@@ -160,6 +167,38 @@ export const SystemDraftEditorWorkspace: React.FC<SystemDraftEditorWorkspaceProp
     const [routeSearch, setRouteSearch] = useState('');
     const searchInputRef = useRef<HTMLInputElement>(null);
     const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const mountedRef = useRef(true);
+    const hasInitializedAutoSaveRef = useRef(false);
+    const hasPendingChangesRef = useRef(false);
+    const changeVersionRef = useRef(0);
+    const savedVersionRef = useRef(0);
+    const previousRoutesRef = useRef(allRoutes);
+    const previousDraftNameRef = useRef(initialDraft.name);
+    const userRef = useRef(user);
+    const allRoutesRef = useRef(allRoutes);
+    const draftNameRef = useRef(draftName);
+    const draftIdRef = useRef(draftId);
+    const storagePathRef = useRef(storagePath);
+
+    useEffect(() => {
+        userRef.current = user;
+    }, [user]);
+
+    useEffect(() => {
+        allRoutesRef.current = allRoutes;
+    }, [allRoutes]);
+
+    useEffect(() => {
+        draftNameRef.current = draftName;
+    }, [draftName]);
+
+    useEffect(() => {
+        draftIdRef.current = draftId;
+    }, [draftId]);
+
+    useEffect(() => {
+        storagePathRef.current = storagePath;
+    }, [storagePath]);
 
     // Get route numbers for sidebar
     const routeNumbers = useMemo(() => getSystemDraftRouteNumbers(allRoutes), [allRoutes]);
@@ -190,85 +229,186 @@ export const SystemDraftEditorWorkspace: React.FC<SystemDraftEditorWorkspaceProp
     }, [allRoutes, currentRouteNumber, setAllRoutes]);
 
     // Save the entire system draft
-    const saveDraftNow = async (): Promise<string | null> => {
-        if (!user) {
-            setAutoSaveStatus('error');
+    const saveDraftNow = useCallback(async (options?: { suppressStatusUpdates?: boolean }): Promise<string | null> => {
+        const activeUser = userRef.current;
+        if (!activeUser) {
+            if (mountedRef.current && !options?.suppressStatusUpdates) {
+                setAutoSaveStatus('error');
+            }
             return null;
         }
 
         try {
-            setAutoSaveStatus('saving');
-            const newDraftId = await saveSystemDraft(user.uid, {
-                id: draftId,
-                name: draftName,
+            if (mountedRef.current && !options?.suppressStatusUpdates) {
+                setAutoSaveStatus('saving');
+            }
+            const versionAtSave = changeVersionRef.current;
+            const newDraftId = await saveSystemDraft(activeUser.uid, {
+                id: draftIdRef.current,
+                name: draftNameRef.current,
                 dayType,
-                routes: allRoutes,
+                routes: allRoutesRef.current,
                 status: 'draft',
-                createdBy: user.uid,
+                createdBy: activeUser.uid,
                 basedOn,
-                storagePath
+                storagePath: storagePathRef.current
             });
+            savedVersionRef.current = Math.max(savedVersionRef.current, versionAtSave);
+            const stillDirty = changeVersionRef.current > savedVersionRef.current;
+            draftIdRef.current = newDraftId;
+            hasPendingChangesRef.current = stillDirty;
 
-            setDraftId(newDraftId);
-            setLastSaved(new Date());
-            setAutoSaveStatus('saved');
+            if (mountedRef.current) {
+                setDraftId(newDraftId);
+                setLastSaved(new Date());
+                setHasUnsavedChanges(stillDirty);
+                if (!options?.suppressStatusUpdates) {
+                    setAutoSaveStatus(stillDirty ? 'idle' : 'saved');
+                }
+            }
 
             // Notify parent of update
-            onDraftUpdated?.({
-                id: newDraftId,
-                name: draftName,
-                dayType,
-                routes: allRoutes,
-                status: 'draft',
-                createdBy: user.uid,
-                basedOn,
-                storagePath,
-                createdAt: initialDraft.createdAt,
-                updatedAt: new Date(),
-                routeCount: allRoutes.length
-            });
+            if (mountedRef.current) {
+                onDraftUpdated?.({
+                    id: newDraftId,
+                    name: draftNameRef.current,
+                    dayType,
+                    routes: allRoutesRef.current,
+                    status: 'draft',
+                    createdBy: activeUser.uid,
+                    basedOn,
+                    storagePath: storagePathRef.current,
+                    createdAt: initialDraft.createdAt,
+                    updatedAt: new Date(),
+                    routeCount: allRoutesRef.current.length
+                });
+            }
 
             return newDraftId;
         } catch (error) {
             console.error('System draft save failed:', error);
-            setAutoSaveStatus('error');
+            if (mountedRef.current && !options?.suppressStatusUpdates) {
+                setAutoSaveStatus('error');
+            }
             return null;
         }
-    };
+    }, [basedOn, dayType, initialDraft.createdAt, onDraftUpdated]);
 
     // Auto-save effect
     useEffect(() => {
-        if (!user) return;
+        if (!userId) return;
+
+        if (!hasInitializedAutoSaveRef.current) {
+            hasInitializedAutoSaveRef.current = true;
+            previousRoutesRef.current = allRoutes;
+            previousDraftNameRef.current = draftName;
+            hasPendingChangesRef.current = changeVersionRef.current > savedVersionRef.current;
+            setHasUnsavedChanges(hasPendingChangesRef.current);
+            return;
+        }
+
+        const routesChanged = previousRoutesRef.current !== allRoutes;
+        const draftNameChanged = previousDraftNameRef.current !== draftName;
+
+        if (!routesChanged && !draftNameChanged) {
+            return;
+        }
+
+        previousRoutesRef.current = allRoutes;
+        previousDraftNameRef.current = draftName;
+
+        changeVersionRef.current += 1;
+        const isDirty = changeVersionRef.current > savedVersionRef.current;
 
         if (saveTimerRef.current) {
             clearTimeout(saveTimerRef.current);
         }
 
+        hasPendingChangesRef.current = isDirty;
+        setHasUnsavedChanges(isDirty);
+
+        if (!isDirty) {
+            return;
+        }
+
         setAutoSaveStatus(prev => (prev === 'saved' || prev === 'error') ? 'idle' : prev);
 
         saveTimerRef.current = setTimeout(() => {
-            saveDraftNow();
+            void saveDraftNow();
         }, 10000);
-
-        return () => {
-            if (saveTimerRef.current) {
-                clearTimeout(saveTimerRef.current);
-            }
-        };
-    }, [allRoutes, draftName, user]);
+    }, [allRoutes, draftName, saveDraftNow, userId]);
 
     // Cleanup on unmount
     useEffect(() => {
+        mountedRef.current = true;
+
         return () => {
+            mountedRef.current = false;
+
             if (saveTimerRef.current) {
                 clearTimeout(saveTimerRef.current);
             }
+
+            if (hasPendingChangesRef.current && userRef.current) {
+                void saveDraftNow({ suppressStatusUpdates: true });
+            }
         };
-    }, []);
+    }, [saveDraftNow]);
 
     // Handle manual save
     const handleSaveVersion = async () => {
         await saveDraftNow();
+    };
+
+    const handleDuplicateDraft = async () => {
+        if (!user) {
+            toast?.error('Duplicate Failed', 'Sign in to duplicate drafts.');
+            return;
+        }
+
+        try {
+            setAutoSaveStatus('saving');
+            const duplicatedName = buildDuplicateDraftName(draftName);
+            const newDraftId = await saveSystemDraft(user.uid, {
+                name: duplicatedName,
+                dayType,
+                routes: allRoutesRef.current,
+                status: 'draft',
+                createdBy: user.uid,
+                basedOn,
+            });
+
+            setDraftId(newDraftId);
+            setDraftName(duplicatedName);
+            setStoragePath(undefined);
+            setLastSaved(new Date());
+            draftIdRef.current = newDraftId;
+            draftNameRef.current = duplicatedName;
+            storagePathRef.current = undefined;
+            savedVersionRef.current = changeVersionRef.current;
+            setHasUnsavedChanges(false);
+            setAutoSaveStatus('saved');
+
+            onDraftUpdated?.({
+                id: newDraftId,
+                name: duplicatedName,
+                dayType,
+                routes: allRoutesRef.current,
+                status: 'draft',
+                createdBy: user.uid,
+                basedOn,
+                storagePath: undefined,
+                createdAt: initialDraft.createdAt,
+                updatedAt: new Date(),
+                routeCount: allRoutesRef.current.length
+            });
+
+            toast?.success('Duplicated', 'Opened a duplicated system draft copy.');
+        } catch (error) {
+            console.error('System draft duplicate failed:', error);
+            setAutoSaveStatus('error');
+            toast?.error('Duplicate Failed', 'Unable to duplicate the current system draft.');
+        }
     };
 
     // Handle publish - publishes all routes
@@ -287,8 +427,8 @@ export const SystemDraftEditorWorkspace: React.FC<SystemDraftEditorWorkspaceProp
                 teamId: team.id,
                 userId: user.uid,
                 publisherName: user.displayName || user.email || 'User',
-                systemDraftId: draftId,
-                routes: allRoutes,
+                systemDraftId: draftIdRef.current,
+                routes: allRoutesRef.current,
                 dayType
             });
 
@@ -432,8 +572,12 @@ export const SystemDraftEditorWorkspace: React.FC<SystemDraftEditorWorkspaceProp
                             const baseName = name.replace(/ - Route \d+[A-Za-z]*$/, '');
                             setDraftName(baseName);
                         }}
+                        onOpenDrafts={onOpenDrafts}
+                        onNewDraft={onNewDraft}
+                        onDuplicateDraft={handleDuplicateDraft}
                         autoSaveStatus={autoSaveStatus}
                         lastSaved={lastSaved}
+                        hasUnsavedChanges={hasUnsavedChanges}
                         onSaveVersion={handleSaveVersion}
                         canUndo={canUndo}
                         canRedo={canRedo}

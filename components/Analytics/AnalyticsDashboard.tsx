@@ -5,28 +5,63 @@
  * Routes to TransitApp, OD Matrix, and future analysis workspaces.
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { Suspense, useState, useEffect } from 'react';
 import { Map, ArrowRight, Loader2, Smartphone, Network, GraduationCap, Route, GitBranch } from 'lucide-react';
 import { useTeam } from '../contexts/TeamContext';
 import { useAuth } from '../contexts/AuthContext';
 import { getTransitAppData, getTransitAppMetadata } from '../../utils/transit-app/transitAppService';
 import { getODMatrixData, getODMatrixMetadata, loadGeocodeCache, setActiveODMatrixImport } from '../../utils/od-matrix/odMatrixService';
-import { TransitAppImport } from './TransitAppImport';
-import { TransitAppWorkspace } from './TransitAppWorkspace';
-import { ODMatrixImport } from './ODMatrixImport';
-import { ODMatrixWorkspace } from './ODMatrixWorkspace';
-import { ODCoordinateEditor } from './ODCoordinateEditor';
 import { TeamManagement } from '../TeamManagement';
-import { HeadwayMap } from '../Mapping/HeadwayMap';
-import { CorridorSpeedMap } from '../Mapping/CorridorSpeedMap';
-import { StudentPassModule } from './StudentPassModule';
-import { ShuttlePlannerWorkspace } from './ShuttlePlannerWorkspace';
-import { RoutePlannerWorkspace } from './RoutePlannerWorkspace';
-import { NetworkConnectionsWorkspace } from './NetworkConnectionsWorkspace';
 import { usePerformanceMetadataQuery } from '../../hooks/usePerformanceData';
 import { isFeatureEnabled, isFeatureUnderConstruction } from '../../utils/features';
 import type { TransitAppDataSummary } from '../../utils/transit-app/transitAppTypes';
 import type { ODMatrixDataSummary, GeocodeCache } from '../../utils/od-matrix/odMatrixTypes';
+import { lazyWithRetry } from '../../utils/lazyWithRetry';
+
+const TransitAppImport = lazyWithRetry(
+    () => import('./TransitAppImport').then(module => ({ default: module.TransitAppImport })),
+    'analytics-transit-app-import'
+);
+const TransitAppWorkspace = lazyWithRetry(
+    () => import('./TransitAppWorkspace').then(module => ({ default: module.TransitAppWorkspace })),
+    'analytics-transit-app-workspace'
+);
+const ODMatrixImport = lazyWithRetry(
+    () => import('./ODMatrixImport').then(module => ({ default: module.ODMatrixImport })),
+    'analytics-od-matrix-import'
+);
+const ODMatrixWorkspace = lazyWithRetry(
+    () => import('./ODMatrixWorkspace').then(module => ({ default: module.ODMatrixWorkspace })),
+    'analytics-od-matrix-workspace'
+);
+const ODCoordinateEditor = lazyWithRetry(
+    () => import('./ODCoordinateEditor').then(module => ({ default: module.ODCoordinateEditor })),
+    'analytics-od-coordinate-editor'
+);
+const HeadwayMap = lazyWithRetry(
+    () => import('../Mapping/HeadwayMap').then(module => ({ default: module.HeadwayMap })),
+    'analytics-headway-map'
+);
+const CorridorSpeedMap = lazyWithRetry(
+    () => import('../Mapping/CorridorSpeedMap').then(module => ({ default: module.CorridorSpeedMap })),
+    'analytics-corridor-speed-map'
+);
+const StudentPassModule = lazyWithRetry(
+    () => import('./StudentPassModule').then(module => ({ default: module.StudentPassModule })),
+    'analytics-student-pass-module'
+);
+const ShuttlePlannerWorkspace = lazyWithRetry(
+    () => import('./ShuttlePlannerWorkspace').then(module => ({ default: module.ShuttlePlannerWorkspace })),
+    'analytics-shuttle-planner-workspace'
+);
+const RoutePlannerWorkspace = lazyWithRetry(
+    () => import('./RoutePlannerWorkspace').then(module => ({ default: module.RoutePlannerWorkspace })),
+    'analytics-route-planner-workspace'
+);
+const NetworkConnectionsWorkspace = lazyWithRetry(
+    () => import('./NetworkConnectionsWorkspace').then(module => ({ default: module.NetworkConnectionsWorkspace })),
+    'analytics-network-connections-workspace'
+);
 
 interface AnalyticsCardProps {
     color: 'cyan' | 'violet' | 'teal' | 'amber';
@@ -141,6 +176,15 @@ const AnalyticsFeatureNotice: React.FC<{ feature: Parameters<typeof isFeatureEna
         </div>
     );
 };
+
+const AnalyticsPanelLoading: React.FC<{ label?: string }> = ({ label = 'Loading analytics module...' }) => (
+    <div className="flex h-full items-center justify-center">
+        <div className="flex flex-col items-center gap-3 text-gray-500">
+            <Loader2 className="text-cyan-500 animate-spin" size={32} />
+            <span className="text-sm font-medium">{label}</span>
+        </div>
+    </div>
+);
 
 export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose }) => {
     const { team } = useTeam();
@@ -316,12 +360,14 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
     if (view === 'import' && user) {
         return (
             <div className="h-full overflow-auto custom-scrollbar p-6">
-                <TransitAppImport
-                    teamId={team.id}
-                    userId={user.uid}
-                    onImportComplete={handleImportComplete}
-                    onCancel={() => setView('dashboard')}
-                />
+                <Suspense fallback={<AnalyticsPanelLoading label="Loading Transit App import..." />}>
+                    <TransitAppImport
+                        teamId={team.id}
+                        userId={user.uid}
+                        onImportComplete={handleImportComplete}
+                        onCancel={() => setView('dashboard')}
+                    />
+                </Suspense>
             </div>
         );
     }
@@ -332,11 +378,13 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
             <div className="h-full overflow-auto custom-scrollbar p-6">
                 <div className="max-w-7xl mx-auto">
                     <AnalyticsFeatureNotice feature="analyticsTransitApp" />
-                    <TransitAppWorkspace
-                        data={transitData}
-                        onReimport={() => setView('import')}
-                        onBack={() => setView('dashboard')}
-                    />
+                    <Suspense fallback={<AnalyticsPanelLoading label="Loading Transit App workspace..." />}>
+                        <TransitAppWorkspace
+                            data={transitData}
+                            onReimport={() => setView('import')}
+                            onBack={() => setView('dashboard')}
+                        />
+                    </Suspense>
                 </div>
             </div>
         );
@@ -346,12 +394,14 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
     if (view === 'od-import' && user) {
         return (
             <div className="h-full overflow-auto custom-scrollbar p-6">
-                <ODMatrixImport
-                    teamId={team.id}
-                    userId={user.uid}
-                    onImportComplete={handleODImportComplete}
-                    onCancel={() => setView('dashboard')}
-                />
+                <Suspense fallback={<AnalyticsPanelLoading label="Loading OD matrix import..." />}>
+                    <ODMatrixImport
+                        teamId={team.id}
+                        userId={user.uid}
+                        onImportComplete={handleODImportComplete}
+                        onCancel={() => setView('dashboard')}
+                    />
+                </Suspense>
             </div>
         );
     }
@@ -362,17 +412,19 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
             <div className="h-full overflow-auto custom-scrollbar p-6">
                 <div className="max-w-7xl mx-auto">
                     <AnalyticsFeatureNotice feature="analyticsOdMatrix" />
-                    <ODMatrixWorkspace
-                        key={odData.metadata.importId ?? 'default'}
-                        data={odData}
-                        geocodeCache={odGeocodeCache}
-                        teamId={team.id}
-                        onReimport={() => setView('od-import')}
-                        onFixCoordinates={handleODFixCoordinates}
-                        onBack={() => setView('dashboard')}
-                        onSwitchImport={handleSwitchImport}
-                        onDeletedImport={handleDeletedImport}
-                    />
+                    <Suspense fallback={<AnalyticsPanelLoading label="Loading OD matrix workspace..." />}>
+                        <ODMatrixWorkspace
+                            key={odData.metadata.importId ?? 'default'}
+                            data={odData}
+                            geocodeCache={odGeocodeCache}
+                            teamId={team.id}
+                            onReimport={() => setView('od-import')}
+                            onFixCoordinates={handleODFixCoordinates}
+                            onBack={() => setView('dashboard')}
+                            onSwitchImport={handleSwitchImport}
+                            onDeletedImport={handleDeletedImport}
+                        />
+                    </Suspense>
                 </div>
             </div>
         );
@@ -381,14 +433,16 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
     // OD coordinate editor (no file re-upload)
     if (view === 'od-fix-coords' && user && odData) {
         return (
-            <ODCoordinateEditor
-                teamId={team.id}
-                userId={user.uid}
-                data={odData}
-                geocodeCache={odGeocodeCache}
-                onComplete={() => loadODData({ markAsLoaded: true })}
-                onCancel={() => setView('od-workspace')}
-            />
+            <Suspense fallback={<AnalyticsPanelLoading label="Loading coordinate editor..." />}>
+                <ODCoordinateEditor
+                    teamId={team.id}
+                    userId={user.uid}
+                    data={odData}
+                    geocodeCache={odGeocodeCache}
+                    onComplete={() => loadODData({ markAsLoaded: true })}
+                    onCancel={() => setView('od-workspace')}
+                />
+            </Suspense>
         );
     }
 
@@ -400,7 +454,9 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
                     <AnalyticsFeatureNotice feature="analyticsStudentPass" />
                 </div>
                 <div className="min-h-0 flex-1 overflow-hidden">
-                    <StudentPassModule onBack={() => setView('dashboard')} teamId={team.id} />
+                    <Suspense fallback={<AnalyticsPanelLoading label="Loading student pass tools..." />}>
+                        <StudentPassModule onBack={() => setView('dashboard')} teamId={team.id} />
+                    </Suspense>
                 </div>
             </div>
         );
@@ -414,7 +470,9 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
                     <AnalyticsFeatureNotice feature="analyticsCorridorHeadway" />
                 </div>
                 <div className="min-h-0 flex-1 overflow-hidden">
-                    <HeadwayMap onBack={() => setView('dashboard')} />
+                    <Suspense fallback={<AnalyticsPanelLoading label="Loading headway map..." />}>
+                        <HeadwayMap onBack={() => setView('dashboard')} />
+                    </Suspense>
                 </div>
             </div>
         );
@@ -427,7 +485,9 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
                     <AnalyticsFeatureNotice feature="analyticsCorridorSpeed" />
                 </div>
                 <div className="min-h-0 flex-1 overflow-hidden">
-                    <CorridorSpeedMap onBack={() => setView('dashboard')} teamId={team.id} />
+                    <Suspense fallback={<AnalyticsPanelLoading label="Loading corridor speed map..." />}>
+                        <CorridorSpeedMap onBack={() => setView('dashboard')} teamId={team.id} />
+                    </Suspense>
                 </div>
             </div>
         );
@@ -440,11 +500,13 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
                     <AnalyticsFeatureNotice feature="analyticsRoutePlanner" />
                 </div>
                 <div className="min-h-0 flex-1 overflow-hidden">
-                    <RoutePlannerWorkspace
-                        onBack={() => setView('dashboard')}
-                        userId={user?.uid ?? null}
-                        teamId={team.id}
-                    />
+                    <Suspense fallback={<AnalyticsPanelLoading label="Loading route planner..." />}>
+                        <RoutePlannerWorkspace
+                            onBack={() => setView('dashboard')}
+                            userId={user?.uid ?? null}
+                            teamId={team.id}
+                        />
+                    </Suspense>
                 </div>
             </div>
         );
@@ -457,12 +519,14 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
                     <AnalyticsFeatureNotice feature="analyticsNetworkConnections" />
                 </div>
                 <div className="min-h-0 flex-1 overflow-hidden">
-                    <NetworkConnectionsWorkspace
-                        onBack={() => setView('dashboard')}
-                        teamId={team.id}
-                        userId={user?.uid ?? null}
-                        observedTransitData={transitData}
-                    />
+                    <Suspense fallback={<AnalyticsPanelLoading label="Loading network connections..." />}>
+                        <NetworkConnectionsWorkspace
+                            onBack={() => setView('dashboard')}
+                            teamId={team.id}
+                            userId={user?.uid ?? null}
+                            observedTransitData={transitData}
+                        />
+                    </Suspense>
                 </div>
             </div>
         );
@@ -475,11 +539,13 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
                     <AnalyticsFeatureNotice feature="analyticsShuttlePlanner" />
                 </div>
                 <div className="min-h-0 flex-1 overflow-hidden">
-                    <ShuttlePlannerWorkspace
-                        onBack={() => setView('dashboard')}
-                        userId={user?.uid ?? null}
-                        teamId={team.id}
-                    />
+                    <Suspense fallback={<AnalyticsPanelLoading label="Loading shuttle planner..." />}>
+                        <ShuttlePlannerWorkspace
+                            onBack={() => setView('dashboard')}
+                            userId={user?.uid ?? null}
+                            teamId={team.id}
+                        />
+                    </Suspense>
                 </div>
             </div>
         );

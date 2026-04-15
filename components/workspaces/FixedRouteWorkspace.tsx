@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { Suspense, useState, useEffect, useCallback } from 'react';
 import {
     CalendarPlus,
     ArrowRight,
@@ -12,34 +12,66 @@ import {
     Loader2,
     Clock,
     Trash2,
-    RefreshCw
+    RefreshCw,
+    Copy
 } from 'lucide-react';
-import { NewScheduleWizard } from '../NewSchedule/NewScheduleWizard';
-import { MasterScheduleBrowser } from '../MasterScheduleBrowser';
-import { ScheduleEditorWorkspace, SiblingDraft } from './ScheduleEditorWorkspace';
-import { SystemDraftEditorWorkspace } from './SystemDraftEditorWorkspace';
-import { ReportsDashboard } from '../Reports/ReportsDashboard';
-import { AnalyticsDashboard } from '../Analytics/AnalyticsDashboard';
-import { GTFSImportModal } from '../GTFSImport';
-import { PerformanceImport } from '../Performance/PerformanceImport';
+import type { SiblingDraft } from './ScheduleEditorWorkspace';
 import { SystemDraftList } from '../layout/SystemDraftList';
 import { TeamManagement } from '../TeamManagement';
 import type { MasterScheduleContent } from '../../utils/masterScheduleTypes';
 import type { DraftBasedOn, DraftSchedule, SystemDraft } from '../../utils/schedule/scheduleTypes';
 import { buildMasterContentFromTables } from '../../utils/schedule/scheduleDraftAdapter';
-import { getAllDrafts, getDraft, deleteDraft } from '../../utils/services/draftService';
-import { getSystemDraft } from '../../utils/services/systemDraftService';
+import { getAllDrafts, getDraft, deleteDraft, duplicateDraft } from '../../utils/services/draftService';
+import { getSystemDraft, duplicateSystemDraft } from '../../utils/services/systemDraftService';
 import {
     buildOpenDraftEditorState,
     buildInitialSiblingEditorState,
     getRemainingDraftsAfterBulkDelete,
     type SiblingDraftCandidate,
 } from '../../utils/workspaces/fixedRouteDraftState';
+import {
+    loadFixedRouteResumeState,
+    saveFixedRouteResumeState,
+} from '../../utils/workspaces/fixedRouteResumeState';
 import { consumeNetworkConnectionEditorHandoff } from '../../utils/network-connections/networkConnectionHandoff';
 import { isFeatureEnabled } from '../../utils/features';
 import { useAuth } from '../contexts/AuthContext';
 import { useTeam } from '../contexts/TeamContext';
 import { useToast } from '../contexts/ToastContext';
+import { lazyWithRetry } from '../../utils/lazyWithRetry';
+
+const NewScheduleWizard = lazyWithRetry(
+    () => import('../NewSchedule/NewScheduleWizard').then(module => ({ default: module.NewScheduleWizard })),
+    'fixed-new-schedule-wizard'
+);
+const MasterScheduleBrowser = lazyWithRetry(
+    () => import('../MasterScheduleBrowser').then(module => ({ default: module.MasterScheduleBrowser })),
+    'fixed-master-schedule-browser'
+);
+const ScheduleEditorWorkspace = lazyWithRetry(
+    () => import('./ScheduleEditorWorkspace').then(module => ({ default: module.ScheduleEditorWorkspace })),
+    'fixed-schedule-editor-workspace'
+);
+const SystemDraftEditorWorkspace = lazyWithRetry(
+    () => import('./SystemDraftEditorWorkspace').then(module => ({ default: module.SystemDraftEditorWorkspace })),
+    'fixed-system-draft-editor-workspace'
+);
+const ReportsDashboard = lazyWithRetry(
+    () => import('../Reports/ReportsDashboard').then(module => ({ default: module.ReportsDashboard })),
+    'fixed-reports-dashboard'
+);
+const AnalyticsDashboard = lazyWithRetry(
+    () => import('../Analytics/AnalyticsDashboard').then(module => ({ default: module.AnalyticsDashboard })),
+    'fixed-analytics-dashboard'
+);
+const GTFSImportModal = lazyWithRetry(
+    () => import('../GTFSImport').then(module => ({ default: module.GTFSImportModal })),
+    'fixed-gtfs-import-modal'
+);
+const PerformanceImport = lazyWithRetry(
+    () => import('../Performance/PerformanceImport').then(module => ({ default: module.PerformanceImport })),
+    'fixed-performance-import'
+);
 
 type FixedRouteViewMode = 'dashboard' | 'editor' | 'new-schedule' | 'master' | 'reports' | 'analytics' | 'drafts' | 'system-editor' | 'performance-import';
 
@@ -110,6 +142,15 @@ const DashboardCard: React.FC<DashboardCardProps> = ({ onClick, icon, title, des
     );
 };
 
+const WorkspacePanelLoading: React.FC<{ label?: string }> = ({ label = 'Loading…' }) => (
+    <div className="flex h-full items-center justify-center">
+        <div className="flex flex-col items-center gap-3 text-gray-500">
+            <Loader2 className="animate-spin text-indigo-500" size={28} />
+            <span className="text-sm font-medium">{label}</span>
+        </div>
+    </div>
+);
+
 export const FixedRouteWorkspace: React.FC = () => {
     const { user } = useAuth();
     const { team } = useTeam();
@@ -161,6 +202,47 @@ export const FixedRouteWorkspace: React.FC = () => {
 
     // System draft state (new model - all routes for a day type)
     const [activeSystemDraft, setActiveSystemDraft] = useState<SystemDraft | null>(null);
+    const [isRestoringResumeTarget, setIsRestoringResumeTarget] = useState(false);
+
+    useEffect(() => {
+        if (viewMode === 'dashboard') return;
+        if (viewMode === 'editor' && !currentEditorDraftId && !editorInitialContent) return;
+        if (viewMode === 'system-editor' && !activeSystemDraft) return;
+
+        const label = (() => {
+            switch (viewMode) {
+                case 'editor':
+                    return currentEditorDraftName
+                        ? `Scheduled Transit · ${currentEditorDraftName}`
+                        : 'Scheduled Transit · Schedule Editor';
+                case 'system-editor':
+                    return activeSystemDraft?.name
+                        ? `Scheduled Transit · ${activeSystemDraft.name}`
+                        : 'Scheduled Transit · System Draft Editor';
+                case 'new-schedule':
+                    return 'Scheduled Transit · New Schedule';
+                case 'master':
+                    return 'Scheduled Transit · Master Schedule';
+                case 'drafts':
+                    return 'Scheduled Transit · My Drafts';
+                case 'reports':
+                    return 'Scheduled Transit · Timetable Publisher';
+                case 'analytics':
+                    return 'Scheduled Transit · Planning Data';
+                case 'performance-import':
+                    return 'Scheduled Transit · Re-import STREETS Data';
+                default:
+                    return 'Scheduled Transit';
+            }
+        })();
+
+        saveFixedRouteResumeState({
+            hash: window.location.hash || `#fixed/${viewMode}`,
+            label,
+            draftId: viewMode === 'editor' ? (currentEditorDraftId || undefined) : undefined,
+            systemDraftId: viewMode === 'system-editor' ? (activeSystemDraft?.id || undefined) : undefined,
+        });
+    }, [activeSystemDraft, currentEditorDraftId, currentEditorDraftName, editorInitialContent, viewMode]);
 
     const fetchDrafts = useCallback(async () => {
         if (!user) return;
@@ -225,6 +307,42 @@ export const FixedRouteWorkspace: React.FC = () => {
         } catch (error) {
             console.error('Failed to delete draft:', error);
             toast?.error('Error', 'Failed to delete draft');
+        }
+    };
+
+    const handleDuplicateDraft = async (draftId: string) => {
+        if (!user) return;
+        try {
+            const duplicatedDraftId = await duplicateDraft(user.uid, draftId);
+            const duplicatedDraft = await getDraft(user.uid, duplicatedDraftId);
+            await fetchDrafts();
+            if (duplicatedDraft?.content) {
+                openExistingDraftWorkspace(duplicatedDraft);
+                toast?.success('Duplicated', 'Draft duplicated successfully');
+            } else {
+                setViewMode('drafts');
+            }
+        } catch (error) {
+            console.error('Failed to duplicate draft:', error);
+            toast?.error('Error', 'Failed to duplicate draft');
+        }
+    };
+
+    const handleDuplicateSystemDraft = async (draftId: string) => {
+        if (!user) return;
+        try {
+            const duplicatedDraftId = await duplicateSystemDraft(user.uid, draftId);
+            const duplicatedDraft = await getSystemDraft(user.uid, duplicatedDraftId);
+            if (duplicatedDraft) {
+                setActiveSystemDraft(duplicatedDraft);
+                setViewMode('system-editor');
+                toast?.success('Duplicated', 'System draft duplicated successfully');
+            } else {
+                setViewMode('drafts');
+            }
+        } catch (error) {
+            console.error('Failed to duplicate system draft:', error);
+            toast?.error('Error', 'Failed to duplicate system draft');
         }
     };
 
@@ -304,6 +422,74 @@ export const FixedRouteWorkspace: React.FC = () => {
             }
         })();
     }, [user, viewMode, setViewMode, toast]);
+
+    useEffect(() => {
+        if (!user) return;
+        if (isRestoringResumeTarget) return;
+
+        const resumeState = loadFixedRouteResumeState();
+        if (!resumeState) return;
+
+        if (viewMode === 'editor' && !editorInitialContent && resumeState.draftId) {
+            setIsRestoringResumeTarget(true);
+            (async () => {
+                try {
+                    const fullDraft = await getDraft(user.uid, resumeState.draftId as string);
+                    if (!fullDraft?.content) {
+                        toast?.warning('Resume unavailable', 'The last editor draft could not be restored.');
+                        setViewMode('dashboard');
+                        return;
+                    }
+
+                    const nextEditorState = buildOpenDraftEditorState(
+                        {
+                            id: fullDraft.id || resumeState.draftId!,
+                            name: fullDraft.name,
+                            updatedAt: fullDraft.updatedAt,
+                        },
+                        fullDraft.content,
+                        fullDraft.basedOn
+                    );
+
+                    setSiblingDrafts([]);
+                    setCurrentEditorDraftId(nextEditorState.currentEditorDraftId);
+                    setCurrentEditorDraftName(nextEditorState.currentEditorDraftName);
+                    setCurrentEditorDraftUpdatedAt(nextEditorState.currentEditorDraftUpdatedAt || null);
+                    setEditorInitialContent(nextEditorState.initialContent);
+                    setEditorBasedOn(nextEditorState.basedOn);
+                } catch (error) {
+                    console.error('Failed to restore fixed-route editor session:', error);
+                    toast?.warning('Resume unavailable', 'The last editor session could not be restored.');
+                    setViewMode('dashboard');
+                } finally {
+                    setIsRestoringResumeTarget(false);
+                }
+            })();
+            return;
+        }
+
+        if (viewMode === 'system-editor' && !activeSystemDraft && resumeState.systemDraftId) {
+            setIsRestoringResumeTarget(true);
+            (async () => {
+                try {
+                    const systemDraft = await getSystemDraft(user.uid, resumeState.systemDraftId as string);
+                    if (!systemDraft) {
+                        toast?.warning('Resume unavailable', 'The last system draft could not be restored.');
+                        setViewMode('dashboard');
+                        return;
+                    }
+
+                    setActiveSystemDraft(systemDraft);
+                } catch (error) {
+                    console.error('Failed to restore system draft session:', error);
+                    toast?.warning('Resume unavailable', 'The last system draft session could not be restored.');
+                    setViewMode('dashboard');
+                } finally {
+                    setIsRestoringResumeTarget(false);
+                }
+            })();
+        }
+    }, [activeSystemDraft, editorInitialContent, isRestoringResumeTarget, setViewMode, toast, user, viewMode]);
 
     // --- Handlers ---
 
@@ -479,56 +665,58 @@ export const FixedRouteWorkspace: React.FC = () => {
 
                 {/* GTFS Import Modal */}
                 {user && (
-                    <GTFSImportModal
-                        isOpen={showGTFSImport}
-                        onClose={() => setShowGTFSImport(false)}
-                        userId={user.uid}
-                        onImportComplete={async (result) => {
-                            if (result.success) {
-                                toast.success('GTFS Import Complete', result.warnings?.[0] || 'Routes imported successfully');
-                                setShowGTFSImport(false);
+                    <Suspense fallback={null}>
+                        <GTFSImportModal
+                            isOpen={showGTFSImport}
+                            onClose={() => setShowGTFSImport(false)}
+                            userId={user.uid}
+                            onImportComplete={async (result) => {
+                                if (result.success) {
+                                    toast.success('GTFS Import Complete', result.warnings?.[0] || 'Routes imported successfully');
+                                    setShowGTFSImport(false);
 
-                                // Bulk import with multiple drafts
-                                if (result.allDraftIds && result.allDraftIds.length > 1) {
-                                    await openEditorWithSiblings(result.allDraftIds);
-                                } else if (result.draftId) {
-                                    // Single import: open the draft in editor
-                                    try {
-                                        const draft = await getDraft(user.uid, result.draftId);
-                                        if (draft?.content) {
-                                            openExistingDraftWorkspace(draft);
-                                        } else {
+                                    // Bulk import with multiple drafts
+                                    if (result.allDraftIds && result.allDraftIds.length > 1) {
+                                        await openEditorWithSiblings(result.allDraftIds);
+                                    } else if (result.draftId) {
+                                        // Single import: open the draft in editor
+                                        try {
+                                            const draft = await getDraft(user.uid, result.draftId);
+                                            if (draft?.content) {
+                                                openExistingDraftWorkspace(draft);
+                                            } else {
+                                                setViewMode('drafts');
+                                            }
+                                        } catch (error) {
+                                            console.error('Failed to load imported draft:', error);
                                             setViewMode('drafts');
                                         }
-                                    } catch (error) {
-                                        console.error('Failed to load imported draft:', error);
-                                        setViewMode('drafts');
                                     }
                                 }
-                            }
-                        }}
-                        onSystemImportComplete={async (result) => {
-                            if (result.success && result.systemDraftId) {
-                                toast.success(
-                                    'System Draft Created',
-                                    `Imported ${result.routeCount} routes for ${result.dayType}`
-                                );
-                                setShowGTFSImport(false);
+                            }}
+                            onSystemImportComplete={async (result) => {
+                                if (result.success && result.systemDraftId) {
+                                    toast.success(
+                                        'System Draft Created',
+                                        `Imported ${result.routeCount} routes for ${result.dayType}`
+                                    );
+                                    setShowGTFSImport(false);
 
-                                // Load and open the system draft
-                                try {
-                                    const systemDraft = await getSystemDraft(user.uid, result.systemDraftId);
-                                    if (systemDraft) {
-                                        setActiveSystemDraft(systemDraft);
-                                        setViewMode('system-editor');
+                                    // Load and open the system draft
+                                    try {
+                                        const systemDraft = await getSystemDraft(user.uid, result.systemDraftId);
+                                        if (systemDraft) {
+                                            setActiveSystemDraft(systemDraft);
+                                            setViewMode('system-editor');
+                                        }
+                                    } catch (error) {
+                                        console.error('Failed to load system draft:', error);
+                                        toast.error('Error', 'Failed to open system draft');
                                     }
-                                } catch (error) {
-                                    console.error('Failed to load system draft:', error);
-                                    toast.error('Error', 'Failed to open system draft');
                                 }
-                            }
-                        }}
-                    />
+                            }}
+                        />
+                    </Suspense>
                 )}
             </div>
         );
@@ -556,52 +744,87 @@ export const FixedRouteWorkspace: React.FC = () => {
             <div className="flex-grow overflow-hidden relative bg-white rounded-3xl border-2 border-gray-100 shadow-sm">
                 <div className="absolute inset-0">
                     {viewMode === 'new-schedule' && (
-                        <NewScheduleWizard
-                            onBack={() => setViewMode('dashboard')}
-                            onGenerate={(tables) => {
-                                const buildResult = buildMasterContentFromTables(tables);
-                                if (!buildResult) {
-                                    alert('Unable to open editor: multiple routes or day types detected.');
-                                    return;
-                                }
-                                openEditorWorkspace(buildResult.content, { type: 'generated' });
-                            }}
-                        />
+                        <Suspense fallback={<WorkspacePanelLoading label="Loading New Schedule..." />}>
+                            <NewScheduleWizard
+                                onBack={() => setViewMode('dashboard')}
+                                onGenerate={(tables) => {
+                                    const buildResult = buildMasterContentFromTables(tables);
+                                    if (!buildResult) {
+                                        alert('Unable to open editor: multiple routes or day types detected.');
+                                        return;
+                                    }
+                                    openEditorWorkspace(buildResult.content, { type: 'generated' });
+                                }}
+                            />
+                        </Suspense>
                     )}
 
                     {viewMode === 'master' && (
-                        <MasterScheduleBrowser
-                            onCopyToDraft={(content, routeIdentity) => {
-                                openEditorWorkspace(content, { type: 'master', id: routeIdentity });
-                            }}
-                            onClose={() => setViewMode('dashboard')}
-                        />
+                        <Suspense fallback={<WorkspacePanelLoading label="Loading Master Schedule..." />}>
+                            <MasterScheduleBrowser
+                                onCopyToDraft={(content, routeIdentity) => {
+                                    openEditorWorkspace(content, { type: 'master', id: routeIdentity });
+                                }}
+                                onClose={() => setViewMode('dashboard')}
+                            />
+                        </Suspense>
                     )}
 
                     {viewMode === 'editor' && editorInitialContent && (
-                        <ScheduleEditorWorkspace
-                            key={currentEditorDraftId || 'single'} // Re-mount when switching drafts
-                            initialContent={editorInitialContent}
-                            basedOn={editorBasedOn}
-                            currentDraftName={currentEditorDraftName}
-                            currentDraftUpdatedAt={currentEditorDraftUpdatedAt || undefined}
-                            onClose={() => setViewMode('dashboard')}
-                            siblingDrafts={siblingDrafts}
-                            currentDraftId={currentEditorDraftId || undefined}
-                            onSwitchDraft={handleSwitchDraft}
-                        />
+                        <Suspense fallback={<WorkspacePanelLoading label="Loading Schedule Editor..." />}>
+                            <ScheduleEditorWorkspace
+                                key={currentEditorDraftId || 'single'} // Re-mount when switching drafts
+                                initialContent={editorInitialContent}
+                                basedOn={editorBasedOn}
+                                currentDraftName={currentEditorDraftName}
+                                currentDraftUpdatedAt={currentEditorDraftUpdatedAt || undefined}
+                                onClose={() => setViewMode('dashboard')}
+                                onOpenDrafts={() => setViewMode('drafts')}
+                                onNewDraft={() => setViewMode(isFeatureEnabled('fixedMasterSchedule') ? 'master' : 'drafts')}
+                                onDraftMetadataChange={({ id, name, updatedAt }) => {
+                                    setCurrentEditorDraftId(id);
+                                    setCurrentEditorDraftName(name);
+                                    setCurrentEditorDraftUpdatedAt(updatedAt);
+                                }}
+                                siblingDrafts={siblingDrafts}
+                                currentDraftId={currentEditorDraftId || undefined}
+                                onSwitchDraft={handleSwitchDraft}
+                            />
+                        </Suspense>
+                    )}
+
+                    {viewMode === 'editor' && !editorInitialContent && isRestoringResumeTarget && (
+                        <div className="flex h-full items-center justify-center">
+                            <div className="flex flex-col items-center gap-3 text-gray-500">
+                                <Loader2 className="animate-spin text-indigo-500" size={28} />
+                                <span className="text-sm font-medium">Restoring your last editor session...</span>
+                            </div>
+                        </div>
                     )}
 
                     {viewMode === 'system-editor' && activeSystemDraft && (
-                        <SystemDraftEditorWorkspace
-                            key={activeSystemDraft.id}
-                            systemDraft={activeSystemDraft}
-                            onClose={() => {
-                                setActiveSystemDraft(null);
-                                setViewMode('dashboard');
-                            }}
-                            onDraftUpdated={(updated) => setActiveSystemDraft(updated)}
-                        />
+                        <Suspense fallback={<WorkspacePanelLoading label="Loading System Draft Editor..." />}>
+                            <SystemDraftEditorWorkspace
+                                key={activeSystemDraft.id}
+                                systemDraft={activeSystemDraft}
+                                onClose={() => {
+                                    setActiveSystemDraft(null);
+                                    setViewMode('dashboard');
+                                }}
+                                onDraftUpdated={(updated) => setActiveSystemDraft(updated)}
+                                onOpenDrafts={() => setViewMode('drafts')}
+                                onNewDraft={() => user ? setShowGTFSImport(true) : setViewMode('drafts')}
+                            />
+                        </Suspense>
+                    )}
+
+                    {viewMode === 'system-editor' && !activeSystemDraft && isRestoringResumeTarget && (
+                        <div className="flex h-full items-center justify-center">
+                            <div className="flex flex-col items-center gap-3 text-gray-500">
+                                <Loader2 className="animate-spin text-indigo-500" size={28} />
+                                <span className="text-sm font-medium">Restoring your last system draft...</span>
+                            </div>
+                        </div>
                     )}
 
                     {viewMode === 'drafts' && (
@@ -709,6 +932,7 @@ export const FixedRouteWorkspace: React.FC = () => {
                                         setActiveSystemDraft(draft);
                                         setViewMode('system-editor');
                                     }}
+                                    onDuplicateDraft={handleDuplicateSystemDraft}
                                     className="mb-8"
                                 />
 
@@ -760,6 +984,13 @@ export const FixedRouteWorkspace: React.FC = () => {
                                                             Edit
                                                         </button>
                                                         <button
+                                                            onClick={() => draft.id && handleDuplicateDraft(draft.id)}
+                                                            className="p-2 text-gray-400 hover:text-indigo-500 hover:bg-indigo-50 rounded-lg transition-colors"
+                                                            title="Duplicate draft"
+                                                        >
+                                                            <Copy size={18} />
+                                                        </button>
+                                                        <button
                                                             onClick={() => draft.id && handleDeleteDraft(draft.id)}
                                                             className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
                                                             title="Delete draft"
@@ -777,11 +1008,15 @@ export const FixedRouteWorkspace: React.FC = () => {
                     )}
 
                     {viewMode === 'reports' && (
-                        <ReportsDashboard onClose={() => setViewMode('dashboard')} />
+                        <Suspense fallback={<WorkspacePanelLoading label="Loading Timetable Publisher..." />}>
+                            <ReportsDashboard onClose={() => setViewMode('dashboard')} />
+                        </Suspense>
                     )}
 
                     {viewMode === 'analytics' && (
-                        <AnalyticsDashboard onClose={() => setViewMode('dashboard')} />
+                        <Suspense fallback={<WorkspacePanelLoading label="Loading Planning Data..." />}>
+                            <AnalyticsDashboard onClose={() => setViewMode('dashboard')} />
+                        </Suspense>
                     )}
 
                     {viewMode === 'performance-import' && (
@@ -806,12 +1041,14 @@ export const FixedRouteWorkspace: React.FC = () => {
                                         <TeamManagement onClose={() => setViewMode('dashboard')} />
                                     </div>
                                 ) : (
-                                    <PerformanceImport
-                                        teamId={team.id}
-                                        userId={user.uid}
-                                        onImportComplete={() => setViewMode('dashboard')}
-                                        onCancel={() => setViewMode('dashboard')}
-                                    />
+                                    <Suspense fallback={<WorkspacePanelLoading label="Loading Performance Import..." />}>
+                                        <PerformanceImport
+                                            teamId={team.id}
+                                            userId={user.uid}
+                                            onImportComplete={() => setViewMode('dashboard')}
+                                            onCancel={() => setViewMode('dashboard')}
+                                        />
+                                    </Suspense>
                                 )}
                             </div>
                         </div>
@@ -822,59 +1059,61 @@ export const FixedRouteWorkspace: React.FC = () => {
 
             {/* GTFS Import Modal - rendered at root level for all non-dashboard views */}
             {user && (
-                <GTFSImportModal
-                    isOpen={showGTFSImport}
-                    onClose={() => setShowGTFSImport(false)}
-                    userId={user.uid}
-                    onImportComplete={async (result) => {
-                        if (result.success && result.draftId) {
-                            const isBulkImport = result.warnings?.some(w => w.includes('Imported') && w.includes('of'));
-                            if (isBulkImport) {
-                                toast.success('GTFS Import Complete', result.warnings?.[0] || 'Routes imported successfully');
-                                setShowGTFSImport(false);
-                                setViewMode('drafts');
-                                setTimeout(() => fetchDrafts(), 100);
-                            } else {
-                                toast.success('GTFS Import Complete', `Created draft for ${result.routeIdentity}`);
-                                setShowGTFSImport(false);
-                                try {
-                                    const draft = await getDraft(user.uid, result.draftId);
-                                    if (draft?.content) {
-                                        openExistingDraftWorkspace(draft);
-                                    } else {
+                <Suspense fallback={null}>
+                    <GTFSImportModal
+                        isOpen={showGTFSImport}
+                        onClose={() => setShowGTFSImport(false)}
+                        userId={user.uid}
+                        onImportComplete={async (result) => {
+                            if (result.success && result.draftId) {
+                                const isBulkImport = result.warnings?.some(w => w.includes('Imported') && w.includes('of'));
+                                if (isBulkImport) {
+                                    toast.success('GTFS Import Complete', result.warnings?.[0] || 'Routes imported successfully');
+                                    setShowGTFSImport(false);
+                                    setViewMode('drafts');
+                                    setTimeout(() => fetchDrafts(), 100);
+                                } else {
+                                    toast.success('GTFS Import Complete', `Created draft for ${result.routeIdentity}`);
+                                    setShowGTFSImport(false);
+                                    try {
+                                        const draft = await getDraft(user.uid, result.draftId);
+                                        if (draft?.content) {
+                                            openExistingDraftWorkspace(draft);
+                                        } else {
+                                            setViewMode('drafts');
+                                            setTimeout(() => fetchDrafts(), 100);
+                                        }
+                                    } catch (error) {
+                                        console.error('Failed to load imported draft:', error);
                                         setViewMode('drafts');
                                         setTimeout(() => fetchDrafts(), 100);
                                     }
-                                } catch (error) {
-                                    console.error('Failed to load imported draft:', error);
-                                    setViewMode('drafts');
-                                    setTimeout(() => fetchDrafts(), 100);
                                 }
                             }
-                        }
-                    }}
-                    onSystemImportComplete={async (result) => {
-                        if (result.success && result.systemDraftId) {
-                            toast.success(
-                                'System Draft Created',
-                                `Imported ${result.routeCount} routes for ${result.dayType}`
-                            );
-                            setShowGTFSImport(false);
+                        }}
+                        onSystemImportComplete={async (result) => {
+                            if (result.success && result.systemDraftId) {
+                                toast.success(
+                                    'System Draft Created',
+                                    `Imported ${result.routeCount} routes for ${result.dayType}`
+                                );
+                                setShowGTFSImport(false);
 
-                            // Load and open the system draft
-                            try {
-                                const systemDraft = await getSystemDraft(user.uid, result.systemDraftId);
-                                if (systemDraft) {
-                                    setActiveSystemDraft(systemDraft);
-                                    setViewMode('system-editor');
+                                // Load and open the system draft
+                                try {
+                                    const systemDraft = await getSystemDraft(user.uid, result.systemDraftId);
+                                    if (systemDraft) {
+                                        setActiveSystemDraft(systemDraft);
+                                        setViewMode('system-editor');
+                                    }
+                                } catch (error) {
+                                    console.error('Failed to load system draft:', error);
+                                    toast.error('Error', 'Failed to open system draft');
                                 }
-                            } catch (error) {
-                                console.error('Failed to load system draft:', error);
-                                toast.error('Error', 'Failed to open system draft');
                             }
-                        }
-                    }}
-                />
+                        }}
+                    />
+                </Suspense>
             )}
         </div>
     );

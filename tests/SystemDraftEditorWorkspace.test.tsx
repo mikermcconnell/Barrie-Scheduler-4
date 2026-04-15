@@ -3,37 +3,45 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 
-const { toast, saveDraftMock, publishDraftMock } = vi.hoisted(() => ({
+const { toast, saveSystemDraftMock, publishSystemDraftMock } = vi.hoisted(() => ({
   toast: {
     success: vi.fn(),
     error: vi.fn(),
     warning: vi.fn(),
   },
-  saveDraftMock: vi.fn(),
-  publishDraftMock: vi.fn(),
+  saveSystemDraftMock: vi.fn(),
+  publishSystemDraftMock: vi.fn(),
 }));
 
-const initialContent = {
-  northTable: {
-    routeName: '10 (Weekday) (North)',
-    stops: ['Stop 1'],
-    stopIds: {},
-    trips: [],
-  },
-  southTable: {
-    routeName: '10 (Weekday) (South)',
-    stops: ['Stop 1'],
-    stopIds: {},
-    trips: [],
-  },
-  metadata: {
-    routeNumber: '10',
-    dayType: 'Weekday',
-    uploadedAt: '2026-03-11T10:00:00Z',
-  },
+const initialSystemDraft = {
+  id: 'system-draft-1',
+  name: 'Weekday System QA',
+  dayType: 'Weekday',
+  routes: [
+    {
+      routeNumber: '10',
+      northTable: {
+        routeName: '10 (Weekday) (North)',
+        stops: ['Stop 1'],
+        stopIds: {},
+        trips: [],
+      },
+      southTable: {
+        routeName: '10 (Weekday) (South)',
+        stops: ['Stop 1'],
+        stopIds: {},
+        trips: [],
+      },
+    },
+  ],
+  status: 'draft',
+  createdBy: 'user-1',
+  createdAt: new Date('2026-03-11T10:00:00Z'),
+  updatedAt: new Date('2026-03-11T11:00:00Z'),
+  routeCount: 1,
 } as const;
 
-const changedSchedules = [
+const changedTables = [
   {
     routeName: '10 (Weekday) (North)',
     stops: ['Stop 1', 'Stop 2'],
@@ -73,37 +81,39 @@ vi.mock('../components/contexts/ToastContext', () => ({
 vi.mock('../components/ScheduleEditor', () => ({
   ScheduleEditor: (props: any) => (
     <div data-testid="editor-shell" data-status={props.autoSaveStatus} data-unsaved={String(props.hasUnsavedChanges)}>
-      <button data-testid="change" onClick={() => props.onSchedulesChange?.(changedSchedules)}>change</button>
+      <button data-testid="change" onClick={() => props.onSchedulesChange?.(changedTables)}>change</button>
+      <button data-testid="rename" onClick={() => props.onRenameDraft?.('Weekday System QA Renamed - Route 10')}>rename</button>
       <button data-testid="save" onClick={() => void props.onSaveVersion?.()}>save</button>
       <button data-testid="publish" onClick={() => void props.onPublish?.()}>publish</button>
     </div>
   ),
 }));
 
-vi.mock('../utils/services/draftService', () => ({
-  saveDraft: saveDraftMock,
+vi.mock('../utils/services/systemDraftService', () => ({
+  saveSystemDraft: saveSystemDraftMock,
+  getSystemDraftRouteNumbers: (routes: Array<{ routeNumber: string }>) => routes.map(route => route.routeNumber),
 }));
 
 vi.mock('../utils/services/publishService', () => ({
-  publishDraft: publishDraftMock,
+  publishSystemDraft: publishSystemDraftMock,
 }));
 
-import { ScheduleEditorWorkspace } from '../components/workspaces/ScheduleEditorWorkspace';
+import { SystemDraftEditorWorkspace } from '../components/workspaces/SystemDraftEditorWorkspace';
 
 async function flushPromises() {
   await Promise.resolve();
   await Promise.resolve();
 }
 
-describe('ScheduleEditorWorkspace', () => {
+describe('SystemDraftEditorWorkspace', () => {
   let container: HTMLDivElement | null = null;
   let root: Root | null = null;
   let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    saveDraftMock.mockReset();
-    publishDraftMock.mockReset();
+    saveSystemDraftMock.mockReset();
+    publishSystemDraftMock.mockReset();
     toast.success.mockReset();
     toast.error.mockReset();
     toast.warning.mockReset();
@@ -124,45 +134,47 @@ describe('ScheduleEditorWorkspace', () => {
     container = null;
   });
 
-  const renderWorkspace = (props?: Partial<React.ComponentProps<typeof ScheduleEditorWorkspace>>) => {
+  const renderWorkspace = (props?: Partial<React.ComponentProps<typeof SystemDraftEditorWorkspace>>) => {
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
 
     flushSync(() => {
       root?.render(
-        <ScheduleEditorWorkspace
-          initialContent={initialContent as any}
+        <SystemDraftEditorWorkspace
+          systemDraft={initialSystemDraft as any}
           onClose={() => {}}
-          currentDraftId="draft-1"
-          currentDraftName="Existing Draft"
-          currentDraftUpdatedAt={new Date('2026-03-11T09:00:00Z')}
           {...props}
         />
       );
     });
   };
 
-  it('saves back into the currently opened draft id', async () => {
-    saveDraftMock.mockResolvedValue('draft-1');
+  it('saves back into the currently opened system draft id with the renamed base draft name', async () => {
+    saveSystemDraftMock.mockResolvedValue('system-draft-1');
     renderWorkspace();
+
+    const renameButton = container?.querySelector('[data-testid="rename"]');
+    flushSync(() => {
+      renameButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
 
     const saveButton = container?.querySelector('[data-testid="save"]');
     saveButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     await flushPromises();
 
-    expect(saveDraftMock).toHaveBeenCalledWith(
+    expect(saveSystemDraftMock).toHaveBeenCalledWith(
       'user-1',
       expect.objectContaining({
-        id: 'draft-1',
-        name: 'Existing Draft',
+        id: 'system-draft-1',
+        name: 'Weekday System QA Renamed',
       })
     );
   });
 
   it('flushes pending autosave work on unmount', async () => {
     vi.useFakeTimers();
-    saveDraftMock.mockResolvedValue('draft-1');
+    saveSystemDraftMock.mockResolvedValue('system-draft-1');
     renderWorkspace();
 
     const changeButton = container?.querySelector('[data-testid="change"]');
@@ -170,7 +182,7 @@ describe('ScheduleEditorWorkspace', () => {
       changeButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    expect(saveDraftMock).not.toHaveBeenCalled();
+    expect(saveSystemDraftMock).not.toHaveBeenCalled();
 
     flushSync(() => {
       root?.unmount();
@@ -179,17 +191,16 @@ describe('ScheduleEditorWorkspace', () => {
 
     await flushPromises();
 
-    expect(saveDraftMock).toHaveBeenCalledTimes(1);
+    expect(saveSystemDraftMock).toHaveBeenCalledTimes(1);
   });
 
   it('returns to a saved, clean state after autosave completes', async () => {
     vi.useFakeTimers();
-    saveDraftMock.mockResolvedValue('draft-1');
+    saveSystemDraftMock.mockResolvedValue('system-draft-1');
     renderWorkspace();
     await flushPromises();
 
     const changeButton = container?.querySelector('[data-testid="change"]');
-
     flushSync(() => {
       changeButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
@@ -198,19 +209,31 @@ describe('ScheduleEditorWorkspace', () => {
     await vi.advanceTimersByTimeAsync(10000);
     await flushPromises();
 
-    expect(saveDraftMock).toHaveBeenCalledTimes(1);
+    expect(saveSystemDraftMock).toHaveBeenCalledTimes(1);
     expect(container?.querySelector('[data-testid="editor-shell"]')?.getAttribute('data-unsaved')).toBe('false');
   });
 
-  it('blocks publish when the latest draft save fails', async () => {
-    saveDraftMock.mockRejectedValue(new Error('save failed'));
+  it('publishes after saving the latest system draft state', async () => {
+    saveSystemDraftMock.mockResolvedValue('system-draft-1');
+    publishSystemDraftMock.mockResolvedValue({
+      success: true,
+      publishedCount: 1,
+      failedCount: 0,
+      publishedRoutes: [],
+      failedRoutes: [],
+    });
     renderWorkspace();
 
     const publishButton = container?.querySelector('[data-testid="publish"]');
     publishButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     await flushPromises();
 
-    expect(publishDraftMock).not.toHaveBeenCalled();
-    expect(toast.error).toHaveBeenCalledWith('Publish Failed', 'Save the draft successfully before publishing.');
+    expect(saveSystemDraftMock).toHaveBeenCalled();
+    expect(publishSystemDraftMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        systemDraftId: 'system-draft-1',
+        dayType: 'Weekday',
+      })
+    );
   });
 });

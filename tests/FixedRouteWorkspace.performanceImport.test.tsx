@@ -83,11 +83,32 @@ vi.mock('../utils/workspaces/fixedRouteDraftState', () => ({
   getRemainingDraftsAfterBulkDelete: vi.fn(),
 }));
 
+const {
+  loadFixedRouteResumeStateMock,
+  saveFixedRouteResumeStateMock,
+} = vi.hoisted(() => ({
+  loadFixedRouteResumeStateMock: vi.fn(() => null),
+  saveFixedRouteResumeStateMock: vi.fn(),
+}));
+
+vi.mock('../utils/workspaces/fixedRouteResumeState', () => ({
+  loadFixedRouteResumeState: loadFixedRouteResumeStateMock,
+  saveFixedRouteResumeState: saveFixedRouteResumeStateMock,
+}));
+
 vi.mock('../utils/network-connections/networkConnectionHandoff', () => ({
   consumeNetworkConnectionEditorHandoff: (): null => null,
 }));
 
 import { FixedRouteWorkspace } from '../components/workspaces/FixedRouteWorkspace';
+import { getDraft } from '../utils/services/draftService';
+import { buildOpenDraftEditorState } from '../utils/workspaces/fixedRouteDraftState';
+
+async function flushLazyRender(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
 
 describe('FixedRouteWorkspace re-import entry', () => {
   let container: HTMLDivElement;
@@ -95,6 +116,8 @@ describe('FixedRouteWorkspace re-import entry', () => {
 
   beforeEach(() => {
     window.location.hash = '#fixed';
+    loadFixedRouteResumeStateMock.mockReset();
+    saveFixedRouteResumeStateMock.mockReset();
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -120,9 +143,50 @@ describe('FixedRouteWorkspace re-import entry', () => {
     expect(button).toBeTruthy();
 
     button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await flushLazyRender();
 
-    expect(container.textContent).toContain('Mock Performance Import');
+    expect(container.textContent).toContain('Loading Performance Import...');
     expect(window.location.hash).toBe('#fixed/performance-import');
+  });
+
+  it('restores the last editor draft when returning through a saved fixed-route hash', async () => {
+    window.location.hash = '#fixed/editor';
+    loadFixedRouteResumeStateMock.mockReturnValue({
+      hash: '#fixed/editor',
+      label: 'Scheduled Transit · Draft 400',
+      draftId: 'draft-400',
+      updatedAt: '2026-04-10T12:00:00.000Z',
+    });
+    vi.mocked(getDraft).mockResolvedValue({
+      id: 'draft-400',
+      name: 'Draft 400',
+      updatedAt: new Date('2026-04-10T12:00:00.000Z'),
+      basedOn: { type: 'master', id: '400-Weekday' },
+      content: {
+        northTable: { routeName: '400 (Weekday) (North)', stops: ['A'], stopIds: {}, trips: [] },
+        southTable: { routeName: '400 (Weekday) (South)', stops: ['A'], stopIds: {}, trips: [] },
+        metadata: { routeNumber: '400', dayType: 'Weekday' },
+      },
+    } as any);
+    vi.mocked(buildOpenDraftEditorState).mockReturnValue({
+      initialContent: {
+        northTable: { routeName: '400 (Weekday) (North)', stops: ['A'], stopIds: {}, trips: [] },
+        southTable: { routeName: '400 (Weekday) (South)', stops: ['A'], stopIds: {}, trips: [] },
+        metadata: { routeNumber: '400', dayType: 'Weekday' },
+      } as any,
+      basedOn: { type: 'master', id: '400-Weekday' },
+      currentEditorDraftId: 'draft-400',
+      currentEditorDraftName: 'Draft 400',
+      currentEditorDraftUpdatedAt: new Date('2026-04-10T12:00:00.000Z'),
+    });
+
+    flushSync(() => {
+      root.render(<FixedRouteWorkspace />);
+    });
+
+    await flushLazyRender();
+
+    expect(getDraft).toHaveBeenCalledWith('user-1', 'draft-400');
+    expect(container.textContent).toContain('Loading Schedule Editor...');
   });
 });

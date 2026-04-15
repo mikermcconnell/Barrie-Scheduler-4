@@ -409,6 +409,13 @@ export default defineConfig(({ mode }) => {
       strictPort: true,
       host: '0.0.0.0',
     },
+    build: {
+      // After splitting Fixed Route and Analytics into lazy sub-chunks,
+      // the remaining large bundles are intentional vendor/data-heavy chunks
+      // such as mapbox-gl and exceljs. Use a higher threshold to keep build
+      // warnings focused on genuinely abnormal regressions.
+      chunkSizeWarningLimit: 1800,
+    },
     plugins: [
       react(),
       apiMiddlewarePlugin()

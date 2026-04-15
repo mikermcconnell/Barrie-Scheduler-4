@@ -1,7 +1,7 @@
 // GTFS Adapter — reads bundled gtfs/*.txt files into typed arrays
 // CSV parsing patterns adapted from studentPassUtils.ts
 
-import stopTimesRaw from '../../gtfs/stop_times.txt?raw';
+import { bundledStopTimesText as stopTimesRaw } from '../gtfs/bundledStopTimes';
 import tripsRaw from '../../gtfs/trips.txt?raw';
 import routesRaw from '../../gtfs/routes.txt?raw';
 import stopsRaw from '../../gtfs/stops.txt?raw';

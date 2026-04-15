@@ -12,6 +12,7 @@ import { Header, View } from './components/layout/Header';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { lazyWithRetry } from './utils/lazyWithRetry';
 import { isFeatureEnabled } from './utils/features';
+import { loadFixedRouteResumeState } from './utils/workspaces/fixedRouteResumeState';
 
 const queryClient = new QueryClient();
 const OnDemandWorkspace = lazyWithRetry(() => import('./components/workspaces/OnDemandWorkspace').then(module => ({ default: module.OnDemandWorkspace })), 'ondemand-workspace');
@@ -45,6 +46,7 @@ const AppContent: React.FC = () => {
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showFileManager, setShowFileManager] = useState(false);
   const [showTeamManagement, setShowTeamManagement] = useState(false);
+  const [fixedRouteResume, setFixedRouteResume] = useState(() => loadFixedRouteResumeState());
 
   // Wrap navigation to sync URL hash
   const setCurrentView = useCallback((view: View) => {
@@ -58,6 +60,7 @@ const AppContent: React.FC = () => {
     const handler = () => {
       const nextView = parseHashView();
       setCurrentViewState(nextView);
+      setFixedRouteResume(loadFixedRouteResumeState());
       if (nextView === 'home' && window.location.hash) {
         window.location.hash = '';
       }
@@ -71,6 +74,12 @@ const AppContent: React.FC = () => {
   if (loading) {
     return <WorkspaceLoadingState label="Loading..." />;
   }
+
+  const handleResumeFixedRoute = () => {
+    if (!fixedRouteResume?.hash) return;
+    window.location.hash = fixedRouteResume.hash;
+  };
+
   return (
     <div className="flex flex-col h-screen font-sans text-gray-800 bg-[#F7F7F7] overflow-hidden">
 
@@ -123,6 +132,26 @@ const AppContent: React.FC = () => {
             <div className="text-center mb-12 mt-8">
               <h2 className="text-4xl font-extrabold text-gray-800 mb-4">Select Workspace</h2>
             </div>
+
+            {fixedRouteResume && (
+              <div className="max-w-4xl mx-auto mb-8 px-2">
+                <button
+                  onClick={handleResumeFixedRoute}
+                  className="w-full rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-left transition-all hover:border-emerald-300 hover:bg-emerald-100/70"
+                >
+                  <div className="flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
+                    <div>
+                      <div className="text-[11px] font-extrabold uppercase tracking-[0.2em] text-emerald-600">Where you left off</div>
+                      <div className="mt-1 text-base font-bold text-gray-900">{fixedRouteResume.label}</div>
+                    </div>
+                    <div className="flex items-center gap-2 text-sm font-bold text-emerald-700">
+                      Resume
+                      <ArrowRight size={16} />
+                    </div>
+                  </div>
+                </button>
+              </div>
+            )}
 
             <div className="grid grid-cols-1 gap-8 md:grid-cols-2 xl:grid-cols-3 max-w-6xl mx-auto pb-12">
               {/* On Demand Card */}

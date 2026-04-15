@@ -122,6 +122,7 @@ export async function uploadToMasterSchedule(
     }
 ): Promise<MasterScheduleEntry> {
     const routeIdentity = buildRouteIdentity(routeNumber, dayType);
+    const cycleMode = options?.cycleMode;
 
     // 1. First, get the current version number (outside transaction for storage path)
     const entryRef = doc(db, 'teams', teamId, 'masterSchedules', routeIdentity);
@@ -138,7 +139,7 @@ export async function uploadToMasterSchedule(
             routeNumber,
             dayType,
             uploadedAt: new Date().toISOString(),
-            cycleMode: options?.cycleMode,
+            ...(cycleMode ? { cycleMode } : {}),
         }
     };
 
@@ -180,7 +181,7 @@ export async function uploadToMasterSchedule(
             transaction.set(entryRef, {
                 routeNumber,
                 dayType,
-                cycleMode: options?.cycleMode,
+                ...(cycleMode ? { cycleMode } : {}),
                 currentVersion: newVersion,
                 storagePath,
                 tripCount,
@@ -196,7 +197,7 @@ export async function uploadToMasterSchedule(
                 id: routeIdentity,
                 routeNumber,
                 dayType,
-                cycleMode: options?.cycleMode,
+                cycleMode,
                 currentVersion: newVersion,
                 storagePath,
                 tripCount,

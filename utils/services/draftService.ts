@@ -20,6 +20,7 @@ import { db, storage } from '../firebase';
 import type { DraftSchedule, DraftScheduleInput } from '../schedule/scheduleTypes';
 import type { MasterScheduleContent } from '../masterScheduleTypes';
 import { downloadFileContent } from './dataService';
+import { buildDuplicateDraftName } from './draftNaming';
 
 const DRAFTS_COLLECTION = 'draftSchedules';
 
@@ -185,4 +186,25 @@ export const deleteDraft = async (
     }
 
     await deleteDoc(draftRef);
+};
+
+export const duplicateDraft = async (
+    userId: string,
+    draftId: string,
+    overrideName?: string
+): Promise<string> => {
+    const existingDraft = await getDraft(userId, draftId);
+    if (!existingDraft?.content) {
+        throw new Error('Draft content not found');
+    }
+
+    return saveDraft(userId, {
+        name: overrideName || buildDuplicateDraftName(existingDraft.name),
+        routeNumber: existingDraft.routeNumber,
+        dayType: existingDraft.dayType,
+        status: 'draft',
+        createdBy: userId,
+        basedOn: existingDraft.basedOn,
+        content: existingDraft.content
+    });
 };

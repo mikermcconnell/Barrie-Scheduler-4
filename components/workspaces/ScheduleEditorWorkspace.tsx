@@ -11,6 +11,7 @@ import type { MasterScheduleContent } from '../../utils/masterScheduleTypes';
 import type { DraftBasedOn } from '../../utils/schedule/scheduleTypes';
 import { buildMasterContentFromTables, buildTablesFromContent } from '../../utils/schedule/scheduleDraftAdapter';
 import { saveDraft } from '../../utils/services/draftService';
+import { buildDuplicateDraftName } from '../../utils/services/draftNaming';
 import { publishDraft } from '../../utils/services/publishService';
 
 // Minimal draft info for the route switcher
@@ -26,6 +27,9 @@ interface ScheduleEditorWorkspaceProps {
     initialContent: MasterScheduleContent;
     basedOn?: DraftBasedOn;
     onClose: () => void;
+    onOpenDrafts?: () => void;
+    onNewDraft?: () => void;
+    onDraftMetadataChange?: (draft: { id: string | null; name: string; updatedAt: Date | null }) => void;
     // Optional: sibling drafts for route switching (bulk import)
     siblingDrafts?: SiblingDraft[];
     currentDraftId?: string;
@@ -38,6 +42,9 @@ export const ScheduleEditorWorkspace: React.FC<ScheduleEditorWorkspaceProps> = (
     initialContent,
     basedOn,
     onClose,
+    onOpenDrafts,
+    onNewDraft,
+    onDraftMetadataChange,
     siblingDrafts,
     currentDraftId,
     currentDraftName,
@@ -47,6 +54,7 @@ export const ScheduleEditorWorkspace: React.FC<ScheduleEditorWorkspaceProps> = (
     const { user } = useAuth();
     const { team } = useTeam();
     const toast = useToast();
+    const userId = user?.uid ?? null;
 
     const initialTables = useMemo(() => buildTablesFromContent(initialContent), [initialContent]);
     const {
@@ -65,6 +73,7 @@ export const ScheduleEditorWorkspace: React.FC<ScheduleEditorWorkspaceProps> = (
     const [draftName, setDraftName] = useState<string>(initialDraftName);
     const [autoSaveStatus, setAutoSaveStatus] = useState<AutoSaveStatus>('idle');
     const [lastSaved, setLastSaved] = useState<Date | null>(currentDraftUpdatedAt || null);
+    const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
     const [isPublishing, setIsPublishing] = useState(false);
     const [routeSearch, setRouteSearch] = useState('');
     const [dayTypeFilter, setDayTypeFilter] = useState<'all' | 'Weekday' | 'Saturday' | 'Sunday'>('all');
@@ -75,6 +84,10 @@ export const ScheduleEditorWorkspace: React.FC<ScheduleEditorWorkspaceProps> = (
     const mountedRef = useRef(true);
     const hasInitializedAutoSaveRef = useRef(false);
     const hasPendingChangesRef = useRef(false);
+    const changeVersionRef = useRef(0);
+    const savedVersionRef = useRef(0);
+    const previousSchedulesRef = useRef(schedules);
+    const previousDraftNameRef = useRef(initialDraftName);
     const userRef = useRef(user);
     const schedulesRef = useRef(schedules);
     const draftIdRef = useRef<string | null>(currentDraftId || null);
@@ -97,6 +110,14 @@ export const ScheduleEditorWorkspace: React.FC<ScheduleEditorWorkspaceProps> = (
     useEffect(() => {
         draftNameRef.current = draftName;
     }, [draftName]);
+
+    useEffect(() => {
+        onDraftMetadataChange?.({
+            id: draftId,
+            name: draftName,
+            updatedAt: lastSaved,
+        });
+    }, [draftId, draftName, lastSaved, onDraftMetadataChange]);
 
     // Auto-expand the current route's group
     useEffect(() => {
@@ -131,6 +152,7 @@ export const ScheduleEditorWorkspace: React.FC<ScheduleEditorWorkspaceProps> = (
             if (mountedRef.current && !options?.suppressStatusUpdates) {
                 setAutoSaveStatus('saving');
             }
+            const versionAtSave = changeVersionRef.current;
             const newDraftId = await saveDraft(activeUser.uid, {
                 id: draftIdRef.current || undefined,
                 name: draftNameRef.current,
@@ -142,13 +164,16 @@ export const ScheduleEditorWorkspace: React.FC<ScheduleEditorWorkspaceProps> = (
                 content: buildResult.content
             });
             draftIdRef.current = newDraftId;
-            hasPendingChangesRef.current = false;
+            savedVersionRef.current = Math.max(savedVersionRef.current, versionAtSave);
+            const stillDirty = changeVersionRef.current > savedVersionRef.current;
+            hasPendingChangesRef.current = stillDirty;
 
             if (mountedRef.current) {
                 setDraftId(newDraftId);
                 setLastSaved(new Date());
+                setHasUnsavedChanges(stillDirty);
                 if (!options?.suppressStatusUpdates) {
-                    setAutoSaveStatus('saved');
+                    setAutoSaveStatus(stillDirty ? 'idle' : 'saved');
                 }
             }
 
@@ -163,6 +188,8 @@ export const ScheduleEditorWorkspace: React.FC<ScheduleEditorWorkspaceProps> = (
     }, [basedOn]);
 
     useEffect(() => {
+        mountedRef.current = true;
+
         return () => {
             mountedRef.current = false;
 
@@ -177,23 +204,91 @@ export const ScheduleEditorWorkspace: React.FC<ScheduleEditorWorkspaceProps> = (
     }, [saveDraftNow]);
 
     useEffect(() => {
-        if (!user) return;
+        if (!userId) return;
+
         if (!hasInitializedAutoSaveRef.current) {
             hasInitializedAutoSaveRef.current = true;
+            previousSchedulesRef.current = schedules;
+            previousDraftNameRef.current = draftName;
+            hasPendingChangesRef.current = changeVersionRef.current > savedVersionRef.current;
+            setHasUnsavedChanges(hasPendingChangesRef.current);
             return;
         }
+
+        const schedulesChanged = previousSchedulesRef.current !== schedules;
+        const draftNameChanged = previousDraftNameRef.current !== draftName;
+
+        if (!schedulesChanged && !draftNameChanged) {
+            return;
+        }
+
+        previousSchedulesRef.current = schedules;
+        previousDraftNameRef.current = draftName;
+
+        changeVersionRef.current += 1;
+        const isDirty = changeVersionRef.current > savedVersionRef.current;
+
         if (saveTimerRef.current) {
             clearTimeout(saveTimerRef.current);
         }
+
+        hasPendingChangesRef.current = isDirty;
+        setHasUnsavedChanges(isDirty);
+
+        if (!isDirty) {
+            return;
+        }
+
         setAutoSaveStatus(prev => (prev === 'saved' || prev === 'error') ? 'idle' : prev);
-        hasPendingChangesRef.current = true;
         saveTimerRef.current = setTimeout(() => {
             void saveDraftNow();
         }, 10000);
-    }, [draftName, saveDraftNow, schedules, user]);
+    }, [draftName, saveDraftNow, schedules, userId]);
 
     const handleSaveVersion = async () => {
         await saveDraftNow();
+    };
+
+    const handleDuplicateDraft = async () => {
+        const activeUser = userRef.current;
+        if (!activeUser) {
+            toast?.error('Duplicate Failed', 'Sign in to duplicate drafts.');
+            return;
+        }
+
+        const buildResult = buildMasterContentFromTables(schedulesRef.current);
+        if (!buildResult) {
+            toast?.error('Duplicate Failed', 'This draft contains multiple routes or day types.');
+            return;
+        }
+
+        try {
+            setAutoSaveStatus('saving');
+            const duplicatedName = buildDuplicateDraftName(draftNameRef.current);
+            const duplicatedDraftId = await saveDraft(activeUser.uid, {
+                name: duplicatedName,
+                routeNumber: buildResult.routeNumber,
+                dayType: buildResult.dayType,
+                status: 'draft',
+                createdBy: activeUser.uid,
+                basedOn,
+                content: buildResult.content
+            });
+
+            draftIdRef.current = duplicatedDraftId;
+            draftNameRef.current = duplicatedName;
+            setDraftId(duplicatedDraftId);
+            setDraftName(duplicatedName);
+            setLastSaved(new Date());
+            savedVersionRef.current = changeVersionRef.current;
+            setHasUnsavedChanges(false);
+            setAutoSaveStatus('saved');
+            toast?.success('Duplicated', 'Opened a duplicated draft copy.');
+        } catch (error) {
+            console.error('Draft duplicate failed:', error);
+            setAutoSaveStatus('error');
+            toast?.error('Duplicate Failed', 'Unable to duplicate the current draft.');
+        }
     };
 
     const handlePublish = async () => {
@@ -433,8 +528,12 @@ export const ScheduleEditorWorkspace: React.FC<ScheduleEditorWorkspaceProps> = (
                     originalSchedules={initialTables}
                     draftName={draftName}
                     onRenameDraft={setDraftName}
+                    onOpenDrafts={onOpenDrafts}
+                    onNewDraft={onNewDraft}
+                    onDuplicateDraft={handleDuplicateDraft}
                     autoSaveStatus={autoSaveStatus}
                     lastSaved={lastSaved}
+                    hasUnsavedChanges={hasUnsavedChanges}
                     onSaveVersion={handleSaveVersion}
                     onClose={hasSiblings ? undefined : onClose}
                     canUndo={canUndo}
