@@ -1,8 +1,9 @@
 import path from 'path';
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
-import { optimizeImplementation } from './api/optimize';
-import { performanceQueryHandler } from './api/performance-query';
+import optimizeApiHandler from './api/optimize';
+import performanceQueryApiHandler from './api/performance-query';
+import localAiReviewApiHandler from './api/local-ai-review';
 import AdmZip from 'adm-zip';
 import {
   authenticateFirebaseRequest,
@@ -72,6 +73,20 @@ function parseGtfsZip(buffer: Buffer): Map<string, string> {
 
   return files;
 }
+
+function attachJsonResponseHelpers(res: any) {
+  const response = res as any;
+  response.status = (statusCode: number) => {
+    response.statusCode = statusCode;
+    return response;
+  };
+  response.json = (payload: unknown) => {
+    response.setHeader('Content-Type', 'application/json');
+    response.end(JSON.stringify(payload));
+    return response;
+  };
+  return response;
+}
 console.log('✅ vite.config.ts is loading...');
 
 export default defineConfig(({ mode }) => {
@@ -80,6 +95,33 @@ export default defineConfig(({ mode }) => {
   // (loadEnv only returns an object; it does NOT populate process.env)
   if (!process.env.FIREBASE_WEB_API_KEY && env.FIREBASE_WEB_API_KEY) {
     process.env.FIREBASE_WEB_API_KEY = env.FIREBASE_WEB_API_KEY;
+  }
+  if (!process.env.GEMINI_API_KEY && env.GEMINI_API_KEY) {
+    process.env.GEMINI_API_KEY = env.GEMINI_API_KEY;
+  }
+  if (!process.env.OPTIMIZE_RATE_LIMIT_PER_HOUR && env.OPTIMIZE_RATE_LIMIT_PER_HOUR) {
+    process.env.OPTIMIZE_RATE_LIMIT_PER_HOUR = env.OPTIMIZE_RATE_LIMIT_PER_HOUR;
+  }
+  if (!process.env.OPTIMIZE_MULTI_PHASE && env.OPTIMIZE_MULTI_PHASE) {
+    process.env.OPTIMIZE_MULTI_PHASE = env.OPTIMIZE_MULTI_PHASE;
+  }
+  if (!process.env.LOCAL_AI_ENABLED && env.LOCAL_AI_ENABLED) {
+    process.env.LOCAL_AI_ENABLED = env.LOCAL_AI_ENABLED;
+  }
+  if (!process.env.LOCAL_AI_PROVIDER && env.LOCAL_AI_PROVIDER) {
+    process.env.LOCAL_AI_PROVIDER = env.LOCAL_AI_PROVIDER;
+  }
+  if (!process.env.LOCAL_AI_BASE_URL && env.LOCAL_AI_BASE_URL) {
+    process.env.LOCAL_AI_BASE_URL = env.LOCAL_AI_BASE_URL;
+  }
+  if (!process.env.LOCAL_AI_MODEL && env.LOCAL_AI_MODEL) {
+    process.env.LOCAL_AI_MODEL = env.LOCAL_AI_MODEL;
+  }
+  if (!process.env.LOCAL_AI_TIMEOUT_MS && env.LOCAL_AI_TIMEOUT_MS) {
+    process.env.LOCAL_AI_TIMEOUT_MS = env.LOCAL_AI_TIMEOUT_MS;
+  }
+  if (!process.env.LOCAL_AI_API_KEY && env.LOCAL_AI_API_KEY) {
+    process.env.LOCAL_AI_API_KEY = env.LOCAL_AI_API_KEY;
   }
   console.log('✅ defineConfig called');
 
@@ -93,69 +135,13 @@ export default defineConfig(({ mode }) => {
 
         if (req.url === '/api/optimize' && req.method === 'POST') {
           try {
-            const authedUser = await authenticateFirebaseRequest(req as any);
-            if (!authedUser) {
-              res.statusCode = 401;
-              res.setHeader('Content-Type', 'application/json');
-              res.end(JSON.stringify({ error: 'Authentication required' }));
-              return;
-            }
-
-            const requestIp = getRequestIp(req as any);
-            const maxRequestsPerHour = Number(env.OPTIMIZE_RATE_LIMIT_PER_HOUR || 20);
-            const rateLimitKey = `optimize:${authedUser.uid}:${requestIp}`;
-            if (!checkRateLimit(rateLimitKey, maxRequestsPerHour, 60 * 60 * 1000)) {
-              res.statusCode = 429;
-              res.setHeader('Content-Type', 'application/json');
-              res.end(JSON.stringify({ error: 'Rate limit exceeded. Please try again later.' }));
-              return;
-            }
-
             const buffers = [];
             for await (const chunk of req) {
               buffers.push(chunk);
             }
             const bodyString = Buffer.concat(buffers).toString();
-
-            if (!bodyString) {
-              throw new Error('Empty request body');
-            }
-
-            const data = JSON.parse(bodyString);
-            const apiKey = env.GEMINI_API_KEY;
-
-            if (!apiKey) {
-              console.error('Missing GEMINI_API_KEY');
-              res.statusCode = 500;
-              res.setHeader('Content-Type', 'application/json');
-              res.end(JSON.stringify({ error: 'Missing API Key' }));
-              return;
-            }
-
-            console.log('🚀 Processing optimization request for', data.mode);
-            const { requirements, mode, currentShifts, focusInstruction, requestId } = data;
-
-            const startedAt = Date.now();
-            const shifts = await optimizeImplementation(
-              requirements,
-              apiKey,
-              mode,
-              currentShifts,
-              focusInstruction,
-              requestId
-            );
-            const pipeline = mode === 'refine' && ['1', 'true', 'yes', 'on'].includes((env.OPTIMIZE_MULTI_PHASE || '').toLowerCase())
-              ? 'multi-phase'
-              : 'fast';
-
-            res.statusCode = 200;
-            res.setHeader('Content-Type', 'application/json');
-            res.end(JSON.stringify({
-              shifts,
-              requestId,
-              durationMs: Date.now() - startedAt,
-              pipeline
-            }));
+            (req as any).body = bodyString;
+            await optimizeApiHandler(req as any, attachJsonResponseHelpers(res));
 
           } catch (error: any) {
             console.error('❌ API Error:', error);
@@ -173,27 +159,30 @@ export default defineConfig(({ mode }) => {
             for await (const chunk of req) {
               buffers.push(chunk);
             }
-            const bodyString = Buffer.concat(buffers).toString();
-            if (!bodyString) throw new Error('Empty request body');
-
-            const { question, context } = JSON.parse(bodyString);
-            const apiKey = env.GEMINI_API_KEY;
-
-            if (!apiKey) {
-              res.statusCode = 500;
-              res.setHeader('Content-Type', 'application/json');
-              res.end(JSON.stringify({ error: 'Missing GEMINI_API_KEY' }));
-              return;
-            }
-
-            console.log('🤖 Performance query:', question?.slice(0, 80));
-            const result = await performanceQueryHandler(question, context, apiKey);
-
-            res.statusCode = 200;
-            res.setHeader('Content-Type', 'application/json');
-            res.end(JSON.stringify(result));
+            (req as any).body = Buffer.concat(buffers).toString();
+            await performanceQueryApiHandler(req as any, attachJsonResponseHelpers(res));
           } catch (error: any) {
             console.error('❌ Performance query error:', error);
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: 'Internal Server Error', message: error.message }));
+          }
+          return;
+        }
+
+        // Local AI Review endpoint
+        if (req.url === '/api/local-ai-review' && (req.method === 'POST' || req.method === 'GET')) {
+          try {
+            if (req.method === 'POST') {
+              const buffers: Buffer[] = [];
+              for await (const chunk of req) {
+                buffers.push(chunk);
+              }
+              (req as any).body = Buffer.concat(buffers).toString();
+            }
+            await localAiReviewApiHandler(req as any, attachJsonResponseHelpers(res));
+          } catch (error: any) {
+            console.error('❌ Local AI review error:', error);
             res.statusCode = 500;
             res.setHeader('Content-Type', 'application/json');
             res.end(JSON.stringify({ error: 'Internal Server Error', message: error.message }));

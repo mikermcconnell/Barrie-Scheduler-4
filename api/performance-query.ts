@@ -1,3 +1,4 @@
+import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
 const SYSTEM_PROMPT = `You are a transit performance analyst for Barrie Transit, a mid-size municipal transit agency in Ontario, Canada.
@@ -17,6 +18,62 @@ When providing analysis:
 - Suggest possible causes when patterns are clear
 - Keep responses concise and actionable
 - Use bullet points and tables where appropriate`;
+
+type PerformanceQueryBody = {
+    question?: unknown;
+    context?: unknown;
+};
+
+type JsonResponse = Pick<VercelResponse, 'statusCode' | 'setHeader' | 'end'>;
+
+function sendJson(res: JsonResponse, statusCode: number, payload: Record<string, unknown>) {
+    res.statusCode = statusCode;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify(payload));
+}
+
+function readRequestBody(body: VercelRequest['body']): PerformanceQueryBody | null {
+    if (typeof body === 'string') {
+        try {
+            const parsed = JSON.parse(body);
+            if (parsed && typeof parsed === 'object') {
+                return parsed as PerformanceQueryBody;
+            }
+        } catch {
+            return null;
+        }
+        return null;
+    }
+
+    if (body && typeof body === 'object') {
+        return body as PerformanceQueryBody;
+    }
+
+    return null;
+}
+
+function parsePerformanceQueryPayload(body: VercelRequest['body']) {
+    const parsed = readRequestBody(body);
+    if (!parsed) {
+        return null;
+    }
+
+    const { question, context } = parsed;
+    if (typeof question !== 'string' || typeof context !== 'string') {
+        return null;
+    }
+
+    const trimmedQuestion = question.trim();
+    const trimmedContext = context.trim();
+    if (!trimmedQuestion || !trimmedContext) {
+        return null;
+    }
+
+    return {
+        question: trimmedQuestion,
+        context: trimmedContext,
+    };
+}
 
 export async function performanceQueryHandler(
     question: string,
@@ -38,4 +95,39 @@ export async function performanceQueryHandler(
     const answer = result.response.text();
 
     return { answer: answer || 'No response generated.' };
+}
+
+export async function handlePerformanceQueryRequest(req: VercelRequest, res: VercelResponse): Promise<void> {
+    if (req.method !== 'POST') {
+        sendJson(res, 405, { error: 'Method not allowed. Use POST.' });
+        return;
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+        console.error('GEMINI_API_KEY is not set in environment variables');
+        sendJson(res, 500, { error: 'Server configuration error' });
+        return;
+    }
+
+    const payload = parsePerformanceQueryPayload(req.body);
+    if (!payload) {
+        sendJson(res, 400, { error: 'Missing or invalid question/context' });
+        return;
+    }
+
+    try {
+        const result = await performanceQueryHandler(payload.question, payload.context, apiKey);
+        sendJson(res, 200, result);
+    } catch (error) {
+        console.error('Performance query error:', error);
+        sendJson(res, 500, {
+            error: 'Internal Server Error',
+            message: error instanceof Error ? error.message : 'Unknown error',
+        });
+    }
+}
+
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+    return handlePerformanceQueryRequest(req, res);
 }

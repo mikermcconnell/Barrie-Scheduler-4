@@ -349,6 +349,151 @@ describe('Step2Analysis', () => {
         expect(rowHeaders.some(header => header.includes('Short Turn'))).toBe(false);
     });
 
+    it('switches the main chart metric without implying a banding change', () => {
+        container = document.createElement('div');
+        document.body.appendChild(container);
+        root = createRoot(container);
+
+        flushSync(() => {
+            root?.render(
+                <Step2Analysis
+                    dayType="Weekday"
+                    routeNumber="7"
+                    analysis={[
+                        {
+                            timeBucket: '06:30 - 06:59',
+                            totalP50: 20,
+                            totalP80: 24,
+                            observedCycleP50: 20,
+                            observedCycleP80: 24,
+                            assignedBand: 'A',
+                            isOutlier: false,
+                            ignored: false,
+                            details: [
+                                { segmentName: 'Park Place to Peggy Hill', p50: 5, p80: 6, n: 3 },
+                                { segmentName: 'Peggy Hill to Allandale GO Station', p50: 5, p80: 6, n: 3 },
+                            ],
+                            expectedSegmentCount: 2,
+                            observedSegmentCount: 2,
+                            sampleCountMode: 'observations',
+                            contributingDays: [],
+                        },
+                    ]}
+                    bands={[
+                        { id: 'A', label: 'Band A', min: 0, max: 30, avg: 20, color: '#ef4444', count: 1 },
+                    ]}
+                    setAnalysis={vi.fn()}
+                    segmentsMap={{
+                        North: [
+                            { segmentName: 'Park Place to Peggy Hill', timeBuckets: {} },
+                            { segmentName: 'Peggy Hill to Allandale GO Station', timeBuckets: {} },
+                        ],
+                    }}
+                    canonicalSegmentColumns={[
+                        { segmentName: 'Park Place to Peggy Hill', direction: 'North', groupLabel: '7A' },
+                        { segmentName: 'Peggy Hill to Allandale GO Station', direction: 'North', groupLabel: '7A' },
+                    ]}
+                />
+            );
+        });
+
+        const p80Button = Array.from(container.querySelectorAll('button')).find(
+            (button) => button.textContent?.includes('80th Percentile (Reliable)')
+        ) as HTMLButtonElement | undefined;
+        expect(p80Button).toBeTruthy();
+
+        expect(container.textContent).toContain('Median Cycle Time (50%)');
+        expect(container.textContent).toContain('Bands (A-E) are calculated from the 50th Percentile (median)');
+
+        flushSync(() => {
+            p80Button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        });
+
+        expect(container.textContent).toContain('Reliable Cycle Time (80%)');
+        expect(container.textContent).toContain('Bands (A-E) are calculated from the 50th Percentile (median)');
+        expect(container.textContent).toContain('P80 mode keeps the same median-based bands');
+    });
+
+    it('expands bucket details in canonical order and toggles the targeted bucket ignore state', () => {
+        const setAnalysis = vi.fn();
+        container = document.createElement('div');
+        document.body.appendChild(container);
+        root = createRoot(container);
+
+        flushSync(() => {
+            root?.render(
+                <Step2Analysis
+                    dayType="Weekday"
+                    routeNumber="2"
+                    analysis={[
+                        {
+                            timeBucket: '06:30 - 06:59',
+                            totalP50: 20,
+                            totalP80: 24,
+                            observedCycleP50: 20,
+                            observedCycleP80: 24,
+                            assignedBand: 'A',
+                            isOutlier: false,
+                            ignored: false,
+                            details: [
+                                { segmentName: 'Peggy Hill to Allandale GO Station', p50: 5, p80: 6, n: 3 },
+                                { segmentName: 'Park Place to Peggy Hill', p50: 5, p80: 6, n: 3 },
+                            ],
+                            expectedSegmentCount: 2,
+                            observedSegmentCount: 2,
+                            sampleCountMode: 'observations',
+                            contributingDays: [],
+                        },
+                    ]}
+                    bands={[
+                        { id: 'A', label: 'Band A', min: 0, max: 30, avg: 20, color: '#ef4444', count: 1 },
+                    ]}
+                    setAnalysis={setAnalysis}
+                    segmentsMap={{
+                        North: [
+                            { segmentName: 'Park Place to Peggy Hill', timeBuckets: {} },
+                            { segmentName: 'Peggy Hill to Allandale GO Station', timeBuckets: {} },
+                        ],
+                    }}
+                    canonicalSegmentColumns={[
+                        { segmentName: 'Park Place to Peggy Hill', direction: 'North', groupLabel: '2A' },
+                        { segmentName: 'Peggy Hill to Allandale GO Station', direction: 'North', groupLabel: '2A' },
+                    ]}
+                />
+            );
+        });
+
+        const ignoreButton = container.querySelector('[title="Ignore from analysis"]') as HTMLButtonElement | null;
+        expect(ignoreButton).toBeTruthy();
+        const bucketRow = ignoreButton?.closest('tr') as HTMLTableRowElement | null;
+        expect(bucketRow).toBeTruthy();
+
+        flushSync(() => {
+            ignoreButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        });
+
+        expect(setAnalysis).toHaveBeenCalledTimes(1);
+        expect(setAnalysis).toHaveBeenCalledWith([
+            expect.objectContaining({
+                timeBucket: '06:30 - 06:59',
+                ignored: true,
+            }),
+        ]);
+
+        flushSync(() => {
+            bucketRow?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        });
+
+        const expandedDetails = Array.from(
+            container.querySelectorAll('td[colspan="7"] .bg-white.p-2.rounded.border.border-gray-100.flex.justify-between.items-center.text-xs')
+        ).map((card) => card.textContent?.replace(/\s+/g, ' ').trim() || '');
+
+        expect(expandedDetails[0]).toContain('Park Place to Peggy Hill');
+        expect(expandedDetails[1]).toContain('Peggy Hill to Allandale GO Station');
+        expect(expandedDetails[0]).toContain('n=3');
+        expect(expandedDetails[1]).toContain('n=3');
+    });
+
     it('keeps fine stop-to-stop rows in the 30-minute matrix when the canonical chain is coarser timepoints', () => {
         container = document.createElement('div');
         document.body.appendChild(container);
@@ -614,5 +759,139 @@ describe('Step2Analysis', () => {
         const approveButton = container.querySelector('[data-testid="step2-approval-action"]') as HTMLButtonElement | null;
         expect(approveButton).toBeNull();
         expect(container.textContent).not.toContain('I understand the current warnings');
+    });
+
+    it('switches to P80 display values without changing median-based band membership', () => {
+        container = document.createElement('div');
+        document.body.appendChild(container);
+        root = createRoot(container);
+
+        flushSync(() => {
+            root?.render(
+                <Step2Analysis
+                    dayType="Weekday"
+                    routeNumber="7"
+                    analysis={[
+                        {
+                            timeBucket: '06:30 - 06:59',
+                            totalP50: 20,
+                            totalP80: 26,
+                            observedCycleP50: 20,
+                            observedCycleP80: 26,
+                            assignedBand: 'A',
+                            isOutlier: false,
+                            ignored: false,
+                            details: [
+                                { segmentName: 'Park Place to Peggy Hill', p50: 9, p80: 12, n: 3 },
+                                { segmentName: 'Peggy Hill to Allandale GO Station', p50: 11, p80: 14, n: 3 },
+                            ],
+                            expectedSegmentCount: 2,
+                            observedSegmentCount: 2,
+                            sampleCountMode: 'days',
+                            contributingDays: [],
+                        },
+                    ]}
+                    bands={[
+                        { id: 'A', label: 'Band A', min: 18, max: 22, avg: 20, color: '#2563eb', count: 1 },
+                    ]}
+                    setAnalysis={vi.fn()}
+                    segmentsMap={{
+                        North: [
+                            { segmentName: 'Park Place to Peggy Hill', timeBuckets: {} },
+                            { segmentName: 'Peggy Hill to Allandale GO Station', timeBuckets: {} },
+                        ],
+                    }}
+                    canonicalSegmentColumns={[
+                        { segmentName: 'Park Place to Peggy Hill', direction: 'North', groupLabel: '7A' },
+                        { segmentName: 'Peggy Hill to Allandale GO Station', direction: 'North', groupLabel: '7A' },
+                    ]}
+                />
+            );
+        });
+
+        expect(container.textContent).toContain('Median Cycle Time (50%)');
+        expect(container.textContent).toContain('Band A');
+
+        const p80Button = Array.from(container.querySelectorAll('button')).find(
+            button => button.textContent?.includes('80th Percentile')
+        );
+        expect(p80Button).toBeTruthy();
+
+        flushSync(() => {
+            p80Button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        });
+
+        expect(container.textContent).toContain('Reliable Cycle Time (80%)');
+        expect(container.textContent).toContain('Band A');
+        expect(container.textContent).toContain('median-based bands');
+
+        const matrixToggle = container.querySelector('[data-testid="step2-view-segment-matrix"]') as HTMLButtonElement | null;
+        flushSync(() => {
+            matrixToggle?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        });
+
+        expect(container.textContent).toContain('selected reliable (P80) travel time');
+        expect(container.querySelector('[data-testid="step2-matrix-cell-06-30-06-59-park-place-to-peggy-hill"]')?.textContent).toContain('12');
+        expect(container.querySelector('[data-testid="step2-matrix-cell-06-30-06-59-peggy-hill-to-allandale-go-station"]')?.textContent).toContain('14');
+    });
+
+    it('lets the planner ignore a bucket from the detailed table', () => {
+        container = document.createElement('div');
+        document.body.appendChild(container);
+        root = createRoot(container);
+
+        const setAnalysis = vi.fn();
+
+        flushSync(() => {
+            root?.render(
+                <Step2Analysis
+                    dayType="Weekday"
+                    routeNumber="7"
+                    analysis={[
+                        {
+                            timeBucket: '06:30 - 06:59',
+                            totalP50: 20,
+                            totalP80: 24,
+                            observedCycleP50: 20,
+                            observedCycleP80: 24,
+                            assignedBand: 'A',
+                            isOutlier: false,
+                            ignored: false,
+                            details: [
+                                { segmentName: 'Park Place to Peggy Hill', p50: 9, p80: 11, n: 3 },
+                            ],
+                            expectedSegmentCount: 1,
+                            observedSegmentCount: 1,
+                            sampleCountMode: 'days',
+                            contributingDays: [],
+                        },
+                    ]}
+                    bands={[
+                        { id: 'A', label: 'Band A', min: 18, max: 22, avg: 20, color: '#2563eb', count: 1 },
+                    ]}
+                    setAnalysis={setAnalysis}
+                    segmentsMap={{
+                        North: [{ segmentName: 'Park Place to Peggy Hill', timeBuckets: {} }],
+                    }}
+                    canonicalSegmentColumns={[
+                        { segmentName: 'Park Place to Peggy Hill', direction: 'North', groupLabel: '7A' },
+                    ]}
+                />
+            );
+        });
+
+        const ignoreButton = container.querySelector('button[title="Ignore from analysis"]') as HTMLButtonElement | null;
+        expect(ignoreButton).toBeTruthy();
+
+        flushSync(() => {
+            ignoreButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        });
+
+        expect(setAnalysis).toHaveBeenCalledWith([
+            expect.objectContaining({
+                timeBucket: '06:30 - 06:59',
+                ignored: true,
+            }),
+        ]);
     });
 });

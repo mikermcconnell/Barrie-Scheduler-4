@@ -9,12 +9,16 @@ const REPORT_RECIPIENTS = defineSecret('REPORT_RECIPIENTS');
 const DEFAULT_TEAM_ID = 'PHICwXGlvDen0RGt7fCG';
 const TEAM_NAME = 'Barrie Transit';
 
+function buildReportSubject(latestDay: PerformanceDataSummary['dailySummaries'][number]): string {
+  return `${TEAM_NAME} Performance — ${latestDay.date} — OTP ${latestDay.system.otp.onTimePercent.toFixed(1)}%`;
+}
+
 export const sendDailyReport = onSchedule(
   {
     schedule: 'every day 07:00',
     timeZone: 'America/Toronto',
     secrets: [REPORT_RECIPIENTS],
-    memory: '512MiB',
+    memory: '1GiB',
     timeoutSeconds: 120,
     region: 'us-central1',
   },
@@ -33,9 +37,10 @@ export const sendDailyReport = onSchedule(
     }
 
     const meta = metadataSnap.data()!;
-    const storagePath = meta.storagePath as string | undefined;
+    const storagePath = (meta.reportStoragePath as string | undefined)
+      || (meta.storagePath as string | undefined);
     if (!storagePath) {
-      console.warn('No storagePath in metadata — skipping report');
+      console.warn('No reportStoragePath or storagePath in metadata — skipping report');
       return;
     }
 
@@ -67,7 +72,7 @@ export const sendDailyReport = onSchedule(
     const to = recipientsCsv.split(',').map((e: string) => e.trim()).filter(Boolean);
 
     // Write to Firestore mail collection → triggers Firebase Trigger Email extension
-    const subject = `${TEAM_NAME} Performance — ${latestDay.date} — OTP ${latestDay.system.otp.onTimePercent.toFixed(1)}%`;
+    const subject = buildReportSubject(latestDay);
 
     await db.collection('mail').add({
       to,
@@ -83,7 +88,7 @@ export const sendDailyReport = onSchedule(
 
 /** Temporary test endpoint — send report to a specific email */
 export const testDailyReport = onRequest(
-  { memory: '512MiB', timeoutSeconds: 120, region: 'us-central1' },
+  { memory: '1GiB', timeoutSeconds: 120, region: 'us-central1' },
   async (req, res) => {
     const to = (req.query.to as string) || '';
     if (!to || !to.includes('@')) {
@@ -99,7 +104,10 @@ export const testDailyReport = onRequest(
       .get();
     if (!metadataSnap.exists) { res.status(404).json({ error: 'No data' }); return; }
 
-    const storagePath = metadataSnap.data()!.storagePath as string;
+    const meta = metadataSnap.data()!;
+    const storagePath = (meta.reportStoragePath as string | undefined)
+      || (meta.storagePath as string | undefined);
+    if (!storagePath) { res.status(404).json({ error: 'No report data path' }); return; }
     const [content] = await bucket.file(storagePath).download();
     const summary: PerformanceDataSummary = JSON.parse(content.toString('utf-8'));
 
@@ -108,7 +116,7 @@ export const testDailyReport = onRequest(
     const trendDays = sorted.slice(0, 56).reverse();
 
     const html = buildReportHtml({ latestDay, trendDays, teamName: TEAM_NAME });
-    const subject = `[TEST] ${TEAM_NAME} Performance — ${latestDay.date} — OTP ${latestDay.system.otp.onTimePercent.toFixed(1)}%`;
+    const subject = buildReportSubject(latestDay);
 
     await db.collection('mail').add({ to: [to], message: { subject, html } });
     res.json({ success: true, sentTo: to, subject });

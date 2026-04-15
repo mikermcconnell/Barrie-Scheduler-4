@@ -18,6 +18,9 @@ export interface TripPoint {
 export interface MasterTrip {
     id: string; // Unique ID
     lineageId?: string; // Durable logical trip identity for compare/delta workflows
+    deltaSourceTripId?: string; // Optional original/source trip anchor for non-master delta rendering
+    deltaSourceLineageId?: string; // Optional original/source lineage anchor for non-master delta rendering
+    deltaSourceRouteName?: string; // Route table name for delta source lookup when inherited from another trip
     blockId: string; // "101", "102" etc.
     direction: 'North' | 'South';
     tripNumber: number; // Sequence in block

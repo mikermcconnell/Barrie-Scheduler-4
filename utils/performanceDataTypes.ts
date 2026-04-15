@@ -531,16 +531,17 @@ export interface PerformanceDataSummary {
 // ─── Firebase Metadata ──────────────────────────────────────────────
 
 export interface PerformanceMetadata {
-  importedAt: string;
-  importedBy: string;
-  dateRange: { start: string; end: string };
-  dayCount: number;
-  totalRecords: number;
-  runtimeLogicVersion?: number;
-  cleanHistoryStartDate?: string;
-  storagePath?: string;
-  overviewStoragePath?: string;
-}
+    importedAt: string;
+    importedBy: string;
+    dateRange: { start: string; end: string };
+    dayCount: number;
+    totalRecords: number;
+    runtimeLogicVersion?: number;
+    cleanHistoryStartDate?: string;
+    storagePath?: string;
+    overviewStoragePath?: string;
+    reportStoragePath?: string;
+  }
 
 // ─── Import State (ephemeral, not stored) ───────────────────────────
 

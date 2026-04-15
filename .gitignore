@@ -45,6 +45,8 @@ data/gtfs/
 
 # Temp files
 .tmp/
+temp/
+chat-attachments/
 
 # Git worktrees
 .worktrees/

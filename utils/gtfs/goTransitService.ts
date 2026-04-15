@@ -6,7 +6,7 @@
  */
 
 import type { DayType } from '../parsers/masterScheduleParser';
-import type { ConnectionTime } from '../connections/connectionTypes';
+import type { ConnectionTarget, ConnectionTime } from '../connections/connectionTypes';
 import { generateConnectionId } from '../connections/connectionTypes';
 
 // === TYPES ===
@@ -631,6 +631,43 @@ export function getGeorgianCollegeTemplateData(_dayType: DayType): {
         icon: 'clock',
         times: connectionTimes,
         autoPopulateStops: true  // Enable auto-populate by default
+    };
+}
+
+export function isGeorgianCollegeConnectionTarget(target: Pick<ConnectionTarget, 'type' | 'name' | 'location' | 'stopCode' | 'stopCodes'>): boolean {
+    if (target.type !== 'manual') return false;
+
+    const name = target.name?.toLowerCase() || '';
+    const location = target.location?.toLowerCase() || '';
+    const stopCodes = new Set([target.stopCode, ...(target.stopCodes || [])].filter(Boolean));
+
+    return (
+        name.includes('georgian college')
+        || location.includes('georgian college')
+        || Array.from(stopCodes).some(code => GEORGIAN_COLLEGE_STOPS.some(stop => stop.code === code))
+    );
+}
+
+export function applyGeorgianCollegeDefaults(target: ConnectionTarget): ConnectionTarget {
+    if (!isGeorgianCollegeConnectionTarget(target)) {
+        return target;
+    }
+
+    const template = getGeorgianCollegeTemplateData('Weekday');
+    const hasTimes = Array.isArray(target.times) && target.times.length > 0;
+    const hasStopCodes = Array.isArray(target.stopCodes) && target.stopCodes.length > 0;
+
+    return {
+        ...target,
+        name: target.name || template.name,
+        location: target.location || template.location,
+        stopCode: target.stopCode || template.stopCode,
+        stopName: target.stopName || GEORGIAN_COLLEGE_STOPS.find(stop => stop.code === (target.stopCode || template.stopCode))?.name,
+        stopCodes: hasStopCodes ? target.stopCodes : template.stops.map(stop => stop.code),
+        autoPopulateStops: target.autoPopulateStops ?? template.autoPopulateStops,
+        icon: target.icon || template.icon,
+        defaultEventType: target.defaultEventType || 'departure',
+        times: hasTimes ? target.times : template.times
     };
 }
 

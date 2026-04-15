@@ -5,7 +5,7 @@
  * (GO Trains, Georgian College bells) and other bus routes.
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
     Link2,
     Plus,
@@ -14,12 +14,12 @@ import {
     RotateCcw,
     ChevronDown,
     ChevronUp,
-    Train,
     Clock,
     Bus,
     AlertCircle,
     CheckCircle2,
-    Info
+    Info,
+    Wrench
 } from 'lucide-react';
 import type { MasterRouteTable } from '../../../utils/parsers/masterScheduleParser';
 import type {
@@ -40,11 +40,14 @@ import { AddTargetModal, AddTargetInitialData } from '../connections/AddTargetMo
 import { ImportRouteModal } from '../connections/ImportRouteModal';
 import { ConnectionAddChooser, ConnectionTemplateSelection } from '../connections/ConnectionAddChooser';
 import { ConnectionStatusPanel } from '../../connections/ConnectionStatusPanel';
+import { Modal } from '../../ui/Modal';
 import { getConnectionLibrary, saveConnectionLibrary } from '../../../utils/connections/connectionLibraryService';
 import { getMasterSchedule } from '../../../utils/services/masterScheduleService';
 import { optimizeForConnections, checkConnections, ConnectionCheckResult } from '../../../utils/connections/connectionOptimizer';
 import { appendLibraryChange } from '../../../utils/connections/connectionLibraryUtils';
 import { alignTemplateInitialDataToLoadedStops } from '../../../utils/connections/templateInitialDataUtils';
+import { buildRouteConnectionFromTarget } from '../../../utils/connections/routeConnectionDefaults';
+import { buildRouteTimepointStopOptions } from '../../../utils/connections/routeTimepointStops';
 
 interface Step5Props {
     schedules: MasterRouteTable[];
@@ -88,11 +91,17 @@ export const Step5Connections: React.FC<Step5Props> = ({
     const [showAddTargetModal, setShowAddTargetModal] = useState(false);
     const [showImportRouteModal, setShowImportRouteModal] = useState(false);
     const [addTargetInitialData, setAddTargetInitialData] = useState<AddTargetInitialData | undefined>();
-    const [expandedSection, setExpandedSection] = useState<'library' | 'config' | 'optimize' | null>('library');
+    const [pendingRouteAttachment, setPendingRouteAttachment] = useState(false);
+    const [expandedSection, setExpandedSection] = useState<'config' | 'optimize' | null>('config');
+    const [showLibraryManagerModal, setShowLibraryManagerModal] = useState(false);
     const [isLoadingLibrary, setIsLoadingLibrary] = useState(false);
     const [connectionStatus, setConnectionStatus] = useState<ConnectionCheckResult | null>(null);
     const [isCheckingStatus, setIsCheckingStatus] = useState(false);
     const validationSchedules = connectionScopeSchedules || schedules;
+    const hasAutoPickedSection = useRef(false);
+    const routeLabel = React.useMemo(() => (
+        routeIdentity.replace(/-(Weekday|Saturday|Sunday)$/i, '')
+    ), [routeIdentity]);
 
     const deriveRouteTargetTimes = useCallback((
         table: MasterRouteTable,
@@ -346,9 +355,34 @@ export const Step5Connections: React.FC<Step5Props> = ({
             .map(([code, name]) => ({ code, name }))
             .sort((a, b) => a.name.localeCompare(b.name));
     }, [schedules]);
+    const routeTimepointStops = React.useMemo<StopInfo[]>(
+        () => buildRouteTimepointStopOptions(schedules),
+        [schedules]
+    );
+    const routeStopOptions = React.useMemo<StopInfo[]>(() => {
+        const optionMap = new Map(routeTimepointStops.map(stop => [stop.code, stop] as const));
+
+        (routeConnectionConfig?.connections || []).forEach(connection => {
+            const code = connection.stopCode?.trim();
+            if (!code || optionMap.has(code)) return;
+
+            optionMap.set(code, {
+                code,
+                name: connection.stopName
+                    || availableStops.find(stop => stop.code === code)?.name
+                    || `Stop ${code}`
+            });
+        });
+
+        return Array.from(optionMap.values());
+    }, [availableStops, routeConnectionConfig, routeTimepointStops]);
     const getTemplateInitialData = useCallback((data: AddTargetInitialData): AddTargetInitialData => (
         alignTemplateInitialDataToLoadedStops(data, availableStops, validationSchedules)
     ), [availableStops, validationSchedules]);
+    const materializeRouteConnection = useCallback((connection: Omit<RouteConnection, 'id'>): RouteConnection => ({
+        ...connection,
+        id: `conn_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    }), []);
 
     // Count statistics
     const stats = React.useMemo(() => {
@@ -358,8 +392,24 @@ export const Step5Connections: React.FC<Step5Props> = ({
         return { targetCount, connectionCount, enabledCount };
     }, [connectionLibrary, routeConnectionConfig]);
 
+    useEffect(() => {
+        if (hasAutoPickedSection.current) return;
+        if (!connectionLibrary || !routeConnectionConfig) return;
+
+        setExpandedSection('config');
+        hasAutoPickedSection.current = true;
+    }, [connectionLibrary, routeConnectionConfig]);
+
     // Handle adding a new target
-    const handleAddTarget = useCallback((target: Omit<ConnectionTarget, 'id' | 'createdAt' | 'updatedAt'>) => {
+    const handleAddTarget = useCallback((
+        target: Omit<ConnectionTarget, 'id' | 'createdAt' | 'updatedAt'>,
+        routeAttachmentConfig?: {
+            stopCode: string;
+            stopName?: string;
+            connectionType: 'meet_departing' | 'feed_arriving';
+            bufferMinutes: number;
+        }
+    ) => {
         if (!connectionLibrary) return;
 
         const newTarget: ConnectionTarget = {
@@ -376,8 +426,34 @@ export const Step5Connections: React.FC<Step5Props> = ({
             updatedBy: userId
         }, userId, 'add_target', `Added ${newTarget.name}`));
 
+        if (pendingRouteAttachment && routeConnectionConfig) {
+            const nextConnection = routeAttachmentConfig
+                ? {
+                    targetId: newTarget.id,
+                    connectionType: routeAttachmentConfig.connectionType,
+                    bufferMinutes: routeAttachmentConfig.bufferMinutes,
+                    stopCode: routeAttachmentConfig.stopCode,
+                    stopName: routeAttachmentConfig.stopName,
+                    priority: routeConnectionConfig.connections.length + 1,
+                    enabled: true
+                }
+                : buildRouteConnectionFromTarget(
+                    newTarget,
+                    routeStopOptions,
+                    routeConnectionConfig.connections.length + 1
+                );
+            if (nextConnection) {
+                setRouteConnectionConfig({
+                    ...routeConnectionConfig,
+                    connections: [...routeConnectionConfig.connections, materializeRouteConnection(nextConnection)]
+                });
+                setExpandedSection('config');
+            }
+        }
+
         setShowAddTargetModal(false);
-    }, [connectionLibrary, setConnectionLibrary, userId]);
+        setPendingRouteAttachment(false);
+    }, [connectionLibrary, materializeRouteConnection, pendingRouteAttachment, routeConnectionConfig, routeStopOptions, setConnectionLibrary, setRouteConnectionConfig, userId]);
 
     const handleImportGoGtfsTargets = useCallback((templates: ConnectionTemplateSelection[]) => {
         if (!connectionLibrary) return;
@@ -401,6 +477,7 @@ export const Step5Connections: React.FC<Step5Props> = ({
         );
 
         const nextTargets = [...connectionLibrary.targets];
+        const attachedTargets: ConnectionTarget[] = [];
         let createdCount = 0;
         let updatedCount = 0;
 
@@ -445,6 +522,7 @@ export const Step5Connections: React.FC<Step5Props> = ({
                     updatedCount += 1;
                 }
                 manualTargetsByName.set(normalizedName, updatedTarget);
+                attachedTargets.push(updatedTarget);
             } else {
                 const newTarget: ConnectionTarget = {
                     ...incoming,
@@ -455,6 +533,7 @@ export const Step5Connections: React.FC<Step5Props> = ({
                 nextTargets.push(newTarget);
                 manualTargetsByName.set(normalizedName, newTarget);
                 createdCount += 1;
+                attachedTargets.push(newTarget);
             }
         }
 
@@ -471,10 +550,32 @@ export const Step5Connections: React.FC<Step5Props> = ({
             updatedBy: userId
         }, userId, 'import_go_gtfs', `Imported ${total} GO target(s): ${createdCount} new, ${updatedCount} updated`));
 
+        if (pendingRouteAttachment && routeConnectionConfig) {
+            const existingTargetIds = new Set(routeConnectionConfig.connections.map(connection => connection.targetId));
+            const newConnections = [...routeConnectionConfig.connections];
+
+            attachedTargets.forEach(target => {
+                if (existingTargetIds.has(target.id)) return;
+                const candidate = buildRouteConnectionFromTarget(target, routeStopOptions, newConnections.length + 1);
+                if (!candidate) return;
+                existingTargetIds.add(target.id);
+                newConnections.push(materializeRouteConnection(candidate));
+            });
+
+            if (newConnections.length !== routeConnectionConfig.connections.length) {
+                setRouteConnectionConfig({
+                    ...routeConnectionConfig,
+                    connections: newConnections
+                });
+                setExpandedSection('config');
+            }
+        }
+
         setShowChooser(false);
         setShowAddTargetModal(false);
         setAddTargetInitialData(undefined);
-    }, [connectionLibrary, getTemplateInitialData, setConnectionLibrary, userId]);
+        setPendingRouteAttachment(false);
+    }, [connectionLibrary, getTemplateInitialData, materializeRouteConnection, pendingRouteAttachment, routeConnectionConfig, routeStopOptions, setConnectionLibrary, setRouteConnectionConfig, userId]);
 
     // Handle adding a connection
     const handleAddConnection = useCallback((connection: Omit<RouteConnection, 'id'>) => {
@@ -541,7 +642,7 @@ export const Step5Connections: React.FC<Step5Props> = ({
                         Connection Optimization
                     </h2>
                     <p className="text-sm text-gray-500 mt-1">
-                        Optimize trip times to connect with GO Trains, Georgian College, and other routes
+                        Set connection goals for Route {routeLabel} on {dayType}, then optimize trip times to match them
                     </p>
                 </div>
 
@@ -581,60 +682,39 @@ export const Step5Connections: React.FC<Step5Props> = ({
                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-start gap-3">
                     <Info className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
                     <div>
-                        <p className="text-sm font-medium text-blue-900">Get started with connections</p>
+                        <p className="text-sm font-medium text-blue-900">Start in Route Connections</p>
                         <p className="text-sm text-blue-700 mt-1">
-                            Add connection targets (GO Train times, Georgian College bells, or other routes)
-                            to the library, then configure which ones this route should connect to.
+                            Create a new goal directly from the route panel first. Open the saved service library only if
+                            you need shared imports, bulk maintenance, or route-to-route library work.
+                        </p>
+                    </div>
+                </div>
+            )}
+            {stats.targetCount > 0 && stats.connectionCount === 0 && (
+                <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex items-start gap-3">
+                    <CheckCircle2 className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
+                    <div>
+                        <p className="text-sm font-medium text-green-900">Saved services are ready for this route</p>
+                        <p className="text-sm text-green-700 mt-1">
+                            Choose which saved services Route {routeLabel} should connect with on {dayType}.
+                            The route setup panel opens first so you can start there.
                         </p>
                     </div>
                 </div>
             )}
 
-            {/* Two-column layout */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Left: Connection Library */}
-                <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-                    <button
-                        onClick={() => setExpandedSection(expandedSection === 'library' ? null : 'library')}
-                        className="w-full px-4 py-3 flex items-center justify-between bg-gray-50 hover:bg-gray-100 transition-colors"
-                    >
-                        <div className="flex items-center gap-2">
-                            <Train className="w-4 h-4 text-gray-600" />
-                            <span className="font-medium text-gray-900">Connection Library</span>
-                            <span className="text-xs text-gray-500 bg-gray-200 px-1.5 py-0.5 rounded">
-                                {stats.targetCount}
-                            </span>
-                        </div>
-                        {expandedSection === 'library' ? (
-                            <ChevronUp className="w-4 h-4 text-gray-400" />
-                        ) : (
-                            <ChevronDown className="w-4 h-4 text-gray-400" />
-                        )}
-                    </button>
-
-                    {expandedSection === 'library' && (
-                        <ConnectionLibraryPanel
-                            library={connectionLibrary}
-                            onUpdateLibrary={setConnectionLibrary}
-                            onAddTarget={() => setShowChooser(true)}
-                            onImportRoute={() => setShowImportRouteModal(true)}
-                            schedules={schedules}
-                            validStopCodes={validStopCodes}
-                            userId={userId}
-                            dayType={dayType}
-                        />
-                    )}
-                </div>
-
-                {/* Right: Route Connections */}
+            <div className="space-y-6">
+                {/* Route Connections */}
                 <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
                     <button
                         onClick={() => setExpandedSection(expandedSection === 'config' ? null : 'config')}
                         className="w-full px-4 py-3 flex items-center justify-between bg-gray-50 hover:bg-gray-100 transition-colors"
                     >
-                        <div className="flex items-center gap-2">
-                            <Settings2 className="w-4 h-4 text-gray-600" />
-                            <span className="font-medium text-gray-900">Route Connections</span>
+                        <div className="flex items-center gap-3">
+                            <div className="flex items-center gap-2">
+                                <Settings2 className="w-4 h-4 text-gray-600" />
+                                <span className="font-medium text-gray-900">Route Connections</span>
+                            </div>
                             <span className="text-xs text-gray-500 bg-gray-200 px-1.5 py-0.5 rounded">
                                 {stats.connectionCount}
                             </span>
@@ -650,11 +730,71 @@ export const Step5Connections: React.FC<Step5Props> = ({
                         <RouteConnectionPanel
                             config={routeConnectionConfig}
                             library={connectionLibrary}
-                            availableStops={availableStops}
+                            availableStops={routeStopOptions}
                             onUpdateConfig={setRouteConnectionConfig}
                             onAddConnection={handleAddConnection}
-                        />
-                    )}
+                            onCreateTarget={() => {
+                                    setAddTargetInitialData(undefined);
+                                    setPendingRouteAttachment(true);
+                                    setShowAddTargetModal(true);
+                                }}
+                            />
+                        )}
+                </div>
+
+                {/* Advanced saved-service tools */}
+                <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+                    <div className="px-4 py-4 space-y-4">
+                        <div className="flex items-start justify-between gap-3">
+                            <div className="flex items-start gap-3">
+                                <div className="mt-0.5 rounded-lg bg-amber-100 p-2 text-amber-700">
+                                    <Wrench className="w-4 h-4" />
+                                </div>
+                                <div>
+                                    <div className="flex items-center gap-2">
+                                        <p className="font-medium text-gray-900">Advanced saved-service tools</p>
+                                        <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-600 bg-gray-200 px-1.5 py-0.5 rounded">
+                                            Advanced
+                                        </span>
+                                    </div>
+                                    <p className="text-sm text-gray-600 mt-1">
+                                        Manage the shared saved-service library only when you need imports, GTFS refresh, cleanup, or team-wide maintenance.
+                                    </p>
+                                </div>
+                            </div>
+                            <span className="text-xs text-gray-500 bg-gray-200 px-1.5 py-0.5 rounded">
+                                {stats.targetCount}
+                            </span>
+                        </div>
+
+                        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                            <p className="text-xs text-amber-900">
+                                Most route setup can stay in <span className="font-semibold">Route Connections</span>. Open the library manager only when you need the deeper shared-service tools.
+                            </p>
+                        </div>
+
+                        <div className="flex flex-wrap gap-3">
+                            <button
+                                type="button"
+                                onClick={() => setShowLibraryManagerModal(true)}
+                                className="inline-flex items-center gap-2 rounded-lg bg-amber-600 px-3 py-2 text-sm font-medium text-white hover:bg-amber-700"
+                            >
+                                <Wrench className="w-4 h-4" />
+                                Manage saved services
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setShowLibraryManagerModal(false);
+                                    setShowImportRouteModal(true);
+                                }}
+                                className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                            >
+                                <Bus className="w-4 h-4" />
+                                Import from route
+                            </button>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -706,7 +846,10 @@ export const Step5Connections: React.FC<Step5Props> = ({
             {/* Modals */}
             <ConnectionAddChooser
                 isOpen={showChooser}
-                onClose={() => setShowChooser(false)}
+                onClose={() => {
+                    setShowChooser(false);
+                    setPendingRouteAttachment(false);
+                }}
                 onSelectManual={() => {
                     setAddTargetInitialData(undefined);
                     setShowChooser(false);
@@ -719,6 +862,10 @@ export const Step5Connections: React.FC<Step5Props> = ({
                 }}
                 onSelectGtfsImport={handleImportGoGtfsTargets}
                 dayType={dayType}
+                routeAttachmentContext={pendingRouteAttachment ? {
+                    routeLabel: `Route ${routeLabel}`,
+                    availableStops: routeStopOptions
+                } : undefined}
             />
 
             <AddTargetModal
@@ -726,14 +873,20 @@ export const Step5Connections: React.FC<Step5Props> = ({
                 onClose={() => {
                     setShowAddTargetModal(false);
                     setAddTargetInitialData(undefined);
+                    setPendingRouteAttachment(false);
                 }}
                 onAdd={handleAddTarget}
                 dayType={dayType}
                 existingTargetNames={connectionLibrary?.targets.map(t => t.name) || []}
                 validStopCodes={validStopCodes}
                 availableStops={availableStops}
+                routeStopOptions={routeStopOptions}
                 defaultQualityWindowSettings={connectionLibrary?.qualityWindowSettings}
                 initialData={addTargetInitialData}
+                routeAttachmentPreview={pendingRouteAttachment ? {
+                    routeLabel: `Route ${routeLabel}`,
+                    dayType
+                } : undefined}
             />
 
             <ImportRouteModal
@@ -744,6 +897,44 @@ export const Step5Connections: React.FC<Step5Props> = ({
                 currentRouteIdentity={routeIdentity}
                 existingTargetNames={connectionLibrary?.targets.map(t => t.name) || []}
             />
+
+            <Modal
+                isOpen={showLibraryManagerModal}
+                onClose={() => setShowLibraryManagerModal(false)}
+                size="xl"
+                zIndex="high"
+                className="max-h-[92vh]"
+            >
+                <Modal.Header>Saved Service Library</Modal.Header>
+                <Modal.Body className="p-0">
+                    <div className="border-b border-gray-100 bg-amber-50 px-6 py-4">
+                        <p className="text-sm font-medium text-amber-900">
+                            Advanced shared-service manager
+                        </p>
+                        <p className="text-xs text-amber-800 mt-1">
+                            Use this for team-wide saved-service maintenance, GTFS refresh, imports, and cleanup. For normal route setup, go back to the Route Connections panel.
+                        </p>
+                    </div>
+                    <ConnectionLibraryPanel
+                        library={connectionLibrary}
+                        onUpdateLibrary={setConnectionLibrary}
+                        onAddTarget={() => {
+                            setShowLibraryManagerModal(false);
+                            setShowChooser(true);
+                        }}
+                        onImportRoute={() => {
+                            setShowLibraryManagerModal(false);
+                            setShowImportRouteModal(true);
+                        }}
+                        schedules={schedules}
+                        validStopCodes={validStopCodes}
+                        userId={userId}
+                        dayType={dayType}
+                        compactAdminMode
+                        compactAdminContextLabel={`Route ${routeLabel}`}
+                    />
+                </Modal.Body>
+            </Modal>
         </div>
     );
 };

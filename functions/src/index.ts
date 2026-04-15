@@ -41,6 +41,7 @@ interface ExistingPerformanceSummaryLoad {
   summary: PerformanceDataSummary | null;
   storagePath: string | null;
   overviewStoragePath: string | null;
+  reportStoragePath: string | null;
   metadata: Partial<PerformanceMetadata> | null;
   readError?: Error;
 }
@@ -137,6 +138,9 @@ function getTotalRecords(summary: PerformanceDataSummary): number {
   if (typeof summary?.metadata?.totalRecords === 'number') return summary.metadata.totalRecords;
   return (summary?.dailySummaries || []).reduce((acc, d) => acc + (d?.dataQuality?.totalRecords || 0), 0);
 }
+
+const REPORT_DAY_COUNT = 56;
+const REPORT_MISSED_TRIP_DETAIL_DAY_COUNT = 7;
 
 function resolveCleanHistoryStartDate(
   existingStartDate: string | null | undefined,
@@ -285,6 +289,80 @@ function buildPerformanceOverviewSummary(summary: PerformanceDataSummary): Perfo
   };
 }
 
+function buildReportDwellMetrics(
+  day: PerformanceDataSummary['dailySummaries'][number],
+  isLatestDay: boolean,
+): PerformanceDataSummary['dailySummaries'][number]['byOperatorDwell'] {
+  const dwell = day.byOperatorDwell;
+  if (!dwell) return undefined;
+
+  return {
+    incidents: [],
+    byOperator: isLatestDay ? dwell.byOperator : [],
+    totalIncidents: dwell.totalIncidents,
+    totalTrackedDwellMinutes: dwell.totalTrackedDwellMinutes,
+    totalStopVisits: dwell.totalStopVisits,
+    totalServiceHours: dwell.totalServiceHours,
+    incidentsPer1kVisits: dwell.incidentsPer1kVisits,
+    incidentsPer100ServiceHours: dwell.incidentsPer100ServiceHours,
+  };
+}
+
+function buildPerformanceReportSummary(summary: PerformanceDataSummary): PerformanceDataSummary {
+  const sortedDays = [...summary.dailySummaries].sort((a, b) => a.date.localeCompare(b.date));
+  const reportDaysSource = sortedDays.slice(-REPORT_DAY_COUNT);
+  const latestDate = reportDaysSource.at(-1)?.date;
+  const missedTripDetailDates = new Set(
+    reportDaysSource
+      .slice(-REPORT_MISSED_TRIP_DETAIL_DAY_COUNT)
+      .map(day => day.date),
+  );
+
+  const reportDays = reportDaysSource.map<PerformanceDataSummary['dailySummaries'][number]>(day => {
+    const isLatestDay = !!latestDate && day.date === latestDate;
+    const keepMissedTripDetails = missedTripDetailDates.has(day.date);
+
+    return {
+      ...day,
+      byRoute: isLatestDay ? day.byRoute : [],
+      byHour: isLatestDay ? day.byHour : [],
+      byStop: isLatestDay ? day.byStop : [],
+      byTrip: [],
+      loadProfiles: [],
+      missedTrips: day.missedTrips
+        ? {
+            ...day.missedTrips,
+            trips: keepMissedTripDetails ? (day.missedTrips.trips || []) : [],
+          }
+        : day.missedTrips,
+      ridershipHeatmaps: undefined,
+      byOperatorDwell: buildReportDwellMetrics(day, isLatestDay),
+      byCascade: undefined,
+      segmentRuntimes: undefined,
+      stopSegmentRuntimes: undefined,
+      tripStopSegmentRuntimes: undefined,
+      routeStopDeviations: undefined,
+      byRouteHour: undefined,
+    };
+  });
+
+  const reportDates = reportDays.map(day => day.date);
+  const totalRecords = reportDays.reduce((sum, day) => sum + (day.dataQuality?.totalRecords || 0), 0);
+
+  return {
+    ...summary,
+    dailySummaries: reportDays,
+    metadata: {
+      ...summary.metadata,
+      dateRange: reportDates.length > 0
+        ? { start: reportDates[0], end: reportDates[reportDates.length - 1] }
+        : summary.metadata.dateRange,
+      dayCount: reportDays.length,
+      totalRecords,
+    },
+  };
+}
+
 function mergeDailySummaries(
   existingSummaries: PerformanceDataSummary['dailySummaries'],
   replacementSummaries: PerformanceDataSummary['dailySummaries'],
@@ -336,12 +414,13 @@ async function loadExistingPerformanceSummary(teamId: string): Promise<ExistingP
   const metadataSnap = await metadataRef.get();
 
   if (!metadataSnap.exists) {
-    return { summary: null, storagePath: null, overviewStoragePath: null, metadata: null };
+    return { summary: null, storagePath: null, overviewStoragePath: null, reportStoragePath: null, metadata: null };
   }
 
   const meta = metadataSnap.data() || {};
   const storagePath = typeof meta.storagePath === 'string' ? meta.storagePath : null;
   const overviewStoragePath = typeof meta.overviewStoragePath === 'string' ? meta.overviewStoragePath : null;
+  const reportStoragePath = typeof meta.reportStoragePath === 'string' ? meta.reportStoragePath : null;
   const metadata: Partial<PerformanceMetadata> = {
     importedAt: meta.importedAt?.toDate?.()?.toISOString?.(),
     importedBy: typeof meta.importedBy === 'string' ? meta.importedBy : undefined,
@@ -352,21 +431,23 @@ async function loadExistingPerformanceSummary(teamId: string): Promise<ExistingP
     cleanHistoryStartDate: normalizeDateString(meta.cleanHistoryStartDate) ?? undefined,
     storagePath: storagePath ?? undefined,
     overviewStoragePath: overviewStoragePath ?? undefined,
+    reportStoragePath: reportStoragePath ?? undefined,
   };
   if (!storagePath) {
-    return { summary: null, storagePath: null, overviewStoragePath, metadata };
+    return { summary: null, storagePath: null, overviewStoragePath, reportStoragePath, metadata };
   }
 
   try {
     const file = getBucket().file(storagePath);
     const [content] = await file.download();
     const summary: PerformanceDataSummary = JSON.parse(content.toString('utf-8'));
-    return { summary, storagePath, overviewStoragePath, metadata };
+    return { summary, storagePath, overviewStoragePath, reportStoragePath, metadata };
   } catch (error) {
     return {
       summary: null,
       storagePath,
       overviewStoragePath,
+      reportStoragePath,
       metadata,
       readError: error instanceof Error ? error : new Error(String(error)),
     };
@@ -505,22 +586,27 @@ async function savePerformanceSummary(params: {
   suffix?: string;
   oldStoragePath?: string | null;
   oldOverviewStoragePath?: string | null;
+  oldReportStoragePath?: string | null;
   deleteOld?: boolean;
 }): Promise<string> {
   const timestamp = Date.now().toString();
   const storagePath = buildPerformanceDataStoragePath(params.teamId, timestamp, params.suffix ?? '');
   const overviewStoragePath = buildPerformanceDataStoragePath(params.teamId, timestamp, `${params.suffix ?? ''}-overview`);
+  const reportStoragePath = buildPerformanceDataStoragePath(params.teamId, timestamp, `${params.suffix ?? ''}-report`);
   const jsonStr = JSON.stringify(params.summary);
   const overviewJsonStr = JSON.stringify(buildPerformanceOverviewSummary(params.summary));
+  const reportJsonStr = JSON.stringify(buildPerformanceReportSummary(params.summary));
 
   await getBucket().file(storagePath).save(jsonStr, { contentType: 'application/json' });
   await getBucket().file(overviewStoragePath).save(overviewJsonStr, { contentType: 'application/json' });
+  await getBucket().file(reportStoragePath).save(reportJsonStr, { contentType: 'application/json' });
 
   await getPerformanceMetadataRef(params.teamId).set({
     importedAt: admin.firestore.FieldValue.serverTimestamp(),
     importedBy: params.importedBy,
     storagePath,
     overviewStoragePath,
+    reportStoragePath,
     dateRange: params.summary.metadata.dateRange,
     dayCount: params.summary.metadata.dayCount,
     totalRecords: params.summary.metadata.totalRecords,
@@ -540,6 +626,13 @@ async function savePerformanceSummary(params: {
       await getBucket().file(params.oldOverviewStoragePath).delete();
     } catch {
       // Old overview file may already be gone.
+    }
+  }
+  if (params.deleteOld && params.oldReportStoragePath && params.oldReportStoragePath !== reportStoragePath) {
+    try {
+      await getBucket().file(params.oldReportStoragePath).delete();
+    } catch {
+      // Old report file may already be gone.
     }
   }
 
@@ -644,6 +737,7 @@ export const ingestPerformanceData = onRequest(
       let existingSummaries: PerformanceDataSummary['dailySummaries'] = [];
       let oldStoragePath: string | null = null;
       let oldOverviewStoragePath: string | null = null;
+      let oldReportStoragePath: string | null = null;
       let existingCleanHistoryStartDate: string | undefined;
 
       try {
@@ -659,6 +753,7 @@ export const ingestPerformanceData = onRequest(
         existingSummaries = existing.summary?.dailySummaries || [];
         oldStoragePath = existing.storagePath;
         oldOverviewStoragePath = existing.metadata?.overviewStoragePath ?? null;
+        oldReportStoragePath = existing.metadata?.reportStoragePath ?? null;
         existingCleanHistoryStartDate = mergeStoredPerformanceRuntimeMetadata(
           existing.summary?.metadata,
           existing.metadata,
@@ -696,6 +791,7 @@ export const ingestPerformanceData = onRequest(
         importedBy: 'auto-ingest',
         oldStoragePath,
         oldOverviewStoragePath,
+        oldReportStoragePath,
         deleteOld: true,
       });
       console.log(`Saved ${summary.dailySummaries.length} day(s) to ${storagePath}`);
@@ -878,6 +974,7 @@ export const rebuildPerformanceHistory = onRequest(
         suffix: '-history-rebuild',
         oldStoragePath: existing.storagePath,
         oldOverviewStoragePath: existing.metadata?.overviewStoragePath ?? null,
+        oldReportStoragePath: existing.metadata?.reportStoragePath ?? null,
         deleteOld,
       });
 
@@ -960,6 +1057,7 @@ export const backfillLoadSanitization = onRequest(
       const metadata = metadataSnap.data() || {};
       const oldStoragePath = metadata.storagePath as string | undefined;
       const oldOverviewStoragePath = metadata.overviewStoragePath as string | undefined;
+      const oldReportStoragePath = metadata.reportStoragePath as string | undefined;
       if (!oldStoragePath) {
         res.status(400).json({ error: `Metadata for team ${teamId} has no storagePath` });
         return;
@@ -1004,10 +1102,14 @@ export const backfillLoadSanitization = onRequest(
       const timestamp = Date.now().toString();
       const newStoragePath = `teams/${teamId}/performanceData/${timestamp}-load-sanitize-backfill.json`;
       const newOverviewStoragePath = `teams/${teamId}/performanceData/${timestamp}-load-sanitize-backfill-overview.json`;
+      const newReportStoragePath = `teams/${teamId}/performanceData/${timestamp}-load-sanitize-backfill-report.json`;
       await getBucket().file(newStoragePath).save(JSON.stringify(summary), {
         contentType: 'application/json',
       });
       await getBucket().file(newOverviewStoragePath).save(JSON.stringify(buildPerformanceOverviewSummary(summary)), {
+        contentType: 'application/json',
+      });
+      await getBucket().file(newReportStoragePath).save(JSON.stringify(buildPerformanceReportSummary(summary)), {
         contentType: 'application/json',
       });
 
@@ -1021,6 +1123,7 @@ export const backfillLoadSanitization = onRequest(
         importedBy: 'load-sanitize-backfill',
         storagePath: newStoragePath,
         overviewStoragePath: newOverviewStoragePath,
+        reportStoragePath: newReportStoragePath,
         dateRange,
         dayCount: summary.dailySummaries.length,
         totalRecords: getTotalRecords(summary),
@@ -1036,6 +1139,13 @@ export const backfillLoadSanitization = onRequest(
       if (deleteOld && oldOverviewStoragePath && oldOverviewStoragePath !== newOverviewStoragePath) {
         try {
           await getBucket().file(oldOverviewStoragePath).delete();
+        } catch {
+          // Non-fatal cleanup failure
+        }
+      }
+      if (deleteOld && oldReportStoragePath && oldReportStoragePath !== newReportStoragePath) {
+        try {
+          await getBucket().file(oldReportStoragePath).delete();
         } catch {
           // Non-fatal cleanup failure
         }

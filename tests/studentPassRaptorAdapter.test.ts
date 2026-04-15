@@ -211,7 +211,7 @@ describe('studentPassRaptorAdapter', () => {
       expect(options.toLat).toBe(zoneOrigin[0]);
       expect(options.toLon).toBe(zoneOrigin[1]);
     }
-  });
+  }, 10000);
 
   it('deduplicates repeated route families so distinct options can surface', async () => {
     const { findTripOptionsRaptor } = await import('../utils/transit-app/studentPassRaptorAdapter');

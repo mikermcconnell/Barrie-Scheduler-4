@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+    applyGeorgianCollegeDefaults,
     clearCache,
     getGoStationTemplateData,
-    getGoTrainTimesForStopDetailed
+    getGoTrainTimesForStopDetailed,
+    isGeorgianCollegeConnectionTarget
 } from '../utils/gtfs/goTransitService';
 
 describe('goTransitService data source behavior', () => {
@@ -211,5 +213,48 @@ describe('goTransitService data source behavior', () => {
         expect(result.times).toHaveLength(1);
         expect(result.times[0]?.time).toBe(490);
         expect(result.times[0]?.eventType).toBe('arrival');
+    });
+
+    it('recognizes Georgian College manual connections and fills in default bells when missing', () => {
+        const hydrated = applyGeorgianCollegeDefaults({
+            id: 'georgian-target',
+            name: 'Georgian College Bells',
+            type: 'manual',
+            location: 'Georgian College',
+            stopCode: '330',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+        });
+
+        expect(isGeorgianCollegeConnectionTarget(hydrated)).toBe(true);
+        expect(hydrated.autoPopulateStops).toBe(true);
+        expect(hydrated.stopCodes).toEqual(['327', '328', '329', '330', '331', '335']);
+        expect(hydrated.defaultEventType).toBe('departure');
+        expect(hydrated.times?.map(time => time.label)).toEqual([
+            '8:00a Bell',
+            '9:00a Bell',
+            '10:00a Bell',
+            '11:00a Bell',
+            '12:00p Bell',
+            '1:00p Bell',
+            '2:00p Bell',
+        ]);
+    });
+
+    it('does not overwrite an existing Georgian College connection time list', () => {
+        const hydrated = applyGeorgianCollegeDefaults({
+            id: 'georgian-target',
+            name: 'Georgian College Bells',
+            type: 'manual',
+            location: 'Georgian College',
+            stopCode: '330',
+            times: [{ id: 'custom', time: 915, label: 'Custom Bell', daysActive: ['Weekday'], enabled: true }],
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+        });
+
+        expect(hydrated.times).toHaveLength(1);
+        expect(hydrated.times?.[0]?.label).toBe('Custom Bell');
+        expect(hydrated.stopCodes).toEqual(['327', '328', '329', '330', '331', '335']);
     });
 });

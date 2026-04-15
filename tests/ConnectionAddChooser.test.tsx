@@ -145,7 +145,7 @@ describe('ConnectionAddChooser', () => {
     await new Promise(resolve => setTimeout(resolve, 0));
 
     const importButton = Array.from(container.querySelectorAll('button')).find(
-      button => button.textContent?.includes('Import selected GO targets')
+      button => button.textContent?.includes('Import selected GO options')
     ) as HTMLButtonElement | undefined;
 
     expect(importButton).toBeDefined();
@@ -192,7 +192,7 @@ describe('ConnectionAddChooser', () => {
     flushSync(() => setSelectValue(selects[1] as HTMLSelectElement, 'arrivals'));
 
     const addButton = Array.from(container.querySelectorAll('#go-template-builder button')).find(
-      button => button.textContent?.includes('Add GO template')
+      button => button.textContent?.includes('Use this GO connection')
     ) as HTMLButtonElement | undefined;
 
     flushSync(() => {
@@ -241,7 +241,7 @@ describe('ConnectionAddChooser', () => {
     });
 
     const importButton = Array.from(container.querySelectorAll('button')).find(
-      button => button.textContent?.includes('Import selected GO targets')
+      button => button.textContent?.includes('Import selected GO options')
     ) as HTMLButtonElement | undefined;
 
     expect(importButton?.disabled).toBe(false);
@@ -291,7 +291,7 @@ describe('ConnectionAddChooser', () => {
     });
 
     const allButton = Array.from(container.querySelectorAll('#go-template-builder button')).find(
-      button => button.textContent?.includes('Add all GO trains')
+      button => button.textContent?.includes('Import all GO options')
     ) as HTMLButtonElement | undefined;
 
     flushSync(() => {
@@ -302,5 +302,126 @@ describe('ConnectionAddChooser', () => {
 
     expect(onSelectGtfsImport).toHaveBeenCalledTimes(1);
     expect(onSelectGtfsImport.mock.calls[0][0]).toHaveLength(4);
+  });
+
+  it('can open after initially rendering closed without crashing', async () => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    flushSync(() => {
+      root?.render(
+        <ConnectionAddChooser
+          isOpen={false}
+          onClose={() => {}}
+          onSelectManual={() => {}}
+          onSelectTemplate={() => {}}
+          onSelectGtfsImport={() => {}}
+          dayType="Weekday"
+        />
+      );
+    });
+
+    expect(container.textContent).toBe('');
+
+    flushSync(() => {
+      root?.render(
+        <ConnectionAddChooser
+          isOpen
+          onClose={() => {}}
+          onSelectManual={() => {}}
+          onSelectTemplate={() => {}}
+          onSelectGtfsImport={() => {}}
+          dayType="Weekday"
+        />
+      );
+    });
+
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    expect(container.textContent).toContain('Add connection');
+    expect(container.textContent).toContain('Create custom connection');
+  });
+
+  it('uses route-first GO wording when opened from the route panel', async () => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    flushSync(() => {
+      root?.render(
+        <ConnectionAddChooser
+          isOpen
+          onClose={() => {}}
+          onSelectManual={() => {}}
+          onSelectTemplate={() => {}}
+          onSelectGtfsImport={() => {}}
+          dayType="Weekday"
+          routeAttachmentContext={{ routeLabel: 'Route 400' }}
+        />
+      );
+    });
+
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    expect(container.textContent).toContain('Create connection for Route 400');
+    expect(container.textContent).toContain('Anything you choose here will be saved first and then added to Route 400 for Weekday.');
+
+    const goTrainButton = Array.from(container.querySelectorAll('button')).find(
+      button => button.textContent?.includes('GO Train')
+    ) as HTMLButtonElement | undefined;
+
+    flushSync(() => {
+      click(goTrainButton ?? null);
+    });
+
+    expect(container.textContent).toContain('Use this GO connection for Route 400');
+    expect(container.textContent).toContain('Add all GO options to Route 400');
+    expect(container.textContent).toContain('Select one or more GO options to add to Route 400.');
+  });
+
+  it('shows a route attach preview for selected GO options in route-first mode', async () => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    flushSync(() => {
+      root?.render(
+        <ConnectionAddChooser
+          isOpen
+          onClose={() => {}}
+          onSelectManual={() => {}}
+          onSelectTemplate={() => {}}
+          onSelectGtfsImport={() => {}}
+          dayType="Weekday"
+          routeAttachmentContext={{
+            routeLabel: 'Route 400',
+            availableStops: [
+              { code: '9003', name: 'Barrie Allandale Waterfront GO' },
+              { code: '725', name: 'Barrie South GO' }
+            ]
+          }}
+        />
+      );
+    });
+
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    const labels = Array.from(container.querySelectorAll('label'));
+    const arrivalsOption = labels.find(label =>
+      label.textContent?.includes('Allandale Waterfront GO Arrivals')
+    );
+    const checkbox = arrivalsOption?.querySelector('input[type="checkbox"]') as HTMLInputElement | null;
+
+    flushSync(() => {
+      click(checkbox);
+    });
+
+    expect(container.textContent).toContain('Route attach preview');
+    expect(container.textContent).toContain('Review which stop each GO option will use on Route 400 before saving.');
+    expect(container.textContent).toContain('Allandale Waterfront GO Arrivals');
+    expect(container.textContent).toContain('Barrie Allandale Waterfront GO (9003)');
+    expect(container.textContent).toContain('Bus leaves 5 min after arrival');
+    expect(container.textContent).toContain('Ready to attach');
   });
 });

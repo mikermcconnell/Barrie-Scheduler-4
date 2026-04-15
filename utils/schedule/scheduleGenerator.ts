@@ -413,9 +413,16 @@ export const generateSchedule = (
                 }
             }
 
-            // Use the observed segment chain as the target after per-segment rounding.
+            // LOCKED LOGIC: round each active segment before summing.
+            // Keep the summed rounded value as the travel target, then let the
+            // final active segment absorb any remainder needed to hit that exact total.
             const isPartialTrip = activeStartIdx > 0;
-            const directionTarget = Math.max(1, Math.round(rawSum));
+            const directionTarget = Math.max(
+                1,
+                rawSegmentTimes
+                    .slice(activeStartIdx)
+                    .reduce((sum, segmentTime) => sum + Math.round(segmentTime), 0)
+            );
 
             // Second pass: round each segment, then adjust last active segment to hit target exactly
             // LOCKED LOGIC: Round BEFORE summing

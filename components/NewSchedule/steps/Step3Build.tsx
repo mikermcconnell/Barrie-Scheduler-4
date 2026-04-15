@@ -10,6 +10,7 @@ import { detectMasterCycleMode, type MasterCycleModeDetection } from '../../../u
 import { buildStep2ApprovedRuntimeModelFromContract } from '../utils/step2ApprovedRuntimeModelAdapter';
 import type { ApprovedRuntimeContract } from '../utils/step2ReviewTypes';
 import type { ApprovedRuntimeModel } from '../utils/wizardState';
+import { getStep3RouteDefaults } from '../utils/step3RouteDefaults';
 
 // Configuration Constants
 export const SCHEDULE_DEFAULTS = {
@@ -83,6 +84,7 @@ export const Step3Build: React.FC<Step3Props> = ({
     const [displayBandDefaults, setDisplayBandDefaults] = React.useState<BandRecoveryDefault[]>([]);
     const [masterCycleModeDetection, setMasterCycleModeDetection] = React.useState<MasterCycleModeDetection | null>(null);
     const configRef = React.useRef(config);
+    const lastRouteDefaultsKeyRef = React.useRef<string | null>(null);
     React.useEffect(() => { configRef.current = config; }, [config]);
 
     // Keep display state in sync when autofill loads new data
@@ -111,6 +113,48 @@ export const Step3Build: React.FC<Step3Props> = ({
         if ((config.recoveryRatio ?? 0) > 0) return;
         setConfig({ ...config, recoveryRatio: SCHEDULE_DEFAULTS.RECOVERY_RATIO });
     }, [config, setConfig]);
+
+    React.useEffect(() => {
+        const normalizedRouteKey = config.routeNumber
+            .replace(/^route\s*/i, '')
+            .replace(/\s*-\s*/g, '-')
+            .trim()
+            .toUpperCase();
+        if (!normalizedRouteKey) {
+            lastRouteDefaultsKeyRef.current = null;
+            return;
+        }
+
+        if (lastRouteDefaultsKeyRef.current === normalizedRouteKey) {
+            return;
+        }
+        lastRouteDefaultsKeyRef.current = normalizedRouteKey;
+
+        const routeDefaults = getStep3RouteDefaults(config.routeNumber);
+        if (!routeDefaults) return;
+
+        const currentConfig = configRef.current;
+        const nextConfig: ScheduleConfig = {
+            ...currentConfig,
+            cycleMode: routeDefaults.cycleMode,
+            ...(routeDefaults.cycleTime !== undefined ? { cycleTime: routeDefaults.cycleTime } : {}),
+            ...(routeDefaults.cycleMode === 'Floating'
+                ? {
+                    recoveryRatio: (currentConfig.recoveryRatio ?? 0) > 0
+                        ? currentConfig.recoveryRatio
+                        : SCHEDULE_DEFAULTS.RECOVERY_RATIO,
+                }
+                : {}),
+        };
+
+        const changed = nextConfig.cycleMode !== currentConfig.cycleMode
+            || nextConfig.cycleTime !== currentConfig.cycleTime
+            || nextConfig.recoveryRatio !== currentConfig.recoveryRatio;
+
+        if (changed) {
+            setConfig(nextConfig);
+        }
+    }, [config.routeNumber, setConfig]);
 
     const resolvedApprovedRuntimeModel = React.useMemo(
         () => buildStep2ApprovedRuntimeModelFromContract(approvedRuntimeContract),

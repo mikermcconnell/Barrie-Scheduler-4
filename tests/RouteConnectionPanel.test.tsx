@@ -12,17 +12,6 @@ const click = (element: Element | null) => {
   element.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 };
 
-const setSelectValue = (select: HTMLSelectElement, value: string) => {
-  const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
-  if (setter) {
-    setter.call(select, value);
-  } else {
-    select.value = value;
-  }
-  select.dispatchEvent(new Event('input', { bubbles: true }));
-  select.dispatchEvent(new Event('change', { bubbles: true }));
-};
-
 const findButtonByText = (container: HTMLElement, text: string) =>
   Array.from(container.querySelectorAll('button')).find(
     button => button.textContent?.trim().includes(text)
@@ -31,22 +20,32 @@ const findButtonByText = (container: HTMLElement, text: string) =>
 const buildLibrary = (): ConnectionLibrary => ({
   targets: [
     {
-      id: 'arrival-target',
-      name: 'GO Arrivals',
-      type: 'manual',
-      stopCode: '9003',
-      defaultEventType: 'arrival',
-      times: [{ id: 'arrival-time', time: 480, daysActive: ['Weekday'], enabled: true }],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    },
-    {
       id: 'departure-target',
       name: 'GO Departures',
       type: 'manual',
       stopCode: '9003',
       defaultEventType: 'departure',
       times: [{ id: 'departure-time', time: 540, daysActive: ['Weekday'], enabled: true }],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    },
+    {
+      id: 'downtown-target',
+      name: 'Downtown Departures',
+      type: 'manual',
+      stopCode: '1001',
+      defaultEventType: 'departure',
+      times: [{ id: 'downtown-time', time: 510, daysActive: ['Weekday'], enabled: true }],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    },
+    {
+      id: 'arrival-target',
+      name: 'GO Arrivals',
+      type: 'manual',
+      stopCode: '9003',
+      defaultEventType: 'arrival',
+      times: [{ id: 'arrival-time', time: 480, daysActive: ['Weekday'], enabled: true }],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     }
@@ -77,7 +76,7 @@ describe('RouteConnectionPanel', () => {
     root = null;
   });
 
-  it('defaults an arrival target to feed-arriving when adding a route connection', async () => {
+  it('applies a selected existing arrival connection with route defaults', async () => {
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -88,7 +87,10 @@ describe('RouteConnectionPanel', () => {
         <RouteConnectionPanel
           config={buildConfig()}
           library={buildLibrary()}
-          availableStops={[{ code: '9003', name: 'Allandale Waterfront GO Station' }]}
+          availableStops={[
+            { code: '1001', name: 'Downtown Terminal' },
+            { code: '9003', name: 'Allandale Waterfront GO Station' }
+          ]}
           onUpdateConfig={() => {}}
           onAddConnection={onAddConnection}
         />
@@ -98,23 +100,13 @@ describe('RouteConnectionPanel', () => {
     await new Promise(resolve => setTimeout(resolve, 0));
 
     flushSync(() => {
-      click(findButtonByText(container as HTMLDivElement, 'Add Connection') ?? null);
+      click(findButtonByText(container as HTMLDivElement, 'GO Arrivals') ?? null);
     });
 
-    const selects = container.querySelectorAll('select');
-    expect(selects.length).toBeGreaterThanOrEqual(2);
-
-    flushSync(() => setSelectValue(selects[0] as HTMLSelectElement, 'arrival-target'));
-    expect(container.textContent).toContain('Buffer (minutes after)');
-
-    flushSync(() => setSelectValue(selects[1] as HTMLSelectElement, '9003'));
-    const submitButtons = Array.from(container.querySelectorAll('button')).filter(
-      button => button.textContent?.trim() === 'Add Connection'
-    );
-    const submitButton = submitButtons[submitButtons.length - 1] as HTMLButtonElement | undefined;
+    expect(container.textContent).toContain('Apply existing connection');
 
     flushSync(() => {
-      click(submitButton ?? null);
+      click(findButtonByText(container as HTMLDivElement, 'Apply existing connection') ?? null);
     });
 
     expect(onAddConnection).toHaveBeenCalledTimes(1);
@@ -125,7 +117,7 @@ describe('RouteConnectionPanel', () => {
     });
   });
 
-  it('keeps a departure target on meet-departing when selected', async () => {
+  it('sorts existing connections by stop code and highlights arrivals and departures', async () => {
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -135,7 +127,10 @@ describe('RouteConnectionPanel', () => {
         <RouteConnectionPanel
           config={buildConfig()}
           library={buildLibrary()}
-          availableStops={[{ code: '9003', name: 'Allandale Waterfront GO Station' }]}
+          availableStops={[
+            { code: '1001', name: 'Downtown Terminal' },
+            { code: '9003', name: 'Allandale Waterfront GO Station' }
+          ]}
           onUpdateConfig={() => {}}
           onAddConnection={() => {}}
         />
@@ -144,13 +139,116 @@ describe('RouteConnectionPanel', () => {
 
     await new Promise(resolve => setTimeout(resolve, 0));
 
+    const targetButtons = Array.from(container.querySelectorAll('button')).filter(button => (
+      button.textContent?.includes('Departures') || button.textContent?.includes('Arrivals')
+    ));
+
+    expect(targetButtons[0]?.textContent).toContain('Downtown Departures');
+    expect(container.textContent).toContain('Arrival');
+    expect(container.textContent).toContain('Departure');
+    expect(container.textContent).toContain('Stop 1001');
+    expect(container.textContent).toContain('Stop 9003');
+  });
+
+  it('offers a route-first create flow when no saved targets exist yet', async () => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const onCreateTarget = vi.fn();
+
     flushSync(() => {
-      click(findButtonByText(container as HTMLDivElement, 'Add Connection') ?? null);
+      root?.render(
+        <RouteConnectionPanel
+          config={buildConfig()}
+          library={{ targets: [], updatedAt: new Date().toISOString(), updatedBy: 'test-user' }}
+          availableStops={[{ code: '9003', name: 'Allandale Waterfront GO Station' }]}
+          onUpdateConfig={() => {}}
+          onAddConnection={() => {}}
+          onCreateTarget={onCreateTarget}
+        />
+      );
     });
 
-    const selects = container.querySelectorAll('select');
-    flushSync(() => setSelectValue(selects[0] as HTMLSelectElement, 'departure-target'));
+    await new Promise(resolve => setTimeout(resolve, 0));
 
-    expect(container.textContent).toContain('Buffer (minutes before)');
+    expect(container.textContent).toContain('Use existing connection');
+    expect(container.textContent).toContain('Create new connection');
+    expect(container.textContent).toContain('No existing connections are available yet.');
+
+    flushSync(() => {
+      click(findButtonByText(container as HTMLDivElement, 'Create new connection') ?? null);
+    });
+
+    expect(onCreateTarget).toHaveBeenCalledTimes(1);
+  });
+
+  it('builds an other-route draft from the selected stop, timing rule, and buffer', async () => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const onAddOtherRouteConnection = vi.fn();
+
+    flushSync(() => {
+      root?.render(
+        <RouteConnectionPanel
+          config={buildConfig()}
+          library={buildLibrary()}
+          availableStops={[{ code: '1001', name: 'Downtown Terminal' }]}
+          onUpdateConfig={() => {}}
+          onAddConnection={() => {}}
+          onAddOtherRouteConnection={onAddOtherRouteConnection}
+          otherRouteOptions={[
+            {
+              key: 'route-2-north-downtown',
+              routeIdentity: '2-Weekday',
+              routeLabel: '2',
+              direction: 'North',
+              stopCode: '1001',
+              stopName: 'Downtown Terminal',
+            },
+          ]}
+        />
+      );
+    });
+
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    const selects = Array.from(container.querySelectorAll('select'));
+    const ruleSelect = selects.find(select =>
+      Array.from(select.querySelectorAll('option')).some(option => option.textContent?.includes('Current route leaves after'))
+    ) as HTMLSelectElement | undefined;
+
+    flushSync(() => {
+      ruleSelect!.value = 'feed_arriving';
+      ruleSelect!.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    const minuteInput = Array.from(container.querySelectorAll('input')).find(input => (
+      input.getAttribute('type') === 'number'
+    )) as HTMLInputElement | undefined;
+
+    flushSync(() => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      valueSetter?.call(minuteInput, '7');
+      minuteInput!.dispatchEvent(new Event('input', { bubbles: true }));
+      minuteInput!.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    flushSync(() => {
+      click(findButtonByText(container as HTMLDivElement, 'Route 2') ?? null);
+    });
+
+    expect(onAddOtherRouteConnection).toHaveBeenCalledTimes(1);
+    expect(onAddOtherRouteConnection).toHaveBeenCalledWith({
+      routeIdentity: '2-Weekday',
+      routeLabel: '2',
+      direction: 'North',
+      currentStopCode: '1001',
+      currentStopName: 'Downtown Terminal',
+      targetStopCode: '1001',
+      targetStopName: 'Downtown Terminal',
+      connectionType: 'feed_arriving',
+      bufferMinutes: 7,
+    });
   });
 });

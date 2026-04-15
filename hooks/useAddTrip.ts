@@ -6,26 +6,15 @@
  */
 
 import { useState, useCallback } from 'react';
-import { MasterRouteTable, type MasterTrip } from '../utils/parsers/masterScheduleParser';
+import { MasterRouteTable } from '../utils/parsers/masterScheduleParser';
 import type { ConnectionLibrary } from '../utils/connections/connectionTypes';
 import {
     applyAddTripResultToSchedules,
-    stripScheduleDecorators,
+    buildAddTripModalContext,
+    type AddTripPlacement,
     type AddTripModalContext,
     type AddTripResult
 } from '../utils/schedule/addTripPlanner';
-
-// Find table and trip by ID
-const findTableAndTrip = (
-    schedules: MasterRouteTable[],
-    tripId: string
-): { table: MasterRouteTable; trip: MasterTrip; tableIdx: number } | null => {
-    for (let i = 0; i < schedules.length; i++) {
-        const trip = schedules[i].trips.find(t => t.id === tripId);
-        if (trip) return { table: schedules[i], trip, tableIdx: i };
-    }
-    return null;
-};
 
 interface UseAddTripOptions {
     schedules: MasterRouteTable[];
@@ -37,9 +26,9 @@ interface UseAddTripOptions {
 
 interface UseAddTripReturn {
     modalContext: AddTripModalContext | null;
-    openModal: (afterTripId: string, routeData: { north?: MasterRouteTable; south?: MasterRouteTable }) => void;
+    openModal: (anchorTripId: string, routeData: { north?: MasterRouteTable; south?: MasterRouteTable }, placement?: AddTripPlacement) => void;
     closeModal: () => void;
-    handleConfirm: (result: AddTripResult) => void;
+    handleConfirm: (result: AddTripResult, contextOverride?: AddTripModalContext) => void;
 }
 
 export const useAddTrip = ({
@@ -55,36 +44,26 @@ export const useAddTrip = ({
      * Opens the Add Trip Modal with context
      */
     const openModal = useCallback((
-        afterTripId: string,
-        _routeData: { north?: MasterRouteTable; south?: MasterRouteTable }
+        anchorTripId: string,
+        _routeData: { north?: MasterRouteTable; south?: MasterRouteTable },
+        placement: AddTripPlacement = 'after'
     ) => {
-        if (!afterTripId) return;
+        if (!anchorTripId) return;
 
-        const result = findTableAndTrip(schedules, afterTripId);
-        if (!result) {
-            console.error('Could not find trip with id:', afterTripId);
+        const modalContext = buildAddTripModalContext(
+            schedules,
+            anchorTripId,
+            placement,
+            connectionLibrary ?? null,
+            _routeData.north && _routeData.south ? 'cycle' : 'trip'
+        );
+
+        if (!modalContext) {
+            console.error('Could not build add-trip context for trip id:', anchorTripId);
             return;
         }
 
-        const referenceTrip = result.trip;
-        const targetTable = result.table;
-
-        // Find the "next" trip in the schedule (for midpoint calculation)
-        const sortedTrips = [...targetTable.trips].sort((a, b) => a.startTime - b.startTime);
-        const refIdx = sortedTrips.findIndex(t => t.id === afterTripId);
-        const nextTrip = refIdx >= 0 && refIdx < sortedTrips.length - 1 ? sortedTrips[refIdx + 1] : null;
-
-        // Get route base name for block ID generation
-        const routeBaseName = stripScheduleDecorators(targetTable.routeName);
-
-        setModalContext({
-            referenceTrip,
-            nextTrip,
-            targetTable,
-            allSchedules: schedules,
-            routeBaseName,
-            connectionLibrary: connectionLibrary ?? null
-        });
+        setModalContext(modalContext);
     }, [connectionLibrary, schedules]);
 
     /**
@@ -97,20 +76,35 @@ export const useAddTrip = ({
     /**
      * Handle confirmed add trip from modal
      */
-    const handleConfirm = useCallback((modalResult: AddTripResult) => {
-        if (!modalContext) {
+    const handleConfirm = useCallback((modalResult: AddTripResult, contextOverride?: AddTripModalContext) => {
+        const effectiveContext = contextOverride ?? modalContext;
+
+        if (!effectiveContext) {
             console.error('No addTripModalContext!');
             return;
         }
 
-        const { startTime, tripCount, blockId, blockMode, targetDirection, targetRouteName, startStopName, endStopName } = modalResult;
+        const {
+            startTime,
+            tripCount,
+            serviceMode = 'trip',
+            absorbShortTrailingGapIntoRecovery = false,
+            blockId,
+            blockMode,
+            targetDirection,
+            targetRouteName,
+            startStopName,
+            endStopName
+        } = modalResult;
 
         const { schedules: newScheds, createdTripIds } = applyAddTripResultToSchedules(
             schedules,
-            modalContext,
+            effectiveContext,
             {
                 startTime,
                 tripCount,
+                serviceMode,
+                absorbShortTrailingGapIntoRecovery,
                 blockMode,
                 blockId,
                 targetDirection,
@@ -125,14 +119,19 @@ export const useAddTrip = ({
 
         // Show success message
         if (onSuccess) {
-            const routeNum = modalContext.routeBaseName.split(' ')[0];
-            const dayLabel = modalContext.targetTable.routeName.includes('(Saturday)')
+            const routeNum = effectiveContext.routeBaseName.split(' ')[0];
+            const dayLabel = effectiveContext.targetTable.routeName.includes('(Saturday)')
                 ? 'Saturday'
-                : modalContext.targetTable.routeName.includes('(Sunday)')
+                : effectiveContext.targetTable.routeName.includes('(Sunday)')
                     ? 'Sunday'
                     : 'Weekday';
-            const directionLabel = targetDirection === 'North' ? 'northbound' : 'southbound';
-            onSuccess(`✓ Added ${tripCount} ${directionLabel} trip${tripCount > 1 ? 's' : ''} to Route ${routeNum} (${dayLabel}) as block ${blockId}`);
+            if (serviceMode === 'cycle') {
+                const directionLabel = targetDirection === 'North' ? 'northbound' : 'southbound';
+                onSuccess(`✓ Added ${tripCount} full cycle${tripCount > 1 ? 's' : ''} starting ${directionLabel} on Route ${routeNum} (${dayLabel}) as block ${blockId}`);
+            } else {
+                const directionLabel = targetDirection === 'North' ? 'northbound' : 'southbound';
+                onSuccess(`✓ Added ${tripCount} ${directionLabel} trip${tripCount > 1 ? 's' : ''} to Route ${routeNum} (${dayLabel}) as block ${blockId}`);
+            }
         }
 
         setModalContext(null);

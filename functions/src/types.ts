@@ -502,4 +502,5 @@ export interface PerformanceMetadata {
   cleanHistoryStartDate?: string;
   storagePath?: string;
   overviewStoragePath?: string;
+  reportStoragePath?: string;
 }

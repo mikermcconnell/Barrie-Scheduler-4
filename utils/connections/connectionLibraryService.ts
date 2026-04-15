@@ -24,6 +24,7 @@ import {
     generateConnectionId as genId,
     DEFAULT_CONNECTION_QUALITY_WINDOW_SETTINGS as DEFAULT_QUALITY_WINDOW_SETTINGS
 } from './connectionTypes';
+import { applyGeorgianCollegeDefaults } from '../gtfs/goTransitService';
 
 // ============ HELPER FUNCTIONS ============
 
@@ -80,7 +81,7 @@ export async function getConnectionLibrary(teamId: string): Promise<ConnectionLi
 
         const data = docSnap.data();
         return {
-            targets: data.targets || [],
+            targets: (data.targets || []).map((target: ConnectionTarget) => applyGeorgianCollegeDefaults(target)),
             qualityWindowSettings: data.qualityWindowSettings || DEFAULT_QUALITY_WINDOW_SETTINGS,
             changeLog: data.changeLog || [],
             updatedAt: timestampToISO(data.updatedAt),

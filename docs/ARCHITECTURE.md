@@ -91,6 +91,9 @@ components/
 │   ├── ConnectionsPanel.tsx        # Library management in editor (524 lines)
 │   └── ConnectionStatusPanel.tsx   # Connection status overview
 │
+├── ai/                             # ═══ Local AI Review UI ═══
+│   └── AIReviewPanel.tsx           # Fixed-route local AI review side panel
+│
 ├── Performance/                    # ═══ Operations Performance ═══
 │   ├── PerformanceWorkspace.tsx    # Workspace root
 │   ├── PerformanceDashboard.tsx    # Tab router (Overview, OTP, Ridership, Load, Reports)
@@ -249,7 +252,11 @@ utils/
 │
 ├── ai/                                 # ═══ AI Integration ═══
 │   ├── runtimeAnalysis.ts             # Time band analysis (274 lines)
+│   ├── optimizeCore.ts                # Shared optimize engine used by API + Functions runtimes
 │   ├── performanceQueryService.ts     # AI performance queries
+│   ├── scheduleReviewContext.ts       # Fixed-route AI review snapshot builder
+│   ├── scheduleReviewService.ts       # Fixed-route AI review client
+│   ├── scheduleReviewTypes.ts         # Fixed-route AI review contracts
 │   └── geminiOptimizer.ts             # Gemini optimize client (fast full, multi-phase refine)
 │
 ├── transit-app/                        # ═══ Transit App Data ═══
@@ -278,7 +285,7 @@ utils/
 ```
 hooks/
 ├── useScheduleWizard.ts           # ★ Wizard state management (434 lines)
-├── useScheduleEditing.ts          # Editor state management (392 lines)
+├── useScheduleEditing.ts          # Inline edit/recovery/time-adjust mutation path for Schedule Editor (392 lines)
 ├── useGridNavigation.ts           # Keyboard grid navigation (373 lines)
 ├── useAutoSave.ts                 # Debounced auto-save to Firestore (358 lines)
 ├── useUploadToMaster.ts           # Upload draft to master workflow (264 lines)
@@ -293,13 +300,14 @@ hooks/
 ### API & Cloud Functions
 
 ```
-api/                                # Vite dev-server API middleware
-├── optimize.ts                    # Gemini optimization endpoint parity for local dev
+api/                                # Canonical serverless/API handlers; Vite dev may delegate here
+├── optimize.ts                    # Gemini optimization endpoint (canonical handler used by dev + serverless)
 ├── gtfs.ts                        # GTFS proxy endpoint (247 lines)
 ├── security.ts                    # API auth/security middleware (196 lines)
 ├── parse-schedule.ts              # Schedule parsing endpoint
 ├── download-file.ts               # File download proxy
-└── performance-query.ts           # Performance AI query endpoint
+├── performance-query.ts           # Performance AI query endpoint (canonical handler used by dev + serverless)
+└── local-ai-review.ts             # Fixed-route local AI review endpoint (health + anomaly review)
 
 functions/src/                      # Firebase Cloud Functions
 ├── index.ts                       # Cloud Functions entry point (205 lines)

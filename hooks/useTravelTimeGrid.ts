@@ -12,7 +12,7 @@ import { useCallback } from 'react';
 import type { MasterRouteTable, MasterTrip } from '../utils/parsers/masterScheduleParser';
 import { validateRouteTable } from '../utils/parsers/masterScheduleParser';
 import { reassignBlocksForTables, MatchConfigPresets } from '../utils/blocks/blockAssignmentCore';
-import { parseRouteInfo } from '../utils/config/routeDirectionConfig';
+import { getRouteConfig, parseRouteInfo } from '../utils/config/routeDirectionConfig';
 import { TimeUtils } from '../utils/timeUtils';
 import { deepCloneSchedules } from '../utils/schedule/scheduleEditorUtils';
 import { resolveGridSegmentTimes } from '../utils/schedule/travelTimeGridUtils';
@@ -44,7 +44,17 @@ const reassignBlocksForRelatedTables = (tables: MasterRouteTable[], routeName: s
     const relatedTables = tables.filter(table => getTrueBaseRoute(table.routeName) === baseName);
     if (relatedTables.length === 0) return;
 
-    reassignBlocksForTables(relatedTables, baseName, MatchConfigPresets.editor);
+    const routeConfig = getRouteConfig(baseName);
+    const directions = new Set(
+        relatedTables.flatMap(table => table.trips.map(trip => trip.direction))
+    );
+    const hasBidirectionalService = directions.has('North') && directions.has('South');
+    const reassignmentConfig =
+        routeConfig?.segments.length === 2 && hasBidirectionalService
+            ? MatchConfigPresets.merged
+            : MatchConfigPresets.editor;
+
+    reassignBlocksForTables(relatedTables, baseName, reassignmentConfig);
 };
 
 const recalculateTrip = (trip: MasterTrip, cols: string[]) => {

@@ -14,6 +14,8 @@ import {
     Trash2,
     Edit2,
     ChevronRight,
+    ChevronDown,
+    ChevronUp,
     Upload,
     RefreshCw,
     Filter
@@ -49,6 +51,8 @@ interface ConnectionLibraryPanelProps {
     availableStops?: StopOption[];
     userId: string;
     dayType: 'Weekday' | 'Saturday' | 'Sunday';
+    compactAdminMode?: boolean;
+    compactAdminContextLabel?: string;
 }
 
 const validateQualitySettings = (settings: ConnectionQualityWindowSettings): string => {
@@ -76,13 +80,16 @@ export const ConnectionLibraryPanel: React.FC<ConnectionLibraryPanelProps> = ({
     validStopCodes,
     availableStops = [],
     userId,
-    dayType
+    dayType,
+    compactAdminMode = false,
+    compactAdminContextLabel
 }) => {
     const [expandedTargetId, setExpandedTargetId] = useState<string | null>(null);
     const [editingTarget, setEditingTarget] = useState<ConnectionTarget | null>(null);
-    const [showMatchingOnly, setShowMatchingOnly] = useState(false);
+    const [showMatchingOnly, setShowMatchingOnly] = useState(compactAdminMode);
     const [isRefreshingGtfs, setIsRefreshingGtfs] = useState(false);
     const [gtfsStatusMessage, setGtfsStatusMessage] = useState<string>('');
+    const [showMaintenanceTools, setShowMaintenanceTools] = useState(!compactAdminMode);
     const [qualityDraft, setQualityDraft] = useState<ConnectionQualityWindowSettings>(
         library?.qualityWindowSettings || DEFAULT_CONNECTION_QUALITY_WINDOW_SETTINGS
     );
@@ -100,12 +107,21 @@ export const ConnectionLibraryPanel: React.FC<ConnectionLibraryPanelProps> = ({
         );
     }, [targets, showMatchingOnly, validStopCodes, dayType]);
 
-    const manualTargets = displayedTargets.filter(t => t.type === 'manual');
-    const routeTargets = displayedTargets.filter(t => t.type === 'route');
+    const matchingTargetCount = targets.filter(target =>
+        targetMatchesLoadedStops(target, validStopCodes || [])
+        && targetHasActiveTimesForDay(target, dayType)
+    ).length;
 
     useEffect(() => {
         setQualityDraft(qualitySettings);
     }, [qualitySettings.excellentMin, qualitySettings.excellentMax, qualitySettings.goodMin, qualitySettings.goodMax]);
+
+    useEffect(() => {
+        if (compactAdminMode) {
+            setShowMatchingOnly(true);
+            setShowMaintenanceTools(false);
+        }
+    }, [compactAdminMode]);
 
     const qualityError = useMemo(() => validateQualitySettings(qualityDraft), [qualityDraft]);
 
@@ -219,6 +235,52 @@ export const ConnectionLibraryPanel: React.FC<ConnectionLibraryPanelProps> = ({
         if (!target.times) return [];
         return target.times.filter(t => t.daysActive.includes(dayType));
     };
+    const getCompactTargetSummary = (target: ConnectionTarget) => {
+        const matchesLoadedRoute = targetMatchesLoadedStops(target, validStopCodes || []);
+        const activeTimes = getActiveTimes(target);
+        const enabledActiveTimes = activeTimes.filter(time => time.enabled);
+        return {
+            matchesLoadedRoute,
+            activeTimes,
+            enabledActiveTimes,
+            enabledActiveTimeCount: enabledActiveTimes.length,
+            hasActiveTimes: enabledActiveTimes.length > 0
+        };
+    };
+    const sortTargetsForCompactAdmin = (left: ConnectionTarget, right: ConnectionTarget) => {
+        if (!compactAdminMode) {
+            return left.name.localeCompare(right.name, undefined, { sensitivity: 'base' });
+        }
+
+        const leftSummary = getCompactTargetSummary(left);
+        const rightSummary = getCompactTargetSummary(right);
+
+        if (leftSummary.matchesLoadedRoute !== rightSummary.matchesLoadedRoute) {
+            return leftSummary.matchesLoadedRoute ? -1 : 1;
+        }
+
+        if (leftSummary.hasActiveTimes !== rightSummary.hasActiveTimes) {
+            return leftSummary.hasActiveTimes ? -1 : 1;
+        }
+
+        if (leftSummary.enabledActiveTimeCount !== rightSummary.enabledActiveTimeCount) {
+            return rightSummary.enabledActiveTimeCount - leftSummary.enabledActiveTimeCount;
+        }
+
+        return left.name.localeCompare(right.name, undefined, { sensitivity: 'base' });
+    };
+    const manualTargets = useMemo(
+        () => displayedTargets
+            .filter(t => t.type === 'manual')
+            .sort(sortTargetsForCompactAdmin),
+        [displayedTargets, compactAdminMode, dayType, validStopCodes]
+    );
+    const routeTargets = useMemo(
+        () => displayedTargets
+            .filter(t => t.type === 'route')
+            .sort(sortTargetsForCompactAdmin),
+        [displayedTargets, compactAdminMode, dayType, validStopCodes]
+    );
 
     const editingInitialData = editingTarget ? {
         name: editingTarget.name,
@@ -348,119 +410,182 @@ export const ConnectionLibraryPanel: React.FC<ConnectionLibraryPanelProps> = ({
                     className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition-colors text-sm font-medium"
                 >
                     <Plus className="w-4 h-4" />
-                    Add Target
+                    {compactAdminMode ? 'Add saved service' : 'Add Target'}
                 </button>
                 <button
                     onClick={onImportRoute}
                     className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-gray-50 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors text-sm font-medium"
                 >
                     <Upload className="w-4 h-4" />
-                    Import Route
+                    {compactAdminMode ? 'Import from route' : 'Import Route'}
                 </button>
             </div>
 
-            <div className="px-3 py-2 bg-gray-50 border-t border-gray-100 border-b border-gray-100">
-                <div className="flex items-center justify-between text-xs text-gray-600">
-                    <span>
-                        GTFS cache: {gtfsCache?.fetchedAt ? new Date(gtfsCache.fetchedAt).toLocaleString() : 'Not cached'}
-                        {gtfsCacheAge ? ` (${gtfsCacheAge})` : ''}
-                    </span>
-                    <button
-                        onClick={handleRefreshGtfs}
-                        disabled={isRefreshingGtfs}
-                        className="inline-flex items-center gap-1 px-2 py-1 rounded bg-white border border-gray-200 hover:bg-gray-100 disabled:opacity-50"
-                    >
-                        <RefreshCw className={`w-3 h-3 ${isRefreshingGtfs ? 'animate-spin' : ''}`} />
-                        Refresh GTFS
-                    </button>
-                </div>
-                {gtfsStatusMessage && (
-                    <p className={`mt-1 text-[11px] ${gtfsStatusMessage.includes('Failed') ? 'text-red-600' : 'text-green-600'}`}>
-                        {gtfsStatusMessage}
+            {compactAdminMode && (
+                <div className="px-3 py-3 bg-blue-50 border-t border-blue-100 border-b border-blue-100">
+                    <p className="text-sm font-medium text-blue-900">
+                        {showMatchingOnly
+                            ? `Showing saved services that match ${compactAdminContextLabel || 'this route'} on ${dayType}`
+                            : 'Showing all saved services in the shared library'}
                     </p>
-                )}
-            </div>
-
-            {/* Timing quality settings */}
-            <div className="p-3 bg-gray-50/60">
-                <h4 className="text-xs font-medium text-gray-600 uppercase tracking-wider mb-2">
-                    Connection Timing Settings
-                </h4>
-                <div className="grid grid-cols-2 gap-2">
-                    <label className="text-xs text-gray-600">
-                        Good Min
-                        <input
-                            type="number"
-                            min={0}
-                            value={qualityDraft.goodMin}
-                            onChange={(e) => setQualityDraft({ ...qualityDraft, goodMin: Number(e.target.value || 0) })}
-                            className="mt-1 w-full px-2 py-1 border border-gray-200 rounded text-sm"
-                        />
-                    </label>
-                    <label className="text-xs text-gray-600">
-                        Excellent Min
-                        <input
-                            type="number"
-                            min={0}
-                            value={qualityDraft.excellentMin}
-                            onChange={(e) => setQualityDraft({ ...qualityDraft, excellentMin: Number(e.target.value || 0) })}
-                            className="mt-1 w-full px-2 py-1 border border-gray-200 rounded text-sm"
-                        />
-                    </label>
-                    <label className="text-xs text-gray-600">
-                        Excellent Max
-                        <input
-                            type="number"
-                            min={0}
-                            value={qualityDraft.excellentMax}
-                            onChange={(e) => setQualityDraft({ ...qualityDraft, excellentMax: Number(e.target.value || 0) })}
-                            className="mt-1 w-full px-2 py-1 border border-gray-200 rounded text-sm"
-                        />
-                    </label>
-                    <label className="text-xs text-gray-600">
-                        Good Max
-                        <input
-                            type="number"
-                            min={0}
-                            value={qualityDraft.goodMax}
-                            onChange={(e) => setQualityDraft({ ...qualityDraft, goodMax: Number(e.target.value || 0) })}
-                            className="mt-1 w-full px-2 py-1 border border-gray-200 rounded text-sm"
-                        />
-                    </label>
+                    <p className="text-xs text-blue-700 mt-1">
+                        {showMatchingOnly
+                            ? `${matchingTargetCount} of ${targets.length} saved service${targets.length === 1 ? '' : 's'} currently match the loaded route/day context.`
+                            : 'Switch back to the route-relevant view when you only want the services most useful for the current route setup.'}
+                    </p>
+                    <div className="mt-2 flex items-center justify-between gap-3">
+                        <button
+                            type="button"
+                            onClick={() => setShowMatchingOnly(value => !value)}
+                            className="inline-flex items-center gap-1 rounded bg-white px-2.5 py-1.5 text-xs font-medium text-blue-700 border border-blue-200 hover:bg-blue-100"
+                        >
+                            <Filter className="w-3 h-3" />
+                            {showMatchingOnly ? 'Show all saved services' : 'Show route-relevant only'}
+                        </button>
+                        <span className="text-xs text-blue-700">
+                            {displayedTargets.length}/{targets.length}
+                        </span>
+                    </div>
                 </div>
-                <p className="text-[11px] text-gray-500 mt-2">
-                    Excellent: {qualityDraft.excellentMin}-{qualityDraft.excellentMax} min early.
-                    Good: {qualityDraft.goodMin}-{qualityDraft.excellentMin} and {qualityDraft.excellentMax}-{qualityDraft.goodMax} min early.
-                    Outside that is bad.
-                </p>
-                {qualityError && (
-                    <p className="text-[11px] text-red-600 mt-1">{qualityError}</p>
-                )}
-                <div className="flex justify-end mt-2">
-                    <button
-                        onClick={handleSaveQualitySettings}
-                        disabled={!!qualityError}
-                        className="px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                        Save Settings
-                    </button>
-                </div>
-            </div>
+            )}
 
-            <div className="px-3 py-2 flex items-center justify-between">
-                <label className="inline-flex items-center gap-2 text-xs text-gray-600">
-                    <input
-                        type="checkbox"
-                        checked={showMatchingOnly}
-                        onChange={(e) => setShowMatchingOnly(e.target.checked)}
-                    />
-                    <Filter className="w-3 h-3" />
-                    Show only targets matching loaded route/day
-                </label>
-                <span className="text-xs text-gray-500">
-                    {displayedTargets.length}/{targets.length}
-                </span>
-            </div>
+            {compactAdminMode && targets.length > 0 && (
+                <div className="px-3 py-3 bg-white border-b border-gray-100">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                            <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+                                Manual saved services
+                            </p>
+                            <p className="mt-1 text-lg font-semibold text-gray-900">
+                                {manualTargets.length}
+                            </p>
+                            <p className="text-xs text-gray-600 mt-1">
+                                GO, bells, and other shared manual service goals
+                            </p>
+                        </div>
+                        <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                            <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+                                Route-derived saved services
+                            </p>
+                            <p className="mt-1 text-lg font-semibold text-gray-900">
+                                {routeTargets.length}
+                            </p>
+                            <p className="text-xs text-gray-600 mt-1">
+                                Saved services created from other routes and linked schedule data
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {!compactAdminMode && (
+                <>
+                <div className="px-3 py-2 bg-gray-50 border-t border-gray-100 border-b border-gray-100">
+                    <div className="flex items-center justify-between text-xs text-gray-600">
+                        <span>
+                            GTFS cache: {gtfsCache?.fetchedAt ? new Date(gtfsCache.fetchedAt).toLocaleString() : 'Not cached'}
+                            {gtfsCacheAge ? ` (${gtfsCacheAge})` : ''}
+                        </span>
+                        <button
+                            onClick={handleRefreshGtfs}
+                            disabled={isRefreshingGtfs}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded bg-white border border-gray-200 hover:bg-gray-100 disabled:opacity-50"
+                        >
+                            <RefreshCw className={`w-3 h-3 ${isRefreshingGtfs ? 'animate-spin' : ''}`} />
+                            Refresh GTFS
+                        </button>
+                    </div>
+                    {gtfsStatusMessage && (
+                        <p className={`mt-1 text-[11px] ${gtfsStatusMessage.includes('Failed') ? 'text-red-600' : 'text-green-600'}`}>
+                            {gtfsStatusMessage}
+                        </p>
+                    )}
+                </div>
+
+                {/* Timing quality settings */}
+                <div className="p-3 bg-gray-50/60">
+                    <h4 className="text-xs font-medium text-gray-600 uppercase tracking-wider mb-2">
+                        Connection Timing Settings
+                    </h4>
+                    <div className="grid grid-cols-2 gap-2">
+                        <label className="text-xs text-gray-600">
+                            Good Min
+                            <input
+                                type="number"
+                                min={0}
+                                value={qualityDraft.goodMin}
+                                onChange={(e) => setQualityDraft({ ...qualityDraft, goodMin: Number(e.target.value || 0) })}
+                                className="mt-1 w-full px-2 py-1 border border-gray-200 rounded text-sm"
+                            />
+                        </label>
+                        <label className="text-xs text-gray-600">
+                            Excellent Min
+                            <input
+                                type="number"
+                                min={0}
+                                value={qualityDraft.excellentMin}
+                                onChange={(e) => setQualityDraft({ ...qualityDraft, excellentMin: Number(e.target.value || 0) })}
+                                className="mt-1 w-full px-2 py-1 border border-gray-200 rounded text-sm"
+                            />
+                        </label>
+                        <label className="text-xs text-gray-600">
+                            Excellent Max
+                            <input
+                                type="number"
+                                min={0}
+                                value={qualityDraft.excellentMax}
+                                onChange={(e) => setQualityDraft({ ...qualityDraft, excellentMax: Number(e.target.value || 0) })}
+                                className="mt-1 w-full px-2 py-1 border border-gray-200 rounded text-sm"
+                            />
+                        </label>
+                        <label className="text-xs text-gray-600">
+                            Good Max
+                            <input
+                                type="number"
+                                min={0}
+                                value={qualityDraft.goodMax}
+                                onChange={(e) => setQualityDraft({ ...qualityDraft, goodMax: Number(e.target.value || 0) })}
+                                className="mt-1 w-full px-2 py-1 border border-gray-200 rounded text-sm"
+                            />
+                        </label>
+                    </div>
+                    <p className="text-[11px] text-gray-500 mt-2">
+                        Excellent: {qualityDraft.excellentMin}-{qualityDraft.excellentMax} min early.
+                        Good: {qualityDraft.goodMin}-{qualityDraft.excellentMin} and {qualityDraft.excellentMax}-{qualityDraft.goodMax} min early.
+                        Outside that is bad.
+                    </p>
+                    {qualityError && (
+                        <p className="text-[11px] text-red-600 mt-1">{qualityError}</p>
+                    )}
+                    <div className="flex justify-end mt-2">
+                        <button
+                            onClick={handleSaveQualitySettings}
+                            disabled={!!qualityError}
+                            className="px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            Save Settings
+                        </button>
+                    </div>
+                </div>
+                </>
+            )}
+
+            {!compactAdminMode && (
+                <div className="px-3 py-2 flex items-center justify-between">
+                    <label className="inline-flex items-center gap-2 text-xs text-gray-600">
+                        <input
+                            type="checkbox"
+                            checked={showMatchingOnly}
+                            onChange={(e) => setShowMatchingOnly(e.target.checked)}
+                        />
+                        <Filter className="w-3 h-3" />
+                        Show only targets matching loaded route/day
+                    </label>
+                    <span className="text-xs text-gray-500">
+                        {displayedTargets.length}/{targets.length}
+                    </span>
+                </div>
+            )}
 
             {/* Empty state */}
             {targets.length === 0 && (
@@ -477,13 +602,14 @@ export const ConnectionLibraryPanel: React.FC<ConnectionLibraryPanelProps> = ({
             {manualTargets.length > 0 && (
                 <div className="p-3">
                     <h4 className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">
-                        Manual Targets
+                        {compactAdminMode ? 'Manual saved services' : 'Manual Targets'}
                     </h4>
                     <div className="space-y-2">
                         {manualTargets.map(target => {
                             const Icon = getTargetIcon(target);
                             const isExpanded = expandedTargetId === target.id;
                             const activeTimes = getActiveTimes(target);
+                            const compactSummary = getCompactTargetSummary(target);
 
                             return (
                                 <div
@@ -503,6 +629,26 @@ export const ConnectionLibraryPanel: React.FC<ConnectionLibraryPanelProps> = ({
                                             {target.location && (
                                                 <div className="text-xs text-gray-500">
                                                     {target.location}
+                                                </div>
+                                            )}
+                                            {compactAdminMode && (
+                                                <div className="mt-1 flex flex-wrap gap-1.5">
+                                                    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                                                        compactSummary.matchesLoadedRoute
+                                                            ? 'bg-blue-100 text-blue-700'
+                                                            : 'bg-amber-100 text-amber-800'
+                                                    }`}>
+                                                        {compactSummary.matchesLoadedRoute ? 'Stops match route' : 'No route stop match'}
+                                                    </span>
+                                                    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                                                        compactSummary.hasActiveTimes
+                                                            ? 'bg-emerald-100 text-emerald-700'
+                                                            : 'bg-gray-100 text-gray-700'
+                                                    }`}>
+                                                        {compactSummary.hasActiveTimes
+                                                            ? `${compactSummary.enabledActiveTimeCount} active ${dayType.toLowerCase()} time${compactSummary.enabledActiveTimeCount === 1 ? '' : 's'}`
+                                                            : `No active ${dayType.toLowerCase()} times`}
+                                                    </span>
                                                 </div>
                                             )}
                                         </div>
@@ -634,10 +780,12 @@ export const ConnectionLibraryPanel: React.FC<ConnectionLibraryPanelProps> = ({
             {routeTargets.length > 0 && (
                 <div className="p-3">
                     <h4 className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">
-                        Route Connections
+                        {compactAdminMode ? 'Route-derived saved services' : 'Route Connections'}
                     </h4>
                     <div className="space-y-2">
-                        {routeTargets.map(target => (
+                        {routeTargets.map(target => {
+                            const compactSummary = getCompactTargetSummary(target);
+                            return (
                             <React.Fragment key={target.id}>
                                 <div className="flex items-center gap-3 px-3 py-2 border border-gray-200 rounded-lg">
                                     <Bus className="w-4 h-4 text-blue-500" />
@@ -648,6 +796,26 @@ export const ConnectionLibraryPanel: React.FC<ConnectionLibraryPanelProps> = ({
                                         <div className="text-xs text-gray-500">
                                             {target.routeIdentity} • {target.stopName} • {target.direction}
                                         </div>
+                                        {compactAdminMode && (
+                                            <div className="mt-1 flex flex-wrap gap-1.5">
+                                                <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                                                    compactSummary.matchesLoadedRoute
+                                                        ? 'bg-blue-100 text-blue-700'
+                                                        : 'bg-amber-100 text-amber-800'
+                                                }`}>
+                                                    {compactSummary.matchesLoadedRoute ? 'Stops match route' : 'No route stop match'}
+                                                </span>
+                                                <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                                                    compactSummary.hasActiveTimes
+                                                        ? 'bg-emerald-100 text-emerald-700'
+                                                        : 'bg-gray-100 text-gray-700'
+                                                }`}>
+                                                    {compactSummary.hasActiveTimes
+                                                        ? `${compactSummary.enabledActiveTimeCount} active ${dayType.toLowerCase()} time${compactSummary.enabledActiveTimeCount === 1 ? '' : 's'}`
+                                                        : `No active ${dayType.toLowerCase()} times`}
+                                                </span>
+                                            </div>
+                                        )}
                                     </div>
                                     <button
                                         onClick={() => handleEditRouteTarget(target)}
@@ -671,12 +839,144 @@ export const ConnectionLibraryPanel: React.FC<ConnectionLibraryPanelProps> = ({
                                 </button>
                             </div>
                             </React.Fragment>
-                        ))}
+                        )})}
                     </div>
                 </div>
             )}
 
-            {library.changeLog && library.changeLog.length > 0 && (
+            {compactAdminMode && (
+                <div className="p-3 border-t border-gray-100">
+                    <button
+                        type="button"
+                        onClick={() => setShowMaintenanceTools(value => !value)}
+                        className="w-full flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2 text-left hover:bg-gray-100 transition-colors"
+                    >
+                        <div>
+                            <p className="text-sm font-medium text-gray-900">Library maintenance</p>
+                            <p className="text-xs text-gray-500 mt-0.5">
+                                GTFS refresh, connection timing settings, and recent shared-library changes
+                            </p>
+                        </div>
+                        {showMaintenanceTools ? (
+                            <ChevronUp className="w-4 h-4 text-gray-400" />
+                        ) : (
+                            <ChevronDown className="w-4 h-4 text-gray-400" />
+                        )}
+                    </button>
+
+                    {showMaintenanceTools && (
+                        <div className="mt-3 border border-gray-200 rounded-lg overflow-hidden">
+                            <div className="px-3 py-2 bg-gray-50 border-b border-gray-100">
+                                <div className="flex items-center justify-between text-xs text-gray-600">
+                                    <span>
+                                        GTFS cache: {gtfsCache?.fetchedAt ? new Date(gtfsCache.fetchedAt).toLocaleString() : 'Not cached'}
+                                        {gtfsCacheAge ? ` (${gtfsCacheAge})` : ''}
+                                    </span>
+                                    <button
+                                        onClick={handleRefreshGtfs}
+                                        disabled={isRefreshingGtfs}
+                                        className="inline-flex items-center gap-1 px-2 py-1 rounded bg-white border border-gray-200 hover:bg-gray-100 disabled:opacity-50"
+                                    >
+                                        <RefreshCw className={`w-3 h-3 ${isRefreshingGtfs ? 'animate-spin' : ''}`} />
+                                        Refresh GTFS
+                                    </button>
+                                </div>
+                                {gtfsStatusMessage && (
+                                    <p className={`mt-1 text-[11px] ${gtfsStatusMessage.includes('Failed') ? 'text-red-600' : 'text-green-600'}`}>
+                                        {gtfsStatusMessage}
+                                    </p>
+                                )}
+                            </div>
+
+                            <div className="p-3 bg-gray-50/60 border-b border-gray-100">
+                                <h4 className="text-xs font-medium text-gray-600 uppercase tracking-wider mb-2">
+                                    Connection Timing Settings
+                                </h4>
+                                <div className="grid grid-cols-2 gap-2">
+                                    <label className="text-xs text-gray-600">
+                                        Good Min
+                                        <input
+                                            type="number"
+                                            min={0}
+                                            value={qualityDraft.goodMin}
+                                            onChange={(e) => setQualityDraft({ ...qualityDraft, goodMin: Number(e.target.value || 0) })}
+                                            className="mt-1 w-full px-2 py-1 border border-gray-200 rounded text-sm"
+                                        />
+                                    </label>
+                                    <label className="text-xs text-gray-600">
+                                        Excellent Min
+                                        <input
+                                            type="number"
+                                            min={0}
+                                            value={qualityDraft.excellentMin}
+                                            onChange={(e) => setQualityDraft({ ...qualityDraft, excellentMin: Number(e.target.value || 0) })}
+                                            className="mt-1 w-full px-2 py-1 border border-gray-200 rounded text-sm"
+                                        />
+                                    </label>
+                                    <label className="text-xs text-gray-600">
+                                        Excellent Max
+                                        <input
+                                            type="number"
+                                            min={0}
+                                            value={qualityDraft.excellentMax}
+                                            onChange={(e) => setQualityDraft({ ...qualityDraft, excellentMax: Number(e.target.value || 0) })}
+                                            className="mt-1 w-full px-2 py-1 border border-gray-200 rounded text-sm"
+                                        />
+                                    </label>
+                                    <label className="text-xs text-gray-600">
+                                        Good Max
+                                        <input
+                                            type="number"
+                                            min={0}
+                                            value={qualityDraft.goodMax}
+                                            onChange={(e) => setQualityDraft({ ...qualityDraft, goodMax: Number(e.target.value || 0) })}
+                                            className="mt-1 w-full px-2 py-1 border border-gray-200 rounded text-sm"
+                                        />
+                                    </label>
+                                </div>
+                                <p className="text-[11px] text-gray-500 mt-2">
+                                    Excellent: {qualityDraft.excellentMin}-{qualityDraft.excellentMax} min early.
+                                    Good: {qualityDraft.goodMin}-{qualityDraft.excellentMin} and {qualityDraft.excellentMax}-{qualityDraft.goodMax} min early.
+                                    Outside that is bad.
+                                </p>
+                                {qualityError && (
+                                    <p className="text-[11px] text-red-600 mt-1">{qualityError}</p>
+                                )}
+                                <div className="flex justify-end mt-2">
+                                    <button
+                                        onClick={handleSaveQualitySettings}
+                                        disabled={!!qualityError}
+                                        className="px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        Save Settings
+                                    </button>
+                                </div>
+                            </div>
+
+                            {library.changeLog && library.changeLog.length > 0 && (
+                                <div className="p-3">
+                                    <h4 className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">
+                                        Recent Changes
+                                    </h4>
+                                    <div className="space-y-1 max-h-40 overflow-y-auto">
+                                        {library.changeLog.slice(0, 8).map(entry => (
+                                            <div key={entry.id} className="text-[11px] text-gray-600 bg-gray-50 rounded px-2 py-1">
+                                                <span className="font-semibold">v{entry.version}</span> {entry.action}
+                                                {entry.details ? ` - ${entry.details}` : ''}
+                                                <span className="text-gray-400 ml-1">
+                                                    ({new Date(entry.timestamp).toLocaleString()})
+                                                </span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {!compactAdminMode && library.changeLog && library.changeLog.length > 0 && (
                 <div className="p-3">
                     <h4 className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">
                         Recent Changes

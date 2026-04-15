@@ -150,6 +150,229 @@ describe('AddTripModal', () => {
     routeBaseName: '2 (Weekday)'
   });
 
+  const build400SouthContext = (): AddTripModalContext => ({
+    referenceTrip: {
+      id: '400-south-1',
+      blockId: '400-WD-1',
+      direction: 'South',
+      tripNumber: 2,
+      rowId: 2,
+      startTime: 410,
+      endTime: 432,
+      recoveryTime: 8,
+      travelTime: 22,
+      cycleTime: 30,
+      stops: { 'RVH Main Entrance': '6:50 AM', 'Park Place': '7:12 AM' },
+      arrivalTimes: { 'RVH Main Entrance': '6:50 AM', 'Park Place': '7:12 AM' },
+      stopMinutes: { 'RVH Main Entrance': 410, 'Park Place': 432 }
+    },
+    nextTrip: null,
+    targetTable: {
+      routeName: '400 (Weekday) (South)',
+      stops: ['RVH Main Entrance', 'Park Place'],
+      stopIds: { 'RVH Main Entrance': 'RVH', 'Park Place': 'P4' },
+      trips: [
+        {
+          id: '400-south-1',
+          blockId: '400-WD-1',
+          direction: 'South',
+          tripNumber: 2,
+          rowId: 2,
+          startTime: 410,
+          endTime: 432,
+          recoveryTime: 8,
+          travelTime: 22,
+          cycleTime: 30,
+          stops: { 'RVH Main Entrance': '6:50 AM', 'Park Place': '7:12 AM' },
+          arrivalTimes: { 'RVH Main Entrance': '6:50 AM', 'Park Place': '7:12 AM' },
+          stopMinutes: { 'RVH Main Entrance': 410, 'Park Place': 432 }
+        }
+      ]
+    },
+    allSchedules: [
+      {
+        routeName: '400 (Weekday) (North)',
+        stops: ['Park Place', 'RVH Main Entrance'],
+        stopIds: { 'Park Place': 'P4', 'RVH Main Entrance': 'RVH' },
+        trips: [
+          {
+            id: '400-north-1',
+            blockId: '400-WD-1',
+            direction: 'North',
+            tripNumber: 1,
+            rowId: 1,
+            startTime: 380,
+            endTime: 402,
+            recoveryTime: 8,
+            travelTime: 22,
+            cycleTime: 30,
+            stops: { 'Park Place': '6:20 AM', 'RVH Main Entrance': '6:42 AM' },
+            arrivalTimes: { 'Park Place': '6:20 AM', 'RVH Main Entrance': '6:42 AM' },
+            stopMinutes: { 'Park Place': 380, 'RVH Main Entrance': 402 }
+          }
+        ]
+      },
+      {
+        routeName: '400 (Weekday) (South)',
+        stops: ['RVH Main Entrance', 'Park Place'],
+        stopIds: { 'RVH Main Entrance': 'RVH', 'Park Place': 'P4' },
+        trips: [
+          {
+            id: '400-south-1',
+            blockId: '400-WD-1',
+            direction: 'South',
+            tripNumber: 2,
+            rowId: 2,
+            startTime: 410,
+            endTime: 432,
+            recoveryTime: 8,
+            travelTime: 22,
+            cycleTime: 30,
+            stops: { 'RVH Main Entrance': '6:50 AM', 'Park Place': '7:12 AM' },
+            arrivalTimes: { 'RVH Main Entrance': '6:50 AM', 'Park Place': '7:12 AM' },
+            stopMinutes: { 'RVH Main Entrance': 410, 'Park Place': 432 }
+          }
+        ]
+      }
+    ] as any,
+    routeBaseName: '400 (Weekday)',
+    preferredServiceMode: 'cycle'
+  });
+
+  const build400GapContext = (): AddTripModalContext => ({
+    referenceTrip: {
+      id: '400-north-gap-1',
+      blockId: '400-WD-2',
+      direction: 'North',
+      tripNumber: 3,
+      rowId: 3,
+      startTime: 408,
+      endTime: 430,
+      recoveryTime: 7,
+      travelTime: 22,
+      cycleTime: 29,
+      stops: { 'Park Place': '6:48 AM', 'RVH Main Entrance': '7:10 AM' },
+      arrivalTimes: { 'Park Place': '6:48 AM', 'RVH Main Entrance': '7:10 AM' },
+      stopMinutes: { 'Park Place': 408, 'RVH Main Entrance': 430 }
+    },
+    nextTrip: null,
+    targetTable: {
+      routeName: '400 (Weekday) (North)',
+      stops: ['Park Place', 'RVH Main Entrance'],
+      stopIds: { 'Park Place': 'P4', 'RVH Main Entrance': 'RVH' },
+      trips: [
+        {
+          id: '400-north-1',
+          blockId: '400-WD-1',
+          direction: 'North',
+          tripNumber: 1,
+          rowId: 1,
+          startTime: 380,
+          endTime: 402,
+          recoveryTime: 7,
+          travelTime: 22,
+          cycleTime: 29,
+          stops: { 'Park Place': '6:20 AM', 'RVH Main Entrance': '6:42 AM' },
+          arrivalTimes: { 'Park Place': '6:20 AM', 'RVH Main Entrance': '6:42 AM' },
+          stopMinutes: { 'Park Place': 380, 'RVH Main Entrance': 402 }
+        },
+        {
+          id: '400-north-gap-1',
+          blockId: '400-WD-2',
+          direction: 'North',
+          tripNumber: 3,
+          rowId: 3,
+          startTime: 408,
+          endTime: 430,
+          recoveryTime: 7,
+          travelTime: 22,
+          cycleTime: 29,
+          stops: { 'Park Place': '6:48 AM', 'RVH Main Entrance': '7:10 AM' },
+          arrivalTimes: { 'Park Place': '6:48 AM', 'RVH Main Entrance': '7:10 AM' },
+          stopMinutes: { 'Park Place': 408, 'RVH Main Entrance': 430 }
+        }
+      ]
+    },
+    allSchedules: [
+      {
+        routeName: '400 (Weekday) (North)',
+        stops: ['Park Place', 'RVH Main Entrance'],
+        stopIds: { 'Park Place': 'P4', 'RVH Main Entrance': 'RVH' },
+        trips: [
+          {
+            id: '400-north-1',
+            blockId: '400-WD-1',
+            direction: 'North',
+            tripNumber: 1,
+            rowId: 1,
+            startTime: 380,
+            endTime: 402,
+            recoveryTime: 7,
+            travelTime: 22,
+            cycleTime: 29,
+            stops: { 'Park Place': '6:20 AM', 'RVH Main Entrance': '6:42 AM' },
+            arrivalTimes: { 'Park Place': '6:20 AM', 'RVH Main Entrance': '6:42 AM' },
+            stopMinutes: { 'Park Place': 380, 'RVH Main Entrance': 402 }
+          },
+          {
+            id: '400-north-gap-1',
+            blockId: '400-WD-2',
+            direction: 'North',
+            tripNumber: 3,
+            rowId: 3,
+            startTime: 408,
+            endTime: 430,
+            recoveryTime: 7,
+            travelTime: 22,
+            cycleTime: 29,
+            stops: { 'Park Place': '6:48 AM', 'RVH Main Entrance': '7:10 AM' },
+            arrivalTimes: { 'Park Place': '6:48 AM', 'RVH Main Entrance': '7:10 AM' },
+            stopMinutes: { 'Park Place': 408, 'RVH Main Entrance': 430 }
+          }
+        ]
+      },
+      {
+        routeName: '400 (Weekday) (South)',
+        stops: ['RVH Main Entrance', 'Park Place'],
+        stopIds: { 'RVH Main Entrance': 'RVH', 'Park Place': 'P4' },
+        trips: [
+          {
+            id: '400-south-1',
+            blockId: '400-WD-1',
+            direction: 'South',
+            tripNumber: 2,
+            rowId: 2,
+            startTime: 410,
+            endTime: 432,
+            recoveryTime: 7,
+            travelTime: 22,
+            cycleTime: 29,
+            stops: { 'RVH Main Entrance': '6:50 AM', 'Park Place': '7:12 AM' },
+            arrivalTimes: { 'RVH Main Entrance': '6:50 AM', 'Park Place': '7:12 AM' },
+            stopMinutes: { 'RVH Main Entrance': 410, 'Park Place': 432 }
+          },
+          {
+            id: '400-south-gap-1',
+            blockId: '400-WD-2',
+            direction: 'South',
+            tripNumber: 4,
+            rowId: 4,
+            startTime: 437,
+            endTime: 459,
+            recoveryTime: 7,
+            travelTime: 22,
+            cycleTime: 29,
+            stops: { 'RVH Main Entrance': '7:17 AM', 'Park Place': '7:39 AM' },
+            arrivalTimes: { 'RVH Main Entrance': '7:17 AM', 'Park Place': '7:39 AM' },
+            stopMinutes: { 'RVH Main Entrance': 437, 'Park Place': 459 }
+          }
+        ]
+      }
+    ] as any,
+    routeBaseName: '400 (Weekday)',
+    preferredServiceMode: 'cycle'
+  });
+
   it('shows planner-focused impact information and updates preview for shorthand time input', () => {
     flushSync(() => {
       root?.render(
@@ -161,9 +384,16 @@ describe('AddTripModal', () => {
       );
     });
 
-    expect(container?.textContent).toContain('Planner impact');
-    expect(container?.textContent).toContain('Peak buses');
+    expect(container?.textContent).toContain('Planned change');
+    expect(container?.textContent).toContain('Add new trip');
+    expect(container?.textContent).toContain('Choose where the new trip goes in the preview.');
+    expect(container?.textContent).toContain('Placement');
+    expect(container?.textContent).toContain('Anchor trip');
+    expect(container?.textContent).toContain('Anchor block');
+    expect(container?.textContent).toContain('Northbound · 6:00 AM → 6:30 AM');
+    expect(container?.textContent).toContain('2-WD-1');
     expect(container?.textContent).toContain('Trips to add');
+    expect(container?.textContent).toContain('Advanced planner controls');
 
     const input = container?.querySelector('input[type="text"]') as HTMLInputElement | null;
     expect(input).not.toBeNull();
@@ -180,6 +410,80 @@ describe('AddTripModal', () => {
 
     expect((input as HTMLInputElement).value).toBe('5:57a');
     expect(container?.textContent).toContain('5:57 AM');
+  });
+
+  it('keeps advanced planner details collapsed until the planner expands them', () => {
+    flushSync(() => {
+      root?.render(
+        <AddTripModal
+          context={buildContext()}
+          onCancel={() => {}}
+          onConfirm={() => {}}
+        />
+      );
+    });
+
+    expect(container?.textContent).toContain('Advanced planner controls');
+    expect(container?.textContent).not.toContain('Planner impact');
+
+    const advancedButton = Array.from(container?.querySelectorAll('button') ?? []).find(button =>
+      button.textContent?.includes('Advanced planner controls')
+    ) as HTMLButtonElement | undefined;
+
+    flushSync(() => {
+      advancedButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(container?.textContent).toContain('Planner impact');
+    expect(container?.textContent).toContain('Peak buses');
+  });
+
+  it('preserves a manual custom time instead of snapping back to the template trip time', () => {
+    const onConfirm = vi.fn();
+
+    flushSync(() => {
+      root?.render(
+        <AddTripModal
+          context={buildContext()}
+          onCancel={() => {}}
+          onConfirm={onConfirm}
+        />
+      );
+    });
+
+    const customTimeButton = Array.from(container?.querySelectorAll('button') ?? []).find(button =>
+      button.textContent?.includes('Custom time')
+    ) as HTMLButtonElement | undefined;
+    const input = container?.querySelector('input[type="text"]') as HTMLInputElement | null;
+    const addButton = Array.from(container?.querySelectorAll('button') ?? []).find(button =>
+      button.textContent?.includes('Add 1 Trip')
+    ) as HTMLButtonElement | undefined;
+
+    const setInputValue = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      'value'
+    )?.set;
+
+    flushSync(() => {
+      customTimeButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    flushSync(() => {
+      setInputValue?.call(input, '11:40 PM');
+      input?.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
+    expect((input as HTMLInputElement).value).toBe('11:40 PM');
+
+    flushSync(() => {
+      addButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(onConfirm).toHaveBeenCalledWith(expect.objectContaining({
+      startTime: 23 * 60 + 40
+    }), expect.objectContaining({
+      routeBaseName: '2 (Weekday)'
+    }));
   });
 
   it('lets the planner switch direction and confirm a short turn', () => {
@@ -229,8 +533,361 @@ describe('AddTripModal', () => {
     expect(onConfirm).toHaveBeenCalledWith(expect.objectContaining({
       targetDirection: 'South',
       targetRouteName: '2 (Weekday) (South)',
+      serviceMode: 'trip',
+      blockMode: 'existing',
+      blockId: '2-WD-2',
       startStopName: 'Downtown',
       endStopName: 'Downtown'
+    }), expect.objectContaining({
+      routeBaseName: '2 (Weekday)'
+    }));
+  });
+
+  it('defaults block assignment to an existing block when one is available', () => {
+    flushSync(() => {
+      root?.render(
+        <AddTripModal
+          context={buildContext()}
+          onCancel={() => {}}
+          onConfirm={() => {}}
+        />
+      );
+    });
+
+    const existingButton = Array.from(container?.querySelectorAll('button') ?? []).find(button =>
+      button.textContent?.includes('Choose another block')
+    ) as HTMLButtonElement | undefined;
+    const referenceButton = Array.from(container?.querySelectorAll('button') ?? []).find(button =>
+      button.textContent?.includes('Use same block')
+    ) as HTMLButtonElement | undefined;
+    const blockSelect = Array.from(container?.querySelectorAll('select') ?? []).find(select =>
+      Array.from(select.options).some(option => option.value === '2-WD-2')
+    ) as HTMLSelectElement | undefined;
+
+    expect(existingButton?.className).toContain('border-blue-300');
+    expect(referenceButton?.className).not.toContain('border-blue-300');
+    expect(blockSelect?.value).toBe('2-WD-2');
+    expect(container?.textContent).toContain('2-WD-2 (1 trip)');
+  });
+
+  it('supports confirming a full cycle from the highlighted planner controls', () => {
+    const onConfirm = vi.fn();
+
+    flushSync(() => {
+      root?.render(
+        <AddTripModal
+          context={{ ...buildContext(), preferredServiceMode: 'cycle' }}
+          onCancel={() => {}}
+          onConfirm={onConfirm}
+        />
+      );
+    });
+
+    const cycleButton = Array.from(container?.querySelectorAll('button') ?? []).find(button =>
+      button.textContent?.includes('Round trip')
+    ) as HTMLButtonElement | undefined;
+
+    flushSync(() => {
+      cycleButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const switchButton = Array.from(container?.querySelectorAll('button') ?? []).find(button =>
+      button.textContent?.includes('Use new block 2-WD-3')
+    ) as HTMLButtonElement | undefined;
+
+    flushSync(() => {
+      switchButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const addButton = Array.from(container?.querySelectorAll('button') ?? []).find(button =>
+      button.textContent?.includes('Add 1 Cycle')
+    ) as HTMLButtonElement | undefined;
+
+    flushSync(() => {
+      addButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(container?.textContent).toContain('2 total trips will be added.');
+    expect(container?.textContent).toContain('Northbound planning');
+    expect(container?.textContent).toContain('Schedule');
+    expect(container?.textContent).toContain('Timeline');
+    expect(container?.textContent).toContain('Travel Times');
+    expect(container?.textContent).not.toContain('Route Editor');
+    expect(onConfirm).toHaveBeenCalledWith(expect.objectContaining({
+      serviceMode: 'cycle',
+      blockMode: 'new',
+      blockId: '2-WD-3',
+      targetDirection: 'North',
+      startStopName: 'Park Place',
+      endStopName: 'Downtown'
+    }), expect.objectContaining({
+      routeBaseName: '2 (Weekday)'
+    }));
+  });
+
+  it('defaults to full cycle when opened from a paired round-trip context', () => {
+    flushSync(() => {
+      root?.render(
+        <AddTripModal
+          context={{ ...buildContext(), preferredServiceMode: 'cycle' }}
+          onCancel={() => {}}
+          onConfirm={() => {}}
+        />
+      );
+    });
+
+    expect(container?.textContent).toContain('Resolve Block Conflict');
+    expect(container?.textContent).toContain('2 total trips will be added.');
+    expect(container?.textContent).toContain('Schedule');
+    expect(container?.textContent).not.toContain('Route Editor');
+    expect(container?.textContent).toContain('Selected block already has overlapping work.');
+  });
+
+  it('keeps full cycle northbound-first even when opened from the southbound side', () => {
+    const onConfirm = vi.fn();
+
+    flushSync(() => {
+      root?.render(
+        <AddTripModal
+          context={build400SouthContext()}
+          onCancel={() => {}}
+          onConfirm={onConfirm}
+        />
+      );
+    });
+
+    expect(container?.textContent).toContain('Northbound planning');
+    expect(container?.textContent).toContain('RVH Main Entrance');
+    expect(container?.textContent).toContain('Park Place');
+    expect(container?.textContent).not.toContain('Route Editor');
+
+    const southButton = Array.from(container?.querySelectorAll('button') ?? []).find(button =>
+      button.textContent?.includes('Southbound')
+    ) as HTMLButtonElement | undefined;
+
+    expect(southButton?.disabled).toBe(true);
+
+    const switchButton = Array.from(container?.querySelectorAll('button') ?? []).find(button =>
+      button.textContent?.includes('Use new block 400-WD-2')
+    ) as HTMLButtonElement | undefined;
+
+    flushSync(() => {
+      switchButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const addButton = Array.from(container?.querySelectorAll('button') ?? []).find(button =>
+      button.textContent?.includes('Add 1 Cycle')
+    ) as HTMLButtonElement | undefined;
+
+    flushSync(() => {
+      addButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(onConfirm).toHaveBeenCalledWith(expect.objectContaining({
+      serviceMode: 'cycle',
+      targetDirection: 'North',
+      targetRouteName: '400 (Weekday) (North)',
+      startStopName: 'Park Place',
+      endStopName: 'RVH Main Entrance'
+    }), expect.objectContaining({
+      routeBaseName: '400 (Weekday)'
+    }));
+  });
+
+  it('blocks duplicate full cycles on the same block and lets the planner switch to a new block', () => {
+    const onConfirm = vi.fn();
+
+    flushSync(() => {
+      root?.render(
+        <AddTripModal
+          context={build400SouthContext()}
+          onCancel={() => {}}
+          onConfirm={onConfirm}
+        />
+      );
+    });
+
+    expect(container?.textContent).toContain('Selected block already has overlapping work.');
+    expect(container?.textContent).toContain('Use new block 400-WD-2');
+
+    const actionButton = Array.from(container?.querySelectorAll('button') ?? []).find(button =>
+      button.textContent?.includes('Resolve Block Conflict')
+    ) as HTMLButtonElement | undefined;
+
+    expect(actionButton?.disabled).toBe(true);
+
+    const switchButton = Array.from(container?.querySelectorAll('button') ?? []).find(button =>
+      button.textContent?.includes('Use new block 400-WD-2')
+    ) as HTMLButtonElement | undefined;
+
+    flushSync(() => {
+      switchButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(container?.textContent).not.toContain('Selected block already has overlapping work.');
+
+    const addButton = Array.from(container?.querySelectorAll('button') ?? []).find(button =>
+      button.textContent?.includes('Add 1 Cycle')
+    ) as HTMLButtonElement | undefined;
+
+    expect(addButton?.disabled).toBe(false);
+
+    flushSync(() => {
+      addButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(onConfirm).toHaveBeenCalledWith(expect.objectContaining({
+      blockMode: 'new',
+      blockId: '400-WD-2',
+      serviceMode: 'cycle'
+    }), expect.objectContaining({
+      routeBaseName: '400 (Weekday)'
+    }));
+  });
+
+  it('shows a short same-block continuity gap and lets the planner absorb it into recovery', () => {
+    const onConfirm = vi.fn();
+
+    flushSync(() => {
+      root?.render(
+        <AddTripModal
+          context={build400GapContext()}
+          onCancel={() => {}}
+          onConfirm={onConfirm}
+        />
+      );
+    });
+
+    const referenceButton = Array.from(container?.querySelectorAll('button') ?? []).find(button =>
+      button.textContent?.includes('Use same block')
+    ) as HTMLButtonElement | undefined;
+    flushSync(() => {
+      referenceButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const advancedButton = Array.from(container?.querySelectorAll('button') ?? []).find(button =>
+      button.textContent?.includes('Advanced planner controls')
+    ) as HTMLButtonElement | undefined;
+
+    flushSync(() => {
+      advancedButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const minusSixtyButton = Array.from(container?.querySelectorAll('button') ?? []).find(button =>
+      button.textContent?.includes('-60 min')
+    ) as HTMLButtonElement | undefined;
+
+    flushSync(() => {
+      minusSixtyButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(container?.textContent).toContain('Block continuity:');
+    expect(container?.textContent).toContain('2 min idle gap before the next trip on this block at 6:48 AM.');
+
+    const absorbButton = Array.from(container?.querySelectorAll('button') ?? []).find(button =>
+      button.textContent?.includes('Absorb 2 min into recovery')
+    ) as HTMLButtonElement | undefined;
+
+    flushSync(() => {
+      absorbButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(container?.textContent).toContain('Absorbing 2 min into recovery');
+
+    const addButton = Array.from(container?.querySelectorAll('button') ?? []).find(button =>
+      button.textContent?.includes('Add 1 Cycle')
+    ) as HTMLButtonElement | undefined;
+
+    flushSync(() => {
+      addButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(onConfirm).toHaveBeenCalledWith(expect.objectContaining({
+      serviceMode: 'cycle',
+      blockMode: 'reference',
+      blockId: '400-WD-2',
+      absorbShortTrailingGapIntoRecovery: true,
+      targetDirection: 'North'
+    }), expect.objectContaining({
+      routeBaseName: '400 (Weekday)'
+    }));
+  });
+
+  it('lets the planner switch to a new block from the bus / block controls', () => {
+    const onConfirm = vi.fn();
+
+    flushSync(() => {
+      root?.render(
+        <AddTripModal
+          context={buildContext()}
+          onCancel={() => {}}
+          onConfirm={onConfirm}
+        />
+      );
+    });
+
+    const createNewBlockButton = Array.from(container?.querySelectorAll('button') ?? []).find(button =>
+      button.textContent?.includes('Create new block')
+    ) as HTMLButtonElement | undefined;
+    const addButton = Array.from(container?.querySelectorAll('button') ?? []).find(button =>
+      button.textContent?.includes('Add 1 Trip')
+    ) as HTMLButtonElement | undefined;
+
+    flushSync(() => {
+      createNewBlockButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(container?.textContent).toContain('Create new block');
+    expect(container?.textContent).toContain('new block 2-WD-3');
+
+    flushSync(() => {
+      addButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(onConfirm).toHaveBeenCalledWith(expect.objectContaining({
+      serviceMode: 'trip',
+      blockMode: 'new',
+      blockId: '2-WD-3'
+    }), expect.objectContaining({
+      routeBaseName: '2 (Weekday)'
+    }));
+  });
+
+  it('lets the planner change the insertion point from the preview before confirming', () => {
+    const onConfirm = vi.fn();
+
+    flushSync(() => {
+      root?.render(
+        <AddTripModal
+          context={buildContext()}
+          onCancel={() => {}}
+          onConfirm={onConfirm}
+        />
+      );
+    });
+
+    const aboveFirstRowButton = Array.from(container?.querySelectorAll('button') ?? []).find(button =>
+      button.textContent?.includes('Above first row')
+    ) as HTMLButtonElement | undefined;
+    const addButton = Array.from(container?.querySelectorAll('button') ?? []).find(button =>
+      button.textContent?.includes('Add 1 Trip')
+    ) as HTMLButtonElement | undefined;
+
+    flushSync(() => {
+      aboveFirstRowButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(container?.textContent).toContain('Insertion point: Insert before the first visible trip');
+
+    flushSync(() => {
+      addButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(onConfirm).toHaveBeenCalledWith(expect.objectContaining({
+      serviceMode: 'trip'
+    }), expect.objectContaining({
+      anchorTripId: 'north-1',
+      insertionPlacement: 'before'
     }));
   });
 });

@@ -4,23 +4,25 @@
  * Reads hook input from stdin, checks the edited file path, runs matching tests.
  * Returns additionalContext so Claude sees test results.
  */
-const { execSync } = require('child_process');
-const path = require('path');
+import { execSync } from 'node:child_process';
 
 // Map source files to their test files
 const FILE_TEST_MAP = {
   'utils/timeUtils.ts': 'tests/timeUtils.test.ts',
-  'utils/schedule/scheduleGenerator.ts': 'tests/scheduleGenerator',
+  'utils/schedule/scheduleGenerator.ts': 'tests/scheduleGenerator.goldenPath.test.ts tests/scheduleGenerator.directionStart.test.ts tests/scheduleGenerator.floating.test.ts tests/scheduleGenerator.canonicalTravelTimes.test.ts',
   'utils/blocks/blockAssignmentCore.ts': 'tests/blockAssignmentCore.test.ts',
   'utils/parsers/masterScheduleParser.ts': 'tests/parser.test.ts',
   'utils/parsers/masterScheduleParserV2.ts': 'tests/parser.test.ts',
   'utils/parsers/parserAdapter.ts': 'tests/parser.test.ts',
   'utils/connections/connectionUtils.ts': 'tests/connectionUtils.test.ts',
-  'utils/goTransitService.ts': 'tests/goTransitService.test.ts',
-  'utils/scheduleDraftAdapter.ts': 'tests/scheduleDraftAdapter.test.ts',
-  'utils/platformConflictDetection.ts': 'tests/platformAnalysis.test.ts',
-  'utils/routeInference.ts': 'tests/routeInference.test.ts',
+  'utils/gtfs/goTransitService.ts': 'tests/goTransitService.test.ts',
+  'utils/schedule/scheduleDraftAdapter.ts': 'tests/scheduleDraftAdapter.test.ts',
+  'utils/platform/platformAnalysis.ts': 'tests/platformAnalysis.test.ts',
+  'utils/platform/platformConfig.ts': 'tests/platformConfig.test.ts',
+  'utils/platform/platformConfigService.ts': 'tests/platformConfigService.test.ts',
+  'components/NewSchedule/utils/routeInference.ts': 'tests/routeInference.test.ts',
   'components/NewSchedule/utils/blockStartDirection.ts': 'tests/blockStartDirection.test.ts',
+  'components/NewSchedule/utils/step2ParsedDataFingerprint.ts': 'tests/step2ParsedDataFingerprint.test.ts',
 };
 
 async function main() {

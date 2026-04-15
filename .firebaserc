@@ -1,5 +1,13 @@
 {
   "projects": {
     "default": "barrie-scheduler-7844a"
+  },
+  "targets": {},
+  "etags": {
+    "barrie-scheduler-7844a": {
+      "extensionInstances": {
+        "firestore-send-email": "cde89947575806d2da7e525ed9a9735176d300de13d280eaaa0a830400103456"
+      }
+    }
   }
 }

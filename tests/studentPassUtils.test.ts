@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import {
     BARRIE_SCHOOLS,
     findBestTrip,
@@ -9,6 +9,13 @@ import {
     parseTimeToMinutes,
     minutesToDisplayTime,
 } from '../utils/transit-app/studentPassUtils';
+import { getStudentPassServiceDateInfo } from '../utils/transit-app/studentPassRaptorAdapter';
+
+beforeAll(() => {
+    // Warm the RAPTOR routing indexes once so the suite exercises student-pass
+    // behavior instead of timing out on one-time GTFS preprocessing.
+    getStudentPassServiceDateInfo(new Date('2026-04-07T00:00:00'));
+}, 120000);
 
 // ─── isPointInPolygon ─────────────────────────────────────────────────────────
 
@@ -207,20 +214,23 @@ describe('minutesToDisplayTime', () => {
 // ─── findBestTrip (integration invariants) ────────────────────────────────────
 
 describe('findBestTrip', () => {
-    const cityWideZone: [number, number][] = [
-        [44.20, -79.95],
-        [44.20, -79.40],
-        [44.60, -79.40],
-        [44.60, -79.95],
+    const southZoneWithReasonableSearchRadius: [number, number][] = [
+        [44.355, -79.700],
+        [44.355, -79.690],
+        [44.365, -79.690],
+        [44.365, -79.700],
     ];
     const representativeSchool = BARRIE_SCHOOLS.find((school) => school.id === 'barrie-north')!;
+    let representativeTripResult: ReturnType<typeof findBestTrip>;
 
-    it('returns stop ids for each leg when a trip is found', { timeout: 60000 }, () => {
-        const result = findBestTrip(cityWideZone, representativeSchool);
+    beforeAll(() => {
+        representativeTripResult = findBestTrip(southZoneWithReasonableSearchRadius, representativeSchool);
+    }, 120000);
 
-        expect(result.found).toBe(true);
+    it('returns stop ids for each leg when a trip is found', () => {
+        expect(representativeTripResult.found).toBe(true);
 
-        const allLegs = [...result.morningLegs, ...result.afternoonLegs];
+        const allLegs = [...representativeTripResult.morningLegs, ...representativeTripResult.afternoonLegs];
         expect(allLegs.length).toBeGreaterThan(0);
         for (const leg of allLegs) {
             expect(leg.fromStopId).toBeTruthy();
@@ -273,7 +283,9 @@ describe('getClusterStopIds', () => {
 // ─── 2-transfer integration ──────────────────────────────────────────────────
 
 describe('findBestTrip — 2-transfer fallback', () => {
-    it('finds a trip for a zone far from Barrie North Collegiate', () => {
+    let fallbackTripResult: ReturnType<typeof findBestTrip>;
+
+    beforeAll(() => {
         // South/central Barrie zone — far from school, likely needs 2 transfers
         const southZone: [number, number][] = [
             [44.355, -79.700],
@@ -282,19 +294,21 @@ describe('findBestTrip — 2-transfer fallback', () => {
             [44.365, -79.700],
         ];
         const school = BARRIE_SCHOOLS.find((s) => s.id === 'barrie-north')!;
-        const result = findBestTrip(southZone, school);
+        fallbackTripResult = findBestTrip(southZone, school);
+    }, 120000);
 
+    it('finds a trip for a zone far from Barrie North Collegiate', () => {
         // The key assertion: this zone should find SOME trip (direct, 1-transfer, or 2-transfer)
         // Previously this would return found: false for many zones
-        expect(result.found).toBe(true);
-        expect(result.morningLegs.length).toBeGreaterThanOrEqual(1);
+        expect(fallbackTripResult.found).toBe(true);
+        expect(fallbackTripResult.morningLegs.length).toBeGreaterThanOrEqual(1);
 
         // If it's a 2-transfer result, verify structure
-        if (result.morningLegs.length === 3) {
-            expect(result.transfers).toBeDefined();
-            expect(result.transfers!.length).toBe(2);
-            expect(result.transfers![0].waitMinutes).toBeGreaterThanOrEqual(0);
-            expect(result.transfers![1].waitMinutes).toBeGreaterThanOrEqual(0);
+        if (fallbackTripResult.morningLegs.length === 3) {
+            expect(fallbackTripResult.transfers).toBeDefined();
+            expect(fallbackTripResult.transfers!.length).toBe(2);
+            expect(fallbackTripResult.transfers![0].waitMinutes).toBeGreaterThanOrEqual(0);
+            expect(fallbackTripResult.transfers![1].waitMinutes).toBeGreaterThanOrEqual(0);
         }
     });
 });

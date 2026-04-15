@@ -22,7 +22,7 @@ import {
 import { db, storage } from './firebase';
 import type { PerformanceDataSummary, PerformanceMetadata } from './performanceDataTypes';
 import { aggregateMonthlySnapshots } from './performanceDataAggregator';
-import { buildPerformanceOverviewSummary } from './performanceOverviewSummary';
+import { buildPerformanceOverviewSummary, buildPerformanceReportSummary } from './performanceOverviewSummary';
 import { saveMonthlySnapshots } from './performanceSnapshotService';
 
 // ============ HELPERS ============
@@ -37,6 +37,10 @@ function getStoragePath(teamId: string, timestamp: string) {
 
 function getOverviewStoragePath(teamId: string, timestamp: string) {
     return `teams/${teamId}/performanceData/${timestamp}-overview.json`;
+}
+
+function getReportStoragePath(teamId: string, timestamp: string) {
+    return `teams/${teamId}/performanceData/${timestamp}-report.json`;
 }
 
 export function mergePerformanceSummaryMetadata(
@@ -56,6 +60,7 @@ export function mergePerformanceSummaryMetadata(
             cleanHistoryStartDate: metadata.cleanHistoryStartDate ?? summary.metadata.cleanHistoryStartDate,
             storagePath: metadata.storagePath || summary.metadata.storagePath,
             overviewStoragePath: metadata.overviewStoragePath || summary.metadata.overviewStoragePath,
+            reportStoragePath: metadata.reportStoragePath || summary.metadata.reportStoragePath,
         },
     };
 }
@@ -74,6 +79,7 @@ export function mergePerformanceOverviewMetadata(
             cleanHistoryStartDate: metadata.cleanHistoryStartDate ?? summary.metadata.cleanHistoryStartDate,
             storagePath: metadata.storagePath || summary.metadata.storagePath,
             overviewStoragePath: metadata.overviewStoragePath || summary.metadata.overviewStoragePath,
+            reportStoragePath: metadata.reportStoragePath || summary.metadata.reportStoragePath,
         },
     };
 }
@@ -88,6 +94,7 @@ export async function savePerformanceData(
     const timestamp = Date.now().toString();
     const storagePath = getStoragePath(teamId, timestamp);
     const overviewStoragePath = getOverviewStoragePath(teamId, timestamp);
+    const reportStoragePath = getReportStoragePath(teamId, timestamp);
     const metadataRef = getMetadataRef(teamId);
 
     // Merge with existing data — new days replace old, existing days are kept
@@ -95,6 +102,7 @@ export async function savePerformanceData(
     const existing = await getDoc(metadataRef);
     const oldPath: string | null = existing.exists() ? existing.data().storagePath || null : null;
     const oldOverviewPath: string | null = existing.exists() ? existing.data().overviewStoragePath || null : null;
+    const oldReportPath: string | null = existing.exists() ? existing.data().reportStoragePath || null : null;
     if (oldPath) {
         try {
             const oldRef = ref(storage, oldPath);
@@ -141,6 +149,7 @@ export async function savePerformanceData(
     }
 
     const overviewSummary = buildPerformanceOverviewSummary(merged);
+    const reportSummary = buildPerformanceReportSummary(merged);
 
     // Upload merged summary JSON to Storage
     const storageRef = ref(storage, storagePath);
@@ -150,6 +159,9 @@ export async function savePerformanceData(
     await uploadString(ref(storage, overviewStoragePath), JSON.stringify(overviewSummary), 'raw', {
         contentType: 'application/json',
     });
+    await uploadString(ref(storage, reportStoragePath), JSON.stringify(reportSummary), 'raw', {
+        contentType: 'application/json',
+    });
 
     // Save metadata to Firestore
     await setDoc(metadataRef, {
@@ -157,6 +169,7 @@ export async function savePerformanceData(
         importedBy: userId,
         storagePath,
         overviewStoragePath,
+        reportStoragePath,
         dateRange: merged.metadata.dateRange,
         dayCount: merged.metadata.dayCount,
         totalRecords: merged.metadata.totalRecords,
@@ -179,6 +192,13 @@ export async function savePerformanceData(
             // Old overview file may already be gone — ignore
         }
     }
+    if (oldReportPath && oldReportPath !== reportStoragePath) {
+        try {
+            await deleteObject(ref(storage, oldReportPath));
+        } catch {
+            // Old report file may already be gone — ignore
+        }
+    }
 }
 
 // ============ READ ============
@@ -199,6 +219,7 @@ export async function getPerformanceMetadata(teamId: string): Promise<Performanc
             cleanHistoryStartDate: typeof data.cleanHistoryStartDate === 'string' ? data.cleanHistoryStartDate : undefined,
             storagePath: data.storagePath || '',
             overviewStoragePath: data.overviewStoragePath || '',
+            reportStoragePath: data.reportStoragePath || '',
         };
     } catch (error) {
         console.error('Error getting performance metadata:', error);
@@ -262,6 +283,7 @@ export async function deletePerformanceData(teamId: string): Promise<void> {
     if (docSnap.exists()) {
         const storagePath = docSnap.data().storagePath;
         const overviewStoragePath = docSnap.data().overviewStoragePath;
+        const reportStoragePath = docSnap.data().reportStoragePath;
         if (storagePath) {
             try {
                 await deleteObject(ref(storage, storagePath));
@@ -272,6 +294,13 @@ export async function deletePerformanceData(teamId: string): Promise<void> {
         if (overviewStoragePath) {
             try {
                 await deleteObject(ref(storage, overviewStoragePath));
+            } catch {
+                // File may already be gone
+            }
+        }
+        if (reportStoragePath) {
+            try {
+                await deleteObject(ref(storage, reportStoragePath));
             } catch {
                 // File may already be gone
             }

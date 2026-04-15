@@ -17,6 +17,7 @@ export const FEATURE_DEFINITIONS = {
     fixedGtfsImport: { defaultEnabled: true, hideInDemoMode: false },
     fixedPerformanceImport: { defaultEnabled: true, hideInDemoMode: false },
     fixedSystemEditor: { defaultEnabled: true, hideInDemoMode: false },
+    fixedLocalAiReview: { defaultEnabled: false, hideInDemoMode: false },
 
     analyticsTransitApp: { defaultEnabled: true, hideInDemoMode: false },
     analyticsOdMatrix: { defaultEnabled: true, hideInDemoMode: true },

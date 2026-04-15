@@ -22,7 +22,8 @@ vi.mock('../utils/parsers/masterScheduleParser', async () => {
 vi.mock('../utils/blocks/blockAssignmentCore', () => ({
   reassignBlocksForTables: reassignBlocksForTablesMock,
   MatchConfigPresets: {
-    editor: { mode: 'editor' }
+    editor: { mode: 'editor' },
+    merged: { mode: 'merged' }
   }
 }));
 
@@ -171,7 +172,7 @@ describe('useTravelTimeGrid', () => {
         expect.objectContaining({ routeName: '2 (Weekday) (South)' })
       ]),
       '2',
-      { mode: 'editor' }
+      { mode: 'merged' }
     );
 
     const updatedNorth = latest?.find(table => table.routeName === '2 (Weekday) (North)');

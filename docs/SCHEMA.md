@@ -46,9 +46,16 @@ storage/
     ├── routeMaps/{safeName}
     ├── transitAppData/{allPaths}
     ├── performanceData/{allPaths}
+    ├── performanceData/{timestamp}-overview.json
+    ├── performanceData/{timestamp}-report.json
     ├── performanceImports/raw/{timestamp}.csv
     └── odMatrixData/{allPaths}
 ```
+
+`teams/{teamId}/performanceData/metadata` may store multiple storage pointers for the same import:
+- `storagePath`: full performance summary for the app
+- `overviewStoragePath`: lightweight recent overview payload for dashboard first-load
+- `reportStoragePath`: report-focused snapshot used by the daily email
 
 ---
 

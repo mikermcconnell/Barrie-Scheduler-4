@@ -4,10 +4,10 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
-import { Trash2, Plus, MapPinOff, MapPin, Copy, ChevronRight } from 'lucide-react';
+import { Trash2, Plus, MapPinOff, MapPin, Copy, ChevronRight, Pencil } from 'lucide-react';
 
 export interface TripContextMenuAction {
-    type: 'endBlockHere' | 'startBlockHere' | 'deleteTrip' | 'deleteRoundTrip' | 'addTripAfter' | 'duplicateTrip';
+    type: 'endBlockHere' | 'startBlockHere' | 'deleteTrip' | 'deleteRoundTrip' | 'addTripBefore' | 'addTripAfter' | 'duplicateTrip' | 'extendTrip';
     tripId: string;
     tripIds?: string[];
     stopName?: string;
@@ -23,11 +23,15 @@ interface TripContextMenuProps {
     currentStopName?: string;
     currentStopIndex?: number;
     stops: string[];
+    beforeTripId?: string;
+    afterTripId?: string;
     rowTripIds?: string[];
+    tripOptions?: Array<{ id: string; direction: 'North' | 'South' }>;
     menuLabel?: string;
     addLabel?: string;
     deleteLabel?: string;
     hideTripSpecificActions?: boolean;
+    quickAddActionsOnly?: boolean;
     onAction: (action: TripContextMenuAction) => void;
     onClose: () => void;
 }
@@ -41,16 +45,20 @@ export const TripContextMenu: React.FC<TripContextMenuProps> = ({
     currentStopName,
     currentStopIndex,
     stops,
+    beforeTripId,
+    afterTripId,
     rowTripIds,
+    tripOptions,
     menuLabel,
     addLabel,
     deleteLabel,
     hideTripSpecificActions = false,
+    quickAddActionsOnly = false,
     onAction,
     onClose
 }) => {
     const menuRef = useRef<HTMLDivElement>(null);
-    const [activeSubmenu, setActiveSubmenu] = useState<'endBlock' | 'startBlock' | null>(null);
+    const [activeSubmenu, setActiveSubmenu] = useState<'endBlock' | 'startBlock' | 'extendTrip' | null>(null);
     const [submenuPosition, setSubmenuPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
     // Close on click outside
@@ -90,10 +98,20 @@ export const TripContextMenu: React.FC<TripContextMenuProps> = ({
         }
     }, [x, y]);
 
-    const handleAction = (type: TripContextMenuAction['type'], stopName?: string, stopIndex?: number) => {
+    const handleAction = (
+        type: TripContextMenuAction['type'],
+        stopName?: string,
+        stopIndex?: number,
+        tripIdOverride?: string
+    ) => {
+        const resolvedTripId = tripIdOverride
+            ?? (type === 'addTripBefore' ? (beforeTripId ?? tripId) : undefined)
+            ?? (type === 'addTripAfter' ? (afterTripId ?? tripId) : undefined)
+            ?? tripId;
+
         onAction({
             type,
-            tripId,
+            tripId: resolvedTripId,
             tripIds: rowTripIds,
             stopName,
             stopIndex
@@ -101,7 +119,7 @@ export const TripContextMenu: React.FC<TripContextMenuProps> = ({
         onClose();
     };
 
-    const openSubmenu = (submenu: 'endBlock' | 'startBlock', element: HTMLElement) => {
+    const openSubmenu = (submenu: 'endBlock' | 'startBlock' | 'extendTrip', element: HTMLElement) => {
         const rect = element.getBoundingClientRect();
         setSubmenuPosition({
             x: rect.right,
@@ -112,7 +130,7 @@ export const TripContextMenu: React.FC<TripContextMenuProps> = ({
 
     const handleSubmenuKeyDown = (
         e: React.KeyboardEvent<HTMLButtonElement>,
-        submenu: 'endBlock' | 'startBlock'
+        submenu: 'endBlock' | 'startBlock' | 'extendTrip'
     ) => {
         if (e.key === 'ArrowRight' || e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
@@ -124,6 +142,58 @@ export const TripContextMenu: React.FC<TripContextMenuProps> = ({
     const endBlockStops = stops.slice(0, -1);
     // Stops for "Start Block Here" - all except the first one
     const startBlockStops = stops.slice(1);
+
+    const renderExtendAction = () => {
+        if (tripOptions && tripOptions.length > 1) {
+            return (
+                <div className="relative">
+                    <button
+                        onMouseEnter={(e) => openSubmenu('extendTrip', e.currentTarget)}
+                        onFocus={(e) => openSubmenu('extendTrip', e.currentTarget)}
+                        onKeyDown={(e) => handleSubmenuKeyDown(e, 'extendTrip')}
+                        className="w-full px-3 py-2 text-left text-sm flex items-center gap-2 hover:bg-gray-50 text-gray-700"
+                        aria-haspopup="menu"
+                        aria-expanded={activeSubmenu === 'extendTrip'}
+                    >
+                        <Pencil size={14} className="text-blue-500" />
+                        <span className="flex-1">Extend Trip</span>
+                        <ChevronRight size={14} className="text-gray-400" />
+                    </button>
+
+                    {activeSubmenu === 'extendTrip' && (
+                        <div
+                            className="fixed z-[101] bg-white rounded-lg shadow-xl border border-gray-200 py-1 min-w-[160px] max-h-[300px] overflow-y-auto"
+                            style={{ left: submenuPosition.x, top: submenuPosition.y }}
+                            onMouseEnter={() => setActiveSubmenu('extendTrip')}
+                        >
+                            <div className="px-3 py-1.5 text-[10px] font-semibold text-gray-400 uppercase tracking-wide border-b border-gray-100">
+                                Choose Trip
+                            </div>
+                            {tripOptions.map(option => (
+                                <button
+                                    key={option.id}
+                                    onClick={() => handleAction('extendTrip', undefined, undefined, option.id)}
+                                    className="w-full px-3 py-1.5 text-left text-xs hover:bg-blue-50 text-gray-700 truncate"
+                                >
+                                    Extend {option.direction}bound trip
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        return (
+            <button
+                onClick={() => handleAction('extendTrip', undefined, undefined, tripOptions?.[0]?.id)}
+                className="w-full px-3 py-2 text-left text-sm flex items-center gap-2 hover:bg-gray-50 text-gray-700"
+            >
+                <Pencil size={14} className="text-blue-500" />
+                <span>Extend Trip</span>
+            </button>
+        );
+    };
 
     return (
         // z-[10000] ensures context menu appears above fullscreen container (z-[9999])
@@ -141,6 +211,26 @@ export const TripContextMenu: React.FC<TripContextMenuProps> = ({
 
             {/* Actions */}
             <div className="py-1">
+                {quickAddActionsOnly ? (
+                    <>
+                        {renderExtendAction()}
+                        <button
+                            onClick={() => handleAction('addTripBefore')}
+                            className="w-full px-3 py-2 text-left text-sm flex items-center gap-2 hover:bg-gray-50 text-gray-700"
+                        >
+                            <Plus size={14} className="text-gray-600" />
+                            <span>Add Trip Before</span>
+                        </button>
+                        <button
+                            onClick={() => handleAction('addTripAfter')}
+                            className="w-full px-3 py-2 text-left text-sm flex items-center gap-2 hover:bg-gray-50 text-gray-700"
+                        >
+                            <Plus size={14} className="text-gray-600" />
+                            <span>Add Trip After</span>
+                        </button>
+                    </>
+                ) : (
+                    <>
                 {/* Start Block Here - with submenu */}
                 {!hideTripSpecificActions && startBlockStops.length > 0 && (
                     <div className="relative">
@@ -239,6 +329,8 @@ export const TripContextMenu: React.FC<TripContextMenuProps> = ({
                     <span>{addLabel ?? 'Add Trip After'}</span>
                 </button>
 
+                {renderExtendAction()}
+
                 {/* Duplicate Trip */}
                 {!hideTripSpecificActions && (
                     <button
@@ -260,6 +352,8 @@ export const TripContextMenu: React.FC<TripContextMenuProps> = ({
                     <Trash2 size={14} />
                     <span>{deleteLabel ?? 'Delete Trip'}</span>
                 </button>
+                    </>
+                )}
             </div>
         </div>
     );

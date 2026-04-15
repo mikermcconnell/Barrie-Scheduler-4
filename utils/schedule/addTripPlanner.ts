@@ -9,6 +9,8 @@ import { compareBlockIds } from './scheduleEditorUtils';
 import { createTripLineageId } from './tripLineage';
 
 export type AddTripBlockMode = 'new' | 'reference' | 'existing';
+export type AddTripServiceMode = 'trip' | 'cycle';
+export type AddTripPlacement = 'before' | 'after';
 export type AddTripStartPreset =
   | 'plus-30'
   | 'minus-30'
@@ -29,11 +31,17 @@ export interface AddTripModalContext {
   allSchedules: MasterRouteTable[];
   routeBaseName: string;
   connectionLibrary?: ConnectionLibrary | null;
+  preferredServiceMode?: AddTripServiceMode;
+  anchorTripId?: string;
+  insertionPlacement?: AddTripPlacement;
+  initialStartTime?: number;
 }
 
 export interface AddTripResult {
   startTime: number;
   tripCount: number;
+  serviceMode?: AddTripServiceMode;
+  absorbShortTrailingGapIntoRecovery?: boolean;
   blockMode: AddTripBlockMode;
   blockId: string;
   targetDirection: 'North' | 'South';
@@ -77,6 +85,19 @@ export interface AddTripPreviewItem {
   platformLabel: string | null;
 }
 
+export interface AddTripBlockConflict {
+  previewIndex: number;
+  previewDirection: 'North' | 'South';
+  previewRouteName: string;
+  conflictingTripId: string;
+  conflictingBlockId: string;
+  conflictingRouteName: string;
+  conflictingDirection: 'North' | 'South';
+  conflictingStartTime: number;
+  conflictingEndTime: number;
+  conflictingRecoveryTime: number;
+}
+
 export interface AddTripImpactSummary {
   gapBeforeMinutes: number | null;
   gapAfterMinutes: number | null;
@@ -95,6 +116,12 @@ export interface AddTripImpactSummary {
   isPartial: boolean;
   partialLabel: string;
   blockMode: AddTripBlockMode;
+  hasBlockingBlockConflict: boolean;
+  blockingConflictCount: number;
+  trailingBlockGapMinutes: number | null;
+  trailingBlockGapNextTripStartTime: number | null;
+  canAbsorbShortTrailingGap: boolean;
+  absorbedTrailingGapIntoRecovery: boolean;
 }
 
 export interface AddTripPlanningBuildResult {
@@ -114,9 +141,71 @@ export interface AddTripPlanningBuildResult {
   routePlatformHints: string[];
   selectedStartStopName: string;
   selectedEndStopName: string;
+  actualTripCount: number;
+  blockConflicts: AddTripBlockConflict[];
 }
 
 const routeNumberFromBase = (routeBaseName: string): string => routeBaseName.trim().split(' ')[0] || routeBaseName.trim();
+
+const findTableAndTrip = (
+  schedules: MasterRouteTable[],
+  tripId: string
+): { table: MasterRouteTable; trip: MasterTrip } | null => {
+  for (const table of schedules) {
+    const trip = table.trips.find(candidate => candidate.id === tripId);
+    if (trip) return { table, trip };
+  }
+  return null;
+};
+
+const getMedianHeadway = (trips: MasterTrip[]): number | null => {
+  if (trips.length < 2) return null;
+  const sorted = [...trips].sort((a, b) => getOperationalSortTime(a.startTime) - getOperationalSortTime(b.startTime));
+  const headways: number[] = [];
+  for (let i = 1; i < sorted.length; i += 1) {
+    headways.push(getOperationalSortTime(sorted[i].startTime) - getOperationalSortTime(sorted[i - 1].startTime));
+  }
+  return median(headways);
+};
+
+export const buildAddTripModalContext = (
+  schedules: MasterRouteTable[],
+  anchorTripId: string,
+  placement: AddTripPlacement,
+  connectionLibrary?: ConnectionLibrary | null,
+  preferredServiceMode?: AddTripServiceMode
+): AddTripModalContext | null => {
+  const found = findTableAndTrip(schedules, anchorTripId);
+  if (!found) return null;
+
+  const { table, trip } = found;
+  const sortedTrips = [...table.trips].sort((a, b) => getOperationalSortTime(a.startTime) - getOperationalSortTime(b.startTime));
+  const tripIndex = sortedTrips.findIndex(candidate => candidate.id === anchorTripId);
+  const previousTrip = tripIndex > 0 ? sortedTrips[tripIndex - 1] ?? null : null;
+  const nextTrip = tripIndex >= 0 && tripIndex < sortedTrips.length - 1 ? sortedTrips[tripIndex + 1] ?? null : null;
+  const routeBaseName = stripScheduleDecorators(table.routeName);
+  const suggestedHeadway = getMedianHeadway(sortedTrips) ?? 30;
+  const initialStartTime = placement === 'before'
+    ? previousTrip
+      ? Math.round((previousTrip.startTime + trip.startTime) / 2)
+      : Math.max(0, trip.startTime - suggestedHeadway)
+    : nextTrip
+      ? Math.round((trip.startTime + nextTrip.startTime) / 2)
+      : trip.startTime + suggestedHeadway;
+
+  return {
+    referenceTrip: placement === 'before' ? (previousTrip ?? trip) : trip,
+    nextTrip: placement === 'before' ? trip : nextTrip,
+    targetTable: table,
+    allSchedules: schedules,
+    routeBaseName,
+    connectionLibrary: connectionLibrary ?? null,
+    preferredServiceMode,
+    anchorTripId,
+    insertionPlacement: placement,
+    initialStartTime
+  };
+};
 
 export const stripScheduleDecorators = (routeName: string): string => routeName
   .replace(/\s*\((North|South)\)/gi, '')
@@ -126,6 +215,130 @@ const getScheduleRouteTables = (context: AddTripModalContext): { northTable: Mas
   const northTable = context.allSchedules.find(table => table.routeName === `${context.routeBaseName} (North)`) ?? null;
   const southTable = context.allSchedules.find(table => table.routeName === `${context.routeBaseName} (South)`) ?? null;
   return { northTable, southTable };
+};
+
+const getEquivalentStopName = (
+  sourceTable: MasterRouteTable,
+  targetTable: MasterRouteTable,
+  stopName: string,
+): string | null => {
+  if (targetTable.stops.includes(stopName)) return stopName;
+
+  const sourceStopId = sourceTable.stopIds?.[stopName];
+  if (sourceStopId) {
+    const matchedById = Object.entries(targetTable.stopIds ?? {}).find(([, stopId]) => stopId === sourceStopId)?.[0];
+    if (matchedById) return matchedById;
+  }
+
+  const normalized = stopName.trim().toLowerCase();
+  return targetTable.stops.find(candidate => candidate.trim().toLowerCase() === normalized) ?? null;
+};
+
+const getDirectionalStopSelection = (
+  sourceTable: MasterRouteTable,
+  targetTable: MasterRouteTable,
+  anchorDirection: 'North' | 'South',
+  targetDirection: 'North' | 'South',
+  stopSelection: { startStopName: string; endStopName: string }
+): { startStopName: string; endStopName: string } => {
+  if (anchorDirection === targetDirection) {
+    return stopSelection;
+  }
+
+  const reversedStart = getEquivalentStopName(sourceTable, targetTable, stopSelection.endStopName)
+    ?? targetTable.stops[0]
+    ?? stopSelection.endStopName;
+  const reversedEnd = getEquivalentStopName(sourceTable, targetTable, stopSelection.startStopName)
+    ?? targetTable.stops[targetTable.stops.length - 1]
+    ?? stopSelection.startStopName;
+
+  return {
+    startStopName: reversedStart,
+    endStopName: reversedEnd
+  };
+};
+
+const getActualTripCount = (
+  requestedCount: number,
+  serviceMode: AddTripServiceMode,
+  isBidirectional: boolean
+): number => {
+  if (serviceMode === 'cycle' && isBidirectional) {
+    return requestedCount * 2;
+  }
+  return requestedCount;
+};
+
+const getOccupiedEndTime = (trip: { endTime: number; recoveryTime?: number | null }): number => (
+  trip.endTime + Math.max(0, trip.recoveryTime || 0)
+);
+
+const rangesOverlap = (
+  startA: number,
+  endA: number,
+  startB: number,
+  endB: number
+): boolean => startA < endB && endA > startB;
+
+const collectBlockConflicts = (
+  schedules: MasterRouteTable[],
+  blockId: string,
+  previewItems: AddTripPreviewItem[],
+  enabled: boolean
+): AddTripBlockConflict[] => {
+  if (!enabled || !blockId || previewItems.length === 0) return [];
+
+  const existingTrips = schedules.flatMap(table => table.trips.map(trip => ({
+    routeName: table.routeName,
+    trip
+  })));
+
+  return previewItems.flatMap(item => {
+    const previewOccupiedEnd = getOccupiedEndTime(item);
+    return existingTrips
+      .filter(({ trip }) => (
+        trip.blockId === blockId
+        && rangesOverlap(item.startTime, previewOccupiedEnd, trip.startTime, getOccupiedEndTime(trip))
+      ))
+      .map(({ routeName, trip }) => ({
+        previewIndex: item.index,
+        previewDirection: item.direction,
+        previewRouteName: item.routeName,
+        conflictingTripId: trip.id,
+        conflictingBlockId: trip.blockId,
+        conflictingRouteName: routeName,
+        conflictingDirection: trip.direction,
+        conflictingStartTime: trip.startTime,
+        conflictingEndTime: trip.endTime,
+        conflictingRecoveryTime: trip.recoveryTime || 0
+      }));
+  });
+};
+
+const getTrailingBlockGap = (
+  schedules: MasterRouteTable[],
+  blockId: string,
+  lastPreview: AddTripPreviewItem | null,
+  enabled: boolean
+): { gapMinutes: number | null; nextTripStartTime: number | null } => {
+  if (!enabled || !blockId || !lastPreview) {
+    return { gapMinutes: null, nextTripStartTime: null };
+  }
+
+  const occupiedEnd = getOccupiedEndTime(lastPreview);
+  const nextTrip = schedules
+    .flatMap(table => table.trips)
+    .filter(trip => trip.blockId === blockId && trip.startTime >= occupiedEnd)
+    .sort((a, b) => getOperationalSortTime(a.startTime) - getOperationalSortTime(b.startTime))[0];
+
+  if (!nextTrip) {
+    return { gapMinutes: null, nextTripStartTime: null };
+  }
+
+  return {
+    gapMinutes: nextTrip.startTime - occupiedEnd,
+    nextTripStartTime: nextTrip.startTime
+  };
 };
 
 const getTripMinute = (trip: MasterTrip, stopName: string): number | null => {
@@ -191,6 +404,11 @@ const resolveStopRange = (
   };
 };
 
+const getRouteEndpoints = (table: MasterRouteTable): { startStopName: string; endStopName: string } => ({
+  startStopName: table.stops[0] ?? '',
+  endStopName: table.stops[Math.max(0, table.stops.length - 1)] ?? table.stops[0] ?? ''
+});
+
 const getBlockCounts = (schedules: MasterRouteTable[]): Map<string, number> => {
   const counts = new Map<string, number>();
   schedules.forEach(table => {
@@ -203,6 +421,7 @@ const collectBlockChoices = (context: AddTripModalContext): { choices: AddTripBl
   const routePrefix = routeNumberFromBase(context.routeBaseName);
   const daySuffix = getDayTypeSuffix(context.targetTable.routeName);
   const existingBlockNums: number[] = [];
+  const matchedParsedBlocks: Array<{ daySuffix: string | null }> = [];
   const blockCounts = getBlockCounts(context.allSchedules);
 
   context.allSchedules.forEach(table => {
@@ -214,11 +433,17 @@ const collectBlockChoices = (context: AddTripModalContext): { choices: AddTripBl
       if (parsed.routeNumber !== routePrefix) return;
       if (parsed.daySuffix && parsed.daySuffix !== daySuffix) return;
       existingBlockNums.push(parsed.number);
+      matchedParsedBlocks.push({ daySuffix: parsed.daySuffix });
     });
   });
 
   const maxNum = existingBlockNums.length > 0 ? Math.max(...existingBlockNums) : 0;
-  const newBlockId = `${routePrefix}-${daySuffix}-${maxNum + 1}`;
+  const referenceParsed = parseBlockId(context.referenceTrip.blockId);
+  const usesUnsuffixedBlocks = matchedParsedBlocks.some(block => block.daySuffix === null)
+    || referenceParsed?.daySuffix === null;
+  const newBlockId = usesUnsuffixedBlocks
+    ? `${routePrefix}-${maxNum + 1}`
+    : `${routePrefix}-${daySuffix}-${maxNum + 1}`;
   const existingChoices = Array.from(new Set(
     context.allSchedules
       .flatMap(table => table.trips)
@@ -322,7 +547,7 @@ const getPresetStartTimes = (
     { preset: 'copy-next', label: `Copy next pattern ${TimeUtils.fromMinutes(copyNext)}`, startTime: copyNext },
     { preset: 'first-trip', label: `First trip ${firstTrip ? TimeUtils.fromMinutes(firstTrip.startTime) : '-'}`, startTime: firstTrip?.startTime ?? null },
     { preset: 'last-trip', label: `Last trip ${lastTrip ? TimeUtils.fromMinutes(lastTrip.startTime) : '-'}`, startTime: lastTrip?.startTime ?? null },
-    { preset: 'manual', label: 'Custom time', startTime: templateTrip?.startTime ?? currentStartTime }
+    { preset: 'manual', label: 'Custom time', startTime: null }
   ];
 };
 
@@ -426,6 +651,8 @@ const buildPreview = (
   direction: 'North' | 'South',
   startTime: number,
   stopSelection: { startStopName: string; endStopName: string },
+  serviceMode: AddTripServiceMode,
+  isBidirectional: boolean,
   blockId: string,
   index: number,
   dayType: 'Weekday' | 'Saturday' | 'Sunday'
@@ -434,10 +661,13 @@ const buildPreview = (
   const templateTrip = getTemplate(directionTrips, startTime, selectedTargetTable, direction)
     ?? context.referenceTrip;
   const fullRouteRange = getFullRouteRange(selectedTargetTable);
+  const effectiveStopSelection = serviceMode === 'cycle' && isBidirectional
+    ? getRouteEndpoints(selectedTargetTable)
+    : stopSelection;
   const resolvedRange = resolveStopRange(
     selectedTargetTable,
-    stopSelection.startStopName,
-    stopSelection.endStopName,
+    effectiveStopSelection.startStopName,
+    effectiveStopSelection.endStopName,
     templateTrip?.startStopIndex ?? 0,
     templateTrip?.endStopIndex ?? Math.max(0, selectedTargetTable.stops.length - 1)
   );
@@ -513,6 +743,8 @@ export const buildAddTripSuggestions = (
   selectedDirection: 'North' | 'South',
   startTime: number,
   tripCount: number,
+  serviceMode: AddTripServiceMode,
+  absorbShortTrailingGapIntoRecovery: boolean,
   blockMode: AddTripBlockMode,
   selectedBlockId: string,
   stopSelection: { startStopName: string; endStopName: string }
@@ -526,37 +758,59 @@ export const buildAddTripSuggestions = (
   const routeNumber = routeNumberFromBase(context.routeBaseName);
   const dayTypeLabel = getDayTypeLabel(context.targetTable.routeName);
   const routeSuffix = getDayTypeSuffix(context.targetTable.routeName);
-  const selectedTargetTable = selectedDirection === 'North' ? (northTable ?? context.targetTable) : (southTable ?? context.targetTable);
-  const directionTrips = getDirectionTrips(selectedTargetTable, selectedDirection);
+  const isBidirectional = !!northTable && !!southTable;
+  const cycleUsesFullRoute = serviceMode === 'cycle' && isBidirectional;
+  const effectiveDirection: 'North' | 'South' = cycleUsesFullRoute
+    ? 'North'
+    : selectedDirection;
+  const selectedTargetTable = effectiveDirection === 'North' ? (northTable ?? context.targetTable) : (southTable ?? context.targetTable);
+  const directionTrips = getDirectionTrips(selectedTargetTable, effectiveDirection);
   const nearbyTrips = getNearbyTrips(directionTrips, startTime);
-  const templateTrip = getTemplate(directionTrips, startTime, selectedTargetTable, selectedDirection);
+  const templateTrip = getTemplate(directionTrips, startTime, selectedTargetTable, effectiveDirection);
   const presetOptions = getPresetStartTimes(directionTrips, nearbyTrips, templateTrip, context.referenceTrip.startTime, startTime);
   const { choices: blockChoices, newBlockId } = collectBlockChoices(context);
-  const resolvedRange = resolveStopRange(
-    selectedTargetTable,
-    stopSelection.startStopName,
-    stopSelection.endStopName,
-    templateTrip?.startStopIndex ?? 0,
-    templateTrip?.endStopIndex ?? Math.max(0, selectedTargetTable.stops.length - 1)
-  );
-  const selectedStartStopName = resolvedRange.startStopName;
-  const selectedEndStopName = resolvedRange.endStopName;
-  const isBidirectional = !!northTable && !!southTable;
+  const selectedStopSelection = cycleUsesFullRoute
+    ? getRouteEndpoints(selectedTargetTable)
+    : (() => {
+        const resolvedRange = resolveStopRange(
+          selectedTargetTable,
+          stopSelection.startStopName,
+          stopSelection.endStopName,
+          templateTrip?.startStopIndex ?? 0,
+          templateTrip?.endStopIndex ?? Math.max(0, selectedTargetTable.stops.length - 1)
+        );
+        return {
+          startStopName: resolvedRange.startStopName,
+          endStopName: resolvedRange.endStopName
+        };
+      })();
+  const selectedStartStopName = selectedStopSelection.startStopName;
+  const selectedEndStopName = selectedStopSelection.endStopName;
+  const actualTripCount = getActualTripCount(tripCount, serviceMode, isBidirectional);
   const blockId = blockMode === 'new' ? newBlockId : blockMode === 'reference' ? context.referenceTrip.blockId : (selectedBlockId || newBlockId);
 
   const previewItems: AddTripPreviewItem[] = [];
   let currentStart = startTime;
-  let currentDirection = selectedDirection;
+  let currentDirection = effectiveDirection;
 
-  for (let i = 0; i < tripCount; i++) {
-    const targetDirection = isBidirectional ? currentDirection : selectedDirection;
+  for (let i = 0; i < actualTripCount; i++) {
+    const targetDirection = isBidirectional ? currentDirection : effectiveDirection;
     const targetTable = targetDirection === 'North' ? (northTable ?? context.targetTable) : (southTable ?? context.targetTable);
+    const directionalStopSelection = getDirectionalStopSelection(
+      selectedTargetTable,
+      targetTable,
+      effectiveDirection,
+      targetDirection,
+      selectedStopSelection
+    );
     const preview = buildPreview(
       context,
       targetTable,
       targetDirection,
       currentStart,
-      { startStopName: selectedStartStopName, endStopName: selectedEndStopName },
+      directionalStopSelection,
+      serviceMode,
+      isBidirectional,
       blockId,
       i + 1,
       dayTypeLabel
@@ -595,8 +849,30 @@ export const buildAddTripSuggestions = (
     ));
   });
 
+  const blockConflicts = collectBlockConflicts(
+    context.allSchedules,
+    blockId,
+    previewItems,
+    serviceMode === 'cycle' && blockMode !== 'new'
+  );
+
   const firstPreview = previewItems[0] ?? null;
   const lastPreview = previewItems[previewItems.length - 1] ?? null;
+  const trailingBlockGap = getTrailingBlockGap(
+    context.allSchedules,
+    blockId,
+    lastPreview,
+    blockMode !== 'new' && blockConflicts.length === 0
+  );
+  const canAbsorbShortTrailingGap = trailingBlockGap.gapMinutes !== null
+    && trailingBlockGap.gapMinutes > 0
+    && trailingBlockGap.gapMinutes <= 5;
+
+  if (lastPreview && absorbShortTrailingGapIntoRecovery && canAbsorbShortTrailingGap) {
+    lastPreview.recoveryTime += trailingBlockGap.gapMinutes as number;
+    lastPreview.cycleTime = lastPreview.travelTime + lastPreview.recoveryTime;
+  }
+
   const targetHeadway = getTargetHeadway(directionTrips);
   const templateCycleTime = templateTrip
     ? (templateTrip.cycleTime || (templateTrip.endTime - templateTrip.startTime + (templateTrip.recoveryTime || 0)))
@@ -649,7 +925,13 @@ export const buildAddTripSuggestions = (
     partialLabel: selectedStartStopName === selectedTargetTable.stops[0] && selectedEndStopName === selectedTargetTable.stops[selectedTargetTable.stops.length - 1]
       ? 'Full trip'
       : `${selectedStartStopName} → ${selectedEndStopName}`,
-    blockMode
+    blockMode,
+    hasBlockingBlockConflict: blockConflicts.length > 0,
+    blockingConflictCount: blockConflicts.length,
+    trailingBlockGapMinutes: trailingBlockGap.gapMinutes,
+    trailingBlockGapNextTripStartTime: trailingBlockGap.nextTripStartTime,
+    canAbsorbShortTrailingGap,
+    absorbedTrailingGapIntoRecovery: absorbShortTrailingGapIntoRecovery && canAbsorbShortTrailingGap
   };
 
   const selectedConnections = firstPreview?.connectionMatches ?? [];
@@ -671,7 +953,9 @@ export const buildAddTripSuggestions = (
     selectedConnections,
     routePlatformHints,
     selectedStartStopName,
-    selectedEndStopName
+    selectedEndStopName,
+    actualTripCount,
+    blockConflicts
   };
 };
 
@@ -730,20 +1014,36 @@ export const applyAddTripResultToSchedules = (
   const isBidirectional = !!northTable && !!southTable;
   const createdTripIds: string[] = [];
   const blockId = result.blockMode === 'new' ? result.blockId : result.blockMode === 'reference' ? context.referenceTrip.blockId : result.blockId;
-  let currentDirection = result.targetDirection;
+  const cycleUsesFullRoute = (result.serviceMode ?? 'trip') === 'cycle' && isBidirectional;
+  const initialDirection: 'North' | 'South' = cycleUsesFullRoute ? 'North' : result.targetDirection;
+  const initialSourceTable = initialDirection === 'North' ? (northTable ?? context.targetTable) : (southTable ?? context.targetTable);
+  const cycleStopSelection = cycleUsesFullRoute
+    ? getRouteEndpoints(initialSourceTable)
+    : { startStopName: result.startStopName, endStopName: result.endStopName };
+  let currentDirection = initialDirection;
   let currentStart = result.startTime;
+  const requestedServiceMode = result.serviceMode ?? 'trip';
+  const createdTrips: MasterTrip[] = [];
+  const totalTripsToCreate = getActualTripCount(result.tripCount, requestedServiceMode, isBidirectional);
 
-  for (let i = 0; i < result.tripCount; i++) {
-    const targetDirection = isBidirectional ? currentDirection : result.targetDirection;
+  for (let i = 0; i < totalTripsToCreate; i++) {
+    const targetDirection = isBidirectional ? currentDirection : initialDirection;
     const targetRouteName = isBidirectional ? `${context.routeBaseName} (${targetDirection})` : result.targetRouteName;
     const targetTable = newSchedules.find(table => table.routeName === targetRouteName) ?? context.targetTable;
     const trips = getDirectionTrips(targetTable, targetDirection);
     const templateTrip = getTemplate(trips, currentStart, targetTable, targetDirection) ?? context.referenceTrip;
+    const directionalStopSelection = getDirectionalStopSelection(
+      initialSourceTable,
+      targetTable,
+      initialDirection,
+      targetDirection,
+      cycleStopSelection
+    );
     const fullRouteRange = getFullRouteRange(targetTable);
     const range = resolveStopRange(
       targetTable,
-      result.startStopName,
-      result.endStopName,
+      directionalStopSelection.startStopName,
+      directionalStopSelection.endStopName,
       templateTrip.startStopIndex ?? 0,
       templateTrip.endStopIndex ?? Math.max(0, targetTable.stops.length - 1)
     );
@@ -759,6 +1059,9 @@ export const applyAddTripResultToSchedules = (
       ...JSON.parse(JSON.stringify(templateTrip)),
       id: `trip_${Date.now()}_${Math.floor(Math.random() * 10000)}_${i}`,
       lineageId: createTripLineageId(),
+      deltaSourceTripId: templateTrip.deltaSourceTripId ?? templateTrip.id,
+      deltaSourceLineageId: templateTrip.deltaSourceLineageId ?? templateTrip.lineageId,
+      deltaSourceRouteName: templateTrip.deltaSourceRouteName ?? targetRouteName,
       rowId: Date.now() + i,
       blockId,
       direction: targetDirection,
@@ -779,8 +1082,32 @@ export const applyAddTripResultToSchedules = (
     targetTable.trips.push(newTrip);
     targetTable.trips.sort((a, b) => getOperationalSortTime(a.startTime) - getOperationalSortTime(b.startTime));
     createdTripIds.push(newTrip.id);
+    createdTrips.push(newTrip);
     currentStart = endTime + recoveryTime;
     if (isBidirectional) currentDirection = currentDirection === 'North' ? 'South' : 'North';
+  }
+
+  if (result.absorbShortTrailingGapIntoRecovery && createdTrips.length > 0) {
+    const lastCreatedTrip = createdTrips[createdTrips.length - 1];
+    const occupiedEnd = getOccupiedEndTime(lastCreatedTrip);
+    const nextBlockTrip = newSchedules
+      .flatMap(table => table.trips)
+      .filter(trip => trip.blockId === blockId && !createdTripIds.includes(trip.id) && trip.startTime >= occupiedEnd)
+      .sort((a, b) => getOperationalSortTime(a.startTime) - getOperationalSortTime(b.startTime))[0];
+
+    const trailingGapMinutes = nextBlockTrip ? nextBlockTrip.startTime - occupiedEnd : null;
+    if (trailingGapMinutes !== null && trailingGapMinutes > 0 && trailingGapMinutes <= 5) {
+      lastCreatedTrip.recoveryTime += trailingGapMinutes;
+      lastCreatedTrip.cycleTime = lastCreatedTrip.travelTime + lastCreatedTrip.recoveryTime;
+      const terminalStopName = Object.keys(lastCreatedTrip.arrivalTimes ?? {}).at(-1)
+        ?? Object.keys(lastCreatedTrip.stops ?? {}).at(-1);
+      if (terminalStopName) {
+        lastCreatedTrip.recoveryTimes = {
+          ...(lastCreatedTrip.recoveryTimes ?? {}),
+          [terminalStopName]: lastCreatedTrip.recoveryTime
+        };
+      }
+    }
   }
 
   renumberTripsWithinBlocks(newSchedules);

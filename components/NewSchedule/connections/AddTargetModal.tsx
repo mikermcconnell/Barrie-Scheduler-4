@@ -22,7 +22,8 @@ import type {
     ConnectionTime,
     ConnectionTargetType,
     ConnectionEventType,
-    ConnectionQualityWindowSettings
+    ConnectionQualityWindowSettings,
+    ConnectionType
 } from '../../../utils/connections/connectionTypes';
 import {
     generateConnectionId,
@@ -33,6 +34,7 @@ import {
 } from '../../../utils/connections/connectionTypes';
 import type { DayType } from '../../../utils/parsers/masterScheduleParser';
 import { formatGapTimeForEvent } from '../../../utils/connections/connectionUtils';
+import { buildRouteAttachmentPreview } from '../../../utils/connections/routeConnectionDefaults';
 
 /**
  * Stop with name for auto-populate display.
@@ -67,14 +69,27 @@ export interface AddTargetInitialData {
 interface AddTargetModalProps {
     isOpen: boolean;
     onClose: () => void;
-    onAdd: (target: Omit<ConnectionTarget, 'id' | 'createdAt' | 'updatedAt'>) => void;
+    onAdd: (
+        target: Omit<ConnectionTarget, 'id' | 'createdAt' | 'updatedAt'>,
+        routeAttachmentConfig?: {
+            stopCode: string;
+            stopName?: string;
+            connectionType: ConnectionType;
+            bufferMinutes: number;
+        }
+    ) => void;
     dayType: DayType;
     existingTargetNames: string[];
     validStopCodes?: string[];
     availableStops?: StopOption[];
+    routeStopOptions?: StopOption[];
     defaultQualityWindowSettings?: ConnectionQualityWindowSettings;
     initialData?: AddTargetInitialData;
     mode?: 'add' | 'edit';
+    routeAttachmentPreview?: {
+        routeLabel: string;
+        dayType: DayType;
+    };
 }
 
 export const AddTargetModal: React.FC<AddTargetModalProps> = ({
@@ -85,9 +100,11 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
     existingTargetNames,
     validStopCodes,
     availableStops,
+    routeStopOptions,
     defaultQualityWindowSettings,
     initialData,
-    mode = 'add'
+    mode = 'add',
+    routeAttachmentPreview
 }) => {
     type NewTimeEventChoice = 'default' | ConnectionEventType;
     type TimeDayPattern = 'current' | 'weekday' | 'saturday' | 'sunday' | 'daily';
@@ -104,10 +121,14 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
     const [newTimeEventType, setNewTimeEventType] = useState<NewTimeEventChoice>('default');
     const [newTimeDayPattern, setNewTimeDayPattern] = useState<TimeDayPattern>('current');
     const [defaultEventType, setDefaultEventType] = useState<ConnectionEventType>('departure');
+    const [routeStopCode, setRouteStopCode] = useState('');
+    const [routeConnectionType, setRouteConnectionType] = useState<ConnectionType>('meet_departing');
+    const [routeBufferMinutes, setRouteBufferMinutes] = useState(5);
     const [previewTripTime, setPreviewTripTime] = useState('8:00 AM');
     const [error, setError] = useState('');
     const [hasInitialized, setHasInitialized] = useState(false);
     const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
+    const [showGoalDetails, setShowGoalDetails] = useState(false);
     const [useLibraryTimingDefaults, setUseLibraryTimingDefaults] = useState(true);
     const [qualityWindowSettings, setQualityWindowSettings] = useState<ConnectionQualityWindowSettings>(
         defaultQualityWindowSettings || DEFAULT_CONNECTION_QUALITY_WINDOW_SETTINGS
@@ -167,6 +188,15 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
         () => selectableStops.find(option => option.code === stopCode.trim()),
         [selectableStops, stopCode]
     );
+    const routeSelectableStops = React.useMemo<StopOption[]>(() => (
+        routeStopOptions && routeStopOptions.length > 0
+            ? routeStopOptions
+            : selectableStops
+    ), [routeStopOptions, selectableStops]);
+    const selectedRouteStopOption = React.useMemo(
+        () => routeSelectableStops.find(option => option.code === routeStopCode.trim()),
+        [routeSelectableStops, routeStopCode]
+    );
     const filteredSelectableStops = React.useMemo(() => {
         const query = stopSearch.trim().toLowerCase();
         if (!query) return selectableStops.slice(0, 8);
@@ -178,9 +208,56 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
 
     // Track if icon was set from template (hide Type selector)
     const iconFromTemplate = initialData?.icon !== undefined;
+    const isRouteGoalBuilder = Boolean(routeAttachmentPreview);
+    const hideGoalDetailsByDefault = Boolean(routeAttachmentPreview && initialData);
+    const shouldShowGoalDetails = !hideGoalDetailsByDefault || showGoalDetails;
+    const modalTitle = routeAttachmentPreview
+        ? initialData
+            ? `Review connection for ${routeAttachmentPreview.routeLabel}`
+            : `Create connection for ${routeAttachmentPreview.routeLabel}`
+        : mode === 'edit'
+            ? 'Edit custom connection'
+            : 'Add custom connection';
+    const modalSubtitle = routeAttachmentPreview
+        ? initialData
+            ? `Confirm the stop, timing, and events before adding this connection to ${routeAttachmentPreview.routeLabel}.`
+            : `Build a new connection, then add it to ${routeAttachmentPreview.routeLabel}.`
+        : 'Create a custom place and time set for this route to connect with.';
+    const submitButtonLabel = routeAttachmentPreview
+        ? `Save connection and add to ${routeAttachmentPreview.routeLabel}`
+        : mode === 'edit'
+            ? 'Save changes'
+            : 'Save custom connection';
+    const routeDefaultEventType: ConnectionEventType = routeConnectionType === 'feed_arriving'
+        ? 'arrival'
+        : 'departure';
 
     // Get enabled stop codes for submission
     const enabledStopCodes = stops.filter(s => s.enabled).map(s => s.code);
+    const previewTargetDraft = React.useMemo(() => ({
+        stopCode: isRouteGoalBuilder
+            ? routeStopCode.trim()
+            : (autoPopulateStops && enabledStopCodes.length > 0 ? enabledStopCodes[0] : stopCode.trim()),
+        stopName: isRouteGoalBuilder
+            ? selectedRouteStopOption?.name
+            : autoPopulateStops && enabledStopCodes.length > 0
+                ? stops.find(stop => stop.code === enabledStopCodes[0])?.name
+                : selectedStopOption?.name,
+        location: isRouteGoalBuilder
+            ? (location.trim() || selectedRouteStopOption?.name)
+            : (location.trim() || undefined),
+        defaultEventType: isRouteGoalBuilder ? routeDefaultEventType : defaultEventType,
+        times
+    }), [autoPopulateStops, defaultEventType, enabledStopCodes, isRouteGoalBuilder, location, routeDefaultEventType, routeStopCode, selectedRouteStopOption?.name, selectedStopOption?.name, stopCode, stops, times]);
+    const routePreview = React.useMemo(() => {
+        if (!routeAttachmentPreview) return null;
+        return buildRouteAttachmentPreview(
+            previewTargetDraft,
+            routeSelectableStops.map(stop => ({ code: stop.code, name: stop.name })),
+            routeAttachmentPreview.dayType,
+            routeBufferMinutes
+        );
+    }, [previewTargetDraft, routeAttachmentPreview, routeBufferMinutes, routeSelectableStops]);
 
     // Toggle individual stop
     const handleToggleStop = (code: string) => {
@@ -200,6 +277,38 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
             setStopSearch(`${selectedStopOption.name} (${selectedStopOption.code})`);
         }
     }, [autoPopulateStops, selectedStopOption]);
+
+    React.useEffect(() => {
+        if (!isOpen) {
+            setShowGoalDetails(false);
+            return;
+        }
+        setShowGoalDetails(!hideGoalDetailsByDefault);
+    }, [hideGoalDetailsByDefault, isOpen]);
+
+    React.useEffect(() => {
+        if (!isRouteGoalBuilder) return;
+        setDefaultEventType(routeDefaultEventType);
+    }, [isRouteGoalBuilder, routeDefaultEventType]);
+
+    React.useEffect(() => {
+        if (!isOpen || autoPopulateStops) return;
+        if (stopCode.trim()) return;
+        if (selectableStops.length !== 1) return;
+
+        const [onlyStop] = selectableStops;
+        setStopCode(onlyStop.code);
+        setStopSearch(`${onlyStop.name} (${onlyStop.code})`);
+        setError('');
+    }, [autoPopulateStops, isOpen, selectableStops, stopCode]);
+
+    React.useEffect(() => {
+        if (!isRouteGoalBuilder || !isOpen) return;
+        if (routeStopCode.trim()) return;
+        if (routeSelectableStops.length !== 1) return;
+
+        setRouteStopCode(routeSelectableStops[0].code);
+    }, [isOpen, isRouteGoalBuilder, routeSelectableStops, routeStopCode]);
 
     // Apply initial data when modal opens with new initialData
     React.useEffect(() => {
@@ -250,6 +359,9 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
             setHasInitialized(false);
             setStopSearch('');
             setIsAdvancedOpen(false);
+            setRouteStopCode('');
+            setRouteConnectionType('meet_departing');
+            setRouteBufferMinutes(5);
         }
     }, [isOpen, initialData, hasInitialized, activeDefaultQualitySettings, selectableStops]);
 
@@ -363,7 +475,17 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
             return;
         }
 
-        if (autoPopulateStops && stops.length > 0) {
+        if (isRouteGoalBuilder && !routeStopCode.trim()) {
+            setError('Choose a route timepoint');
+            return;
+        }
+
+        if (!Number.isFinite(routeBufferMinutes) || routeBufferMinutes < 0) {
+            setError('Buffer must be 0 minutes or greater');
+            return;
+        }
+
+        if (!isRouteGoalBuilder && autoPopulateStops && stops.length > 0) {
             if (enabledStopCodes.length === 0) {
                 setError('Select at least one stop');
                 return;
@@ -372,10 +494,10 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
                 setError('One or more selected stop codes are not in the loaded schedule stop IDs');
                 return;
             }
-        } else if (!stopCode.trim()) {
+        } else if (!isRouteGoalBuilder && !stopCode.trim()) {
             setError('Stop code is required');
             return;
-        } else if (knownStopCodes.size > 0 && !isKnownOrExistingStopCode(stopCode.trim())) {
+        } else if (!isRouteGoalBuilder && knownStopCodes.size > 0 && !isKnownOrExistingStopCode(stopCode.trim())) {
             setError('Stop code must match a loaded schedule stop ID');
             return;
         }
@@ -404,25 +526,43 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
             }
         }
 
+        const effectiveStopCode = isRouteGoalBuilder
+            ? routeStopCode.trim()
+            : (autoPopulateStops && enabledStopCodes.length > 0 ? enabledStopCodes[0] : stopCode.trim());
+        const effectiveStopName = isRouteGoalBuilder
+            ? selectedRouteStopOption?.name
+            : autoPopulateStops && enabledStopCodes.length > 0
+                ? stops.find(stop => stop.code === enabledStopCodes[0])?.name
+                : selectedStopOption?.name;
+        const effectiveLocation = isRouteGoalBuilder
+            ? (location.trim() || selectedRouteStopOption?.name)
+            : (location.trim() || undefined);
+        const effectiveDefaultEventType = isRouteGoalBuilder
+            ? routeDefaultEventType
+            : defaultEventType;
+
         onAdd({
             name: name.trim(),
             type: 'manual' as ConnectionTargetType,
-            location: location.trim() || undefined,
-            stopCode: autoPopulateStops && enabledStopCodes.length > 0 ? enabledStopCodes[0] : stopCode.trim(),
-            stopName: autoPopulateStops && enabledStopCodes.length > 0
-                ? stops.find(stop => stop.code === enabledStopCodes[0])?.name
-                : selectedStopOption?.name,
-            icon,
+            location: effectiveLocation,
+            stopCode: effectiveStopCode,
+            stopName: effectiveStopName,
+            icon: isRouteGoalBuilder ? 'clock' : icon,
             times,
-            color: icon === 'train' ? 'green' : 'teal',
-            defaultEventType,
+            color: (isRouteGoalBuilder ? 'clock' : icon) === 'train' ? 'green' : 'teal',
+            defaultEventType: effectiveDefaultEventType,
             // Store auto-populate metadata for connection matching
-            ...(autoPopulateStops && enabledStopCodes.length > 0 && {
+            ...(!isRouteGoalBuilder && autoPopulateStops && enabledStopCodes.length > 0 && {
                 stopCodes: enabledStopCodes,
                 autoPopulateStops: true
             }),
             qualityWindowSettings: useLibraryTimingDefaults ? undefined : qualityWindowSettings
-        });
+        }, isRouteGoalBuilder ? {
+            stopCode: routeStopCode.trim(),
+            stopName: selectedRouteStopOption?.name,
+            connectionType: routeConnectionType,
+            bufferMinutes: routeBufferMinutes
+        } : undefined);
 
         // Reset form
         setName('');
@@ -434,6 +574,9 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
         setNewTimeEventType('default');
         setNewTimeDayPattern('current');
         setDefaultEventType('departure');
+        setRouteStopCode('');
+        setRouteConnectionType('meet_departing');
+        setRouteBufferMinutes(5);
         setIsAdvancedOpen(false);
         setQualityWindowSettings(activeDefaultQualitySettings);
         setUseLibraryTimingDefaults(true);
@@ -445,9 +588,14 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
             <div className="my-auto flex max-h-[calc(100vh-2rem)] w-full max-w-lg flex-col overflow-hidden rounded-xl bg-white shadow-xl">
                 {/* Header */}
                 <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-                    <h2 className="text-lg font-semibold text-gray-900">
-                        {mode === 'edit' ? 'Edit Connection Target' : 'Add Connection Target'}
-                    </h2>
+                    <div>
+                        <h2 className="text-lg font-semibold text-gray-900">
+                            {modalTitle}
+                        </h2>
+                        <p className="text-sm text-gray-500">
+                            {modalSubtitle}
+                        </p>
+                    </div>
                     <button
                         onClick={onClose}
                         className="p-1 text-gray-400 hover:text-gray-600 rounded"
@@ -486,40 +634,199 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
                         }
                         return null;
                     })()}
+                    {isRouteGoalBuilder && (
+                        <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-4">
+                            <div>
+                                <p className="text-sm font-semibold text-gray-900">Step 1 · Route connection setup</p>
+                                <p className="text-xs text-gray-500 mt-1">
+                                    Choose the route timepoint, how the bus should connect, and the default buffer.
+                                </p>
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    Route timepoint *
+                                </label>
+                                <select
+                                    value={routeStopCode}
+                                    onChange={(e) => setRouteStopCode(e.target.value)}
+                                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                                >
+                                    <option value="">Select a route timepoint...</option>
+                                    {routeSelectableStops.map(option => (
+                                        <option key={option.code} value={option.code}>
+                                            {option.name} ({option.code})
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    Bus should *
+                                </label>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => setRouteConnectionType('meet_departing')}
+                                        className={`rounded-lg border px-3 py-2 text-sm font-medium ${
+                                            routeConnectionType === 'meet_departing'
+                                                ? 'border-blue-500 bg-blue-50 text-blue-700'
+                                                : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+                                        }`}
+                                    >
+                                        Arrive before time
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setRouteConnectionType('feed_arriving')}
+                                        className={`rounded-lg border px-3 py-2 text-sm font-medium ${
+                                            routeConnectionType === 'feed_arriving'
+                                                ? 'border-purple-500 bg-purple-50 text-purple-700'
+                                                : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+                                        }`}
+                                    >
+                                        Leave after time
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    Ideal buffer (minutes)
+                                </label>
+                                <input
+                                    type="number"
+                                    min={0}
+                                    value={routeBufferMinutes}
+                                    onChange={(e) => setRouteBufferMinutes(Number(e.target.value || 0))}
+                                    className="w-28 px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                                />
+                            </div>
+                        </div>
+                    )}
+                    {routeAttachmentPreview && routePreview && (
+                        <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 space-y-2">
+                            <div className="flex items-center justify-between gap-3">
+                                <div>
+                                    <p className="text-sm font-semibold text-blue-900">
+                                        Route preview for {routeAttachmentPreview.routeLabel}
+                                    </p>
+                                    <p className="text-xs text-blue-700">
+                                        This connection will be saved and attached to the current route when you save.
+                                    </p>
+                                </div>
+                                <span className="text-xs font-medium text-blue-700 bg-white/80 border border-blue-200 rounded px-2 py-1">
+                                    {routeAttachmentPreview.dayType}
+                                </span>
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+                                <div>
+                                    <p className="text-[11px] font-semibold uppercase tracking-wide text-blue-700">Target</p>
+                                    <p className="text-blue-900 font-medium">{name.trim() || 'Name this connection to preview it clearly'}</p>
+                                </div>
+                                <div>
+                                    <p className="text-[11px] font-semibold uppercase tracking-wide text-blue-700">Route stop</p>
+                                    {routePreview.canAttach ? (
+                                        <p className="text-blue-900 font-medium">
+                                            {routePreview.stopName || 'Selected stop'} <span className="text-blue-700 font-normal">({routePreview.stopCode})</span>
+                                        </p>
+                                    ) : (
+                                        <p className="text-amber-800 font-medium">Pick a route stop to attach this connection</p>
+                                    )}
+                                </div>
+                                <div>
+                                    <p className="text-[11px] font-semibold uppercase tracking-wide text-blue-700">Timing rule</p>
+                                    <p className="text-blue-900 font-medium">{routePreview.ruleSummary}</p>
+                                </div>
+                            </div>
+                            <div>
+                                <p className="text-[11px] font-semibold uppercase tracking-wide text-blue-700">Applied events</p>
+                                {routePreview.activeEventCount > 0 ? (
+                                    <div className="mt-1">
+                                        <p className="text-sm text-blue-900">
+                                            {routePreview.activeEventCount} active event{routePreview.activeEventCount === 1 ? '' : 's'} on {routeAttachmentPreview.dayType}
+                                        </p>
+                                        <p className="text-xs text-blue-700 mt-1">
+                                            {routePreview.activeEventPreview.join(' • ')}
+                                            {routePreview.activeEventCount > routePreview.activeEventPreview.length
+                                                ? ` • +${routePreview.activeEventCount - routePreview.activeEventPreview.length} more`
+                                                : ''}
+                                        </p>
+                                    </div>
+                                ) : (
+                                    <p className="text-sm text-amber-800">Add at least one active time to preview which events this route will use.</p>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
+                    {hideGoalDetailsByDefault && (
+                        <div className="rounded-lg border border-gray-200 bg-white p-4">
+                            <div className="flex items-start justify-between gap-3">
+                                <div>
+                                    <p className="text-sm font-semibold text-gray-900">
+                                        Connection details
+                                    </p>
+                                    <p className="text-xs text-gray-500 mt-1">
+                                        {name.trim() || initialData?.name || 'New connection'}
+                                        {(location.trim() || initialData?.location) ? ` • ${location.trim() || initialData?.location}` : ''}
+                                    </p>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setShowGoalDetails(!showGoalDetails)}
+                                    className="inline-flex items-center gap-1.5 text-sm font-medium text-gray-700 hover:text-gray-900"
+                                >
+                                    {showGoalDetails ? 'Hide details' : 'Edit details'}
+                                    {showGoalDetails ? (
+                                        <ChevronUp className="w-4 h-4" />
+                                    ) : (
+                                        <ChevronDown className="w-4 h-4" />
+                                    )}
+                                </button>
+                            </div>
+                        </div>
+                    )}
 
                     {/* Name */}
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Name *
-                        </label>
-                        <input
-                            type="text"
-                            value={name}
-                            onChange={(e) => setName(e.target.value)}
-                            placeholder="e.g., GO Train to Toronto"
-                            className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                        />
-                    </div>
+                    {shouldShowGoalDetails && !isRouteGoalBuilder && (
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                                Connection name *
+                            </label>
+                            <input
+                                type="text"
+                                value={name}
+                                onChange={(e) => setName(e.target.value)}
+                                placeholder="e.g., GO Train to Toronto"
+                                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            />
+                        </div>
+                    )}
 
                     {/* Location */}
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Location
-                        </label>
-                        <input
-                            type="text"
-                            value={location}
-                            onChange={(e) => setLocation(e.target.value)}
-                            placeholder="e.g., Allandale Waterfront GO Station"
-                            className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                        />
-                    </div>
+                    {shouldShowGoalDetails && !isRouteGoalBuilder && (
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                                Place
+                            </label>
+                            <input
+                                type="text"
+                                value={location}
+                                onChange={(e) => setLocation(e.target.value)}
+                                placeholder="e.g., Allandale Waterfront GO Station"
+                                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            />
+                        </div>
+                    )}
 
                     {/* Stop - show toggle if auto-populate available */}
+                    {!isRouteGoalBuilder && (
                     <div>
                         <div className="flex items-center justify-between mb-1">
                             <label className="block text-sm font-medium text-gray-700">
-                                Stop *
+                                Connection stop *
                             </label>
                             {stops.length > 0 && (
                                 <button
@@ -532,7 +839,7 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
                                     ) : (
                                         <ToggleLeft className="w-5 h-5 text-gray-400" />
                                     )}
-                                    <span>Auto-apply to {location} stops</span>
+                                    <span>Use all matching {location || 'place'} stops</span>
                                 </button>
                             )}
                         </div>
@@ -540,7 +847,7 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
                         {autoPopulateStops && stops.length > 0 ? (
                             <div className="p-3 bg-teal-50 border border-teal-200 rounded-lg">
                                 <p className="text-sm text-teal-800 mb-2">
-                                    Click stops to toggle on/off:
+                                    Select which stops should use this connection:
                                 </p>
                                 <div className="space-y-1.5">
                                     {stops.map(stop => (
@@ -585,7 +892,7 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
                                         });
                                         setStopCode(exactMatch?.code || '');
                                     }}
-                                    placeholder="Search stop name or code"
+                                    placeholder="Search by stop name or ID"
                                     className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                                 />
                                 <div className="border border-gray-200 rounded-lg overflow-hidden bg-white">
@@ -605,7 +912,7 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
                                                         }`}
                                                     >
                                                         <span className="truncate pr-3">{option.name}</span>
-                                                        <span className="font-mono text-xs text-gray-500">{option.code}</span>
+                                                        <span className="font-mono text-xs text-gray-500">ID {option.code}</span>
                                                     </button>
                                                 );
                                             })}
@@ -618,11 +925,11 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
                                 </div>
                                 {selectedStopOption ? (
                                     <p className="text-xs text-gray-600">
-                                        Selected: <span className="font-medium text-gray-800">{selectedStopOption.name}</span> ({selectedStopOption.code})
+                                        Selected place: <span className="font-medium text-gray-800">{selectedStopOption.name}</span> ({selectedStopOption.code})
                                     </p>
                                 ) : (
                                     <p className="text-xs text-gray-500">
-                                        Choose a stop from the list to fill the stop code automatically.
+                                        Choose a stop from the list to fill the stop ID automatically.
                                     </p>
                                 )}
                             </div>
@@ -631,17 +938,18 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
                                 type="text"
                                 value={stopCode}
                                 onChange={(e) => setStopCode(e.target.value)}
-                                placeholder="e.g., 1234"
+                                placeholder="Enter stop ID, e.g. 1234"
                                 className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                             />
                         )}
                     </div>
+                    )}
 
                     {/* Icon/Type - only show when not from template */}
-                    {!iconFromTemplate && (
+                    {!isRouteGoalBuilder && !iconFromTemplate && (
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">
-                                Type
+                                Connection kind
                             </label>
                             <div className="flex gap-2">
                                 <button
@@ -653,7 +961,7 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
                                     }`}
                                 >
                                     <Train className="w-4 h-4" />
-                                    GO Train
+                                    Train / rail
                                 </button>
                                 <button
                                     onClick={() => setIcon('clock')}
@@ -664,7 +972,7 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
                                     }`}
                                 >
                                     <Clock className="w-4 h-4" />
-                                    Bell/Schedule
+                                    Bell / schedule
                                 </button>
                             </div>
                         </div>
@@ -673,14 +981,14 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
                     {/* Times */}
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Times *
+                            {isRouteGoalBuilder ? 'Step 2 · Connection time(s) *' : 'Connection times *'}
                         </label>
                         {/* Add time form */}
                         <div className="grid grid-cols-[minmax(0,1.5fr)_auto] gap-2 mb-2">
                             <textarea
                                 value={newTimeStr}
                                 onChange={(e) => setNewTimeStr(e.target.value)}
-                                placeholder="7:15 AM, 8:45 AM or one per line"
+                                placeholder={isRouteGoalBuilder ? 'Enter one time or a list, e.g. 7:15 AM, 8:45 AM' : '7:15 AM, 8:45 AM or one per line'}
                                 rows={3}
                                 className="min-h-[76px] px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-y"
                             />
@@ -714,9 +1022,10 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
                             </button>
                         </div>
                         <p className="text-xs text-gray-500 mb-3">
-                            Paste several times at once. Separate them with commas, semicolons, or line breaks. The selected day pattern applies to each new time.
+                            Enter one time or paste a list. Separate times with commas, semicolons, or line breaks. The selected day pattern applies to each new time.
                         </p>
 
+                        {!isRouteGoalBuilder && (
                         <button
                             type="button"
                             onClick={() => setIsAdvancedOpen(!isAdvancedOpen)}
@@ -724,7 +1033,7 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
                             aria-controls="add-target-modal-advanced"
                             className="mb-3 inline-flex items-center gap-2 text-sm font-medium text-gray-700 hover:text-gray-900"
                         >
-                            <span>Advanced</span>
+                            <span>Advanced timing</span>
                             {isAdvancedOpen ? (
                                 <ChevronUp className="w-4 h-4" />
                             ) : (
@@ -734,12 +1043,13 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
                                 default event, timing preview, quality windows
                             </span>
                         </button>
+                        )}
 
-                        {isAdvancedOpen && (
+                        {!isRouteGoalBuilder && isAdvancedOpen && (
                             <div id="add-target-modal-advanced" className="space-y-3 mb-3 rounded-lg border border-gray-200 bg-gray-50/70 p-3">
                                 <div>
                                     <label className="block text-xs font-medium text-gray-600 mb-1">
-                                        Default Event
+                                        Default event
                                     </label>
                                     <select
                                         value={defaultEventType}
@@ -754,7 +1064,7 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
 
                                 <div>
                                     <label className="block text-xs font-medium text-gray-600 mb-1">
-                                        Event for New Times
+                                        Event for new times
                                     </label>
                                     <select
                                         value={newTimeEventType}
@@ -775,7 +1085,7 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
                                 {times.length > 0 && (
                                     <div className="border border-gray-200 rounded-lg p-3 bg-white">
                                         <div className="flex items-center justify-between mb-2">
-                                            <label className="text-sm font-medium text-gray-700">Preview Simulation</label>
+                                            <label className="text-sm font-medium text-gray-700">Preview simulation</label>
                                             <input
                                                 type="text"
                                                 value={previewTripTime}
@@ -828,7 +1138,7 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
                                 <div className="border border-gray-200 rounded-lg p-3 bg-white">
                                     <div className="flex items-center justify-between mb-2">
                                         <label className="block text-sm font-medium text-gray-700">
-                                            Connection Timing
+                                            Connection timing
                                         </label>
                                         <button
                                             type="button"
@@ -846,7 +1156,7 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
                                             ) : (
                                                 <ToggleLeft className="w-5 h-5 text-gray-400" />
                                             )}
-                                            <span>Use library default</span>
+                                            <span>Use saved timing defaults</span>
                                         </button>
                                     </div>
                                     {!useLibraryTimingDefaults && (
@@ -955,6 +1265,21 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
                                 ))}
                             </div>
                         )}
+
+                        {shouldShowGoalDetails && isRouteGoalBuilder && (
+                            <div className="mt-4">
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    Step 3 · Connection name *
+                                </label>
+                                <input
+                                    type="text"
+                                    value={name}
+                                    onChange={(e) => setName(e.target.value)}
+                                    placeholder="e.g., Georgian morning arrival"
+                                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                />
+                            </div>
+                        )}
                     </div>
 
                 </div>
@@ -971,7 +1296,7 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
                         onClick={handleSubmit}
                         className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
                     >
-                        {mode === 'edit' ? 'Save Changes' : 'Add Target'}
+                        {submitButtonLabel}
                     </button>
                 </div>
             </div>

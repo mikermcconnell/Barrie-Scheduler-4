@@ -48,12 +48,20 @@ vi.mock('../utils/connections/connectionLibraryService', () => ({
   getConnectionLibrary: getConnectionLibraryMock
 }));
 
-vi.mock('../utils/blocks/blockAssignmentCore', () => ({
-  reassignBlocksForTables: reassignBlocksForTablesMock,
-  MatchConfigPresets: {
-    editor: { mode: 'editor' }
-  }
-}));
+vi.mock('../utils/blocks/blockAssignmentCore', async () => {
+  const actual = await vi.importActual<typeof import('../utils/blocks/blockAssignmentCore')>(
+    '../utils/blocks/blockAssignmentCore'
+  );
+
+  return {
+    ...actual,
+    reassignBlocksForTables: reassignBlocksForTablesMock,
+    MatchConfigPresets: {
+      ...actual.MatchConfigPresets,
+      editor: { mode: 'editor' }
+    }
+  };
+});
 
 vi.mock('../hooks/useAddTrip', () => ({
   useAddTrip: (): {

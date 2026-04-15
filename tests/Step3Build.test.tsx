@@ -64,6 +64,97 @@ describe('Step3Build', () => {
         });
     });
 
+    it('autofills route-based strict defaults from the route number', async () => {
+        const setConfig = vi.fn();
+
+        container = document.createElement('div');
+        document.body.appendChild(container);
+        root = createRoot(container);
+
+        flushSync(() => {
+            root?.render(
+                <Step3Build
+                    dayType="Weekday"
+                    bands={[]}
+                    config={{
+                        routeNumber: '2',
+                        cycleTime: 60,
+                        blocks: [],
+                    }}
+                    setConfig={setConfig}
+                    teamId={undefined}
+                    stopSuggestions={[]}
+                    autofillFromMaster={false}
+                    onAutofillFromMasterChange={() => {}}
+                />
+            );
+        });
+
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(setConfig).toHaveBeenCalledWith(expect.objectContaining({
+            routeNumber: '2',
+            cycleMode: 'Strict',
+            cycleTime: 90,
+        }));
+    });
+
+    it('autofills floating routes once and still lets the planner override the reference cycle', async () => {
+        const setConfig = vi.fn();
+        container = document.createElement('div');
+        document.body.appendChild(container);
+        root = createRoot(container);
+
+        flushSync(() => {
+            root?.render(
+                <Step3Build
+                    dayType="Weekday"
+                    bands={[]}
+                    config={{
+                        routeNumber: '12',
+                        cycleMode: 'Strict',
+                        cycleTime: 60,
+                        recoveryRatio: 0,
+                        blocks: [],
+                        recoveryDistribution: 'End',
+                    }}
+                    setConfig={setConfig}
+                    teamId={undefined}
+                    stopSuggestions={[]}
+                    autofillFromMaster={false}
+                    onAutofillFromMasterChange={() => {}}
+                />
+            );
+        });
+
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(setConfig).toHaveBeenCalledWith(expect.objectContaining({
+            routeNumber: '12',
+            cycleMode: 'Floating',
+            cycleTime: 60,
+            recoveryRatio: 15,
+        }));
+
+        setConfig.mockClear();
+
+        const numberInputs = Array.from(container.querySelectorAll('input[type="number"]')) as HTMLInputElement[];
+
+        flushSync(() => {
+            const setNativeValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+            setNativeValue?.call(numberInputs[0], '72');
+            numberInputs[0].dispatchEvent(new Event('input', { bubbles: true }));
+            numberInputs[0].dispatchEvent(new Event('change', { bubbles: true }));
+        });
+
+        expect(setConfig).toHaveBeenCalledWith(expect.objectContaining({
+            routeNumber: '12',
+            cycleTime: 72,
+        }));
+    });
+
     it('prefers the approved runtime contract for the Step 2 summary guidance', () => {
         container = document.createElement('div');
         document.body.appendChild(container);

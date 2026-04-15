@@ -116,6 +116,11 @@ function formatDateLong(dateStr: string): string {
   return d.toLocaleDateString('en-CA', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 }
 
+function formatReportDateLabel(dateStr: string): string {
+  const d = new Date(dateStr + 'T12:00:00');
+  return d.toLocaleDateString('en-CA', { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
 function bphColor(value: number): string {
   if (value < 10 || value > 30) return '#dc2626'; // red
   if (value >= 20) return '#16a34a'; // green
@@ -645,7 +650,7 @@ export function buildReportHtml(data: ReportData): string {
     <!-- Header -->
     <div style="background:#1e3a5f;padding:24px;text-align:center;">
       <div style="font-size:20px;font-weight:700;color:#ffffff;">${teamName}</div>
-      <div style="font-size:16px;color:#93c5fd;margin-top:2px;">Daily Performance Report</div>
+      <div style="font-size:16px;color:#93c5fd;margin-top:2px;">Daily Performance Report - ${formatReportDateLabel(latestDay.date)}</div>
       <div style="font-size:12px;color:#bfdbfe;margin-top:6px;">
         For more information:
         <a href="https://transitscheduler.ca/#operations/performance" style="color:#bfdbfe;text-decoration:underline;">https://transitscheduler.ca/#operations/performance</a>
