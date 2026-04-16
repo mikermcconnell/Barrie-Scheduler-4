@@ -29,7 +29,7 @@ import {
     sanitizeInput,
     sortTripsByBlockFlow
 } from '../../utils/schedule/scheduleEditorUtils';
-import type { ConnectionLibrary } from '../../utils/connections/connectionTypes';
+import type { ConnectionLibrary, RouteConnectionConfig } from '../../utils/connections/connectionTypes';
 import type { DayType } from '../../utils/parsers/masterScheduleParser';
 import { getConnectionsForStop } from '../../utils/connections/connectionUtils';
 import { ConnectionIndicator } from './ConnectionIndicator';
@@ -47,10 +47,17 @@ export interface SingleRouteViewProps {
     onDirectionChange?: (tableRouteName: string, direction: 'North' | 'South') => void;
     readOnly?: boolean;
     connectionLibrary?: ConnectionLibrary | null;
+    routeConnectionConfig?: RouteConnectionConfig | null;
     dayType?: DayType;
 }
 
-export const SingleRouteView: React.FC<SingleRouteViewProps> = ({ table, showSummary = true, originalTable, onCellEdit, onRecoveryEdit, onTimeAdjust, onDeleteTrip, onDuplicateTrip, onAddTrip, onDirectionChange, readOnly = false, connectionLibrary, dayType = 'Weekday' }) => {
+const getConnectionPopoverAlign = (index: number, totalStops: number): 'left' | 'center' | 'right' => {
+    if (index <= 0) return 'left';
+    if (index >= totalStops - 2) return 'right';
+    return 'center';
+};
+
+export const SingleRouteView: React.FC<SingleRouteViewProps> = ({ table, showSummary = true, originalTable, onCellEdit, onRecoveryEdit, onTimeAdjust, onDeleteTrip, onDuplicateTrip, onAddTrip, onDirectionChange, readOnly = false, connectionLibrary, routeConnectionConfig, dayType = 'Weekday' }) => {
     const stopsWithRecovery = useMemo(() => {
         const set = new Set<string>();
         table.trips.forEach(t => {
@@ -207,7 +214,7 @@ export const SingleRouteView: React.FC<SingleRouteViewProps> = ({ table, showSum
                                     <React.Fragment key={`sub-${stop}`}>
                                         {stopsWithRecovery.has(stop) ? (
                                             <>
-                                                <th className="py-1 px-1 border-b border-gray-200 text-xs font-medium text-gray-700 text-center" style={{ minWidth: '56px', width: '56px' }}>ARR</th>
+                                                <th className="py-1 px-1 border-b border-gray-200 text-xs font-medium text-gray-700 text-center" style={{ minWidth: '64px', width: '64px' }}>ARR</th>
                                                 <th className="py-1 px-1 border-b border-gray-200 text-xs font-semibold text-blue-700 text-center bg-blue-50" style={{ minWidth: '32px', width: '32px' }}>R</th>
                                                 <th className="py-1 px-1 border-b border-gray-200 text-xs font-medium text-gray-700 text-center" style={{ minWidth: '80px', width: '80px' }}>DEP</th>
                                             </>
@@ -228,7 +235,7 @@ export const SingleRouteView: React.FC<SingleRouteViewProps> = ({ table, showSum
                                             {onAddTrip && <button onClick={() => onAddTrip(trip.id)} className="opacity-70 group-hover:opacity-100 absolute -right-2 top-1/2 -translate-y-1/2 bg-blue-600 text-white rounded-full p-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"><Plus size={10} /></button>}
                                         </div>
                                     </td>
-                                    {table.stops.map(stop => {
+                                    {table.stops.map((stop, stopIndex) => {
                                         // Calculate diff from original
                                         const originalTrip = originalTable?.trips.find(t => t.id === trip.id);
 
@@ -264,19 +271,25 @@ export const SingleRouteView: React.FC<SingleRouteViewProps> = ({ table, showSum
                                         const connections = connectionLibrary && stopCode && (arrMin !== null || depMin !== null)
                                             ? getConnectionsForStop(
                                                 stopCode,
-                                                {
-                                                    arrival: arrMin,
-                                                    departure: depMin
-                                                },
+                                                hasRecovery
+                                                    ? {
+                                                        arrival: arrMin,
+                                                        departure: depMin
+                                                    }
+                                                    : {
+                                                        arrival: null,
+                                                        departure: depMin
+                                                    },
                                                 connectionLibrary,
-                                                dayType
+                                                dayType,
+                                                routeConnectionConfig?.connections
                                             )
                                             : [];
                                         const arrivalConnections = hasRecovery
-                                            ? connections.filter(connection => connection.eventType === 'departure')
+                                            ? connections.filter(connection => connection.busAnchor === 'arrival')
                                             : [];
                                         const departureConnections = hasRecovery
-                                            ? connections.filter(connection => connection.eventType === 'arrival')
+                                            ? connections.filter(connection => connection.busAnchor === 'departure')
                                             : connections;
 
                                         return (
@@ -284,13 +297,16 @@ export const SingleRouteView: React.FC<SingleRouteViewProps> = ({ table, showSum
                                                 {hasRecovery ? (
                                                     <>
                                                         {/* ARR Column */}
-                                                        <td className="p-0 border-r relative" style={{ minWidth: '56px', width: '56px' }}>
+                                                        <td className="p-0 border-r relative" style={{ minWidth: '64px', width: '64px' }}>
                                                             <div className={`flex ${arrivalConnections.length > 0 ? 'flex-col' : 'items-center'} justify-center`}>
                                                                 <span className={`w-full font-mono text-sm text-center p-1 text-gray-700 ${arrDiff !== 0 ? 'font-bold' : ''}`}>
                                                                     {arrTime}
                                                                 </span>
                                                                 {arrivalConnections.length > 0 && (
-                                                                    <ConnectionIndicator connections={arrivalConnections} />
+                                                                    <ConnectionIndicator
+                                                                        connections={arrivalConnections}
+                                                                        popoverAlign={getConnectionPopoverAlign(stopIndex, table.stops.length)}
+                                                                    />
                                                                 )}
                                                                 {arrDiff !== 0 && (
                                                                     <span className={`absolute top-0 right-0 text-[9px] font-bold px-0.5 rounded-bl ${arrDiff > 0 ? 'text-green-600 bg-green-50' : 'text-red-600 bg-red-50'}`}>
@@ -339,7 +355,10 @@ export const SingleRouteView: React.FC<SingleRouteViewProps> = ({ table, showSum
                                                                     className={`w-full bg-transparent font-mono text-sm text-center p-1 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-200 ${depDiff !== 0 ? 'font-bold' : ''} ${readOnly ? 'cursor-default' : ''}`}
                                                                 />
                                                                 {departureConnections.length > 0 && (
-                                                                    <ConnectionIndicator connections={departureConnections} />
+                                                                    <ConnectionIndicator
+                                                                        connections={departureConnections}
+                                                                        popoverAlign={getConnectionPopoverAlign(stopIndex, table.stops.length)}
+                                                                    />
                                                                 )}
                                                                 {depDiff !== 0 && (
                                                                     <span className={`absolute top-0 right-0 text-[9px] font-bold px-0.5 rounded-bl ${depDiff > 0 ? 'text-green-600 bg-green-50' : 'text-red-600 bg-red-50'}`}>
@@ -381,7 +400,10 @@ export const SingleRouteView: React.FC<SingleRouteViewProps> = ({ table, showSum
                                                                 className={`w-full bg-transparent font-mono text-sm text-center p-1 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-200 ${depDiff !== 0 ? 'font-bold' : ''} ${readOnly ? 'cursor-default' : ''}`}
                                                             />
                                                             {connections.length > 0 && (
-                                                                <ConnectionIndicator connections={connections} />
+                                                                <ConnectionIndicator
+                                                                    connections={connections}
+                                                                    popoverAlign={getConnectionPopoverAlign(stopIndex, table.stops.length)}
+                                                                />
                                                             )}
                                                             {depDiff !== 0 && (
                                                                 <span className={`absolute top-0 right-0 text-[9px] font-bold px-0.5 rounded-bl ${depDiff > 0 ? 'text-green-600 bg-green-50' : 'text-red-600 bg-red-50'}`}>

@@ -52,11 +52,11 @@ vi.mock('../utils/gtfs/goTransitService', () => ({
   QUICK_TEMPLATES: [
     {
       id: 'go-barrie-south-departures',
-      name: 'Barrie South GO Departures',
-      description: 'Meet trains before departure',
+      name: 'Barrie South GO • To Train',
+      description: 'Bus arrives before the train departs',
       icon: 'train',
       getData: () => ({
-        name: 'Barrie South GO Departures',
+        name: 'Barrie South GO • To Train',
         location: 'Barrie South GO',
         stopCode: '725',
         icon: 'train',
@@ -66,11 +66,11 @@ vi.mock('../utils/gtfs/goTransitService', () => ({
     },
     {
       id: 'go-barrie-south-arrivals',
-      name: 'Barrie South GO Arrivals',
-      description: 'Connect after train arrival',
+      name: 'Barrie South GO • From Train',
+      description: 'Bus departs after the train arrives',
       icon: 'train',
       getData: () => ({
-        name: 'Barrie South GO Arrivals',
+        name: 'Barrie South GO • From Train',
         location: 'Barrie South GO',
         stopCode: '725',
         icon: 'train',
@@ -80,11 +80,11 @@ vi.mock('../utils/gtfs/goTransitService', () => ({
     },
     {
       id: 'go-allandale-waterfront-departures',
-      name: 'Allandale Waterfront GO Departures',
-      description: 'Meet trains before departure',
+      name: 'Allandale Waterfront GO • To Train',
+      description: 'Bus arrives before the train departs',
       icon: 'train',
       getData: () => ({
-        name: 'Allandale Waterfront GO Departures',
+        name: 'Allandale Waterfront GO • To Train',
         location: 'Allandale Waterfront GO',
         stopCode: '9003',
         icon: 'train',
@@ -94,11 +94,11 @@ vi.mock('../utils/gtfs/goTransitService', () => ({
     },
     {
       id: 'go-allandale-waterfront-arrivals',
-      name: 'Allandale Waterfront GO Arrivals',
-      description: 'Connect after train arrival',
+      name: 'Allandale Waterfront GO • From Train',
+      description: 'Bus departs after the train arrives',
       icon: 'train',
       getData: () => ({
-        name: 'Allandale Waterfront GO Arrivals',
+        name: 'Allandale Waterfront GO • From Train',
         location: 'Allandale Waterfront GO',
         stopCode: '9003',
         icon: 'train',
@@ -147,7 +147,7 @@ vi.mock('../utils/connections/connectionOptimizer', () => ({
 
 vi.mock('../hooks/useAddTrip', () => ({
   useAddTrip: () => ({
-    modalContext: null,
+    modalContext: null as any,
     openModal: vi.fn(),
     closeModal: vi.fn(),
     handleConfirm: vi.fn(),
@@ -190,24 +190,24 @@ vi.mock('../components/RouteSummary', () => ({
 }));
 
 vi.mock('../components/AuditLogPanel', () => ({
-  useAuditLog: () => ({ entries: [], logAction: vi.fn() }),
-  AuditLogPanel: () => null,
+  useAuditLog: () => ({ entries: [] as any[], logAction: vi.fn((): void => undefined) }),
+  AuditLogPanel: (): null => null,
 }));
 
 vi.mock('../components/modals/AddTripModal', () => ({
-  AddTripModal: () => null,
+  AddTripModal: (): null => null,
 }));
 
 vi.mock('../components/NewSchedule/TripContextMenu', () => ({
-  TripContextMenu: () => null,
+  TripContextMenu: (): null => null,
 }));
 
 vi.mock('../components/ui/CascadeModeSelector', () => ({
-  CascadeModeSelector: () => null,
+  CascadeModeSelector: (): null => null,
 }));
 
 vi.mock('../components/NewSchedule/connections/ImportRouteModal', () => ({
-  ImportRouteModal: () => null,
+  ImportRouteModal: (): null => null,
 }));
 
 import { ScheduleEditor } from '../components/ScheduleEditor';

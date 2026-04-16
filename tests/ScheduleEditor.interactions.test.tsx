@@ -6,6 +6,7 @@ import type { MasterRouteTable } from '../utils/parsers/masterScheduleParser';
 
 const {
   getConnectionLibraryMock,
+  getRouteConnectionConfigMock,
   reassignBlocksForTablesMock,
   showSuccessToastMock,
   onSaveVersionMock,
@@ -14,6 +15,7 @@ const {
   roundTripAdjustMock,
 } = vi.hoisted(() => ({
   getConnectionLibraryMock: vi.fn().mockResolvedValue(null),
+  getRouteConnectionConfigMock: vi.fn().mockResolvedValue(null),
   reassignBlocksForTablesMock: vi.fn(),
   showSuccessToastMock: vi.fn(),
   onSaveVersionMock: vi.fn(),
@@ -45,7 +47,8 @@ vi.mock('../utils/parsers/masterScheduleParser', async () => {
 });
 
 vi.mock('../utils/connections/connectionLibraryService', () => ({
-  getConnectionLibrary: getConnectionLibraryMock
+  getConnectionLibrary: getConnectionLibraryMock,
+  getRouteConnectionConfig: getRouteConnectionConfigMock
 }));
 
 vi.mock('../utils/blocks/blockAssignmentCore', async () => {

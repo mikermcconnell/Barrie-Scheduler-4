@@ -1440,36 +1440,14 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
             const groupedData = buildSegmentsMapFromParsedData(sortedParsedData);
             setSegmentsMap(groupedData);
 
-            const currentRouteIdentity = currentConfiguredRouteIdentity;
-            const hasFreshCanonicalData = !!currentRouteIdentity && canonicalRouteIdentity === currentRouteIdentity;
-            let generationCanonicalStops = activeApprovedPlanning?.canonicalDirectionStops
-                ?? (hasFreshCanonicalData ? activeCanonicalDirectionStops : undefined);
+            const generationCanonicalStops = activeApprovedPlanning?.canonicalDirectionStops;
 
-            if (!generationCanonicalStops && team?.id && config.routeNumber?.trim() && currentRouteIdentity) {
-                try {
-                    const masterResult = await getMasterSchedule(team.id, currentRouteIdentity);
-                    if (masterResult) {
-                        generationCanonicalStops = getUsableCanonicalDirectionStops(config.routeNumber.trim(), {
-                            North: masterResult.content.northTable.stops || [],
-                            South: masterResult.content.southTable.stops || [],
-                        });
-                        setCanonicalDirectionStops(generationCanonicalStops);
-                        setCanonicalSegmentColumns(
-                            generationCanonicalStops
-                                ? buildCanonicalSegmentColumnsFromMasterStops(
-                                    config.routeNumber.trim(),
-                                    generationCanonicalStops.North,
-                                    generationCanonicalStops.South
-                                )
-                                : undefined
-                        );
-                    } else {
-                        generationCanonicalStops = undefined;
-                    }
-                    setCanonicalRouteIdentity(currentRouteIdentity);
-                } catch (error) {
-                    console.error('Failed to refresh canonical master data before generation:', error);
-                }
+            if (!generationCanonicalStops) {
+                toast.error(
+                    'Runtime Model Missing',
+                    'The approved Step 2 planning stop chain is unavailable. Return to Step 2, rebuild the runtime review, and try again.'
+                );
+                return;
             }
 
             if (!approvedDirectionBandSummary) {

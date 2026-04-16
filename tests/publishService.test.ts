@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { MasterRouteTable } from '../utils/parsers/masterScheduleParser';
 
 const {
   docMock,
@@ -34,7 +35,7 @@ vi.mock('../utils/masterScheduleTypes', () => ({
 
 import { publishDraft, publishSystemDraft } from '../utils/services/publishService';
 
-const makeTable = (routeName: string) => ({
+const makeTable = (routeName: string): MasterRouteTable => ({
   routeName,
   stops: ['Stop 1', 'Stop 2'],
   stopIds: { 'Stop 1': '1', 'Stop 2': '2' },

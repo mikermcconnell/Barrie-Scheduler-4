@@ -17,14 +17,38 @@ export function getDefaultConnectionTypeForTarget(
     return target.defaultEventType === 'arrival' ? 'feed_arriving' : 'meet_departing';
 }
 
+export function getBusConnectionAnchorForConnectionType(
+    connectionType: ConnectionType
+): 'arrival' | 'departure' {
+    return connectionType === 'meet_departing' ? 'arrival' : 'departure';
+}
+
+export function getBusConnectionAnchorLabel(
+    connectionType: ConnectionType
+): 'Bus arrival' | 'Bus departure' {
+    return getBusConnectionAnchorForConnectionType(connectionType) === 'arrival'
+        ? 'Bus arrival'
+        : 'Bus departure';
+}
+
+export function getConnectionIntentLabel(
+    connectionType: ConnectionType,
+    targetLabel = 'this service'
+): string {
+    return connectionType === 'meet_departing'
+        ? `To ${targetLabel}`
+        : `From ${targetLabel}`;
+}
+
 export function getConnectionRuleSummary(
     connectionType: ConnectionType,
-    bufferMinutes: number
+    bufferMinutes: number,
+    targetEventType: 'departure' | 'arrival' = 'arrival'
 ): string {
     if (connectionType === 'meet_departing') {
-        return `Bus arrives ${bufferMinutes} min before departure`;
+        return `${getBusConnectionAnchorLabel(connectionType)} ${bufferMinutes} min before departure`;
     }
-    return `Bus leaves ${bufferMinutes} min after arrival`;
+    return `${getBusConnectionAnchorLabel(connectionType)} ${bufferMinutes} min after ${targetEventType === 'departure' ? 'departure' : 'arrival'}`;
 }
 
 export function suggestRouteConnectionStopCode(
@@ -102,7 +126,7 @@ export function buildRouteAttachmentPreview(
     return {
         canAttach: !!stopCode,
         connectionType,
-        ruleSummary: getConnectionRuleSummary(connectionType, bufferMinutes),
+        ruleSummary: getConnectionRuleSummary(connectionType, bufferMinutes, target.defaultEventType || 'departure'),
         stopCode,
         stopName,
         activeEventCount: activeTimes.length,

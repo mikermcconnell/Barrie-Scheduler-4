@@ -334,7 +334,7 @@ describe('AddTargetModal', () => {
         dayType: 'Weekday'
       },
       initialData: {
-        name: 'GO Departures',
+        name: 'GO • To Train',
         location: 'Allandale Waterfront GO Station',
         stopCode: '1234',
         icon: 'train',
@@ -353,9 +353,10 @@ describe('AddTargetModal', () => {
     await new Promise(resolve => setTimeout(resolve, 0));
 
     expect(container.textContent).toContain('Route preview for Route 400');
-    expect(container.textContent).toContain('GO Departures');
+    expect(container.textContent).toContain('GO • To Train');
     expect(container.textContent).toContain('Allandale Waterfront GO Station (1234)');
-    expect(container.textContent).toContain('Bus arrives 5 min before departure');
+    expect(container.textContent).toContain('To this service');
+    expect(container.textContent).toContain('Bus arrival 5 min before departure');
     expect(container.textContent).toContain('4 active events on Weekday');
     expect(container.textContent).toContain('7:30a DEP');
     expect(container.textContent).toContain('+1 more');
@@ -377,6 +378,7 @@ describe('AddTargetModal', () => {
     expect(container.textContent).toContain('Step 1 · Route connection setup');
     expect(container.textContent).toContain('Step 2 · Connection time(s) *');
     expect(container.textContent).toContain('Step 3 · Connection name *');
+    expect(container.textContent).toContain('Connection direction *');
     expect(findInputByPlaceholder(container, 'e.g., GO Train to Toronto')).toBeUndefined();
 
     const routeStopSelect = Array.from(container.querySelectorAll('select')).find(select =>
@@ -390,7 +392,7 @@ describe('AddTargetModal', () => {
     const bufferInput = Array.from(container.querySelectorAll('input')).find(input =>
       (input as HTMLInputElement).type === 'number'
     ) as HTMLInputElement | undefined;
-    const leaveAfterButton = findButtonByText(container, 'Leave after time');
+    const leaveAfterButton = findButtonByText(container, 'From this service');
     const addTimeButton = container.querySelector('button[title="Add times"]');
 
     expect(routeStopSelect).toBeDefined();

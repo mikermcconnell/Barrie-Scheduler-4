@@ -12,8 +12,8 @@ describe('step2ParsedDataFingerprint', () => {
                 sampleCountMode: 'days',
                 troubleshootingPatternStatus: 'anchored',
                 segments: [
-                    { segmentName: ' A to B ', timeBuckets: {} },
-                    { segmentName: ' B to C ', timeBuckets: {} },
+                    { segmentName: ' A to B ', timeBuckets: { '06:00 - 06:29': { p50: 5, p80: 6, n: 2 } } },
+                    { segmentName: ' B to C ', timeBuckets: { '06:30 - 06:59': { p50: 7, p80: 8, n: 2 } } },
                 ],
             },
         ] as any);
@@ -21,7 +21,8 @@ describe('step2ParsedDataFingerprint', () => {
         expect(fingerprint).toContain('step2-parsed-data:v1:');
         expect(fingerprint).toContain('"detectedRouteNumber":"7"');
         expect(fingerprint).toContain('"detectedDirection":"North"');
-        expect(fingerprint).toContain('"segments":["A to B","B to C"]');
+        expect(fingerprint).toContain('"segmentName":"A to B"');
+        expect(fingerprint).toContain('"bucket":"06:00 - 06:29"');
         expect(fingerprint).not.toContain('north.csv');
     });
 
@@ -33,8 +34,8 @@ describe('step2ParsedDataFingerprint', () => {
             sampleCountMode: 'days',
             troubleshootingPatternStatus: 'anchored',
             segments: [
-                { segmentName: 'A to B', timeBuckets: {} },
-                { segmentName: 'B to C', timeBuckets: {} },
+                { segmentName: 'A to B', timeBuckets: { '06:00 - 06:29': { p50: 5, p80: 6, n: 2 } } },
+                { segmentName: 'B to C', timeBuckets: { '06:30 - 06:59': { p50: 7, p80: 8, n: 2 } } },
             ],
         };
 
@@ -53,5 +54,40 @@ describe('step2ParsedDataFingerprint', () => {
         ] as any);
 
         expect(firstFingerprint).toBe(renamedFingerprint);
+    });
+
+    it('changes when the parsed runtime values change materially', () => {
+        const baseRuntime = {
+            allTimeBuckets: ['06:00 - 06:29'],
+            detectedRouteNumber: '7',
+            detectedDirection: 'North',
+            sampleCountMode: 'days',
+            troubleshootingPatternStatus: 'anchored',
+            segments: [
+                {
+                    segmentName: 'A to B',
+                    timeBuckets: {
+                        '06:00 - 06:29': { p50: 5, p80: 6, n: 2 },
+                    },
+                },
+            ],
+        };
+
+        const firstFingerprint = buildStep2ParsedDataFingerprint([baseRuntime] as any);
+        const changedFingerprint = buildStep2ParsedDataFingerprint([
+            {
+                ...baseRuntime,
+                segments: [
+                    {
+                        segmentName: 'A to B',
+                        timeBuckets: {
+                            '06:00 - 06:29': { p50: 50, p80: 60, n: 8 },
+                        },
+                    },
+                ],
+            },
+        ] as any);
+
+        expect(firstFingerprint).not.toBe(changedFingerprint);
     });
 });

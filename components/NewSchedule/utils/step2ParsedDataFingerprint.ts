@@ -4,10 +4,15 @@ import type { OrderedSegmentColumn } from './wizardState';
 
 const normalizeText = (value: string): string => value.trim();
 
-const normalizeSegmentNames = (segments: RuntimeData['segments']): string[] => (
-    segments
-        .map(segment => normalizeText(segment.segmentName))
-        .filter(Boolean)
+const normalizeSegmentTimeBuckets = (timeBuckets: SegmentRawData['timeBuckets']) => (
+    Object.entries(timeBuckets || {})
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([bucket, values]) => ({
+            bucket: normalizeText(bucket),
+            p50: values?.p50 ?? null,
+            p80: values?.p80 ?? null,
+            n: values?.n ?? null,
+        }))
 );
 
 const normalizeTimeBand = (band: TimeBand) => ({
@@ -78,7 +83,12 @@ export const buildStep2ParsedDataFingerprint = (
             troubleshootingPatternStatus: runtime.troubleshootingPatternStatus || null,
             sampleCountMode: runtime.sampleCountMode || null,
             allTimeBuckets: runtime.allTimeBuckets?.map(normalizeText) || [],
-            segments: normalizeSegmentNames(runtime.segments || []),
+            segments: (runtime.segments || []).map(segment => ({
+                segmentName: normalizeText(segment.segmentName),
+                fromRouteStopIndex: segment.fromRouteStopIndex ?? null,
+                toRouteStopIndex: segment.toRouteStopIndex ?? null,
+                timeBuckets: normalizeSegmentTimeBuckets(segment.timeBuckets),
+            })),
         })),
         analysis: scope?.analysis?.map(normalizeAnalysisBucket) || [],
         bands: scope?.bands?.map(normalizeTimeBand) || [],

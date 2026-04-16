@@ -45,7 +45,7 @@ import {
     matchesSearch
 } from '../NewSchedule/QuickActionsBar';
 import { StackedTimeCell, StackedTimeInput } from '../ui/StackedTimeInput';
-import type { ConnectionLibrary } from '../../utils/connections/connectionTypes';
+import type { ConnectionLibrary, RouteConnectionConfig } from '../../utils/connections/connectionTypes';
 import type { DayType } from '../../utils/parsers/masterScheduleParser';
 import { getConnectionsForStop } from '../../utils/connections/connectionUtils';
 import { ConnectionIndicator } from './ConnectionIndicator';
@@ -114,6 +114,12 @@ const abbreviateStopName = (name: string): string => {
         out = out.replace(pattern, replacement);
     }
     return out.replace(/\s+/g, ' ').trim();
+};
+
+const getConnectionPopoverAlign = (index: number, totalStops: number): 'left' | 'center' | 'right' => {
+    if (index <= 0) return 'left';
+    if (index >= totalStops - 2) return 'right';
+    return 'center';
 };
 
 /**
@@ -357,6 +363,7 @@ export interface RoundTripTableViewProps {
     targetHeadway?: number;
     readOnly?: boolean;
     connectionLibrary?: ConnectionLibrary | null;
+    routeConnectionConfig?: RouteConnectionConfig | null;
     dayType?: DayType;
     masterBaseline?: MasterRouteTable[] | null;
     highlightedTripId?: string | null;
@@ -422,6 +429,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
     targetHeadway,
     readOnly = false,
     connectionLibrary,
+    routeConnectionConfig,
     dayType = 'Weekday',
     masterBaseline,
     highlightedTripId
@@ -1344,14 +1352,14 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                         const isMergedTerminusStop = isLastStop && hasMergedTerminus;
                                         const hasRecovery = i > 0 && northStopsWithRecovery.has(stop);
                                         const showArrRCols = hasRecovery || isMergedTerminusStop;
-                                        if (showArrRCols) cols.push(<col key={`n-arr-${i}`} className="w-14" />);
+                                        if (showArrRCols) cols.push(<col key={`n-arr-${i}`} style={{ width: '64px' }} />);
                                         if (showArrRCols) cols.push(<col key={`n-r-${i}`} className="w-8" />);
                                         if (!isMergedTerminusStop) cols.push(<col key={`n-dep-${i}`} style={{ width: '80px' }} />);
                                     });
 
                                     southDisplayStops.forEach((stop, i) => {
                                         const hasRecovery = i > 0 && southStopsWithRecovery.has(stop);
-                                        if (hasRecovery) cols.push(<col key={`s-arr-${i}`} className="w-14" />);
+                                        if (hasRecovery) cols.push(<col key={`s-arr-${i}`} style={{ width: '64px' }} />);
                                         if (hasRecovery) cols.push(<col key={`s-r-${i}`} className="w-8" />);
                                         cols.push(<col key={`s-dep-${i}`} style={{ width: '80px' }} />);
                                     });
@@ -1776,10 +1784,11 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                         departure: depTimeMinutes
                                                                     },
                                                                     connectionLibrary,
-                                                                    dayType
+                                                                    dayType,
+                                                                    routeConnectionConfig?.connections
                                                                 )
                                                                 : [];
-                                                            return stopConnections.filter(connection => connection.eventType === 'departure');
+                                                            return stopConnections.filter(connection => connection.busAnchor === 'arrival');
                                                         })()
                                                         : [];
 
@@ -1831,7 +1840,10 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                         })}
                                                                     />
                                                                     {northArrivalConnections.length > 0 && (
-                                                                        <ConnectionIndicator connections={northArrivalConnections} />
+                                                                        <ConnectionIndicator
+                                                                            connections={northArrivalConnections}
+                                                                            popoverAlign={getConnectionPopoverAlign(i, northDisplayStops.length)}
+                                                                        />
                                                                     )}
                                                                     {showDeltas && (() => {
                                                                         const originalArrival = getArrivalDisplayTime(originalNorthTrip, stop);
@@ -1910,16 +1922,22 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                             const connections = connectionLibrary && stopCode && (arrivalTimeMinutes !== null || depTimeMinutes !== null)
                                                                 ? getConnectionsForStop(
                                                                     stopCode,
-                                                                    {
-                                                                        arrival: arrivalTimeMinutes,
-                                                                        departure: depTimeMinutes
-                                                                    },
+                                                                    showArrRCols
+                                                                        ? {
+                                                                            arrival: arrivalTimeMinutes,
+                                                                            departure: depTimeMinutes
+                                                                        }
+                                                                        : {
+                                                                            arrival: null,
+                                                                            departure: depTimeMinutes
+                                                                        },
                                                                     connectionLibrary,
-                                                                    dayType
+                                                                    dayType,
+                                                                    routeConnectionConfig?.connections
                                                                 )
                                                                 : [];
                                                             const departureConnections = showArrRCols
-                                                                ? connections.filter(connection => connection.eventType === 'arrival')
+                                                                ? connections.filter(connection => connection.busAnchor === 'departure')
                                                                 : connections;
 
                                                             return (
@@ -2002,7 +2020,10 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                         </button>
                                                                     )}
                                                                     {departureConnections.length > 0 && (
-                                                                        <ConnectionIndicator connections={departureConnections} />
+                                                                        <ConnectionIndicator
+                                                                            connections={departureConnections}
+                                                                            popoverAlign={getConnectionPopoverAlign(i, northDisplayStops.length)}
+                                                                        />
                                                                     )}
                                                                     {!insightBadgeShown && rowInsights.length > 0 && (() => {
                                                                         insightBadgeShown = true;
@@ -2069,10 +2090,11 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                         departure: southDepTimeMinutes
                                                                     },
                                                                     connectionLibrary,
-                                                                    dayType
+                                                                    dayType,
+                                                                    routeConnectionConfig?.connections
                                                                 )
                                                                 : [];
-                                                            return stopConnections.filter(connection => connection.eventType === 'departure');
+                                                            return stopConnections.filter(connection => connection.busAnchor === 'arrival');
                                                         })()
                                                         : [];
 
@@ -2134,7 +2156,10 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                         })}
                                                                     />
                                                                     {southArrivalConnections.length > 0 && (
-                                                                        <ConnectionIndicator connections={southArrivalConnections} />
+                                                                        <ConnectionIndicator
+                                                                            connections={southArrivalConnections}
+                                                                            popoverAlign={getConnectionPopoverAlign(i, southDisplayStops.length)}
+                                                                        />
                                                                     )}
                                                                     {showDeltas && (() => {
                                                                         const originalArrival = getArrivalDisplayTime(originalSouthTrip, stop);
@@ -2214,16 +2239,22 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                             const southConnections = connectionLibrary && southStopCode && (southArrivalTimeMinutes !== null || southDepTimeMinutes !== null)
                                                                 ? getConnectionsForStop(
                                                                     southStopCode,
-                                                                    {
-                                                                        arrival: southArrivalTimeMinutes,
-                                                                        departure: southDepTimeMinutes
-                                                                    },
+                                                                    hasRecovery
+                                                                        ? {
+                                                                            arrival: southArrivalTimeMinutes,
+                                                                            departure: southDepTimeMinutes
+                                                                        }
+                                                                        : {
+                                                                            arrival: null,
+                                                                            departure: southDepTimeMinutes
+                                                                        },
                                                                     connectionLibrary,
-                                                                    dayType
+                                                                    dayType,
+                                                                    routeConnectionConfig?.connections
                                                                 )
                                                                 : [];
                                                             const departureConnections = hasRecovery
-                                                                ? southConnections.filter(connection => connection.eventType === 'arrival')
+                                                                ? southConnections.filter(connection => connection.busAnchor === 'departure')
                                                                 : southConnections;
 
                                                             return (
@@ -2282,7 +2313,10 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                     </button>
                                                                 )}
                                                                 {departureConnections.length > 0 && (
-                                                                    <ConnectionIndicator connections={departureConnections} />
+                                                                    <ConnectionIndicator
+                                                                        connections={departureConnections}
+                                                                        popoverAlign={getConnectionPopoverAlign(i, southDisplayStops.length)}
+                                                                    />
                                                                 )}
                                                                 {(() => {
                                                                     const isLastSouthStop = i === southDisplayStops.length - 1;

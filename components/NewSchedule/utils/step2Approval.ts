@@ -31,6 +31,13 @@ const cloneSnapshotValue = <T>(value: T): T => {
     return JSON.parse(JSON.stringify(value)) as T;
 };
 
+const hasUsableCanonicalDirectionStops = (
+    stops: Step2ReviewResult['planning']['canonicalDirectionStops'] | undefined
+): boolean => !!stops && (
+    (stops.North?.length ?? 0) > 0
+    || (stops.South?.length ?? 0) > 0
+);
+
 export const canCreateStep2Approval = (input: Step2ApprovalCreationInput): boolean => {
     const { reviewResult } = input;
 
@@ -38,6 +45,9 @@ export const canCreateStep2Approval = (input: Step2ApprovalCreationInput): boole
     if (!reviewResult.approvalEligible) return false;
     if (reviewResult.health.status === 'blocked') return false;
     if (!reviewResult.inputFingerprint.trim()) return false;
+    if (reviewResult.planning.usableBucketCount <= 0) return false;
+    if (reviewResult.planning.usableBandCount <= 0) return false;
+    if (!hasUsableCanonicalDirectionStops(reviewResult.planning.canonicalDirectionStops)) return false;
 
     return true;
 };
@@ -61,6 +71,7 @@ export const createStep2ApprovedRuntimeContract = (
             : null,
         runtimeLogicVersion: sourceSnapshot.runtimeLogicVersion,
         importedAt: sourceSnapshot.importedAt?.trim(),
+        cleanHistoryStartDate: sourceSnapshot.cleanHistoryStartDate?.trim(),
         stopOrderDecision: sourceSnapshot.stopOrderDecision,
         stopOrderConfidence: sourceSnapshot.stopOrderConfidence,
         stopOrderSource: sourceSnapshot.stopOrderSource,

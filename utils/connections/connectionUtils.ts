@@ -11,13 +11,16 @@ import type {
     ConnectionTime,
     ConnectionQuality,
     ConnectionQualityWindowSettings,
-    ConnectionEventType
+    ConnectionEventType,
+    ConnectionType,
+    RouteConnection
 } from './connectionTypes';
 import type { DayType } from '../parsers/masterScheduleParser';
 import {
     formatConnectionTime,
     DEFAULT_CONNECTION_QUALITY_WINDOW_SETTINGS
 } from './connectionTypes';
+import { getRouteVariant, parseRouteInfo } from '../config/routeDirectionConfig';
 
 // Only show connection indicators when the timing is realistically connectable:
 // - At most 20 minutes early (bus arrives too early beyond this is not actionable)
@@ -34,16 +37,81 @@ export interface StopConnectionTripTimes {
  * A matched connection for display in the schedule table.
  */
 export interface ConnectionMatch {
+    connectionId?: string;      // RouteConnection.id when attached to a specific route rule
     targetId: string;           // Connection target ID
     targetName: string;         // "Georgian College Bells"
+    targetShortLabel?: string;  // "7A", "2B", "GO"
     targetTime: number;         // 480 (8:00am bell) - minutes from midnight
     targetTimeLabel: string;    // "8:00a Bell" or "8:00a"
     tripTime: number;           // 475 (7:55am arrival) - minutes from midnight
     eventType: ConnectionEventType; // departure | arrival
+    busAnchor: 'arrival' | 'departure'; // Which bus-side event this connection should attach to in the UI
     gapMinutes: number;         // Positive = preferred direction margin (before departure / after arrival)
     meetsConnection: boolean;   // true when gapMinutes >= 0
     quality: ConnectionQuality; // excellent | good | bad
     icon: 'train' | 'clock' | 'bus';
+}
+
+function normalizeRouteToken(value?: string): string | undefined {
+    const token = value?.trim().toUpperCase().match(/\d+[A-Z]?/)?.[0];
+    return token || undefined;
+}
+
+function getDirectionSuffix(direction?: ConnectionTarget['direction']): 'N' | 'S' | '' {
+    if (direction === 'North') return 'N';
+    if (direction === 'South') return 'S';
+    return '';
+}
+
+function getRouteShortLabel(target: ConnectionTarget): string | undefined {
+    const routeIdentityLabel = target.routeIdentity?.replace(/-(Weekday|Saturday|Sunday)$/i, '').trim();
+    const parsed = routeIdentityLabel ? parseRouteInfo(routeIdentityLabel) : null;
+
+    if (parsed) {
+        if (parsed.suffixIsDirection && target.direction) {
+            return normalizeRouteToken(getRouteVariant(parsed.baseRoute, target.direction))
+                || normalizeRouteToken(parsed.variant);
+        }
+
+        const baseToken = normalizeRouteToken(parsed.variant);
+        if (!baseToken) return undefined;
+
+        if (/[A-Z]$/.test(baseToken)) {
+            return baseToken;
+        }
+
+        const directionSuffix = getDirectionSuffix(target.direction);
+        return directionSuffix ? `${baseToken}${directionSuffix}` : baseToken;
+    }
+
+    const routeMatch = target.name.match(/route\s+([A-Za-z0-9]+)/i);
+    const matchedToken = normalizeRouteToken(routeMatch?.[1]);
+    if (!matchedToken) return undefined;
+
+    if (/[A-Z]$/.test(matchedToken)) {
+        return matchedToken;
+    }
+
+    const directionSuffix = getDirectionSuffix(target.direction);
+    return directionSuffix ? `${matchedToken}${directionSuffix}` : matchedToken;
+}
+
+function getTargetShortLabel(target: ConnectionTarget): string | undefined {
+    if (target.icon === 'train') return 'GO';
+    if (target.icon === 'bus') return getRouteShortLabel(target);
+    return undefined;
+}
+
+export function getBusAnchorForConnectionEvent(
+    eventType: ConnectionEventType
+): 'arrival' | 'departure' {
+    return eventType === 'arrival' ? 'departure' : 'arrival';
+}
+
+function getBusAnchorForConnectionType(
+    connectionType: ConnectionType
+): 'arrival' | 'departure' {
+    return connectionType === 'meet_departing' ? 'arrival' : 'departure';
 }
 
 /**
@@ -99,6 +167,19 @@ function getTripTimeForEvent(
     return normalizedTripTime.arrival ?? normalizedTripTime.departure ?? null;
 }
 
+function getTripTimeForConnectionType(
+    connectionType: ConnectionType,
+    tripTime: number | StopConnectionTripTimes
+): number | null {
+    const normalizedTripTime = normalizeTripTimes(tripTime);
+
+    if (connectionType === 'meet_departing') {
+        return normalizedTripTime.arrival ?? null;
+    }
+
+    return normalizedTripTime.departure ?? null;
+}
+
 function getGapForEvent(
     connectionTime: ConnectionTime,
     target: ConnectionTarget,
@@ -116,10 +197,26 @@ function getGapForEvent(
     return connectionTime.time - eventTripTime;
 }
 
+function getGapForConnectionType(
+    connectionType: ConnectionType,
+    connectionTime: ConnectionTime,
+    tripTime: number | StopConnectionTripTimes
+): number | null {
+    const eventTripTime = getTripTimeForConnectionType(connectionType, tripTime);
+    if (eventTripTime === null) return null;
+
+    if (connectionType === 'meet_departing') {
+        return connectionTime.time - eventTripTime;
+    }
+
+    return eventTripTime - connectionTime.time;
+}
+
 function findPreferredConnectionTime(
     target: ConnectionTarget,
     tripTime: number | StopConnectionTripTimes,
-    dayType: DayType
+    dayType: DayType,
+    connectionType?: ConnectionType
 ): ConnectionTime | null {
     if (!target.times || target.times.length === 0) return null;
 
@@ -129,7 +226,9 @@ function findPreferredConnectionTime(
     const candidateTimes = applicableTimes
         .map(time => ({
             time,
-            gap: getGapForEvent(time, target, tripTime)
+            gap: connectionType
+                ? getGapForConnectionType(connectionType, time, tripTime)
+                : getGapForEvent(time, target, tripTime)
         }))
         .filter((candidate): candidate is { time: ConnectionTime; gap: number } => candidate.gap !== null);
 
@@ -149,6 +248,21 @@ function findPreferredConnectionTime(
         (a, b) => Math.abs(a.gap) - Math.abs(b.gap)
     );
     return closest.length > 0 ? closest[0].time : null;
+}
+
+function getApplicableRouteConnections(
+    stopCode: string,
+    targetId: string,
+    routeConnections?: RouteConnection[] | null
+): Array<RouteConnection | undefined> {
+    if (!routeConnections) return [undefined];
+
+    const normalizedStopCode = stopCode.trim();
+    return routeConnections.filter(connection => (
+        connection.enabled
+        && connection.targetId === targetId
+        && connection.stopCode?.trim() === normalizedStopCode
+    ));
 }
 
 function getQualitySettings(connectionLibrary: ConnectionLibrary): ConnectionQualityWindowSettings {
@@ -187,7 +301,8 @@ export function getConnectionsForStop(
     stopCode: string,
     tripTime: number | StopConnectionTripTimes | null,
     connectionLibrary: ConnectionLibrary | null,
-    dayType: DayType
+    dayType: DayType,
+    routeConnections?: RouteConnection[] | null
 ): ConnectionMatch[] {
     if (!stopCode || tripTime === null || !connectionLibrary) return [];
 
@@ -196,45 +311,61 @@ export function getConnectionsForStop(
     const matches: ConnectionMatch[] = [];
 
     for (const target of matchingTargets) {
-        const connTime = findPreferredConnectionTime(target, tripTime, dayType);
+        const applicableRouteConnections = getApplicableRouteConnections(stopCode, target.id, routeConnections);
+        if (applicableRouteConnections.length === 0) continue;
 
-        if (!connTime) continue;
+        for (const routeConnection of applicableRouteConnections) {
+            const connTime = findPreferredConnectionTime(
+                target,
+                tripTime,
+                dayType,
+                routeConnection?.connectionType
+            );
 
-        const eventType = getEventType(connTime, target);
-        // Positive means preferred direction margin:
-        // - departure: before departure
-        // - arrival: after arrival
-        const gapMinutes = getGapForEvent(connTime, target, tripTime);
-        const eventTripTime = getTripTimeForEvent(eventType, tripTime);
+            if (!connTime) continue;
 
-        if (gapMinutes === null || eventTripTime === null) {
-            continue;
+            const eventType = getEventType(connTime, target);
+            const gapMinutes = routeConnection
+                ? getGapForConnectionType(routeConnection.connectionType, connTime, tripTime)
+                : getGapForEvent(connTime, target, tripTime);
+            const eventTripTime = routeConnection
+                ? getTripTimeForConnectionType(routeConnection.connectionType, tripTime)
+                : getTripTimeForEvent(eventType, tripTime);
+
+            if (gapMinutes === null || eventTripTime === null) {
+                continue;
+            }
+
+            // Hide non-actionable matches outside the connection window.
+            if (gapMinutes > MAX_EARLY_MINUTES || gapMinutes < -MAX_LATE_MINUTES) {
+                continue;
+            }
+
+            // meetsConnection if we remain in the preferred direction
+            const meetsConnection = gapMinutes >= 0;
+            const qualitySettings = target.qualityWindowSettings || libraryQualitySettings;
+            const quality = classifyConnectionQuality(gapMinutes, qualitySettings);
+
+            matches.push({
+                connectionId: routeConnection?.id,
+                targetId: target.id,
+                targetName: target.name,
+                targetShortLabel: getTargetShortLabel(target),
+                targetTime: connTime.time,
+                targetTimeLabel: connTime.label
+                    ? `${formatConnectionTime(connTime.time)} ${connTime.label}`
+                    : formatConnectionTime(connTime.time),
+                tripTime: eventTripTime,
+                eventType,
+                busAnchor: routeConnection
+                    ? getBusAnchorForConnectionType(routeConnection.connectionType)
+                    : getBusAnchorForConnectionEvent(eventType),
+                gapMinutes,
+                meetsConnection,
+                quality,
+                icon: target.icon || 'clock'
+            });
         }
-
-        // Hide non-actionable matches outside the connection window.
-        if (gapMinutes > MAX_EARLY_MINUTES || gapMinutes < -MAX_LATE_MINUTES) {
-            continue;
-        }
-
-        // meetsConnection if we arrive before or at the connection time
-        const meetsConnection = gapMinutes >= 0;
-        const qualitySettings = target.qualityWindowSettings || libraryQualitySettings;
-        const quality = classifyConnectionQuality(gapMinutes, qualitySettings);
-
-        matches.push({
-            targetId: target.id,
-            targetName: target.name,
-            targetTime: connTime.time,
-            targetTimeLabel: connTime.label
-                ? `${formatConnectionTime(connTime.time)} ${connTime.label}`
-                : formatConnectionTime(connTime.time),
-            tripTime: eventTripTime,
-            eventType,
-            gapMinutes,
-            meetsConnection,
-            quality,
-            icon: target.icon || 'clock'
-        });
     }
 
     // Sort by closest gap first (smallest absolute value)

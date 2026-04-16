@@ -94,7 +94,9 @@ describe('shared optimize core', () => {
       extendedPipeline: false,
     });
 
-    const config = getGenerativeModelMock.mock.calls[0]?.[0];
+    const firstCall = (getGenerativeModelMock.mock.calls as unknown as Array<[any]>)[0];
+    expect(firstCall).toBeDefined();
+    const [config] = firstCall!;
     expect(config.systemInstruction).toContain('Breaks: 60min (4 slots) if actual drive time > 7.5h.');
   });
 });

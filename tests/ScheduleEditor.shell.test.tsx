@@ -6,6 +6,7 @@ import type { MasterRouteTable } from '../utils/parsers/masterScheduleParser';
 
 const {
   getConnectionLibraryMock,
+  getRouteConnectionConfigMock,
   writeBufferMock,
   linkClickMock,
   createObjectUrlMock,
@@ -13,6 +14,7 @@ const {
   redoMock,
 } = vi.hoisted(() => ({
   getConnectionLibraryMock: vi.fn().mockResolvedValue(null),
+  getRouteConnectionConfigMock: vi.fn().mockResolvedValue(null),
   writeBufferMock: vi.fn().mockResolvedValue(new ArrayBuffer(8)),
   linkClickMock: vi.fn(),
   createObjectUrlMock: vi.fn(() => 'blob:mock-export'),
@@ -113,11 +115,12 @@ vi.mock('../utils/parsers/masterScheduleParser', async () => {
 
 vi.mock('../utils/connections/connectionLibraryService', () => ({
   getConnectionLibrary: getConnectionLibraryMock,
+  getRouteConnectionConfig: getRouteConnectionConfigMock,
 }));
 
 vi.mock('../hooks/useAddTrip', () => ({
   useAddTrip: () => ({
-    modalContext: null,
+    modalContext: null as any,
     openModal: vi.fn(),
     closeModal: vi.fn(),
     handleConfirm: vi.fn(),
@@ -178,20 +181,20 @@ vi.mock('../components/RouteSummary', () => ({
 }));
 
 vi.mock('../components/AuditLogPanel', () => ({
-  useAuditLog: () => ({ entries: [], logAction: vi.fn() }),
-  AuditLogPanel: () => null,
+  useAuditLog: () => ({ entries: [] as any[], logAction: vi.fn((): void => undefined) }),
+  AuditLogPanel: (): null => null,
 }));
 
 vi.mock('../components/modals/AddTripModal', () => ({
-  AddTripModal: () => null,
+  AddTripModal: (): null => null,
 }));
 
 vi.mock('../components/NewSchedule/TripContextMenu', () => ({
-  TripContextMenu: () => null,
+  TripContextMenu: (): null => null,
 }));
 
 vi.mock('../components/ui/CascadeModeSelector', () => ({
-  CascadeModeSelector: () => null,
+  CascadeModeSelector: (): null => null,
 }));
 
 import { ScheduleEditor } from '../components/ScheduleEditor';
@@ -277,7 +280,7 @@ describe('ScheduleEditor shell behavior', () => {
     vi.restoreAllMocks();
   });
 
-  const renderEditor = () => {
+  const renderEditor = (draftName?: string) => {
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -288,6 +291,7 @@ describe('ScheduleEditor shell behavior', () => {
           schedules={schedules}
           teamId="team-1"
           userId="user-1"
+          draftName={draftName}
           onSchedulesChange={vi.fn()}
           canUndo
           canRedo
@@ -378,14 +382,24 @@ describe('ScheduleEditor shell behavior', () => {
     expect(header?.getAttribute('data-unsaved')).toBe('false');
   });
 
-  it('runs the export workflow and clicks a generated download link', async () => {
-    renderEditor();
+  it('runs the export workflow and names the file after the draft', async () => {
+    renderEditor('Route 10 Weekday Draft');
     await flushPromises();
 
     const originalCreateElement = document.createElement.bind(document);
+    let downloadFileName = '';
     const createElementSpy = vi.spyOn(document, 'createElement').mockImplementation((tagName: string) => {
       const element = originalCreateElement(tagName);
       if (tagName.toLowerCase() === 'a') {
+        Object.defineProperty(element, 'download', {
+          configurable: true,
+          get() {
+            return downloadFileName;
+          },
+          set(value: string) {
+            downloadFileName = value;
+          },
+        });
         Object.defineProperty(element, 'click', {
           configurable: true,
           value: linkClickMock,
@@ -406,6 +420,7 @@ describe('ScheduleEditor shell behavior', () => {
     expect(writeBufferMock).toHaveBeenCalledTimes(1);
     expect(createObjectUrlMock).toHaveBeenCalledTimes(1);
     expect(linkClickMock).toHaveBeenCalledTimes(1);
+    expect(downloadFileName).toBe('Route 10 Weekday Draft.xlsx');
     createElementSpy.mockRestore();
   });
 });

@@ -29,7 +29,10 @@ import {
     isCacheFresh,
     getCacheAge
 } from '../../../utils/gtfs/goTransitService';
-import { buildRouteAttachmentPreview } from '../../../utils/connections/routeConnectionDefaults';
+import {
+    buildRouteAttachmentPreview,
+    getConnectionIntentLabel
+} from '../../../utils/connections/routeConnectionDefaults';
 
 export interface ConnectionTemplateSelection {
     name: string;
@@ -309,7 +312,7 @@ export const ConnectionAddChooser: React.FC<ConnectionAddChooserProps> = ({
                             <div className="flex-1 min-w-0">
                                 <p className="font-medium text-gray-900">GO Train</p>
                                 <p className="text-sm text-gray-500 truncate">
-                                    Pick a station and whether the bus connects before departure or after arrival
+                                    Pick a station and whether the bus connects to or from the train
                                 </p>
                             </div>
                             <ChevronRight className="w-5 h-5 text-gray-400 group-hover:text-green-600" />
@@ -336,21 +339,21 @@ export const ConnectionAddChooser: React.FC<ConnectionAddChooserProps> = ({
                                         </select>
                                     </label>
                                     <label className="text-xs text-gray-600">
-                                        Bus timing
+                                        Connection direction
                                         <select
                                             value={selectedGoServiceType}
                                             onChange={(e) => setSelectedGoServiceType(e.target.value as 'departures' | 'arrivals')}
                                             className="mt-1 w-full px-2 py-2 border border-gray-200 rounded-lg text-sm bg-white"
                                         >
-                                            <option value="departures">Before departure</option>
-                                            <option value="arrivals">After arrival</option>
+                                            <option value="departures">To train</option>
+                                            <option value="arrivals">From train</option>
                                         </select>
                                     </label>
                                 </div>
                                 <p className="text-xs text-gray-600">
                                     {selectedGoServiceType === 'departures'
-                                        ? 'Bus should arrive before the train leaves.'
-                                        : 'Bus should depart after the train arrives.'}
+                                        ? 'To train means the bus arrives before the train departs.'
+                                        : 'From train means the bus departs after the train arrives.'}
                                 </p>
                                 <button
                                     type="button"
@@ -558,9 +561,12 @@ export const ConnectionAddChooser: React.FC<ConnectionAddChooserProps> = ({
                                                     </div>
                                                     <div>
                                                         <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">
-                                                            Timing rule
+                                                            Connection direction
                                                         </p>
-                                                        <p className="text-sm text-gray-900">
+                                                        <p className="text-sm font-medium text-gray-900">
+                                                            {getConnectionIntentLabel(entry.preview.connectionType, 'train')}
+                                                        </p>
+                                                        <p className="text-xs text-gray-500 mt-0.5">
                                                             {entry.preview.ruleSummary}
                                                         </p>
                                                     </div>

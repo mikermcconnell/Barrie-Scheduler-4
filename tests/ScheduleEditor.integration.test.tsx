@@ -5,7 +5,7 @@ import { flushSync } from 'react-dom';
 
 vi.mock('../hooks/useAddTrip', () => ({
   useAddTrip: () => ({
-    modalContext: null,
+    modalContext: null as any,
     openModal: vi.fn(),
     closeModal: vi.fn(),
     handleConfirm: vi.fn(),
@@ -13,16 +13,16 @@ vi.mock('../hooks/useAddTrip', () => ({
 }));
 
 vi.mock('../components/AuditLogPanel', () => ({
-  useAuditLog: () => ({ entries: [], logAction: vi.fn() }),
-  AuditLogPanel: () => null,
+  useAuditLog: () => ({ entries: [] as any[], logAction: vi.fn((): void => undefined) }),
+  AuditLogPanel: (): null => null,
 }));
 
 vi.mock('../components/NewSchedule/TripContextMenu', () => ({
-  TripContextMenu: () => null,
+  TripContextMenu: (): null => null,
 }));
 
 vi.mock('../components/ui/CascadeModeSelector', () => ({
-  CascadeModeSelector: () => null,
+  CascadeModeSelector: (): null => null,
 }));
 
 import { ScheduleEditor } from '../components/ScheduleEditor';

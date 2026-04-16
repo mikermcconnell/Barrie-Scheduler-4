@@ -144,8 +144,8 @@ describe('RouteConnectionPanel', () => {
     ));
 
     expect(targetButtons[0]?.textContent).toContain('Downtown Departures');
-    expect(container.textContent).toContain('Arrival');
-    expect(container.textContent).toContain('Departure');
+    expect(container.textContent).toContain('From train');
+    expect(container.textContent).toContain('To Downtown Departures');
     expect(container.textContent).toContain('Stop 1001');
     expect(container.textContent).toContain('Stop 9003');
   });
@@ -213,9 +213,13 @@ describe('RouteConnectionPanel', () => {
 
     await new Promise(resolve => setTimeout(resolve, 0));
 
+    flushSync(() => {
+      click(findButtonByText(container as HTMLDivElement, 'Open route-to-route options') ?? null);
+    });
+
     const selects = Array.from(container.querySelectorAll('select'));
     const ruleSelect = selects.find(select =>
-      Array.from(select.querySelectorAll('option')).some(option => option.textContent?.includes('Current route leaves after'))
+      Array.from(select.querySelectorAll('option')).some(option => option.textContent?.includes('From other route'))
     ) as HTMLSelectElement | undefined;
 
     flushSync(() => {

@@ -113,4 +113,48 @@ describe('step2HealthEvaluator', () => {
         expect(blocked.blockers).toContain('No complete cycle buckets are currently available for scheduling.');
         expect(blocked.warnings).toContain('This performance import was built with older runtime logic. Re-importing is recommended.');
     });
+
+    it('blocks Step 2 when exclusions leave no usable planning buckets or bands', () => {
+        const blocked = evaluateStep2ReviewHealth({
+            routeNumber: '7',
+            analysis: [{
+                timeBucket: '15:00 - 15:29',
+                totalP50: 96,
+                totalP80: 102,
+                observedCycleP50: 98,
+                observedCycleP80: 104,
+                assignedBand: 'B',
+                isOutlier: false,
+                ignored: true,
+                sampleCountMode: 'days' as const,
+                details: [
+                    { segmentName: 'Park Place to Peggy Hill', p50: 14, p80: 16, n: 6 },
+                    { segmentName: 'Peggy Hill to Allandale GO Station', p50: 16, p80: 18, n: 6 },
+                    { segmentName: 'Allandale GO Station to Downtown', p50: 18, p80: 20, n: 6 },
+                    { segmentName: 'Downtown to Peggy Hill', p50: 17, p80: 19, n: 6 },
+                ],
+            }],
+            segmentsMap: {
+                North: [
+                    { segmentName: 'Park Place to Peggy Hill', timeBuckets: {} },
+                    { segmentName: 'Peggy Hill to Allandale GO Station', timeBuckets: {} },
+                ],
+                South: [
+                    { segmentName: 'Allandale GO Station to Downtown', timeBuckets: {} },
+                    { segmentName: 'Downtown to Peggy Hill', timeBuckets: {} },
+                ],
+            } as any,
+            canonicalSegmentColumns: [
+                { segmentName: 'Park Place to Peggy Hill', direction: 'North', groupLabel: '7A' },
+                { segmentName: 'Peggy Hill to Allandale GO Station', direction: 'North', groupLabel: '7A' },
+                { segmentName: 'Allandale GO Station to Downtown', direction: 'South', groupLabel: '7B' },
+                { segmentName: 'Downtown to Peggy Hill', direction: 'South', groupLabel: '7B' },
+            ],
+            performanceDiagnostics: diagnostics,
+        });
+
+        expect(blocked.status).toBe('blocked');
+        expect(blocked.blockers).toContain('No usable planning buckets remain after the current exclusions and banding rules.');
+        expect(blocked.blockers).toContain('No usable runtime bands remain for schedule generation.');
+    });
 });

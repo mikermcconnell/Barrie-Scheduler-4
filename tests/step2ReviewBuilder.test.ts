@@ -190,6 +190,52 @@ describe('step2ReviewBuilder', () => {
         expect(blockedResult.troubleshooting.canRenderFullPath).toBe(false);
     });
 
+    it('blocks approval when no planning stop chain is available for generation', () => {
+        const result = buildStep2ReviewResult({
+            routeIdentity: '7-Weekday',
+            routeNumber: '7',
+            dayType: 'Weekday',
+            importMode: 'performance',
+            performanceConfig: null,
+            performanceDiagnostics: null,
+            parsedDataFingerprint: 'runtime-data-v1',
+            canonicalDirectionStops: null,
+            canonicalRouteSource: null,
+            plannerOverrides: { excludedBuckets: [] },
+            analysis: [{
+                timeBucket: '15:00 - 15:29',
+                totalP50: 30,
+                totalP80: 35,
+                assignedBand: 'A',
+                isOutlier: false,
+                ignored: false,
+                sampleCountMode: 'days',
+                details: [
+                    { segmentName: 'Park Place to Downtown Hub', p50: 15, p80: 18, n: 6 },
+                    { segmentName: 'Downtown Hub to Park Place', p50: 15, p80: 17, n: 6 },
+                ],
+            }],
+            bands: [{
+                id: 'A',
+                label: 'Band A',
+                min: 25,
+                max: 35,
+                avg: 30,
+                color: '#22c55e',
+                count: 1,
+            }],
+            segmentsMap: {
+                North: [{ segmentName: 'Park Place to Downtown Hub', timeBuckets: {} }],
+                South: [{ segmentName: 'Downtown Hub to Park Place', timeBuckets: {} }],
+            } as any,
+            runtimeDiagnostics: diagnostics,
+        });
+
+        expect(result.health.status).toBe('blocked');
+        expect(result.health.blockers).toContain('No approved planning stop chain is available for schedule generation.');
+        expect(result.approvalEligible).toBe(false);
+    });
+
     it('can build a source snapshot from the performance diagnostics metadata', () => {
         expect(buildStep2SourceSnapshot({
             routeIdentity: '7-Weekday',
@@ -205,6 +251,7 @@ describe('step2ReviewBuilder', () => {
                 },
                 runtimeLogicVersion: 2,
                 importedAt: ' 2026-03-24T12:00:00.000Z ',
+                cleanHistoryStartDate: ' 2026-03-01 ',
                 stopOrderDecision: 'accept',
                 stopOrderConfidence: 'high',
                 stopOrderSource: 'runtime-derived',
@@ -225,6 +272,7 @@ describe('step2ReviewBuilder', () => {
             },
             runtimeLogicVersion: 2,
             importedAt: '2026-03-24T12:00:00.000Z',
+            cleanHistoryStartDate: '2026-03-01',
             stopOrderDecision: 'accept',
             stopOrderConfidence: 'high',
             stopOrderSource: 'runtime-derived',

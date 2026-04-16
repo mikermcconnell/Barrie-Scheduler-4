@@ -35,16 +35,40 @@ const baseReviewResult: Step2ReviewResult = {
     planning: {
         chartBasis: 'observed-cycle',
         generationBasis: 'direction-band-summary',
-        buckets: [],
-        bands: [],
-        directionBandSummary: {},
-        segmentColumns: [],
+        buckets: [{
+            timeBucket: '06:30 - 06:59',
+            totalP50: 40,
+            totalP80: 44,
+            assignedBand: 'A',
+            isOutlier: false,
+            ignored: false,
+            details: [],
+        }],
+        bands: [{
+            id: 'A',
+            label: 'Band A',
+            min: 35,
+            max: 45,
+            avg: 40,
+            color: '#2563eb',
+            count: 1,
+        }],
+        directionBandSummary: {
+            North: [{
+                bandId: 'A',
+                color: '#2563eb',
+                avgTotal: 40,
+                segments: [],
+                timeSlots: ['06:30 - 06:59'],
+            }],
+        },
+        segmentColumns: [{ segmentName: 'A to B' }],
         canonicalDirectionStops: {
             North: ['A', 'B'],
         },
         usableBucketCount: 5,
         ignoredBucketCount: 1,
-        usableBandCount: 0,
+        usableBandCount: 1,
         directions: ['North', 'South'],
     },
     troubleshooting: {
@@ -67,6 +91,7 @@ const sourceSnapshot: Step2SourceSnapshot = {
     },
     runtimeLogicVersion: 7,
     importedAt: '2026-03-27T12:00:00.000Z',
+    cleanHistoryStartDate: '2026-03-01',
 };
 
 describe('step2Approval', () => {
@@ -134,6 +159,7 @@ describe('step2Approval', () => {
                 },
                 runtimeLogicVersion: 7,
                 importedAt: '2026-03-27T12:00:00.000Z',
+                cleanHistoryStartDate: '2026-03-01',
             },
         });
         expect(contract?.planning).toEqual(baseReviewResult.planning);
@@ -142,7 +168,7 @@ describe('step2Approval', () => {
         expect(contract?.healthSnapshot).not.toBe(baseReviewResult.health);
     });
 
-    it('refuses to approve blocked or stale reviews', () => {
+    it('refuses to approve blocked, stale, or generation-incomplete reviews', () => {
         expect(createStep2ApprovedRuntimeContract({
             reviewResult: {
                 ...baseReviewResult,
@@ -165,6 +191,42 @@ describe('step2Approval', () => {
             sourceSnapshot,
             approvedAt: '2026-03-27T12:30:00.000Z',
             acknowledgedWarnings: ['Legacy runtime logic detected'],
+        })).toBeNull();
+
+        expect(createStep2ApprovedRuntimeContract({
+            reviewResult: {
+                ...baseReviewResult,
+                planning: {
+                    ...baseReviewResult.planning,
+                    usableBucketCount: 0,
+                },
+            },
+            sourceSnapshot,
+            approvedAt: '2026-03-27T12:30:00.000Z',
+        })).toBeNull();
+
+        expect(createStep2ApprovedRuntimeContract({
+            reviewResult: {
+                ...baseReviewResult,
+                planning: {
+                    ...baseReviewResult.planning,
+                    usableBandCount: 0,
+                },
+            },
+            sourceSnapshot,
+            approvedAt: '2026-03-27T12:30:00.000Z',
+        })).toBeNull();
+
+        expect(createStep2ApprovedRuntimeContract({
+            reviewResult: {
+                ...baseReviewResult,
+                planning: {
+                    ...baseReviewResult.planning,
+                    canonicalDirectionStops: undefined,
+                },
+            },
+            sourceSnapshot,
+            approvedAt: '2026-03-27T12:30:00.000Z',
         })).toBeNull();
     });
 });

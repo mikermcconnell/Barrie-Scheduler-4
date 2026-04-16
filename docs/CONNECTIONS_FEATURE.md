@@ -10,6 +10,7 @@ The Connections feature enables transit planners to define external services (GO
 - If after-midnight service is supported, represent times beyond 1440 (e.g., 25:15 = 1515) to keep ordering monotonic.
 - `DayType` values and holiday rules are shared with the schedule calendar (define in `utils/connections/connectionTypes.ts`).
 - This doc does not define route assignment, connection buffers, or optimization logic.
+- Planner-facing setup UI should describe connection intent as **to / from** the external service or route (for example, **to train**, **from train**, **to Route 8**, **from Route 8**). Keep arrival/departure wording for detailed timing math, previews, and diagnostics.
 
 ## Success Criteria
 

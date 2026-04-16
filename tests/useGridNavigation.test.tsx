@@ -2,9 +2,9 @@ import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
 import { flushSync } from 'react-dom';
-import { useGridNavigation, type GridNavigationCallbacks } from '../hooks/useGridNavigation';
+import { useGridNavigation, type GridColumn, type GridNavigationCallbacks } from '../hooks/useGridNavigation';
 
-const defaultColumns = [
+const defaultColumns: GridColumn[] = [
   { stopName: 'Stop 1', cellType: 'dep' as const, direction: 'North' as const },
   { stopName: 'Stop 2', cellType: 'arr' as const, direction: 'North' as const },
   { stopName: 'Stop 3', cellType: 'dep' as const, direction: 'South' as const },

@@ -10,11 +10,11 @@ vi.mock('../utils/gtfs/goTransitService', () => ({
   QUICK_TEMPLATES: [
     {
       id: 'go-barrie-south-departures',
-      name: 'Barrie South GO Departures',
-      description: 'Meet trains before departure',
+      name: 'Barrie South GO • To Train',
+      description: 'Bus arrives before the train departs',
       icon: 'train',
       getData: () => ({
-        name: 'Barrie South GO Departures',
+        name: 'Barrie South GO • To Train',
         location: 'Barrie South GO',
         stopCode: '725',
         icon: 'train',
@@ -24,11 +24,11 @@ vi.mock('../utils/gtfs/goTransitService', () => ({
     },
     {
       id: 'go-barrie-south-arrivals',
-      name: 'Barrie South GO Arrivals',
-      description: 'Connect after train arrival',
+      name: 'Barrie South GO • From Train',
+      description: 'Bus departs after the train arrives',
       icon: 'train',
       getData: () => ({
-        name: 'Barrie South GO Arrivals',
+        name: 'Barrie South GO • From Train',
         location: 'Barrie South GO',
         stopCode: '725',
         icon: 'train',
@@ -38,11 +38,11 @@ vi.mock('../utils/gtfs/goTransitService', () => ({
     },
     {
       id: 'go-allandale-waterfront-departures',
-      name: 'Allandale Waterfront GO Departures',
-      description: 'Meet trains before departure',
+      name: 'Allandale Waterfront GO • To Train',
+      description: 'Bus arrives before the train departs',
       icon: 'train',
       getData: () => ({
-        name: 'Allandale Waterfront GO Departures',
+        name: 'Allandale Waterfront GO • To Train',
         location: 'Allandale Waterfront GO',
         stopCode: '9003',
         icon: 'train',
@@ -52,11 +52,11 @@ vi.mock('../utils/gtfs/goTransitService', () => ({
     },
     {
       id: 'go-allandale-waterfront-arrivals',
-      name: 'Allandale Waterfront GO Arrivals',
-      description: 'Connect after train arrival',
+      name: 'Allandale Waterfront GO • From Train',
+      description: 'Bus departs after the train arrives',
       icon: 'train',
       getData: () => ({
-        name: 'Allandale Waterfront GO Arrivals',
+        name: 'Allandale Waterfront GO • From Train',
         location: 'Allandale Waterfront GO',
         stopCode: '9003',
         icon: 'train',
@@ -203,7 +203,7 @@ describe('ConnectionAddChooser', () => {
 
     expect(onSelectTemplate).toHaveBeenCalledTimes(1);
     expect(onSelectTemplate.mock.calls[0][0]).toMatchObject({
-      name: 'Barrie South GO Arrivals',
+      name: 'Barrie South GO • From Train',
       defaultEventType: 'arrival',
       stopCode: '725'
     });
@@ -232,7 +232,7 @@ describe('ConnectionAddChooser', () => {
 
     const labels = Array.from(container.querySelectorAll('label'));
     const arrivalsOption = labels.find(label =>
-      label.textContent?.includes('Allandale Waterfront GO Arrivals')
+      label.textContent?.includes('Allandale Waterfront GO • From Train')
     );
     const checkbox = arrivalsOption?.querySelector('input[type="checkbox"]') as HTMLInputElement | null;
 
@@ -255,7 +255,7 @@ describe('ConnectionAddChooser', () => {
     expect(onSelectGtfsImport).toHaveBeenCalledTimes(1);
     expect(onSelectGtfsImport.mock.calls[0][0]).toHaveLength(1);
     expect(onSelectGtfsImport.mock.calls[0][0][0]).toMatchObject({
-      name: 'Allandale Waterfront GO Arrivals',
+      name: 'Allandale Waterfront GO • From Train',
       defaultEventType: 'arrival',
       stopCode: '9003'
     });
@@ -378,6 +378,9 @@ describe('ConnectionAddChooser', () => {
     expect(container.textContent).toContain('Use this GO connection for Route 400');
     expect(container.textContent).toContain('Add all GO options to Route 400');
     expect(container.textContent).toContain('Select one or more GO options to add to Route 400.');
+    expect(container.textContent).toContain('Pick a station and whether the bus connects to or from the train');
+    expect(container.textContent).toContain('To train');
+    expect(container.textContent).toContain('From train');
   });
 
   it('shows a route attach preview for selected GO options in route-first mode', async () => {
@@ -409,7 +412,7 @@ describe('ConnectionAddChooser', () => {
 
     const labels = Array.from(container.querySelectorAll('label'));
     const arrivalsOption = labels.find(label =>
-      label.textContent?.includes('Allandale Waterfront GO Arrivals')
+      label.textContent?.includes('Allandale Waterfront GO • From Train')
     );
     const checkbox = arrivalsOption?.querySelector('input[type="checkbox"]') as HTMLInputElement | null;
 
@@ -419,9 +422,10 @@ describe('ConnectionAddChooser', () => {
 
     expect(container.textContent).toContain('Route attach preview');
     expect(container.textContent).toContain('Review which stop each GO option will use on Route 400 before saving.');
-    expect(container.textContent).toContain('Allandale Waterfront GO Arrivals');
+    expect(container.textContent).toContain('Allandale Waterfront GO • From Train');
     expect(container.textContent).toContain('Barrie Allandale Waterfront GO (9003)');
-    expect(container.textContent).toContain('Bus leaves 5 min after arrival');
+    expect(container.textContent).toContain('From train');
+    expect(container.textContent).toContain('Bus departure 5 min after arrival');
     expect(container.textContent).toContain('Ready to attach');
   });
 });

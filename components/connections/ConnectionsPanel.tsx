@@ -27,6 +27,7 @@ import { generateConnectionId, parseConnectionTime } from '../../utils/connectio
 import { ConnectionLibraryPanel } from '../NewSchedule/connections/ConnectionLibraryPanel';
 import {
     RouteConnectionPanel,
+    type ExistingConnectionApplyScope,
     type OtherRouteOption,
     type OtherRouteConnectionDraft
 } from '../NewSchedule/connections/RouteConnectionPanel';
@@ -56,6 +57,7 @@ interface ConnectionsPanelProps {
     teamId: string;
     userId: string;
     onLibraryChanged?: (library: ConnectionLibrary | null) => void;
+    onRouteConfigChanged?: (config: RouteConnectionConfig | null) => void;
     onClose: () => void;
 }
 
@@ -66,6 +68,7 @@ export const ConnectionsPanel: React.FC<ConnectionsPanelProps> = ({
     teamId,
     userId,
     onLibraryChanged,
+    onRouteConfigChanged,
     onClose
 }) => {
     const [connectionLibrary, setConnectionLibrary] = useState<ConnectionLibrary | null>(null);
@@ -126,6 +129,37 @@ export const ConnectionsPanel: React.FC<ConnectionsPanelProps> = ({
         () => buildRouteTimepointStopOptions(currentRouteSchedules),
         [currentRouteSchedules]
     );
+    const draftRouteEntries = React.useMemo(() => {
+        const grouped = new Map<string, MasterRouteTable[]>();
+
+        schedules.forEach(table => {
+            const normalizedRouteName = table.routeName
+                .replace(/\s*\((North|South)\)/gi, '')
+                .replace(/\s*\((Weekday|Saturday|Sunday)\)/gi, '')
+                .trim();
+            const parsed = parseRouteInfo(normalizedRouteName);
+            const candidateBase = parsed.suffixIsDirection ? parsed.baseRoute : normalizedRouteName;
+            const hasExplicitDay = /\((Weekday|Saturday|Sunday)\)/i.test(table.routeName);
+
+            if (hasExplicitDay && !table.routeName.toLowerCase().includes(`(${dayType.toLowerCase()})`)) {
+                return;
+            }
+
+            const identity = `${candidateBase}-${dayType}`;
+            const existing = grouped.get(identity);
+            if (existing) {
+                existing.push(table);
+            } else {
+                grouped.set(identity, [table]);
+            }
+        });
+
+        return Array.from(grouped.entries()).map(([identity, tables]) => ({
+            routeIdentity: identity,
+            tables,
+            routeStopOptions: buildRouteTimepointStopOptions(tables)
+        }));
+    }, [dayType, schedules]);
     const routeStopOptions = React.useMemo<StopInfo[]>(() => {
         const optionMap = new Map(routeTimepointStops.map(stop => [stop.code, stop] as const));
 
@@ -358,47 +392,60 @@ export const ConnectionsPanel: React.FC<ConnectionsPanelProps> = ({
 
             const updatedTargets = connectionLibrary.targets.map(target => {
                 if (target.type !== 'route' || !target.routeIdentity) return target;
+
+                const normalizedTarget = target.defaultEventType === 'departure'
+                    ? target
+                    : {
+                        ...target,
+                        defaultEventType: 'departure' as const,
+                        updatedAt: new Date().toISOString()
+                    };
+
+                if (normalizedTarget !== target) {
+                    changed = true;
+                }
+
                 const schedule = scheduleMap.get(target.routeIdentity);
-                if (!schedule) return target;
+                if (!schedule) return normalizedTarget;
 
                 const sourceUpdatedAt = schedule.entry.updatedAt.toISOString();
-                const table = target.direction === 'South'
+                const table = normalizedTarget.direction === 'South'
                     ? schedule.content.southTable
                     : schedule.content.northTable;
-                if (!table) return target;
+                if (!table) return normalizedTarget;
 
-                const stopNameFromCode = target.stopCode
-                    ? Object.entries(table.stopIds || {}).find(([, code]) => code === target.stopCode)?.[0]
+                const stopNameFromCode = normalizedTarget.stopCode
+                    ? Object.entries(table.stopIds || {}).find(([, code]) => code === normalizedTarget.stopCode)?.[0]
                     : undefined;
-                const resolvedStopName = stopNameFromCode || target.stopName;
-                const resolvedStopCode = target.stopCode || (resolvedStopName ? table.stopIds?.[resolvedStopName] : '');
+                const resolvedStopName = stopNameFromCode || normalizedTarget.stopName;
+                const resolvedStopCode = normalizedTarget.stopCode || (resolvedStopName ? table.stopIds?.[resolvedStopName] : '');
 
-                if (!resolvedStopName || !resolvedStopCode) return target;
+                if (!resolvedStopName || !resolvedStopCode) return normalizedTarget;
 
-                const cacheValid = target.sourceScheduleUpdatedAt === sourceUpdatedAt
-                    && target.times
-                    && target.times.length > 0;
+                const cacheValid = normalizedTarget.sourceScheduleUpdatedAt === sourceUpdatedAt
+                    && normalizedTarget.times
+                    && normalizedTarget.times.length > 0;
 
                 if (cacheValid) {
-                    if (target.stopName !== resolvedStopName || target.stopCode !== resolvedStopCode) {
+                    if (normalizedTarget.stopName !== resolvedStopName || normalizedTarget.stopCode !== resolvedStopCode) {
                         changed = true;
-                        return { ...target, stopName: resolvedStopName, stopCode: resolvedStopCode };
+                        return { ...normalizedTarget, stopName: resolvedStopName, stopCode: resolvedStopCode };
                     }
-                    return target;
+                    return normalizedTarget;
                 }
 
                 const derivedTimes = deriveRouteTargetTimes(table, resolvedStopName, schedule.entry.dayType);
                 if (derivedTimes.length === 0) {
-                    if (target.sourceScheduleUpdatedAt !== sourceUpdatedAt || target.stopName !== resolvedStopName || target.stopCode !== resolvedStopCode) {
+                    if (normalizedTarget.sourceScheduleUpdatedAt !== sourceUpdatedAt || normalizedTarget.stopName !== resolvedStopName || normalizedTarget.stopCode !== resolvedStopCode) {
                         changed = true;
-                        return { ...target, stopName: resolvedStopName, stopCode: resolvedStopCode, sourceScheduleUpdatedAt: sourceUpdatedAt };
+                        return { ...normalizedTarget, stopName: resolvedStopName, stopCode: resolvedStopCode, sourceScheduleUpdatedAt: sourceUpdatedAt };
                     }
-                    return target;
+                    return normalizedTarget;
                 }
 
                 changed = true;
                 return {
-                    ...target,
+                    ...normalizedTarget,
                     stopName: resolvedStopName,
                     stopCode: resolvedStopCode,
                     times: derivedTimes,
@@ -453,6 +500,11 @@ export const ConnectionsPanel: React.FC<ConnectionsPanelProps> = ({
     }, [teamId, routeIdentity, routeConnectionConfig, isLoadingConfig, hasLoadedInitialConfig]);
 
     useEffect(() => {
+        if (!hasLoadedInitialConfig || isLoadingConfig) return;
+        onRouteConfigChanged?.(routeConnectionConfig);
+    }, [hasLoadedInitialConfig, isLoadingConfig, onRouteConfigChanged, routeConnectionConfig]);
+
+    useEffect(() => {
         if (!connectionLibrary || !routeConnectionConfig || schedules.length === 0) {
             setConnectionStatus(null);
             return;
@@ -482,6 +534,103 @@ export const ConnectionsPanel: React.FC<ConnectionsPanelProps> = ({
         });
     }, [materializeRouteConnection, routeConnectionConfig]);
 
+    const handleApplyExistingConnections = useCallback(async (
+        targetIds: string[],
+        scope: ExistingConnectionApplyScope
+    ) => {
+        if (!connectionLibrary || !routeConnectionConfig || targetIds.length === 0) return;
+
+        const selectedTargets = connectionLibrary.targets.filter(target => targetIds.includes(target.id));
+        if (selectedTargets.length === 0) return;
+
+        const applyToRoute = async (
+            targetRouteIdentity: string,
+            stopOptions: StopInfo[],
+            baseConfig?: RouteConnectionConfig | null
+        ): Promise<RouteConnectionConfig | null> => {
+            const existingConfig = baseConfig || await getRouteConnectionConfig(teamId, targetRouteIdentity) || {
+                routeIdentity: targetRouteIdentity,
+                connections: [],
+                optimizationMode: 'hybrid' as const
+            };
+
+            const nextConnections = [...existingConfig.connections];
+            const existingTargetIds = new Set(nextConnections.map(connection => connection.targetId));
+            let changed = false;
+
+            selectedTargets.forEach(target => {
+                if (existingTargetIds.has(target.id)) return;
+                const candidate = buildRouteConnectionFromTarget(target, stopOptions, nextConnections.length + 1);
+                if (!candidate) return;
+
+                nextConnections.push(materializeRouteConnection({
+                    ...candidate,
+                    priority: nextConnections.length + 1
+                }));
+                existingTargetIds.add(target.id);
+                changed = true;
+            });
+
+            if (!changed) return null;
+
+            return {
+                ...existingConfig,
+                routeIdentity: targetRouteIdentity,
+                connections: nextConnections
+            };
+        };
+
+        if (scope === 'current_route') {
+            const nextConfig = await applyToRoute(routeIdentity, routeStopOptions, routeConnectionConfig);
+            if (nextConfig) {
+                setRouteConnectionConfig(nextConfig);
+            }
+            return;
+        }
+
+        const changedConfigs = await Promise.all(
+            draftRouteEntries.map(async entry => ({
+                routeIdentity: entry.routeIdentity,
+                config: await applyToRoute(
+                    entry.routeIdentity,
+                    entry.routeStopOptions,
+                    entry.routeIdentity === routeIdentity ? routeConnectionConfig : undefined
+                )
+            }))
+        );
+
+        const routesToSave = changedConfigs.filter(
+            (entry): entry is { routeIdentity: string; config: RouteConnectionConfig } => !!entry.config
+        );
+
+        if (routesToSave.length === 0) return;
+
+        const currentRouteUpdate = routesToSave.find(entry => entry.routeIdentity === routeIdentity);
+        if (currentRouteUpdate) {
+            setRouteConnectionConfig(currentRouteUpdate.config);
+        }
+
+        await Promise.all(
+            routesToSave
+                .filter(entry => entry.routeIdentity !== routeIdentity)
+                .map(async entry => {
+                    try {
+                        await saveRouteConnectionConfig(teamId, entry.routeIdentity, entry.config);
+                    } catch (error) {
+                        console.error('Error saving route connection config for bulk apply:', entry.routeIdentity, error);
+                    }
+                })
+        );
+    }, [
+        connectionLibrary,
+        draftRouteEntries,
+        materializeRouteConnection,
+        routeConnectionConfig,
+        routeIdentity,
+        routeStopOptions,
+        teamId
+    ]);
+
     const handleAddOtherRouteConnection = useCallback((draft: OtherRouteConnectionDraft) => {
         if (!connectionLibrary || !routeConnectionConfig) return;
 
@@ -493,28 +642,37 @@ export const ConnectionsPanel: React.FC<ConnectionsPanelProps> = ({
             && target.stopCode === draft.targetStopCode
         ));
 
-        const routeTarget = existingTarget || {
-            id: `target_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-            name: `Route ${draft.routeLabel} (${draft.direction}) • ${draft.targetStopName}`,
-            type: 'route' as const,
-            routeIdentity: draft.routeIdentity,
-            stopCode: draft.targetStopCode,
-            stopName: draft.targetStopName,
-            direction: draft.direction,
-            icon: 'bus' as const,
-            color: 'blue',
-            defaultEventType: draft.connectionType === 'feed_arriving' ? 'arrival' as const : 'departure' as const,
-            createdAt: now,
-            updatedAt: now
-        };
+        const routeTarget = existingTarget
+            ? {
+                ...existingTarget,
+                stopName: draft.targetStopName,
+                defaultEventType: 'departure' as const,
+                updatedAt: now
+            }
+            : {
+                id: `target_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                name: `Route ${draft.routeLabel} (${draft.direction}) • ${draft.targetStopName}`,
+                type: 'route' as const,
+                routeIdentity: draft.routeIdentity,
+                stopCode: draft.targetStopCode,
+                stopName: draft.targetStopName,
+                direction: draft.direction,
+                icon: 'bus' as const,
+                color: 'blue',
+                defaultEventType: 'departure' as const,
+                createdAt: now,
+                updatedAt: now
+            };
 
-        if (!existingTarget) {
+        if (!existingTarget || existingTarget.defaultEventType !== 'departure' || existingTarget.stopName !== draft.targetStopName) {
             setConnectionLibrary(appendLibraryChange({
                 ...connectionLibrary,
-                targets: [...connectionLibrary.targets, routeTarget],
+                targets: existingTarget
+                    ? connectionLibrary.targets.map(target => target.id === existingTarget.id ? routeTarget : target)
+                    : [...connectionLibrary.targets, routeTarget],
                 updatedAt: now,
                 updatedBy: userId
-            }, userId, 'add_route_target', `Added route target ${routeTarget.name}`));
+            }, userId, existingTarget ? 'update_route_target' : 'add_route_target', `${existingTarget ? 'Updated' : 'Added'} route target ${routeTarget.name}`));
         }
 
         const alreadyAttached = routeConnectionConfig.connections.some(connection => connection.targetId === routeTarget.id);
@@ -775,6 +933,7 @@ export const ConnectionsPanel: React.FC<ConnectionsPanelProps> = ({
                                 availableStops={routeStopOptions}
                                 onUpdateConfig={setRouteConnectionConfig}
                                 onAddConnection={handleAddConnection}
+                                onApplyExistingConnections={handleApplyExistingConnections}
                                 otherRouteOptions={otherRouteOptions}
                                 onAddOtherRouteConnection={handleAddOtherRouteConnection}
                                 onCreateTarget={() => {

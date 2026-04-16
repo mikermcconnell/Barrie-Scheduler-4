@@ -70,8 +70,8 @@ describe('goTransitService data source behavior', () => {
 
         expect(departures.defaultEventType).toBe('departure');
         expect(arrivals.defaultEventType).toBe('arrival');
-        expect(departures.name.toLowerCase()).toContain('departures');
-        expect(arrivals.name.toLowerCase()).toContain('arrivals');
+        expect(departures.name).toContain('To Train');
+        expect(arrivals.name).toContain('From Train');
     });
 
     it('uses calendar_dates when calendar is not present', () => {

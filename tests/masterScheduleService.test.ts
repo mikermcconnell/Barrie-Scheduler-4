@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { MasterRouteTable } from '../utils/parsers/masterScheduleParser';
 
 const {
   collectionMock,
@@ -74,7 +75,7 @@ import {
   uploadToMasterSchedule,
 } from '../utils/services/masterScheduleService';
 
-const northTable = {
+const northTable: MasterRouteTable = {
   routeName: '2 Weekday North',
   stops: ['Park Place', 'Downtown Hub'],
   stopIds: {
@@ -84,7 +85,7 @@ const northTable = {
   trips: [],
 };
 
-const southTable = {
+const southTable: MasterRouteTable = {
   routeName: '2 Weekday South',
   stops: ['Downtown Hub', 'Park Place'],
   stopIds: {
@@ -267,11 +268,11 @@ describe('uploadToMasterSchedule', () => {
   it('omits cycleMode from Firestore writes when no cycle mode is provided', async () => {
     getDocMock.mockResolvedValueOnce({
       exists: () => false,
-      data: () => undefined,
+      data: (): undefined => undefined,
     });
     transactionGetMock.mockResolvedValueOnce({
       exists: () => false,
-      data: () => undefined,
+      data: (): undefined => undefined,
     });
 
     const result = await uploadToMasterSchedule(
@@ -310,11 +311,11 @@ describe('uploadToMasterSchedule', () => {
   it('cleans up the orphaned storage blob when the transaction fails', async () => {
     getDocMock.mockResolvedValueOnce({
       exists: () => false,
-      data: () => undefined,
+      data: (): undefined => undefined,
     });
     transactionGetMock.mockResolvedValueOnce({
       exists: () => false,
-      data: () => undefined,
+      data: (): undefined => undefined,
     });
     runTransactionMock.mockRejectedValueOnce(new Error('transaction failed'));
 

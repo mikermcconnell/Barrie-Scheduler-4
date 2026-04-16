@@ -34,7 +34,10 @@ import {
 } from '../../../utils/connections/connectionTypes';
 import type { DayType } from '../../../utils/parsers/masterScheduleParser';
 import { formatGapTimeForEvent } from '../../../utils/connections/connectionUtils';
-import { buildRouteAttachmentPreview } from '../../../utils/connections/routeConnectionDefaults';
+import {
+    buildRouteAttachmentPreview,
+    getConnectionIntentLabel
+} from '../../../utils/connections/routeConnectionDefaults';
 
 /**
  * Stop with name for auto-populate display.
@@ -663,7 +666,7 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
 
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                                    Bus should *
+                                    Connection direction *
                                 </label>
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                                     <button
@@ -675,7 +678,7 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
                                                 : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
                                         }`}
                                     >
-                                        Arrive before time
+                                        To this service
                                     </button>
                                     <button
                                         type="button"
@@ -686,9 +689,12 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
                                                 : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
                                         }`}
                                     >
-                                        Leave after time
+                                        From this service
                                     </button>
                                 </div>
+                                <p className="mt-1 text-xs text-gray-500">
+                                    Choose whether the bus is connecting to or from this service at the selected route timepoint.
+                                </p>
                             </div>
 
                             <div>
@@ -736,8 +742,11 @@ export const AddTargetModal: React.FC<AddTargetModalProps> = ({
                                     )}
                                 </div>
                                 <div>
-                                    <p className="text-[11px] font-semibold uppercase tracking-wide text-blue-700">Timing rule</p>
-                                    <p className="text-blue-900 font-medium">{routePreview.ruleSummary}</p>
+                                    <p className="text-[11px] font-semibold uppercase tracking-wide text-blue-700">Connection direction</p>
+                                    <p className="text-blue-900 font-medium">
+                                        {getConnectionIntentLabel(routePreview.connectionType)}
+                                    </p>
+                                    <p className="text-xs text-blue-700 mt-0.5">{routePreview.ruleSummary}</p>
                                 </div>
                             </div>
                             <div>

@@ -49,7 +49,7 @@ vi.mock('../components/NewSchedule/connections/AddTargetModal', () => ({
 }));
 
 vi.mock('../components/NewSchedule/connections/ImportRouteModal', () => ({
-  ImportRouteModal: () => null
+  ImportRouteModal: (): null => null
 }));
 
 vi.mock('../components/connections/ConnectionStatusPanel', () => ({
@@ -62,7 +62,7 @@ vi.mock('../utils/connections/connectionLibraryService', () => ({
 }));
 
 vi.mock('../utils/services/masterScheduleService', () => ({
-  getMasterSchedule: vi.fn()
+  getMasterSchedule: vi.fn(async (): Promise<null> => null)
 }));
 
 vi.mock('../utils/connections/connectionOptimizer', () => ({

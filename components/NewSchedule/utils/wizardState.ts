@@ -567,6 +567,12 @@ export const buildStep2DataHealthReport = (params: {
     const lookup = buildNormalizedSegmentNameLookup(displaySegmentNames);
     const sampleCountMode = analysis.find(bucket => bucket.sampleCountMode)?.sampleCountMode;
     const confidenceThreshold = getLowConfidenceThreshold(sampleCountMode);
+    const usableBuckets = analysis.filter(bucket => !bucket.ignored && !!bucket.assignedBand);
+    const usableBandCount = new Set(
+        usableBuckets
+            .map(bucket => bucket.assignedBand)
+            .filter((bandId): bandId is string => !!bandId)
+    ).size;
 
     const matchedSegments = new Set<string>();
     let completeBucketCount = 0;
@@ -653,6 +659,12 @@ export const buildStep2DataHealthReport = (params: {
     }
     if (displaySegmentNames.length > 0 && completeBucketCount === 0) {
         blockers.push('No complete cycle buckets are currently available for scheduling.');
+    }
+    if (analysis.length > 0 && usableBuckets.length === 0) {
+        blockers.push('No usable planning buckets remain after the current exclusions and banding rules.');
+    }
+    if (analysis.length > 0 && usableBandCount === 0) {
+        blockers.push('No usable runtime bands remain for schedule generation.');
     }
 
     if (performanceDiagnostics?.usesLegacyRuntimeLogic) {

@@ -4,8 +4,9 @@ import { createRoot, type Root } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import type { MasterRouteTable } from '../utils/parsers/masterScheduleParser';
 
-const { getConnectionLibraryMock } = vi.hoisted(() => ({
-  getConnectionLibraryMock: vi.fn().mockResolvedValue(null)
+const { getConnectionLibraryMock, getRouteConnectionConfigMock } = vi.hoisted(() => ({
+  getConnectionLibraryMock: vi.fn().mockResolvedValue(null),
+  getRouteConnectionConfigMock: vi.fn().mockResolvedValue(null)
 }));
 
 vi.mock('../utils/parsers/masterScheduleParser', async () => {
@@ -31,7 +32,8 @@ vi.mock('../utils/parsers/masterScheduleParser', async () => {
 });
 
 vi.mock('../utils/connections/connectionLibraryService', () => ({
-  getConnectionLibrary: getConnectionLibraryMock
+  getConnectionLibrary: getConnectionLibraryMock,
+  getRouteConnectionConfig: getRouteConnectionConfigMock
 }));
 
 vi.mock('../hooks/useAddTrip', () => ({

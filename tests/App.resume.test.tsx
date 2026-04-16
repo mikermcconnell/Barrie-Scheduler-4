@@ -5,7 +5,7 @@ import { flushSync } from 'react-dom';
 
 vi.mock('../components/contexts/AuthContext', () => ({
   AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  useAuth: () => ({ user: null, loading: false }),
+  useAuth: (): { user: null; loading: boolean } => ({ user: null, loading: false }),
 }));
 
 vi.mock('../components/contexts/TeamContext', () => ({

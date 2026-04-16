@@ -49,8 +49,8 @@ import {
 } from '../utils/parsers/masterScheduleParser';
 import { ConnectionsPanel } from './connections/ConnectionsPanel';
 import { AIReviewPanel } from './ai/AIReviewPanel';
-import type { ConnectionLibrary } from '../utils/connections/connectionTypes';
-import { getConnectionLibrary } from '../utils/connections/connectionLibraryService';
+import type { ConnectionLibrary, RouteConnectionConfig } from '../utils/connections/connectionTypes';
+import { getConnectionLibrary, getRouteConnectionConfig } from '../utils/connections/connectionLibraryService';
 import { RouteSummary } from './RouteSummary';
 import { WorkspaceHeader } from './layout/WorkspaceHeader';
 import { AutoSaveStatus } from '../hooks/useAutoSave';
@@ -305,6 +305,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
     const [showConnectionsPanel, setShowConnectionsPanel] = useState(false);
     const [showAiReviewPanel, setShowAiReviewPanel] = useState(false);
     const [connectionLibrary, setConnectionLibrary] = useState<ConnectionLibrary | null>(null);
+    const [activeRouteConnectionConfig, setActiveRouteConnectionConfig] = useState<RouteConnectionConfig | null>(null);
     void uploaderName;
     const aiReviewEnabled = isFeatureEnabled('fixedLocalAiReview');
 
@@ -987,6 +988,15 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
 
     // NOTE: Travel time grid handlers moved to useTravelTimeGrid hook (see gridHandlers.* above)
 
+    const buildDraftExportFileName = (): string => {
+        const sanitizedDraftName = (draftName || 'Schedule Draft')
+            .replace(/[<>:"/\\|?*\u0000-\u001F]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+
+        return `${sanitizedDraftName || 'Schedule Draft'}.xlsx`;
+    };
+
     const handleExport = async () => {
         const workbook = new ExcelJS.Workbook();
         workbook.creator = 'Barrie Transit Scheduler';
@@ -1370,13 +1380,52 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
         const link = document.createElement('a');
         link.href = URL.createObjectURL(blob);
-        link.download = 'Bus_Schedule_Export.xlsx';
+        link.download = buildDraftExportFileName();
         link.click();
     };
 
     // Active Data
     const activeRouteGroup = consolidatedRoutes[activeRouteIdx];
     const activeRoute = activeRouteGroup?.days[activeDay] || activeRouteGroup?.days[Object.keys(activeRouteGroup?.days || {})[0]];
+    const activeRouteIdentity = activeRouteGroup ? `${activeRouteGroup.name}-${activeDay}` : null;
+
+    useEffect(() => {
+        if (!teamId || !activeRouteIdentity) {
+            setActiveRouteConnectionConfig(null);
+            return;
+        }
+
+        let cancelled = false;
+        setActiveRouteConnectionConfig({
+            routeIdentity: activeRouteIdentity,
+            connections: [],
+            optimizationMode: 'hybrid'
+        });
+
+        getRouteConnectionConfig(teamId, activeRouteIdentity)
+            .then((config) => {
+                if (cancelled) return;
+                setActiveRouteConnectionConfig(config || {
+                    routeIdentity: activeRouteIdentity,
+                    connections: [],
+                    optimizationMode: 'hybrid'
+                });
+            })
+            .catch((error) => {
+                console.error('Failed to load route connection config:', error);
+                if (cancelled) return;
+                setActiveRouteConnectionConfig({
+                    routeIdentity: activeRouteIdentity,
+                    connections: [],
+                    optimizationMode: 'hybrid'
+                });
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [teamId, activeRouteIdentity]);
+
     const summaryTable = useMemo(() => {
         if (!activeRoute) return { routeName: 'Unknown', trips: [], stops: [], stopIds: {} };
         if (activeRoute.combined) return { routeName: activeRouteGroup.name, trips: [...(activeRoute.north?.trips || []), ...(activeRoute.south?.trips || [])], stops: [], stopIds: {} };
@@ -1597,6 +1646,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                                     targetHeadway={targetHeadway}
                                     readOnly={readOnly}
                                     connectionLibrary={connectionLibrary}
+                                    routeConnectionConfig={activeRouteConnectionConfig}
                                     dayType={activeDay as DayType}
                                     masterBaseline={masterBaseline}
                                     highlightedTripId={recentlyAddedTripId}
@@ -1614,6 +1664,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                             teamId={teamId}
                             userId={userId}
                             onLibraryChanged={setConnectionLibrary}
+                            onRouteConfigChanged={setActiveRouteConnectionConfig}
                             onClose={() => setShowConnectionsPanel(false)}
                         />
                     )}

@@ -69,6 +69,13 @@ const normalizeDirectionStops = (
     return Object.keys(result).length > 0 ? result : undefined;
 };
 
+const hasUsableCanonicalDirectionStops = (
+    stops: Step2ReviewResult['planning']['canonicalDirectionStops'] | undefined
+): boolean => !!stops && (
+    (stops.North?.length ?? 0) > 0
+    || (stops.South?.length ?? 0) > 0
+);
+
 const buildTroubleshootingPayload = (
     input: Pick<
         Step2ReviewBuilderInput,
@@ -157,15 +164,10 @@ export const buildStep2ReviewResult = (
         warnings.push('Observed stop order still needs planner review before it should replace the current stop chain.');
     }
 
-    const health = {
-        ...baseHealth,
-        blockers,
-        warnings,
-        runtimeSourceSummary: stopOrderSummary
-            ? `${stopOrderSummary} • ${baseHealth.runtimeSourceSummary}`
-            : baseHealth.runtimeSourceSummary,
-        status: deriveHealthStatus(blockers, warnings),
-    } as typeof baseHealth;
+    const normalizedDirectionStops = normalizeDirectionStops(input.canonicalDirectionStops ?? null);
+    if (!hasUsableCanonicalDirectionStops(normalizedDirectionStops)) {
+        blockers.push('No approved planning stop chain is available for schedule generation.');
+    }
 
     const approvedRuntimeModel = buildApprovedRuntimeModel({
         dayType: input.dayType,
@@ -175,8 +177,26 @@ export const buildStep2ReviewResult = (
         bands: input.bands,
         segmentsMap: input.segmentsMap,
         canonicalSegmentColumns: input.canonicalSegmentColumns ?? undefined,
-        healthReport: health,
+        healthReport: {
+            ...baseHealth,
+            blockers,
+            warnings,
+            runtimeSourceSummary: stopOrderSummary
+                ? `${stopOrderSummary} • ${baseHealth.runtimeSourceSummary}`
+                : baseHealth.runtimeSourceSummary,
+            status: deriveHealthStatus(blockers, warnings),
+        },
     });
+
+    const health = {
+        ...baseHealth,
+        blockers,
+        warnings,
+        runtimeSourceSummary: stopOrderSummary
+            ? `${stopOrderSummary} • ${baseHealth.runtimeSourceSummary}`
+            : baseHealth.runtimeSourceSummary,
+        status: deriveHealthStatus(blockers, warnings),
+    } as typeof baseHealth;
 
     const reviewInput: Step2ReviewInput = {
         routeIdentity: input.routeIdentity,
@@ -206,7 +226,7 @@ export const buildStep2ReviewResult = (
             bands: cloneValue(approvedRuntimeModel.bands),
             directionBandSummary: cloneValue(approvedRuntimeModel.directionBandSummary) as DirectionBandSummary,
             segmentColumns: cloneValue(approvedRuntimeModel.segmentColumns),
-            canonicalDirectionStops: normalizeDirectionStops(input.canonicalDirectionStops ?? null),
+            canonicalDirectionStops: normalizedDirectionStops,
             usableBucketCount: approvedRuntimeModel.usableBucketCount,
             ignoredBucketCount: approvedRuntimeModel.ignoredBucketCount,
             usableBandCount: approvedRuntimeModel.usableBandCount,
@@ -214,7 +234,10 @@ export const buildStep2ReviewResult = (
         },
         troubleshooting: buildTroubleshootingPayload(input),
         plannerOverrides: normalizedPlannerOverrides,
-        approvalEligible: health.status !== 'blocked',
+        approvalEligible: health.status !== 'blocked'
+            && approvedRuntimeModel.usableBucketCount > 0
+            && approvedRuntimeModel.usableBandCount > 0
+            && hasUsableCanonicalDirectionStops(normalizedDirectionStops),
     };
 };
 

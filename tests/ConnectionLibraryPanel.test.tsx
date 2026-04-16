@@ -7,7 +7,7 @@ import { ConnectionLibraryPanel } from '../components/NewSchedule/connections/Co
 import type { ConnectionLibrary } from '../utils/connections/connectionTypes';
 
 vi.mock('../components/NewSchedule/connections/AddTargetModal', () => ({
-  AddTargetModal: () => null
+  AddTargetModal: (): null => null
 }));
 
 vi.mock('../utils/gtfs/goTransitService', () => ({

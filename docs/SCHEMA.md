@@ -18,8 +18,8 @@ firebase/
 │   ├── platformConfig/default            # Team-specific platform / hub configuration
 │   ├── masterSchedules/{routeIdentity}/  # Published schedules
 │   │   ├── versions/{versionId}          # Version history
-│   │   └── connectionConfig/default      # Route connection settings
 │   ├── connectionLibrary/default         # Shared connection targets used by app services
+│   ├── routeConnectionConfigs/{routeIdentity} # Per-route connection settings
 │   ├── transitAppData/{docId}            # Transit App analytics datasets
 │   ├── performanceData/{docId}           # STREETS / ops performance datasets
 │   ├── performanceImports/{importId}     # Archived raw STREETS import runs for replay/rebuild
@@ -29,8 +29,7 @@ firebase/
 └── migrations/                           # Data migration tracking
 ```
 
-`teams/{teamId}/connectionLibrary/default` is used by the application and documented here because code reads and writes that document.
-The checked-in `firestore.rules` file does not currently enumerate that subcollection explicitly, so verify or update rules before treating Connection Library access as production-safe.
+`teams/{teamId}/connectionLibrary/default` and `teams/{teamId}/routeConnectionConfigs/{routeIdentity}` are used by the application and documented here because code reads and writes those paths directly.
 
 ### Cloud Storage Paths
 
@@ -423,7 +422,7 @@ interface ConnectionTime {
 }
 ```
 
-### RouteConnectionConfig (`teams/{teamId}/masterSchedules/{routeIdentity}/connectionConfig/default`)
+### RouteConnectionConfig (`teams/{teamId}/routeConnectionConfigs/{routeIdentity}`)
 
 ```typescript
 type OptimizationMode = 'shift' | 'individual' | 'hybrid';

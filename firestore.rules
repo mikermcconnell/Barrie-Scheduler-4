@@ -58,6 +58,11 @@ service cloud.firestore {
         allow read, write: if isTeamMember(teamId);
       }
 
+      // Per-route connection configuration
+      match /routeConnectionConfigs/{routeIdentity} {
+        allow read, write: if isTeamMember(teamId);
+      }
+
       // Transit App Data
       match /transitAppData/{docId} {
         allow read, write: if isTeamMember(teamId);

@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import {
   buildRouteAttachmentPreview,
   buildRouteConnectionFromTarget,
+  getBusConnectionAnchorForConnectionType,
+  getConnectionIntentLabel,
   getDefaultConnectionTypeForTarget,
   getConnectionRuleSummary,
   suggestRouteConnectionStopCode
@@ -17,6 +19,8 @@ describe('routeConnectionDefaults', () => {
   it('defaults arrival targets to after-arrival route connections', () => {
     expect(getDefaultConnectionTypeForTarget({ defaultEventType: 'arrival' })).toBe('feed_arriving');
     expect(getDefaultConnectionTypeForTarget({ defaultEventType: 'departure' })).toBe('meet_departing');
+    expect(getBusConnectionAnchorForConnectionType('meet_departing')).toBe('arrival');
+    expect(getBusConnectionAnchorForConnectionType('feed_arriving')).toBe('departure');
   });
 
   it('suggests a route stop by direct stop code or matching location', () => {
@@ -60,7 +64,9 @@ describe('routeConnectionDefaults', () => {
   });
 
   it('builds a route attachment preview with rule and active events', () => {
-    expect(getConnectionRuleSummary('feed_arriving', 5)).toBe('Bus leaves 5 min after arrival');
+    expect(getConnectionIntentLabel('meet_departing', 'train')).toBe('To train');
+    expect(getConnectionIntentLabel('feed_arriving', 'Route 8')).toBe('From Route 8');
+    expect(getConnectionRuleSummary('feed_arriving', 5)).toBe('Bus departure 5 min after arrival');
 
     expect(
       buildRouteAttachmentPreview(
@@ -80,7 +86,7 @@ describe('routeConnectionDefaults', () => {
     ).toMatchObject({
       canAttach: true,
       connectionType: 'feed_arriving',
-      ruleSummary: 'Bus leaves 5 min after arrival',
+      ruleSummary: 'Bus departure 5 min after arrival',
       stopCode: '9003',
       stopName: 'Allandale Waterfront GO',
       activeEventCount: 1,

@@ -5,7 +5,6 @@ describe('buildRouteTimepointStopOptions', () => {
   it('reduces route 2-style merged directions to the major route timepoints', () => {
     const stops = buildRouteTimepointStopOptions([
       {
-        routeName: '2A (North)',
         stops: ['Park Pl', "Veteran's at Essa", 'Cuthbert Street', 'Sproule at Kraus', 'Dunlop at Ferndale', 'Downtown Hub'],
         stopIds: {
           'Park Pl': '777',
@@ -14,11 +13,9 @@ describe('buildRouteTimepointStopOptions', () => {
           'Sproule at Kraus': '627',
           'Dunlop at Ferndale': '271',
           'Downtown Hub': '1'
-        },
-        trips: []
+        }
       },
       {
-        routeName: '2B (South)',
         stops: ['Downtown Hub', 'Ferndale Drive', 'Sproule at Kraus', 'Ferndale Woods Public School', "Veteran's at Essa", 'Park Pl'],
         stopIds: {
           'Downtown Hub': '1',
@@ -27,8 +24,7 @@ describe('buildRouteTimepointStopOptions', () => {
           'Ferndale Woods Public School': '841',
           "Veteran's at Essa": '847',
           'Park Pl': '777'
-        },
-        trips: []
+        }
       }
     ]);
 

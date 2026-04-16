@@ -24,7 +24,8 @@ vi.mock('../utils/parsers/masterScheduleParser', async () => {
 });
 
 vi.mock('../utils/connections/connectionLibraryService', () => ({
-  getConnectionLibrary: vi.fn().mockResolvedValue(null)
+  getConnectionLibrary: vi.fn().mockResolvedValue(null),
+  getRouteConnectionConfig: vi.fn().mockResolvedValue(null)
 }));
 
 vi.mock('../hooks/useAddTrip', () => ({

@@ -773,7 +773,7 @@ export function getGoStationTemplateData(
         .map(t => ({ ...t, label: t.label || 'GO Train' }));
 
     return {
-        name: `${station.name} ${defaultEventType === 'departure' ? 'Departures' : 'Arrivals'}`,
+        name: `${station.name} • ${defaultEventType === 'departure' ? 'To Train' : 'From Train'}`,
         location: station.name,
         stopCode: station.stopCode,
         icon: 'train',
@@ -827,29 +827,29 @@ export interface QuickTemplateOption {
 export const QUICK_TEMPLATES: QuickTemplateOption[] = [
     {
         id: 'go-barrie-south-departures',
-        name: 'Barrie South GO Departures',
-        description: 'Meet trains before departure',
+        name: 'Barrie South GO • To Train',
+        description: 'Bus arrives before the train departs',
         icon: 'train',
         getData: (dayType) => getGoStationTemplateData('barrie-south', dayType, 'southbound')
     },
     {
         id: 'go-barrie-south-arrivals',
-        name: 'Barrie South GO Arrivals',
-        description: 'Connect after train arrival',
+        name: 'Barrie South GO • From Train',
+        description: 'Bus departs after the train arrives',
         icon: 'train',
         getData: (dayType) => getGoStationTemplateData('barrie-south', dayType, 'northbound')
     },
     {
         id: 'go-allandale-waterfront-departures',
-        name: 'Barrie Allandale Waterfront GO Departures',
-        description: 'Meet trains before departure',
+        name: 'Barrie Allandale Waterfront GO • To Train',
+        description: 'Bus arrives before the train departs',
         icon: 'train',
         getData: (dayType) => getGoStationTemplateData('allandale-waterfront', dayType, 'southbound')
     },
     {
         id: 'go-allandale-waterfront-arrivals',
-        name: 'Barrie Allandale Waterfront GO Arrivals',
-        description: 'Connect after train arrival',
+        name: 'Barrie Allandale Waterfront GO • From Train',
+        description: 'Bus departs after the train arrives',
         icon: 'train',
         getData: (dayType) => getGoStationTemplateData('allandale-waterfront', dayType, 'northbound')
     },

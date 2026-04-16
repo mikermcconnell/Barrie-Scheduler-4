@@ -240,7 +240,7 @@ describe('RoundTripTableView accessibility polish', () => {
     expect(stickyCells).toHaveLength(0);
   });
 
-  it('shows departure-train matches on arrival cells and arrival-train matches on departure cells', () => {
+  it('places round-trip connection icons using the saved route connection type', () => {
     flushSync(() => {
       root?.render(
         <RoundTripTableView
@@ -305,35 +305,32 @@ describe('RoundTripTableView accessibility polish', () => {
                 times: [
                   {
                     id: 'dep-1',
-                    time: 377,
+                    time: 367,
                     enabled: true,
                     daysActive: ['Weekday'],
                     eventType: 'departure'
-                  }
-                ]
-              },
-              {
-                id: 'go-arrival',
-                name: 'Barrie South GO Arrivals',
-                type: 'manual',
-                stopCode: '725',
-                defaultEventType: 'arrival',
-                icon: 'train',
-                createdAt: '2026-03-30T00:00:00.000Z',
-                updatedAt: '2026-03-30T00:00:00.000Z',
-                times: [
-                  {
-                    id: 'arr-1',
-                    time: 365,
-                    enabled: true,
-                    daysActive: ['Weekday'],
-                    eventType: 'arrival'
                   }
                 ]
               }
             ],
             updatedAt: '2026-03-30T00:00:00.000Z',
             updatedBy: 'tester'
+          }}
+          routeConnectionConfig={{
+            routeIdentity: '11-Weekday',
+            optimizationMode: 'hybrid',
+            connections: [
+              {
+                id: 'conn-dep',
+                targetId: 'go-departure',
+                connectionType: 'feed_arriving',
+                bufferMinutes: 5,
+                stopCode: '725',
+                stopName: 'Barrie South GO',
+                priority: 1,
+                enabled: true
+              }
+            ]
           }}
           onCellEdit={vi.fn()}
         />
@@ -342,12 +339,15 @@ describe('RoundTripTableView accessibility polish', () => {
 
     const arrivalCells = Array.from(container?.querySelectorAll('[aria-label*="arrival time"]') ?? []);
     const departureCells = Array.from(container?.querySelectorAll('[aria-label*="departure time"]') ?? []);
-    const arrivalCell = arrivalCells.find((cell) => cell.textContent?.includes('12 min before departure'));
-    const departureCell = departureCells.find((cell) => cell.textContent?.includes('3 min after arrival'));
+    const arrivalCell = arrivalCells.find((cell) =>
+      cell.querySelector('button[aria-label*="Barrie South GO Departures"]')
+    );
+    const departureCell = departureCells.find((cell) =>
+      cell.querySelector('button[aria-label*="Barrie South GO Departures"]')
+    );
 
-    expect(arrivalCell).not.toBeUndefined();
+    expect(arrivalCell).toBeUndefined();
     expect(departureCell).not.toBeUndefined();
-    expect(arrivalCell?.textContent).not.toContain('3 min after arrival');
-    expect(departureCell?.textContent).not.toContain('12 min before departure');
+    expect(departureCell?.querySelector('button[aria-label*="Barrie South GO Arrivals"]')).toBeNull();
   });
 });
