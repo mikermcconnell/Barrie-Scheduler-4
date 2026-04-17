@@ -15,7 +15,7 @@ import {
 } from 'firebase/firestore';
 import {
     ref,
-    uploadString,
+    uploadBytes,
     getDownloadURL,
     deleteObject,
 } from 'firebase/storage';
@@ -41,6 +41,28 @@ function getOverviewStoragePath(teamId: string, timestamp: string) {
 
 function getReportStoragePath(teamId: string, timestamp: string) {
     return `teams/${teamId}/performanceData/${timestamp}-report.json`;
+}
+
+export function buildStorageJsonUploadData(value: unknown): Blob | Uint8Array {
+    const json = JSON.stringify(value);
+    if (typeof Blob !== 'undefined') {
+        return new Blob([json], { type: 'application/json' });
+    }
+    return new TextEncoder().encode(json);
+}
+
+export function getTotalRecordsForSummary(summary: PerformanceDataSummary): number {
+    return summary.dailySummaries.reduce((sum, day) => sum + (day.dataQuality?.totalRecords || 0), 0);
+}
+
+export function resolveMergedCleanHistoryStartDate(
+    incomingStartDate: string | undefined,
+    existingStartDate: string | undefined,
+): string | undefined {
+    if (incomingStartDate && existingStartDate) {
+        return incomingStartDate <= existingStartDate ? incomingStartDate : existingStartDate;
+    }
+    return incomingStartDate ?? existingStartDate;
 }
 
 export function mergePerformanceSummaryMetadata(
@@ -135,9 +157,12 @@ export async function savePerformanceData(
                         importedBy: userId,
                         dateRange: { start: dates[0], end: dates[dates.length - 1] },
                         dayCount: allDays.length,
-                        totalRecords: summary.metadata.totalRecords,
+                        totalRecords: getTotalRecordsForSummary({ ...summary, dailySummaries: allDays }),
                         runtimeLogicVersion: summary.metadata.runtimeLogicVersion ?? oldSummary.metadata?.runtimeLogicVersion,
-                        cleanHistoryStartDate: summary.metadata.cleanHistoryStartDate ?? oldSummary.metadata?.cleanHistoryStartDate,
+                        cleanHistoryStartDate: resolveMergedCleanHistoryStartDate(
+                            summary.metadata.cleanHistoryStartDate,
+                            oldSummary.metadata?.cleanHistoryStartDate,
+                        ),
                     },
                     schemaVersion: summary.schemaVersion,
                 };
@@ -153,13 +178,13 @@ export async function savePerformanceData(
 
     // Upload merged summary JSON to Storage
     const storageRef = ref(storage, storagePath);
-    await uploadString(storageRef, JSON.stringify(merged), 'raw', {
+    await uploadBytes(storageRef, buildStorageJsonUploadData(merged), {
         contentType: 'application/json',
     });
-    await uploadString(ref(storage, overviewStoragePath), JSON.stringify(overviewSummary), 'raw', {
+    await uploadBytes(ref(storage, overviewStoragePath), buildStorageJsonUploadData(overviewSummary), {
         contentType: 'application/json',
     });
-    await uploadString(ref(storage, reportStoragePath), JSON.stringify(reportSummary), 'raw', {
+    await uploadBytes(ref(storage, reportStoragePath), buildStorageJsonUploadData(reportSummary), {
         contentType: 'application/json',
     });
 

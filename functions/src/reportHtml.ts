@@ -177,6 +177,40 @@ function apcPill(status: 'ok' | 'review' | 'suspect'): string {
   return `<span style="background:${apcStatusBg(status)};color:${apcStatusColor(status)};padding:2px 8px;border-radius:999px;font-weight:700;font-size:11px;">${apcStatusLabel(status)}</span>`;
 }
 
+function apcIssueSideForRoute(
+  route: RouteMetrics,
+  status: 'ok' | 'review' | 'suspect',
+): 'boards' | 'alights' | null {
+  if (status === 'ok') return null;
+  if (route.ridership === route.alightings) return null;
+  return route.ridership < route.alightings ? 'boards' : 'alights';
+}
+
+function apcIssueCellStyle(
+  status: 'ok' | 'review' | 'suspect',
+  isIssue: boolean,
+): string {
+  if (!isIssue || status === 'ok') {
+    return 'color:#374151;';
+  }
+
+  if (status === 'suspect') {
+    return 'color:#b91c1c;background:#fef2f2;font-weight:700;box-shadow: inset 3px 0 0 #dc2626;';
+  }
+
+  return 'color:#b45309;background:#fffbeb;font-weight:700;box-shadow: inset 3px 0 0 #f59e0b;';
+}
+
+function apcStatusCellStyle(status: 'ok' | 'review' | 'suspect'): string {
+  if (status === 'suspect') {
+    return 'background:#fef2f2;box-shadow: inset 3px 0 0 #dc2626;';
+  }
+  if (status === 'review') {
+    return 'background:#fffbeb;box-shadow: inset 3px 0 0 #f59e0b;';
+  }
+  return '';
+}
+
 function stopLabel(name: string, id: string): string {
   if (!id) return name;
   return `${name} <span style="color:#9ca3af;font-weight:400;">(${id})</span>`;
@@ -187,6 +221,67 @@ function sectionHeader(title: string, subtitle?: string): string {
     <div style="margin:24px 0 10px;">
       <div style="font-size:15px;font-weight:700;color:#1e3a5f;padding-bottom:4px;border-bottom:2px solid #e5e7eb;">${title}</div>
       ${subtitle ? `<div style="font-size:11px;color:#9ca3af;margin-top:2px;">${subtitle}</div>` : ''}
+    </div>`;
+}
+
+function formatRouteList(routeIds: string[], maxShown = 4): string {
+  const unique = [...new Set(routeIds.filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  if (unique.length === 0) return 'None';
+  if (unique.length <= maxShown) return unique.join(', ');
+  return `${unique.slice(0, maxShown).join(', ')} +${unique.length - maxShown} more`;
+}
+
+function buildExecutiveSummary(latestDay: DailySummary): string {
+  const mt = latestDay.missedTrips;
+  const apcIssueRoutes = latestDay.byRoute.filter(route => apcStatusForRoute(route) !== 'ok');
+  const worstOtpRoute = [...latestDay.byRoute]
+    .sort((a, b) => a.otp.onTimePercent - b.otp.onTimePercent)[0];
+
+  let statusLabel = 'Stable';
+  let statusBg = '#ecfdf5';
+  let statusColor = '#166534';
+  let summaryLead = `Service delivery was generally stable on ${formatDateLong(latestDay.date)}.`;
+
+  if ((mt?.missedPct ?? 0) >= 5 || latestDay.system.otp.onTimePercent < 75) {
+    statusLabel = 'Needs Attention';
+    statusBg = '#fef2f2';
+    statusColor = '#991b1b';
+    summaryLead = `Service delivery needs attention for ${formatDateLong(latestDay.date)}.`;
+  } else if ((mt?.totalMissed ?? 0) > 0 || latestDay.system.otp.onTimePercent < 85 || apcIssueRoutes.length > 0) {
+    statusLabel = 'Review';
+    statusBg = '#fffbeb';
+    statusColor = '#92400e';
+    summaryLead = `Service delivery was mostly stable on ${formatDateLong(latestDay.date)}, with a few items to review.`;
+  }
+
+  const bullets = [
+    summaryLead,
+    `System OTP was ${pct(latestDay.system.otp.onTimePercent)} with ${num(latestDay.system.totalRidership)} riders.`,
+    mt && mt.totalScheduled > 0
+      ? mt.totalMissed === 0
+        ? `All ${num(mt.totalScheduled)} scheduled trips operated.`
+        : `${num(mt.totalMissed)} of ${num(mt.totalScheduled)} scheduled trips were missed (${mt.missedPct.toFixed(1)}%), affecting Routes ${formatRouteList(mt.byRoute.map(route => route.routeId))}.`
+      : `No missed-trip summary was available in this dataset.`,
+    apcIssueRoutes.length > 0
+      ? `APC review flags were triggered on ${apcIssueRoutes.length} route${apcIssueRoutes.length === 1 ? '' : 's'} (${formatRouteList(apcIssueRoutes.map(route => route.routeId))}).`
+      : 'No APC review flags were triggered yesterday.',
+    worstOtpRoute
+      ? `Lowest route OTP was ${worstOtpRoute.routeId} ${worstOtpRoute.routeName} at ${pct(worstOtpRoute.otp.onTimePercent)}.`
+      : 'Route-level OTP details were unavailable.',
+  ];
+
+  return `
+    ${sectionHeader('Yesterday at a Glance', 'Quick management summary of the previous service day')}
+    <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;box-shadow:0 1px 2px rgba(15,23,42,0.04);">
+      <div style="margin-bottom:10px;">
+        <span style="display:inline-block;background:${statusBg};color:${statusColor};padding:4px 10px;border-radius:999px;font-size:11px;font-weight:700;letter-spacing:0.3px;text-transform:uppercase;">${statusLabel}</span>
+      </div>
+      ${bullets.map(item => `
+        <div style="font-size:13px;line-height:1.5;color:#374151;margin:6px 0;">
+          <span style="color:#2563eb;font-weight:700;margin-right:6px;">•</span>${item}
+        </div>
+      `).join('')}
     </div>`;
 }
 
@@ -282,9 +377,43 @@ function otpBar(earlyPct: number, onTimePct: number, latePct: number): string {
 function buildMissedTripsTable(latestDay: DailySummary, trendDays: DailySummary[]): string {
   const mt = latestDay.missedTrips;
   if (!mt || mt.totalScheduled <= 0) return '';
+  const impactedRoutes = mt.trips?.map(trip => trip.routeId) ?? mt.byRoute.map(route => route.routeId);
+  const missedTripSummary = `
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin:8px 0 12px;">
+      <tr>
+        <td style="width:25%;padding:0 4px 8px 0;">
+          <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:10px 12px;">
+            <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.4px;color:#6b7280;">Missed Trips</div>
+            <div style="font-size:22px;font-weight:700;color:#111827;margin-top:2px;">${num(mt.totalMissed)}</div>
+          </div>
+        </td>
+        <td style="width:25%;padding:0 0 8px 4px;">
+          <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:10px 12px;">
+            <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.4px;color:#6b7280;">No Data Recorded</div>
+            <div style="font-size:22px;font-weight:700;color:#991b1b;margin-top:2px;">${num(mt.notPerformedCount)}</div>
+          </div>
+        </td>
+      </tr>
+      <tr>
+        <td style="width:25%;padding:0 4px 0 0;">
+          <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:10px 12px;">
+            <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.4px;color:#6b7280;">Late 15+ Min</div>
+            <div style="font-size:22px;font-weight:700;color:#92400e;margin-top:2px;">${num(mt.lateOver15Count)}</div>
+          </div>
+        </td>
+        <td style="width:75%;padding:0 0 0 4px;">
+          <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:10px 12px;">
+            <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.4px;color:#6b7280;">Impacted Routes</div>
+            <div style="font-size:14px;font-weight:700;color:#111827;margin-top:4px;">${formatRouteList(impactedRoutes, 6)}</div>
+          </div>
+        </td>
+      </tr>
+    </table>`;
+
   if (mt.totalMissed === 0) {
     return `
       ${sectionHeader('Missed Trips', `0 of ${num(mt.totalScheduled)} scheduled trips missed (0.0%)`)}
+      ${missedTripSummary}
       <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:6px;padding:10px 12px;">
         <div style="font-size:12px;font-weight:700;color:#166534;">All scheduled trips operated.</div>
         <div style="font-size:11px;color:#15803d;margin-top:2px;">No missed trips were detected for this service day.</div>
@@ -373,6 +502,7 @@ function buildMissedTripsTable(latestDay: DailySummary, trendDays: DailySummary[
   // If we have trip-level data, render the two-section layout
   if (allTrips.length > 0) {
     let html = sectionHeader('Missed Trips', `${num(mt.totalMissed)} of ${num(mt.totalScheduled)} scheduled trips missed (${mt.missedPct.toFixed(1)}%)`);
+    html += missedTripSummary;
 
     // --- Late departures (15+ min), aggregated over a multi-day window ---
     if (canBuildLateTrend && lateTrendRows.length > 0) {
@@ -456,6 +586,7 @@ function buildMissedTripsTable(latestDay: DailySummary, trendDays: DailySummary[
 
   return `
     ${sectionHeader('Missed Trips', `${num(mt.totalMissed)} of ${num(mt.totalScheduled)} scheduled trips missed (${mt.missedPct.toFixed(1)}%)`)}
+    ${missedTripSummary}
     <div style="font-size:11px;color:#9ca3af;margin-bottom:8px;">Trip-level rows unavailable; showing route-level summary for this dataset.</div>
     <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;">
       <tr style="background:#f9fafb;">
@@ -518,11 +649,8 @@ function buildRouteScorecard(routes: RouteMetrics[]): string {
   const rows = sorted.map((r, i) => {
     const discrepancyPct = apcDiscrepancyPctForRoute(r);
     const apcStatus = apcStatusForRoute(r);
-    const bg = apcStatus === 'suspect'
-      ? '#fff7f7'
-      : apcStatus === 'review'
-        ? '#fffdf5'
-        : (i % 2 === 0 ? '#ffffff' : '#f9fafb');
+    const issueSide = apcIssueSideForRoute(r, apcStatus);
+    const bg = i % 2 === 0 ? '#ffffff' : '#f9fafb';
     return `
       <tr style="background:${bg};">
         <td style="padding:6px 10px;font-size:12px;font-weight:700;color:#374151;border-bottom:1px solid #f3f4f6;">${r.routeId}</td>
@@ -530,9 +658,9 @@ function buildRouteScorecard(routes: RouteMetrics[]): string {
         <td style="padding:6px 10px;font-size:12px;text-align:right;border-bottom:1px solid #f3f4f6;">${otpPill(r.otp.onTimePercent)}</td>
         <td style="padding:6px 10px;font-size:12px;text-align:right;color:#111827;border-bottom:1px solid #f3f4f6;">${pct(r.otp.earlyPercent)}</td>
         <td style="padding:6px 10px;font-size:12px;text-align:right;color:#111827;border-bottom:1px solid #f3f4f6;">${pct(r.otp.latePercent)}</td>
-        <td style="padding:6px 10px;font-size:12px;text-align:right;color:#374151;border-bottom:1px solid #f3f4f6;">${num(r.ridership)}</td>
-        <td style="padding:6px 10px;font-size:12px;text-align:right;color:#374151;border-bottom:1px solid #f3f4f6;">${num(r.alightings)}</td>
-        <td style="padding:6px 10px;font-size:12px;text-align:right;border-bottom:1px solid #f3f4f6;">
+        <td style="padding:6px 10px;font-size:12px;text-align:right;border-bottom:1px solid #f3f4f6;${apcIssueCellStyle(apcStatus, issueSide === 'boards')}">${num(r.ridership)}</td>
+        <td style="padding:6px 10px;font-size:12px;text-align:right;border-bottom:1px solid #f3f4f6;${apcIssueCellStyle(apcStatus, issueSide === 'alights')}">${num(r.alightings)}</td>
+        <td style="padding:6px 10px;font-size:12px;text-align:right;border-bottom:1px solid #f3f4f6;${apcStatusCellStyle(apcStatus)}">
           ${apcPill(apcStatus)}
           <div style="font-size:10px;color:#9ca3af;margin-top:2px;">${pct(discrepancyPct)} gap</div>
         </td>
@@ -556,7 +684,7 @@ function buildRouteScorecard(routes: RouteMetrics[]): string {
       </tr>
       ${rows}
     </table>
-    <div style="font-size:11px;color:#9ca3af;margin-top:6px;">APC status is based on the daily difference between route boardings and alightings.</div>`;
+    <div style="font-size:11px;color:#9ca3af;margin-top:6px;">APC status is based on the daily difference between route boardings and alightings. For review/suspect rows, only the lower of Boards/Alights is highlighted.</div>`;
 }
 
 function buildTopStops(stops: StopMetrics[]): string {
@@ -688,13 +816,16 @@ export function buildReportHtml(data: ReportData): string {
       <!-- OTP Distribution Bar -->
       ${otpBar(sys.otp.earlyPercent, sys.otp.onTimePercent, sys.otp.latePercent)}
 
-      <!-- ═══ 2. ROUTE SCORECARD ═══ -->
+      <!-- ═══ 2. EXECUTIVE SUMMARY ═══ -->
+      ${buildExecutiveSummary(latestDay)}
+
+      <!-- ═══ 3. ROUTE SCORECARD ═══ -->
       ${buildRouteScorecard(latestDay.byRoute)}
 
-      <!-- ═══ 3. MISSED TRIPS ═══ -->
+      <!-- ═══ 4. MISSED TRIPS ═══ -->
       ${buildMissedTripsTable(latestDay, trendDays)}
 
-      <!-- ═══ 4. OTP TREND ═══ -->
+      <!-- ═══ 5. OTP TREND ═══ -->
       ${trendDays.length > 1 ? (() => {
         const recentTrend = trendDays.slice(-7);
         return `
@@ -721,10 +852,10 @@ export function buildReportHtml(data: ReportData): string {
       </table>`;
       })() : ''}
 
-      <!-- ═══ 5. BOARDINGS BY HOUR ═══ -->
+      <!-- ═══ 6. BOARDINGS BY HOUR ═══ -->
       ${buildHourlyTable(latestDay.byHour, totalServiceHours)}
 
-      <!-- ═══ 6. STOP HIGHLIGHTS ═══ -->
+      <!-- ═══ 7. STOP HIGHLIGHTS ═══ -->
       ${buildTopStops(latestDay.byStop)}
 
     </div>

@@ -263,6 +263,17 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
                             </div>
                         )}
 
+                        {onSaveVersion && (
+                            <button
+                                onClick={() => onSaveVersion()}
+                                className="px-3 py-2 rounded-lg text-sm font-semibold text-gray-700 hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 flex items-center gap-2 flex-shrink-0"
+                                title="Save draft now"
+                            >
+                                <History size={14} />
+                                Save now
+                            </button>
+                        )}
+
                         {onOpenDrafts && (
                             <button
                                 onClick={onOpenDrafts}
@@ -304,17 +315,6 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
                             >
                                 <Download size={14} />
                                 Export Draft
-                            </button>
-                        )}
-
-                        {onSaveVersion && (
-                            <button
-                                onClick={() => onSaveVersion()}
-                                className="px-3 py-2 rounded-lg text-sm font-semibold text-gray-700 hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 flex items-center gap-2 flex-shrink-0"
-                                title="Save draft now"
-                            >
-                                <History size={14} />
-                                Save now
                             </button>
                         )}
 

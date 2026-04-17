@@ -10,6 +10,7 @@ const {
   writeBufferMock,
   linkClickMock,
   createObjectUrlMock,
+  workbookSheetsMock,
   undoMock,
   redoMock,
 } = vi.hoisted(() => ({
@@ -18,6 +19,7 @@ const {
   writeBufferMock: vi.fn().mockResolvedValue(new ArrayBuffer(8)),
   linkClickMock: vi.fn(),
   createObjectUrlMock: vi.fn(() => 'blob:mock-export'),
+  workbookSheetsMock: [] as string[][],
   undoMock: vi.fn(),
   redoMock: vi.fn(),
 }));
@@ -67,7 +69,15 @@ vi.mock('exceljs', () => {
   class MockWorkbook {
     creator = '';
     created: Date | null = null;
-    addWorksheet = vi.fn(() => createWorksheet());
+    private readonly sheetNames: string[];
+    constructor() {
+      this.sheetNames = [];
+      workbookSheetsMock.push(this.sheetNames);
+    }
+    addWorksheet = vi.fn((name: string) => {
+      this.sheetNames.push(name);
+      return createWorksheet();
+    });
     xlsx = {
       writeBuffer: writeBufferMock,
     };
@@ -247,6 +257,48 @@ const schedules = [
       },
     ],
   },
+  {
+    routeName: '8 (Weekday) (North)',
+    stops: ['Stop A', 'Stop B'],
+    stopIds: {},
+    trips: [
+      {
+        id: 'route-8-north-trip',
+        blockId: '8-1',
+        direction: 'North',
+        tripNumber: 1,
+        rowId: 1,
+        startTime: 500,
+        endTime: 530,
+        recoveryTime: 0,
+        travelTime: 30,
+        cycleTime: 30,
+        stops: { 'Stop A': '8:20 AM', 'Stop B': '8:50 AM' },
+        arrivalTimes: { 'Stop A': '8:20 AM', 'Stop B': '8:50 AM' },
+      },
+    ],
+  },
+  {
+    routeName: '8 (Weekday) (South)',
+    stops: ['Stop A', 'Stop B'],
+    stopIds: {},
+    trips: [
+      {
+        id: 'route-8-south-trip',
+        blockId: '8-1',
+        direction: 'South',
+        tripNumber: 2,
+        rowId: 2,
+        startTime: 535,
+        endTime: 565,
+        recoveryTime: 0,
+        travelTime: 30,
+        cycleTime: 30,
+        stops: { 'Stop A': '8:55 AM', 'Stop B': '9:25 AM' },
+        arrivalTimes: { 'Stop A': '8:55 AM', 'Stop B': '9:25 AM' },
+      },
+    ],
+  },
 ] as any;
 
 describe('ScheduleEditor shell behavior', () => {
@@ -259,6 +311,7 @@ describe('ScheduleEditor shell behavior', () => {
     writeBufferMock.mockClear();
     linkClickMock.mockClear();
     createObjectUrlMock.mockClear();
+    workbookSheetsMock.length = 0;
     undoMock.mockClear();
     redoMock.mockClear();
     originalCreateObjectURL = URL.createObjectURL;
@@ -280,7 +333,11 @@ describe('ScheduleEditor shell behavior', () => {
     vi.restoreAllMocks();
   });
 
-  const renderEditor = (draftName?: string) => {
+  const renderEditor = (options?: {
+    draftName?: string;
+    schedules?: typeof schedules;
+    exportScopeSchedules?: typeof schedules;
+  }) => {
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -288,10 +345,11 @@ describe('ScheduleEditor shell behavior', () => {
     flushSync(() => {
       root?.render(
         <ScheduleEditor
-          schedules={schedules}
+          schedules={options?.schedules ?? schedules}
+          exportScopeSchedules={options?.exportScopeSchedules}
           teamId="team-1"
           userId="user-1"
-          draftName={draftName}
+          draftName={options?.draftName}
           onSchedulesChange={vi.fn()}
           canUndo
           canRedo
@@ -299,6 +357,16 @@ describe('ScheduleEditor shell behavior', () => {
           redo={redoMock}
         />,
       );
+    });
+  };
+
+  const clickButtonByText = (label: string) => {
+    const button = Array.from(container?.querySelectorAll('button') || []).find(
+      element => element.textContent?.includes(label),
+    ) as HTMLButtonElement | undefined;
+    expect(button).toBeDefined();
+    flushSync(() => {
+      button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
   };
 
@@ -382,8 +450,12 @@ describe('ScheduleEditor shell behavior', () => {
     expect(header?.getAttribute('data-unsaved')).toBe('false');
   });
 
-  it('runs the export workflow and names the file after the draft', async () => {
-    renderEditor('Route 10 Weekday Draft');
+  it('exports the current route only when selected from the export dialog', async () => {
+    renderEditor({
+      draftName: 'Route 10 Weekday Draft',
+      schedules: schedules.slice(0, 2) as any,
+      exportScopeSchedules: schedules as any,
+    });
     await flushPromises();
 
     const originalCreateElement = document.createElement.bind(document);
@@ -414,13 +486,75 @@ describe('ScheduleEditor shell behavior', () => {
       exportButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
+    expect(writeBufferMock).not.toHaveBeenCalled();
+    expect(container?.querySelector('[role="dialog"]')?.textContent).toContain('Choose whether to export just the current route or the entire draft');
+    expect(container?.querySelector('[role="dialog"]')?.textContent).toContain('Export 2 routes across the full loaded system draft');
+
+    clickButtonByText('Current route');
     await flushPromises();
     await flushPromises();
 
     expect(writeBufferMock).toHaveBeenCalledTimes(1);
     expect(createObjectUrlMock).toHaveBeenCalledTimes(1);
     expect(linkClickMock).toHaveBeenCalledTimes(1);
-    expect(downloadFileName).toBe('Route 10 Weekday Draft.xlsx');
+    expect(downloadFileName).toBe('Route 10 Weekday Draft - Route 10 - Weekday.xlsx');
+    expect(workbookSheetsMock[0]).toEqual([
+      'Service Hours Summary',
+      '10 (Weekday) (North)',
+      '10 (Weekday) (South)',
+    ]);
+    createElementSpy.mockRestore();
+  });
+
+  it('exports all loaded routes when that option is selected', async () => {
+    renderEditor({
+      draftName: 'Boxing Day',
+      schedules: schedules.slice(0, 2) as any,
+      exportScopeSchedules: schedules as any,
+    });
+    await flushPromises();
+
+    const originalCreateElement = document.createElement.bind(document);
+    let downloadFileName = '';
+    const createElementSpy = vi.spyOn(document, 'createElement').mockImplementation((tagName: string) => {
+      const element = originalCreateElement(tagName);
+      if (tagName.toLowerCase() === 'a') {
+        Object.defineProperty(element, 'download', {
+          configurable: true,
+          get() {
+            return downloadFileName;
+          },
+          set(value: string) {
+            downloadFileName = value;
+          },
+        });
+        Object.defineProperty(element, 'click', {
+          configurable: true,
+          value: linkClickMock,
+        });
+      }
+      return element;
+    });
+
+    const exportButton = container?.querySelector('[data-testid="export"]');
+
+    flushSync(() => {
+      exportButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    clickButtonByText('All routes in system draft');
+    await flushPromises();
+    await flushPromises();
+
+    expect(writeBufferMock).toHaveBeenCalledTimes(1);
+    expect(downloadFileName).toBe('Boxing Day.xlsx');
+    expect(workbookSheetsMock[0]).toEqual([
+      'Service Hours Summary',
+      '10 (Weekday) (North)',
+      '10 (Weekday) (South)',
+      '8 (Weekday) (North)',
+      '8 (Weekday) (South)',
+    ]);
     createElementSpy.mockRestore();
   });
 });

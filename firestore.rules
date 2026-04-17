@@ -73,6 +73,11 @@ service cloud.firestore {
         allow read, write: if isTeamMember(teamId);
       }
 
+      // Monthly performance snapshots
+      match /performanceSnapshots/{docId} {
+        allow read, write: if isTeamMember(teamId);
+      }
+
       // OD Matrix Data
       match /odMatrixData/{docId} {
         allow read, write: if isTeamMember(teamId);

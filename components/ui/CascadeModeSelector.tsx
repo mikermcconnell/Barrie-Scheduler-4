@@ -16,21 +16,22 @@ interface CascadeModeSelectorProps {
     mode: CascadeMode;
     onChange: (mode: CascadeMode) => void;
     disabled?: boolean;
+    allowedModes?: CascadeMode[];
 }
 
 const modeConfig: Record<CascadeMode, { label: string; description: string; icon: React.ReactNode }> = {
     always: {
-        label: 'Full Cascade',
-        description: 'Cascade to trip and block',
+        label: 'Cascade On',
+        description: 'Cascade to later cells and trips',
         icon: <Zap size={14} />
     },
     'within-trip': {
-        label: 'Trip Only',
-        description: 'Only cascade within trip',
+        label: 'This Trip Only',
+        description: 'Cascade to later cells in this trip only',
         icon: <ArrowRight size={14} />
     },
     none: {
-        label: 'Single Cell',
+        label: 'Cascade Off',
         description: 'Edit only this cell',
         icon: <Target size={14} />
     }
@@ -39,10 +40,14 @@ const modeConfig: Record<CascadeMode, { label: string; description: string; icon
 export const CascadeModeSelector: React.FC<CascadeModeSelectorProps> = ({
     mode,
     onChange,
-    disabled = false
+    disabled = false,
+    allowedModes
 }) => {
     const [isOpen, setIsOpen] = React.useState(false);
     const dropdownRef = React.useRef<HTMLDivElement>(null);
+    const availableModes = allowedModes && allowedModes.length > 0
+        ? allowedModes
+        : (Object.keys(modeConfig) as CascadeMode[]);
 
     // Close dropdown when clicking outside
     React.useEffect(() => {
@@ -83,7 +88,7 @@ export const CascadeModeSelector: React.FC<CascadeModeSelectorProps> = ({
                         </p>
                     </div>
 
-                    {(Object.keys(modeConfig) as CascadeMode[]).map(modeKey => {
+                    {availableModes.map(modeKey => {
                         const config = modeConfig[modeKey];
                         const isActive = mode === modeKey;
 

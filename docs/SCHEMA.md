@@ -22,6 +22,7 @@ firebase/
 │   ├── routeConnectionConfigs/{routeIdentity} # Per-route connection settings
 │   ├── transitAppData/{docId}            # Transit App analytics datasets
 │   ├── performanceData/{docId}           # STREETS / ops performance datasets
+│   ├── performanceSnapshots/{month}      # Monthly performance rollups (YYYY-MM)
 │   ├── performanceImports/{importId}     # Archived raw STREETS import runs for replay/rebuild
 │   └── odMatrixData/{docId}              # Origin-destination datasets
 │       └── imports/{importId}            # OD import history

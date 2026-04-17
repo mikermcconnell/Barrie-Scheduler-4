@@ -11,6 +11,8 @@ import type { ConnectionLibrary } from '../utils/connections/connectionTypes';
 import {
     applyAddTripResultToSchedules,
     buildAddTripModalContext,
+    buildEditTripModalContext,
+    applyEditTripResultToSchedules,
     type AddTripPlacement,
     type AddTripModalContext,
     type AddTripResult
@@ -27,6 +29,7 @@ interface UseAddTripOptions {
 interface UseAddTripReturn {
     modalContext: AddTripModalContext | null;
     openModal: (anchorTripId: string, routeData: { north?: MasterRouteTable; south?: MasterRouteTable }, placement?: AddTripPlacement) => void;
+    openEditModal: (tripId: string) => void;
     closeModal: () => void;
     handleConfirm: (result: AddTripResult, contextOverride?: AddTripModalContext) => void;
 }
@@ -55,11 +58,28 @@ export const useAddTrip = ({
             anchorTripId,
             placement,
             connectionLibrary ?? null,
-            _routeData.north && _routeData.south ? 'cycle' : 'trip'
+            _routeData.north && _routeData.south ? 'custom' : 'trip'
         );
 
         if (!modalContext) {
             console.error('Could not build add-trip context for trip id:', anchorTripId);
+            return;
+        }
+
+        setModalContext(modalContext);
+    }, [connectionLibrary, schedules]);
+
+    const openEditModal = useCallback((tripId: string) => {
+        if (!tripId) return;
+
+        const modalContext = buildEditTripModalContext(
+            schedules,
+            tripId,
+            connectionLibrary ?? null
+        );
+
+        if (!modalContext) {
+            console.error('Could not build edit-trip context for trip id:', tripId);
             return;
         }
 
@@ -97,40 +117,80 @@ export const useAddTrip = ({
             endStopName
         } = modalResult;
 
-        const { schedules: newScheds, createdTripIds } = applyAddTripResultToSchedules(
-            schedules,
-            effectiveContext,
-            {
-                startTime,
-                tripCount,
-                serviceMode,
-                absorbShortTrailingGapIntoRecovery,
-                blockMode,
-                blockId,
-                targetDirection,
-                targetRouteName,
-                startStopName,
-                endStopName
+        if (effectiveContext.actionMode === 'edit') {
+            const { schedules: newScheds, blockConflicts } = applyEditTripResultToSchedules(
+                schedules,
+                effectiveContext,
+                {
+                    startTime,
+                    tripCount: 1,
+                    serviceMode: 'trip',
+                    absorbShortTrailingGapIntoRecovery: false,
+                    blockMode: 'reference',
+                    blockId: effectiveContext.referenceTrip.blockId,
+                    targetDirection: effectiveContext.referenceTrip.direction,
+                    targetRouteName: effectiveContext.targetTable.routeName,
+                    startStopName,
+                    endStopName
+                }
+            );
+
+            if (blockConflicts.length > 0) {
+                console.error('Edit trip would create a block conflict:', blockConflicts[0]);
+                return;
             }
-        );
 
-        setSchedules(newScheds);
-        onTripsAdded?.(createdTripIds);
+            setSchedules(newScheds);
 
-        // Show success message
-        if (onSuccess) {
-            const routeNum = effectiveContext.routeBaseName.split(' ')[0];
-            const dayLabel = effectiveContext.targetTable.routeName.includes('(Saturday)')
-                ? 'Saturday'
-                : effectiveContext.targetTable.routeName.includes('(Sunday)')
-                    ? 'Sunday'
-                    : 'Weekday';
-            if (serviceMode === 'cycle') {
-                const directionLabel = targetDirection === 'North' ? 'northbound' : 'southbound';
-                onSuccess(`✓ Added ${tripCount} full cycle${tripCount > 1 ? 's' : ''} starting ${directionLabel} on Route ${routeNum} (${dayLabel}) as block ${blockId}`);
-            } else {
-                const directionLabel = targetDirection === 'North' ? 'northbound' : 'southbound';
-                onSuccess(`✓ Added ${tripCount} ${directionLabel} trip${tripCount > 1 ? 's' : ''} to Route ${routeNum} (${dayLabel}) as block ${blockId}`);
+            if (onSuccess) {
+                const routeNum = effectiveContext.routeBaseName.split(' ')[0];
+                const dayLabel = effectiveContext.targetTable.routeName.includes('(Saturday)')
+                    ? 'Saturday'
+                    : effectiveContext.targetTable.routeName.includes('(Sunday)')
+                        ? 'Sunday'
+                        : 'Weekday';
+                const directionLabel = effectiveContext.referenceTrip.direction.toLowerCase();
+                onSuccess(`✓ Updated ${directionLabel}bound trip on Route ${routeNum} (${dayLabel})`);
+            }
+        } else {
+            const { schedules: newScheds, createdTripIds } = applyAddTripResultToSchedules(
+                schedules,
+                effectiveContext,
+                {
+                    startTime,
+                    tripCount,
+                    serviceMode,
+                    absorbShortTrailingGapIntoRecovery,
+                    blockMode,
+                    blockId,
+                    targetDirection,
+                    targetRouteName,
+                    startStopName,
+                    endStopName
+                }
+            );
+
+            setSchedules(newScheds);
+            onTripsAdded?.(createdTripIds);
+
+            // Show success message
+            if (onSuccess) {
+                const routeNum = effectiveContext.routeBaseName.split(' ')[0];
+                const dayLabel = effectiveContext.targetTable.routeName.includes('(Saturday)')
+                    ? 'Saturday'
+                    : effectiveContext.targetTable.routeName.includes('(Sunday)')
+                        ? 'Sunday'
+                        : 'Weekday';
+                if (serviceMode === 'cycle') {
+                    const directionLabel = targetDirection === 'North' ? 'northbound' : 'southbound';
+                    onSuccess(`✓ Added ${tripCount} full cycle${tripCount > 1 ? 's' : ''} starting ${directionLabel} on Route ${routeNum} (${dayLabel}) as block ${blockId}`);
+                } else if (serviceMode === 'custom') {
+                    const directionLabel = targetDirection === 'North' ? 'northbound' : 'southbound';
+                    onSuccess(`✓ Added ${tripCount} custom round trip${tripCount > 1 ? 's' : ''} starting ${directionLabel} on Route ${routeNum} (${dayLabel}) as block ${blockId}`);
+                } else {
+                    const directionLabel = targetDirection === 'North' ? 'northbound' : 'southbound';
+                    onSuccess(`✓ Added ${tripCount} ${directionLabel} trip${tripCount > 1 ? 's' : ''} to Route ${routeNum} (${dayLabel}) as block ${blockId}`);
+                }
             }
         }
 
@@ -140,6 +200,7 @@ export const useAddTrip = ({
     return {
         modalContext,
         openModal,
+        openEditModal,
         closeModal,
         handleConfirm
     };

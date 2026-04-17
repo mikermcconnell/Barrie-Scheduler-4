@@ -104,6 +104,7 @@ import { CascadeModeSelector } from './ui/CascadeModeSelector';
 import { isEditableEventTarget } from '../utils/domUtils';
 import { isFeatureEnabled } from '../utils/features';
 import { buildScheduleReviewSnapshot } from '../utils/ai/scheduleReviewContext';
+import { Modal } from './ui/Modal';
 import {
     applyExtendTripResultToSchedules,
     buildExtendTripModalContext,
@@ -133,12 +134,17 @@ interface TripBucketAnalysisDisplay {
     }>;
 }
 
+type ExportScope = 'current-route' | 'all-routes';
+
 export interface ScheduleEditorProps {
     schedules: MasterRouteTable[];
     useAuthoritativeTimepoints?: boolean;
     // Optional schedule scope used by Connections library validation/resolution.
     // If omitted, defaults to the currently edited schedules.
     connectionScopeSchedules?: MasterRouteTable[];
+    // Optional schedule scope used for full-system export from editors that only load one route at a time.
+    // If omitted, defaults to the currently edited schedules.
+    exportScopeSchedules?: MasterRouteTable[];
     onSchedulesChange?: (schedules: MasterRouteTable[]) => void;
     originalSchedules?: MasterRouteTable[];
     onResetOriginals?: () => void;
@@ -202,6 +208,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
     schedules,
     useAuthoritativeTimepoints = false,
     connectionScopeSchedules,
+    exportScopeSchedules,
     onSchedulesChange,
     originalSchedules,
     onResetOriginals,
@@ -240,6 +247,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         ? false
         : (hasUnsavedChanges ?? schedules.length > 0);
     const stripNumberedStopSuffix = (stopName: string): string => stopName.replace(/\s*\(\d+\)\s*$/, '');
+    const hasNumberedStopSuffix = (stopName: string): boolean => /\s*\(\d+\)\s*$/.test(stopName);
     const resolveTripStopKey = <T,>(record: Record<string, T> | undefined, stopName: string): string | null => {
         if (!record) return null;
         if (record[stopName] !== undefined) return stopName;
@@ -249,10 +257,12 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
 
         const normalizedStop = stopName.trim().toLowerCase();
         const normalizedBase = baseName.trim().toLowerCase();
+        const allowSuffixedFallback = hasNumberedStopSuffix(stopName);
 
         for (const key of Object.keys(record)) {
             const normalizedKey = key.trim().toLowerCase();
             const normalizedKeyBase = stripNumberedStopSuffix(key).trim().toLowerCase();
+            if (!allowSuffixedFallback && hasNumberedStopSuffix(key)) continue;
             if (
                 normalizedKey === normalizedStop ||
                 normalizedKey === normalizedBase ||
@@ -299,6 +309,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
     const [recentlyAddedTripId, setRecentlyAddedTripId] = useState<string | null>(null);
     const [isFullScreen, setIsFullScreen] = useState(false);
     const [showAuditLog, setShowAuditLog] = useState(false);
+    const [showExportScopeModal, setShowExportScopeModal] = useState(false);
     const [extendTripModalContext, setExtendTripModalContext] = useState<ExtendTripModalContext | null>(null);
 
     // Connections Panel State
@@ -361,6 +372,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
     const {
         modalContext: addTripModalContext,
         openModal: openAddTripModal,
+        openEditModal,
         closeModal: closeAddTripModal,
         handleConfirm: handleAddTripFromModal
     } = useAddTrip({
@@ -398,7 +410,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
     };
 
     // Consolidate Routes
-    const consolidatedRoutes = useMemo(() => {
+    const consolidateRoutes = (tables: MasterRouteTable[]) => {
         const routeGroups: Record<string, {
             name: string;
             days: Record<string, {
@@ -408,7 +420,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
             }>;
         }> = {};
 
-        schedules.forEach(table => {
+        tables.forEach(table => {
             let dayType = 'Weekday';
             if (table.routeName.includes('(Saturday)')) dayType = 'Saturday';
             else if (table.routeName.includes('(Sunday)')) dayType = 'Sunday';
@@ -452,7 +464,13 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
             const numB = parseInt(b.name.replace(/\D/g, '')) || 0;
             return numB - numA; // Descending order
         });
+    };
+
+    const consolidatedRoutes = useMemo(() => {
+        return consolidateRoutes(schedules);
     }, [schedules]);
+    const exportableTables = exportScopeSchedules ?? schedules;
+    const exportableRouteCount = useMemo(() => consolidateRoutes(exportableTables).length, [exportableTables]);
 
     // Travel Time Grid Hook
     const gridHandlers = useTravelTimeGrid(schedules, onSchedulesChange, logAction);
@@ -695,6 +713,14 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                 const addResult = findTableAndTrip(schedules, action.tripId);
                 if (addResult) {
                     openAddTripModal(action.tripId, { north: activeRoute.north, south: activeRoute.south }, 'after');
+                }
+                break;
+            }
+
+            case 'editTrip': {
+                const editResult = findTableAndTrip(schedules, action.tripId);
+                if (editResult) {
+                    openEditModal(action.tripId);
                 }
                 break;
             }
@@ -988,16 +1014,34 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
 
     // NOTE: Travel time grid handlers moved to useTravelTimeGrid hook (see gridHandlers.* above)
 
-    const buildDraftExportFileName = (): string => {
-        const sanitizedDraftName = (draftName || 'Schedule Draft')
+    const sanitizeExportFileNamePart = (value: string): string => value
             .replace(/[<>:"/\\|?*\u0000-\u001F]/g, ' ')
             .replace(/\s+/g, ' ')
             .trim();
 
+    const buildDraftExportFileName = (scope: ExportScope): string => {
+        const sanitizedDraftName = sanitizeExportFileNamePart(draftName || 'Schedule Draft');
+        if (scope === 'current-route') {
+            const routeLabel = sanitizeExportFileNamePart(`Route ${activeRouteGroup?.name || 'Current Route'}`);
+            const dayLabel = sanitizeExportFileNamePart(activeDay || 'Current Day');
+            return `${sanitizedDraftName || 'Schedule Draft'} - ${routeLabel} - ${dayLabel}.xlsx`;
+        }
         return `${sanitizedDraftName || 'Schedule Draft'}.xlsx`;
     };
 
-    const handleExport = async () => {
+    const handleExport = () => {
+        setShowExportScopeModal(true);
+    };
+
+    const exportSchedules = async (scope: ExportScope) => {
+        const tablesToExport = scope === 'current-route' ? activeRouteTables : exportableTables;
+        if (tablesToExport.length === 0) {
+            setShowExportScopeModal(false);
+            return;
+        }
+
+        setShowExportScopeModal(false);
+
         const workbook = new ExcelJS.Workbook();
         workbook.creator = 'Barrie Transit Scheduler';
         workbook.created = new Date();
@@ -1036,7 +1080,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         const summarySheet = workbook.addWorksheet('Service Hours Summary');
 
         // Process each schedule table
-        for (const table of schedules) {
+        for (const table of tablesToExport) {
             const ws = workbook.addWorksheet(table.routeName.substring(0, 31));
 
             // Extract info using centralized direction config
@@ -1380,7 +1424,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
         const link = document.createElement('a');
         link.href = URL.createObjectURL(blob);
-        link.download = buildDraftExportFileName();
+        link.download = buildDraftExportFileName(scope);
         link.click();
     };
 
@@ -1505,6 +1549,48 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                 />
             )}
 
+            <Modal
+                isOpen={showExportScopeModal}
+                onClose={() => setShowExportScopeModal(false)}
+                size="sm"
+            >
+                <Modal.Header>Export draft</Modal.Header>
+                <Modal.Body className="space-y-3">
+                    <p className="text-sm text-gray-600">
+                        Choose whether to export just the current route or the entire draft.
+                    </p>
+                    <button
+                        type="button"
+                        onClick={() => { void exportSchedules('current-route'); }}
+                        className="w-full rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-left hover:border-blue-300 hover:bg-blue-100"
+                    >
+                        <div className="text-sm font-semibold text-blue-900">Current route</div>
+                        <div className="mt-1 text-xs text-blue-700">
+                            Export Route {activeRouteGroup.name} · {activeDay}
+                        </div>
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => { void exportSchedules('all-routes'); }}
+                        className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-left hover:border-gray-300 hover:bg-gray-50"
+                    >
+                        <div className="text-sm font-semibold text-gray-900">All routes in system draft</div>
+                        <div className="mt-1 text-xs text-gray-600">
+                            Export {exportableRouteCount} route{exportableRouteCount === 1 ? '' : 's'} across the full loaded system draft
+                        </div>
+                    </button>
+                </Modal.Body>
+                <Modal.Footer>
+                    <button
+                        type="button"
+                        onClick={() => setShowExportScopeModal(false)}
+                        className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                    >
+                        Cancel
+                    </button>
+                </Modal.Footer>
+            </Modal>
+
             <div className={`h-full flex flex-col bg-gray-50 overflow-hidden ${isFullScreen ? 'fixed inset-0 z-[9999] bg-white' : ''}`}>
                 {/* WorkspaceHeader - hidden in embedded mode */}
                 {!embedded && (
@@ -1626,6 +1712,18 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                             />
                         ) : (
                             <>
+                                {!readOnly && (
+                                    <div className="mb-3 flex items-center justify-end gap-2">
+                                        <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                            Cascading
+                                        </span>
+                                        <CascadeModeSelector
+                                            mode={cascadeMode}
+                                            onChange={setCascadeMode}
+                                            allowedModes={['always', 'within-trip', 'none']}
+                                        />
+                                    </div>
+                                )}
                                 <RoundTripTableView
                                     schedules={schedules}
                                     useAuthoritativeTimepoints={useAuthoritativeTimepoints}

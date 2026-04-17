@@ -448,7 +448,7 @@ describe('RoundTripTableView row actions', () => {
     expect(rowsForBlock[2]?.textContent).toContain('END');
   });
 
-  it('shows non-master deltas on newly added trips when they inherit a delta source', () => {
+  it('does not show non-master deltas on newly added trips without a real original match', () => {
     render(
       [
         {
@@ -459,9 +459,6 @@ describe('RoundTripTableView row actions', () => {
             {
               id: 'north-added',
               lineageId: 'ln:new-trip',
-              deltaSourceTripId: 'north-original',
-              deltaSourceLineageId: 'ln:orig-trip',
-              deltaSourceRouteName: '400 (Weekday) (North)',
               blockId: '400-2',
               direction: 'North',
               tripNumber: 1,
@@ -518,6 +515,6 @@ describe('RoundTripTableView row actions', () => {
     );
 
     expect(rowsForBlock).toHaveLength(1);
-    expect(rowsForBlock[0]?.textContent).toContain('+1');
+    expect(rowsForBlock[0]?.textContent).not.toContain('+1');
   });
 });

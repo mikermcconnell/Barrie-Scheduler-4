@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { mergePerformanceSummaryMetadata } from '../utils/performanceDataService';
+import {
+    buildStorageJsonUploadData,
+    getTotalRecordsForSummary,
+    mergePerformanceSummaryMetadata,
+    resolveMergedCleanHistoryStartDate,
+} from '../utils/performanceDataService';
 import type { PerformanceDataSummary, PerformanceMetadata } from '../utils/performanceDataTypes';
 
 describe('performanceDataService metadata merge', () => {
@@ -68,5 +73,50 @@ describe('performanceDataService metadata merge', () => {
 
         expect(merged.metadata.runtimeLogicVersion).toBe(3);
         expect(merged.metadata.cleanHistoryStartDate).toBe('2026-03-22');
+    });
+});
+
+describe('performanceDataService storage upload payload', () => {
+    it('serializes JSON into a binary upload payload instead of relying on raw string upload helpers', async () => {
+        const payload = buildStorageJsonUploadData({
+            hello: 'world',
+            count: 2,
+        });
+
+        if (payload instanceof Blob) {
+            expect(payload.type).toBe('application/json');
+            expect(payload.size).toBeGreaterThan(0);
+            return;
+        }
+
+        expect(new TextDecoder().decode(payload)).toBe('{"hello":"world","count":2}');
+    });
+});
+
+describe('performanceDataService merge helpers', () => {
+    it('sums total records from all merged days instead of only the newest import', () => {
+        const summary: PerformanceDataSummary = {
+            dailySummaries: [
+                { date: '2026-04-14', dataQuality: { totalRecords: 100 } } as any,
+                { date: '2026-04-15', dataQuality: { totalRecords: 200 } } as any,
+                { date: '2026-04-16', dataQuality: { totalRecords: 300 } } as any,
+            ],
+            metadata: {
+                importedAt: '2026-04-17T00:00:00.000Z',
+                importedBy: 'tester',
+                dateRange: { start: '2026-04-14', end: '2026-04-16' },
+                dayCount: 3,
+                totalRecords: 300,
+            },
+            schemaVersion: 8,
+        };
+
+        expect(getTotalRecordsForSummary(summary)).toBe(600);
+    });
+
+    it('preserves the older clean-history start date when merging a new manual import', () => {
+        expect(resolveMergedCleanHistoryStartDate('2026-04-16', '2026-03-30')).toBe('2026-03-30');
+        expect(resolveMergedCleanHistoryStartDate('2026-03-29', '2026-03-30')).toBe('2026-03-29');
+        expect(resolveMergedCleanHistoryStartDate(undefined, '2026-03-30')).toBe('2026-03-30');
     });
 });

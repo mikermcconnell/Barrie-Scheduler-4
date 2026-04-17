@@ -86,10 +86,10 @@ const updateRouteInRoutes = (
 const getAllTablesFromRoutes = (routes: SystemDraftRoute[]): MasterRouteTable[] => {
     const tables: MasterRouteTable[] = [];
     for (const route of routes) {
-        if (route.northTable && route.northTable.trips.length > 0) {
+        if (route.northTable && (route.northTable.trips.length > 0 || route.northTable.stops.length > 0)) {
             tables.push(route.northTable);
         }
-        if (route.southTable && route.southTable.trips.length > 0) {
+        if (route.southTable && (route.southTable.trips.length > 0 || route.southTable.stops.length > 0)) {
             tables.push(route.southTable);
         }
     }
@@ -564,14 +564,11 @@ export const SystemDraftEditorWorkspace: React.FC<SystemDraftEditorWorkspaceProp
                     <ScheduleEditor
                         schedules={currentTables}
                         connectionScopeSchedules={getAllTablesFromRoutes(allRoutes)}
+                        exportScopeSchedules={getAllTablesFromRoutes(allRoutes)}
                         onSchedulesChange={handleSchedulesChange}
                         originalSchedules={originalTables}
-                        draftName={`${draftName} - Route ${currentRouteNumber}`}
-                        onRenameDraft={(name) => {
-                            // Extract just the system name (remove route suffix)
-                            const baseName = name.replace(/ - Route \d+[A-Za-z]*$/, '');
-                            setDraftName(baseName);
-                        }}
+                        draftName={draftName}
+                        onRenameDraft={setDraftName}
                         onOpenDrafts={onOpenDrafts}
                         onNewDraft={onNewDraft}
                         onDuplicateDraft={handleDuplicateDraft}

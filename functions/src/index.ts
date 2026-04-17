@@ -2,7 +2,7 @@ import * as admin from 'firebase-admin';
 import { onRequest } from 'firebase-functions/v2/https';
 import { defineSecret } from 'firebase-functions/params';
 import { parseSTREETSCSV } from './parser';
-export { sendDailyReport, testDailyReport } from './dailyReport';
+export { sendDailyReport, testDailyReport, testStaleReportAlert } from './dailyReport';
 export { optimizeSchedule } from './optimize';
 import { aggregateDailySummaries } from './aggregator';
 import {

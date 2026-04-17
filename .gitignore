@@ -47,6 +47,7 @@ data/gtfs/
 .tmp/
 temp/
 chat-attachments/
+.codex-temp/
 
 # Git worktrees
 .worktrees/

@@ -80,9 +80,16 @@ vi.mock('../components/contexts/ToastContext', () => ({
 
 vi.mock('../components/ScheduleEditor', () => ({
   ScheduleEditor: (props: any) => (
-    <div data-testid="editor-shell" data-status={props.autoSaveStatus} data-unsaved={String(props.hasUnsavedChanges)}>
+    <div
+      data-testid="editor-shell"
+      data-status={props.autoSaveStatus}
+      data-unsaved={String(props.hasUnsavedChanges)}
+      data-draft-name={props.draftName}
+      data-current-schedule-count={String(props.schedules?.length ?? 0)}
+      data-export-scope-count={String(props.exportScopeSchedules?.length ?? 0)}
+    >
       <button data-testid="change" onClick={() => props.onSchedulesChange?.(changedTables)}>change</button>
-      <button data-testid="rename" onClick={() => props.onRenameDraft?.('Weekday System QA Renamed - Route 10')}>rename</button>
+      <button data-testid="rename" onClick={() => props.onRenameDraft?.('Weekday System QA Renamed')}>rename</button>
       <button data-testid="save" onClick={() => void props.onSaveVersion?.()}>save</button>
       <button data-testid="publish" onClick={() => void props.onPublish?.()}>publish</button>
     </div>
@@ -170,6 +177,45 @@ describe('SystemDraftEditorWorkspace', () => {
         name: 'Weekday System QA Renamed',
       })
     );
+  });
+
+  it('passes the base draft name to the editor without appending the route number', async () => {
+    saveSystemDraftMock.mockResolvedValue('system-draft-1');
+    renderWorkspace();
+
+    expect(container?.querySelector('[data-testid="editor-shell"]')?.getAttribute('data-draft-name')).toBe('Weekday System QA');
+  });
+
+  it('passes the full system draft tables as the export scope while editing one route', async () => {
+    saveSystemDraftMock.mockResolvedValue('system-draft-1');
+    renderWorkspace({
+      systemDraft: {
+        ...initialSystemDraft,
+        routes: [
+          ...initialSystemDraft.routes,
+          {
+            routeNumber: '8',
+            northTable: {
+              routeName: '8 (Weekday) (North)',
+              stops: ['Stop A'],
+              stopIds: {},
+              trips: [{ id: '8n' }],
+            },
+            southTable: {
+              routeName: '8 (Weekday) (South)',
+              stops: ['Stop A'],
+              stopIds: {},
+              trips: [{ id: '8s' }],
+            },
+          },
+        ],
+        routeCount: 2,
+      } as any,
+    });
+
+    const editor = container?.querySelector('[data-testid="editor-shell"]');
+    expect(editor?.getAttribute('data-current-schedule-count')).toBe('2');
+    expect(editor?.getAttribute('data-export-scope-count')).toBe('4');
   });
 
   it('flushes pending autosave work on unmount', async () => {

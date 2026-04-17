@@ -373,6 +373,103 @@ describe('AddTripModal', () => {
     preferredServiceMode: 'cycle'
   });
 
+  const buildAliasCustomContext = (): AddTripModalContext => ({
+    referenceTrip: {
+      id: '7-south-1',
+      blockId: '7-2',
+      direction: 'South',
+      tripNumber: 2,
+      rowId: 2,
+      startTime: 490,
+      endTime: 520,
+      recoveryTime: 0,
+      travelTime: 30,
+      cycleTime: 30,
+      stops: {
+        'Rose Street': '8:10 AM',
+        'Downtown Hub': '8:22 AM',
+        'Park Place': '8:40 AM'
+      }
+    },
+    nextTrip: null,
+    targetTable: {
+      routeName: '7 (Sunday) (South)',
+      stops: ['DEPART ROSE STREET', 'Downtown Hub', 'Park Place'],
+      stopIds: { 'DEPART ROSE STREET': '251', 'Downtown Hub': '2', 'Park Place': '777' },
+      trips: [
+        {
+          id: '7-south-1',
+          blockId: '7-2',
+          direction: 'South',
+          tripNumber: 2,
+          rowId: 2,
+          startTime: 490,
+          endTime: 520,
+          recoveryTime: 0,
+          travelTime: 30,
+          cycleTime: 30,
+          stops: {
+            'Rose Street': '8:10 AM',
+            'Downtown Hub': '8:22 AM',
+            'Park Place': '8:40 AM'
+          }
+        }
+      ]
+    },
+    allSchedules: [
+      {
+        routeName: '7 (Sunday) (North)',
+        stops: ['Park Place', 'ARRIVE DOWNTOWN HUB', 'Rose Street'],
+        stopIds: { 'Park Place': '777', 'ARRIVE DOWNTOWN HUB': '2', 'Rose Street': '251' },
+        trips: [
+          {
+            id: '7-north-1',
+            blockId: '7-1',
+            direction: 'North',
+            tripNumber: 1,
+            rowId: 1,
+            startTime: 451,
+            endTime: 481,
+            recoveryTime: 0,
+            travelTime: 30,
+            cycleTime: 30,
+            stops: {
+              'Park Place': '7:31 AM',
+              'Downtown Hub': '7:35 AM',
+              'Rose Street': '8:01 AM'
+            }
+          }
+        ]
+      },
+      {
+        routeName: '7 (Sunday) (South)',
+        stops: ['DEPART ROSE STREET', 'Downtown Hub', 'Park Place'],
+        stopIds: { 'DEPART ROSE STREET': '251', 'Downtown Hub': '2', 'Park Place': '777' },
+        trips: [
+          {
+            id: '7-south-1',
+            blockId: '7-2',
+            direction: 'South',
+            tripNumber: 2,
+            rowId: 2,
+            startTime: 490,
+            endTime: 520,
+            recoveryTime: 0,
+            travelTime: 30,
+            cycleTime: 30,
+            stops: {
+              'Rose Street': '8:10 AM',
+              'Downtown Hub': '8:22 AM',
+              'Park Place': '8:40 AM'
+            }
+          }
+        ]
+      }
+    ] as any,
+    routeBaseName: '7 (Sunday)',
+    preferredServiceMode: 'custom'
+  });
+
   it('shows planner-focused impact information and updates preview for shorthand time input', () => {
     flushSync(() => {
       root?.render(
@@ -410,6 +507,53 @@ describe('AddTripModal', () => {
 
     expect((input as HTMLInputElement).value).toBe('5:57a');
     expect(container?.textContent).toContain('5:57 AM');
+  });
+
+  it('defaults the preview schedule to timepoints view', () => {
+    flushSync(() => {
+      root?.render(
+        <AddTripModal
+          context={buildContext()}
+          onCancel={() => {}}
+          onConfirm={() => {}}
+        />
+      );
+    });
+
+    const timepointsButton = Array.from(container?.querySelectorAll('button') ?? []).find(button =>
+      button.textContent?.trim() === 'Timepoints'
+    ) as HTMLButtonElement | undefined;
+
+    expect(timepointsButton).toBeTruthy();
+    expect(timepointsButton?.className).toContain('bg-blue-50');
+    expect(timepointsButton?.className).toContain('text-blue-700');
+  });
+
+  it('shows bus / block controls before trip type in the main planner flow', () => {
+    flushSync(() => {
+      root?.render(
+        <AddTripModal
+          context={buildContext()}
+          onCancel={() => {}}
+          onConfirm={() => {}}
+        />
+      );
+    });
+
+    const labels = Array.from(container?.querySelectorAll('label') ?? []);
+    const addNewTripLabel = labels.find(label => label.textContent?.includes('Add new trip'));
+    const busBlockLabel = labels.find(label => label.textContent?.includes('Bus / block'));
+    const tripTypeLabel = labels.find(label => label.textContent?.includes('Trip type'));
+
+    expect(addNewTripLabel).toBeTruthy();
+    expect(busBlockLabel).toBeTruthy();
+    expect(tripTypeLabel).toBeTruthy();
+    expect(
+      addNewTripLabel?.compareDocumentPosition(busBlockLabel as Node) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+    expect(
+      busBlockLabel?.compareDocumentPosition(tripTypeLabel as Node) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
   });
 
   it('keeps advanced planner details collapsed until the planner expands them', () => {
@@ -507,9 +651,11 @@ describe('AddTripModal', () => {
       southButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    const selects = Array.from(container?.querySelectorAll('select') ?? []) as HTMLSelectElement[];
-    const startStopSelect = selects[0];
-    const endStopSelect = selects[1];
+    const stopSelects = Array.from(container?.querySelectorAll('select') ?? []).filter(select =>
+      Array.from(select.options).some(option => option.value === 'Downtown' || option.value === 'Park Place')
+    ) as HTMLSelectElement[];
+    const startStopSelect = stopSelects[0];
+    const endStopSelect = stopSelects[1];
 
     const setSelectValue = (element: HTMLSelectElement | undefined, value: string) => {
       const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value')?.set;
@@ -619,6 +765,117 @@ describe('AddTripModal', () => {
       blockId: '2-WD-3',
       targetDirection: 'North',
       startStopName: 'Park Place',
+      endStopName: 'Downtown'
+    }), expect.objectContaining({
+      routeBaseName: '2 (Weekday)'
+    }));
+  });
+
+  it('defaults to custom paired-trip planning when opened in paired custom mode', () => {
+    flushSync(() => {
+      root?.render(
+        <AddTripModal
+          context={{ ...buildContext(), preferredServiceMode: 'custom' }}
+          onCancel={() => {}}
+          onConfirm={() => {}}
+        />
+      );
+    });
+
+    const customButton = Array.from(container?.querySelectorAll('button') ?? []).find(button =>
+      button.textContent?.includes('Custom trip')
+    ) as HTMLButtonElement | undefined;
+
+    expect(customButton?.className).toContain('border-blue-300');
+    expect(container?.textContent).toContain('Custom trips to add');
+    expect(container?.textContent).toContain('2 total trips will be added.');
+    expect(container?.textContent).toContain('Start timepoint');
+    expect(container?.textContent).toContain('End timepoint');
+
+    const switchButton = Array.from(container?.querySelectorAll('button') ?? []).find(button =>
+      button.textContent?.includes('Use new block 2-WD-3')
+    ) as HTMLButtonElement | undefined;
+
+    flushSync(() => {
+      switchButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(container?.textContent).toContain('Add 1 Custom Trip');
+  });
+
+  it('shows timepoints from either direction in custom trip selectors', () => {
+    flushSync(() => {
+      root?.render(
+        <AddTripModal
+          context={buildAliasCustomContext()}
+          onCancel={() => {}}
+          onConfirm={() => {}}
+        />
+      );
+    });
+
+    const stopSelects = Array.from(container?.querySelectorAll('select') ?? []).filter(select =>
+      Array.from(select.options).some(option => option.value === 'ARRIVE DOWNTOWN HUB' || option.value === 'DEPART ROSE STREET')
+    ) as HTMLSelectElement[];
+
+    expect(stopSelects).toHaveLength(2);
+
+    stopSelects.forEach(select => {
+      const values = Array.from(select.options).map(option => option.value);
+      expect(values).toContain('ARRIVE DOWNTOWN HUB');
+      expect(values).toContain('DEPART ROSE STREET');
+      expect(values).toContain('Park Place');
+      expect(values).toContain('Downtown Hub');
+    });
+
+    expect(container?.textContent).toContain('Choose any timepoint from either direction.');
+  });
+
+  it('lets the planner confirm a custom paired trip with separate outbound and return endpoints', () => {
+    const onConfirm = vi.fn();
+
+    flushSync(() => {
+      root?.render(
+        <AddTripModal
+          context={{ ...buildContext(), preferredServiceMode: 'custom' }}
+          onCancel={() => {}}
+          onConfirm={onConfirm}
+        />
+      );
+    });
+
+    const stopSelects = Array.from(container?.querySelectorAll('select') ?? []).filter(select =>
+      Array.from(select.options).some(option => option.value === 'Downtown' || option.value === 'Park Place')
+    ) as HTMLSelectElement[];
+    const startStopSelect = stopSelects[0];
+    const endStopSelect = stopSelects[1];
+
+    const setSelectValue = (element: HTMLSelectElement | undefined, value: string) => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value')?.set;
+      flushSync(() => {
+        setter?.call(element, value);
+        element?.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+    };
+
+    setSelectValue(startStopSelect, 'Downtown');
+    setSelectValue(endStopSelect, 'Downtown');
+
+    const addButton = Array.from(container?.querySelectorAll('button') ?? []).find(button =>
+      button.textContent?.includes('Add 1 Custom Trip')
+    ) as HTMLButtonElement | undefined;
+
+    flushSync(() => {
+      addButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(onConfirm).toHaveBeenCalledWith(expect.objectContaining({
+      serviceMode: 'custom',
+      targetDirection: 'North',
+      targetRouteName: '2 (Weekday) (North)',
+      blockMode: 'existing',
+      blockId: '2-WD-2',
+      startStopName: 'Downtown',
       endStopName: 'Downtown'
     }), expect.objectContaining({
       routeBaseName: '2 (Weekday)'

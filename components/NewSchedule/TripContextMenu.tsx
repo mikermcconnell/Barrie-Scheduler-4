@@ -7,7 +7,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Trash2, Plus, MapPinOff, MapPin, Copy, ChevronRight, Pencil } from 'lucide-react';
 
 export interface TripContextMenuAction {
-    type: 'endBlockHere' | 'startBlockHere' | 'deleteTrip' | 'deleteRoundTrip' | 'addTripBefore' | 'addTripAfter' | 'duplicateTrip' | 'extendTrip';
+    type: 'endBlockHere' | 'startBlockHere' | 'deleteTrip' | 'deleteRoundTrip' | 'addTripBefore' | 'addTripAfter' | 'duplicateTrip' | 'extendTrip' | 'editTrip';
     tripId: string;
     tripIds?: string[];
     stopName?: string;
@@ -58,7 +58,7 @@ export const TripContextMenu: React.FC<TripContextMenuProps> = ({
     onClose
 }) => {
     const menuRef = useRef<HTMLDivElement>(null);
-    const [activeSubmenu, setActiveSubmenu] = useState<'endBlock' | 'startBlock' | 'extendTrip' | null>(null);
+    const [activeSubmenu, setActiveSubmenu] = useState<'endBlock' | 'startBlock' | 'extendTrip' | 'editTrip' | null>(null);
     const [submenuPosition, setSubmenuPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
     // Close on click outside
@@ -119,7 +119,7 @@ export const TripContextMenu: React.FC<TripContextMenuProps> = ({
         onClose();
     };
 
-    const openSubmenu = (submenu: 'endBlock' | 'startBlock' | 'extendTrip', element: HTMLElement) => {
+    const openSubmenu = (submenu: 'endBlock' | 'startBlock' | 'extendTrip' | 'editTrip', element: HTMLElement) => {
         const rect = element.getBoundingClientRect();
         setSubmenuPosition({
             x: rect.right,
@@ -130,7 +130,7 @@ export const TripContextMenu: React.FC<TripContextMenuProps> = ({
 
     const handleSubmenuKeyDown = (
         e: React.KeyboardEvent<HTMLButtonElement>,
-        submenu: 'endBlock' | 'startBlock' | 'extendTrip'
+        submenu: 'endBlock' | 'startBlock' | 'extendTrip' | 'editTrip'
     ) => {
         if (e.key === 'ArrowRight' || e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
@@ -195,6 +195,58 @@ export const TripContextMenu: React.FC<TripContextMenuProps> = ({
         );
     };
 
+    const renderEditAction = () => {
+        if (tripOptions && tripOptions.length > 1) {
+            return (
+                <div className="relative">
+                    <button
+                        onMouseEnter={(e) => openSubmenu('editTrip', e.currentTarget)}
+                        onFocus={(e) => openSubmenu('editTrip', e.currentTarget)}
+                        onKeyDown={(e) => handleSubmenuKeyDown(e, 'editTrip')}
+                        className="w-full px-3 py-2 text-left text-sm flex items-center gap-2 hover:bg-gray-50 text-gray-700"
+                        aria-haspopup="menu"
+                        aria-expanded={activeSubmenu === 'editTrip'}
+                    >
+                        <Pencil size={14} className="text-indigo-500" />
+                        <span className="flex-1">Edit Trip</span>
+                        <ChevronRight size={14} className="text-gray-400" />
+                    </button>
+
+                    {activeSubmenu === 'editTrip' && (
+                        <div
+                            className="fixed z-[101] bg-white rounded-lg shadow-xl border border-gray-200 py-1 min-w-[160px] max-h-[300px] overflow-y-auto"
+                            style={{ left: submenuPosition.x, top: submenuPosition.y }}
+                            onMouseEnter={() => setActiveSubmenu('editTrip')}
+                        >
+                            <div className="px-3 py-1.5 text-[10px] font-semibold text-gray-400 uppercase tracking-wide border-b border-gray-100">
+                                Choose Trip
+                            </div>
+                            {tripOptions.map(option => (
+                                <button
+                                    key={option.id}
+                                    onClick={() => handleAction('editTrip', undefined, undefined, option.id)}
+                                    className="w-full px-3 py-1.5 text-left text-xs hover:bg-indigo-50 text-gray-700 truncate"
+                                >
+                                    Edit {option.direction}bound trip
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        return (
+            <button
+                onClick={() => handleAction('editTrip', undefined, undefined, tripOptions?.[0]?.id)}
+                className="w-full px-3 py-2 text-left text-sm flex items-center gap-2 hover:bg-gray-50 text-gray-700"
+            >
+                <Pencil size={14} className="text-indigo-500" />
+                <span>Edit Trip</span>
+            </button>
+        );
+    };
+
     return (
         // z-[10000] ensures context menu appears above fullscreen container (z-[9999])
         <div
@@ -214,6 +266,7 @@ export const TripContextMenu: React.FC<TripContextMenuProps> = ({
                 {quickAddActionsOnly ? (
                     <>
                         {renderExtendAction()}
+                        {renderEditAction()}
                         <button
                             onClick={() => handleAction('addTripBefore')}
                             className="w-full px-3 py-2 text-left text-sm flex items-center gap-2 hover:bg-gray-50 text-gray-700"
@@ -329,6 +382,7 @@ export const TripContextMenu: React.FC<TripContextMenuProps> = ({
                     <span>{addLabel ?? 'Add Trip After'}</span>
                 </button>
 
+                {renderEditAction()}
                 {renderExtendAction()}
 
                 {/* Duplicate Trip */}

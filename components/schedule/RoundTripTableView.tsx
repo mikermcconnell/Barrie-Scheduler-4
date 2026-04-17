@@ -195,11 +195,13 @@ const getStopValue = <T,>(record: Record<string, T> | undefined, stopName: strin
     // Strip "(n)" suffix and try base name
     const baseName = stopName.replace(/\s*\(\d+\)$/, '');
     if (baseName !== stopName && record[baseName] !== undefined) return record[baseName];
+    const queryHasSuffix = /\s*\(\d+\)$/.test(stopName);
     // Try case-insensitive match
     const lowerStop = stopName.toLowerCase();
     const lowerBase = baseName.toLowerCase();
     for (const key of Object.keys(record)) {
         const lowerKey = key.toLowerCase();
+        if (!queryHasSuffix && /\s*\(\d+\)$/.test(key)) continue;
         if (lowerKey === lowerStop || lowerKey === lowerBase) return record[key];
     }
     return undefined;
@@ -218,9 +220,14 @@ const getDepartureDisplayTime = (
 ): string => {
     if (!trip) return '';
     const arrival = getArrivalDisplayTime(trip, stopName);
-    if (!arrival) return '';
+    const explicitDeparture = getStopValue(trip.stops, stopName) || '';
+    if (!arrival) return explicitDeparture;
 
     const recovery = getStopValue(trip.recoveryTimes, stopName) || 0;
+
+    if (explicitDeparture && explicitDeparture !== arrival) {
+        return explicitDeparture;
+    }
 
     return recovery === 0 ? arrival : TimeUtils.addMinutes(arrival, recovery);
 };
@@ -321,6 +328,7 @@ const getRoundTripGridCellLabel = ({
 export interface RoundTripTableViewProps {
     schedules: MasterRouteTable[];
     useAuthoritativeTimepoints?: boolean;
+    initialTimepointOnly?: boolean;
     onCellEdit?: (tripId: string, col: string, val: string) => void;
     onTimeAdjust?: (tripId: string, stopName: string, delta: number) => void;
     onRecoveryEdit?: (tripId: string, stopName: string, delta: number) => void;
@@ -413,6 +421,7 @@ const buildDynamicBlockBoundaries = (
 export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
     schedules,
     useAuthoritativeTimepoints = false,
+    initialTimepointOnly = false,
     onCellEdit,
     onTimeAdjust,
     onRecoveryEdit,
@@ -439,7 +448,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
     const [focusMode, setFocusMode] = useState(true);
     const [showDirectionLegend, setShowDirectionLegend] = useState(false);
     const [density, setDensity] = useState<DensityMode>('compact');
-    const [timepointOnly, setTimepointOnly] = useState(false);
+    const [timepointOnly, setTimepointOnly] = useState(initialTimepointOnly);
     const [showMetaCols, setShowMetaCols] = useState(true);
     const [showActionsCol, setShowActionsCol] = useState(true);
     const [showRowNumberCol, setShowRowNumberCol] = useState(false);
@@ -453,6 +462,10 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
             highlightedRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
     }, [highlightedTripId, schedules]);
+
+    useEffect(() => {
+        setTimepointOnly(initialTimepointOnly);
+    }, [initialTimepointOnly, schedules]);
 
     const isMasterMode = !!masterBaseline && masterBaseline.length > 0;
 
@@ -1770,11 +1783,9 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                     const northArrivalConnections = showArrRCols
                                                         ? (() => {
                                                             const arrival = getArrivalTimeForStop(northTrip, stop, i, northDisplayStops.length);
-                                                            const recovery = getStopValue(northTrip?.recoveryTimes, stop) || 0;
                                                             const arrivalTimeMinutes = arrival ? TimeUtils.toMinutes(arrival) : null;
-                                                            const depTimeMinutes = arrival ? TimeUtils.toMinutes(
-                                                                recovery === 0 ? arrival : TimeUtils.addMinutes(arrival, recovery)
-                                                            ) : null;
+                                                            const departure = getDepartureDisplayTime(northTrip, stop, combined.routeName, false);
+                                                            const depTimeMinutes = departure ? TimeUtils.toMinutes(departure) : null;
                                                             const stopCode = combined.northStopIds?.[stop] || '';
                                                             const stopConnections = connectionLibrary && stopCode && (arrivalTimeMinutes !== null || depTimeMinutes !== null)
                                                                 ? getConnectionsForStop(
@@ -1913,11 +1924,9 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                         {!isMergedTerminusStop && (() => {
                                                             // Compute departure time for connection indicator
                                                             const arrival = getArrivalTimeForStop(northTrip, stop, i, northDisplayStops.length);
-                                                            const recovery = getStopValue(northTrip?.recoveryTimes, stop) || 0;
                                                             const arrivalTimeMinutes = arrival ? TimeUtils.toMinutes(arrival) : null;
-                                                            const depTimeMinutes = arrival ? TimeUtils.toMinutes(
-                                                                recovery === 0 ? arrival : TimeUtils.addMinutes(arrival, recovery)
-                                                            ) : null;
+                                                            const departure = getDepartureDisplayTime(northTrip, stop, combined.routeName, false);
+                                                            const depTimeMinutes = departure ? TimeUtils.toMinutes(departure) : null;
                                                             const stopCode = combined.northStopIds?.[stop] || '';
                                                             const connections = connectionLibrary && stopCode && (arrivalTimeMinutes !== null || depTimeMinutes !== null)
                                                                 ? getConnectionsForStop(
@@ -1959,7 +1968,6 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                         </button>
                                                                     )}
                                                                     {(() => {
-                                                                        // Standard calculation: arrival + recovery
                                                                         const arrival = getArrivalTimeForStop(northTrip, stop, i, northDisplayStops.length);
                                                                         if (!arrival) return null;
 
@@ -1975,9 +1983,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                             return null;
                                                                         }
 
-                                                                        const recovery = getStopValue(northTrip?.recoveryTimes, stop) || 0;
-
-                                                                        const depValue = recovery === 0 ? arrival : TimeUtils.addMinutes(arrival, recovery);
+                                                                        const depValue = getDepartureDisplayTime(northTrip, stop, combined.routeName, false);
 
                                                                         return (
                                                                             <StackedTimeInput
@@ -1985,7 +1991,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                                 onChange={() => {}}
                                                                                 onBlur={(val) => {
                                                                                     if (northTrip && val && onCellEdit) {
-                                                                                        const originalValue = getArrivalTimeForStop(northTrip, stop, i, northDisplayStops.length);
+                                                                                        const originalValue = getDepartureDisplayTime(northTrip, stop, combined.routeName, false);
                                                                                         const formatted = parseTimeInput(val, originalValue);
                                                                                         if (formatted) onCellEdit(northTrip.id, stop, formatted);
                                                                                     }
@@ -2076,11 +2082,9 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                     const southArrivalConnections = hasRecovery
                                                         ? (() => {
                                                             const southArrival = getStopValue(southTrip?.arrivalTimes, stop) || getStopValue(southTrip?.stops, stop);
-                                                            const southRecovery = getStopValue(southTrip?.recoveryTimes, stop) || 0;
                                                             const southArrivalTimeMinutes = southArrival ? TimeUtils.toMinutes(southArrival) : null;
-                                                            const southDepTimeMinutes = southArrival ? TimeUtils.toMinutes(
-                                                                southRecovery === 0 ? southArrival : TimeUtils.addMinutes(southArrival, southRecovery)
-                                                            ) : null;
+                                                            const southDeparture = getDepartureDisplayTime(southTrip, stop, combined.routeName, i === southDisplayStops.length - 1);
+                                                            const southDepTimeMinutes = southDeparture ? TimeUtils.toMinutes(southDeparture) : null;
                                                             const southStopCode = combined.southStopIds?.[stop] || '';
                                                             const stopConnections = connectionLibrary && southStopCode && (southArrivalTimeMinutes !== null || southDepTimeMinutes !== null)
                                                                 ? getConnectionsForStop(
@@ -2228,11 +2232,8 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                         {(() => {
                                                             // Compute departure time for connection indicator
                                                             const southArrival = getStopValue(southTrip?.arrivalTimes, stop) || getStopValue(southTrip?.stops, stop);
-                                                            const southRecovery = getStopValue(southTrip?.recoveryTimes, stop) || 0;
                                                             const southArrivalTimeMinutes = southArrival ? TimeUtils.toMinutes(southArrival) : null;
-                                                            const southDepValue = southArrival
-                                                                ? (southRecovery === 0 ? southArrival : TimeUtils.addMinutes(southArrival, southRecovery))
-                                                                : '';
+                                                            const southDepValue = getDepartureDisplayTime(southTrip, stop, combined.routeName, i === southDisplayStops.length - 1);
                                                             const canAdjustSouthDep = !!southTrip && !!southDepValue;
                                                             const southDepTimeMinutes = southDepValue ? TimeUtils.toMinutes(southDepValue) : null;
                                                             const southStopCode = combined.southStopIds?.[stop] || '';

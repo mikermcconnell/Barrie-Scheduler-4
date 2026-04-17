@@ -223,6 +223,7 @@ export const AddTripSchedulePreview: React.FC<Props> = ({
                   <RoundTripTableView
                     schedules={visibleSchedules}
                     readOnly
+                    initialTimepointOnly
                     connectionLibrary={connectionLibrary}
                     dayType={activeDay}
                     highlightedTripId={highlightInCurrentView}
