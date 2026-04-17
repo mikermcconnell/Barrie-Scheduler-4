@@ -1079,30 +1079,31 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         // Create summary sheet FIRST so it appears first in workbook
         const summarySheet = workbook.addWorksheet('Service Hours Summary');
 
-        // Process each schedule table
-        for (const table of tablesToExport) {
-            const ws = workbook.addWorksheet(table.routeName.substring(0, 31));
+        const singleDirectionHeaderFill = 'FFE5E7EB';
+        const recoveryHeaderFill = 'FFDBEAFE';
+        const northHeaderFill = 'FFE0ECFF';
+        const southHeaderFill = 'FFFCE7D6';
+        const northRecoveryFill = 'FFD7E9FF';
+        const southRecoveryFill = 'FFF9D9C0';
 
-            // Extract info using centralized direction config
-            const tableDirection = extractDirectionFromName(table.routeName);
+        type ExportColumnDef = {
+            name: string;
+            subheader: string;
+            isRecovery: boolean;
+            stopName?: string;
+            side?: 'north' | 'south';
+        };
+
+        const getDirectionLabel = (baseName: string, tableDirection: 'North' | 'South' | null): string => {
+            const routeConfig = getRouteConfig(baseName);
             const isNorth = tableDirection === 'North';
             const isSouth = tableDirection === 'South';
-            const dayType = table.routeName.includes('Saturday') ? 'Saturday' :
-                table.routeName.includes('Sunday') ? 'Sunday' : 'Weekday';
-            const baseName = table.routeName
-                .replace(/\s*\((North|South)\)/gi, '')
-                .replace(/\s*\((Weekday|Saturday|Sunday)\)/gi, '')
-                .trim();
-
-            // Get direction info from config
-            const routeConfig = getRouteConfig(baseName);
             let direction = isNorth ? 'NORTHBOUND' : isSouth ? 'SOUTHBOUND' : 'ALL TRIPS';
+
             if (routeConfig) {
                 if (routeConfig.segments.length === 1) {
-                    // Loop route
                     direction = `LOOP (${routeConfig.segments[0].name.toUpperCase()})`;
                 } else if (routeConfig.segments.length === 2) {
-                    // Bidirectional route
                     const northSegment = routeConfig.segments.find(s => s.name === 'North');
                     const southSegment = routeConfig.segments.find(s => s.name === 'South');
                     if (isNorth && northSegment) {
@@ -1113,22 +1114,66 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                 }
             }
 
-            // Get route color
+            return direction;
+        };
+
+        const applySummaryCard = (
+            ws: ExcelJS.Worksheet,
+            startColumn: number,
+            routeColorArgb: string,
+            routeColorHex: string,
+            totalTrips: number,
+            totalTravelTime: number,
+            totalRecovery: number,
+            totalCycleTime: number
+        ) => {
+            const recoveryRatio = totalTravelTime > 0 ? ((totalRecovery / totalTravelTime) * 100).toFixed(1) + '%' : '0%';
+            const summaryStartRow = 2;
+
+            ws.getCell(summaryStartRow, startColumn).value = 'DAY SUMMARY';
+            ws.mergeCells(summaryStartRow, startColumn, summaryStartRow, startColumn + 1);
+            ws.getCell(summaryStartRow, startColumn).font = { bold: true, size: 12, color: { argb: 'FFFFFFFF' } };
+            ws.getCell(summaryStartRow, startColumn).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: routeColorArgb } };
+            ws.getCell(summaryStartRow, startColumn).alignment = headerAlignment;
+
+            const summaryItems = [
+                ['Total Trips', totalTrips],
+                ['Total Travel', toHours(totalTravelTime) + ' hrs'],
+                ['Total Recovery', toHours(totalRecovery) + ' hrs'],
+                ['Total Cycle', toHours(totalCycleTime) + ' hrs'],
+                ['Recovery Ratio', recoveryRatio]
+            ];
+
+            summaryItems.forEach((item, idx) => {
+                const r = summaryStartRow + 1 + idx;
+                ws.getCell(r, startColumn).value = item[0];
+                ws.getCell(r, startColumn).font = { size: 10, color: { argb: 'FF6B7280' } };
+                ws.getCell(r, startColumn).alignment = { horizontal: 'right', vertical: 'middle' };
+                ws.getCell(r, startColumn + 1).value = item[1];
+                ws.getCell(r, startColumn + 1).font = { bold: true, size: 10 };
+                ws.getCell(r, startColumn + 1).alignment = cellAlignment;
+                if (idx === 3) {
+                    ws.getCell(r, startColumn + 1).font = { bold: true, size: 11, color: { argb: hexToArgb(routeColorHex) } };
+                }
+            });
+
+            ws.getColumn(startColumn).width = 14;
+            ws.getColumn(startColumn + 1).width = 10;
+        };
+
+        const addSingleDirectionSheet = (table: MasterRouteTable, baseName: string, dayType: string) => {
+            const ws = workbook.addWorksheet(`${baseName} (${dayType})`.substring(0, 31));
+            const tableDirection = extractDirectionFromName(table.routeName);
             const routeColor = getRouteColor(baseName);
             const routeTextColor = getContrastTextColor(routeColor);
             const routeColorArgb = hexToArgb(routeColor);
 
-            // Calculate summary stats
             const totalTrips = table.trips.length;
             const totalTravelTime = table.trips.reduce((sum, t) => sum + t.travelTime, 0);
             const totalRecovery = table.trips.reduce((sum, t) => sum + t.recoveryTime, 0);
             const totalCycleTime = totalTravelTime + totalRecovery;
-            const recoveryRatio = totalTravelTime > 0 ? ((totalRecovery / totalTravelTime) * 100).toFixed(1) + '%' : '0%';
-
-            // Store for summary sheet
             routeSummaries.push({ route: baseName, dayType, cycleHours: totalCycleTime / 60 });
 
-            // Build set of stops with recovery (same logic as UI)
             const stopsWithRecovery = new Set<string>();
             table.trips.forEach(t => {
                 if (t.recoveryTimes) {
@@ -1138,19 +1183,13 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                 }
             });
 
-            // Build column structure with ARR/R/DEP pattern
-            // columnDefs: { name: string, subheader: string, isRecovery: boolean, stopName?: string }
-            const columnDefs: { name: string; subheader: string; isRecovery: boolean; stopName?: string }[] = [];
-            columnDefs.push({ name: 'Block', subheader: '', isRecovery: false });
-
+            const columnDefs: ExportColumnDef[] = [{ name: 'Block', subheader: '', isRecovery: false }];
             table.stops.forEach((stop) => {
                 if (stopsWithRecovery.has(stop)) {
-                    // Stop with recovery: ARR | R | DEP
                     columnDefs.push({ name: stop, subheader: 'ARR', isRecovery: false, stopName: stop });
                     columnDefs.push({ name: 'R', subheader: 'R', isRecovery: true, stopName: stop });
                     columnDefs.push({ name: stop, subheader: 'DEP', isRecovery: false, stopName: stop });
                 } else {
-                    // Stop without recovery: DEP only
                     columnDefs.push({ name: stop, subheader: 'DEP', isRecovery: false, stopName: stop });
                 }
             });
@@ -1159,7 +1198,6 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
             columnDefs.push({ name: 'Cycle', subheader: '', isRecovery: false });
             columnDefs.push({ name: 'Ratio', subheader: '', isRecovery: false });
 
-            // Row 1: Route header with route color
             const routeRow = ws.addRow([`ROUTE ${baseName} - ${dayType.toUpperCase()}`]);
             ws.mergeCells(1, 1, 1, columnDefs.length);
             routeRow.height = 28;
@@ -1168,8 +1206,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
             routeRow.getCell(1).alignment = headerAlignment;
             routeRow.getCell(1).border = allBorders;
 
-            // Row 2: Direction subheader
-            const dirRow = ws.addRow([direction]);
+            const dirRow = ws.addRow([getDirectionLabel(baseName, tableDirection)]);
             ws.mergeCells(2, 1, 2, columnDefs.length);
             dirRow.height = 22;
             dirRow.getCell(1).font = { bold: true, size: 12, color: { argb: 'FF374151' } };
@@ -1177,56 +1214,50 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
             dirRow.getCell(1).alignment = headerAlignment;
             dirRow.getCell(1).border = allBorders;
 
-            // Row 3: Column headers (stop names)
             const headerRow = ws.addRow(columnDefs.map(c => c.name));
             headerRow.height = 20;
             headerRow.eachCell((cell, colNumber) => {
                 cell.font = { bold: true, size: 10, color: { argb: 'FF1F2937' } };
-                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE5E7EB' } };
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: columnDefs[colNumber - 1]?.isRecovery ? recoveryHeaderFill : singleDirectionHeaderFill } };
                 cell.alignment = headerAlignment;
                 cell.border = allBorders;
                 if (columnDefs[colNumber - 1]?.isRecovery) {
-                    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDBEAFE' } };
                     cell.font = { bold: true, size: 10, color: { argb: 'FF1D4ED8' } };
                 }
             });
 
-            // Row 4: ARR/R/DEP subheaders
             const subheaderRow = ws.addRow(columnDefs.map(c => c.subheader));
             subheaderRow.height = 16;
             subheaderRow.eachCell((cell, colNumber) => {
                 cell.font = { bold: true, size: 9, color: { argb: 'FF6B7280' } };
-                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9FAFB' } };
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: columnDefs[colNumber - 1]?.isRecovery ? recoveryHeaderFill : 'FFF9FAFB' } };
                 cell.alignment = headerAlignment;
                 cell.border = allBorders;
                 if (columnDefs[colNumber - 1]?.isRecovery) {
-                    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDBEAFE' } };
                     cell.font = { bold: true, size: 9, color: { argb: 'FF1D4ED8' } };
                 }
             });
 
-            // Data rows
             table.trips.forEach((trip, tripIdx) => {
                 const rowData: (string | number)[] = [trip.blockId];
 
                 table.stops.forEach((stop) => {
-                    const depTime = trip.stops[stop] || '';
-                    const recovery = trip.recoveryTimes?.[stop] ?? 0;
+                    const depTime = getTripStopValue(trip.stops, stop) || '';
+                    const recovery = getTripStopValue(trip.recoveryTimes, stop) ?? 0;
 
                     if (stopsWithRecovery.has(stop)) {
-                        // Calculate ARR time = DEP - Recovery
-                        let arrTime = '';
-                        if (depTime) {
+                        let arrTime = getTripStopValue(trip.arrivalTimes, stop) || '';
+                        if (!arrTime && depTime) {
                             const depMin = TimeUtils.toMinutes(depTime);
                             if (depMin !== null) {
                                 arrTime = TimeUtils.fromMinutes(depMin - recovery);
                             }
                         }
-                        rowData.push(arrTime);           // ARR
-                        rowData.push(recovery || '');    // R
-                        rowData.push(depTime);           // DEP
+                        rowData.push(arrTime);
+                        rowData.push(recovery || '');
+                        rowData.push(depTime);
                     } else {
-                        rowData.push(depTime);           // DEP only
+                        rowData.push(depTime);
                     }
                 });
 
@@ -1251,45 +1282,207 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                 });
             });
 
-            // Summary card (offset to right)
-            const summaryCol = columnDefs.length + 3;
-            const summaryStartRow = 2;
-
-            // Summary header
-            ws.getCell(summaryStartRow, summaryCol).value = 'DAY SUMMARY';
-            ws.mergeCells(summaryStartRow, summaryCol, summaryStartRow, summaryCol + 1);
-            ws.getCell(summaryStartRow, summaryCol).font = { bold: true, size: 12, color: { argb: 'FFFFFFFF' } };
-            ws.getCell(summaryStartRow, summaryCol).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: routeColorArgb } };
-            ws.getCell(summaryStartRow, summaryCol).alignment = headerAlignment;
-
-            const summaryItems = [
-                ['Total Trips', totalTrips],
-                ['Total Travel', toHours(totalTravelTime) + ' hrs'],
-                ['Total Recovery', toHours(totalRecovery) + ' hrs'],
-                ['Total Cycle', toHours(totalCycleTime) + ' hrs'],
-                ['Recovery Ratio', recoveryRatio]
-            ];
-
-            summaryItems.forEach((item, idx) => {
-                const r = summaryStartRow + 1 + idx;
-                ws.getCell(r, summaryCol).value = item[0];
-                ws.getCell(r, summaryCol).font = { size: 10, color: { argb: 'FF6B7280' } };
-                ws.getCell(r, summaryCol).alignment = { horizontal: 'right', vertical: 'middle' };
-                ws.getCell(r, summaryCol + 1).value = item[1];
-                ws.getCell(r, summaryCol + 1).font = { bold: true, size: 10 };
-                ws.getCell(r, summaryCol + 1).alignment = cellAlignment;
-                if (idx === 3) { // Total Cycle row
-                    ws.getCell(r, summaryCol + 1).font = { bold: true, size: 11, color: { argb: hexToArgb(routeColor) } };
-                }
-            });
-
-            // Column widths
             columnDefs.forEach((col, idx) => {
                 ws.getColumn(idx + 1).width = col.isRecovery ? 5 : col.name === 'Block' ? 10 : Math.max(col.name.length + 2, 10);
             });
-            ws.getColumn(summaryCol).width = 14;
-            ws.getColumn(summaryCol + 1).width = 10;
-        }
+            applySummaryCard(ws, columnDefs.length + 3, routeColorArgb, routeColor, totalTrips, totalTravelTime, totalRecovery, totalCycleTime);
+        };
+
+        const addMergedRouteSheet = (baseName: string, dayType: string, northTable: MasterRouteTable, southTable: MasterRouteTable) => {
+            const ws = workbook.addWorksheet(`${baseName} (${dayType})`.substring(0, 31));
+            const roundTrip = buildRoundTripView(northTable, southTable);
+            const routeColor = getRouteColor(baseName);
+            const routeTextColor = getContrastTextColor(routeColor);
+            const routeColorArgb = hexToArgb(routeColor);
+
+            const totalTrips = northTable.trips.length + southTable.trips.length;
+            const totalTravelTime = [...northTable.trips, ...southTable.trips].reduce((sum, t) => sum + t.travelTime, 0);
+            const totalRecovery = [...northTable.trips, ...southTable.trips].reduce((sum, t) => sum + t.recoveryTime, 0);
+            const totalCycleTime = totalTravelTime + totalRecovery;
+            routeSummaries.push({ route: baseName, dayType, cycleHours: totalCycleTime / 60 });
+
+            const northStopsWithRecovery = new Set<string>();
+            northTable.trips.forEach(trip => {
+                if (trip.recoveryTimes) {
+                    Object.entries(trip.recoveryTimes).forEach(([stopName, minutes]) => {
+                        if (minutes != null) northStopsWithRecovery.add(stopName);
+                    });
+                }
+            });
+            const southStopsWithRecovery = new Set<string>();
+            southTable.trips.forEach(trip => {
+                if (trip.recoveryTimes) {
+                    Object.entries(trip.recoveryTimes).forEach(([stopName, minutes]) => {
+                        if (minutes != null) southStopsWithRecovery.add(stopName);
+                    });
+                }
+            });
+
+            const columnDefs: ExportColumnDef[] = [{ name: 'Block', subheader: '', isRecovery: false }];
+            roundTrip.northStops.forEach((stop) => {
+                if (northStopsWithRecovery.has(stop)) {
+                    columnDefs.push({ name: stop, subheader: 'ARR', isRecovery: false, stopName: stop, side: 'north' });
+                    columnDefs.push({ name: 'R', subheader: 'R', isRecovery: true, stopName: stop, side: 'north' });
+                    columnDefs.push({ name: stop, subheader: 'DEP', isRecovery: false, stopName: stop, side: 'north' });
+                } else {
+                    columnDefs.push({ name: stop, subheader: 'DEP', isRecovery: false, stopName: stop, side: 'north' });
+                }
+            });
+            roundTrip.southStops.forEach((stop) => {
+                if (southStopsWithRecovery.has(stop)) {
+                    columnDefs.push({ name: stop, subheader: 'ARR', isRecovery: false, stopName: stop, side: 'south' });
+                    columnDefs.push({ name: 'R', subheader: 'R', isRecovery: true, stopName: stop, side: 'south' });
+                    columnDefs.push({ name: stop, subheader: 'DEP', isRecovery: false, stopName: stop, side: 'south' });
+                } else {
+                    columnDefs.push({ name: stop, subheader: 'DEP', isRecovery: false, stopName: stop, side: 'south' });
+                }
+            });
+            columnDefs.push({ name: 'Travel', subheader: '', isRecovery: false });
+            columnDefs.push({ name: 'Recovery', subheader: '', isRecovery: false });
+            columnDefs.push({ name: 'Cycle', subheader: '', isRecovery: false });
+            columnDefs.push({ name: 'Ratio', subheader: '', isRecovery: false });
+
+            const routeRow = ws.addRow([`ROUTE ${baseName} - ${dayType.toUpperCase()}`]);
+            ws.mergeCells(1, 1, 1, columnDefs.length);
+            routeRow.height = 28;
+            routeRow.getCell(1).font = { bold: true, size: 16, color: { argb: routeTextColor } };
+            routeRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: routeColorArgb } };
+            routeRow.getCell(1).alignment = headerAlignment;
+            routeRow.getCell(1).border = allBorders;
+
+            const dirRow = ws.addRow(['Merged round-trip view (North / South paired like the schedule editor)']);
+            ws.mergeCells(2, 1, 2, columnDefs.length);
+            dirRow.height = 22;
+            dirRow.getCell(1).font = { bold: true, size: 12, color: { argb: 'FF374151' } };
+            dirRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9FAFB' } };
+            dirRow.getCell(1).alignment = headerAlignment;
+            dirRow.getCell(1).border = allBorders;
+
+            const headerRow = ws.addRow(columnDefs.map(c => c.name));
+            headerRow.height = 20;
+            headerRow.eachCell((cell, colNumber) => {
+                const col = columnDefs[colNumber - 1];
+                const fillColor = col.isRecovery
+                    ? (col.side === 'south' ? southRecoveryFill : northRecoveryFill)
+                    : col.side === 'north'
+                        ? northHeaderFill
+                        : col.side === 'south'
+                            ? southHeaderFill
+                            : singleDirectionHeaderFill;
+                const fontColor = col.isRecovery
+                    ? (col.side === 'south' ? 'FFB45309' : 'FF1D4ED8')
+                    : col.side === 'north'
+                        ? 'FF1D4ED8'
+                        : col.side === 'south'
+                            ? 'FFC2410C'
+                            : 'FF1F2937';
+                cell.font = { bold: true, size: 10, color: { argb: fontColor } };
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fillColor } };
+                cell.alignment = headerAlignment;
+                cell.border = allBorders;
+            });
+
+            const subheaderRow = ws.addRow(columnDefs.map(c => c.subheader));
+            subheaderRow.height = 16;
+            subheaderRow.eachCell((cell, colNumber) => {
+                const col = columnDefs[colNumber - 1];
+                const fillColor = col.isRecovery
+                    ? (col.side === 'south' ? southRecoveryFill : northRecoveryFill)
+                    : col.side === 'north'
+                        ? 'FFF5F9FF'
+                        : col.side === 'south'
+                            ? 'FFFFF7ED'
+                            : 'FFF9FAFB';
+                const fontColor = col.isRecovery
+                    ? (col.side === 'south' ? 'FFB45309' : 'FF1D4ED8')
+                    : 'FF6B7280';
+                cell.font = { bold: true, size: 9, color: { argb: fontColor } };
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fillColor } };
+                cell.alignment = headerAlignment;
+                cell.border = allBorders;
+            });
+
+            roundTrip.rows.forEach((roundTripRow, rowIndex) => {
+                const northTrip = roundTripRow.trips.find(trip => trip.direction === 'North');
+                const southTrip = roundTripRow.trips.find(trip => trip.direction === 'South');
+                const rowData: (string | number)[] = [roundTripRow.blockId];
+
+                const appendTripColumns = (
+                    trip: MasterTrip | undefined,
+                    stops: string[],
+                    stopsWithRecovery: Set<string>
+                ) => {
+                    stops.forEach((stop) => {
+                        const depTime = trip ? (getTripStopValue(trip.stops, stop) || '') : '';
+                        const recovery = trip ? (getTripStopValue(trip.recoveryTimes, stop) ?? 0) : 0;
+                        if (stopsWithRecovery.has(stop)) {
+                            let arrTime = trip ? (getTripStopValue(trip.arrivalTimes, stop) || '') : '';
+                            if (!arrTime && depTime) {
+                                const depMin = TimeUtils.toMinutes(depTime);
+                                if (depMin !== null) {
+                                    arrTime = TimeUtils.fromMinutes(depMin - recovery);
+                                }
+                            }
+                            rowData.push(arrTime);
+                            rowData.push(trip ? (recovery || '') : '');
+                            rowData.push(depTime);
+                        } else {
+                            rowData.push(depTime);
+                        }
+                    });
+                };
+
+                appendTripColumns(northTrip, roundTrip.northStops, northStopsWithRecovery);
+                appendTripColumns(southTrip, roundTrip.southStops, southStopsWithRecovery);
+
+                const ratio = roundTripRow.totalTravelTime > 0
+                    ? ((roundTripRow.totalRecoveryTime / roundTripRow.totalTravelTime) * 100).toFixed(0) + '%'
+                    : '-';
+                rowData.push(roundTripRow.totalTravelTime);
+                rowData.push(roundTripRow.totalRecoveryTime);
+                rowData.push(roundTripRow.totalCycleTime);
+                rowData.push(ratio);
+
+                const row = ws.addRow(rowData);
+                row.height = 18;
+                row.eachCell((cell, colNumber) => {
+                    const col = columnDefs[colNumber - 1];
+                    cell.font = { size: 10 };
+                    cell.alignment = cellAlignment;
+                    cell.border = allBorders;
+                    const baseFill = rowIndex % 2 === 0 ? 'FFFFFFFF' : 'FFF9FAFB';
+                    let fillColor = baseFill;
+                    if (col?.isRecovery) {
+                        fillColor = col.side === 'south' ? 'FFFFF1E8' : 'FFEFF6FF';
+                    }
+                    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fillColor } };
+                    if (col?.isRecovery) {
+                        cell.font = { size: 10, color: { argb: col.side === 'south' ? 'FFB45309' : 'FF1D4ED8' }, bold: true };
+                    }
+                });
+            });
+
+            columnDefs.forEach((col, idx) => {
+                ws.getColumn(idx + 1).width = col.isRecovery ? 5 : col.name === 'Block' ? 10 : Math.max(col.name.length + 2, 10);
+            });
+            applySummaryCard(ws, columnDefs.length + 3, routeColorArgb, routeColor, totalTrips, totalTravelTime, totalRecovery, totalCycleTime);
+        };
+
+        const exportRouteGroups = consolidateRoutes(tablesToExport);
+        exportRouteGroups.forEach((group) => {
+            Object.entries(group.days)
+                .sort(([dayA], [dayB]) => ['Weekday', 'Saturday', 'Sunday'].indexOf(dayA) - ['Weekday', 'Saturday', 'Sunday'].indexOf(dayB))
+                .forEach(([dayType, dayGroup]) => {
+                    if (dayGroup.north && dayGroup.south) {
+                        addMergedRouteSheet(group.name, dayType, dayGroup.north, dayGroup.south);
+                    } else {
+                        const table = dayGroup.north || dayGroup.south;
+                        if (table) {
+                            addSingleDirectionSheet(table, group.name, dayType);
+                        }
+                    }
+                });
+        });
 
         // ========================================
         // Populate Service Hours Summary Sheet

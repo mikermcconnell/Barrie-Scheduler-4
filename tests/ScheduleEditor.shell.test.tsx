@@ -11,6 +11,7 @@ const {
   linkClickMock,
   createObjectUrlMock,
   workbookSheetsMock,
+  workbookSheetRowsMock,
   undoMock,
   redoMock,
 } = vi.hoisted(() => ({
@@ -20,6 +21,7 @@ const {
   linkClickMock: vi.fn(),
   createObjectUrlMock: vi.fn(() => 'blob:mock-export'),
   workbookSheetsMock: [] as string[][],
+  workbookSheetRowsMock: [] as Array<Array<{ name: string; rows: unknown[][] }>>,
   undoMock: vi.fn(),
   redoMock: vi.fn(),
 }));
@@ -48,10 +50,11 @@ const createRow = (data: unknown[]) => {
   };
 };
 
-const createWorksheet = () => {
+const createWorksheet = (name: string, rowStore: unknown[][]) => {
   const columnMap = new Map<number, { width?: number }>();
   return {
     addRow(data: unknown[]) {
+      rowStore.push(data);
       return createRow(data);
     },
     mergeCells: vi.fn(),
@@ -70,13 +73,18 @@ vi.mock('exceljs', () => {
     creator = '';
     created: Date | null = null;
     private readonly sheetNames: string[];
+    private readonly sheets: Array<{ name: string; rows: unknown[][] }>;
     constructor() {
       this.sheetNames = [];
+      this.sheets = [];
       workbookSheetsMock.push(this.sheetNames);
+      workbookSheetRowsMock.push(this.sheets);
     }
     addWorksheet = vi.fn((name: string) => {
       this.sheetNames.push(name);
-      return createWorksheet();
+      const sheet = { name, rows: [] as unknown[][] };
+      this.sheets.push(sheet);
+      return createWorksheet(name, sheet.rows);
     });
     xlsx = {
       writeBuffer: writeBufferMock,
@@ -217,7 +225,7 @@ async function flushPromises() {
 const schedules = [
   {
     routeName: '10 (Weekday) (North)',
-    stops: ['Stop 1', 'Stop 2'],
+    stops: ['North Stop 1', 'North Stop 2'],
     stopIds: {},
     trips: [
       {
@@ -231,14 +239,14 @@ const schedules = [
         recoveryTime: 0,
         travelTime: 30,
         cycleTime: 30,
-        stops: { 'Stop 1': '7:00 AM', 'Stop 2': '7:30 AM' },
-        arrivalTimes: { 'Stop 1': '7:00 AM', 'Stop 2': '7:30 AM' },
+        stops: { 'North Stop 1': '7:00 AM', 'North Stop 2': '7:30 AM' },
+        arrivalTimes: { 'North Stop 1': '7:00 AM', 'North Stop 2': '7:30 AM' },
       },
     ],
   },
   {
     routeName: '10 (Weekday) (South)',
-    stops: ['Stop 1', 'Stop 2'],
+    stops: ['South Stop 1', 'South Stop 2'],
     stopIds: {},
     trips: [
       {
@@ -252,14 +260,14 @@ const schedules = [
         recoveryTime: 0,
         travelTime: 30,
         cycleTime: 30,
-        stops: { 'Stop 1': '7:35 AM', 'Stop 2': '8:05 AM' },
-        arrivalTimes: { 'Stop 1': '7:35 AM', 'Stop 2': '8:05 AM' },
+        stops: { 'South Stop 1': '7:35 AM', 'South Stop 2': '8:05 AM' },
+        arrivalTimes: { 'South Stop 1': '7:35 AM', 'South Stop 2': '8:05 AM' },
       },
     ],
   },
   {
     routeName: '8 (Weekday) (North)',
-    stops: ['Stop A', 'Stop B'],
+    stops: ['8 North Stop A', '8 North Stop B'],
     stopIds: {},
     trips: [
       {
@@ -273,14 +281,14 @@ const schedules = [
         recoveryTime: 0,
         travelTime: 30,
         cycleTime: 30,
-        stops: { 'Stop A': '8:20 AM', 'Stop B': '8:50 AM' },
-        arrivalTimes: { 'Stop A': '8:20 AM', 'Stop B': '8:50 AM' },
+        stops: { '8 North Stop A': '8:20 AM', '8 North Stop B': '8:50 AM' },
+        arrivalTimes: { '8 North Stop A': '8:20 AM', '8 North Stop B': '8:50 AM' },
       },
     ],
   },
   {
     routeName: '8 (Weekday) (South)',
-    stops: ['Stop A', 'Stop B'],
+    stops: ['8 South Stop A', '8 South Stop B'],
     stopIds: {},
     trips: [
       {
@@ -294,8 +302,8 @@ const schedules = [
         recoveryTime: 0,
         travelTime: 30,
         cycleTime: 30,
-        stops: { 'Stop A': '8:55 AM', 'Stop B': '9:25 AM' },
-        arrivalTimes: { 'Stop A': '8:55 AM', 'Stop B': '9:25 AM' },
+        stops: { '8 South Stop A': '8:55 AM', '8 South Stop B': '9:25 AM' },
+        arrivalTimes: { '8 South Stop A': '8:55 AM', '8 South Stop B': '9:25 AM' },
       },
     ],
   },
@@ -312,6 +320,7 @@ describe('ScheduleEditor shell behavior', () => {
     linkClickMock.mockClear();
     createObjectUrlMock.mockClear();
     workbookSheetsMock.length = 0;
+    workbookSheetRowsMock.length = 0;
     undoMock.mockClear();
     redoMock.mockClear();
     originalCreateObjectURL = URL.createObjectURL;
@@ -500,9 +509,19 @@ describe('ScheduleEditor shell behavior', () => {
     expect(downloadFileName).toBe('Route 10 Weekday Draft - Route 10 - Weekday.xlsx');
     expect(workbookSheetsMock[0]).toEqual([
       'Service Hours Summary',
-      '10 (Weekday) (North)',
-      '10 (Weekday) (South)',
+      '10 (Weekday)',
     ]);
+    expect(workbookSheetRowsMock[0][1]?.rows[2]).toEqual(expect.arrayContaining([
+      'Block',
+      'North Stop 1',
+      'North Stop 2',
+      'South Stop 1',
+      'South Stop 2',
+      'Travel',
+      'Recovery',
+      'Cycle',
+      'Ratio',
+    ]));
     createElementSpy.mockRestore();
   });
 
@@ -550,10 +569,8 @@ describe('ScheduleEditor shell behavior', () => {
     expect(downloadFileName).toBe('Boxing Day.xlsx');
     expect(workbookSheetsMock[0]).toEqual([
       'Service Hours Summary',
-      '10 (Weekday) (North)',
-      '10 (Weekday) (South)',
-      '8 (Weekday) (North)',
-      '8 (Weekday) (South)',
+      '10 (Weekday)',
+      '8 (Weekday)',
     ]);
     createElementSpy.mockRestore();
   });
