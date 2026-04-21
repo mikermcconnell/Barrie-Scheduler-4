@@ -426,22 +426,32 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
 
         // Helper functions
         const hexToArgb = (hex: string) => 'FF' + hex.replace('#', '').toUpperCase();
-        const getContrastText = (bgHex: string): string => {
-            const hex = bgHex.replace('#', '');
-            const r = parseInt(hex.substr(0, 2), 16);
-            const g = parseInt(hex.substr(2, 2), 16);
-            const b = parseInt(hex.substr(4, 2), 16);
-            const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-            return luminance > 0.5 ? 'FF1F2937' : 'FFFFFFFF';
-        };
         const toHours = (min: number) => (min / 60).toFixed(1);
+        const getExcelColumnLetter = (columnNumber: number): string => {
+            let dividend = columnNumber;
+            let columnName = '';
+
+            while (dividend > 0) {
+                const modulo = (dividend - 1) % 26;
+                columnName = String.fromCharCode(65 + modulo) + columnName;
+                dividend = Math.floor((dividend - modulo) / 26);
+            }
+
+            return columnName;
+        };
 
         // Common styles
-        const thinBorder: Partial<ExcelJS.Border> = { style: 'thin', color: { argb: 'FFE5E7EB' } };
-        const mediumBorder: Partial<ExcelJS.Border> = { style: 'medium', color: { argb: 'FF9CA3AF' } };
-        const blockSeparatorBorder: Partial<ExcelJS.Border> = { style: 'medium', color: { argb: 'FF374151' } };
+        const thinBorder: Partial<ExcelJS.Border> = { style: 'thin', color: { argb: 'FFE2E8F0' } };
+        const mediumBorder: Partial<ExcelJS.Border> = { style: 'medium', color: { argb: 'FF94A3B8' } };
+        const blockSeparatorBorder: Partial<ExcelJS.Border> = { style: 'medium', color: { argb: 'FF64748B' } };
         const allBorders: Partial<ExcelJS.Borders> = { top: thinBorder, bottom: thinBorder, left: thinBorder, right: thinBorder };
         const centerAlign: Partial<ExcelJS.Alignment> = { horizontal: 'center', vertical: 'middle' };
+        const reportHeaderFill = 'FF1F2937';
+        const reportSubheaderFill = 'FFF8FAFC';
+        const reportLabelFill = 'FFF1F5F9';
+        const reportMutedText = 'FF64748B';
+        const reportBodyText = 'FF0F172A';
+        const reportWhite = 'FFFFFFFF';
 
         // Headway variance colors (target ~30 min for most routes)
         const getHeadwayColor = (headway: number, avgHeadway: number): string => {
@@ -467,6 +477,7 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
 
         // ===== SHEET 1: Service Hours Summary =====
         const summarySheet = workbook.addWorksheet('Overview');
+        summarySheet.views = [{ showGridLines: false }];
 
         // Build data rows
         const dataRows = ROUTE_ORDER.map(route => {
@@ -511,7 +522,7 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
         summarySheet.mergeCells(1, 1, 1, 8);
         titleRow.height = 32;
         titleRow.getCell(1).font = { bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
-        titleRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E40AF' } };
+        titleRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: reportHeaderFill } };
         titleRow.getCell(1).alignment = centerAlign;
 
         // Subtitle with date
@@ -531,23 +542,23 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
         summarySheet.mergeCells(4, 6, 4, 7);
         dayTypeRow.height = 24;
         dayTypeRow.eachCell((cell, colNum) => {
-            cell.font = { bold: true, size: 11, color: { argb: 'FF1F2937' } };
+            cell.font = { bold: true, size: 11, color: { argb: reportBodyText } };
             cell.alignment = centerAlign;
             cell.border = allBorders;
-            if (colNum === 2 || colNum === 3) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDBEAFE' } };
+            if (colNum === 2 || colNum === 3) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0F2FE' } };
             if (colNum === 4 || colNum === 5) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF3C7' } };
-            if (colNum === 6 || colNum === 7) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE9D5FF' } };
-            if (colNum === 8) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD1FAE5' } };
+            if (colNum === 6 || colNum === 7) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3E8FF' } };
+            if (colNum === 8) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDCFCE7' } };
         });
 
         // Sub-headers row
         const subHeaderRow = summarySheet.addRow(['Route', 'Daily', 'Annual', 'Daily', 'Annual', 'Daily', 'Annual', 'Annual']);
         subHeaderRow.height = 20;
         subHeaderRow.eachCell((cell, colNum) => {
-            cell.font = { bold: true, size: 10, color: { argb: 'FF6B7280' } };
+            cell.font = { bold: true, size: 10, color: { argb: reportMutedText } };
             cell.alignment = centerAlign;
             cell.border = allBorders;
-            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9FAFB' } };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: reportSubheaderFill } };
         });
 
         // Data rows with hyperlinks
@@ -581,7 +592,7 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
                 }
                 if (colNum === 8) {
                     cell.font = { bold: true, size: 10 };
-                    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD1FAE5' } };
+                    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDCFCE7' } };
                 }
             });
         });
@@ -604,7 +615,7 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
             cell.border = allBorders;
             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE5E7EB' } };
             if (colNum === 8) {
-                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF10B981' } };
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F766E' } };
                 cell.font = { bold: true, size: 12, color: { argb: 'FFFFFFFF' } };
             }
         });
@@ -633,7 +644,7 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
         summarySheet.mergeCells(navTitleRow.number, 1, navTitleRow.number, 4);
         navTitleRow.height = 26;
         navTitleRow.getCell(1).font = { bold: true, size: 12, color: { argb: 'FF1F2937' } };
-        navTitleRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3F4F6' } };
+        navTitleRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: reportLabelFill } };
         navTitleRow.getCell(1).alignment = { horizontal: 'left', vertical: 'middle' };
         navTitleRow.getCell(1).border = allBorders;
 
@@ -644,10 +655,10 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
             cell.font = { bold: true, size: 10, color: { argb: 'FF374151' } };
             cell.alignment = centerAlign;
             cell.border = allBorders;
-            if (colNum === 1) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE5E7EB' } };
-            if (colNum === 2) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDBEAFE' } };
+            if (colNum === 1) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } };
+            if (colNum === 2) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0F2FE' } };
             if (colNum === 3) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF3C7' } };
-            if (colNum === 4) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE9D5FF' } };
+            if (colNum === 4) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3E8FF' } };
         });
 
         // Navigation links for each route
@@ -892,7 +903,6 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
 
                 const routeColor = getRouteColor(route);
                 const routeColorArgb = hexToArgb(routeColor);
-                const routeTextColor = getContrastText(routeColor);
 
                 // Get all trips from both directions
                 const northTrips = content.northTable.trips || [];
@@ -958,39 +968,33 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
 
                 // ===== ROW 1: ROUTE HEADER =====
                 const routeHeaderRow = ws.addRow([`ROUTE ${route} - ${dayType.toUpperCase()} SCHEDULE`]);
-                ws.mergeCells(1, 1, 1, Math.max(tableCols, 12));
-                routeHeaderRow.height = 36;
-                routeHeaderRow.getCell(1).font = { bold: true, size: 20, color: { argb: routeTextColor } };
-                routeHeaderRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: routeColorArgb } };
-                routeHeaderRow.getCell(1).alignment = centerAlign;
 
                 // ===== ROW 2: Back to Overview link =====
                 const backRow = ws.addRow(['← Back to Overview']);
                 ws.mergeCells(2, 1, 2, 2);
                 backRow.getCell(1).value = { text: '← Back to Overview', hyperlink: "#'Overview'!A1" };
-                backRow.getCell(1).font = { size: 10, color: { argb: 'FF2563EB' }, underline: true };
-                backRow.height = 20;
 
                 ws.addRow([]); // Row 3: spacer
 
                 // ===== RENDER TRIP TABLES =====
                 renderTripTable(ws, northTrips, northStopColumns, northUniqueBlocks, {
                     label: 'NORTHBOUND TRIPS',
-                    headerTextColor: 'FF1E40AF',
-                    headerBgColor: 'FFDBEAFE',
-                    rowHeaderBgColor: 'FFEFF6FF'
+                    headerTextColor: 'FFFFFFFF',
+                    headerBgColor: 'FF1D4ED8',
+                    rowHeaderBgColor: 'FFF8FAFC'
                 }, tableCols, avgHeadway);
 
                 renderTripTable(ws, southTrips, southStopColumns, southUniqueBlocks, {
                     label: 'SOUTHBOUND TRIPS',
-                    headerTextColor: 'FF5B21B6',
-                    headerBgColor: 'FFEDE9FE',
-                    rowHeaderBgColor: 'FFF5F3FF'
+                    headerTextColor: 'FFFFFFFF',
+                    headerBgColor: 'FF6D28D9',
+                    rowHeaderBgColor: 'FFF8FAFC'
                 }, tableCols, avgHeadway);
 
                 // ===== METRICS PANEL (Right Side) =====
                 // Add metrics panel to the right of the trip data
                 const metricsStartCol = getMetricsStartColumn(northTableCols, southTableCols);
+                const sheetEndCol = metricsStartCol + 1;
                 const serviceWindow = `${firstTripTime} – ${lastTripTime}`;
                 const tripBreakdown = `${totalTrips} (${northTripCount}N + ${southTripCount}S)`;
                 const recoveryPct = Number(recoveryRatio);
@@ -1007,32 +1011,69 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
                 ];
 
                 // Add metrics panel title
+                ws.mergeCells(1, 1, 1, Math.max(sheetEndCol, 12));
+                routeHeaderRow.height = 34;
+                routeHeaderRow.getCell(1).font = { bold: true, size: 19, color: { argb: reportWhite } };
+                routeHeaderRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: reportHeaderFill } };
+                routeHeaderRow.getCell(1).alignment = centerAlign;
+                routeHeaderRow.getCell(1).border = {
+                    top: mediumBorder,
+                    left: mediumBorder,
+                    right: mediumBorder,
+                    bottom: { style: 'medium', color: { argb: routeColorArgb } },
+                };
+
+                ws.getCell(2, 1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: reportSubheaderFill } };
+                ws.getCell(2, 1).border = { bottom: thinBorder };
+                backRow.getCell(1).font = { size: 10, color: { argb: 'FF2563EB' }, underline: true };
+                backRow.getCell(1).alignment = { horizontal: 'left', vertical: 'middle' };
+                backRow.height = 18;
+
+                ws.views = [{ state: 'frozen', xSplit: 2, ySplit: 4, showGridLines: false }];
+
                 ws.getCell(4, metricsStartCol).value = 'SCHEDULE METRICS';
-                ws.getCell(4, metricsStartCol).font = { bold: true, size: 11, color: { argb: 'FF1F2937' } };
-                ws.getCell(4, metricsStartCol).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3F4F6' } };
-                ws.getCell(4, metricsStartCol).border = allBorders;
+                ws.getCell(4, metricsStartCol).font = { bold: true, size: 11, color: { argb: reportWhite } };
+                ws.getCell(4, metricsStartCol).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: reportHeaderFill } };
+                ws.getCell(4, metricsStartCol).alignment = centerAlign;
+                ws.getCell(4, metricsStartCol).border = {
+                    top: mediumBorder,
+                    left: mediumBorder,
+                    right: mediumBorder,
+                    bottom: thinBorder,
+                };
                 ws.mergeCells(4, metricsStartCol, 4, metricsStartCol + 1);
 
                 metricsData.forEach((metric, idx) => {
                     const rowNum = 5 + idx;
+                    const isLastMetricRow = idx === metricsData.length - 1;
                     ws.getCell(rowNum, metricsStartCol).value = metric.label;
-                    ws.getCell(rowNum, metricsStartCol).font = { size: 9, color: { argb: 'FF6B7280' } };
-                    ws.getCell(rowNum, metricsStartCol).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9FAFB' } };
-                    ws.getCell(rowNum, metricsStartCol).border = allBorders;
+                    ws.getCell(rowNum, metricsStartCol).font = { size: 8, bold: true, color: { argb: reportMutedText } };
+                    ws.getCell(rowNum, metricsStartCol).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: idx % 2 === 0 ? reportLabelFill : reportSubheaderFill } };
+                    ws.getCell(rowNum, metricsStartCol).border = {
+                        top: thinBorder,
+                        left: mediumBorder,
+                        right: thinBorder,
+                        bottom: isLastMetricRow ? mediumBorder : thinBorder,
+                    };
                     ws.getCell(rowNum, metricsStartCol).alignment = { horizontal: 'right', vertical: 'middle' };
 
                     ws.getCell(rowNum, metricsStartCol + 1).value = metric.value;
-                    ws.getCell(rowNum, metricsStartCol + 1).font = { bold: true, size: 11, color: { argb: 'FF1F2937' } };
-                    ws.getCell(rowNum, metricsStartCol + 1).border = allBorders;
-                    ws.getCell(rowNum, metricsStartCol + 1).alignment = { horizontal: 'center', vertical: 'middle' };
+                    ws.getCell(rowNum, metricsStartCol + 1).font = { bold: true, size: 11, color: { argb: reportBodyText } };
+                    ws.getCell(rowNum, metricsStartCol + 1).border = {
+                        top: thinBorder,
+                        left: thinBorder,
+                        right: mediumBorder,
+                        bottom: isLastMetricRow ? mediumBorder : thinBorder,
+                    };
+                    ws.getCell(rowNum, metricsStartCol + 1).alignment = { horizontal: 'right', vertical: 'middle' };
 
                     if (metric.highlight) {
-                        ws.getCell(rowNum, metricsStartCol + 1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD1FAE5' } };
-                        ws.getCell(rowNum, metricsStartCol + 1).font = { bold: true, size: 11, color: { argb: 'FF059669' } };
+                        ws.getCell(rowNum, metricsStartCol + 1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDCFCE7' } };
+                        ws.getCell(rowNum, metricsStartCol + 1).font = { bold: true, size: 11, color: { argb: 'FF047857' } };
                     } else if (metric.recoveryHighlight) {
                         ws.getCell(rowNum, metricsStartCol + 1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: getRecoveryColor(recoveryPct) } };
                     } else {
-                        ws.getCell(rowNum, metricsStartCol + 1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFFF' } };
+                        ws.getCell(rowNum, metricsStartCol + 1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: reportWhite } };
                     }
                 });
 
@@ -1041,13 +1082,14 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
                     ws.getColumn(index + 1).width = width;
                 });
 
+                ws.getColumn(metricsStartCol - 1).width = 3;
                 // Side panel columns
-                ws.getColumn(metricsStartCol).width = 16;
-                ws.getColumn(metricsStartCol + 1).width = 14;
+                ws.getColumn(metricsStartCol).width = 18;
+                ws.getColumn(metricsStartCol + 1).width = 15;
 
                 // ===== FREEZE PANES =====
                 // Freeze first 2 columns (Block, Band) and first 4 rows (header + link + spacer)
-                ws.views = [{ state: 'frozen', xSplit: 2, ySplit: 4 }];
+                const printAreaEndRow = Math.max(ws.rowCount, 4 + metricsData.length);
 
                 // ===== PRINT SETTINGS =====
                 ws.pageSetup = {
@@ -1063,7 +1105,9 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
                         bottom: 0.5,
                         header: 0.3,
                         footer: 0.3
-                    }
+                    },
+                    horizontalCentered: true,
+                    printArea: `A1:${getExcelColumnLetter(sheetEndCol)}${printAreaEndRow}`,
                 };
                 ws.headerFooter = {
                     oddHeader: `&C&B${route} - ${dayType} Schedule`,
