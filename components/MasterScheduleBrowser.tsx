@@ -41,6 +41,13 @@ import { calculateSequentialHeadways } from '../utils/schedule/scheduleEditorUti
 import { PlatformTimeline } from './PlatformTimeline';
 import { ScheduleEditor } from './ScheduleEditor';
 import { consumeNetworkConnectionMasterHandoff } from '../utils/network-connections/networkConnectionHandoff';
+import {
+    buildDirectionColumnWidths,
+    getMetricsStartColumn,
+    getRenderedTableColumnCount,
+    mergeScheduleColumnWidths,
+    type ExportStopColumn,
+} from '../utils/reports/masterScheduleExportLayout';
 
 // Constants
 const ROUTE_ORDER = ['400', '100', '101', '2', '7', '8A', '8B', '10', '11', '12'] as const;
@@ -714,8 +721,6 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
         };
 
         // ===== HELPER: Render a direction's trip table =====
-        type StopColumn = { name: string; subColumns: string[]; type: 'regular' | 'turnaround' };
-
         type DirectionConfig = {
             label: string;
             headerTextColor: string;
@@ -726,17 +731,17 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
         const renderTripTable = (
             ws: ExcelJS.Worksheet,
             trips: MasterTrip[],
-            stopColumns: StopColumn[],
+            stopColumns: ExportStopColumn[],
             uniqueBlocks: Set<string>,
             config: DirectionConfig,
-            totalCols: number,
+            tableCols: number,
             avgHeadway: number
         ) => {
             if (trips.length === 0) return;
 
             // Section header with block count
             const headerRow = ws.addRow([`${config.label} (${trips.length} trips, ${uniqueBlocks.size} blocks)`]);
-            ws.mergeCells(headerRow.number, 1, headerRow.number, totalCols);
+            ws.mergeCells(headerRow.number, 1, headerRow.number, tableCols);
             headerRow.height = 24;
             headerRow.getCell(1).font = { bold: true, size: 12, color: { argb: config.headerTextColor } };
             headerRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: config.headerBgColor } };
@@ -940,8 +945,8 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
                 // Build enhanced stop columns:
                 // - Regular stops: just DEP subheading
                 // - Turnaround (last stop): ARR + R columns (arrival time + recovery minutes)
-                const buildStopColumns = (stops: string[], turnaroundStop: string | null): StopColumn[] => {
-                    const columns: StopColumn[] = [];
+                const buildStopColumns = (stops: string[], turnaroundStop: string | null): ExportStopColumn[] => {
+                    const columns: ExportStopColumn[] = [];
                     stops.forEach(stop => {
                         if (stop === turnaroundStop) {
                             // Turnaround stop: show ARR time and R (recovery minutes)
@@ -957,13 +962,13 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
                 const northStopColumns = buildStopColumns(northStops, northTurnaroundStop);
                 const southStopColumns = buildStopColumns(southStops, southTurnaroundStop);
 
-                // Calculate total columns for each direction (for header merge)
-                const getNorthColCount = () => {
-                    let count = 2; // Block + Band
-                    northStopColumns.forEach(col => count += col.subColumns.length);
-                    count += 5; // Trav, Rec, Ratio, Hdwy, Cycle
-                    return count;
-                };
+                const northTableCols = getRenderedTableColumnCount(northStopColumns);
+                const southTableCols = getRenderedTableColumnCount(southStopColumns);
+                const tableCols = Math.max(northTableCols, southTableCols);
+                const mergedScheduleColWidths = mergeScheduleColumnWidths(
+                    buildDirectionColumnWidths(northStopColumns),
+                    buildDirectionColumnWidths(southStopColumns),
+                );
 
                 // Count unique blocks per direction
                 const northUniqueBlocks = new Set(northTrips.map(t => t.blockId));
@@ -971,8 +976,7 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
 
                 // ===== ROW 1: ROUTE HEADER =====
                 const routeHeaderRow = ws.addRow([`ROUTE ${route} - ${dayType.toUpperCase()} SCHEDULE`]);
-                const totalCols = getNorthColCount();
-                ws.mergeCells(1, 1, 1, Math.max(totalCols, 12));
+                ws.mergeCells(1, 1, 1, Math.max(tableCols, 12));
                 routeHeaderRow.height = 36;
                 routeHeaderRow.getCell(1).font = { bold: true, size: 20, color: { argb: routeTextColor } };
                 routeHeaderRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: routeColorArgb } };
@@ -993,18 +997,18 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
                     headerTextColor: 'FF1E40AF',
                     headerBgColor: 'FFDBEAFE',
                     rowHeaderBgColor: 'FFEFF6FF'
-                }, totalCols, avgHeadway);
+                }, tableCols, avgHeadway);
 
                 renderTripTable(ws, southTrips, southStopColumns, southUniqueBlocks, {
                     label: 'SOUTHBOUND TRIPS',
                     headerTextColor: 'FF5B21B6',
                     headerBgColor: 'FFEDE9FE',
                     rowHeaderBgColor: 'FFF5F3FF'
-                }, totalCols, avgHeadway);
+                }, tableCols, avgHeadway);
 
                 // ===== METRICS PANEL (Right Side) =====
                 // Add metrics panel to the right of the trip data
-                const metricsStartCol = totalCols + 2; // Gap of 1 column
+                const metricsStartCol = getMetricsStartColumn(northTableCols, southTableCols);
                 const serviceWindow = `${firstTripTime} – ${lastTripTime}`;
                 const tripBreakdown = `${totalTrips} (${northTripCount}N + ${southTripCount}S)`;
                 const recoveryPct = Number(recoveryRatio);
@@ -1051,31 +1055,9 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
                 });
 
                 // ===== COLUMN WIDTHS =====
-                ws.getColumn(1).width = 10;  // Block
-                ws.getColumn(2).width = 6;   // Band
-
-                // Stop columns with wider time columns
-                let currentCol = 3;
-                const stopColWidth = 11; // Standard time column width for "12:30 PM"
-                const recoveryColWidth = 5; // Narrow for R column
-
-                northStopColumns.forEach(col => {
-                    if (col.type === 'turnaround') {
-                        ws.getColumn(currentCol).width = stopColWidth;     // ARR
-                        ws.getColumn(currentCol + 1).width = recoveryColWidth; // R
-                        currentCol += 2;
-                    } else {
-                        ws.getColumn(currentCol).width = stopColWidth; // DEP
-                        currentCol += 1;
-                    }
+                mergedScheduleColWidths.forEach((width, index) => {
+                    ws.getColumn(index + 1).width = width;
                 });
-
-                // Metrics columns in new order: Trav, Rec, Ratio, Hdwy, Cycle
-                ws.getColumn(currentCol).width = 7;     // Trav
-                ws.getColumn(currentCol + 1).width = 6; // Rec
-                ws.getColumn(currentCol + 2).width = 7; // Ratio
-                ws.getColumn(currentCol + 3).width = 6; // Hdwy
-                ws.getColumn(currentCol + 4).width = 7; // Cycle
 
                 // Side panel columns
                 ws.getColumn(metricsStartCol).width = 16;

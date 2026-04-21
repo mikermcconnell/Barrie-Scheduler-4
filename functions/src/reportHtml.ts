@@ -1,4 +1,4 @@
-import { DailySummary, RouteMetrics, HourMetrics, StopMetrics } from './types';
+import { DailySummary, RouteMetrics, HourMetrics, StopMetrics, DwellIncident } from './types';
 
 export interface ReportData {
   latestDay: DailySummary;
@@ -344,7 +344,84 @@ function buildDwellKpiCard(latestDay: DailySummary, trendDays: DailySummary[]): 
         ${averageLine}
         ${testingNote}
       </div>
-    </td>`;
+      </td>`;
+}
+
+function formatDwellHours(totalSeconds: number): string {
+  return (totalSeconds / 3600).toFixed(1);
+}
+
+function isReportableDwellIncident(incident: DwellIncident): boolean {
+  return incident.severity === 'moderate' || incident.severity === 'high';
+}
+
+function getReportableDwellIncidents(day: DailySummary): DwellIncident[] {
+  return (day.byOperatorDwell?.incidents ?? []).filter(isReportableDwellIncident);
+}
+
+function getDailyReportableDwellSeconds(day: DailySummary): number {
+  return getReportableDwellIncidents(day)
+    .reduce((sum, incident) => sum + incident.trackedDwellSeconds, 0);
+}
+
+function buildRouteDwellMap(day: DailySummary): Map<string, number> {
+  const totals = new Map<string, number>();
+
+  for (const incident of getReportableDwellIncidents(day)) {
+    const routeId = incident.routeId?.trim();
+    if (!routeId) continue;
+    totals.set(routeId, (totals.get(routeId) ?? 0) + incident.trackedDwellSeconds);
+  }
+
+  return totals;
+}
+
+function parseServiceHour(time: string): number | null {
+  const match = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(time.trim());
+  if (!match) return null;
+
+  const hour = Number.parseInt(match[1] || '', 10);
+  const minute = Number.parseInt(match[2] || '', 10);
+  const second = match[3] ? Number.parseInt(match[3], 10) : 0;
+
+  if (!Number.isFinite(hour) || !Number.isFinite(minute) || !Number.isFinite(second)) return null;
+  if (hour < 0 || minute < 0 || minute > 59 || second < 0 || second > 59) return null;
+
+  return hour % 24;
+}
+
+function buildHourlyDwellMap(day: DailySummary): Map<number, number> {
+  const totals = new Map<number, number>();
+
+  for (const incident of getReportableDwellIncidents(day)) {
+    const hour = parseServiceHour(incident.observedDepartureTime);
+    if (hour === null) continue;
+    totals.set(hour, (totals.get(hour) ?? 0) + incident.trackedDwellSeconds);
+  }
+
+  return totals;
+}
+
+function buildTrendRows(trendDays: DailySummary[]): Array<{
+  day: DailySummary;
+  dwellSeconds: number;
+  rollingAverageSeconds: number;
+}> {
+  const dwellSeconds = trendDays.map(getDailyReportableDwellSeconds);
+
+  return trendDays.map((day, index) => {
+    const windowStart = Math.max(0, index - 6);
+    const window = dwellSeconds.slice(windowStart, index + 1);
+    const windowAverage = window.length > 0
+      ? window.reduce((sum, value) => sum + value, 0) / window.length
+      : 0;
+
+    return {
+      day,
+      dwellSeconds: dwellSeconds[index] ?? 0,
+      rollingAverageSeconds: windowAverage,
+    };
+  });
 }
 
 /** Horizontal stacked bar showing early/on-time/late distribution */
@@ -598,7 +675,7 @@ function buildMissedTripsTable(latestDay: DailySummary, trendDays: DailySummary[
     </table>`;
 }
 
-function buildHourlyTable(byHour: HourMetrics[], totalServiceHours: number): string {
+function buildHourlyTable(byHour: HourMetrics[], totalServiceHours: number, dwellByHour: Map<number, number>): string {
   const active = byHour.filter(h => h.boardings > 0).sort((a, b) => a.hour - b.hour);
   if (active.length === 0) return '';
 
@@ -613,6 +690,7 @@ function buildHourlyTable(byHour: HourMetrics[], totalServiceHours: number): str
     // Scale bars relative to peak hour for clear differentiation
     const barWidth = maxBoards > 0 ? Math.max(3, Math.round((h.boardings / maxBoards) * 100)) : 3;
     const bph = serviceHoursPerHour > 0 ? (h.boardings / serviceHoursPerHour).toFixed(1) : '—';
+    const dwellHours = formatDwellHours(dwellByHour.get(h.hour) ?? 0);
     return `
       <tr style="background:${bg};">
         <td style="padding:5px 10px;font-size:12px;color:#374151;border-bottom:1px solid #f3f4f6;font-weight:${isPeak ? '700' : '400'};">${hourLabel}${isPeak ? ' ★' : ''}</td>
@@ -621,6 +699,7 @@ function buildHourlyTable(byHour: HourMetrics[], totalServiceHours: number): str
           <div style="background:#06b6d4;height:24px;width:${barWidth}%;border-radius:3px;min-width:4px;"></div>
         </td>
         <td style="padding:5px 10px;font-size:12px;text-align:right;font-weight:600;color:#0891b2;border-bottom:1px solid #f3f4f6;">${bph}</td>
+        <td style="padding:5px 10px;font-size:12px;text-align:right;font-weight:600;color:#374151;border-bottom:1px solid #f3f4f6;">${dwellHours}</td>
         <td style="padding:5px 10px;font-size:12px;text-align:right;border-bottom:1px solid #f3f4f6;">${h.otp.total > 0 ? otpPill(h.otp.onTimePercent) : '<span style="color:#d1d5db;">—</span>'}</td>
       </tr>`;
   }).join('');
@@ -633,13 +712,14 @@ function buildHourlyTable(byHour: HourMetrics[], totalServiceHours: number): str
         <th style="padding:5px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Boards</th>
         <th style="padding:5px 10px;text-align:left;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;"></th>
         <th style="padding:5px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">BPH</th>
+        <th style="padding:5px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Dwell (hrs)</th>
         <th style="padding:5px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">OTP</th>
       </tr>
       ${rows}
     </table>`;
 }
 
-function buildRouteScorecard(routes: RouteMetrics[]): string {
+function buildRouteScorecard(routes: RouteMetrics[], dwellByRoute: Map<string, number>): string {
   const routesWithBph = routes.map(r => ({
     ...r,
     bph: r.serviceHours > 0 ? Math.round(r.ridership / r.serviceHours * 10) / 10 : 0,
@@ -651,6 +731,7 @@ function buildRouteScorecard(routes: RouteMetrics[]): string {
     const apcStatus = apcStatusForRoute(r);
     const issueSide = apcIssueSideForRoute(r, apcStatus);
     const bg = i % 2 === 0 ? '#ffffff' : '#f9fafb';
+    const dwellHours = formatDwellHours(dwellByRoute.get(r.routeId) ?? 0);
     return `
       <tr style="background:${bg};">
         <td style="padding:6px 10px;font-size:12px;font-weight:700;color:#374151;border-bottom:1px solid #f3f4f6;">${r.routeId}</td>
@@ -660,6 +741,7 @@ function buildRouteScorecard(routes: RouteMetrics[]): string {
         <td style="padding:6px 10px;font-size:12px;text-align:right;color:#111827;border-bottom:1px solid #f3f4f6;">${pct(r.otp.latePercent)}</td>
         <td style="padding:6px 10px;font-size:12px;text-align:right;border-bottom:1px solid #f3f4f6;${apcIssueCellStyle(apcStatus, issueSide === 'boards')}">${num(r.ridership)}</td>
         <td style="padding:6px 10px;font-size:12px;text-align:right;border-bottom:1px solid #f3f4f6;${apcIssueCellStyle(apcStatus, issueSide === 'alights')}">${num(r.alightings)}</td>
+        <td style="padding:6px 10px;font-size:12px;text-align:right;color:#374151;border-bottom:1px solid #f3f4f6;">${dwellHours}</td>
         <td style="padding:6px 10px;font-size:12px;text-align:right;border-bottom:1px solid #f3f4f6;${apcStatusCellStyle(apcStatus)}">
           ${apcPill(apcStatus)}
           <div style="font-size:10px;color:#9ca3af;margin-top:2px;">${pct(discrepancyPct)} gap</div>
@@ -679,12 +761,13 @@ function buildRouteScorecard(routes: RouteMetrics[]): string {
         <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Late</th>
         <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Boards</th>
         <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Alights</th>
+        <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Dwell (hrs)</th>
         <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">APC</th>
         <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">BPH</th>
       </tr>
       ${rows}
     </table>
-    <div style="font-size:11px;color:#9ca3af;margin-top:6px;">APC status is based on the daily difference between route boardings and alightings. For review/suspect rows, only the lower of Boards/Alights is highlighted.</div>`;
+    <div style="font-size:11px;color:#9ca3af;margin-top:6px;">Dwell hours reflect moderate/high dwell incidents only. APC status is based on the daily difference between route boardings and alightings. For review/suspect rows, only the lower of Boards/Alights is highlighted.</div>`;
 }
 
 function buildTopStops(stops: StopMetrics[]): string {
@@ -744,6 +827,9 @@ export function buildReportHtml(data: ReportData): string {
   const sys = latestDay.system;
   // System totals
   const totalServiceHours = latestDay.byRoute.reduce((s, r) => s + r.serviceHours, 0);
+  const dwellByRoute = buildRouteDwellMap(latestDay);
+  const dwellByHour = buildHourlyDwellMap(latestDay);
+  const trendRows = buildTrendRows(trendDays);
 
   // Derive date range label from trend data
   const dateRangeLabel = (() => {
@@ -820,24 +906,26 @@ export function buildReportHtml(data: ReportData): string {
       ${buildExecutiveSummary(latestDay)}
 
       <!-- ═══ 3. ROUTE SCORECARD ═══ -->
-      ${buildRouteScorecard(latestDay.byRoute)}
+      ${buildRouteScorecard(latestDay.byRoute, dwellByRoute)}
 
       <!-- ═══ 4. MISSED TRIPS ═══ -->
       ${buildMissedTripsTable(latestDay, trendDays)}
 
       <!-- ═══ 5. OTP TREND ═══ -->
       ${trendDays.length > 1 ? (() => {
-        const recentTrend = trendDays.slice(-7);
+        const recentTrend = trendRows.slice(-7);
         return `
-      ${sectionHeader(`Last ${recentTrend.length} Days Trend`)}
+      ${sectionHeader(`Last ${recentTrend.length} Days Trend`, 'Dwell reflects moderate/high incidents only')}
       <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;">
         <tr style="background:#f9fafb;">
           <th style="padding:6px 10px;text-align:left;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Date</th>
           <th style="padding:6px 10px;text-align:center;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Shift</th>
           <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">OTP</th>
           <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Riders</th>
+          <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">Dwell (hrs)</th>
+          <th style="padding:6px 10px;text-align:right;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;">7-day Avg Dwell (hrs)</th>
         </tr>
-        ${recentTrend.map((day, i) => {
+        ${recentTrend.map(({ day, dwellSeconds, rollingAverageSeconds }, i) => {
           const isLatest = day.date === latestDay.date;
           const bg = isLatest ? '#eff6ff' : (i % 2 === 0 ? '#ffffff' : '#f9fafb');
           const dayLabel = day.dayType === 'weekday' ? 'Wk' : day.dayType === 'saturday' ? 'Sat' : 'Sun';
@@ -847,13 +935,15 @@ export function buildReportHtml(data: ReportData): string {
           <td style="padding:6px 10px;font-size:11px;text-align:center;color:#6b7280;border-bottom:1px solid #f3f4f6;">${dayLabel}</td>
           <td style="padding:6px 10px;font-size:12px;text-align:right;border-bottom:1px solid #f3f4f6;">${otpPill(day.system.otp.onTimePercent)}</td>
           <td style="padding:6px 10px;font-size:12px;text-align:right;color:#374151;border-bottom:1px solid #f3f4f6;">${num(day.system.totalRidership)}</td>
+          <td style="padding:6px 10px;font-size:12px;text-align:right;color:#374151;border-bottom:1px solid #f3f4f6;">${formatDwellHours(dwellSeconds)}</td>
+          <td style="padding:6px 10px;font-size:12px;text-align:right;color:#374151;border-bottom:1px solid #f3f4f6;">${formatDwellHours(rollingAverageSeconds)}</td>
         </tr>`;
         }).join('')}
       </table>`;
       })() : ''}
 
       <!-- ═══ 6. BOARDINGS BY HOUR ═══ -->
-      ${buildHourlyTable(latestDay.byHour, totalServiceHours)}
+      ${buildHourlyTable(latestDay.byHour, totalServiceHours, dwellByHour)}
 
       <!-- ═══ 7. STOP HIGHLIGHTS ═══ -->
       ${buildTopStops(latestDay.byStop)}

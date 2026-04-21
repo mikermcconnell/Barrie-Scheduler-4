@@ -5,7 +5,7 @@
  */
 
 import React, { useState } from 'react';
-import { FileText, FileSpreadsheet, ArrowRight } from 'lucide-react';
+import { FileText, FileSpreadsheet, ArrowLeft, ArrowRight } from 'lucide-react';
 import { PublicTimetable } from './PublicTimetable';
 
 interface ReportsDashboardProps {
@@ -25,6 +25,13 @@ export const ReportsDashboard: React.FC<ReportsDashboardProps> = ({ onClose }) =
         <div className="h-full overflow-auto custom-scrollbar p-6">
             <div className="max-w-4xl mx-auto">
                 <div className="mb-8">
+                    <button
+                        onClick={onClose}
+                        className="inline-flex items-center gap-2 text-sm font-medium text-gray-500 hover:text-gray-700 transition-colors mb-4"
+                    >
+                        <ArrowLeft size={16} />
+                        Back
+                    </button>
                     <h2 className="text-2xl font-bold text-gray-900 tracking-tight mb-2">Reports</h2>
                     <p className="text-gray-500">Generate public timetables and export-ready outputs.</p>
                 </div>

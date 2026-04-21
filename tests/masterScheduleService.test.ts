@@ -71,7 +71,10 @@ vi.mock('../utils/firebase', () => ({
 
 import { buildRouteIdentity } from '../utils/masterScheduleTypes';
 import {
+  deleteRouteMap,
+  getRouteMapUrl,
   prepareUpload,
+  uploadRouteMap,
   uploadToMasterSchedule,
 } from '../utils/services/masterScheduleService';
 
@@ -376,5 +379,43 @@ describe('uploadToMasterSchedule', () => {
     );
 
     consoleErrorSpy.mockRestore();
+  });
+});
+
+describe('route map operations', () => {
+  it('uploads route maps to the canonical extensionless path and clears legacy files', async () => {
+    getDownloadURLMock.mockResolvedValueOnce('https://example.com/maps/2');
+    deleteObjectMock.mockRejectedValue({ code: 'storage/object-not-found' });
+
+    const file = new File(['image-data'], 'route-map.PNG', { type: 'image/png' });
+    const url = await uploadRouteMap('team-1', '2', file);
+
+    expect(url).toBe('https://example.com/maps/2');
+    expect(uploadBytesMock).toHaveBeenCalledWith(
+      { path: 'teams/team-1/routeMaps/2' },
+      file,
+      { contentType: 'image/png' },
+    );
+    expect(deleteObjectMock).toHaveBeenCalledWith({ path: 'teams/team-1/routeMaps/2.png' });
+    expect(deleteObjectMock).toHaveBeenCalledWith({ path: 'teams/team-1/routeMaps/2.PNG' });
+  });
+
+  it('prefers the canonical route map path before falling back to legacy extensions', async () => {
+    getDownloadURLMock
+      .mockResolvedValueOnce('https://example.com/maps/2');
+
+    await expect(getRouteMapUrl('team-1', '2')).resolves.toBe('https://example.com/maps/2');
+    expect(getDownloadURLMock).toHaveBeenCalledTimes(1);
+    expect(getDownloadURLMock).toHaveBeenCalledWith({ path: 'teams/team-1/routeMaps/2' });
+  });
+
+  it('deletes the canonical route map and all legacy variants', async () => {
+    deleteObjectMock.mockRejectedValue({ code: 'storage/object-not-found' });
+
+    await expect(deleteRouteMap('team-1', '2')).resolves.toBeUndefined();
+
+    expect(deleteObjectMock).toHaveBeenCalledWith({ path: 'teams/team-1/routeMaps/2' });
+    expect(deleteObjectMock).toHaveBeenCalledWith({ path: 'teams/team-1/routeMaps/2.png' });
+    expect(deleteObjectMock).toHaveBeenCalledWith({ path: 'teams/team-1/routeMaps/2.WEBP' });
   });
 });

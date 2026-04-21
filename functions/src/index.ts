@@ -655,7 +655,10 @@ async function savePerformanceSummary(params: {
 export const ingestPerformanceData = onRequest(
   {
     secrets: [INGEST_API_KEY],
-    memory: '1GiB',
+    // Daily imports now routinely load the archived summary plus overview/report payloads.
+    // Keep behavior unchanged, but give the merge/save path enough headroom to avoid OOM kills.
+    memory: '8GiB',
+    cpu: 2,
     timeoutSeconds: 300,
     maxInstances: 1,
     region: 'us-central1',

@@ -21,7 +21,8 @@ Load `ORCHESTRATOR.md` when you are operating in orchestrator mode, delegating w
 
 Load `.claude/CLAUDE.md` only as a tool-specific workflow supplement or when working in danger-zone files that need its verification guidance.
 Load `.claude/context.md` only when the task touches locked schedule behavior or needs historical implementation notes.
-Do not use `docs/plans/` or `docs/archive/` as default context.
+For Route Planner, Shuttle Planner, Network Connections, and other planning-data tasks, load the matching feature docs named in `docs/CONTEXT_INDEX.md` instead of scanning `docs/` blindly.
+Do not use `docs/plans/`, `docs/archive/`, or `docs/artifacts/` as default context.
 
 ## Repo Principles
 

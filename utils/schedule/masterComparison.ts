@@ -13,6 +13,7 @@ export interface AmbiguousMasterComparisonCandidate {
 export interface MatchedMasterComparisonEntry {
     status: 'matched';
     direction: DirectionKey;
+    routeName: string;
     currentTripId: string;
     masterTrip: MasterTrip;
     matchMethod: MasterComparisonMatchMethod;
@@ -24,6 +25,7 @@ export interface MatchedMasterComparisonEntry {
 export interface NewMasterComparisonEntry {
     status: 'new';
     direction: DirectionKey;
+    routeName: string;
     currentTripId: string;
     confidence: 'low';
     reason: string;
@@ -32,6 +34,7 @@ export interface NewMasterComparisonEntry {
 export interface AmbiguousMasterComparisonEntry {
     status: 'ambiguous';
     direction: DirectionKey;
+    routeName: string;
     currentTripId: string;
     confidence: 'low';
     reason: string;
@@ -42,6 +45,7 @@ export interface AmbiguousMasterComparisonEntry {
 export interface RemovedMasterComparisonEntry {
     status: 'removed';
     direction: DirectionKey;
+    routeName: string;
     masterTrip: MasterTrip;
     confidence: 'low';
     reason: string;
@@ -64,6 +68,32 @@ export interface MasterComparisonResult {
     masterShiftByDir: Partial<Record<DirectionKey, number>>;
 }
 
+export type TripChangeKind =
+    | 'new'
+    | 'extended'
+    | 'shortened'
+    | 'retimed'
+    | 'review'
+    | 'removed'
+    | 'unchanged';
+
+export interface MasterComparisonChangeCounts {
+    new: number;
+    extended: number;
+    shortened: number;
+    retimed: number;
+    review: number;
+    removed: number;
+    unchanged: number;
+    totalChanges: number;
+}
+
+export interface MasterComparisonChangeSummary {
+    counts: MasterComparisonChangeCounts;
+    currentTripKinds: Map<string, TripChangeKind>;
+    removedMasterTrips: RemovedMasterComparisonEntry[];
+}
+
 const DIRECTIONS: DirectionKey[] = ['North', 'South'];
 
 export const buildTripKey = (direction: DirectionKey, tripId: string): string => `${direction}::${tripId}`;
@@ -73,6 +103,151 @@ const buildMatchedMasterKey = (direction: DirectionKey, trip: MasterTrip): strin
 
 const toDirection = (routeName: string): DirectionKey =>
     (extractDirectionFromName(routeName) || 'North') as DirectionKey;
+
+const emptyChangeCounts = (): MasterComparisonChangeCounts => ({
+    new: 0,
+    extended: 0,
+    shortened: 0,
+    retimed: 0,
+    review: 0,
+    removed: 0,
+    unchanged: 0,
+    totalChanges: 0,
+});
+
+const getTimedStopCount = (trip: MasterTrip): number => {
+    const stopKeys = new Set<string>();
+
+    Object.entries(trip.stops || {}).forEach(([key, value]) => {
+        if (value) stopKeys.add(key);
+    });
+    Object.entries(trip.arrivalTimes || {}).forEach(([key, value]) => {
+        if (value) stopKeys.add(key);
+    });
+
+    return stopKeys.size;
+};
+
+const recordsDiffer = (
+    a?: Record<string, string | number>,
+    b?: Record<string, string | number>
+): boolean => {
+    const keys = new Set([
+        ...Object.keys(a || {}),
+        ...Object.keys(b || {}),
+    ]);
+
+    for (const key of keys) {
+        const left = a?.[key];
+        const right = b?.[key];
+        if ((left ?? '') !== (right ?? '')) {
+            return true;
+        }
+    }
+
+    return false;
+};
+
+export const classifyMatchedTripChange = (currentTrip: MasterTrip, masterTrip: MasterTrip): TripChangeKind => {
+    const extendsEarlier = currentTrip.startTime < masterTrip.startTime;
+    const extendsLater = currentTrip.endTime > masterTrip.endTime;
+    const startsLater = currentTrip.startTime > masterTrip.startTime;
+    const endsEarlier = currentTrip.endTime < masterTrip.endTime;
+
+    const startStopExtended = (
+        currentTrip.startStopIndex !== undefined
+        && masterTrip.startStopIndex !== undefined
+        && currentTrip.startStopIndex < masterTrip.startStopIndex
+    );
+    const startStopReduced = (
+        currentTrip.startStopIndex !== undefined
+        && masterTrip.startStopIndex !== undefined
+        && currentTrip.startStopIndex > masterTrip.startStopIndex
+    );
+    const endStopExtended = (
+        currentTrip.endStopIndex !== undefined
+        && masterTrip.endStopIndex !== undefined
+        && currentTrip.endStopIndex > masterTrip.endStopIndex
+    );
+    const endStopReduced = (
+        currentTrip.endStopIndex !== undefined
+        && masterTrip.endStopIndex !== undefined
+        && currentTrip.endStopIndex < masterTrip.endStopIndex
+    );
+
+    const currentTimedStopCount = getTimedStopCount(currentTrip);
+    const masterTimedStopCount = getTimedStopCount(masterTrip);
+    const hasMoreTimedStops = currentTimedStopCount > masterTimedStopCount;
+    const hasFewerTimedStops = currentTimedStopCount < masterTimedStopCount;
+
+    const isExtended = extendsEarlier || extendsLater || startStopExtended || endStopExtended || hasMoreTimedStops;
+    const isShortened = startsLater || endsEarlier || startStopReduced || endStopReduced || hasFewerTimedStops;
+    const hasTimingDelta = (
+        currentTrip.startTime !== masterTrip.startTime
+        || currentTrip.endTime !== masterTrip.endTime
+        || currentTrip.travelTime !== masterTrip.travelTime
+        || currentTrip.recoveryTime !== masterTrip.recoveryTime
+        || recordsDiffer(currentTrip.stops, masterTrip.stops)
+        || recordsDiffer(currentTrip.arrivalTimes, masterTrip.arrivalTimes)
+        || recordsDiffer(currentTrip.recoveryTimes, masterTrip.recoveryTimes)
+    );
+
+    if (isExtended && !isShortened) return 'extended';
+    if (isShortened && !isExtended) return 'shortened';
+    if (hasTimingDelta) return 'retimed';
+    return 'unchanged';
+};
+
+export const buildMasterComparisonChangeSummary = (
+    schedules: MasterRouteTable[],
+    detailed: DetailedMasterComparisonResult,
+    options?: { routeNames?: string[] }
+): MasterComparisonChangeSummary => {
+    const counts = emptyChangeCounts();
+    const routeNameFilter = options?.routeNames ? new Set(options.routeNames) : null;
+    const currentTripLookup = new Map<string, MasterTrip>();
+    const currentTripKinds = new Map<string, TripChangeKind>();
+
+    schedules.forEach(table => {
+        const dir = toDirection(table.routeName);
+        table.trips.forEach(trip => {
+            currentTripLookup.set(buildTripKey(dir, trip.id), trip);
+        });
+    });
+
+    detailed.currentTripComparisons.forEach((entry, key) => {
+        if (routeNameFilter && !routeNameFilter.has(entry.routeName)) {
+            return;
+        }
+
+        let kind: TripChangeKind = 'unchanged';
+        if (entry.status === 'new') {
+            kind = 'new';
+        } else if (entry.status === 'ambiguous') {
+            kind = 'review';
+        } else {
+            const currentTrip = currentTripLookup.get(key);
+            kind = currentTrip
+                ? classifyMatchedTripChange(currentTrip, entry.masterTrip)
+                : 'retimed';
+        }
+
+        currentTripKinds.set(key, kind);
+        counts[kind] += 1;
+    });
+
+    const removedMasterTrips = detailed.removedMasterTrips.filter(entry => (
+        !routeNameFilter || routeNameFilter.has(entry.routeName)
+    ));
+    counts.removed = removedMasterTrips.length;
+    counts.totalChanges = counts.new + counts.extended + counts.shortened + counts.retimed + counts.review + counts.removed;
+
+    return {
+        counts,
+        currentTripKinds,
+        removedMasterTrips,
+    };
+};
 
 export const buildDetailedMasterComparison = (
     schedules: MasterRouteTable[],
@@ -95,6 +270,7 @@ export const buildDetailedMasterComparison = (
     const shiftByDir: Partial<Record<DirectionKey, number>> = {};
 
     const masterByDir: Record<DirectionKey, MasterTrip[]> = { North: [], South: [] };
+    const currentRouteNamesByTripKey = new Map<string, string>();
     masterBaseline.forEach(table => {
         const dir = toDirection(table.routeName);
         table.trips.forEach(trip => {
@@ -107,6 +283,7 @@ export const buildDetailedMasterComparison = (
         const dir = toDirection(table.routeName);
         table.trips.forEach(trip => {
             currentByDir[dir].push(trip);
+            currentRouteNamesByTripKey.set(buildTripKey(dir, trip.id), table.routeName);
         });
     });
 
@@ -127,6 +304,7 @@ export const buildDetailedMasterComparison = (
         currentTripComparisons.set(currentTripKey, {
             status: 'matched',
             direction,
+            routeName: currentRouteNamesByTripKey.get(currentTripKey) || direction,
             currentTripId: currentTrip.id,
             masterTrip,
             matchMethod,
@@ -282,11 +460,12 @@ export const buildDetailedMasterComparison = (
                     currentTripComparisons.set(key, {
                         status: 'ambiguous',
                         direction: dir,
+                        routeName: currentRouteNamesByTripKey.get(key) || dir,
                         currentTripId: currentTrip.id,
                         confidence: 'low',
                         shiftMinutes: bestShift,
                         candidates: shortlist,
-                        reason: `Multiple master trips are plausible after ${bestShift > 0 ? '+' : ''}${bestShift}m alignment. Review before trusting this delta.`,
+                        reason: `Multiple baseline trips are plausible after ${bestShift > 0 ? '+' : ''}${bestShift}m alignment. Review before trusting this delta.`,
                     });
                     continue;
                 }
@@ -307,9 +486,10 @@ export const buildDetailedMasterComparison = (
                 removedMasterTrips.push({
                     status: 'removed',
                     direction: dir,
+                    routeName: table.routeName,
                     masterTrip: { ...trip, direction: dir },
                     confidence: 'low',
-                    reason: 'No current trip matched this master trip.',
+                    reason: 'No current trip matched this baseline trip.',
                 });
             }
         });
@@ -324,9 +504,10 @@ export const buildDetailedMasterComparison = (
             currentTripComparisons.set(key, {
                 status: 'new',
                 direction: dir,
+                routeName: currentRouteNamesByTripKey.get(key) || dir,
                 currentTripId: currentTrip.id,
                 confidence: 'low',
-                reason: 'No master trip matched this current trip.',
+                reason: 'No baseline trip matched this current trip.',
             });
         });
     }

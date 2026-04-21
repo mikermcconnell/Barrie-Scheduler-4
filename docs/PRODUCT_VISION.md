@@ -1,13 +1,48 @@
-# Barrie Transit Schedule Builder - Product Vision
+# Scheduler 4 - Product Vision
 
 > Source of truth for product decisions. Read this before planning significant features.
+> Scheduler 4 is a transit planning platform with a fixed-route scheduling core.
 > Keep roadmap status and dated delivery history in `docs/IMPLEMENTATION_PLAN.md`, not here.
+
+---
+
+## Product Frame
+
+Scheduler 4 is an internal Barrie Transit planning platform.
+
+Its most mature and operationally critical workflow is fixed-route schedule building, but the repository also contains adjacent planning and analysis surfaces that support service design, on-demand planning, and operations review.
+
+Primary app shells today:
+- **Scheduled Transit** - fixed-route schedule generation, editing, optimization, publishing, and timetable/report outputs
+- **Transit On-Demand** - demand-responsive planning and shift optimization
+- **Dashboard & Reporting** - STREETS-backed performance dashboards and operational reporting
+
+Adjacent planning-data workspaces include Route Planner, Shuttle Planner, Network Connections, Transit App analytics, OD analysis, Route 8 sandbox, student-pass planning, and related exploratory tools.
+
+Use this document for the overall product frame and the fixed-route core workflow. Use feature-specific product briefs and UI specs for narrower planning-data modules when those tasks are directly relevant.
 
 ---
 
 ## Purpose
 
-Internal operations tool for Barrie Transit planners to **create, edit, optimize, and publish fixed-route bus schedules**. This replaces manual Excel-based scheduling with a structured workflow that enforces timing rules and enables AI-assisted optimization.
+Internal operations tool for Barrie Transit planners to **create, edit, optimize, and publish fixed-route bus schedules** while keeping that core workflow connected to adjacent planning and analysis tools.
+
+The fixed-route workflow replaces manual Excel-based scheduling with a structured system that enforces timing rules and enables AI-assisted optimization.
+
+---
+
+## Related Feature Docs
+
+Load these only when the task is directly related:
+
+- `docs/ROUTE_PLANNER_PRODUCT_BRIEF.md`
+- `docs/ROUTE_PLANNER_UI_SPEC.md`
+- `docs/ROUTE_PLANNER_PRD.md`
+- `docs/SHUTTLE_PLANNER_PRD.md`
+- `docs/SHUTTLE_PLANNER_UI_SPEC.md`
+- `docs/NETWORK_CONNECTIONS_PRODUCT_BRIEF.md`
+- `docs/NETWORK_CONNECTIONS_UI_SPEC.md`
+- `docs/OD_WORKSPACE_GUIDE.md`
 
 ---
 
@@ -15,15 +50,15 @@ Internal operations tool for Barrie Transit planners to **create, edit, optimize
 
 | User | Role | Primary Tasks |
 |------|------|---------------|
-| **Transit Planner** | Schedule creation | Build schedules from runtime data, optimize for connections |
-| **Operations Manager** | Schedule approval | Review drafts, publish to master, track versions |
+| **Transit Planner** | Schedule creation and planning analysis | Build schedules from runtime data, optimize for connections, and use planning tools |
+| **Operations Manager** | Schedule approval and operational review | Review drafts, publish to master, track versions, review reporting |
 | **Dispatcher** | Reference | View published schedules, export for operations |
 
 All users belong to **teams** with role-based access (Owner, Admin, Member).
 
 ---
 
-## Core Workflows
+## Core Fixed-Route Workflows
 
 ### 1. Create Schedule from Runtime Data (Primary)
 ```
@@ -80,7 +115,7 @@ AI-assisted but planner-controlled.
 
 ---
 
-## Data Model (Simplified)
+## Fixed-Route Data Model (Simplified)
 
 ```
 Team
@@ -102,7 +137,7 @@ Team
 
 ---
 
-## Routes Supported
+## Fixed-Route Routes Supported
 
 | Type | Examples | Pattern |
 |------|----------|---------|

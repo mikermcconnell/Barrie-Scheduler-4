@@ -26,6 +26,7 @@ interface MasterCompareReviewPanelProps {
     items: MasterCompareReviewItem[];
     activeTripId: string | null;
     onSelectTrip: (tripId: string) => void;
+    baselineLabel?: string;
 }
 
 const formatDiff = (diffMinutes: number): string => (
@@ -36,6 +37,7 @@ export const MasterCompareReviewPanel: React.FC<MasterCompareReviewPanelProps> =
     items,
     activeTripId,
     onSelectTrip,
+    baselineLabel = 'baseline',
 }) => {
     if (items.length === 0) return null;
 
@@ -48,7 +50,7 @@ export const MasterCompareReviewPanel: React.FC<MasterCompareReviewPanelProps> =
                         <span className="text-sm font-bold uppercase tracking-wide">Compare review needed</span>
                     </div>
                     <p className="mt-1 text-sm text-amber-900">
-                        {items.length} trip{items.length === 1 ? '' : 's'} have more than one plausible master match.
+                        {items.length} trip{items.length === 1 ? '' : 's'} have more than one plausible {baselineLabel} match.
                         These rows are flagged as review-needed instead of forcing a confident delta.
                     </p>
                 </div>
@@ -117,7 +119,7 @@ export const MasterCompareReviewPanel: React.FC<MasterCompareReviewPanelProps> =
                                         className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2"
                                     >
                                         <div className="text-[11px] font-bold uppercase tracking-wide text-gray-500">
-                                            Master candidate
+                                            {baselineLabel} candidate
                                         </div>
                                         <div className="mt-1 text-sm font-semibold text-gray-900">
                                             {TimeUtils.fromMinutes(candidate.startTime)} → {TimeUtils.fromMinutes(candidate.endTime)}

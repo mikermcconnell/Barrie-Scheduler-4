@@ -53,8 +53,10 @@ import { useGridNavigation, GridColumn, GridRowInfo } from '../../hooks/useGridN
 import { getRowInsights, type ScheduleInsight } from '../../utils/schedule/scheduleInsights';
 import {
     buildDetailedMasterComparison,
+    buildMasterComparisonChangeSummary,
     buildTripKey,
     type CurrentTripComparisonEntry,
+    type TripChangeKind,
 } from '../../utils/schedule/masterComparison';
 import { getTripLineageLookupKey } from '../../utils/schedule/tripLineage';
 import {
@@ -90,6 +92,60 @@ interface ColumnInfo {
 }
 
 type DensityMode = 'ultra' | 'compact' | 'comfortable';
+
+type VisibleTripChangeKind = Exclude<TripChangeKind, 'removed' | 'unchanged'>;
+
+const CHANGE_KIND_META: Record<VisibleTripChangeKind, {
+    label: string;
+    rowClass: string;
+    blockClass: string;
+    badgeClass: string;
+    summaryClass: string;
+    order: number;
+}> = {
+    review: {
+        label: 'REVIEW',
+        rowClass: 'ring-2 ring-inset ring-amber-300 bg-amber-50/40',
+        blockClass: 'bg-amber-50',
+        badgeClass: 'text-[9px] text-amber-800 bg-amber-100 px-1 rounded font-bold',
+        summaryClass: 'border-amber-200 bg-amber-50 text-amber-900',
+        order: 0,
+    },
+    new: {
+        label: 'NEW',
+        rowClass: 'ring-2 ring-inset ring-green-300 bg-green-50/30',
+        blockClass: 'bg-green-50',
+        badgeClass: 'text-[9px] text-green-700 bg-green-100 px-1 rounded font-bold',
+        summaryClass: 'border-green-200 bg-green-50 text-green-900',
+        order: 1,
+    },
+    extended: {
+        label: 'EXTENDED',
+        rowClass: 'ring-2 ring-inset ring-emerald-300 bg-emerald-50/30',
+        blockClass: 'bg-emerald-50',
+        badgeClass: 'text-[9px] text-emerald-700 bg-emerald-100 px-1 rounded font-bold',
+        summaryClass: 'border-emerald-200 bg-emerald-50 text-emerald-900',
+        order: 2,
+    },
+    shortened: {
+        label: 'SHORTENED',
+        rowClass: 'ring-2 ring-inset ring-orange-300 bg-orange-50/30',
+        blockClass: 'bg-orange-50',
+        badgeClass: 'text-[9px] text-orange-700 bg-orange-100 px-1 rounded font-bold',
+        summaryClass: 'border-orange-200 bg-orange-50 text-orange-900',
+        order: 3,
+    },
+    retimed: {
+        label: 'RETIMED',
+        rowClass: 'ring-2 ring-inset ring-indigo-300 bg-indigo-50/25',
+        blockClass: 'bg-indigo-50',
+        badgeClass: 'text-[9px] text-indigo-700 bg-indigo-100 px-1 rounded font-bold',
+        summaryClass: 'border-indigo-200 bg-indigo-50 text-indigo-900',
+        order: 4,
+    },
+};
+
+const CHANGE_SUMMARY_ORDER: VisibleTripChangeKind[] = ['new', 'extended', 'shortened', 'retimed', 'review'];
 
 const STOP_ABBREVIATIONS: Array<[RegExp, string]> = [
     [/barrie south go station/gi, 'B. South GO'],
@@ -374,6 +430,7 @@ export interface RoundTripTableViewProps {
     routeConnectionConfig?: RouteConnectionConfig | null;
     dayType?: DayType;
     masterBaseline?: MasterRouteTable[] | null;
+    compareBaselineLabel?: string;
     highlightedTripId?: string | null;
 }
 
@@ -441,6 +498,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
     routeConnectionConfig,
     dayType = 'Weekday',
     masterBaseline,
+    compareBaselineLabel,
     highlightedTripId
 }) => {
     // Sort state: 'blockFlow' (default), 'blockId', 'endTime', 'startTime' (first departure), or a stop name
@@ -452,7 +510,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
     const [showMetaCols, setShowMetaCols] = useState(true);
     const [showActionsCol, setShowActionsCol] = useState(true);
     const [showRowNumberCol, setShowRowNumberCol] = useState(false);
-    const [showDeltas, setShowDeltas] = useState(true);
+    const [showDeltas, setShowDeltas] = useState(() => !(masterBaseline && masterBaseline.length > 0));
     const [compareReviewFocusTripId, setCompareReviewFocusTripId] = useState<string | null>(null);
 
     useEffect(() => {
@@ -468,10 +526,12 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
     }, [initialTimepointOnly, schedules]);
 
     const isMasterMode = !!masterBaseline && masterBaseline.length > 0;
+    const baselineLabel = compareBaselineLabel || 'Baseline';
 
-    // Auto-enable deltas when master mode activates
+    // Keep compare deltas opt-in in master/baseline mode so row highlights
+    // for newly added service do not immediately show noisy baseline badges.
     useEffect(() => {
-        if (isMasterMode) setShowDeltas(true);
+        if (isMasterMode) setShowDeltas(false);
     }, [isMasterMode]);
 
     const originalTripLookup = useMemo(() => {
@@ -539,9 +599,11 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
         return lookup;
     }, [schedules]);
 
-    const { currentTripComparisons, removedMasterTrips, masterShiftByDir } = useMemo(() => {
-        return buildDetailedMasterComparison(isMasterMode ? schedules : [], isMasterMode ? masterBaseline : null);
-    }, [masterBaseline, schedules, isMasterMode]);
+    const detailedMasterComparison = useMemo(() => (
+        buildDetailedMasterComparison(isMasterMode ? schedules : [], isMasterMode ? masterBaseline : null)
+    ), [masterBaseline, schedules, isMasterMode]);
+
+    const { currentTripComparisons, masterShiftByDir } = detailedMasterComparison;
 
     const compareReviewItems = useMemo<MasterCompareReviewItem[]>(() => {
         if (!isMasterMode) return [];
@@ -604,14 +666,14 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
 
         if (north === undefined && south === undefined) return null;
         if (north !== undefined && south !== undefined && north === south) {
-            return `Auto-align ${fmt(north)}`;
+            return `${baselineLabel} auto-align ${fmt(north)}`;
         }
 
         const parts: string[] = [];
         if (north !== undefined) parts.push(`N ${fmt(north)}`);
         if (south !== undefined) parts.push(`S ${fmt(south)}`);
-        return `Auto-align ${parts.join(' | ')}`;
-    }, [isMasterMode, masterShiftByDir]);
+        return `${baselineLabel} auto-align ${parts.join(' | ')}`;
+    }, [baselineLabel, isMasterMode, masterShiftByDir]);
 
     const getTripComparison = useCallback((direction: 'North' | 'South', tripId: string): CurrentTripComparisonEntry | undefined => (
         currentTripComparisons.get(buildTripKey(direction, tripId))
@@ -1013,6 +1075,12 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
             {roundTripData.map(({ combined, north, south, northTripOrder, southTripOrder, blockBoundaries }) => {
                 const allNorthTrips = north?.trips || [];
                 const allSouthTrips = south?.trips || [];
+                const routeTableNames = [north.routeName, south.routeName].filter(Boolean);
+                const routeComparisonSummary = buildMasterComparisonChangeSummary(
+                    schedules,
+                    detailedMasterComparison,
+                    { routeNames: routeTableNames }
+                );
                 const routeCompareReviewItems = compareReviewItems.filter(item => (
                     item.routeName === north.routeName || item.routeName === south.routeName
                 ));
@@ -1196,14 +1264,14 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                             className={`px-2 py-1 rounded text-xs font-semibold border ${showDeltas
                                                 ? (isMasterMode ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-green-50 text-green-700 border-green-200')
                                                 : 'bg-white text-gray-700 border-gray-300'}`}
-                                            title={isMasterMode ? 'Show differences from Master schedule' : 'Show time differences from original'}
+                                            title={isMasterMode ? `Show differences from ${baselineLabel}` : 'Show time differences from original'}
                                         >
-                                            {isMasterMode ? 'Master Deltas' : '+/- Deltas'}
+                                            {isMasterMode ? `${baselineLabel} Deltas` : '+/- Deltas'}
                                         </button>
                                         {isMasterMode && masterShiftLabel && (
                                             <span
                                                 className="px-2 py-1 rounded text-xs font-semibold border bg-indigo-50 text-indigo-700 border-indigo-200"
-                                                title="Detected global time offset used to align current trips to master during comparison"
+                                                title={`Detected global time offset used to align current trips to ${baselineLabel} during comparison`}
                                             >
                                                 {masterShiftLabel}
                                             </span>
@@ -1279,12 +1347,59 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                             </div>
                         </div>
 
+                        {isMasterMode && (
+                            <div className="px-3 pt-3">
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-3">
+                                    <div className="flex flex-wrap items-start justify-between gap-3">
+                                        <div>
+                                            <div className="text-sm font-bold text-slate-900">Changes from baseline</div>
+                                            <div className="mt-1 text-xs text-slate-600">
+                                                Planner-facing compare summary for this route group.
+                                            </div>
+                                        </div>
+                                        <div className="text-xs font-semibold text-slate-500">
+                                            {routeComparisonSummary.counts.totalChanges === 0
+                                                ? 'No changes detected'
+                                                : `${routeComparisonSummary.counts.totalChanges} changed item${routeComparisonSummary.counts.totalChanges === 1 ? '' : 's'}`}
+                                        </div>
+                                    </div>
+
+                                    <div className="mt-3 flex flex-wrap gap-2">
+                                        {CHANGE_SUMMARY_ORDER.map(kind => {
+                                            const count = routeComparisonSummary.counts[kind];
+                                            if (count === 0) return null;
+
+                                            return (
+                                                <div
+                                                    key={`${combined.routeName}-${kind}`}
+                                                    className={`rounded-full border px-3 py-1 text-xs font-semibold ${CHANGE_KIND_META[kind].summaryClass}`}
+                                                >
+                                                    {CHANGE_KIND_META[kind].label} {count}
+                                                </div>
+                                            );
+                                        })}
+                                        {routeComparisonSummary.counts.removed > 0 && (
+                                            <div className="rounded-full border border-red-200 bg-red-50 px-3 py-1 text-xs font-semibold text-red-900">
+                                                REMOVED {routeComparisonSummary.counts.removed}
+                                            </div>
+                                        )}
+                                        {routeComparisonSummary.counts.totalChanges === 0 && (
+                                            <div className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700">
+                                                No trip changes
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
                         {isMasterMode && routeCompareReviewItems.length > 0 && (
                             <div className="px-3 pb-3">
                                 <MasterCompareReviewPanel
                                     items={routeCompareReviewItems}
                                     activeTripId={compareReviewFocusTripId}
                                     onSelectTrip={setCompareReviewFocusTripId}
+                                    baselineLabel={baselineLabel}
                                 />
                             </div>
                         )}
@@ -1539,29 +1654,18 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                         const originalSouthTrip = southTrip
                                             ? (isMasterMode ? getMasterMatchedTrip('South', southTrip.id) : getOriginalTrip(south.routeName, southTrip))
                                             : undefined;
-
-                                        // NEW trip: exists in current schedule but not matched to any master trip
-                                        const isNewTrip = isMasterMode
-                                            && (
-                                                northComparison?.status === 'new'
-                                                || southComparison?.status === 'new'
-                                            )
-                                            && northComparison?.status !== 'ambiguous'
-                                            && southComparison?.status !== 'ambiguous'
-                                            && !originalNorthTrip
-                                            && !originalSouthTrip;
-                                        const isReviewTrip = isMasterMode
-                                            && (
-                                                northComparison?.status === 'ambiguous'
-                                                || southComparison?.status === 'ambiguous'
-                                            );
                                         const compareReason = isMasterMode
                                             ? [northComparison?.reason, southComparison?.reason].filter(Boolean).join(' ')
                                             : undefined;
-                                        const matchMethodLabel = isMasterMode
-                                            ? [northComparison, southComparison]
-                                                .find(entry => entry?.status === 'matched' && entry.matchMethod === 'time-shift')
-                                            : undefined;
+                                        const rowChangeKinds = isMasterMode
+                                            ? Array.from(new Set(
+                                                row.trips
+                                                    .map(trip => routeComparisonSummary.currentTripKinds.get(buildTripKey(trip.direction, trip.id)))
+                                                    .filter((kind): kind is VisibleTripChangeKind => !!kind && kind !== 'unchanged')
+                                            )).sort((a, b) => CHANGE_KIND_META[a].order - CHANGE_KIND_META[b].order)
+                                            : [];
+                                        const primaryChangeKind = rowChangeKinds[0] || null;
+                                        const primaryChangeMeta = primaryChangeKind ? CHANGE_KIND_META[primaryChangeKind] : null;
 
                                         const tripStartTime = northTrip?.startTime || southTrip?.startTime || 0;
                                         const tripEndTime = northTrip?.endTime || southTrip?.endTime || 0;
@@ -1627,7 +1731,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                         return (
                                             <tr
                                                 key={uniqueRowKey}
-                                                className={`group hover:bg-blue-50/50 ${rowBg} ${grayOutClass} ${filterHighlightClass} ${searchHideClass} ${isReviewTrip ? 'ring-2 ring-inset ring-amber-300 bg-amber-50/40' : ''} ${isNewTrip ? 'ring-2 ring-inset ring-green-300 bg-green-50/30' : ''} ${isRecentlyAddedRow ? 'ring-2 ring-inset ring-emerald-400 bg-emerald-50/60' : ''} ${isCompareReviewFocusedRow ? 'ring-2 ring-inset ring-amber-400 bg-amber-50/70' : ''} ${gridNav.isRowActive(rowIdx) ? 'bg-blue-50/30' : ''}`}
+                                                className={`group hover:bg-blue-50/50 ${rowBg} ${grayOutClass} ${filterHighlightClass} ${searchHideClass} ${primaryChangeMeta?.rowClass || ''} ${isRecentlyAddedRow ? 'ring-2 ring-inset ring-emerald-400 bg-emerald-50/60' : ''} ${isCompareReviewFocusedRow ? 'ring-2 ring-inset ring-amber-400 bg-amber-50/70' : ''} ${gridNav.isRowActive(rowIdx) ? 'bg-blue-50/30' : ''}`}
                                                 data-highlighted-row={isRecentlyAddedRow ? 'true' : 'false'}
                                                 data-row-trip-ids={`|${rowTripIds.join('|')}|`}
                                                 title={compareReason}
@@ -1702,18 +1806,18 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                 )}
 
                                                 {/* Block ID */}
-                                                <td className={`p-2 border-r border-gray-100 ${isReviewTrip ? 'bg-amber-50' : isNewTrip ? 'bg-green-50' : 'bg-white'} group-hover:bg-gray-100 font-medium text-xs text-gray-700 text-center`}>
+                                                <td className={`p-2 border-r border-gray-100 ${primaryChangeMeta?.blockClass || 'bg-white'} group-hover:bg-gray-100 font-medium text-xs text-gray-700 text-center`}>
                                                     <div className="flex flex-col items-center gap-0.5">
                                                         <span>{row.blockId}</span>
-                                                        {isReviewTrip && (
-                                                            <span className="text-[9px] text-amber-800 bg-amber-100 px-1 rounded font-bold" title={compareReason}>REVIEW</span>
-                                                        )}
-                                                        {!isReviewTrip && !isNewTrip && matchMethodLabel && (
-                                                            <span className="text-[9px] text-indigo-700 bg-indigo-100 px-1 rounded font-bold" title={matchMethodLabel.reason}>ALIGNED</span>
-                                                        )}
-                                                        {!isReviewTrip && isNewTrip && (
-                                                            <span className="text-[9px] text-green-700 bg-green-100 px-1 rounded font-bold" title={compareReason}>NEW</span>
-                                                        )}
+                                                        {rowChangeKinds.map(kind => (
+                                                            <span
+                                                                key={`${row.blockId}-${kind}`}
+                                                                className={CHANGE_KIND_META[kind].badgeClass}
+                                                                title={compareReason}
+                                                            >
+                                                                {CHANGE_KIND_META[kind].label}
+                                                            </span>
+                                                        ))}
                                                         {isBlockStartRow && (
                                                             <span className="text-[9px] text-emerald-600 font-bold">BEGIN</span>
                                                         )}
@@ -2392,7 +2496,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                     });
                                     })()}
                                     {/* REMOVED trip ghost rows - master-only trips not matched to current schedule */}
-                                    {isMasterMode && removedMasterTrips.length > 0 && removedMasterTrips.map(({ masterTrip, reason }) => {
+                                    {isMasterMode && routeComparisonSummary.removedMasterTrips.length > 0 && routeComparisonSummary.removedMasterTrips.map(({ masterTrip, reason }) => {
                                         const totalColCount = columnMapping.length;
                                         return (
                                             <tr key={`removed-${masterTrip.id}`} className="bg-red-50/70 opacity-60" title={reason}>

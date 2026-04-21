@@ -49,7 +49,7 @@ describe('RoundTripTableView compare-to-master badges', () => {
         container = null;
     });
 
-    it('shows aligned, new, and removed states from the dedicated compare result', () => {
+    it('shows retimed, new, and removed states from the dedicated compare result', () => {
         const currentSchedules = [
             {
                 routeName: '10 (North)',
@@ -85,9 +85,56 @@ describe('RoundTripTableView compare-to-master badges', () => {
         });
 
         const text = container?.textContent ?? '';
-        expect(text).toContain('ALIGNED');
+        expect(text).toContain('Changes from baseline');
+        expect(text).toContain('RETIMED');
         expect(text).toContain('NEW');
         expect(text).toContain('REMOVED');
+    });
+
+    it('keeps baseline deltas hidden until the toggle is enabled', () => {
+        const currentSchedules = [
+            {
+                routeName: '10 (North)',
+                stops: ['Terminal'],
+                stopIds: { Terminal: 'STOP-1' },
+                trips: [
+                    makeTrip('draft-a', 'North', 365),
+                ],
+            },
+        ] as any;
+
+        const masterBaseline = [
+            {
+                routeName: '10 (North)',
+                stops: ['Terminal'],
+                stopIds: { Terminal: 'STOP-1' },
+                trips: [
+                    makeTrip('master-a', 'North', 360),
+                ],
+            },
+        ] as any;
+
+        flushSync(() => {
+            root?.render(
+                <RoundTripTableView
+                    schedules={currentSchedules}
+                    masterBaseline={masterBaseline}
+                    onCellEdit={() => {}}
+                />
+            );
+        });
+
+        const deltaToggle = Array.from(container?.querySelectorAll('button') ?? []).find(
+            button => button.textContent?.includes('Baseline Deltas')
+        );
+        expect(deltaToggle).toBeTruthy();
+        expect(deltaToggle?.className).toContain('bg-white');
+
+        flushSync(() => {
+            deltaToggle?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        });
+
+        expect(deltaToggle?.className).toContain('bg-indigo-50');
     });
 
     it('shows a review-needed state for ambiguous compare matches', () => {

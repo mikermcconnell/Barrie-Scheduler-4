@@ -58,6 +58,12 @@ service cloud.firestore {
         allow read, write: if isTeamMember(teamId);
       }
 
+      // Public timetable brochure settings
+      match /publicTimetable/{docId} {
+        allow read: if isTeamMember(teamId);
+        allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
+      }
+
       // Per-route connection configuration
       match /routeConnectionConfigs/{routeIdentity} {
         allow read, write: if isTeamMember(teamId);

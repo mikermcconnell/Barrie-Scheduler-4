@@ -7,6 +7,14 @@ service firebase.storage {
         firestore.exists(/databases/(default)/documents/teams/$(teamId)/members/$(request.auth.uid));
     }
 
+    function isTeamManager(teamId) {
+      return request.auth != null &&
+        (
+          firestore.get(/databases/(default)/documents/teams/$(teamId)/members/$(request.auth.uid)).data.role == 'owner' ||
+          firestore.get(/databases/(default)/documents/teams/$(teamId)/members/$(request.auth.uid)).data.role == 'admin'
+        );
+    }
+
     // Users can only access their own files
     match /users/{userId}/{allPaths=**} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
@@ -19,7 +27,8 @@ service firebase.storage {
 
     // Team route map images
     match /teams/{teamId}/routeMaps/{allPaths=**} {
-      allow read, write: if isTeamMember(teamId);
+      allow read: if isTeamMember(teamId);
+      allow write: if isTeamManager(teamId);
     }
 
     // Team transit app data (aggregated JSON)

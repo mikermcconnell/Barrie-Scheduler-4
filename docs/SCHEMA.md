@@ -10,6 +10,7 @@
 firebase/
 ├── users/{userId}/
 │   ├── draftSchedules/{draftId}          # Working schedule copies
+│   ├── route8SandboxProjects/{projectId} # Standalone Route 8 sandbox copies + family workspace state
 │   ├── newScheduleProjects/{projectId}   # Wizard project state
 │   └── files/{fileId}                    # Uploaded file metadata
 │
@@ -19,6 +20,7 @@ firebase/
 │   ├── masterSchedules/{routeIdentity}/  # Published schedules
 │   │   ├── versions/{versionId}          # Version history
 │   ├── connectionLibrary/default         # Shared connection targets used by app services
+│   ├── publicTimetable/default           # Team-managed brochure content defaults
 │   ├── routeConnectionConfigs/{routeIdentity} # Per-route connection settings
 │   ├── transitAppData/{docId}            # Transit App analytics datasets
 │   ├── performanceData/{docId}           # STREETS / ops performance datasets
@@ -31,6 +33,7 @@ firebase/
 ```
 
 `teams/{teamId}/connectionLibrary/default` and `teams/{teamId}/routeConnectionConfigs/{routeIdentity}` are used by the application and documented here because code reads and writes those paths directly.
+`teams/{teamId}/publicTimetable/default` stores the team-managed brochure copy used by the Public Timetable generator preview/export.
 
 ### Cloud Storage Paths
 
@@ -38,6 +41,7 @@ firebase/
 storage/
 ├── users/{userId}/
 │   ├── draftSchedules/{draftId}_{timestamp}.json
+│   ├── route8SandboxProjects/{projectId}_{timestamp}.json
 │   ├── newScheduleProjects/{projectId}_{timestamp}.json
 │   └── files/{timestamp}_{safeName}
 │
@@ -142,6 +146,45 @@ interface DraftSchedule {
 }
 ```
 
+### Route8SandboxProject (`users/{userId}/route8SandboxProjects/{projectId}`)
+
+Route 8 sandbox projects are intentionally user-scoped experimental copies. They do **not** publish back to the live 8A/8B schedule paths.
+
+```typescript
+interface Route8SandboxProject {
+  id: string;
+  name: string;
+  dayType: DayType;
+  teamId?: string | null;
+  status: 'draft';
+  createdBy: string;
+  storagePath?: string;     // Cloud Storage JSON payload
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+```
+
+### Route8SandboxContent (Cloud Storage JSON)
+
+```typescript
+interface Route8SandboxContent {
+  dayType: DayType;
+  sourceSnapshots: {
+    '8A': Route8SandboxSourceSnapshot;
+    '8B': Route8SandboxSourceSnapshot;
+  };
+  sourceCopies: {
+    '8A': MasterScheduleContent;
+    '8B': MasterScheduleContent;
+  };
+  workingCopies: {
+    '8A': MasterScheduleContent;
+    '8B': MasterScheduleContent;
+  };
+  notes?: string;
+}
+```
+
 ### PlatformConfig (`teams/{teamId}/platformConfig/default`)
 
 ```typescript
@@ -154,6 +197,33 @@ interface PlatformConfigDocument {
 ```
 
 Platform config is read by team members and should only be written by team owners/admins.
+
+### PublicTimetableConfig (`teams/{teamId}/publicTimetable/default`)
+
+```typescript
+interface PublicTimetableConfigDocument {
+  disclaimer: string;
+  fareEffectiveDate: string;
+  fareRows: Array<{
+    label: string;
+    adult: string;
+    student: string;
+    children: string;
+    senior: string;
+    family: string;
+  }>;
+  fareNote: string;
+  legendItems: string[];
+  promoTitle: string;
+  promoText: string;
+  contacts: string[];
+  updatedAt: Timestamp;
+  updatedBy: string;       // userId
+  version: number;
+}
+```
+
+Public timetable settings are readable by team members and should only be written by team owners/admins.
 
 ---
 

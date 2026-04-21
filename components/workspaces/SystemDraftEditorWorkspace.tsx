@@ -24,6 +24,11 @@ import type { SystemDraft, SystemDraftRoute, SystemDraftBasedOn } from '../../ut
 import { saveSystemDraft, getSystemDraftRouteNumbers } from '../../utils/services/systemDraftService';
 import { buildDuplicateDraftName } from '../../utils/services/draftNaming';
 import { publishSystemDraft } from '../../utils/services/publishService';
+import {
+    buildSystemBaselinesFromGTFSFeed,
+    fetchGTFSFeed,
+    DEFAULT_GTFS_URL,
+} from '../../utils/gtfs/gtfsImportService';
 
 interface SystemDraftEditorWorkspaceProps {
     systemDraft: SystemDraft;
@@ -161,6 +166,8 @@ export const SystemDraftEditorWorkspace: React.FC<SystemDraftEditorWorkspaceProp
     const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
     const [isPublishing, setIsPublishing] = useState(false);
     const [storagePath, setStoragePath] = useState<string | undefined>(initialDraft.storagePath);
+    const [compareBaseline, setCompareBaseline] = useState<MasterRouteTable[] | null>(null);
+    const [compareBaselineLabel, setCompareBaselineLabel] = useState<string | undefined>(undefined);
     const originalRoutesSnapshotRef = useRef<SystemDraftRoute[]>(initialDraft.routes);
 
     // Sidebar state
@@ -202,6 +209,7 @@ export const SystemDraftEditorWorkspace: React.FC<SystemDraftEditorWorkspaceProp
 
     // Get route numbers for sidebar
     const routeNumbers = useMemo(() => getSystemDraftRouteNumbers(allRoutes), [allRoutes]);
+    const routeNumbersKey = useMemo(() => routeNumbers.join('|'), [routeNumbers]);
 
     // Filter routes for sidebar
     const filteredRouteNumbers = useMemo(() => {
@@ -209,6 +217,51 @@ export const SystemDraftEditorWorkspace: React.FC<SystemDraftEditorWorkspaceProp
         const query = routeSearch.toLowerCase();
         return routeNumbers.filter(r => r.toLowerCase().includes(query));
     }, [routeNumbers, routeSearch]);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        const loadCompareBaseline = async () => {
+            const shouldUseGtfsBaseline = (
+                basedOn?.type === 'gtfs'
+                || (
+                    dayType === 'Sunday'
+                    && draftName.toLowerCase().includes('boxing day')
+                )
+            );
+
+            if (!shouldUseGtfsBaseline) {
+                if (!cancelled) {
+                    setCompareBaseline(null);
+                    setCompareBaselineLabel(undefined);
+                }
+                return;
+            }
+
+            try {
+                const feedUrl = basedOn.gtfsFeedUrl || DEFAULT_GTFS_URL;
+                const feed = await fetchGTFSFeed(feedUrl);
+                const baseline = buildSystemBaselinesFromGTFSFeed(feed, dayType, routeNumbers);
+
+                if (!cancelled) {
+                    setCompareBaseline(baseline);
+                    setCompareBaselineLabel(baseline.length > 0 ? 'GTFS' : undefined);
+                }
+            } catch (error) {
+                console.error('Failed to load GTFS compare baseline for system draft:', error);
+                if (!cancelled) {
+                    setCompareBaseline(null);
+                    setCompareBaselineLabel(undefined);
+                }
+            }
+        };
+
+        void loadCompareBaseline();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [basedOn?.gtfsFeedUrl, basedOn?.type, dayType, draftName, routeNumbersKey]);
 
     // Get current route's tables
     const currentTables = useMemo(
@@ -567,6 +620,8 @@ export const SystemDraftEditorWorkspace: React.FC<SystemDraftEditorWorkspaceProp
                         exportScopeSchedules={getAllTablesFromRoutes(allRoutes)}
                         onSchedulesChange={handleSchedulesChange}
                         originalSchedules={originalTables}
+                        masterBaseline={compareBaseline}
+                        compareBaselineLabel={compareBaselineLabel}
                         draftName={draftName}
                         onRenameDraft={setDraftName}
                         onOpenDrafts={onOpenDrafts}

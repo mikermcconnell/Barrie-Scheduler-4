@@ -27,6 +27,7 @@ export const FEATURE_DEFINITIONS = {
     analyticsNetworkConnections: { defaultEnabled: true, hideInDemoMode: true },
     analyticsRoutePlanner: { defaultEnabled: true, hideInDemoMode: true },
     analyticsShuttlePlanner: { defaultEnabled: true, hideInDemoMode: true },
+    analyticsRoute8Sandbox: { defaultEnabled: true, hideInDemoMode: true },
 
     operationsPerformanceDashboard: { defaultEnabled: true, hideInDemoMode: false },
     operationsPerfReports: { defaultEnabled: true, hideInDemoMode: false },

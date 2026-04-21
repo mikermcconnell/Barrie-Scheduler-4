@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { jsPDF } from 'jspdf';
-import 'jspdf-autotable';
+import autoTable from 'jspdf-autotable';
 import { Radio, Filter, Layers, MessageCircle } from 'lucide-react';
 import type { HeatmapAtlasSliceId, TransitAppDataSummary, TransferSeason } from '../../utils/transit-app/transitAppTypes';
 import { TransitAppMap } from './TransitAppMap';
@@ -103,7 +103,7 @@ export const HeatmapModule: React.FC<HeatmapModuleProps> = ({ data }) => {
                 : 'N/A',
         ]);
 
-        doc.autoTable({
+        autoTable(doc, {
             head,
             body,
             startY: margin + 11,
@@ -125,7 +125,7 @@ export const HeatmapModule: React.FC<HeatmapModuleProps> = ({ data }) => {
             callout.note,
         ]);
 
-        doc.autoTable({
+        autoTable(doc, {
             head: calloutHead,
             body: calloutBody,
             startY: 168,

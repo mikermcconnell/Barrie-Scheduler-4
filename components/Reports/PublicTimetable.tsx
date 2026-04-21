@@ -5,74 +5,66 @@
  * Matches Barrie Transit's official brochure design.
  */
 
-import React, { useState, useEffect, useMemo } from 'react';
-import { ArrowLeft, Download, RefreshCw, Eye, Check, FileText, Upload, Trash2, Image } from 'lucide-react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { ArrowLeft, Download, RefreshCw, Eye, Trash2, Image, ChevronDown, ChevronUp, Save, RotateCcw } from 'lucide-react';
 import { jsPDF } from 'jspdf';
-import 'jspdf-autotable';
 import { useTeam } from '../contexts/TeamContext';
+import { useToast } from '../contexts/ToastContext';
+import { useAuth } from '../contexts/AuthContext';
 import { getAllMasterSchedules, getMasterSchedule, uploadRouteMap, deleteRouteMap, getRouteMapUrl } from '../../utils/services/masterScheduleService';
-import type { MasterScheduleEntry, DayType, RouteIdentity } from '../../utils/masterScheduleTypes';
-import type { MasterRouteTable, MasterTrip, RoundTripTable } from '../../utils/parsers/masterScheduleParser';
+import type { MasterScheduleEntry, DayType } from '../../utils/masterScheduleTypes';
+import type { RoundTripTable } from '../../utils/parsers/masterScheduleParser';
 import { buildRoundTripView } from '../../utils/parsers/masterScheduleParser';
 import { buildRouteIdentity } from '../../utils/masterScheduleTypes';
 import { getRouteConfig, getRouteDirections } from '../../utils/config/routeDirectionConfig';
 import { getRouteColor, getRouteTextColor } from '../../utils/config/routeColors';
-
-// Extend jsPDF with autoTable
-declare module 'jspdf' {
-    interface jsPDF {
-        autoTable: (options: AutoTableOptions) => jsPDF;
-        lastAutoTable: { finalY: number };
-    }
-}
-
-interface AutoTableOptions {
-    head?: string[][];
-    body?: string[][];
-    startY?: number;
-    theme?: 'striped' | 'grid' | 'plain';
-    headStyles?: Record<string, unknown>;
-    bodyStyles?: Record<string, unknown>;
-    columnStyles?: Record<number, Record<string, unknown>>;
-    styles?: Record<string, unknown>;
-    margin?: { left?: number; right?: number; top?: number; bottom?: number };
-    tableWidth?: 'auto' | 'wrap' | number;
-    didDrawPage?: (data: { pageNumber: number }) => void;
-    didParseCell?: (data: { section: string; row: { index: number }; column: { index: number }; cell: { styles: Record<string, unknown> } }) => void;
-}
+import {
+    BROCHURE_DAY_ORDER,
+    deduplicateStopsForBrochure,
+    formatBrochureStopName as formatBrochureStopLabel,
+    formatCompactTime,
+    getBrochureDayKey,
+    getBrochureDayLabel,
+} from '../../utils/reports/publicTimetableUtils';
+import {
+    PUBLIC_TIMETABLE_FARE_HEADERS,
+} from '../../utils/reports/publicTimetableContent';
+import type { PublicTimetableConfigDocument } from '../../utils/reports/publicTimetableConfigService';
+import {
+    buildDefaultPublicTimetableConfig,
+    getEffectivePublicTimetableConfig,
+    getPublicTimetableConfigErrorMessage,
+    savePublicTimetableConfig,
+} from '../../utils/reports/publicTimetableConfigService';
 
 interface PublicTimetableProps {
     onBack: () => void;
 }
 
-type TimetableFormat = 'brochure';
+type DayStatus = 'idle' | 'loading' | 'ready' | 'missing' | 'error';
+type BrochureDayRecord = Record<'weekday' | 'saturday' | 'sunday', {
+    dayType: DayType;
+    label: string;
+    status: DayStatus;
+    table: RoundTripTable | null;
+    message: string | null;
+}>;
 
-// Helper to format minutes to time string
-const formatTime = (minutes: number): string => {
-    const hours = Math.floor(minutes / 60) % 24;
-    const mins = minutes % 60;
-    const period = hours >= 12 ? 'PM' : 'AM';
-    const displayHours = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
-    return `${displayHours}:${mins.toString().padStart(2, '0')} ${period}`;
-};
-
-// Parse time string to minutes
-const parseTimeToMinutes = (timeStr: string): number | null => {
-    if (!timeStr) return null;
-    const match = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
-    if (!match) return null;
-    let hours = parseInt(match[1]);
-    const mins = parseInt(match[2]);
-    const period = match[3]?.toUpperCase();
-    if (period === 'PM' && hours < 12) hours += 12;
-    if (period === 'AM' && hours === 12) hours = 0;
-    return hours * 60 + mins;
-};
+const createEmptyBrochureDays = (): BrochureDayRecord => ({
+    weekday: { dayType: 'Weekday', label: getBrochureDayLabel('Weekday'), status: 'idle', table: null, message: null },
+    saturday: { dayType: 'Saturday', label: getBrochureDayLabel('Saturday'), status: 'idle', table: null, message: null },
+    sunday: { dayType: 'Sunday', label: getBrochureDayLabel('Sunday'), status: 'idle', table: null, message: null },
+});
 
 // Get direction display label for brochure format
 // North (2A): "2A Dunlop to Downtown"
 // South (2B): "2B Park Place" (no "to" - it's the return direction)
 const getDirectionLabel = (routeNumber: string, direction: 'North' | 'South'): string => {
+    const config = getRouteConfig(routeNumber);
+    if (config?.segments.length === 1) {
+        return config.segments[0].variant;
+    }
+
     const directions = getRouteDirections(routeNumber);
     if (directions) {
         const info = direction === 'North' ? directions.north : directions.south;
@@ -95,142 +87,33 @@ const getDirectionLabel = (routeNumber: string, direction: 'North' | 'South'): s
     return `${direction}bound`;
 };
 
-// Get short direction label (e.g., "2A Dunlop")
-const getShortDirectionLabel = (routeNumber: string, direction: 'North' | 'South'): string => {
-    const directions = getRouteDirections(routeNumber);
-    if (directions) {
-        const info = direction === 'North' ? directions.north : directions.south;
-        return info.variant;
-    }
-    return direction === 'North' ? 'A' : 'B';
-};
-
-// Get route display name (e.g., "Dunlop/Park Place" for Route 2)
-const getRouteDisplayName = (routeNumber: string): string => {
-    const directions = getRouteDirections(routeNumber);
-    if (directions) {
-        // Extract the area name from north terminus (e.g., "Dunlop" from "Dunlop to Downtown")
-        const northTerminus = directions.north.terminus;
-        const northArea = northTerminus.includes(' to ')
-            ? northTerminus.split(' to ')[0]
-            : northTerminus;
-        // South terminus is typically the endpoint name
-        const southArea = directions.south.terminus;
-        return `${northArea}/\n${southArea}`;
-    }
-    return `Route ${routeNumber}`;
-};
-
-// Format time compactly in 24-hour format (e.g., "18:05" instead of "6:05 PM")
-const formatCompactTime = (timeStr: string | undefined): string => {
-    if (!timeStr) return '-';
-    // Parse time and convert to 24-hour format
-    const match = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
-    if (!match) return timeStr.replace(/\s*(AM|PM)$/i, '').trim();
-
-    let hours = parseInt(match[1]);
-    const mins = match[2];
-    const period = match[3]?.toUpperCase();
-
-    if (period === 'PM' && hours < 12) hours += 12;
-    if (period === 'AM' && hours === 12) hours = 0;
-
-    return `${hours}:${mins}`;
-};
-
-// Strip numbered suffixes like (2), (3), (4) from stop names for public display
-const stripStopSuffix = (stop: string): string => {
-    return stop.replace(/\s*\(\d+\)$/, '');
-};
-
-/**
- * De-duplicate stops for public brochure display.
- * When a stop appears multiple times (arrival + departure at timing points),
- * keep only the LAST occurrence (departure time) for each unique stop name.
- * Returns: { displayStops: cleaned stop names, stopMapping: original stop name for each display stop }
- */
-const deduplicateStopsForBrochure = (stops: string[]): { displayStops: string[]; stopMapping: string[] } => {
-    const seenStops = new Map<string, number>(); // cleanName -> last index
-
-    // First pass: find the last occurrence of each stop name
-    stops.forEach((stop, idx) => {
-        const cleanName = stripStopSuffix(stop);
-        seenStops.set(cleanName, idx); // Overwrites, so we get the last occurrence
-    });
-
-    // Second pass: build the de-duplicated list in order
-    const displayStops: string[] = [];
-    const stopMapping: string[] = []; // Maps display index to original stop name (for time lookup)
-    const addedStops = new Set<string>();
-
-    stops.forEach((stop, idx) => {
-        const cleanName = stripStopSuffix(stop);
-        // Only add if this is the last occurrence (the departure)
-        if (seenStops.get(cleanName) === idx && !addedStops.has(cleanName)) {
-            displayStops.push(cleanName);
-            stopMapping.push(stop); // Keep original name for time lookup
-            addedStops.add(cleanName);
-        }
-    });
-
-    return { displayStops, stopMapping };
-};
-
-// Format stop name with (Depart)/(Arrive) annotations for brochure
-const formatBrochureStopName = (
-    stop: string,
-    stopIndex: number,
-    totalStops: number,
-    _direction: 'North' | 'South'
-): string => {
-    const isFirst = stopIndex === 0;
-    const isLast = stopIndex === totalStops - 1;
-
-    // Origin stop (first in direction) gets "(Depart)" - where trip begins
-    if (isFirst) return `${stop} (Depart)`;
-
-    // Destination stop (last in direction) gets "(Arrive)" - where trip ends
-    if (isLast) return `${stop} (Arrive)`;
-
-    return stop;
-};
-
 export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
-    const { team } = useTeam();
+    const { team, canManageTeam } = useTeam();
+    const { user } = useAuth();
+    const toast = useToast();
+    const brochurePage1Ref = useRef<HTMLDivElement | null>(null);
+    const brochurePage2Ref = useRef<HTMLDivElement | null>(null);
     const [entries, setEntries] = useState<MasterScheduleEntry[]>([]);
     const [loading, setLoading] = useState(true);
     const [generating, setGenerating] = useState(false);
 
     // Selection state
     const [selectedRoute, setSelectedRoute] = useState<string>('');
-    const [selectedDayType, setSelectedDayType] = useState<DayType>('Weekday');
     const [selectedDirection, setSelectedDirection] = useState<'North' | 'South' | 'Both'>('Both');
     const [selectedStops, setSelectedStops] = useState<string[]>([]);
-    const [format] = useState<TimetableFormat>('brochure');
     const [headerText, setHeaderText] = useState('');
 
     // Route map image
     const [mapImageUrl, setMapImageUrl] = useState<string | null>(null);
     const [uploadingMap, setUploadingMap] = useState(false);
 
-    // Loaded schedule data
-    const [scheduleData, setScheduleData] = useState<{
-        northTable: MasterRouteTable | null;
-        southTable: MasterRouteTable | null;
-    }>({ northTable: null, southTable: null });
-
-    // All day types data for brochure format (Weekday, Saturday, Sunday)
-    const [allDayTypesData, setAllDayTypesData] = useState<{
-        weekday: RoundTripTable | null;
-        saturday: RoundTripTable | null;
-        sunday: RoundTripTable | null;
-    }>({ weekday: null, saturday: null, sunday: null });
-
-    // Build round-trip view for brochure format
-    const roundTripTable = useMemo((): RoundTripTable | null => {
-        if (!scheduleData.northTable || !scheduleData.southTable) return null;
-        return buildRoundTripView(scheduleData.northTable, scheduleData.southTable);
-    }, [scheduleData]);
+    const [brochureDays, setBrochureDays] = useState<BrochureDayRecord>(createEmptyBrochureDays());
+    const [brochureConfig, setBrochureConfig] = useState<PublicTimetableConfigDocument>(buildDefaultPublicTimetableConfig());
+    const [configDraft, setConfigDraft] = useState<PublicTimetableConfigDocument>(buildDefaultPublicTimetableConfig());
+    const [loadingConfig, setLoadingConfig] = useState(false);
+    const [savingConfig, setSavingConfig] = useState(false);
+    const [configWarning, setConfigWarning] = useState<string | null>(null);
+    const [showConfigEditor, setShowConfigEditor] = useState(false);
 
     // Load available schedules
     useEffect(() => {
@@ -261,41 +144,40 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
         });
     }, [entries]);
 
-    // Get day types for selected route
-    const dayTypes = useMemo(() => {
-        return entries
-            .filter(e => e.routeNumber === selectedRoute)
-            .map(e => e.dayType);
-    }, [entries, selectedRoute]);
-
-    // Load schedule when route/dayType changes
     useEffect(() => {
-        const loadSchedule = async () => {
-            if (!team?.id || !selectedRoute || !selectedDayType) {
-                setScheduleData({ northTable: null, southTable: null });
+        const loadBrochureConfig = async () => {
+            if (!team?.id) {
+                const defaults = buildDefaultPublicTimetableConfig();
+                setBrochureConfig(defaults);
+                setConfigDraft(defaults);
+                setConfigWarning(null);
                 return;
             }
 
-            const routeIdentity = buildRouteIdentity(selectedRoute, selectedDayType);
+            setLoadingConfig(true);
             try {
-                const result = await getMasterSchedule(team.id, routeIdentity);
-                if (result) {
-                    setScheduleData({
-                        northTable: result.content.northTable,
-                        southTable: result.content.southTable
-                    });
-                    // Auto-select all stops initially
-                    const allStops = new Set<string>();
-                    result.content.northTable.stops.forEach(s => allStops.add(s));
-                    result.content.southTable.stops.forEach(s => allStops.add(s));
-                    setSelectedStops(Array.from(allStops));
-                }
+                const config = await getEffectivePublicTimetableConfig(team.id);
+                setBrochureConfig(config);
+                setConfigDraft({
+                    ...config,
+                    fareRows: config.fareRows.map(row => ({ ...row })),
+                    legendItems: [...config.legendItems],
+                    contacts: [...config.contacts],
+                });
+                setConfigWarning(null);
             } catch (error) {
-                console.error('Error loading schedule:', error);
+                console.error('Error loading public timetable config:', error);
+                const defaults = buildDefaultPublicTimetableConfig();
+                setBrochureConfig(defaults);
+                setConfigDraft(defaults);
+                setConfigWarning(getPublicTimetableConfigErrorMessage(error, 'load'));
+            } finally {
+                setLoadingConfig(false);
             }
         };
-        loadSchedule();
-    }, [team?.id, selectedRoute, selectedDayType]);
+
+        void loadBrochureConfig();
+    }, [team?.id]);
 
     // Load route map image when route changes
     useEffect(() => {
@@ -304,84 +186,119 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
                 setMapImageUrl(null);
                 return;
             }
-            console.log('[RouteMap] Loading for:', { teamId: team.id, route: selectedRoute });
             try {
                 const url = await getRouteMapUrl(team.id, selectedRoute);
-                console.log('[RouteMap] Load result:', url ? 'Found' : 'Not found', url);
                 setMapImageUrl(url);
             } catch (error) {
-                console.error('[RouteMap] Load error:', error);
+                console.error('Error loading route map:', error);
                 setMapImageUrl(null);
+                toast.error('Route Map Load Failed', 'The route map could not be loaded.');
             }
         };
-        loadMapImage();
-    }, [team?.id, selectedRoute]);
+        void loadMapImage();
+    }, [selectedRoute, team?.id, toast]);
 
-    // Load all day types for brochure format
+    // Load all brochure day data
     useEffect(() => {
         const loadAllDayTypes = async () => {
-            if (!team?.id || !selectedRoute || format !== 'brochure') {
+            if (!team?.id || !selectedRoute) {
+                setBrochureDays(createEmptyBrochureDays());
+                setSelectedStops([]);
                 return;
             }
 
-            const dayTypesToLoad: DayType[] = ['Weekday', 'Saturday', 'Sunday'];
-            const results: { weekday: RoundTripTable | null; saturday: RoundTripTable | null; sunday: RoundTripTable | null } = {
-                weekday: null,
-                saturday: null,
-                sunday: null,
-            };
+            setBrochureDays({
+                weekday: { dayType: 'Weekday', label: getBrochureDayLabel('Weekday'), status: 'loading', table: null, message: null },
+                saturday: { dayType: 'Saturday', label: getBrochureDayLabel('Saturday'), status: 'loading', table: null, message: null },
+                sunday: { dayType: 'Sunday', label: getBrochureDayLabel('Sunday'), status: 'loading', table: null, message: null },
+            });
 
-            for (const dayType of dayTypesToLoad) {
+            const loadedDays: Array<{
+                key: keyof BrochureDayRecord;
+                value: BrochureDayRecord[keyof BrochureDayRecord];
+            }> = await Promise.all(BROCHURE_DAY_ORDER.map(async (dayType) => {
+                const dayKey = getBrochureDayKey(dayType);
+
                 try {
                     const routeIdentity = buildRouteIdentity(selectedRoute, dayType);
                     const result = await getMasterSchedule(team.id, routeIdentity);
-                    if (result) {
-                        const roundTrip = buildRoundTripView(result.content.northTable, result.content.southTable);
-                        // Debug terminus detection
-                        console.log(`[Brochure] Route ${selectedRoute} ${dayType}:`, {
-                            lastNorthStop: roundTrip.northStops[roundTrip.northStops.length - 1],
-                            firstSouthStop: roundTrip.southStops[0],
-                            terminusDetected: roundTrip.terminusStop,
-                            northStops: roundTrip.northStops,
-                            southStops: roundTrip.southStops
-                        });
-                        if (dayType === 'Weekday') results.weekday = roundTrip;
-                        else if (dayType === 'Saturday') results.saturday = roundTrip;
-                        else if (dayType === 'Sunday') results.sunday = roundTrip;
+                    if (!result) {
+                        return {
+                            key: dayKey,
+                            value: {
+                                dayType,
+                                label: getBrochureDayLabel(dayType),
+                                status: 'missing' as const,
+                                table: null,
+                                message: `${dayType} schedule is not published for this route.`,
+                            } as BrochureDayRecord[keyof BrochureDayRecord]
+                        };
                     }
+
+                    return {
+                        key: dayKey,
+                        value: {
+                            dayType,
+                            label: getBrochureDayLabel(dayType),
+                            status: 'ready' as const,
+                            table: buildRoundTripView(result.content.northTable, result.content.southTable),
+                            message: null,
+                        } as BrochureDayRecord[keyof BrochureDayRecord]
+                    };
                 } catch (error) {
                     console.error(`Error loading ${dayType} schedule:`, error);
+                    return {
+                        key: dayKey,
+                        value: {
+                            dayType,
+                            label: getBrochureDayLabel(dayType),
+                            status: 'error' as const,
+                            table: null,
+                            message: `Could not load the ${dayType.toLowerCase()} schedule.`,
+                        } as BrochureDayRecord[keyof BrochureDayRecord]
+                    };
                 }
-            }
+            }));
 
-            setAllDayTypesData(results);
+            const nextDays = createEmptyBrochureDays();
+            const allStops = new Set<string>();
+
+            loadedDays.forEach(({ key, value }) => {
+                nextDays[key] = value;
+                if (value.table) {
+                    value.table.northStops.forEach(stop => allStops.add(stop));
+                    value.table.southStops.forEach(stop => allStops.add(stop));
+                }
+            });
+
+            setBrochureDays(nextDays);
+            setSelectedStops(Array.from(allStops));
         };
-        loadAllDayTypes();
-    }, [team?.id, selectedRoute, format]);
+        void loadAllDayTypes();
+    }, [selectedRoute, team?.id]);
 
     // Handle map image upload
     const handleMapUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
+        event.target.value = '';
+
         if (!file || !team?.id || !selectedRoute) {
-            console.log('[RouteMap] Upload aborted - missing:', { file: !!file, teamId: team?.id, route: selectedRoute });
             return;
         }
 
-        // Validate file type
         if (!file.type.startsWith('image/')) {
-            alert('Please select an image file');
+            toast.warning('Image Required', 'Please select an image file.');
             return;
         }
 
-        console.log('[RouteMap] Uploading:', { teamId: team.id, route: selectedRoute, fileName: file.name, fileType: file.type });
         setUploadingMap(true);
         try {
             const url = await uploadRouteMap(team.id, selectedRoute, file);
-            console.log('[RouteMap] Upload successful:', url);
             setMapImageUrl(url);
+            toast.success('Route Map Updated', 'The brochure map image is ready.');
         } catch (error) {
-            console.error('[RouteMap] Upload failed:', error);
-            alert('Failed to upload map image. Check console for details.');
+            console.error('Route map upload failed:', error);
+            toast.error('Upload Failed', 'The route map image could not be uploaded.');
         } finally {
             setUploadingMap(false);
         }
@@ -391,28 +308,33 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
     const handleMapDelete = async () => {
         if (!team?.id || !selectedRoute || !mapImageUrl) return;
 
-        if (!confirm('Delete route map image?')) return;
+        if (!window.confirm('Delete route map image?')) return;
 
         try {
             await deleteRouteMap(team.id, selectedRoute);
             setMapImageUrl(null);
+            toast.success('Route Map Deleted', 'The brochure map image was removed.');
         } catch (error) {
             console.error('Error deleting map:', error);
-            alert('Failed to delete map image');
+            toast.error('Delete Failed', 'The route map image could not be deleted.');
         }
     };
 
     // Get available stops based on direction
     const availableStops = useMemo(() => {
         const stops = new Set<string>();
+        const readyTables = Object.values(brochureDays)
+            .filter((day): day is BrochureDayRecord[keyof BrochureDayRecord] & { table: RoundTripTable } => day.status === 'ready' && day.table !== null)
+            .map(day => day.table);
+
         if (selectedDirection === 'North' || selectedDirection === 'Both') {
-            scheduleData.northTable?.stops.forEach(s => stops.add(s));
+            readyTables.forEach(table => table.northStops.forEach(stop => stops.add(stop)));
         }
         if (selectedDirection === 'South' || selectedDirection === 'Both') {
-            scheduleData.southTable?.stops.forEach(s => stops.add(s));
+            readyTables.forEach(table => table.southStops.forEach(stop => stops.add(stop)));
         }
         return Array.from(stops);
-    }, [scheduleData, selectedDirection]);
+    }, [brochureDays, selectedDirection]);
 
     // Toggle stop selection
     const toggleStop = (stop: string) => {
@@ -427,12 +349,104 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
     const selectAllStops = () => setSelectedStops(availableStops);
     const selectNoStops = () => setSelectedStops([]);
 
+    const updateFareRow = (index: number, field: keyof PublicTimetableConfigDocument['fareRows'][number], value: string) => {
+        setConfigDraft(prev => ({
+            ...prev,
+            fareRows: prev.fareRows.map((row, rowIndex) => (
+                rowIndex === index ? { ...row, [field]: value } : row
+            )),
+        }));
+    };
+
+    const updateStringList = (field: 'legendItems' | 'contacts', index: number, value: string) => {
+        setConfigDraft(prev => ({
+            ...prev,
+            [field]: prev[field].map((item, itemIndex) => itemIndex === index ? value : item),
+        }));
+    };
+
+    const handleResetConfigDefaults = () => {
+        const defaults = buildDefaultPublicTimetableConfig();
+        setConfigDraft(defaults);
+        toast.info('Defaults Restored', 'Review the brochure settings and save to publish them for your team.');
+    };
+
+    const handleSaveConfig = async () => {
+        if (!team?.id || !user?.uid) {
+            toast.warning('Sign In Required', 'Sign in to save brochure settings.');
+            return;
+        }
+
+        const cleanedConfig = {
+            disclaimer: configDraft.disclaimer.trim(),
+            fareEffectiveDate: configDraft.fareEffectiveDate.trim(),
+            fareRows: configDraft.fareRows.map(row => ({
+                label: row.label.trim(),
+                adult: row.adult.trim(),
+                student: row.student.trim(),
+                children: row.children.trim(),
+                senior: row.senior.trim(),
+                family: row.family.trim(),
+            })).filter(row => row.label),
+            fareNote: configDraft.fareNote.trim(),
+            legendItems: configDraft.legendItems.map(item => item.trim()).filter(Boolean),
+            promoTitle: configDraft.promoTitle.trim(),
+            promoText: configDraft.promoText.trim(),
+            contacts: configDraft.contacts.map(contact => contact.trim()).filter(Boolean),
+        };
+
+        if (!cleanedConfig.disclaimer || cleanedConfig.fareRows.length === 0 || cleanedConfig.legendItems.length === 0 || cleanedConfig.contacts.length === 0) {
+            toast.warning('Missing Settings', 'Disclaimer, fares, legend items, and contacts must have at least one value.');
+            return;
+        }
+
+        setSavingConfig(true);
+        try {
+            await savePublicTimetableConfig(team.id, cleanedConfig, user.uid);
+            const nextConfig: PublicTimetableConfigDocument = {
+                ...configDraft,
+                ...cleanedConfig,
+                updatedAt: new Date().toISOString(),
+                updatedBy: user.uid,
+                version: brochureConfig.version + 1,
+            };
+            setBrochureConfig(nextConfig);
+            setConfigDraft({
+                ...nextConfig,
+                fareRows: nextConfig.fareRows.map(row => ({ ...row })),
+                legendItems: [...nextConfig.legendItems],
+                contacts: [...nextConfig.contacts],
+            });
+            setConfigWarning(null);
+            toast.success('Brochure Settings Saved', 'Preview and export now use the updated managed content.');
+        } catch (error) {
+            console.error('Error saving public timetable config:', error);
+            toast.error('Save Failed', getPublicTimetableConfigErrorMessage(error, 'save'));
+        } finally {
+            setSavingConfig(false);
+        }
+    };
+
     // Generate PDF
     const generatePDF = async () => {
-        if (!scheduleData.northTable && !scheduleData.southTable) return;
+        const pages = [
+            brochurePage1Ref.current,
+            brochurePage2Ref.current,
+        ].filter((page): page is HTMLDivElement => page !== null);
+
+        if (!selectedRoute || pages.length === 0) {
+            toast.warning('Nothing To Export', 'Choose a route first.');
+            return;
+        }
+
+        if (selectedStops.length === 0) {
+            toast.warning('No Stops Selected', 'Select at least one stop before exporting.');
+            return;
+        }
 
         setGenerating(true);
         try {
+            const { default: html2canvas } = await import('html2canvas');
             const doc = new jsPDF({
                 orientation: 'landscape',
                 unit: 'mm',
@@ -441,238 +455,304 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
 
             const pageWidth = doc.internal.pageSize.getWidth();
             const pageHeight = doc.internal.pageSize.getHeight();
-            const margin = 10;
+            const margin = 5;
 
-            // Header
-            doc.setFontSize(16);
-            doc.setFont('helvetica', 'bold');
-            const title = headerText || `Route ${selectedRoute} - ${selectedDayType}`;
-            doc.text(title, pageWidth / 2, margin + 5, { align: 'center' });
-
-            // Generate tables for each direction
-            let currentY = margin + 15;
-
-            const generateDirectionTable = (
-                table: MasterRouteTable | null,
-                direction: 'North' | 'South',
-                startY: number
-            ): number => {
-                if (!table) return startY;
-
-                // Filter stops
-                const filteredStops = table.stops.filter(s => selectedStops.includes(s));
-                if (filteredStops.length === 0) return startY;
-
-                // Direction subtitle - use route variant label
-                doc.setFontSize(12);
-                doc.setFont('helvetica', 'bold');
-                doc.text(getDirectionLabel(selectedRoute, direction), margin, startY);
-                startY += 5;
-
-                // Grid format: stops as columns, trips as rows
-                // Build header rows: stop names + stop IDs
-                const stopNamesRow = ['', ...filteredStops];
-                const stopIdsRow = ['', ...filteredStops.map(stop => table.stopIds?.[stop] || '')];
-                const head = [stopNamesRow, stopIdsRow];
-
-                const body = table.trips.map((trip, idx) => {
-                    const row = [`Trip ${idx + 1}`];
-                    filteredStops.forEach(stop => {
-                        const time = trip.stops[stop] || '-';
-                        row.push(time);
-                    });
-                    return row;
+            for (const [index, page] of pages.entries()) {
+                const canvas = await html2canvas(page, {
+                    backgroundColor: '#ffffff',
+                    scale: 2,
+                    useCORS: true,
+                    logging: false,
+                    ignoreElements: (element) => element instanceof HTMLElement && element.dataset.exportIgnore === 'true',
                 });
 
-                doc.autoTable({
-                    head,
-                    body,
-                    startY,
-                    theme: 'grid',
-                    headStyles: {
-                        fillColor: [66, 139, 202],
-                        textColor: 255,
-                        fontSize: 8,
-                        fontStyle: 'bold'
-                    },
-                    bodyStyles: {
-                        fontSize: 7,
-                        cellPadding: 1
-                    },
-                    columnStyles: {
-                        0: { fontStyle: 'bold', cellWidth: 15 }
-                    },
-                    styles: {
-                        overflow: 'linebreak',
-                        cellWidth: 'wrap'
-                    },
-                    margin: { left: margin, right: margin }
-                });
+                const imgData = canvas.toDataURL('image/png');
+                const usableWidth = pageWidth - (margin * 2);
+                const usableHeight = pageHeight - (margin * 2);
+                const ratio = Math.min(usableWidth / canvas.width, usableHeight / canvas.height);
+                const imgWidth = canvas.width * ratio;
+                const imgHeight = canvas.height * ratio;
+                const x = (pageWidth - imgWidth) / 2;
+                const y = (pageHeight - imgHeight) / 2;
 
-                return doc.lastAutoTable.finalY + 10;
-            };
-
-            // Generate based on format selection
-            if (format === 'brochure' && roundTripTable) {
-                // Brochure format: side-by-side directions
-                const northStops = roundTripTable.northStops;
-                const southStops = roundTripTable.southStops;
-                const totalCols = northStops.length + southStops.length;
-
-                // Build header rows
-                const directionRow: string[] = [];
-                // Fill north columns with north label, south columns with south label
-                northStops.forEach((_, idx) => {
-                    directionRow.push(idx === 0 ? getDirectionLabel(selectedRoute, 'North') : '');
-                });
-                southStops.forEach((_, idx) => {
-                    directionRow.push(idx === 0 ? getDirectionLabel(selectedRoute, 'South') : '');
-                });
-
-                const stopNamesRow = [...northStops, ...southStops];
-                const stopIdsRow = [
-                    ...northStops.map(s => roundTripTable.northStopIds?.[s] || ''),
-                    ...southStops.map(s => roundTripTable.southStopIds?.[s] || '')
-                ];
-
-                // Build body rows from round-trips
-                const body = roundTripTable.rows.map(row => {
-                    const northTrip = row.trips.find(t => t.direction === 'North');
-                    const southTrip = row.trips.find(t => t.direction === 'South');
-
-                    const rowData: string[] = [];
-                    northStops.forEach(stop => {
-                        rowData.push(northTrip?.stops[stop] || '-');
-                    });
-                    southStops.forEach(stop => {
-                        rowData.push(southTrip?.stops[stop] || '-');
-                    });
-                    return rowData;
-                });
-
-                // Create merged header for direction labels
-                doc.autoTable({
-                    head: [directionRow, stopNamesRow, stopIdsRow],
-                    body,
-                    startY: currentY,
-                    theme: 'grid',
-                    headStyles: {
-                        fillColor: [66, 139, 202],
-                        textColor: 255,
-                        fontSize: 6,
-                        fontStyle: 'bold',
-                        halign: 'center'
-                    },
-                    bodyStyles: {
-                        fontSize: 6,
-                        cellPadding: 0.5,
-                        halign: 'center'
-                    },
-                    styles: {
-                        overflow: 'linebreak',
-                        cellWidth: 'wrap'
-                    },
-                    margin: { left: margin, right: margin },
-                    // Style for the direction row (first header row)
-                    didParseCell: (data) => {
-                        if (data.section === 'head' && data.row.index === 0) {
-                            data.cell.styles.fillColor = [37, 99, 235]; // Darker blue for direction row
-                            data.cell.styles.fontStyle = 'bold';
-                            data.cell.styles.fontSize = 8;
-                        }
-                        if (data.section === 'head' && data.row.index === 2) {
-                            // ID row - lighter color
-                            data.cell.styles.fillColor = [96, 165, 250];
-                            data.cell.styles.fontStyle = 'normal';
-                        }
-                    }
-                });
-
-                currentY = doc.lastAutoTable.finalY + 5;
-
-                // Add route map if available
-                if (mapImageUrl) {
-                    try {
-                        // Load and add the image
-                        const img = new window.Image();
-                        img.crossOrigin = 'anonymous';
-                        await new Promise<void>((resolve, reject) => {
-                            img.onload = () => resolve();
-                            img.onerror = () => reject(new Error('Failed to load map image'));
-                            img.src = mapImageUrl;
-                        });
-
-                        // Calculate image dimensions to fit in remaining space
-                        const maxWidth = pageWidth - 2 * margin;
-                        const maxHeight = pageHeight - currentY - 20;
-                        let imgWidth = img.width;
-                        let imgHeight = img.height;
-
-                        // Scale to fit
-                        const scale = Math.min(maxWidth / imgWidth, maxHeight / imgHeight, 0.5);
-                        imgWidth *= scale;
-                        imgHeight *= scale;
-
-                        // Center the image
-                        const imgX = (pageWidth - imgWidth) / 2;
-                        doc.addImage(img, 'PNG', imgX, currentY, imgWidth, imgHeight);
-                        currentY += imgHeight + 5;
-                    } catch (error) {
-                        console.error('Error adding map to PDF:', error);
-                    }
+                if (index > 0) {
+                    doc.addPage();
                 }
-            } else {
-                // Grid or Linear format - use existing direction-based tables
-                if (selectedDirection === 'North' || selectedDirection === 'Both') {
-                    currentY = generateDirectionTable(scheduleData.northTable, 'North', currentY);
-                }
-                if (selectedDirection === 'South' || selectedDirection === 'Both') {
-                    // Check if we need a new page
-                    if (currentY > pageHeight - 50) {
-                        doc.addPage();
-                        currentY = margin + 10;
-                    }
-                    currentY = generateDirectionTable(scheduleData.southTable, 'South', currentY);
-                }
+
+                doc.addImage(imgData, 'PNG', x, y, imgWidth, imgHeight, undefined, 'FAST');
             }
 
-            // Footer
-            doc.setFontSize(8);
-            doc.setFont('helvetica', 'normal');
-            doc.text(
-                `Generated ${new Date().toLocaleDateString()}`,
-                pageWidth / 2,
-                pageHeight - 5,
-                { align: 'center' }
-            );
-
-            // Download
-            const filename = `timetable_${selectedRoute}_${selectedDayType}.pdf`;
+            const filename = `timetable_${selectedRoute}.pdf`;
             doc.save(filename);
+            toast.success('PDF Ready', 'The timetable brochure was exported.');
         } catch (error) {
             console.error('Error generating PDF:', error);
+            toast.error('Export Failed', 'The timetable brochure could not be exported.');
         } finally {
             setGenerating(false);
         }
     };
 
-    // Preview data for display
-    const previewTrips = useMemo(() => {
-        const trips: Array<{ direction: 'North' | 'South'; trip: MasterTrip; index: number }> = [];
-
-        if (selectedDirection === 'North' || selectedDirection === 'Both') {
-            scheduleData.northTable?.trips.slice(0, 5).forEach((trip, idx) => {
-                trips.push({ direction: 'North', trip, index: idx });
-            });
+    const brochureTitle = headerText.trim() || (selectedRoute ? `Route ${selectedRoute}` : 'Public Timetable');
+    const routeConfig = selectedRoute ? getRouteConfig(selectedRoute) : null;
+    const isLoopRoute = routeConfig?.segments.length === 1;
+    const hasReadyBrochureDay = Object.values(brochureDays).some(day => day.status === 'ready' && day.table);
+    const routeBadgeTextColor = selectedRoute ? getRouteTextColor(selectedRoute) : '#ffffff';
+    const brochureServiceSummary = selectedRoute
+        ? selectedDirection === 'Both'
+            ? (isLoopRoute ? 'Loop service' : 'All published directions')
+            : getDirectionLabel(selectedRoute, selectedDirection)
+        : '';
+    const brochureAvailableDays = Object.values(brochureDays)
+        .filter(day => day.status === 'ready')
+        .map(day => day.label);
+    const brochureEffectiveDate = entries
+        .filter(entry => entry.routeNumber === selectedRoute)
+        .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
+        .map(entry => entry.effectiveDate?.trim())
+        .find((value): value is string => Boolean(value));
+    const brochurePublicSummary = (() => {
+        if (!selectedRoute || !routeConfig) {
+            return 'Route map and timetable information';
         }
-        if (selectedDirection === 'South' || selectedDirection === 'Both') {
-            scheduleData.southTable?.trips.slice(0, 5).forEach((trip, idx) => {
-                trips.push({ direction: 'South', trip, index: idx });
-            });
+
+        if (routeConfig.segments.length === 1) {
+            return `${routeConfig.segments[0].name} loop`;
         }
 
-        return trips;
-    }, [scheduleData, selectedDirection]);
+        const northTerminus = routeConfig.segments.find(segment => segment.name === 'North')?.terminus;
+        const southTerminus = routeConfig.segments.find(segment => segment.name === 'South')?.terminus;
+
+        if (selectedDirection === 'North') {
+            return northTerminus ? `Toward ${northTerminus}` : 'Northbound service';
+        }
+
+        if (selectedDirection === 'South') {
+            return southTerminus ? `Toward ${southTerminus}` : 'Southbound service';
+        }
+
+        if (northTerminus && southTerminus) {
+            return `${northTerminus} ↔ ${southTerminus}`;
+        }
+
+        return 'Service in both directions';
+    })();
+
+    const renderDayTimetable = (
+        day: BrochureDayRecord[keyof BrochureDayRecord],
+        keyPrefix: string
+    ): React.ReactElement => {
+        if (day.status !== 'ready' || !day.table) {
+            return (
+                <div className="flex-1 min-w-0 flex flex-col">
+                    <div className="text-center py-1.5 font-bold text-sm tracking-wide bg-gray-200 text-gray-700">
+                        {day.label}
+                    </div>
+                    <div className="flex-1 flex items-center justify-center border border-gray-200 bg-gray-50 text-center px-6 py-10 text-sm text-gray-500">
+                        {day.status === 'loading' ? `Loading ${day.label}...` : day.message ?? `${day.label} timetable unavailable.`}
+                    </div>
+                </div>
+            );
+        }
+
+        const routeColor = getRouteColor(selectedRoute);
+        const textColor = getRouteTextColor(selectedRoute);
+        const darkenColor = (hex: string, percent: number): string => {
+            const num = parseInt(hex.slice(1), 16);
+            const r = Math.max(0, (num >> 16) - Math.round(255 * percent / 100));
+            const g = Math.max(0, ((num >> 8) & 0x00FF) - Math.round(255 * percent / 100));
+            const b = Math.max(0, (num & 0x0000FF) - Math.round(255 * percent / 100));
+            return `#${(r << 16 | g << 8 | b).toString(16).padStart(6, '0')}`;
+        };
+        const lightenColor = (hex: string, percent: number): string => {
+            const num = parseInt(hex.slice(1), 16);
+            const r = Math.min(255, (num >> 16) + Math.round(255 * percent / 100));
+            const g = Math.min(255, ((num >> 8) & 0x00FF) + Math.round(255 * percent / 100));
+            const b = Math.min(255, (num & 0x0000FF) + Math.round(255 * percent / 100));
+            return `#${(r << 16 | g << 8 | b).toString(16).padStart(6, '0')}`;
+        };
+
+        const colorDark = darkenColor(routeColor, 15);
+        const colorMid = routeColor;
+        const colorLight = lightenColor(routeColor, 15);
+        const colorLighter = lightenColor(routeColor, 30);
+        const colorBorder = lightenColor(routeColor, 20);
+        const spacerColor = darkenColor(routeColor, 30);
+
+        const northDeduped = deduplicateStopsForBrochure(day.table.northStops);
+        const southDeduped = deduplicateStopsForBrochure(day.table.southStops);
+
+        const northVisibleStops = northDeduped.stopMapping
+            .map((origStop, idx) => ({ origStop, label: northDeduped.displayStops[idx] }))
+            .filter(stop => selectedStops.includes(stop.origStop));
+        const southVisibleStops = southDeduped.stopMapping
+            .map((origStop, idx) => ({ origStop, label: southDeduped.displayStops[idx] }))
+            .filter(stop => selectedStops.includes(stop.origStop));
+
+        const showNorth = (selectedDirection === 'Both' || selectedDirection === 'North') && northVisibleStops.length > 0;
+        const showSouth = (selectedDirection === 'Both' || selectedDirection === 'South') && southVisibleStops.length > 0;
+        const showSpacer = showNorth && showSouth;
+
+        if (!showNorth && !showSouth) {
+            return (
+                <div className="flex-1 min-w-0 flex flex-col">
+                    <div className="text-center py-1.5 font-bold text-sm tracking-wide bg-gray-200 text-gray-700">
+                        {day.label}
+                    </div>
+                    <div className="flex-1 flex items-center justify-center border border-gray-200 bg-gray-50 text-center px-6 py-10 text-sm text-gray-500">
+                        The current stop and direction filters hide all timetable columns for {day.label}.
+                    </div>
+                </div>
+            );
+        }
+
+        return (
+            <div className="flex-1 min-w-0 flex flex-col">
+                <div
+                    className="text-center py-1.5 font-bold text-sm tracking-wide"
+                    style={{ backgroundColor: colorDark, color: textColor }}
+                >
+                    {day.label}
+                </div>
+
+                <div className="overflow-x-auto flex-1">
+                    <table className="w-full border-collapse text-[8px]">
+                        <thead>
+                            <tr style={{ backgroundColor: colorMid }}>
+                                {showNorth && (
+                                    <th
+                                        colSpan={northVisibleStops.length}
+                                        className="text-center py-1 font-bold text-[10px]"
+                                        style={{ color: textColor }}
+                                    >
+                                        {getDirectionLabel(selectedRoute, 'North')}
+                                    </th>
+                                )}
+                                {showSpacer && (
+                                    <th
+                                        className="p-0"
+                                        style={{ width: '4px', minWidth: '4px', maxWidth: '4px', backgroundColor: spacerColor }}
+                                    />
+                                )}
+                                {showSouth && (
+                                    <th
+                                        colSpan={southVisibleStops.length}
+                                        className="text-center py-1 font-bold text-[10px]"
+                                        style={{ color: textColor }}
+                                    >
+                                        {getDirectionLabel(selectedRoute, 'South')}
+                                    </th>
+                                )}
+                            </tr>
+                            <tr style={{ backgroundColor: colorLight }}>
+                                {showNorth && northVisibleStops.map((stop, idx) => (
+                                    <th
+                                        key={`${keyPrefix}-n-${stop.origStop}`}
+                                        className="p-0"
+                                        style={{ minWidth: '32px', maxWidth: '38px', height: '90px', color: textColor, borderRight: `1px solid ${colorBorder}` }}
+                                    >
+                                        <div className="h-full w-full flex items-center justify-center">
+                                            <span
+                                                className="whitespace-nowrap text-[7px] font-bold"
+                                                style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
+                                            >
+                                                {formatBrochureStopLabel(stop.label, idx, northVisibleStops.length)}
+                                            </span>
+                                        </div>
+                                    </th>
+                                ))}
+                                {showSpacer && (
+                                    <th
+                                        key={`${keyPrefix}-spacer`}
+                                        className="p-0"
+                                        style={{ width: '4px', minWidth: '4px', maxWidth: '4px', backgroundColor: spacerColor }}
+                                    />
+                                )}
+                                {showSouth && southVisibleStops.map((stop, idx) => (
+                                    <th
+                                        key={`${keyPrefix}-s-${stop.origStop}`}
+                                        className="p-0"
+                                        style={{ minWidth: '32px', maxWidth: '38px', height: '90px', color: textColor, borderRight: idx < southVisibleStops.length - 1 ? `1px solid ${colorBorder}` : 'none' }}
+                                    >
+                                        <div className="h-full w-full flex items-center justify-center">
+                                            <span
+                                                className="whitespace-nowrap text-[7px] font-bold"
+                                                style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
+                                            >
+                                                {formatBrochureStopLabel(stop.label, idx, southVisibleStops.length)}
+                                            </span>
+                                        </div>
+                                    </th>
+                                ))}
+                            </tr>
+                            <tr style={{ backgroundColor: colorLighter, color: textColor }} className="text-[7px]">
+                                {showNorth && northVisibleStops.map((stop, idx) => (
+                                    <th
+                                        key={`${keyPrefix}-nid-${stop.origStop}`}
+                                        className="px-0.5 py-0.5 font-bold text-center"
+                                        style={{ borderRight: idx < northVisibleStops.length - 1 ? `1px solid ${colorBorder}` : 'none' }}
+                                    >
+                                        {day.table?.northStopIds?.[stop.origStop] || ''}
+                                    </th>
+                                ))}
+                                {showSpacer && (
+                                    <th
+                                        key={`${keyPrefix}-spacer-id`}
+                                        className="p-0"
+                                        style={{ width: '4px', minWidth: '4px', maxWidth: '4px', backgroundColor: spacerColor }}
+                                    />
+                                )}
+                                {showSouth && southVisibleStops.map((stop, idx) => (
+                                    <th
+                                        key={`${keyPrefix}-sid-${stop.origStop}`}
+                                        className="px-0.5 py-0.5 font-bold text-center"
+                                        style={{ borderRight: idx < southVisibleStops.length - 1 ? `1px solid ${colorBorder}` : 'none' }}
+                                    >
+                                        {day.table?.southStopIds?.[stop.origStop] || ''}
+                                    </th>
+                                ))}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {day.table.rows.map((row, rowIdx) => {
+                                const northTrip = row.trips.find(t => t.direction === 'North');
+                                const southTrip = row.trips.find(t => t.direction === 'South');
+                                const rowBg = rowIdx % 2 === 0 ? 'white' : lightenColor(routeColor, 45);
+
+                                return (
+                                    <tr key={`${keyPrefix}-row-${rowIdx}`} style={{ backgroundColor: rowBg }}>
+                                        {showNorth && northVisibleStops.map((stop, idx) => (
+                                            <td
+                                                key={`${keyPrefix}-n-${stop.origStop}-${rowIdx}`}
+                                                className={`px-0.5 py-[1px] text-center text-gray-800 ${idx < northVisibleStops.length - 1 ? 'border-r border-gray-200' : ''}`}
+                                            >
+                                                {formatCompactTime(northTrip?.stops[stop.origStop])}
+                                            </td>
+                                        ))}
+                                        {showSpacer && (
+                                            <td
+                                                key={`${keyPrefix}-spacer-${rowIdx}`}
+                                                className="p-0"
+                                                style={{ width: '4px', minWidth: '4px', maxWidth: '4px', backgroundColor: spacerColor }}
+                                            />
+                                        )}
+                                        {showSouth && southVisibleStops.map((stop, idx) => (
+                                            <td
+                                                key={`${keyPrefix}-s-${stop.origStop}-${rowIdx}`}
+                                                className={`px-0.5 py-[1px] text-center text-gray-800 ${idx < southVisibleStops.length - 1 ? 'border-r border-gray-200' : ''}`}
+                                            >
+                                                {formatCompactTime(southTrip?.stops[stop.origStop])}
+                                            </td>
+                                        ))}
+                                    </tr>
+                                );
+                            })}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        );
+    };
 
     if (loading) {
         return (
@@ -733,7 +813,10 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
                             <label className="block text-sm font-bold text-gray-700 mb-2">Route</label>
                             <select
                                 value={selectedRoute}
-                                onChange={(e) => setSelectedRoute(e.target.value)}
+                                onChange={(e) => {
+                                    setSelectedRoute(e.target.value);
+                                    setSelectedDirection('Both');
+                                }}
                                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
                             >
                                 <option value="">Select a route...</option>
@@ -743,30 +826,35 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
                             </select>
                         </div>
 
-                        {/* Day Type Selection */}
+                        {/* Brochure availability */}
                         <div>
-                            <label className="block text-sm font-bold text-gray-700 mb-2">Day Type</label>
-                            <div className="flex gap-2">
-                                {(['Weekday', 'Saturday', 'Sunday'] as DayType[]).map(day => (
-                                    <button
-                                        key={day}
-                                        onClick={() => setSelectedDayType(day)}
-                                        disabled={!dayTypes.includes(day)}
-                                        className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                                            selectedDayType === day
-                                                ? 'bg-amber-600 text-white'
-                                                : dayTypes.includes(day)
-                                                    ? 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-50'
-                                                    : 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                                        }`}
+                            <label className="block text-sm font-bold text-gray-700 mb-2">Brochure Days</label>
+                            <div className="space-y-2">
+                                {Object.values(brochureDays).map(day => (
+                                    <div
+                                        key={day.dayType}
+                                        className="flex items-center justify-between rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm"
                                     >
-                                        {day}
-                                    </button>
+                                        <span className="font-medium text-gray-800">{day.label}</span>
+                                        <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${
+                                            day.status === 'ready'
+                                                ? 'bg-emerald-100 text-emerald-700'
+                                                : day.status === 'loading'
+                                                    ? 'bg-amber-100 text-amber-700'
+                                                    : 'bg-gray-100 text-gray-500'
+                                        }`}>
+                                            {day.status === 'ready' ? 'Ready' : day.status === 'loading' ? 'Loading' : 'Unavailable'}
+                                        </span>
+                                    </div>
                                 ))}
                             </div>
+                            <p className="mt-2 text-xs text-gray-500">
+                                Export uses the same published day sets shown here. Missing days stay clearly marked instead of silently dropping out.
+                            </p>
                         </div>
 
                         {/* Direction Selection */}
+                        {!isLoopRoute && (
                         <div>
                             <label className="block text-sm font-bold text-gray-700 mb-2">Direction</label>
                             <div className="flex gap-2">
@@ -785,6 +873,7 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
                                 ))}
                             </div>
                         </div>
+                        )}
 
                         {/* Header Text */}
                         <div>
@@ -795,7 +884,7 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
                                 type="text"
                                 value={headerText}
                                 onChange={(e) => setHeaderText(e.target.value)}
-                                placeholder={`Route ${selectedRoute} - ${selectedDayType}`}
+                                placeholder={selectedRoute ? `Route ${selectedRoute}` : 'Route title'}
                                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
                             />
                         </div>
@@ -813,37 +902,204 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
                                             alt={`Route ${selectedRoute} map`}
                                             className="w-full h-32 object-contain bg-white"
                                         />
-                                        <button
-                                            onClick={handleMapDelete}
-                                            className="absolute top-2 right-2 p-1 bg-red-500 text-white rounded-full hover:bg-red-600 transition-colors"
-                                            title="Delete map"
-                                        >
-                                            <Trash2 size={14} />
-                                        </button>
+                                        {canManageTeam && (
+                                            <button
+                                                onClick={handleMapDelete}
+                                                className="absolute top-2 right-2 p-1 bg-red-500 text-white rounded-full hover:bg-red-600 transition-colors"
+                                                title="Delete map"
+                                            >
+                                                <Trash2 size={14} />
+                                            </button>
+                                        )}
                                     </div>
+                                    {!canManageTeam && (
+                                        <p className="text-xs text-gray-500">Team owners and admins manage brochure map images.</p>
+                                    )}
                                 </div>
                             ) : (
-                                <label className={`flex flex-col items-center justify-center w-full h-24 border-2 border-dashed border-gray-300 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors ${
-                                    !selectedRoute ? 'opacity-50 cursor-not-allowed' : ''
-                                }`}>
-                                    <input
-                                        type="file"
-                                        accept="image/*"
-                                        onChange={handleMapUpload}
-                                        disabled={!selectedRoute || uploadingMap}
-                                        className="hidden"
-                                    />
-                                    {uploadingMap ? (
-                                        <RefreshCw size={20} className="text-gray-400 animate-spin mb-1" />
-                                    ) : (
+                                canManageTeam ? (
+                                    <label className={`flex flex-col items-center justify-center w-full h-24 border-2 border-dashed border-gray-300 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors ${
+                                        !selectedRoute ? 'opacity-50 cursor-not-allowed' : ''
+                                    }`}>
+                                        <input
+                                            type="file"
+                                            accept="image/*"
+                                            onChange={handleMapUpload}
+                                            disabled={!selectedRoute || uploadingMap}
+                                            className="hidden"
+                                        />
+                                        {uploadingMap ? (
+                                            <RefreshCw size={20} className="text-gray-400 animate-spin mb-1" />
+                                        ) : (
+                                            <Image size={20} className="text-gray-400 mb-1" />
+                                        )}
+                                        <span className="text-xs text-gray-500">
+                                            {uploadingMap ? 'Uploading...' : 'Click to upload route map'}
+                                        </span>
+                                    </label>
+                                ) : (
+                                    <div className="flex flex-col items-center justify-center w-full h-24 border-2 border-dashed border-gray-300 rounded-lg bg-white px-4 text-center">
                                         <Image size={20} className="text-gray-400 mb-1" />
-                                    )}
-                                    <span className="text-xs text-gray-500">
-                                        {uploadingMap ? 'Uploading...' : 'Click to upload route map'}
-                                    </span>
-                                </label>
+                                        <span className="text-xs text-gray-500">No map uploaded yet.</span>
+                                        <span className="text-[11px] text-gray-400 mt-1">Team owners and admins can add the brochure map.</span>
+                                    </div>
+                                )
                             )}
                         </div>
+
+                        {(canManageTeam || configWarning) && (
+                            <div className="border border-gray-200 rounded-xl bg-white overflow-hidden">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowConfigEditor(prev => !prev)}
+                                    className="w-full flex items-center justify-between px-3 py-2 text-left"
+                                >
+                                    <div>
+                                        <p className="text-sm font-bold text-gray-700">Brochure Content</p>
+                                        <p className="text-xs text-gray-500">
+                                            Manage disclaimer, fares, legend text, promo copy, and contact details.
+                                        </p>
+                                    </div>
+                                    {showConfigEditor ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
+                                </button>
+
+                                {configWarning && (
+                                    <div className="px-3 pb-2 text-xs text-amber-700">
+                                        {configWarning}
+                                    </div>
+                                )}
+
+                                {showConfigEditor && (
+                                    <div className="border-t border-gray-200 px-3 py-3 space-y-4">
+                                        {loadingConfig ? (
+                                            <div className="text-sm text-gray-500">Loading brochure settings...</div>
+                                        ) : canManageTeam ? (
+                                            <>
+                                                <div>
+                                                    <label className="block text-xs font-bold text-gray-600 mb-1">Disclaimer</label>
+                                                    <textarea
+                                                        value={configDraft.disclaimer}
+                                                        onChange={(e) => setConfigDraft(prev => ({ ...prev, disclaimer: e.target.value }))}
+                                                        rows={3}
+                                                        className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
+                                                    />
+                                                </div>
+
+                                                <div>
+                                                    <label className="block text-xs font-bold text-gray-600 mb-1">Fare Effective Date</label>
+                                                    <input
+                                                        type="text"
+                                                        value={configDraft.fareEffectiveDate}
+                                                        onChange={(e) => setConfigDraft(prev => ({ ...prev, fareEffectiveDate: e.target.value }))}
+                                                        className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
+                                                    />
+                                                </div>
+
+                                                <div>
+                                                    <label className="block text-xs font-bold text-gray-600 mb-1">Fare Table</label>
+                                                    <div className="space-y-2">
+                                                        {configDraft.fareRows.map((row, index) => (
+                                                            <div key={`${row.label}-${index}`} className="grid grid-cols-2 gap-2">
+                                                                <input value={row.label} onChange={(e) => updateFareRow(index, 'label', e.target.value)} className="px-2 py-1.5 text-xs border border-gray-300 rounded-md col-span-2" placeholder="Fare label" />
+                                                                <input value={row.adult} onChange={(e) => updateFareRow(index, 'adult', e.target.value)} className="px-2 py-1.5 text-xs border border-gray-300 rounded-md" placeholder="Adult" />
+                                                                <input value={row.student} onChange={(e) => updateFareRow(index, 'student', e.target.value)} className="px-2 py-1.5 text-xs border border-gray-300 rounded-md" placeholder="Student" />
+                                                                <input value={row.children} onChange={(e) => updateFareRow(index, 'children', e.target.value)} className="px-2 py-1.5 text-xs border border-gray-300 rounded-md" placeholder="Children" />
+                                                                <input value={row.senior} onChange={(e) => updateFareRow(index, 'senior', e.target.value)} className="px-2 py-1.5 text-xs border border-gray-300 rounded-md" placeholder="Senior" />
+                                                                <input value={row.family} onChange={(e) => updateFareRow(index, 'family', e.target.value)} className="px-2 py-1.5 text-xs border border-gray-300 rounded-md col-span-2" placeholder="Family" />
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+
+                                                <div>
+                                                    <label className="block text-xs font-bold text-gray-600 mb-1">Fare Note</label>
+                                                    <textarea
+                                                        value={configDraft.fareNote}
+                                                        onChange={(e) => setConfigDraft(prev => ({ ...prev, fareNote: e.target.value }))}
+                                                        rows={2}
+                                                        className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
+                                                    />
+                                                </div>
+
+                                                <div>
+                                                    <label className="block text-xs font-bold text-gray-600 mb-1">Legend Items</label>
+                                                    <div className="space-y-2">
+                                                        {configDraft.legendItems.map((item, index) => (
+                                                            <input
+                                                                key={`legend-${index}`}
+                                                                type="text"
+                                                                value={item}
+                                                                onChange={(e) => updateStringList('legendItems', index, e.target.value)}
+                                                                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
+                                                            />
+                                                        ))}
+                                                    </div>
+                                                </div>
+
+                                                <div>
+                                                    <label className="block text-xs font-bold text-gray-600 mb-1">Promo Title</label>
+                                                    <input
+                                                        type="text"
+                                                        value={configDraft.promoTitle}
+                                                        onChange={(e) => setConfigDraft(prev => ({ ...prev, promoTitle: e.target.value }))}
+                                                        className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
+                                                    />
+                                                </div>
+
+                                                <div>
+                                                    <label className="block text-xs font-bold text-gray-600 mb-1">Promo Text</label>
+                                                    <textarea
+                                                        value={configDraft.promoText}
+                                                        onChange={(e) => setConfigDraft(prev => ({ ...prev, promoText: e.target.value }))}
+                                                        rows={2}
+                                                        className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
+                                                    />
+                                                </div>
+
+                                                <div>
+                                                    <label className="block text-xs font-bold text-gray-600 mb-1">Contact Footer</label>
+                                                    <div className="space-y-2">
+                                                        {configDraft.contacts.map((contact, index) => (
+                                                            <input
+                                                                key={`contact-${index}`}
+                                                                type="text"
+                                                                value={contact}
+                                                                onChange={(e) => updateStringList('contacts', index, e.target.value)}
+                                                                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
+                                                            />
+                                                        ))}
+                                                    </div>
+                                                </div>
+
+                                                <div className="flex gap-2">
+                                                    <button
+                                                        type="button"
+                                                        onClick={handleSaveConfig}
+                                                        disabled={savingConfig}
+                                                        className="flex-1 inline-flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium bg-amber-600 text-white rounded-lg hover:bg-amber-700 disabled:opacity-60"
+                                                    >
+                                                        <Save size={14} />
+                                                        {savingConfig ? 'Saving...' : 'Save'}
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={handleResetConfigDefaults}
+                                                        className="inline-flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium border border-gray-300 rounded-lg hover:bg-gray-50"
+                                                    >
+                                                        <RotateCcw size={14} />
+                                                        Defaults
+                                                    </button>
+                                                </div>
+                                            </>
+                                        ) : (
+                                            <div className="text-sm text-gray-500">
+                                                Brochure content is managed by team owners and admins.
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        )}
 
                         {/* Stop Selection */}
                         <div>
@@ -897,397 +1153,199 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
                     <div className="flex items-center gap-2 mb-4">
                         <Eye size={18} className="text-gray-400" />
                         <h3 className="text-lg font-bold text-gray-900">Preview</h3>
-                        <span className="text-sm text-gray-500">(First 5 trips per direction)</span>
+                        <span className="text-sm text-gray-500">Export captures these brochure pages exactly.</span>
                     </div>
 
                     {!selectedRoute ? (
                         <div className="flex items-center justify-center h-64 border-2 border-dashed border-gray-200 rounded-lg">
                             <p className="text-gray-400">Select a route to preview brochure</p>
                         </div>
+                    ) : !hasReadyBrochureDay ? (
+                        <div className="flex items-center justify-center h-64 border-2 border-dashed border-gray-200 rounded-lg">
+                            <p className="text-gray-400">No published timetable data is available for this route yet.</p>
+                        </div>
                     ) : (
-                        /* Brochure format: Two-page layout matching Barrie Transit brochure design */
                         <div className="space-y-6" style={{ fontFamily: 'Arial, sans-serif' }}>
-                            {/* Helper function to render a timetable */}
                             {(() => {
-                                // Get route color for theming
                                 const routeColor = getRouteColor(selectedRoute);
-                                const textColor = getRouteTextColor(selectedRoute);
-
-                                // Generate color variations (darker/lighter)
-                                const darkenColor = (hex: string, percent: number): string => {
-                                    const num = parseInt(hex.slice(1), 16);
-                                    const r = Math.max(0, (num >> 16) - Math.round(255 * percent / 100));
-                                    const g = Math.max(0, ((num >> 8) & 0x00FF) - Math.round(255 * percent / 100));
-                                    const b = Math.max(0, (num & 0x0000FF) - Math.round(255 * percent / 100));
-                                    return `#${(r << 16 | g << 8 | b).toString(16).padStart(6, '0')}`;
-                                };
-                                const lightenColor = (hex: string, percent: number): string => {
-                                    const num = parseInt(hex.slice(1), 16);
-                                    const r = Math.min(255, (num >> 16) + Math.round(255 * percent / 100));
-                                    const g = Math.min(255, ((num >> 8) & 0x00FF) + Math.round(255 * percent / 100));
-                                    const b = Math.min(255, (num & 0x0000FF) + Math.round(255 * percent / 100));
-                                    return `#${(r << 16 | g << 8 | b).toString(16).padStart(6, '0')}`;
-                                };
-
-                                const colorDark = darkenColor(routeColor, 15);
-                                const colorMid = routeColor;
-                                const colorLight = lightenColor(routeColor, 15);
-                                const colorLighter = lightenColor(routeColor, 30);
-                                const colorBorder = lightenColor(routeColor, 20);
-                                const spacerColor = darkenColor(routeColor, 30);
-
-                                const renderTimetable = (
-                                    table: RoundTripTable,
-                                    dayType: string,
-                                    keyPrefix: string
-                                ) => {
-                                    // De-duplicate stops for cleaner public display
-                                    // This removes duplicate stops (arrival/departure at same location)
-                                    // and keeps only the departure time (last occurrence)
-                                    const northDeduped = deduplicateStopsForBrochure(table.northStops);
-                                    const southDeduped = deduplicateStopsForBrochure(table.southStops);
-
-                                    return (
-                                    <div className="flex-1 min-w-0 flex flex-col">
-                                        {/* Day Type Header Banner */}
-                                        <div
-                                            className="text-center py-1.5 font-bold text-sm tracking-wide"
-                                            style={{ backgroundColor: colorDark, color: textColor }}
-                                        >
-                                            {dayType}
-                                        </div>
-
-                                        {/* Timetable with vertical headers */}
-                                        <div className="overflow-x-auto flex-1">
-                                            <table className="w-full border-collapse text-[8px]">
-                                                <thead>
-                                                    {/* Direction Headers Row - merged into main table for alignment */}
-                                                    <tr style={{ backgroundColor: colorMid }}>
-                                                        <th
-                                                            colSpan={northDeduped.displayStops.length}
-                                                            className="text-center py-1 font-bold text-[10px]"
-                                                            style={{ color: textColor }}
-                                                        >
-                                                            {(() => {
-                                                                const label = getDirectionLabel(selectedRoute, 'North');
-                                                                const parts = label.split(' to ');
-                                                                if (parts.length === 2) {
-                                                                    return (
-                                                                        <>
-                                                                            {parts[0]}<br />
-                                                                            <span className="font-normal text-[9px]">to {parts[1]}</span>
-                                                                        </>
-                                                                    );
-                                                                }
-                                                                return label;
-                                                            })()}
-                                                        </th>
-                                                        {/* Spacer cell - same column as body spacer */}
-                                                        <th
-                                                            className="p-0"
-                                                            style={{ width: '4px', minWidth: '4px', maxWidth: '4px', backgroundColor: spacerColor }}
-                                                        />
-                                                        <th
-                                                            colSpan={southDeduped.displayStops.length}
-                                                            className="text-center py-1 font-bold text-[10px]"
-                                                            style={{ color: textColor }}
-                                                        >
-                                                            {(() => {
-                                                                const label = getDirectionLabel(selectedRoute, 'South');
-                                                                const directions = getRouteDirections(selectedRoute);
-                                                                if (directions) {
-                                                                    const info = directions.south;
-                                                                    return (
-                                                                        <>
-                                                                            {info.variant}<br />
-                                                                            <span className="font-normal text-[9px]">to {info.terminus}</span>
-                                                                        </>
-                                                                    );
-                                                                }
-                                                                return label;
-                                                            })()}
-                                                        </th>
-                                                    </tr>
-                                                    {/* Vertical stop names row */}
-                                                    <tr style={{ backgroundColor: colorLight }}>
-                                                        {northDeduped.displayStops.map((stop, idx) => (
-                                                            <th
-                                                                key={`${keyPrefix}-n-${stop}`}
-                                                                className="p-0"
-                                                                style={{ minWidth: '32px', maxWidth: '38px', height: '90px', color: textColor, borderRight: `1px solid ${colorBorder}` }}
-                                                            >
-                                                                <div
-                                                                    className="h-full w-full flex items-center justify-center"
-                                                                >
-                                                                    <span
-                                                                        className="whitespace-nowrap text-[7px] font-bold"
-                                                                        style={{
-                                                                            writingMode: 'vertical-rl',
-                                                                            transform: 'rotate(180deg)',
-                                                                        }}
-                                                                    >
-                                                                        {formatBrochureStopName(stop, idx, northDeduped.displayStops.length, 'North')}
-                                                                    </span>
-                                                                </div>
-                                                            </th>
-                                                        ))}
-                                                        {/* Spacer column between 2A and 2B */}
-                                                        <th
-                                                            key={`${keyPrefix}-spacer`}
-                                                            className="p-0"
-                                                            style={{ width: '4px', minWidth: '4px', maxWidth: '4px', backgroundColor: spacerColor }}
-                                                        />
-                                                        {southDeduped.displayStops.map((stop, idx) => (
-                                                            <th
-                                                                key={`${keyPrefix}-s-${stop}`}
-                                                                className="p-0"
-                                                                style={{ minWidth: '32px', maxWidth: '38px', height: '90px', color: textColor, borderRight: idx < southDeduped.displayStops.length - 1 ? `1px solid ${colorBorder}` : 'none' }}
-                                                            >
-                                                                <div
-                                                                    className="h-full w-full flex items-center justify-center"
-                                                                >
-                                                                    <span
-                                                                        className="whitespace-nowrap text-[7px] font-bold"
-                                                                        style={{
-                                                                            writingMode: 'vertical-rl',
-                                                                            transform: 'rotate(180deg)',
-                                                                        }}
-                                                                    >
-                                                                        {formatBrochureStopName(stop, idx, southDeduped.displayStops.length, 'South')}
-                                                                    </span>
-                                                                </div>
-                                                            </th>
-                                                        ))}
-                                                    </tr>
-                                                    {/* Stop IDs row */}
-                                                    <tr style={{ backgroundColor: colorLighter, color: textColor }} className="text-[7px]">
-                                                        {northDeduped.stopMapping.map((origStop, idx) => (
-                                                            <th
-                                                                key={`${keyPrefix}-nid-${origStop}`}
-                                                                className="px-0.5 py-0.5 font-bold text-center"
-                                                                style={{ borderRight: `1px solid ${colorBorder}` }}
-                                                            >
-                                                                {table.northStopIds?.[origStop] || ''}
-                                                            </th>
-                                                        ))}
-                                                        {/* Spacer column between 2A and 2B */}
-                                                        <th
-                                                            key={`${keyPrefix}-spacer-id`}
-                                                            className="p-0"
-                                                            style={{ width: '4px', minWidth: '4px', maxWidth: '4px', backgroundColor: spacerColor }}
-                                                        />
-                                                        {southDeduped.stopMapping.map((origStop, idx) => (
-                                                            <th
-                                                                key={`${keyPrefix}-sid-${origStop}`}
-                                                                className="px-0.5 py-0.5 font-bold text-center"
-                                                                style={{ borderRight: idx < southDeduped.stopMapping.length - 1 ? `1px solid ${colorBorder}` : 'none' }}
-                                                            >
-                                                                {table.southStopIds?.[origStop] || ''}
-                                                            </th>
-                                                        ))}
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    {table.rows.map((row, rowIdx) => {
-                                                        const northTrip = row.trips.find(t => t.direction === 'North');
-                                                        const southTrip = row.trips.find(t => t.direction === 'South');
-                                                        // Alternating row color with light tint of route color
-                                                        const rowBg = rowIdx % 2 === 0 ? 'white' : lightenColor(routeColor, 45);
-
-                                                        return (
-                                                            <tr
-                                                                key={`${keyPrefix}-row-${rowIdx}`}
-                                                                style={{ backgroundColor: rowBg }}
-                                                            >
-                                                                {northDeduped.stopMapping.map((origStop, idx) => (
-                                                                    <td
-                                                                        key={`${keyPrefix}-n-${origStop}-${rowIdx}`}
-                                                                        className="px-0.5 py-[1px] text-center text-gray-800 border-r border-gray-200"
-                                                                    >
-                                                                        {formatCompactTime(northTrip?.stops[origStop])}
-                                                                    </td>
-                                                                ))}
-                                                                {/* Spacer column between 2A and 2B */}
-                                                                <td
-                                                                    key={`${keyPrefix}-spacer-${rowIdx}`}
-                                                                    className="p-0"
-                                                                    style={{ width: '4px', minWidth: '4px', maxWidth: '4px', backgroundColor: spacerColor }}
-                                                                />
-                                                                {southDeduped.stopMapping.map((origStop, idx) => (
-                                                                    <td
-                                                                        key={`${keyPrefix}-s-${origStop}-${rowIdx}`}
-                                                                        className={`px-0.5 py-[1px] text-center text-gray-800 ${idx < southDeduped.stopMapping.length - 1 ? 'border-r border-gray-200' : ''}`}
-                                                                    >
-                                                                        {formatCompactTime(southTrip?.stops[origStop])}
-                                                                    </td>
-                                                                ))}
-                                                            </tr>
-                                                        );
-                                                    })}
-                                                </tbody>
-                                            </table>
-                                        </div>
-                                    </div>
-                                    );
-                                };
-
-                                // Letter landscape: 11" × 8.5" at 72 DPI = 792px × 612px
-                                // Using scaled dimensions for better preview
                                 const pageStyle = {
                                     width: '1000px',
-                                    height: '773px', // 1000 / (11/8.5) to maintain letter landscape ratio
+                                    height: '773px',
                                     maxWidth: '100%',
                                 };
 
                                 return (
                                     <>
-                                        {/* PAGE 1: Sunday + Route Info Panel - Letter Landscape */}
-                                        <div className="bg-white border border-gray-300 shadow-lg overflow-hidden mx-auto" style={pageStyle}>
-                                            <div className="text-center text-[10px] text-gray-500 py-1 bg-gray-100 border-b">Page 1 - Front (Letter Landscape 11" × 8.5")</div>
-                                            {allDayTypesData.sunday ? (
-                                                <div className="flex">
-                                                    {/* LEFT SIDE - Sunday Timetable */}
-                                                    <div className="flex-1 min-w-0 flex flex-col">
-                                                        {renderTimetable(allDayTypesData.sunday, 'Sunday & Holidays', 'sunday')}
-
-                                                        {/* Disclaimer */}
-                                                        <div className="px-2 py-1 text-[7px] text-gray-700 border-t border-gray-300">
-                                                            <p className="font-semibold">Times are approximate. Riders should arrive at the bus stop at least 5 minutes before the scheduled time.</p>
-                                                        </div>
-
-                                                        {/* Fare Table */}
-                                                        <div className="px-2 py-1.5 border-t border-gray-300 bg-white">
-                                                            <p className="text-[8px] font-bold text-gray-800 mb-1">Transit Fares - Effective May 1, 2025</p>
-                                                            <table className="w-full text-[6px] border-collapse">
-                                                                <thead>
-                                                                    <tr className="bg-[#2d6b6b] text-white">
-                                                                        <th className="px-1 py-0.5 text-left font-medium border-r border-[#4d8b8b]"></th>
-                                                                        <th className="px-1 py-0.5 text-center font-medium border-r border-[#4d8b8b]">Adult (19-64)</th>
-                                                                        <th className="px-1 py-0.5 text-center font-medium border-r border-[#4d8b8b]">Student (13-18)</th>
-                                                                        <th className="px-1 py-0.5 text-center font-medium border-r border-[#4d8b8b]">Children (0-12)</th>
-                                                                        <th className="px-1 py-0.5 text-center font-medium border-r border-[#4d8b8b]">Senior (65+)</th>
-                                                                        <th className="px-1 py-0.5 text-center font-medium">Family</th>
-                                                                    </tr>
-                                                                </thead>
-                                                                <tbody>
-                                                                    <tr className="bg-gray-50">
-                                                                        <td className="px-1 py-0.5 font-medium border-r border-gray-200">Single Ride</td>
-                                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">$3.50</td>
-                                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">$3.50</td>
-                                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">Free</td>
-                                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">$3.00</td>
-                                                                        <td className="px-1 py-0.5 text-center">-</td>
-                                                                    </tr>
-                                                                    <tr className="bg-white">
-                                                                        <td className="px-1 py-0.5 font-medium border-r border-gray-200">10-Ride Card</td>
-                                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">$30</td>
-                                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">$26</td>
-                                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">-</td>
-                                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">$21</td>
-                                                                        <td className="px-1 py-0.5 text-center">-</td>
-                                                                    </tr>
-                                                                    <tr className="bg-gray-50">
-                                                                        <td className="px-1 py-0.5 font-medium border-r border-gray-200">Day Pass</td>
-                                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">$8.50</td>
-                                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">$8.50</td>
-                                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">-</td>
-                                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">$8.50</td>
-                                                                        <td className="px-1 py-0.5 text-center">$10</td>
-                                                                    </tr>
-                                                                    <tr className="bg-white">
-                                                                        <td className="px-1 py-0.5 font-medium border-r border-gray-200">Monthly Pass</td>
-                                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">$93</td>
-                                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">$71.25</td>
-                                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">-</td>
-                                                                        <td className="px-1 py-0.5 text-center border-r border-gray-200">$54</td>
-                                                                        <td className="px-1 py-0.5 text-center">-</td>
-                                                                    </tr>
-                                                                </tbody>
-                                                            </table>
-                                                            <p className="text-[5px] text-gray-600 mt-0.5">Seniors Ride Free on Tuesdays and Thursdays. Single fares are valid, with a transfer, for 90 minutes on any route.</p>
-                                                        </div>
+                                        <div
+                                            ref={brochurePage1Ref}
+                                            className="bg-white border border-gray-300 shadow-lg overflow-hidden mx-auto"
+                                            style={pageStyle}
+                                        >
+                                            <div data-export-ignore="true" className="text-center text-[10px] text-gray-500 py-1 bg-gray-100 border-b">
+                                                Page 1 - Front (Letter Landscape 11" × 8.5")
+                                            </div>
+                                            <div className="flex h-[calc(100%-25px)]">
+                                                <div className="flex-1 min-w-0 flex flex-col">
+                                                    {renderDayTimetable(brochureDays.sunday, 'sunday')}
+                                                    <div className="px-2 py-1 text-[7px] text-gray-700 border-t border-gray-300">
+                                                        <p className="font-semibold break-words">{brochureConfig.disclaimer}</p>
                                                     </div>
+                                                    <div className="px-2 py-1.5 border-t border-gray-300 bg-white">
+                                                        <p className="text-[8px] font-bold text-gray-800 mb-1">
+                                                            Transit Fares - Effective {brochureConfig.fareEffectiveDate}
+                                                        </p>
+                                                        <table className="w-full text-[6px] border-collapse">
+                                                            <thead>
+                                                                <tr className="bg-[#2d6b6b] text-white">
+                                                                    {PUBLIC_TIMETABLE_FARE_HEADERS.map((header, index) => (
+                                                                        <th key={header || `fare-head-${index}`} className={`px-1 py-0.5 ${index === 0 ? 'text-left' : 'text-center'} font-medium ${index < PUBLIC_TIMETABLE_FARE_HEADERS.length - 1 ? 'border-r border-[#4d8b8b]' : ''}`}>
+                                                                            {header}
+                                                                        </th>
+                                                                    ))}
+                                                                </tr>
+                                                            </thead>
+                                                            <tbody>
+                                                                {brochureConfig.fareRows.map((row, rowIndex) => (
+                                                                    <tr key={row.label} className={rowIndex % 2 === 0 ? 'bg-gray-50' : 'bg-white'}>
+                                                                        {[row.label, row.adult, row.student, row.children, row.senior, row.family].map((cell, cellIndex) => (
+                                                                            <td key={`${row.label}-${cellIndex}`} className={`px-1 py-0.5 ${cellIndex === 0 ? 'font-medium text-left' : 'text-center'} ${cellIndex < PUBLIC_TIMETABLE_FARE_HEADERS.length - 1 ? 'border-r border-gray-200' : ''}`}>
+                                                                                <span className="break-words">{cell}</span>
+                                                                            </td>
+                                                                        ))}
+                                                                    </tr>
+                                                                ))}
+                                                            </tbody>
+                                                        </table>
+                                                        <p className="text-[5px] text-gray-600 mt-0.5 break-words">{brochureConfig.fareNote}</p>
+                                                    </div>
+                                                </div>
 
-                                                    {/* RIGHT SIDE - Route Map (50% width) */}
-                                                    <div className="flex-1 border-l-2 border-[#2d6b6b] flex flex-col bg-white">
-                                                        {/* Route Map - Takes up most of the space */}
-                                                        <div className="flex-1 p-3 bg-white overflow-hidden min-h-[250px]">
-                                                            {mapImageUrl ? (
-                                                                <img src={mapImageUrl} alt={`Route ${selectedRoute} map`} className="w-full h-full object-contain" />
-                                                            ) : (
-                                                                <div className="h-full min-h-[230px] bg-gray-50 rounded border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400 text-sm">
-                                                                    Upload route map
-                                                                </div>
-                                                            )}
-                                                        </div>
+                                                <div className="flex-1 border-l-2 flex flex-col bg-white" style={{ borderColor: routeColor }}>
+                                                    <div className="border-b border-slate-200 bg-white">
+                                                        <div className="flex items-start gap-3 px-4 py-2.5">
+                                                            <div
+                                                                className="mt-0.5 h-10 w-1 shrink-0 rounded-full"
+                                                                style={{ backgroundColor: routeColor }}
+                                                            />
+                                                            <div className="min-w-0 flex-1">
+                                                                <div className="flex items-center justify-between gap-3">
+                                                                    <div className="min-w-0">
+                                                                        <div className="flex items-center gap-2 flex-wrap">
+                                                                            <span
+                                                                                className="inline-flex items-center justify-center rounded-md px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] shadow-sm"
+                                                                                style={{ backgroundColor: routeColor, color: routeBadgeTextColor }}
+                                                                            >
+                                                                                Route {selectedRoute}
+                                                                            </span>
+                                                                            <span className="text-[9px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                                                                                Barrie Transit
+                                                                            </span>
+                                                                        </div>
+                                                                        <p className="mt-1.5 text-[17px] font-semibold tracking-tight text-slate-900">
+                                                                            {brochureTitle}
+                                                                        </p>
+                                                                        <p className="mt-0.5 text-[11px] font-medium text-slate-600">
+                                                                            {brochurePublicSummary}
+                                                                        </p>
+                                                                    </div>
 
-                                                        {/* Legend */}
-                                                        <div className="px-3 py-2 bg-white border-t border-gray-200">
-                                                            <p className="font-bold text-sm text-gray-800 mb-1">Legend</p>
-                                                            <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-gray-700">
-                                                                <div className="flex items-center gap-2">
-                                                                    <div className="w-4 h-4 rounded-full bg-[#2d6b6b] flex items-center justify-center text-white text-[8px] font-bold">#</div>
-                                                                    <span>Timing stop & stop ID listed in schedule</span>
-                                                                </div>
-                                                                <div className="flex items-center gap-2">
-                                                                    <div className="w-4 h-4 rounded-full border-2 border-[#2d6b6b] bg-white flex items-center justify-center text-[#2d6b6b] text-[8px] font-bold">#</div>
-                                                                    <span>Regular stop & stop ID</span>
-                                                                </div>
-                                                                <div className="flex items-center gap-2">
-                                                                    <div className="w-4 h-4 rounded bg-[#2d6b6b] flex items-center justify-center text-white text-[8px] font-bold">#</div>
-                                                                    <span>Connection to other fixed route</span>
-                                                                </div>
-                                                                <div className="flex items-center gap-2">
-                                                                    <div className="w-4 h-4 rounded bg-gray-200 flex items-center justify-center text-gray-600 text-[8px] font-bold">X</div>
-                                                                    <span>Connection to Transit ON Demand</span>
+                                                                    {brochureEffectiveDate ? (
+                                                                        <div className="shrink-0 rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-right">
+                                                                            <p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                                                                                Effective
+                                                                            </p>
+                                                                            <p className="mt-0.5 text-[10px] font-semibold text-slate-700">
+                                                                                {brochureEffectiveDate}
+                                                                            </p>
+                                                                        </div>
+                                                                    ) : null}
                                                                 </div>
                                                             </div>
                                                         </div>
+                                                    </div>
 
-                                                        {/* MyRide Promo */}
-                                                        <div className="px-3 py-2 bg-[#e8f4f4] border-t border-gray-200">
-                                                            <p className="text-sm text-gray-800 font-semibold">Visit MyRideBarrie.ca</p>
-                                                            <p className="text-xs text-gray-600">or download "Transit" for real-time bus information and trip planning.</p>
+                                                    <div className="flex-1 min-h-0 bg-slate-50 px-2.5 py-2.5 overflow-hidden">
+                                                        <div className="h-full rounded-lg border border-slate-200 bg-white p-2 shadow-sm">
+                                                            <div className="mb-1.5 flex items-center gap-1.5 text-slate-500">
+                                                                <Image className="h-3 w-3" />
+                                                                <p className="text-[9px] font-semibold uppercase tracking-[0.12em]">
+                                                                    Route map
+                                                                </p>
+                                                            </div>
+                                                            <div className="flex h-[calc(100%-18px)] items-center justify-center overflow-hidden rounded-md bg-slate-50">
+                                                                {mapImageUrl ? (
+                                                                    <img
+                                                                        src={mapImageUrl}
+                                                                        alt={`Route ${selectedRoute} map`}
+                                                                        className="block max-w-full max-h-full object-contain"
+                                                                    />
+                                                                ) : (
+                                                                    <div className="h-full min-h-[230px] w-full border-2 border-dashed border-gray-300 flex flex-col items-center justify-center px-6 text-center text-gray-400 text-sm">
+                                                                        <p className="font-medium text-gray-500">Route map not available yet</p>
+                                                                        <p className="mt-1 text-xs text-gray-400">Use the timetable panel to check stop times and service days.</p>
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+
+                                                    <div className="border-t border-slate-200 bg-white px-3 py-2">
+                                                        <div className="flex items-center justify-between gap-3">
+                                                            <div className="min-w-0 flex flex-wrap gap-1.5 text-[9px] text-slate-600">
+                                                                {[brochureServiceSummary, ...brochureAvailableDays].filter(Boolean).map((item) => (
+                                                                    <span
+                                                                        key={item}
+                                                                        className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 font-medium"
+                                                                    >
+                                                                        {item}
+                                                                    </span>
+                                                                ))}
+                                                            </div>
+                                                            <div className="shrink-0 text-[9px] font-medium text-slate-500">
+                                                                Major stops shown on map
+                                                            </div>
                                                         </div>
 
-                                                        {/* Contact Footer */}
-                                                        <div className="px-3 py-2 bg-[#2d6b6b] text-white flex items-center justify-between text-xs">
-                                                            <span>705-726-4242</span>
-                                                            <span>servicebarrie@barrie.ca</span>
-                                                            <span>Barrie.ca/Transit</span>
+                                                        <div className="mt-1.5 flex items-center justify-between gap-3 border-t border-slate-100 pt-1.5">
+                                                            <div className="flex flex-wrap gap-x-3 gap-y-1 text-[9px] text-slate-600">
+                                                                {brochureConfig.legendItems.slice(0, 3).map((item, index) => (
+                                                                    <div key={item} className="flex items-center gap-1.5">
+                                                                        <div className={`h-3 w-3 rounded-sm flex items-center justify-center text-[7px] font-bold ${
+                                                                            index === 0 ? 'bg-[#2d6b6b] text-white rounded-full' :
+                                                                                index === 1 ? 'border border-[#2d6b6b] bg-white text-[#2d6b6b] rounded-full' :
+                                                                                    'bg-[#2d6b6b] text-white'
+                                                                        }`}>
+                                                                            {index < 2 ? '•' : '#'}
+                                                                        </div>
+                                                                        <span>{item}</span>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                            <div className="max-w-[38%] text-right text-[9px] text-slate-600 break-words">
+                                                                {brochureConfig.contacts[0] || brochureConfig.contacts[1] || 'barrietransit.ca'}
+                                                            </div>
                                                         </div>
                                                     </div>
                                                 </div>
-                                            ) : (
-                                                <div className="p-8 text-center text-gray-400">
-                                                    Loading Sunday schedule...
-                                                </div>
-                                            )}
+                                            </div>
                                         </div>
 
-                                        {/* PAGE 2: Weekday | Saturday side by side - Letter Landscape */}
-                                        <div className="bg-white border border-gray-300 shadow-lg overflow-hidden mx-auto" style={pageStyle}>
-                                            <div className="text-center text-[10px] text-gray-500 py-1 bg-gray-100 border-b">Page 2 - Back (Letter Landscape 11" × 8.5")</div>
-                                            {allDayTypesData.weekday && allDayTypesData.saturday ? (
-                                                <div className="flex pb-3">
-                                                    {/* Weekday Timetable */}
-                                                    {renderTimetable(allDayTypesData.weekday, 'Weekday', 'weekday')}
+                                        <div
+                                            ref={brochurePage2Ref}
+                                            className="bg-white border border-gray-300 shadow-lg overflow-hidden mx-auto"
+                                            style={pageStyle}
+                                        >
+                                            <div data-export-ignore="true" className="text-center text-[10px] text-gray-500 py-1 bg-gray-100 border-b">
+                                                Page 2 - Back (Letter Landscape 11" × 8.5")
+                                            </div>
+                                            <div className="flex pb-3 h-[calc(100%-25px)]">
+                                                {renderDayTimetable(brochureDays.weekday, 'weekday')}
+                                                <div className="w-[2px] bg-[#0D6B4B]" />
+                                                {renderDayTimetable(brochureDays.saturday, 'saturday')}
+                                            </div>
 
-                                                    {/* Divider */}
-                                                    <div className="w-[2px] bg-[#0D6B4B]" />
-
-                                                    {/* Saturday Timetable */}
-                                                    {renderTimetable(allDayTypesData.saturday, 'Saturday', 'saturday')}
-                                                </div>
-                                            ) : (
-                                                <div className="p-8 text-center text-gray-400">
-                                                    Loading Weekday and Saturday schedules...
-                                                </div>
-                                            )}
-
-                                            {/* Footer for Page 2 */}
                                             <div className="px-2 py-2 text-[6px] text-gray-600 border-t border-gray-300 bg-gray-50">
-                                                <p className="font-semibold">Times are approximate. Riders should arrive at the bus stop at least 5 minutes before the scheduled time.</p>
+                                                <p className="font-semibold break-words">{brochureConfig.disclaimer}</p>
                                             </div>
                                         </div>
                                     </>

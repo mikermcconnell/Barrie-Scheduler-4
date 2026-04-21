@@ -1196,6 +1196,71 @@ export async function importRouteFromGTFS(
     }
 }
 
+/**
+ * Build compare-baseline tables for a single route/day directly from a GTFS feed.
+ * This mirrors the route import path but does not save a draft.
+ */
+export function buildRouteBaselineFromGTFSFeed(
+    feed: ParsedGTFSFeed,
+    routeShortName: string,
+    dayType: DayType,
+    config?: GTFSImportConfig,
+    options: GTFSImportOptions = { timepointsOnly: true }
+): MasterRouteTable[] | null {
+    const routeOption = getAvailableRoutes(feed, config).find(option => (
+        option.routeShortName === routeShortName
+        && option.dayType === dayType
+    ));
+
+    if (!routeOption) {
+        return null;
+    }
+
+    if (routeOption.isMergedRoute) {
+        const northTrips = processTripsForRoute(
+            feed,
+            routeOption.northRouteId!,
+            routeOption.northServiceId!,
+            config,
+            options
+        );
+        northTrips.forEach(t => { t.direction = 'North'; });
+
+        const southTrips = processTripsForRoute(
+            feed,
+            routeOption.southRouteId!,
+            routeOption.southServiceId!,
+            config,
+            options
+        );
+        southTrips.forEach(t => { t.direction = 'South'; });
+
+        const content = convertToMasterSchedule(
+            [...northTrips, ...southTrips],
+            routeOption.routeShortName,
+            routeOption.dayType
+        );
+
+        return [content.northTable, content.southTable];
+    }
+
+    const trips = processTripsForRoute(
+        feed,
+        routeOption.routeId,
+        routeOption.serviceId,
+        config,
+        options
+    );
+
+    const content = convertToMasterSchedule(
+        trips,
+        routeOption.routeShortName,
+        routeOption.dayType
+    );
+
+    return [content.northTable, content.southTable];
+}
+
 // ============ CROSS-ROUTE INTERLINE RECOVERY ============
 
 /**
@@ -1534,6 +1599,89 @@ export async function importAllRoutesFromGTFS(
             error: error instanceof Error ? error.message : 'Unknown error during system import',
         };
     }
+}
+
+/**
+ * Build compare-baseline tables for a GTFS day type without saving a system draft.
+ * Optional routeNumbers limits the returned baseline to a subset of routes.
+ */
+export function buildSystemBaselinesFromGTFSFeed(
+    feed: ParsedGTFSFeed,
+    dayType: DayType,
+    routeNumbers?: string[],
+    config?: GTFSImportConfig,
+    options: GTFSImportOptions = { timepointsOnly: true }
+): MasterRouteTable[] {
+    const allowedRouteNumbers = routeNumbers ? new Set(routeNumbers) : null;
+    const dayTypeRoutes = getAvailableRoutes(feed, config).filter(route => (
+        route.dayType === dayType
+        && (!allowedRouteNumbers || allowedRouteNumbers.has(route.routeShortName))
+    ));
+
+    const systemRoutes: SystemDraftRoute[] = [];
+
+    for (const routeOption of dayTypeRoutes) {
+        let content: MasterScheduleContent;
+
+        if (routeOption.isMergedRoute) {
+            const northTrips = processTripsForRoute(
+                feed,
+                routeOption.northRouteId!,
+                routeOption.northServiceId!,
+                config,
+                options
+            );
+            northTrips.forEach(t => { t.direction = 'North'; });
+
+            const southTrips = processTripsForRoute(
+                feed,
+                routeOption.southRouteId!,
+                routeOption.southServiceId!,
+                config,
+                options
+            );
+            southTrips.forEach(t => { t.direction = 'South'; });
+
+            if (northTrips.length === 0 && southTrips.length === 0) {
+                continue;
+            }
+
+            content = convertToMasterSchedule(
+                [...northTrips, ...southTrips],
+                routeOption.routeShortName,
+                dayType
+            );
+        } else {
+            const trips = processTripsForRoute(
+                feed,
+                routeOption.routeId,
+                routeOption.serviceId,
+                config,
+                options
+            );
+
+            if (trips.length === 0) {
+                continue;
+            }
+
+            content = convertToMasterSchedule(
+                trips,
+                routeOption.routeShortName,
+                dayType
+            );
+        }
+
+        systemRoutes.push({
+            routeNumber: routeOption.routeShortName,
+            northTable: content.northTable,
+            southTable: content.southTable,
+        });
+    }
+
+    applyInterlineRecovery(systemRoutes);
+    coordinateInterlineBlocks(systemRoutes);
+
+    return systemRoutes.flatMap(route => [route.northTable, route.southTable]);
 }
 
 // ============ CONFIG MANAGEMENT ============

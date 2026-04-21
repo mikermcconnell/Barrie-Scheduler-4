@@ -1,14 +1,25 @@
-# Barrie Transit Schedule Builder
+# Barrie Transit Scheduler 4
 
-Internal schedule planning tool for Barrie Transit operations.
+Internal transit planning platform for Barrie Transit operations.
 
 ## Purpose
 
-Generate, edit, and publish fixed-route bus schedules with:
-- Runtime-based schedule generation from CSV data
-- AI-powered schedule optimization (Google Gemini)
-- Excel master schedule import/export
-- Draft → Publish workflow for schedule management
+Scheduler 4 is a Barrie Transit planning app with a strong fixed-route scheduling core plus adjacent planning and operations tools.
+
+It currently supports:
+- fixed-route schedule generation, editing, optimization, and publishing
+- Transit On-Demand planning and shift optimization
+- operations dashboards and reporting for STREETS data
+- planning-data workspaces such as Transit App analytics, OD analysis, Route 8 sandbox, Route Planner, Shuttle Planner, and Network Connections
+
+## Main Workspaces
+
+| Workspace | Role |
+|-----------|------|
+| Scheduled Transit | Core fixed-route schedule building, editing, publishing, connections, and reports |
+| Transit On-Demand | Demand-responsive planning and optimization |
+| Dashboard & Reporting | Operational performance dashboards, imports, and reporting |
+| Planning Data tools | Route planning, shuttle concepts, network connections, Transit App, OD, and related analysis surfaces |
 
 ## Tech Stack
 
@@ -41,25 +52,33 @@ Production note: Transit On Demand optimization should use the Firebase/Cloud Ru
 ├── utils/                   # Domain logic, parsers, services, config
 ├── functions/               # Firebase Functions and ops scripts
 ├── tests/                   # Vitest coverage
-├── docs/                    # Durable docs, runbooks, plans, archive
-└── .claude/                 # Repo workflow and compatibility context
+├── docs/                    # Durable docs, feature briefs, runbooks, plans, archive
+└── .claude/                 # Tool-specific workflow and compatibility context
 ```
 
 Detailed file ownership lives in `docs/ARCHITECTURE.md`. Use the summary above only as a starting point.
 
 ## Documentation
 
+Start with these durable docs:
 - [AGENTS.md](AGENTS.md) - Primary agent entrypoint and repo instruction contract
-- [Context Index](docs/CONTEXT_INDEX.md) - Start here for repository context and load order
+- [Context Index](docs/CONTEXT_INDEX.md) - Canonical load order, document tiers, and what not to load by default
 - [Locked Logic](docs/rules/LOCKED_LOGIC.md) - Durable behavioral constraints
-- [.claude/CLAUDE.md](.claude/CLAUDE.md) - Repo workflow, verification expectations, and danger zones
+- [Product Vision](docs/PRODUCT_VISION.md) - Overall product framing, with fixed-route as the core workflow
 - [Architecture](docs/ARCHITECTURE.md) - System design and source file layout
 - [Schema](docs/SCHEMA.md) - Firestore, storage, and type-location reference
-- [Implementation Plan](docs/IMPLEMENTATION_PLAN.md) - Roadmap and status tracking
-- [Plans Directory](docs/plans/README.md) - Archive and working plans, not default context
-- [Archive](docs/archive/README.md) - Historical notes that should not drive current implementation
 
-## Routes Supported
+Load these only when relevant:
+- [.claude/CLAUDE.md](.claude/CLAUDE.md) - Tool-specific workflow supplement and danger-zone verification guidance
+- [Implementation Plan](docs/IMPLEMENTATION_PLAN.md) - Roadmap and status tracking
+- [Route Planner brief](docs/ROUTE_PLANNER_PRODUCT_BRIEF.md)
+- [Shuttle Planner PRD](docs/SHUTTLE_PLANNER_PRD.md)
+- [Network Connections brief](docs/NETWORK_CONNECTIONS_PRODUCT_BRIEF.md)
+- [Plans Directory](docs/plans/README.md) - Historical plans, not default context
+- [Archive](docs/archive/README.md) - Historical notes that should not drive current implementation
+- [Artifacts](docs/artifacts/README.md) - Supporting files and examples, not default context
+
+## Fixed-Route Routes Supported
 
 | Route | Type | Description |
 |-------|------|-------------|

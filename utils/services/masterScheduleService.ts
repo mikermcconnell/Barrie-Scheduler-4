@@ -7,7 +7,6 @@
 import {
     collection,
     doc,
-    setDoc,
     getDoc,
     getDocs,
     deleteDoc,
@@ -35,10 +34,12 @@ import type {
     UploadSource,
     UploadConfirmation
 } from '../masterScheduleTypes';
-import { buildRouteIdentity, extractRouteNumber, extractDayType } from '../masterScheduleTypes';
+import { buildRouteIdentity } from '../masterScheduleTypes';
 import type { MasterRouteTable } from '../parsers/masterScheduleParser';
 
 const MAX_VERSIONS = 5;
+const ROUTE_MAP_PATH = (teamId: string, routeNumber: string) => `teams/${teamId}/routeMaps/${routeNumber}`;
+const LEGACY_ROUTE_MAP_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'PNG', 'JPG', 'JPEG', 'GIF', 'WEBP'];
 
 // ============ HELPER FUNCTIONS ============
 
@@ -654,9 +655,19 @@ export async function uploadRouteMap(
     routeNumber: string,
     file: File
 ): Promise<string> {
-    // Always use lowercase extension for consistency (Firebase paths are case-sensitive)
-    const extension = (file.name.split('.').pop() || 'png').toLowerCase();
-    const storagePath = `teams/${teamId}/routeMaps/${routeNumber}.${extension}`;
+    await Promise.all(
+        LEGACY_ROUTE_MAP_EXTENSIONS.map(async (extension) => {
+            try {
+                await deleteObject(ref(storage, `${ROUTE_MAP_PATH(teamId, routeNumber)}.${extension}`));
+            } catch (error: any) {
+                if (error.code !== 'storage/object-not-found') {
+                    throw error;
+                }
+            }
+        })
+    );
+
+    const storagePath = ROUTE_MAP_PATH(teamId, routeNumber);
     const storageRef = ref(storage, storagePath);
 
     await uploadBytes(storageRef, file, { contentType: file.type });
@@ -672,22 +683,21 @@ export async function deleteRouteMap(
     teamId: string,
     routeNumber: string
 ): Promise<void> {
-    // Try common extensions
-    const extensions = ['png', 'jpg', 'jpeg', 'gif', 'webp'];
+    const deleteAttempts = [
+        ROUTE_MAP_PATH(teamId, routeNumber),
+        ...LEGACY_ROUTE_MAP_EXTENSIONS.map(ext => `${ROUTE_MAP_PATH(teamId, routeNumber)}.${ext}`)
+    ];
 
-    for (const ext of extensions) {
+    await Promise.all(deleteAttempts.map(async (storagePath) => {
         try {
-            const storagePath = `teams/${teamId}/routeMaps/${routeNumber}.${ext}`;
             const storageRef = ref(storage, storagePath);
             await deleteObject(storageRef);
-            return; // Successfully deleted
         } catch (error: any) {
-            // Continue trying other extensions if not found
             if (error.code !== 'storage/object-not-found') {
                 throw error;
             }
         }
-    }
+    }));
 }
 
 /**
@@ -697,12 +707,18 @@ export async function getRouteMapUrl(
     teamId: string,
     routeNumber: string
 ): Promise<string | null> {
-    // Try common extensions (lowercase and uppercase for backwards compatibility)
-    const extensions = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'PNG', 'JPG', 'JPEG', 'GIF', 'WEBP'];
+    try {
+        const storageRef = ref(storage, ROUTE_MAP_PATH(teamId, routeNumber));
+        return await getDownloadURL(storageRef);
+    } catch (error: any) {
+        if (error.code !== 'storage/object-not-found') {
+            throw error;
+        }
+    }
 
-    for (const ext of extensions) {
+    for (const ext of LEGACY_ROUTE_MAP_EXTENSIONS) {
         try {
-            const storagePath = `teams/${teamId}/routeMaps/${routeNumber}.${ext}`;
+            const storagePath = `${ROUTE_MAP_PATH(teamId, routeNumber)}.${ext}`;
             const storageRef = ref(storage, storagePath);
             const url = await getDownloadURL(storageRef);
             return url;

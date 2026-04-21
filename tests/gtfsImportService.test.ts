@@ -20,6 +20,8 @@ vi.mock('../utils/services/systemDraftService', () => ({
 }));
 
 import {
+    buildRouteBaselineFromGTFSFeed,
+    buildSystemBaselinesFromGTFSFeed,
     convertToMasterSchedule,
     importAllRoutesFromGTFS,
     importRouteFromGTFS,
@@ -653,6 +655,187 @@ describe('importRouteFromGTFS', () => {
             error: 'No trips found for route 10 (Weekday)',
         });
         expect(saveDraftMock).not.toHaveBeenCalled();
+    });
+});
+
+describe('GTFS compare baseline builders', () => {
+    it('builds a Sunday route baseline for Boxing Day-style comparisons', () => {
+        const feed = buildFeed({
+            calendar: [
+                {
+                    service_id: 'sunday',
+                    monday: 0,
+                    tuesday: 0,
+                    wednesday: 0,
+                    thursday: 0,
+                    friday: 0,
+                    saturday: 0,
+                    sunday: 1,
+                    start_date: '20260101',
+                    end_date: '20261231',
+                },
+            ],
+            trips: [
+                {
+                    route_id: 'route-10',
+                    service_id: 'sunday',
+                    trip_id: 'trip-10-north',
+                    direction_id: 1,
+                    block_id: 'block-10',
+                },
+                {
+                    route_id: 'route-10',
+                    service_id: 'sunday',
+                    trip_id: 'trip-10-south',
+                    direction_id: 0,
+                    block_id: 'block-10',
+                },
+            ],
+            stopTimes: [
+                {
+                    trip_id: 'trip-10-north',
+                    arrival_time: '08:00:00',
+                    departure_time: '08:00:00',
+                    stop_id: 'A',
+                    stop_sequence: 1,
+                    timepoint: 1,
+                },
+                {
+                    trip_id: 'trip-10-north',
+                    arrival_time: '08:25:00',
+                    departure_time: '08:25:00',
+                    stop_id: 'C',
+                    stop_sequence: 2,
+                    timepoint: 1,
+                },
+                {
+                    trip_id: 'trip-10-south',
+                    arrival_time: '08:35:00',
+                    departure_time: '08:35:00',
+                    stop_id: 'C',
+                    stop_sequence: 1,
+                    timepoint: 1,
+                },
+                {
+                    trip_id: 'trip-10-south',
+                    arrival_time: '09:00:00',
+                    departure_time: '09:00:00',
+                    stop_id: 'A',
+                    stop_sequence: 2,
+                    timepoint: 1,
+                },
+            ],
+        });
+
+        const baseline = buildRouteBaselineFromGTFSFeed(
+            feed,
+            '10',
+            'Sunday',
+            {
+                feedUrl: 'https://example.com/gtfs.zip',
+                directionMapping: {
+                    'route-10': {
+                        0: 'South',
+                        1: 'North',
+                    },
+                },
+            }
+        );
+
+        expect(baseline).not.toBeNull();
+        expect(baseline?.[0].routeName).toContain('10');
+        expect(baseline?.[0].trips).toHaveLength(1);
+        expect(baseline?.[1].trips).toHaveLength(1);
+    });
+
+    it('builds day-wide GTFS baselines for system draft comparisons', () => {
+        const feed = buildFeed({
+            calendar: [
+                {
+                    service_id: 'sunday',
+                    monday: 0,
+                    tuesday: 0,
+                    wednesday: 0,
+                    thursday: 0,
+                    friday: 0,
+                    saturday: 0,
+                    sunday: 1,
+                    start_date: '20260101',
+                    end_date: '20261231',
+                },
+            ],
+            trips: [
+                {
+                    route_id: 'route-10',
+                    service_id: 'sunday',
+                    trip_id: 'trip-10-north',
+                    direction_id: 1,
+                    block_id: 'block-10',
+                },
+                {
+                    route_id: 'route-10',
+                    service_id: 'sunday',
+                    trip_id: 'trip-10-south',
+                    direction_id: 0,
+                    block_id: 'block-10',
+                },
+            ],
+            stopTimes: [
+                {
+                    trip_id: 'trip-10-north',
+                    arrival_time: '08:00:00',
+                    departure_time: '08:00:00',
+                    stop_id: 'A',
+                    stop_sequence: 1,
+                    timepoint: 1,
+                },
+                {
+                    trip_id: 'trip-10-north',
+                    arrival_time: '08:25:00',
+                    departure_time: '08:25:00',
+                    stop_id: 'C',
+                    stop_sequence: 2,
+                    timepoint: 1,
+                },
+                {
+                    trip_id: 'trip-10-south',
+                    arrival_time: '08:35:00',
+                    departure_time: '08:35:00',
+                    stop_id: 'C',
+                    stop_sequence: 1,
+                    timepoint: 1,
+                },
+                {
+                    trip_id: 'trip-10-south',
+                    arrival_time: '09:00:00',
+                    departure_time: '09:00:00',
+                    stop_id: 'A',
+                    stop_sequence: 2,
+                    timepoint: 1,
+                },
+            ],
+        });
+
+        const baseline = buildSystemBaselinesFromGTFSFeed(
+            feed,
+            'Sunday',
+            ['10'],
+            {
+                feedUrl: 'https://example.com/gtfs.zip',
+                directionMapping: {
+                    'route-10': {
+                        0: 'South',
+                        1: 'North',
+                    },
+                },
+            }
+        );
+
+        expect(baseline).toHaveLength(2);
+        expect(baseline.map(table => table.routeName)).toEqual([
+            '10 (Sunday) (North)',
+            '10 (Sunday) (South)',
+        ]);
     });
 });
 

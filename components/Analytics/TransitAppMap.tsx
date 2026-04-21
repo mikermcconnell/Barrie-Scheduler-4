@@ -25,7 +25,7 @@ import React, { useRef, useEffect, useState, useMemo, useCallback } from 'react'
 import { Layer, Marker, Popup, Source } from 'react-map-gl/mapbox';
 import type { MapMouseEvent, MapRef } from 'react-map-gl/mapbox';
 import { jsPDF } from 'jspdf';
-import 'jspdf-autotable';
+import autoTable from 'jspdf-autotable';
 import type { LocationGridCell, ODPairData, ODPair, StopCoverageGapCluster } from '../../utils/transit-app/transitAppTypes';
 import { loadGtfsRouteShapes, pointToPolylineDistanceKm } from '../../utils/gtfs/gtfsShapesLoader';
 import { findNearestStopName, getAllStopsWithCoords } from '../../utils/gtfs/gtfsStopLookup';
@@ -1203,7 +1203,7 @@ export const TransitAppMap: React.FC<TransitAppMapProps> = ({
             return row;
         });
 
-        doc.autoTable({
+        autoTable(doc, {
             head,
             body,
             startY: margin + 15,

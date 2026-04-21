@@ -13,6 +13,11 @@ import { buildMasterContentFromTables, buildTablesFromContent } from '../../util
 import { saveDraft } from '../../utils/services/draftService';
 import { buildDuplicateDraftName } from '../../utils/services/draftNaming';
 import { publishDraft } from '../../utils/services/publishService';
+import {
+    buildRouteBaselineFromGTFSFeed,
+    fetchGTFSFeed,
+    DEFAULT_GTFS_URL,
+} from '../../utils/gtfs/gtfsImportService';
 
 // Minimal draft info for the route switcher
 export interface SiblingDraft {
@@ -75,6 +80,8 @@ export const ScheduleEditorWorkspace: React.FC<ScheduleEditorWorkspaceProps> = (
     const [lastSaved, setLastSaved] = useState<Date | null>(currentDraftUpdatedAt || null);
     const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
     const [isPublishing, setIsPublishing] = useState(false);
+    const [compareBaseline, setCompareBaseline] = useState<MasterRouteTable[] | null>(null);
+    const [compareBaselineLabel, setCompareBaselineLabel] = useState<string | undefined>(undefined);
     const [routeSearch, setRouteSearch] = useState('');
     const [dayTypeFilter, setDayTypeFilter] = useState<'all' | 'Weekday' | 'Saturday' | 'Sunday'>('all');
     const [expandedRoutes, setExpandedRoutes] = useState<Set<string>>(new Set());
@@ -118,6 +125,60 @@ export const ScheduleEditorWorkspace: React.FC<ScheduleEditorWorkspaceProps> = (
             updatedAt: lastSaved,
         });
     }, [draftId, draftName, lastSaved, onDraftMetadataChange]);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        const loadCompareBaseline = async () => {
+            const shouldUseGtfsBaseline = (
+                basedOn?.type === 'gtfs'
+                || (
+                    initialContent.metadata?.dayType === 'Sunday'
+                    && draftName.toLowerCase().includes('boxing day')
+                )
+            );
+
+            if (!shouldUseGtfsBaseline) {
+                if (!cancelled) {
+                    setCompareBaseline(null);
+                    setCompareBaselineLabel(undefined);
+                }
+                return;
+            }
+
+            const routeNumber = initialContent.metadata?.routeNumber;
+            const dayType = initialContent.metadata?.dayType;
+            if (!routeNumber || !dayType) {
+                if (!cancelled) {
+                    setCompareBaseline(null);
+                    setCompareBaselineLabel(undefined);
+                }
+                return;
+            }
+
+            try {
+                const feed = await fetchGTFSFeed(DEFAULT_GTFS_URL);
+                const baseline = buildRouteBaselineFromGTFSFeed(feed, routeNumber, dayType);
+
+                if (!cancelled) {
+                    setCompareBaseline(baseline);
+                    setCompareBaselineLabel(baseline ? 'GTFS' : undefined);
+                }
+            } catch (error) {
+                console.error('Failed to load GTFS compare baseline for editor draft:', error);
+                if (!cancelled) {
+                    setCompareBaseline(null);
+                    setCompareBaselineLabel(undefined);
+                }
+            }
+        };
+
+        void loadCompareBaseline();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [basedOn?.type, draftName, initialContent]);
 
     // Auto-expand the current route's group
     useEffect(() => {
@@ -526,6 +587,8 @@ export const ScheduleEditorWorkspace: React.FC<ScheduleEditorWorkspaceProps> = (
                     schedules={schedules}
                     onSchedulesChange={setSchedules}
                     originalSchedules={initialTables}
+                    masterBaseline={compareBaseline}
+                    compareBaselineLabel={compareBaselineLabel}
                     draftName={draftName}
                     onRenameDraft={setDraftName}
                     onOpenDrafts={onOpenDrafts}

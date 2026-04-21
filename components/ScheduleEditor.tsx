@@ -111,6 +111,11 @@ import {
     type ExtendTripModalContext,
     type ExtendTripResult
 } from '../utils/schedule/extendTripPlanner';
+import {
+    buildDetailedMasterComparison,
+    buildMasterComparisonChangeSummary,
+    type MasterComparisonChangeCounts,
+} from '../utils/schedule/masterComparison';
 // --- Main Editor Component ---
 
 // Time Band type for display
@@ -133,6 +138,19 @@ interface TripBucketAnalysisDisplay {
         p80: number;
     }>;
 }
+
+const formatChangeSummary = (counts: MasterComparisonChangeCounts): string => {
+    const parts: string[] = [];
+
+    if (counts.new > 0) parts.push(`New ${counts.new}`);
+    if (counts.extended > 0) parts.push(`Extended ${counts.extended}`);
+    if (counts.shortened > 0) parts.push(`Shortened ${counts.shortened}`);
+    if (counts.retimed > 0) parts.push(`Retimed ${counts.retimed}`);
+    if (counts.review > 0) parts.push(`Review ${counts.review}`);
+    if (counts.removed > 0) parts.push(`Removed ${counts.removed}`);
+
+    return parts.join(' • ');
+};
 
 type ExportScope = 'current-route' | 'all-routes';
 
@@ -202,6 +220,7 @@ export interface ScheduleEditorProps {
 
     // Master comparison baseline (inline delta badges)
     masterBaseline?: MasterRouteTable[] | null;
+    compareBaselineLabel?: string;
 }
 
 export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
@@ -240,7 +259,8 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
     publishLabel,
     isPublishing,
     publishDisabled,
-    masterBaseline
+    masterBaseline,
+    compareBaselineLabel
 }) => {
     const MIDNIGHT_ROLLOVER_THRESHOLD = 210; // 3:30 AM
     const effectiveHasUnsavedChanges = readOnly
@@ -1674,6 +1694,16 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
     const activeRouteMasterBaseline = useMemo(() => (
         (masterBaseline || []).filter(table => activeRouteTables.some(routeTable => routeTable.routeName === table.routeName))
     ), [activeRouteTables, masterBaseline]);
+    const activeRouteExportChangeSummary = useMemo(() => {
+        if (activeRouteTables.length === 0 || activeRouteMasterBaseline.length === 0) return null;
+        const detailed = buildDetailedMasterComparison(activeRouteTables, activeRouteMasterBaseline);
+        return buildMasterComparisonChangeSummary(activeRouteTables, detailed);
+    }, [activeRouteMasterBaseline, activeRouteTables]);
+    const fullExportChangeSummary = useMemo(() => {
+        if (exportableTables.length === 0 || !masterBaseline || masterBaseline.length === 0) return null;
+        const detailed = buildDetailedMasterComparison(exportableTables, masterBaseline);
+        return buildMasterComparisonChangeSummary(exportableTables, detailed);
+    }, [exportableTables, masterBaseline]);
     const aiReviewSnapshot = useMemo(() => {
         if (!activeRouteGroup || !activeRoute || activeRouteTables.length === 0) return null;
         return buildScheduleReviewSnapshot({
@@ -1752,6 +1782,29 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                     <p className="text-sm text-gray-600">
                         Choose whether to export just the current route or the entire draft.
                     </p>
+                    {(activeRouteExportChangeSummary || fullExportChangeSummary) && (
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                            <div className="text-xs font-bold uppercase tracking-wide text-slate-700">Change summary</div>
+                            <div className="mt-2 space-y-1 text-xs text-slate-700">
+                                {activeRouteExportChangeSummary && (
+                                    <div>
+                                        <span className="font-semibold text-slate-900">Current route:</span>{' '}
+                                        {activeRouteExportChangeSummary.counts.totalChanges > 0
+                                            ? formatChangeSummary(activeRouteExportChangeSummary.counts)
+                                            : 'No detected changes from baseline'}
+                                    </div>
+                                )}
+                                {fullExportChangeSummary && (
+                                    <div>
+                                        <span className="font-semibold text-slate-900">All routes:</span>{' '}
+                                        {fullExportChangeSummary.counts.totalChanges > 0
+                                            ? formatChangeSummary(fullExportChangeSummary.counts)
+                                            : 'No detected changes from baseline'}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
                     <button
                         type="button"
                         onClick={() => { void exportSchedules('current-route'); }}
@@ -1761,6 +1814,11 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                         <div className="mt-1 text-xs text-blue-700">
                             Export Route {activeRouteGroup.name} · {activeDay}
                         </div>
+                        {activeRouteExportChangeSummary && activeRouteExportChangeSummary.counts.totalChanges > 0 && (
+                            <div className="mt-2 text-[11px] font-medium text-blue-800">
+                                {formatChangeSummary(activeRouteExportChangeSummary.counts)}
+                            </div>
+                        )}
                     </button>
                     <button
                         type="button"
@@ -1771,6 +1829,11 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                         <div className="mt-1 text-xs text-gray-600">
                             Export {exportableRouteCount} route{exportableRouteCount === 1 ? '' : 's'} across the full loaded system draft
                         </div>
+                        {fullExportChangeSummary && fullExportChangeSummary.counts.totalChanges > 0 && (
+                            <div className="mt-2 text-[11px] font-medium text-gray-700">
+                                {formatChangeSummary(fullExportChangeSummary.counts)}
+                            </div>
+                        )}
                     </button>
                 </Modal.Body>
                 <Modal.Footer>
@@ -1940,6 +2003,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                                     routeConnectionConfig={activeRouteConnectionConfig}
                                     dayType={activeDay as DayType}
                                     masterBaseline={masterBaseline}
+                                    compareBaselineLabel={compareBaselineLabel}
                                     highlightedTripId={recentlyAddedTripId}
                                 />
                             </>
