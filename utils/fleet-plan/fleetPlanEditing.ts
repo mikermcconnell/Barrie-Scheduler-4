@@ -3,7 +3,7 @@ import type { FleetPlanRow, FleetPlanSheetConfig, FleetPlanSheetKey } from './ty
 
 export interface FleetPlanGridColumn {
     kind: 'base' | 'timeline';
-    key: 'unitNumber' | 'busSize' | 'makeModel' | 'year' | 'comment' | 'electricFlag' | string;
+    key: 'unitNumber' | 'busSize' | 'makeModel' | 'year' | 'comment' | 'electricFlag' | 'onOrder' | string;
     label: string;
 }
 

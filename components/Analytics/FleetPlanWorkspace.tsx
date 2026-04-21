@@ -68,13 +68,14 @@ function updateRow(rows: FleetPlanRow[], rowId: string, updater: (row: FleetPlan
 
 function getBaseFieldValue(
     row: FleetPlanRow,
-    field: keyof Pick<FleetPlanRow, 'unitNumber' | 'busSize' | 'makeModel' | 'year' | 'comment' | 'electricFlag'>,
+    field: keyof Pick<FleetPlanRow, 'unitNumber' | 'busSize' | 'makeModel' | 'year' | 'comment' | 'electricFlag' | 'onOrder'>,
 ): string {
     if (field === 'unitNumber') return row.unitNumber;
     if (field === 'busSize') return row.busSize || '';
     if (field === 'makeModel') return row.makeModel;
     if (field === 'year') return row.year;
     if (field === 'comment') return row.comment || '';
+    if (field === 'onOrder') return row.onOrder || '';
     return row.electricFlag || '';
 }
 
@@ -211,7 +212,7 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
 
     const handleFieldChange = (
         rowId: string,
-        field: keyof Pick<FleetPlanRow, 'unitNumber' | 'busSize' | 'makeModel' | 'year' | 'comment' | 'electricFlag'>,
+        field: keyof Pick<FleetPlanRow, 'unitNumber' | 'busSize' | 'makeModel' | 'year' | 'comment' | 'electricFlag' | 'onOrder'>,
         value: string,
     ) => {
         if (!activeSheet) return;

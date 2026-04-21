@@ -245,7 +245,7 @@ function writeCommonHeader(worksheet: ExcelJS.Worksheet, config: FleetPlanSheetC
     });
     config.timelineColumns.forEach((column, index) => {
         const headerCell = worksheet.getCell(`${column.exportColumn}${config.headerRow}`);
-        headerCell.value = column.label === 'On Order' ? null : column.label;
+        headerCell.value = column.label;
         styleHeader(headerCell);
 
         const totalCell = worksheet.getCell(`${column.exportColumn}3`);
@@ -275,10 +275,13 @@ function writeSheetRows(worksheet: ExcelJS.Worksheet, sheet: FleetPlanSheet, con
                             ? row.year
                             : column.key === 'comment'
                                 ? row.comment || ''
-                                : row.electricFlag || '';
+                                : column.key === 'onOrder'
+                                    ? row.onOrder || ''
+                                    : row.electricFlag || '';
             styleGridCell(cell, coerceFleetExportValue(rawValue), config.key);
             if (column.key === 'comment') applyAlignment(cell, 'left');
             if (column.key === 'makeModel') applyAlignment(cell, 'left');
+            if (column.key === 'onOrder') applyAlignment(cell, 'left');
         });
 
         config.timelineColumns.forEach((column) => {

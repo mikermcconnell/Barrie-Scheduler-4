@@ -24,6 +24,7 @@ export function createEmptyFleetPlanRow(sheetKey: FleetPlanSheetKey): FleetPlanR
         year: '',
         comment: '',
         electricFlag: sheetKey === 'electric-12m' ? 'E' : '',
+        onOrder: '',
         timeline,
     };
 }
@@ -82,6 +83,7 @@ export function fleetRowHasContent(row: FleetPlanRow): boolean {
         || row.year.trim()
         || row.comment?.trim()
         || row.electricFlag?.trim()
+        || row.onOrder?.trim()
         || Object.values(row.timeline).some((value) => value.trim()),
     );
 }

@@ -34,17 +34,23 @@ function findFooterStartRow(sheet: XLSX.WorkSheet, config: FleetPlanSheetConfig)
 
 function validateSheetHeader(sheet: XLSX.WorkSheet, config: FleetPlanSheetConfig): void {
     const expectedHeaders = FLEET_PLAN_SUPPORTED_HEADERS[config.key];
-    const actualHeaders = config.baseColumns.map((column) =>
-        normalizeFleetPlanCellValue(readCell(sheet, config.headerRow, column.exportColumn)),
-    );
+    const actualHeaders = config.baseColumns.map((column) => normalizeFleetPlanCellValue(readCell(sheet, config.headerRow, column.exportColumn)));
 
     if (expectedHeaders.length !== actualHeaders.length) {
         throw new Error(`Unsupported ${config.name} template: expected ${expectedHeaders.length} base columns but found ${actualHeaders.length}.`);
     }
 
-    expectedHeaders.forEach((header, index) => {
-        if (actualHeaders[index] !== header) {
-            throw new Error(`Unsupported ${config.name} template: expected header "${header}" but found "${actualHeaders[index] || 'blank'}".`);
+    config.baseColumns.forEach((column, index) => {
+        const actualHeader = actualHeaders[index];
+        const expectedHeader = expectedHeaders[index];
+        if (column.headerRequired === false) {
+            if (actualHeader !== '' && actualHeader !== expectedHeader) {
+                throw new Error(`Unsupported ${config.name} template: expected optional header "${expectedHeader}" in ${column.exportColumn}${config.headerRow} but found "${actualHeader}".`);
+            }
+            return;
+        }
+        if (actualHeader !== expectedHeader) {
+            throw new Error(`Unsupported ${config.name} template: expected header "${expectedHeader}" but found "${actualHeader || 'blank'}".`);
         }
     });
 
@@ -70,6 +76,7 @@ function parseRow(sheet: XLSX.WorkSheet, rowNumber: number, config: FleetPlanShe
         year: config.key === 'small-buses' ? '' : normalizeFleetPlanCellValue(readCell(sheet, rowNumber, 'D')),
         comment: config.key === 'small-buses' ? normalizeFleetPlanCellValue(readCell(sheet, rowNumber, 'E')) : '',
         electricFlag: config.key === 'electric-12m' ? normalizeFleetPlanCellValue(readCell(sheet, rowNumber, 'E')) : '',
+        onOrder: config.key === 'small-buses' ? normalizeFleetPlanCellValue(readCell(sheet, rowNumber, 'I')) : '',
         timeline,
     };
 }

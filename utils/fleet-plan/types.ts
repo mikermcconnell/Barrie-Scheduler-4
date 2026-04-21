@@ -22,9 +22,10 @@ export interface FleetPlanSheetConfig {
     headerRow: number;
     dataStartRow: number;
     baseColumns: Array<{
-        key: 'unitNumber' | 'busSize' | 'makeModel' | 'year' | 'comment' | 'electricFlag';
+        key: 'unitNumber' | 'busSize' | 'makeModel' | 'year' | 'comment' | 'electricFlag' | 'onOrder';
         label: string;
         exportColumn: string;
+        headerRequired?: boolean;
     }>;
     timelineColumns: FleetPlanTimelineColumn[];
     footerSpacerRows: number;
@@ -45,6 +46,7 @@ export interface FleetPlanRow {
     year: string;
     comment?: string;
     electricFlag?: string;
+    onOrder?: string;
     timeline: Record<string, string>;
 }
 

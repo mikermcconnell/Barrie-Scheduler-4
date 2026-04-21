@@ -58,12 +58,12 @@ export const FLEET_PLAN_SHEET_CONFIGS: FleetPlanSheetConfig[] = [
             { key: 'busSize', label: 'Size of Bus', exportColumn: 'C' },
             { key: 'makeModel', label: 'Make/Model', exportColumn: 'D' },
             { key: 'comment', label: 'Comment', exportColumn: 'E' },
+            { key: 'onOrder', label: 'On Order', exportColumn: 'I', headerRequired: false },
         ],
         timelineColumns: [
             { key: '2023', label: '2023', exportColumn: 'F' },
             { key: '2024', label: '2024', exportColumn: 'G' },
             { key: '2025', label: '2025', exportColumn: 'H' },
-            { key: 'on-order', label: 'On Order', exportColumn: 'I' },
             { key: '2026', label: '2026', exportColumn: 'J' },
             { key: '2027', label: '2027', exportColumn: 'K' },
             { key: '2028', label: '2028', exportColumn: 'L' },
@@ -146,6 +146,6 @@ export const FLEET_PLAN_REQUIRED_SHEETS = FLEET_PLAN_SHEET_CONFIGS.map((config) 
 
 export const FLEET_PLAN_SUPPORTED_HEADERS: Record<FleetPlanSheetKey, string[]> = {
     'diesel-12m': ['Unit Number', 'Make/Model', 'Year'],
-    'small-buses': ['Unit Number', 'Size of Bus', 'Make/Model', 'Comment'],
+    'small-buses': ['Unit Number', 'Size of Bus', 'Make/Model', 'Comment', 'On Order'],
     'electric-12m': ['Unit Number', 'Make/Model', 'Year', 'Electric "E"'],
 };

@@ -32,7 +32,6 @@ async function buildImportWorkbookBuffer(): Promise<ArrayBuffer> {
     small.getCell('C4').value = 'Size of Bus';
     small.getCell('D4').value = 'Make/Model';
     small.getCell('E4').value = 'Comment';
-    small.getCell('I4').value = 'On Order';
     const smallTimelineHeaders: Array<[string, string | number]> = [
         ['F', 2023],
         ['G', 2024],
@@ -56,6 +55,7 @@ async function buildImportWorkbookBuffer(): Promise<ArrayBuffer> {
     small.getCell('C5').value = '8m';
     small.getCell('D5').value = 'Chev - 4500';
     small.getCell('E5').value = 'growth bus';
+    small.getCell('I5').value = '2 units';
     small.getCell('F5').value = 2020;
     small.getCell('J5').value = 'PURCHASE';
     small.getCell('B6').value = 'Total Cutaways';
@@ -164,11 +164,11 @@ function buildTestFleetPlanWorkbook(): FleetPlanWorkbook {
                         year: '',
                         comment: 'growth bus',
                         electricFlag: '',
+                        onOrder: '2 units',
                         timeline: {
                             '2023': '2020',
                             '2024': '2020',
                             '2025': '2020',
-                            'on-order': '',
                             '2026': 'PURCHASE',
                             '2027': '',
                             '2028': '',
@@ -232,6 +232,7 @@ describe('fleetPlan parser and exporter', () => {
         expect(workbook.sheets[0]?.rows[0]?.unitNumber).toBe('1101');
         expect(workbook.sheets[1]?.rows[0]?.busSize).toBe('8m');
         expect(workbook.sheets[1]?.rows[0]?.comment).toBe('growth bus');
+        expect(workbook.sheets[1]?.rows[0]?.onOrder).toBe('2 units');
         expect(workbook.sheets[2]?.rows[0]?.electricFlag).toBe('E');
         expect(workbook.metadata.templateVersion).toBe('2026-04-08-fleet-plan-v1');
     });
@@ -264,7 +265,6 @@ describe('fleetPlan parser and exporter', () => {
         small.getCell('F4').value = 2023;
         small.getCell('G4').value = 2024;
         small.getCell('H4').value = 2025;
-        small.getCell('I4').value = 'On Order';
         small.getCell('J4').value = 2026;
         small.getCell('K4').value = 2027;
         small.getCell('L4').value = 2028;
@@ -315,6 +315,8 @@ describe('fleetPlan parser and exporter', () => {
 
         const small = workbook.getWorksheet('8m & 6m Buses');
         expect(small?.getCell('G1').value).toBe('TOD Service Buses');
+        expect(small?.getCell('I4').value).toBe('On Order');
+        expect(small?.getCell('I5').value).toBe('2 units');
         expect(small?.getCell('J5').value).toBe('PURCHASE');
         expect(small?.getCell('B6').value).toBe('Total Cutaways');
 
