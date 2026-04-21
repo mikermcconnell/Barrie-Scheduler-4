@@ -24,7 +24,7 @@ import {
     deleteObject,
     getBytes
 } from 'firebase/storage';
-import { db, storage } from '../firebase';
+import { auth, db, storage } from '../firebase';
 import type {
     MasterScheduleEntry,
     MasterScheduleVersion,
@@ -36,6 +36,7 @@ import type {
 } from '../masterScheduleTypes';
 import { buildRouteIdentity } from '../masterScheduleTypes';
 import type { MasterRouteTable } from '../parsers/masterScheduleParser';
+import { downloadFileContent } from './dataService';
 
 const MAX_VERSIONS = 5;
 const ROUTE_MAP_PATH = (teamId: string, routeNumber: string) => `teams/${teamId}/routeMaps/${routeNumber}`;
@@ -54,6 +55,40 @@ function timestampToDate(timestamp: Timestamp | Date): Date {
 function optionalTimestampToDate(timestamp?: Timestamp | Date): Date | undefined {
     if (!timestamp) return undefined;
     return timestampToDate(timestamp);
+}
+
+function decodeStorageBytes(bytes: Uint8Array): string {
+    return new TextDecoder().decode(bytes);
+}
+
+async function readStorageJson(storagePath: string): Promise<string> {
+    const storageRef = ref(storage, storagePath);
+
+    const readViaBytes = async (): Promise<string> => {
+        const bytes = await getBytes(storageRef);
+        return decodeStorageBytes(bytes);
+    };
+
+    try {
+        return await readViaBytes();
+    } catch (initialError: any) {
+        if (initialError?.code === 'storage/unauthorized' && auth.currentUser) {
+            try {
+                await auth.currentUser.getIdToken(true);
+                return await readViaBytes();
+            } catch {
+                // Fall through to the download URL path below.
+            }
+        }
+
+        const downloadUrl = await getDownloadURL(storageRef);
+        return await downloadFileContent(downloadUrl);
+    }
+}
+
+async function readStorageJsonContent(storagePath: string): Promise<MasterScheduleContent> {
+    const json = await readStorageJson(storagePath);
+    return JSON.parse(json) as MasterScheduleContent;
 }
 
 // ============ UPLOAD FLOW ============
@@ -344,10 +379,7 @@ export async function getAllStopsWithCodes(teamId: string): Promise<{ stops: str
 
     const fetchPromises = schedules.map(async (schedule) => {
         try {
-            const storageRef = ref(storage, schedule.storagePath);
-            const bytes = await getBytes(storageRef);
-            const json = new TextDecoder().decode(bytes);
-            const content: MasterScheduleContent = JSON.parse(json);
+            const content = await readStorageJsonContent(schedule.storagePath);
 
             // Collect stop names and their codes from both directions
             const collectStopCodes = (stopIds: Record<string, string> | undefined) => {
@@ -498,10 +530,7 @@ export async function getMasterSchedule(
     };
 
     // Load content from Cloud Storage
-    const storageRef = ref(storage, data.storagePath);
-    const bytes = await getBytes(storageRef);
-    const json = new TextDecoder().decode(bytes);
-    const content: MasterScheduleContent = JSON.parse(json);
+    const content = await readStorageJsonContent(data.storagePath);
 
     return { entry, content };
 }
@@ -550,10 +579,7 @@ export async function getVersionContent(
     const data = versionSnap.data();
 
     // Load content from Cloud Storage
-    const storageRef = ref(storage, data.storagePath);
-    const bytes = await getBytes(storageRef);
-    const json = new TextDecoder().decode(bytes);
-    const content: MasterScheduleContent = JSON.parse(json);
+    const content = await readStorageJsonContent(data.storagePath);
 
     return content;
 }

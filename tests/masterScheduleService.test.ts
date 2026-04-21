@@ -20,6 +20,7 @@ const {
   getDownloadURLMock,
   deleteObjectMock,
   getBytesMock,
+  downloadFileContentMock,
 } = vi.hoisted(() => ({
   collectionMock: vi.fn(),
   docMock: vi.fn(),
@@ -39,6 +40,7 @@ const {
   getDownloadURLMock: vi.fn(),
   deleteObjectMock: vi.fn(),
   getBytesMock: vi.fn(),
+  downloadFileContentMock: vi.fn(),
 }));
 
 vi.mock('firebase/firestore', () => ({
@@ -65,13 +67,19 @@ vi.mock('firebase/storage', () => ({
 }));
 
 vi.mock('../utils/firebase', () => ({
+  auth: { currentUser: null },
   db: { name: 'db' },
   storage: { name: 'storage' },
+}));
+
+vi.mock('../utils/services/dataService', () => ({
+  downloadFileContent: downloadFileContentMock,
 }));
 
 import { buildRouteIdentity } from '../utils/masterScheduleTypes';
 import {
   deleteRouteMap,
+  getMasterSchedule,
   getRouteMapUrl,
   prepareUpload,
   uploadRouteMap,
@@ -134,6 +142,7 @@ beforeEach(() => {
   getDownloadURLMock.mockReset();
   deleteObjectMock.mockReset();
   getBytesMock.mockReset();
+  downloadFileContentMock.mockReset();
 
   collectionMock.mockReturnValue({ path: 'teams/team-1/masterSchedules' });
   docMock.mockImplementation((_db: unknown, ...segments: string[]) => ({
@@ -417,5 +426,35 @@ describe('route map operations', () => {
     expect(deleteObjectMock).toHaveBeenCalledWith({ path: 'teams/team-1/routeMaps/2' });
     expect(deleteObjectMock).toHaveBeenCalledWith({ path: 'teams/team-1/routeMaps/2.png' });
     expect(deleteObjectMock).toHaveBeenCalledWith({ path: 'teams/team-1/routeMaps/2.WEBP' });
+  });
+});
+
+describe('master schedule reads', () => {
+  it('falls back to the download URL path when direct storage bytes are unauthorized', async () => {
+    getDocMock.mockResolvedValueOnce({
+      exists: () => true,
+      id: '2-Weekday',
+      data: () => makeEntryData(4),
+    });
+    getBytesMock.mockRejectedValueOnce({ code: 'storage/unauthorized' });
+    getDownloadURLMock.mockResolvedValueOnce('https://example.com/master-schedule.json');
+    downloadFileContentMock.mockResolvedValueOnce(JSON.stringify({
+      northTable,
+      southTable,
+      metadata: {
+        routeNumber: '2',
+        dayType: 'Weekday',
+        uploadedAt: '2026-04-21T12:00:00.000Z',
+      },
+    }));
+
+    const result = await getMasterSchedule('team-1', '2-Weekday');
+
+    expect(result?.entry.id).toBe('2-Weekday');
+    expect(result?.content.northTable).toEqual(northTable);
+    expect(getDownloadURLMock).toHaveBeenCalledWith({
+      path: 'teams/team-1/masterSchedules/2-Weekday_v4.json',
+    });
+    expect(downloadFileContentMock).toHaveBeenCalledWith('https://example.com/master-schedule.json');
   });
 });
