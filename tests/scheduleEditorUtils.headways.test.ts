@@ -5,6 +5,7 @@ import {
     calculateSequentialHeadways,
     calculateServiceSpan,
     parseTimeInput,
+    sortTripsByBlockFlow,
     validateSchedule
 } from '../utils/schedule/scheduleEditorUtils';
 import type { MasterTrip } from '../utils/parsers/masterScheduleParser';
@@ -73,6 +74,24 @@ describe('scheduleEditorUtils.calculateSequentialHeadways', () => {
 
         expect(headways['late-night']).toBeUndefined();
         expect(headways['after-midnight']).toBe(25);
+    });
+});
+
+describe('scheduleEditorUtils.sortTripsByBlockFlow', () => {
+    it('matches the app block-flow display order across blocks', () => {
+        const trips = sortTripsByBlockFlow([
+            trip({ id: 'block-2-trip-2', blockId: '400-2', tripNumber: 2, startTime: 470, endTime: 500 }),
+            trip({ id: 'block-1-trip-2', blockId: '400-1', tripNumber: 2, startTime: 440, endTime: 470 }),
+            trip({ id: 'block-2-trip-1', blockId: '400-2', tripNumber: 1, startTime: 410, endTime: 440 }),
+            trip({ id: 'block-1-trip-1', blockId: '400-1', tripNumber: 1, startTime: 380, endTime: 410 }),
+        ]);
+
+        expect(trips.map(current => current.id)).toEqual([
+            'block-1-trip-1',
+            'block-2-trip-1',
+            'block-1-trip-2',
+            'block-2-trip-2',
+        ]);
     });
 });
 

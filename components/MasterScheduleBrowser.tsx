@@ -37,7 +37,7 @@ import { buildRouteIdentity } from '../utils/masterScheduleTypes';
 import type { MasterRouteTable, MasterTrip } from '../utils/parsers/masterScheduleParser';
 import { buildRoundTripView } from '../utils/parsers/masterScheduleParser';
 import { getRouteColor, getRouteTextColor } from '../utils/config/routeColors';
-import { calculateSequentialHeadways } from '../utils/schedule/scheduleEditorUtils';
+import { calculateSequentialHeadways, sortTripsByBlockFlow } from '../utils/schedule/scheduleEditorUtils';
 import { PlatformTimeline } from './PlatformTimeline';
 import { ScheduleEditor } from './ScheduleEditor';
 import { consumeNetworkConnectionMasterHandoff } from '../utils/network-connections/networkConnectionHandoff';
@@ -702,24 +702,6 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
             }
         };
 
-        // Helper: Sort trips like Schedule Tweaker - by block ID numerically, then by start time
-        const sortTripsLikeTweaker = (trips: MasterTrip[]): MasterTrip[] => {
-            return [...trips].sort((a, b) => {
-                // Extract numeric parts from block ID for proper sorting (e.g., "100-1" vs "100-2")
-                const aBlockParts = a.blockId.replace(/\D/g, '-').split('-').filter(Boolean).map(Number);
-                const bBlockParts = b.blockId.replace(/\D/g, '-').split('-').filter(Boolean).map(Number);
-
-                // Compare block parts
-                for (let i = 0; i < Math.max(aBlockParts.length, bBlockParts.length); i++) {
-                    const diff = (aBlockParts[i] || 0) - (bBlockParts[i] || 0);
-                    if (diff !== 0) return diff;
-                }
-
-                // Same block - sort by start time
-                return a.startTime - b.startTime;
-            });
-        };
-
         // ===== HELPER: Render a direction's trip table =====
         type DirectionConfig = {
             label: string;
@@ -800,7 +782,7 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
             });
 
             // Sort and calculate headways
-            const sortedTrips = sortTripsLikeTweaker(trips);
+            const sortedTrips = sortTripsByBlockFlow(trips);
             const tripsByTime = [...trips].sort((a, b) => a.startTime - b.startTime);
             const headways = calculateSequentialHeadways(sortedTrips, trip => trip.startTime);
 

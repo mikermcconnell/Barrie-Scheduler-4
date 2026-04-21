@@ -6,16 +6,18 @@
  */
 
 import React, { Suspense, useState, useEffect } from 'react';
-import { Map, ArrowRight, Loader2, Smartphone, Network, GraduationCap, Route, GitBranch } from 'lucide-react';
+import { Map, ArrowRight, Loader2, Smartphone, Network, GraduationCap, Route, GitBranch, Bus } from 'lucide-react';
 import { useTeam } from '../contexts/TeamContext';
 import { useAuth } from '../contexts/AuthContext';
 import { getTransitAppData, getTransitAppMetadata } from '../../utils/transit-app/transitAppService';
 import { getODMatrixData, getODMatrixMetadata, loadGeocodeCache, setActiveODMatrixImport } from '../../utils/od-matrix/odMatrixService';
+import { getFleetPlanMetadata, getFleetPlanWorkbook } from '../../utils/fleet-plan/fleetPlanService';
 import { TeamManagement } from '../TeamManagement';
 import { usePerformanceMetadataQuery } from '../../hooks/usePerformanceData';
 import { isFeatureEnabled, isFeatureUnderConstruction } from '../../utils/features';
 import type { TransitAppDataSummary } from '../../utils/transit-app/transitAppTypes';
 import type { ODMatrixDataSummary, GeocodeCache } from '../../utils/od-matrix/odMatrixTypes';
+import type { FleetPlanWorkbook } from '../../utils/fleet-plan/types';
 import { lazyWithRetry } from '../../utils/lazyWithRetry';
 
 const TransitAppImport = lazyWithRetry(
@@ -49,6 +51,14 @@ const CorridorSpeedMap = lazyWithRetry(
 const StudentPassModule = lazyWithRetry(
     () => import('./StudentPassModule').then(module => ({ default: module.StudentPassModule })),
     'analytics-student-pass-module'
+);
+const FleetPlanImport = lazyWithRetry(
+    () => import('./FleetPlanImport').then(module => ({ default: module.FleetPlanImport })),
+    'analytics-fleet-plan-import'
+);
+const FleetPlanWorkspace = lazyWithRetry(
+    () => import('./FleetPlanWorkspace').then(module => ({ default: module.FleetPlanWorkspace })),
+    'analytics-fleet-plan-workspace'
 );
 const ShuttlePlannerWorkspace = lazyWithRetry(
     () => import('./ShuttlePlannerWorkspace').then(module => ({ default: module.ShuttlePlannerWorkspace })),
@@ -145,6 +155,8 @@ type AnalyticsView =
     | 'headway-map'
     | 'corridor-speed'
     | 'student-pass'
+    | 'fleet-plan-import'
+    | 'fleet-plan-workspace'
     | 'route-planner'
     | 'route8-sandbox'
     | 'network-connections'
@@ -159,6 +171,8 @@ const ANALYTICS_VIEW_FEATURES: Partial<Record<AnalyticsView, Parameters<typeof i
     'headway-map': 'analyticsCorridorHeadway',
     'corridor-speed': 'analyticsCorridorSpeed',
     'student-pass': 'analyticsStudentPass',
+    'fleet-plan-import': 'analyticsFleetPlan',
+    'fleet-plan-workspace': 'analyticsFleetPlan',
     'route-planner': 'analyticsRoutePlanner',
     'route8-sandbox': 'analyticsRoute8Sandbox',
     'network-connections': 'analyticsNetworkConnections',
@@ -199,9 +213,11 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
     const [transitData, setTransitData] = useState<TransitAppDataSummary | null>(null);
     const [odData, setOdData] = useState<ODMatrixDataSummary | null>(null);
     const [odGeocodeCache, setOdGeocodeCache] = useState<GeocodeCache | null>(null);
+    const [fleetPlanData, setFleetPlanData] = useState<FleetPlanWorkbook | null>(null);
     const [loading, setLoading] = useState(true);
     const [hasExistingData, setHasExistingData] = useState(false);
     const [hasODData, setHasODData] = useState(false);
+    const [hasFleetPlanData, setHasFleetPlanData] = useState(false);
     const performanceMetadataQuery = usePerformanceMetadataQuery(team?.id);
     const hasPerformanceData = !!performanceMetadataQuery.data;
 
@@ -219,12 +235,14 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
         }
         (async () => {
             try {
-                const [transitMeta, odMeta] = await Promise.all([
+                const [transitMeta, odMeta, fleetPlanMeta] = await Promise.all([
                     getTransitAppMetadata(team.id),
                     getODMatrixMetadata(team.id),
+                    getFleetPlanMetadata(team.id),
                 ]);
                 setHasExistingData(!!transitMeta);
                 setHasODData(!!odMeta);
+                setHasFleetPlanData(!!fleetPlanMeta);
             } catch (error) {
                 console.error('Error checking analytics data:', error);
             } finally {
@@ -335,6 +353,38 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
             setOdData(null);
             setHasODData(false);
             setView('od-import');
+        }
+    };
+
+    const loadFleetPlan = async (opts: { fallbackToImport?: boolean } = {}) => {
+        if (!team?.id) return;
+        setLoading(true);
+        try {
+            const workbook = await getFleetPlanWorkbook(team.id);
+            if (workbook) {
+                setFleetPlanData(workbook);
+                setHasFleetPlanData(true);
+                setView('fleet-plan-workspace');
+            } else if (opts.fallbackToImport) {
+                setHasFleetPlanData(false);
+                setView('fleet-plan-import');
+            }
+        } catch (error) {
+            console.error('Error loading Fleet Plan data:', error);
+            if (opts.fallbackToImport) {
+                setHasFleetPlanData(false);
+                setView('fleet-plan-import');
+            }
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleFleetPlanClick = async () => {
+        if (hasFleetPlanData) {
+            await loadFleetPlan({ fallbackToImport: true });
+        } else {
+            setView('fleet-plan-import');
         }
     };
 
@@ -464,6 +514,44 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
                         <StudentPassModule onBack={() => setView('dashboard')} teamId={team.id} />
                     </Suspense>
                 </div>
+            </div>
+        );
+    }
+
+    if (view === 'fleet-plan-import' && user) {
+        return (
+            <div className="h-full overflow-auto custom-scrollbar p-6 bg-[#F7F7F7]">
+                <AnalyticsFeatureNotice feature="analyticsFleetPlan" />
+                <Suspense fallback={<AnalyticsPanelLoading label="Loading Fleet Plan import..." />}>
+                    <FleetPlanImport
+                        teamId={team.id}
+                        userId={user.uid}
+                        onImportComplete={(workbook) => {
+                            setFleetPlanData(workbook);
+                            setHasFleetPlanData(true);
+                            setView('fleet-plan-workspace');
+                        }}
+                        onCancel={() => setView('dashboard')}
+                    />
+                </Suspense>
+            </div>
+        );
+    }
+
+    if (view === 'fleet-plan-workspace' && fleetPlanData && user) {
+        return (
+            <div className="h-full overflow-auto custom-scrollbar p-6 bg-[#F7F7F7]">
+                <AnalyticsFeatureNotice feature="analyticsFleetPlan" />
+                <Suspense fallback={<AnalyticsPanelLoading label="Loading Fleet Plan workspace..." />}>
+                    <FleetPlanWorkspace
+                        data={fleetPlanData}
+                        teamId={team.id}
+                        userId={user.uid}
+                        onBack={() => setView('dashboard')}
+                        onReimport={() => setView('fleet-plan-import')}
+                        onSaved={(workbook) => setFleetPlanData(workbook)}
+                    />
+                </Suspense>
             </div>
         );
     }
@@ -639,6 +727,17 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
                             hasData={false}
                             underConstruction={isFeatureUnderConstruction('analyticsStudentPass')}
                             onClick={() => setView('student-pass')}
+                        />
+                    )}
+                    {isFeatureEnabled('analyticsFleetPlan') && (
+                        <AnalyticsCard
+                            color="violet"
+                            icon={<Bus size={20} />}
+                            title="Fleet Plan"
+                            description="Digitize the shared fleet workbook, edit buses in a planner-friendly workspace, and export the plan back to formatted Excel."
+                            hasData={hasFleetPlanData}
+                            underConstruction={isFeatureUnderConstruction('analyticsFleetPlan')}
+                            onClick={handleFleetPlanClick}
                         />
                     )}
                     {isFeatureEnabled('analyticsNetworkConnections') && (

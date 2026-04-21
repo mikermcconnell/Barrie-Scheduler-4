@@ -79,6 +79,7 @@ Broader planning and analysis tools mostly live under `components/Analytics/` pl
 Notable areas:
 - Transit App analytics → `components/Analytics/TransitApp*`, `utils/transit-app/`
 - OD analysis → `components/Analytics/OD*`, `utils/od-matrix/`
+- Fleet Plan → `components/Analytics/FleetPlan*.tsx`, `utils/fleet-plan/`
 - Route Planner → `components/Analytics/RoutePlannerWorkspace.tsx`, `utils/route-planner/`
 - Shuttle Planner → `components/Analytics/ShuttlePlannerWorkspace.tsx`, `utils/shuttle/`
 - Network Connections → `components/Analytics/NetworkConnectionsWorkspace.tsx`, `utils/network-connections/`
@@ -158,6 +159,7 @@ These are the fastest entry points for understanding the codebase:
 ### Planning-data / analytics
 - `components/Analytics/AnalyticsDashboard.tsx`
 - `components/Analytics/TransitAppWorkspace.tsx`
+- `components/Analytics/FleetPlanWorkspace.tsx`
 - `components/Analytics/RoutePlannerWorkspace.tsx`
 - `components/Analytics/NetworkConnectionsWorkspace.tsx`
 - `components/Analytics/Route8SandboxWorkspace.tsx`

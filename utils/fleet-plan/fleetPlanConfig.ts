@@ -1,0 +1,151 @@
+import type { FleetPlanSheetConfig, FleetPlanSheetKey } from './types';
+
+export const FLEET_PLAN_TEMPLATE_VERSION = '2026-04-08-fleet-plan-v1';
+
+export const FLEET_PLAN_SHEET_CONFIGS: FleetPlanSheetConfig[] = [
+    {
+        key: 'diesel-12m',
+        name: '12m Buses',
+        title: '12m Diesel Buses',
+        titleMerge: 'B2:R2',
+        headerRow: 4,
+        dataStartRow: 5,
+        baseColumns: [
+            { key: 'unitNumber', label: 'Unit Number', exportColumn: 'B' },
+            { key: 'makeModel', label: 'Make/Model', exportColumn: 'C' },
+            { key: 'year', label: 'Year', exportColumn: 'D' },
+        ],
+        timelineColumns: [
+            { key: '2023', label: '2023', exportColumn: 'E' },
+            { key: '2024', label: '2024', exportColumn: 'F' },
+            { key: '2025', label: '2025', exportColumn: 'G' },
+            { key: '2026', label: '2026', exportColumn: 'H' },
+            { key: '2027', label: '2027', exportColumn: 'I' },
+            { key: '2028', label: '2028', exportColumn: 'J' },
+            { key: '2029', label: '2029', exportColumn: 'K' },
+            { key: '2030', label: '2030', exportColumn: 'L' },
+            { key: '2031', label: '2031', exportColumn: 'M' },
+            { key: '2032', label: '2032', exportColumn: 'N' },
+            { key: '2033', label: '2033', exportColumn: 'O' },
+            { key: '2034', label: '2034', exportColumn: 'P' },
+            { key: '2035', label: '2035', exportColumn: 'Q' },
+            { key: '2036', label: '2036', exportColumn: 'R' },
+            { key: '2037', label: '2037', exportColumn: 'S' },
+        ],
+        footerSpacerRows: 3,
+        legendColumn: 'V',
+        legendItems: [
+            'BUSES TO BE RETIRED',
+            'TRADED BUSES',
+            'PURCHASE YEAR - RETIREMENT REPLACEMENT',
+            'PURCHASE YEAR - COUNCIL APPROVED GROWTH',
+            'PURCHASE YEAR - 10 YEAR CAPITAL PLAN GROWTH',
+        ],
+        rowBandHeights: { 1: 9, 2: 33.6, 3: 33.6, 4: 35.25 },
+        zoomScale: 70,
+        freezeCell: 'A14',
+        footerType: 'diesel-12m',
+    },
+    {
+        key: 'small-buses',
+        name: '8m & 6m Buses',
+        title: 'Small Buses (8m or 6m)',
+        titleMerge: 'B2:T2',
+        headerRow: 4,
+        dataStartRow: 5,
+        baseColumns: [
+            { key: 'unitNumber', label: 'Unit Number', exportColumn: 'B' },
+            { key: 'busSize', label: 'Size of Bus', exportColumn: 'C' },
+            { key: 'makeModel', label: 'Make/Model', exportColumn: 'D' },
+            { key: 'comment', label: 'Comment', exportColumn: 'E' },
+        ],
+        timelineColumns: [
+            { key: '2023', label: '2023', exportColumn: 'F' },
+            { key: '2024', label: '2024', exportColumn: 'G' },
+            { key: '2025', label: '2025', exportColumn: 'H' },
+            { key: 'on-order', label: 'On Order', exportColumn: 'I' },
+            { key: '2026', label: '2026', exportColumn: 'J' },
+            { key: '2027', label: '2027', exportColumn: 'K' },
+            { key: '2028', label: '2028', exportColumn: 'L' },
+            { key: '2029', label: '2029', exportColumn: 'M' },
+            { key: '2030', label: '2030', exportColumn: 'N' },
+            { key: '2031', label: '2031', exportColumn: 'O' },
+            { key: '2032', label: '2032', exportColumn: 'P' },
+            { key: '2033', label: '2033', exportColumn: 'Q' },
+            { key: '2034', label: '2034', exportColumn: 'R' },
+            { key: '2035', label: '2035', exportColumn: 'S' },
+            { key: '2036', label: '2036', exportColumn: 'T' },
+        ],
+        footerSpacerRows: 0,
+        legendColumn: 'W',
+        legendItems: [
+            'BUSES TO BE RETIRED',
+            'TRADED BUSES',
+            'PURCHASE YEAR - RETIREMENT REPLACEMENT',
+            'PURCHASE YEAR - COUNCIL APPROVED GROWTH',
+            'PURCHASE YEAR - 10 YEAR CAPITAL PLAN GROWTH',
+            'TOD BUSES',
+            'SPECIALIZED BUSES',
+        ],
+        bandLabels: [
+            { cell: 'G1', value: 'TOD Service Buses' },
+            { cell: 'H1', value: 'Spec. Service Buses', fill: 'FF0070C0', fontColor: 'FFFFFFFF', bold: true },
+            { cell: 'J1', value: 'Growth Bus' },
+            { cell: 'K1', value: 'Purchase Year' },
+            { cell: 'L1', value: 'Future bus arrivals' },
+        ],
+        rowBandHeights: { 1: 37.5, 2: 33.6, 3: 33.6, 4: 30.75 },
+        zoomScale: 80,
+        freezeCell: null,
+        footerType: 'small-buses',
+    },
+    {
+        key: 'electric-12m',
+        name: '12m Electric Buses',
+        title: 'Electric 40 Foot Buses',
+        titleMerge: 'B2:Q2',
+        headerRow: 4,
+        dataStartRow: 5,
+        baseColumns: [
+            { key: 'unitNumber', label: 'Unit Number', exportColumn: 'B' },
+            { key: 'makeModel', label: 'Make/Model', exportColumn: 'C' },
+            { key: 'year', label: 'Year', exportColumn: 'D' },
+            { key: 'electricFlag', label: 'Electric "E"', exportColumn: 'E' },
+        ],
+        timelineColumns: [
+            { key: '2024', label: '2024', exportColumn: 'F' },
+            { key: '2025', label: '2025', exportColumn: 'G' },
+            { key: '2026', label: '2026', exportColumn: 'H' },
+            { key: '2027', label: '2027', exportColumn: 'I' },
+            { key: '2028', label: '2028', exportColumn: 'J' },
+            { key: '2029', label: '2029', exportColumn: 'K' },
+            { key: '2030', label: '2030', exportColumn: 'L' },
+            { key: '2031', label: '2031', exportColumn: 'M' },
+            { key: '2032', label: '2032', exportColumn: 'N' },
+            { key: '2033', label: '2033', exportColumn: 'O' },
+            { key: '2034', label: '2034', exportColumn: 'P' },
+            { key: '2035', label: '2035', exportColumn: 'Q' },
+        ],
+        footerSpacerRows: 2,
+        rowBandHeights: { 1: 6.75, 2: 33.6, 3: 33.6, 4: 35.25 },
+        zoomScale: undefined,
+        freezeCell: null,
+        footerType: 'electric-12m',
+    },
+];
+
+export const FLEET_PLAN_SHEET_CONFIG_BY_KEY = Object.fromEntries(
+    FLEET_PLAN_SHEET_CONFIGS.map((config) => [config.key, config]),
+) as Record<FleetPlanSheetKey, FleetPlanSheetConfig>;
+
+export const FLEET_PLAN_SHEET_CONFIG_BY_NAME = Object.fromEntries(
+    FLEET_PLAN_SHEET_CONFIGS.map((config) => [config.name, config]),
+) as Record<string, FleetPlanSheetConfig>;
+
+export const FLEET_PLAN_REQUIRED_SHEETS = FLEET_PLAN_SHEET_CONFIGS.map((config) => config.name);
+
+export const FLEET_PLAN_SUPPORTED_HEADERS: Record<FleetPlanSheetKey, string[]> = {
+    'diesel-12m': ['Unit Number', 'Make/Model', 'Year'],
+    'small-buses': ['Unit Number', 'Size of Bus', 'Make/Model', 'Comment'],
+    'electric-12m': ['Unit Number', 'Make/Model', 'Year', 'Electric "E"'],
+};

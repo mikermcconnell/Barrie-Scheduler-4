@@ -26,14 +26,16 @@ firebase/
 │   ├── performanceData/{docId}           # STREETS / ops performance datasets
 │   ├── performanceSnapshots/{month}      # Monthly performance rollups (YYYY-MM)
 │   ├── performanceImports/{importId}     # Archived raw STREETS import runs for replay/rebuild
-│   └── odMatrixData/{docId}              # Origin-destination datasets
-│       └── imports/{importId}            # OD import history
+│   ├── odMatrixData/{docId}              # Origin-destination datasets
+│   │   └── imports/{importId}            # OD import history
+│   └── fleetPlan/default                 # Shared fleet-planning workbook metadata + active storage pointer
 │
 └── migrations/                           # Data migration tracking
 ```
 
 `teams/{teamId}/connectionLibrary/default` and `teams/{teamId}/routeConnectionConfigs/{routeIdentity}` are used by the application and documented here because code reads and writes those paths directly.
 `teams/{teamId}/publicTimetable/default` stores the team-managed brochure copy used by the Public Timetable generator preview/export.
+`teams/{teamId}/fleetPlan/default` stores the active shared Fleet Plan metadata and the Storage path for the normalized workbook JSON payload.
 
 ### Cloud Storage Paths
 
@@ -53,7 +55,8 @@ storage/
     ├── performanceData/{timestamp}-overview.json
     ├── performanceData/{timestamp}-report.json
     ├── performanceImports/raw/{timestamp}.csv
-    └── odMatrixData/{allPaths}
+    ├── odMatrixData/{allPaths}
+    └── fleetPlan/{timestamp}.json
 ```
 
 `teams/{teamId}/performanceData/metadata` may store multiple storage pointers for the same import:
@@ -224,6 +227,24 @@ interface PublicTimetableConfigDocument {
 ```
 
 Public timetable settings are readable by team members and should only be written by team owners/admins.
+
+### FleetPlanMetadata (`teams/{teamId}/fleetPlan/default`)
+
+```typescript
+interface FleetPlanDocumentMetadata {
+  totalRows: number;
+  sheetCount: number;
+  templateVersion: string;
+  sourceFileName: string;
+  importedAt: string;      // ISO timestamp
+  importedBy: string;      // userId
+  updatedAt: string;       // ISO timestamp
+  updatedBy: string;       // userId
+  storagePath: string;     // Cloud Storage JSON payload
+}
+```
+
+The full editable workbook content is stored in Cloud Storage as normalized JSON rather than raw Excel bytes. The current implementation uses a single active team-shared plan at `teams/{teamId}/fleetPlan/default`.
 
 ---
 

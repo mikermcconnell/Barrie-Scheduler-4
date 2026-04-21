@@ -1,0 +1,95 @@
+import { describe, expect, it } from 'vitest';
+import {
+    applyFleetPlanPaste,
+    duplicateFleetPlanRow,
+    getFleetPlanGridColumns,
+    getNextFleetPlanCellPosition,
+    insertDuplicatedFleetPlanRow,
+} from '../utils/fleet-plan/fleetPlanEditing';
+import { FLEET_PLAN_SHEET_CONFIG_BY_KEY } from '../utils/fleet-plan/fleetPlanConfig';
+import { createEmptyFleetPlanRow } from '../utils/fleet-plan/fleetPlanModel';
+
+describe('fleetPlan editing helpers', () => {
+    it('duplicates a row with a fresh id and cloned timeline data', () => {
+        const row = {
+            ...createEmptyFleetPlanRow('diesel-12m'),
+            id: 'original-row',
+            unitNumber: '1101',
+            timeline: {
+                '2023': '1101',
+                '2024': 'RETIRE',
+            },
+        };
+
+        const duplicate = duplicateFleetPlanRow(row);
+
+        expect(duplicate.id).not.toBe(row.id);
+        expect(duplicate.unitNumber).toBe('1101');
+        expect(duplicate.timeline).toEqual(row.timeline);
+        expect(duplicate.timeline).not.toBe(row.timeline);
+    });
+
+    it('inserts a duplicated row directly below the source row', () => {
+        const first = { ...createEmptyFleetPlanRow('diesel-12m'), id: 'first', unitNumber: '1101' };
+        const second = { ...createEmptyFleetPlanRow('diesel-12m'), id: 'second', unitNumber: '1102' };
+
+        const rows = insertDuplicatedFleetPlanRow([first, second], 'first');
+
+        expect(rows).toHaveLength(3);
+        expect(rows[1]?.unitNumber).toBe('1101');
+        expect(rows[1]?.id).not.toBe('first');
+        expect(rows[2]?.id).toBe('second');
+    });
+
+    it('applies a pasted grid and appends rows when the clipboard is taller than the current sheet', () => {
+        const config = FLEET_PLAN_SHEET_CONFIG_BY_KEY['diesel-12m'];
+        const columns = getFleetPlanGridColumns(config);
+        const rows = [
+            {
+                ...createEmptyFleetPlanRow('diesel-12m'),
+                id: 'row-1',
+                unitNumber: '1101',
+            },
+        ];
+
+        const nextRows = applyFleetPlanPaste({
+            rows,
+            sheetKey: 'diesel-12m',
+            columns,
+            startRowIndex: 0,
+            startColumnIndex: 0,
+            clipboardText: '2101\tNF - Xcelsior\t2018\n2102\tNova Bus\t2019',
+        });
+
+        expect(nextRows).toHaveLength(2);
+        expect(nextRows[0]?.unitNumber).toBe('2101');
+        expect(nextRows[0]?.makeModel).toBe('NF - Xcelsior');
+        expect(nextRows[0]?.year).toBe('2018');
+        expect(nextRows[1]?.unitNumber).toBe('2102');
+        expect(nextRows[1]?.makeModel).toBe('Nova Bus');
+        expect(nextRows[1]?.year).toBe('2019');
+    });
+
+    it('wraps tab navigation and appends a row when leaving the last cell', () => {
+        const config = FLEET_PLAN_SHEET_CONFIG_BY_KEY['electric-12m'];
+        const columnCount = getFleetPlanGridColumns(config).length;
+
+        const horizontal = getNextFleetPlanCellPosition({
+            rowCount: 1,
+            columnCount,
+            current: { rowIndex: 0, columnIndex: columnCount - 1 },
+            mode: 'horizontal',
+        });
+        expect(horizontal.shouldAppendRow).toBe(true);
+        expect(horizontal.nextPosition).toEqual({ rowIndex: 1, columnIndex: 0 });
+
+        const vertical = getNextFleetPlanCellPosition({
+            rowCount: 1,
+            columnCount,
+            current: { rowIndex: 0, columnIndex: 2 },
+            mode: 'vertical',
+        });
+        expect(vertical.shouldAppendRow).toBe(true);
+        expect(vertical.nextPosition).toEqual({ rowIndex: 1, columnIndex: 2 });
+    });
+});

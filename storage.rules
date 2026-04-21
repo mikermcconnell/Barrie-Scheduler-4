@@ -45,5 +45,10 @@ service firebase.storage {
     match /teams/{teamId}/odMatrixData/{allPaths=**} {
       allow read, write: if isTeamMember(teamId);
     }
+
+    // Team Fleet Plan data
+    match /teams/{teamId}/fleetPlan/{allPaths=**} {
+      allow read, write: if isTeamMember(teamId);
+    }
   }
 }

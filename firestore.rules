@@ -93,6 +93,11 @@ service cloud.firestore {
           allow read, write: if isTeamMember(teamId);
         }
       }
+
+      // Fleet Plan data
+      match /fleetPlan/{docId} {
+        allow read, write: if isTeamMember(teamId);
+      }
     }
 
     // ========== HELPER FUNCTIONS ==========

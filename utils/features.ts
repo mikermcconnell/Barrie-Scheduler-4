@@ -24,6 +24,7 @@ export const FEATURE_DEFINITIONS = {
     analyticsCorridorSpeed: { defaultEnabled: true, hideInDemoMode: true },
     analyticsCorridorHeadway: { defaultEnabled: true, hideInDemoMode: true },
     analyticsStudentPass: { defaultEnabled: true, hideInDemoMode: false },
+    analyticsFleetPlan: { defaultEnabled: true, hideInDemoMode: true },
     analyticsNetworkConnections: { defaultEnabled: true, hideInDemoMode: true },
     analyticsRoutePlanner: { defaultEnabled: true, hideInDemoMode: true },
     analyticsShuttlePlanner: { defaultEnabled: true, hideInDemoMode: true },
