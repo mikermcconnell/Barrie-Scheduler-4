@@ -135,7 +135,7 @@ export const SystemDraftEditorWorkspace: React.FC<SystemDraftEditorWorkspaceProp
     onNewDraft
 }) => {
     const { user } = useAuth();
-    const { team } = useTeam();
+    const { team, canManageTeam } = useTeam();
     const toast = useToast();
     const userId = user?.uid ?? null;
 
@@ -470,6 +470,10 @@ export const SystemDraftEditorWorkspace: React.FC<SystemDraftEditorWorkspaceProp
             toast?.warning('Team Required', 'Join a team to publish schedules');
             return;
         }
+        if (!canManageTeam) {
+            toast?.warning('Permission Required', 'Only team owners and admins can publish master schedules.');
+            return;
+        }
 
         // Save before publishing
         await saveDraftNow();
@@ -638,7 +642,7 @@ export const SystemDraftEditorWorkspace: React.FC<SystemDraftEditorWorkspaceProp
                         hideAutoSave={false}
                         onPublish={handlePublish}
                         publishLabel={`Publish All (${allRoutes.length} routes)`}
-                        publishDisabled={!user || !team}
+                        publishDisabled={!user || !team || !canManageTeam}
                         isPublishing={isPublishing}
                         hideSidebar={true}
                         teamId={team?.id}

@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="icon" type="image/jpeg" href="/ontario-northland-favicon.jpeg" />
+  <title>TransitScheduler</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Nunito', 'sans-serif'],
+          },
+          colors: {
+            brand: {
+              green: '#58CC02',
+              greenDark: '#46A302',
+              red: '#FF4B4B',
+              redDark: '#D33131',
+              blue: '#1CB0F6',
+              yellow: '#FFC800',
+              offWhite: '#F7F7F7',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body {
+      background-color: #F7F7F7;
+    }
+
+    /* Duolingo-style button press effect */
+    .btn-bouncy {
+      transition: transform 0.1s, border-bottom-width 0.1s;
+    }
+
+    .btn-bouncy:active {
+      transform: translateY(4px);
+      border-bottom-width: 0px;
+      margin-bottom: 4px;
+      /* Maintain layout space */
+    }
+
+    /* Shake animation for invalid inputs */
+    @keyframes shake {
+      0%, 100% { transform: translateX(0); }
+      25% { transform: translateX(-4px); }
+      75% { transform: translateX(4px); }
+    }
+    .animate-shake {
+      animation: shake 0.3s ease-in-out;
+    }
+
+    /* Cascade highlight flash animation */
+    @keyframes cascade-flash {
+      0% { background-color: rgba(59, 130, 246, 0.3); }
+      100% { background-color: transparent; }
+    }
+    .animate-cascade-flash {
+      animation: cascade-flash 1s ease-out;
+    }
+
+    /* Custom scrollbar for schedule tables */
+    .custom-scrollbar::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-track {
+      background: #f1f1f1;
+      border-radius: 4px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+      background: #c1c1c1;
+      border-radius: 4px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+      background: #a8a8a8;
+    }
+  </style>
+  <script type="module" crossorigin src="/assets/index-CNbDm04c.js"></script>
+</head>
+
+<body>
+  <div id="root"></div>
+</body>
+
+</html>

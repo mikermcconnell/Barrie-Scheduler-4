@@ -57,7 +57,7 @@ export const ScheduleEditorWorkspace: React.FC<ScheduleEditorWorkspaceProps> = (
     onSwitchDraft
 }) => {
     const { user } = useAuth();
-    const { team } = useTeam();
+    const { team, canManageTeam } = useTeam();
     const toast = useToast();
     const userId = user?.uid ?? null;
 
@@ -357,6 +357,10 @@ export const ScheduleEditorWorkspace: React.FC<ScheduleEditorWorkspaceProps> = (
             toast?.warning('Team Required', 'Join a team to publish schedules');
             return;
         }
+        if (!canManageTeam) {
+            toast?.warning('Permission Required', 'Only team owners and admins can publish master schedules.');
+            return;
+        }
 
         const savedDraftId = await saveDraftNow();
         if (!savedDraftId) {
@@ -605,7 +609,7 @@ export const ScheduleEditorWorkspace: React.FC<ScheduleEditorWorkspaceProps> = (
                     redo={redo}
                     hideAutoSave={false}
                     onPublish={handlePublish}
-                    publishDisabled={!user || !team}
+                    publishDisabled={!user || !team || !canManageTeam}
                     isPublishing={isPublishing}
                     hideSidebar={!!hasSiblings}
                     teamId={team?.id}

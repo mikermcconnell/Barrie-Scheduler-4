@@ -11,8 +11,6 @@ import {
     getDoc,
     getDocs,
     deleteDoc,
-    query,
-    where,
     serverTimestamp,
     Timestamp,
     updateDoc,
@@ -20,6 +18,12 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import type { Team, TeamMember, TeamWithMembers, TeamRole } from '../masterScheduleTypes';
+
+interface TeamInviteLookup {
+    id: string;
+    name: string;
+    inviteCode: string;
+}
 
 // ============ HELPER FUNCTIONS ============
 
@@ -40,13 +44,11 @@ function generateInviteCode(): string {
  * Generate a unique invite code across all teams.
  */
 async function generateUniqueInviteCode(excludeTeamId?: string): Promise<string> {
-    const teamsRef = collection(db, 'teams');
     for (let attempt = 0; attempt < 25; attempt++) {
         const candidate = generateInviteCode();
-        const q = query(teamsRef, where('inviteCode', '==', candidate));
-        const existing = await getDocs(q);
-        const usedByOtherTeam = existing.docs.some(d => d.id !== excludeTeamId);
-        if (!usedByOtherTeam) {
+        const inviteSnap = await getDoc(doc(db, 'teamInvites', candidate));
+        const inviteTeamId = inviteSnap.exists() ? inviteSnap.data().teamId : null;
+        if (!inviteSnap.exists() || inviteTeamId === excludeTeamId) {
             return candidate;
         }
     }
@@ -94,6 +96,14 @@ export async function createTeam(
         joinedAt: serverTimestamp(),
         displayName: userDisplayName,
         email: userEmail
+    });
+
+    const inviteRef = doc(db, 'teamInvites', inviteCode);
+    await setDoc(inviteRef, {
+        teamId,
+        teamName: teamName,
+        createdBy: userId,
+        updatedAt: serverTimestamp()
     });
 
     // Update user document with teamId
@@ -158,10 +168,19 @@ export async function getUserTeam(userId: string): Promise<Team | null> {
     }
 
     const teamId = userSnap.data().teamId;
+    const memberRef = doc(db, 'teams', teamId, 'members', userId);
+    const memberSnap = await getDoc(memberRef);
+
+    if (!memberSnap.exists()) {
+        await updateDoc(userRef, { teamId: null });
+        return null;
+    }
+
     const teamRef = doc(db, 'teams', teamId);
     const teamSnap = await getDoc(teamRef);
 
     if (!teamSnap.exists()) {
+        await updateDoc(userRef, { teamId: null });
         return null;
     }
 
@@ -211,6 +230,9 @@ export async function renameTeam(teamId: string, newName: string): Promise<void>
  */
 export async function deleteTeam(teamId: string): Promise<void> {
     const batch = writeBatch(db);
+    const teamRef = doc(db, 'teams', teamId);
+    const teamSnap = await getDoc(teamRef);
+    const inviteCode = teamSnap.exists() ? (teamSnap.data().inviteCode as string | undefined) : undefined;
 
     // Delete all members
     const membersRef = collection(db, 'teams', teamId, 'members');
@@ -236,8 +258,10 @@ export async function deleteTeam(teamId: string): Promise<void> {
     }
 
     // Delete team
-    const teamRef = doc(db, 'teams', teamId);
     batch.delete(teamRef);
+    if (inviteCode) {
+        batch.delete(doc(db, 'teamInvites', inviteCode));
+    }
 
     await batch.commit();
 
@@ -250,28 +274,21 @@ export async function deleteTeam(teamId: string): Promise<void> {
 /**
  * Find team by invite code
  */
-export async function findTeamByInviteCode(code: string): Promise<Team | null> {
-    const teamsRef = collection(db, 'teams');
-    const q = query(teamsRef, where('inviteCode', '==', code.toUpperCase()));
-    const querySnap = await getDocs(q);
+export async function findTeamByInviteCode(code: string): Promise<TeamInviteLookup | null> {
+    const normalizedCode = code.trim().toUpperCase();
+    const inviteRef = doc(db, 'teamInvites', normalizedCode);
+    const inviteSnap = await getDoc(inviteRef);
 
-    if (querySnap.empty) {
+    if (!inviteSnap.exists()) {
         return null;
     }
 
-    if (querySnap.size > 1) {
-        throw new Error('Invite code conflict detected. Ask an admin to regenerate the code.');
-    }
-
-    const teamDoc = querySnap.docs[0];
-    const teamData = teamDoc.data();
+    const inviteData = inviteSnap.data();
 
     return {
-        id: teamDoc.id,
-        name: teamData.name,
-        createdAt: timestampToDate(teamData.createdAt),
-        createdBy: teamData.createdBy,
-        inviteCode: teamData.inviteCode
+        id: inviteData.teamId,
+        name: inviteData.teamName,
+        inviteCode: normalizedCode
     };
 }
 
@@ -310,7 +327,8 @@ export async function joinTeamByInviteCode(
         role: 'member' as TeamRole,
         joinedAt: serverTimestamp(),
         displayName,
-        email
+        email,
+        inviteCode: inviteCode.toUpperCase()
     });
 
     // Update user document with teamId
@@ -348,14 +366,6 @@ export async function leaveTeam(userId: string): Promise<void> {
 export async function removeMember(teamId: string, memberId: string): Promise<void> {
     const memberRef = doc(db, 'teams', teamId, 'members', memberId);
     await deleteDoc(memberRef);
-
-    // Clear teamId from removed member's user doc
-    const userRef = doc(db, 'users', memberId);
-    const userSnap = await getDoc(userRef);
-
-    if (userSnap.exists() && userSnap.data().teamId === teamId) {
-        await updateDoc(userRef, { teamId: null });
-    }
 }
 
 /**
@@ -374,9 +384,24 @@ export async function updateMemberRole(
  * Regenerate invite code (owner/admin only - enforcement via security rules)
  */
 export async function regenerateInviteCode(teamId: string): Promise<string> {
-    const newCode = await generateUniqueInviteCode(teamId);
     const teamRef = doc(db, 'teams', teamId);
+    const teamSnap = await getDoc(teamRef);
+    if (!teamSnap.exists()) {
+        throw new Error('Team not found');
+    }
+
+    const previousCode = teamSnap.data().inviteCode as string | undefined;
+    const newCode = await generateUniqueInviteCode(teamId);
     await updateDoc(teamRef, { inviteCode: newCode });
+    await setDoc(doc(db, 'teamInvites', newCode), {
+        teamId,
+        teamName: teamSnap.data().name,
+        createdBy: teamSnap.data().createdBy,
+        updatedAt: serverTimestamp()
+    });
+    if (previousCode && previousCode !== newCode) {
+        await deleteDoc(doc(db, 'teamInvites', previousCode));
+    }
     return newCode;
 }
 
@@ -390,15 +415,27 @@ export async function setInviteCode(teamId: string, inviteCode: string): Promise
         throw new Error('Invite code must be exactly 6 letters/numbers');
     }
 
-    const teamsRef = collection(db, 'teams');
-    const q = query(teamsRef, where('inviteCode', '==', normalized));
-    const existing = await getDocs(q);
-    const usedByOtherTeam = existing.docs.some(d => d.id !== teamId);
-    if (usedByOtherTeam) {
+    const existingInvite = await getDoc(doc(db, 'teamInvites', normalized));
+    if (existingInvite.exists() && existingInvite.data().teamId !== teamId) {
         throw new Error('Invite code is already in use');
     }
 
     const teamRef = doc(db, 'teams', teamId);
+    const teamSnap = await getDoc(teamRef);
+    if (!teamSnap.exists()) {
+        throw new Error('Team not found');
+    }
+
+    const previousCode = teamSnap.data().inviteCode as string | undefined;
     await updateDoc(teamRef, { inviteCode: normalized });
+    await setDoc(doc(db, 'teamInvites', normalized), {
+        teamId,
+        teamName: teamSnap.data().name,
+        createdBy: teamSnap.data().createdBy,
+        updatedAt: serverTimestamp()
+    });
+    if (previousCode && previousCode !== normalized) {
+        await deleteDoc(doc(db, 'teamInvites', previousCode));
+    }
     return normalized;
 }

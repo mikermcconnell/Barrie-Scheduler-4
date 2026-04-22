@@ -15,14 +15,17 @@ The app uses a mixed model:
 
 - user-scoped data under `users/{userId}/`
 - team-scoped shared data under `teams/{teamId}/`
+- invite lookup under `teamInvites/{inviteCode}`
 - role checks for owners and admins on team management operations
 - team membership checks for shared schedules, analytics, storage assets, and imports
+- Fleet Plan writes currently use team membership rather than owner/admin-only access
 
 ### Firestore
 
 `firestore.rules` currently covers:
 
 - `users/{userId}` and subcollections for personal data
+- `teamInvites/{inviteCode}` for invite lookup
 - `teams/{teamId}` documents
 - `teams/{teamId}/members`
 - `teams/{teamId}/masterSchedules`
@@ -30,8 +33,8 @@ The app uses a mixed model:
 - `teams/{teamId}/performanceData`
 - `teams/{teamId}/odMatrixData` and `imports`
 
-The checked-in rules do not currently include a dedicated `teams/{teamId}/connectionLibrary` match.
-If Connection Library is relied on in production, update `firestore.rules` and `docs/SCHEMA.md` together.
+Authorization should come from membership documents under `teams/{teamId}/members/{userId}`.
+Do not rely on `users/{userId}.teamId` for authorization.
 
 ### Storage
 

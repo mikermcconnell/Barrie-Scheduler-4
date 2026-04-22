@@ -96,8 +96,7 @@ service cloud.firestore {
 
       // Fleet Plan data
       match /fleetPlan/{docId} {
-        allow read: if isTeamMember(teamId);
-        allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
+        allow read, write: if isTeamMember(teamId);
       }
     }
 

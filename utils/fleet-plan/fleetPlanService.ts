@@ -44,7 +44,7 @@ function normalizeFleetPlanError(error: unknown, action: 'load' | 'save'): Error
         if (error.code === 'storage/unauthorized' || error.code === 'permission-denied') {
             return createFleetPlanError(
                 action === 'save'
-                    ? 'Only team owners and admins can update the shared Fleet Plan.'
+                    ? 'You do not have permission to update the shared Fleet Plan. Confirm you still belong to this team.'
                     : 'You do not have permission to open this team Fleet Plan. Confirm you still belong to this team.',
                 'permission',
             );

@@ -6,23 +6,21 @@
  */
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { ArrowLeft, Download, RefreshCw, Eye, Trash2, Image, ChevronDown, ChevronUp, Save, RotateCcw } from 'lucide-react';
+import { ArrowLeft, Download, RefreshCw, Eye, Trash2, Image, ChevronDown, ChevronUp, Save, RotateCcw, Phone, Mail, Globe, Clock3 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import { useTeam } from '../contexts/TeamContext';
 import { useToast } from '../contexts/ToastContext';
 import { useAuth } from '../contexts/AuthContext';
 import { getAllMasterSchedules, getMasterSchedule, uploadRouteMap, deleteRouteMap, getRouteMapUrl } from '../../utils/services/masterScheduleService';
 import type { MasterScheduleEntry, DayType } from '../../utils/masterScheduleTypes';
-import type { RoundTripTable } from '../../utils/parsers/masterScheduleParser';
+import type { MasterTrip, RoundTripTable } from '../../utils/parsers/masterScheduleParser';
 import { buildRoundTripView } from '../../utils/parsers/masterScheduleParser';
 import { buildRouteIdentity } from '../../utils/masterScheduleTypes';
-import { getRouteConfig, getRouteDirections } from '../../utils/config/routeDirectionConfig';
+import { getRouteConfig } from '../../utils/config/routeDirectionConfig';
 import { getRouteColor, getRouteTextColor } from '../../utils/config/routeColors';
 import {
     BROCHURE_DAY_ORDER,
     deduplicateStopsForBrochure,
-    formatBrochureStopName as formatBrochureStopLabel,
-    formatCompactTime,
     getBrochureDayKey,
     getBrochureDayLabel,
 } from '../../utils/reports/publicTimetableUtils';
@@ -56,35 +54,162 @@ const createEmptyBrochureDays = (): BrochureDayRecord => ({
     sunday: { dayType: 'Sunday', label: getBrochureDayLabel('Sunday'), status: 'idle', table: null, message: null },
 });
 
-// Get direction display label for brochure format
-// North (2A): "2A Dunlop to Downtown"
-// South (2B): "2B Park Place" (no "to" - it's the return direction)
-const getDirectionLabel = (routeNumber: string, direction: 'North' | 'South'): string => {
-    const config = getRouteConfig(routeNumber);
-    if (config?.segments.length === 1) {
-        return config.segments[0].variant;
+const LANDSCAPE_MAP_ROUTES = new Set(['10', '11', '100', '101']);
+const MAP_LEGEND_ITEMS = [
+    { label: 'Timepoint stop', markerClassName: 'border-2 border-[#0b5d4f] bg-white' },
+    { label: 'Regular stop', markerClassName: 'border border-slate-500 bg-white' },
+    { label: 'Transfer point', markerClassName: 'bg-[#0b5d4f] text-white' },
+    { label: 'Route path', line: true },
+] as const;
+
+interface VisibleBrochureStop {
+    origStop: string;
+    label: string;
+    stopId: string;
+}
+
+interface DirectionPanelData {
+    key: string;
+    title: string;
+    badge: string;
+    trips: MasterTrip[];
+    stops: VisibleBrochureStop[];
+}
+
+const formatMinutesForBrochure = (minutes: number | null | undefined): string => {
+    if (minutes === null || minutes === undefined || Number.isNaN(minutes)) {
+        return '';
     }
 
-    const directions = getRouteDirections(routeNumber);
-    if (directions) {
-        const info = direction === 'North' ? directions.north : directions.south;
-        if (info.terminus) {
-            // North direction uses "to" (going TO downtown)
-            // South direction just shows the terminus name (returning to origin)
-            if (direction === 'North') {
-                // If terminus already contains "to", don't add another "to"
-                if (info.terminus.toLowerCase().includes(' to ')) {
-                    return `${info.variant} ${info.terminus}`;
-                }
-                return `${info.variant} to ${info.terminus}`;
-            } else {
-                return `${info.variant} ${info.terminus}`;
-            }
-        }
-        return info.variant;
+    const normalized = ((minutes % 1440) + 1440) % 1440;
+    const hours24 = Math.floor(normalized / 60);
+    const mins = Math.round(normalized % 60);
+    const period = hours24 >= 12 ? 'PM' : 'AM';
+    const hours12 = hours24 % 12 === 0 ? 12 : hours24 % 12;
+    return `${hours12}:${mins.toString().padStart(2, '0')} ${period}`;
+};
+
+const formatBrochureHeaderTime = (timeStr: string | undefined): string => {
+    if (!timeStr) {
+        return '-';
     }
-    // Fallback for unknown routes
-    return `${direction}bound`;
+
+    const match = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+    if (!match) {
+        return timeStr;
+    }
+
+    const [, rawHour, mins, rawPeriod] = match;
+    const period = rawPeriod.toUpperCase();
+    return mins === '00' ? `${parseInt(rawHour, 10)} ${period}` : `${parseInt(rawHour, 10)}:${mins} ${period}`;
+};
+
+const formatBrochureCellTime = (timeStr: string | undefined): string => {
+    if (!timeStr) {
+        return '—';
+    }
+
+    const match = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+    if (!match) {
+        return timeStr;
+    }
+
+    const [, rawHour, mins] = match;
+    return mins === '00' ? `${parseInt(rawHour, 10)}` : `${parseInt(rawHour, 10)}:${mins}`;
+};
+
+const formatFrequencyLabel = (minutes: number | null): string => {
+    if (!minutes) {
+        return 'See schedule';
+    }
+
+    return `Every ${minutes} minutes`;
+};
+
+const estimateHeadwayMinutes = (trips: MasterTrip[]): number | null => {
+    const departures = trips
+        .map(trip => trip.startTime)
+        .filter((value): value is number => Number.isFinite(value))
+        .sort((a, b) => a - b);
+
+    if (departures.length < 2) {
+        return null;
+    }
+
+    const diffs = departures
+        .slice(1)
+        .map((value, index) => value - departures[index])
+        .filter(diff => diff >= 5 && diff <= 120)
+        .sort((a, b) => a - b);
+
+    if (diffs.length === 0) {
+        return null;
+    }
+
+    const median = diffs[Math.floor(diffs.length / 2)];
+    return Math.max(5, Math.round(median / 5) * 5);
+};
+
+const getTripDisplayTime = (trip: MasterTrip, stopKey: string): string => {
+    return formatBrochureCellTime(trip.stops[stopKey]);
+};
+
+const chunkTrips = (trips: MasterTrip[], chunkSize: number): MasterTrip[][] => {
+    const chunks: MasterTrip[][] = [];
+    for (let index = 0; index < trips.length; index += chunkSize) {
+        chunks.push(trips.slice(index, index + chunkSize));
+    }
+    return chunks;
+};
+
+const buildDirectionTitleFromStops = (stops: VisibleBrochureStop[]): string => {
+    if (stops.length === 0) {
+        return 'Schedule';
+    }
+
+    if (stops.length === 1) {
+        return stops[0].label;
+    }
+
+    return `${stops[0].label} → ${stops[stops.length - 1].label}`;
+};
+
+const getDirectionBadge = (routeNumber: string, direction: 'North' | 'South'): string => {
+    const config = getRouteConfig(routeNumber);
+    if (!config || config.segments.length === 1) {
+        return routeNumber;
+    }
+
+    const segment = config.segments.find(item => item.name === direction);
+    return segment?.variant.split(' ')[0] ?? routeNumber;
+};
+
+const getVisibleStopsForDirection = (
+    stops: string[],
+    stopIds: Record<string, string>,
+    selectedStops: string[],
+): VisibleBrochureStop[] => {
+    const deduped = deduplicateStopsForBrochure(stops);
+
+    return deduped.stopMapping
+        .map((origStop, index) => ({
+            origStop,
+            label: deduped.displayStops[index],
+            stopId: stopIds[origStop] || '',
+        }))
+        .filter(stop => selectedStops.includes(stop.origStop));
+};
+
+const getContactIcon = (contact: string): React.ReactElement => {
+    if (contact.includes('@')) {
+        return <Mail size={12} />;
+    }
+
+    if (/\d/.test(contact)) {
+        return <Phone size={12} />;
+    }
+
+    return <Globe size={12} />;
 };
 
 export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
@@ -497,15 +622,7 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
     const routeConfig = selectedRoute ? getRouteConfig(selectedRoute) : null;
     const isLoopRoute = routeConfig?.segments.length === 1;
     const hasReadyBrochureDay = Object.values(brochureDays).some(day => day.status === 'ready' && day.table);
-    const routeBadgeTextColor = selectedRoute ? getRouteTextColor(selectedRoute) : '#ffffff';
-    const brochureServiceSummary = selectedRoute
-        ? selectedDirection === 'Both'
-            ? (isLoopRoute ? 'Loop service' : 'All published directions')
-            : getDirectionLabel(selectedRoute, selectedDirection)
-        : '';
-    const brochureAvailableDays = Object.values(brochureDays)
-        .filter(day => day.status === 'ready')
-        .map(day => day.label);
+    const isLandscapeMapRoute = selectedRoute ? LANDSCAPE_MAP_ROUTES.has(selectedRoute) : false;
     const brochureEffectiveDate = entries
         .filter(entry => entry.routeNumber === selectedRoute)
         .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
@@ -538,217 +655,429 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
         return 'Service in both directions';
     })();
 
+    const coverDirectionLines = (() => {
+        if (!selectedRoute || !routeConfig) {
+            return [];
+        }
+
+        if (routeConfig.segments.length === 1) {
+            const segment = routeConfig.segments[0];
+            return [{
+                badge: segment.variant,
+                text: `${segment.name} loop service`,
+            }];
+        }
+
+        const directionsToShow = selectedDirection === 'Both'
+            ? (['North', 'South'] as const)
+            : ([selectedDirection] as const);
+
+        return directionsToShow.map(direction => {
+            const segment = routeConfig.segments.find(item => item.name === direction);
+            const badge = segment?.variant.split(' ')[0] ?? selectedRoute;
+            const variantRemainder = segment?.variant.replace(badge, '').trim() ?? '';
+
+            const text = direction === 'North'
+                ? [
+                    variantRemainder,
+                    segment?.terminus ? (variantRemainder ? `to ${segment.terminus}` : segment.terminus) : null,
+                ].filter(Boolean).join(' ')
+                : (segment?.terminus || variantRemainder || 'Southbound service');
+
+            return { badge, text };
+        });
+    })();
+
+    const buildDayDirectionPanels = (
+        day: BrochureDayRecord[keyof BrochureDayRecord],
+    ): DirectionPanelData[] => {
+        if (day.status !== 'ready' || !day.table || !selectedRoute) {
+            return [];
+        }
+
+        const sortTrips = (trips: MasterTrip[]) => [...trips].sort((a, b) => {
+            if (a.startTime !== b.startTime) {
+                return a.startTime - b.startTime;
+            }
+
+            if (a.blockId !== b.blockId) {
+                return a.blockId.localeCompare(b.blockId, undefined, { numeric: true });
+            }
+
+            return a.tripNumber - b.tripNumber;
+        });
+
+        const northTrips = sortTrips(day.table.rows.flatMap(row => row.trips.filter(trip => trip.direction === 'North')));
+        const southTrips = sortTrips(day.table.rows.flatMap(row => row.trips.filter(trip => trip.direction === 'South')));
+        const northStops = getVisibleStopsForDirection(day.table.northStops, day.table.northStopIds, selectedStops);
+        const southStops = getVisibleStopsForDirection(day.table.southStops, day.table.southStopIds, selectedStops);
+        const panels: DirectionPanelData[] = [];
+
+        if ((selectedDirection === 'Both' || selectedDirection === 'North' || isLoopRoute) && northTrips.length > 0 && northStops.length > 0) {
+            panels.push({
+                key: `${day.dayType}-north`,
+                badge: isLoopRoute ? selectedRoute : getDirectionBadge(selectedRoute, 'North'),
+                title: buildDirectionTitleFromStops(northStops),
+                trips: northTrips,
+                stops: northStops,
+            });
+        }
+
+        if (!isLoopRoute && (selectedDirection === 'Both' || selectedDirection === 'South') && southTrips.length > 0 && southStops.length > 0) {
+            panels.push({
+                key: `${day.dayType}-south`,
+                badge: getDirectionBadge(selectedRoute, 'South'),
+                title: buildDirectionTitleFromStops(southStops),
+                trips: southTrips,
+                stops: southStops,
+            });
+        }
+
+        if (panels.length === 0 && isLoopRoute && southTrips.length > 0 && southStops.length > 0) {
+            panels.push({
+                key: `${day.dayType}-loop`,
+                badge: selectedRoute,
+                title: buildDirectionTitleFromStops(southStops),
+                trips: southTrips,
+                stops: southStops,
+            });
+        }
+
+        return panels;
+    };
+
+    const summarizeDayService = (day: BrochureDayRecord[keyof BrochureDayRecord]) => {
+        if (day.status !== 'ready' || !day.table) {
+            return {
+                label: day.label.replace(' & Holidays', ''),
+                hours: 'Not published',
+                headway: 'Unavailable',
+                isAvailable: false,
+            };
+        }
+
+        const panels = buildDayDirectionPanels(day);
+        const allTrips = panels.flatMap(panel => panel.trips);
+
+        if (allTrips.length === 0) {
+            return {
+                label: day.label.replace(' & Holidays', ''),
+                hours: 'Adjust stop filters',
+                headway: 'Hidden by filters',
+                isAvailable: false,
+            };
+        }
+
+        const start = Math.min(...allTrips.map(trip => trip.startTime));
+        const end = Math.max(...allTrips.map(trip => trip.endTime));
+
+        return {
+            label: day.label.replace(' & Holidays', ''),
+            hours: `${formatMinutesForBrochure(start)} – ${formatMinutesForBrochure(end)}`,
+            headway: formatFrequencyLabel(estimateHeadwayMinutes(allTrips)),
+            isAvailable: true,
+        };
+    };
+
     const renderDayTimetable = (
         day: BrochureDayRecord[keyof BrochureDayRecord],
-        keyPrefix: string
+        keyPrefix: string,
     ): React.ReactElement => {
+        const panels = buildDayDirectionPanels(day);
+        const dayFrequency = formatFrequencyLabel(estimateHeadwayMinutes(panels.flatMap(panel => panel.trips)));
+        const columnsPerChunk = panels.length > 1 ? 5 : 6;
+
         if (day.status !== 'ready' || !day.table) {
             return (
-                <div className="flex-1 min-w-0 flex flex-col">
-                    <div className="text-center py-1.5 font-bold text-sm tracking-wide bg-gray-200 text-gray-700">
-                        {day.label}
+                <div className="flex-1 min-w-0 flex flex-col rounded-[26px] bg-white shadow-[0_18px_40px_rgba(15,23,42,0.14)]">
+                    <div className="flex items-center justify-between rounded-t-[26px] bg-[#0b5d4f] px-5 py-3 text-white">
+                        <span className="text-[18px] font-extrabold uppercase tracking-[0.04em]">{day.label.replace(' & Holidays', '')}</span>
+                        <span className="text-[11px] font-semibold tracking-wide opacity-90">Unavailable</span>
                     </div>
-                    <div className="flex-1 flex items-center justify-center border border-gray-200 bg-gray-50 text-center px-6 py-10 text-sm text-gray-500">
+                    <div className="flex flex-1 items-center justify-center rounded-b-[26px] border border-t-0 border-slate-200 bg-white px-8 text-center text-sm text-slate-500">
                         {day.status === 'loading' ? `Loading ${day.label}...` : day.message ?? `${day.label} timetable unavailable.`}
                     </div>
                 </div>
             );
         }
 
-        const routeColor = getRouteColor(selectedRoute);
-        const textColor = getRouteTextColor(selectedRoute);
-        const darkenColor = (hex: string, percent: number): string => {
-            const num = parseInt(hex.slice(1), 16);
-            const r = Math.max(0, (num >> 16) - Math.round(255 * percent / 100));
-            const g = Math.max(0, ((num >> 8) & 0x00FF) - Math.round(255 * percent / 100));
-            const b = Math.max(0, (num & 0x0000FF) - Math.round(255 * percent / 100));
-            return `#${(r << 16 | g << 8 | b).toString(16).padStart(6, '0')}`;
-        };
-        const lightenColor = (hex: string, percent: number): string => {
-            const num = parseInt(hex.slice(1), 16);
-            const r = Math.min(255, (num >> 16) + Math.round(255 * percent / 100));
-            const g = Math.min(255, ((num >> 8) & 0x00FF) + Math.round(255 * percent / 100));
-            const b = Math.min(255, (num & 0x0000FF) + Math.round(255 * percent / 100));
-            return `#${(r << 16 | g << 8 | b).toString(16).padStart(6, '0')}`;
-        };
-
-        const colorDark = darkenColor(routeColor, 15);
-        const colorMid = routeColor;
-        const colorLight = lightenColor(routeColor, 15);
-        const colorLighter = lightenColor(routeColor, 30);
-        const colorBorder = lightenColor(routeColor, 20);
-        const spacerColor = darkenColor(routeColor, 30);
-
-        const northDeduped = deduplicateStopsForBrochure(day.table.northStops);
-        const southDeduped = deduplicateStopsForBrochure(day.table.southStops);
-
-        const northVisibleStops = northDeduped.stopMapping
-            .map((origStop, idx) => ({ origStop, label: northDeduped.displayStops[idx] }))
-            .filter(stop => selectedStops.includes(stop.origStop));
-        const southVisibleStops = southDeduped.stopMapping
-            .map((origStop, idx) => ({ origStop, label: southDeduped.displayStops[idx] }))
-            .filter(stop => selectedStops.includes(stop.origStop));
-
-        const showNorth = (selectedDirection === 'Both' || selectedDirection === 'North') && northVisibleStops.length > 0;
-        const showSouth = (selectedDirection === 'Both' || selectedDirection === 'South') && southVisibleStops.length > 0;
-        const showSpacer = showNorth && showSouth;
-
-        if (!showNorth && !showSouth) {
+        if (panels.length === 0) {
             return (
-                <div className="flex-1 min-w-0 flex flex-col">
-                    <div className="text-center py-1.5 font-bold text-sm tracking-wide bg-gray-200 text-gray-700">
-                        {day.label}
+                <div className="flex-1 min-w-0 flex flex-col rounded-[26px] bg-white shadow-[0_18px_40px_rgba(15,23,42,0.14)]">
+                    <div className="flex items-center justify-between rounded-t-[26px] bg-[#0b5d4f] px-5 py-3 text-white">
+                        <span className="text-[18px] font-extrabold uppercase tracking-[0.04em]">{day.label.replace(' & Holidays', '')}</span>
+                        <span className="text-[11px] font-semibold tracking-wide opacity-90">Filtered</span>
                     </div>
-                    <div className="flex-1 flex items-center justify-center border border-gray-200 bg-gray-50 text-center px-6 py-10 text-sm text-gray-500">
-                        The current stop and direction filters hide all timetable columns for {day.label}.
+                    <div className="flex flex-1 items-center justify-center rounded-b-[26px] border border-t-0 border-slate-200 bg-white px-8 text-center text-sm text-slate-500">
+                        The current stop and direction filters hide every timetable row for this day.
                     </div>
                 </div>
             );
         }
 
+        const qrPattern = [1, 1, 1, 1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1];
+
         return (
-            <div className="flex-1 min-w-0 flex flex-col">
-                <div
-                    className="text-center py-1.5 font-bold text-sm tracking-wide"
-                    style={{ backgroundColor: colorDark, color: textColor }}
-                >
-                    {day.label}
+            <div className="flex-1 min-w-0 flex flex-col rounded-[26px] bg-white shadow-[0_18px_40px_rgba(15,23,42,0.14)]">
+                <div className="flex items-center justify-between rounded-t-[26px] bg-[#0b5d4f] px-5 py-3 text-white">
+                    <span className="text-[18px] font-extrabold uppercase tracking-[0.04em]">
+                        {day.label.replace(' & Holidays', '')}
+                    </span>
+                    <span className="text-[11px] font-semibold tracking-wide opacity-90">{dayFrequency}</span>
                 </div>
 
-                <div className="overflow-x-auto flex-1">
-                    <table className="w-full border-collapse text-[8px]">
-                        <thead>
-                            <tr style={{ backgroundColor: colorMid }}>
-                                {showNorth && (
-                                    <th
-                                        colSpan={northVisibleStops.length}
-                                        className="text-center py-1 font-bold text-[10px]"
-                                        style={{ color: textColor }}
-                                    >
-                                        {getDirectionLabel(selectedRoute, 'North')}
-                                    </th>
-                                )}
-                                {showSpacer && (
-                                    <th
-                                        className="p-0"
-                                        style={{ width: '4px', minWidth: '4px', maxWidth: '4px', backgroundColor: spacerColor }}
-                                    />
-                                )}
-                                {showSouth && (
-                                    <th
-                                        colSpan={southVisibleStops.length}
-                                        className="text-center py-1 font-bold text-[10px]"
-                                        style={{ color: textColor }}
-                                    >
-                                        {getDirectionLabel(selectedRoute, 'South')}
-                                    </th>
-                                )}
-                            </tr>
-                            <tr style={{ backgroundColor: colorLight }}>
-                                {showNorth && northVisibleStops.map((stop, idx) => (
-                                    <th
-                                        key={`${keyPrefix}-n-${stop.origStop}`}
-                                        className="p-0"
-                                        style={{ minWidth: '32px', maxWidth: '38px', height: '90px', color: textColor, borderRight: `1px solid ${colorBorder}` }}
-                                    >
-                                        <div className="h-full w-full flex items-center justify-center">
-                                            <span
-                                                className="whitespace-nowrap text-[7px] font-bold"
-                                                style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
-                                            >
-                                                {formatBrochureStopLabel(stop.label, idx, northVisibleStops.length)}
-                                            </span>
-                                        </div>
-                                    </th>
-                                ))}
-                                {showSpacer && (
-                                    <th
-                                        key={`${keyPrefix}-spacer`}
-                                        className="p-0"
-                                        style={{ width: '4px', minWidth: '4px', maxWidth: '4px', backgroundColor: spacerColor }}
-                                    />
-                                )}
-                                {showSouth && southVisibleStops.map((stop, idx) => (
-                                    <th
-                                        key={`${keyPrefix}-s-${stop.origStop}`}
-                                        className="p-0"
-                                        style={{ minWidth: '32px', maxWidth: '38px', height: '90px', color: textColor, borderRight: idx < southVisibleStops.length - 1 ? `1px solid ${colorBorder}` : 'none' }}
-                                    >
-                                        <div className="h-full w-full flex items-center justify-center">
-                                            <span
-                                                className="whitespace-nowrap text-[7px] font-bold"
-                                                style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
-                                            >
-                                                {formatBrochureStopLabel(stop.label, idx, southVisibleStops.length)}
-                                            </span>
-                                        </div>
-                                    </th>
-                                ))}
-                            </tr>
-                            <tr style={{ backgroundColor: colorLighter, color: textColor }} className="text-[7px]">
-                                {showNorth && northVisibleStops.map((stop, idx) => (
-                                    <th
-                                        key={`${keyPrefix}-nid-${stop.origStop}`}
-                                        className="px-0.5 py-0.5 font-bold text-center"
-                                        style={{ borderRight: idx < northVisibleStops.length - 1 ? `1px solid ${colorBorder}` : 'none' }}
-                                    >
-                                        {day.table?.northStopIds?.[stop.origStop] || ''}
-                                    </th>
-                                ))}
-                                {showSpacer && (
-                                    <th
-                                        key={`${keyPrefix}-spacer-id`}
-                                        className="p-0"
-                                        style={{ width: '4px', minWidth: '4px', maxWidth: '4px', backgroundColor: spacerColor }}
-                                    />
-                                )}
-                                {showSouth && southVisibleStops.map((stop, idx) => (
-                                    <th
-                                        key={`${keyPrefix}-sid-${stop.origStop}`}
-                                        className="px-0.5 py-0.5 font-bold text-center"
-                                        style={{ borderRight: idx < southVisibleStops.length - 1 ? `1px solid ${colorBorder}` : 'none' }}
-                                    >
-                                        {day.table?.southStopIds?.[stop.origStop] || ''}
-                                    </th>
-                                ))}
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {day.table.rows.map((row, rowIdx) => {
-                                const northTrip = row.trips.find(t => t.direction === 'North');
-                                const southTrip = row.trips.find(t => t.direction === 'South');
-                                const rowBg = rowIdx % 2 === 0 ? 'white' : lightenColor(routeColor, 45);
+                <div className="flex flex-1 flex-col rounded-b-[26px] border border-t-0 border-slate-200 bg-white px-4 pb-3 pt-3">
+                    <p className="mb-3 text-[11px] text-slate-600">All timepoints and every trip are shown.</p>
 
-                                return (
-                                    <tr key={`${keyPrefix}-row-${rowIdx}`} style={{ backgroundColor: rowBg }}>
-                                        {showNorth && northVisibleStops.map((stop, idx) => (
-                                            <td
-                                                key={`${keyPrefix}-n-${stop.origStop}-${rowIdx}`}
-                                                className={`px-0.5 py-[1px] text-center text-gray-800 ${idx < northVisibleStops.length - 1 ? 'border-r border-gray-200' : ''}`}
-                                            >
-                                                {formatCompactTime(northTrip?.stops[stop.origStop])}
-                                            </td>
+                    <div className={`grid flex-1 gap-3 ${panels.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                        {panels.map((panel) => {
+                            const badgeClassName = panel.key.includes('north')
+                                ? 'bg-[#1f5da8] text-white'
+                                : panel.key.includes('south')
+                                    ? 'bg-[#1f6a45] text-white'
+                                    : '';
+                            const loopBadgeStyle = panel.key.includes('north') || panel.key.includes('south')
+                                ? undefined
+                                : { backgroundColor: getRouteColor(selectedRoute), color: getRouteTextColor(selectedRoute) };
+
+                            return (
+                                <div key={`${keyPrefix}-${panel.key}`} className="flex min-h-0 flex-col gap-3">
+                                    <div className="flex items-center gap-2">
+                                        <span
+                                            className={`inline-flex min-w-[34px] items-center justify-center rounded-md px-2 py-1 text-[12px] font-extrabold ${badgeClassName}`}
+                                            style={loopBadgeStyle}
+                                        >
+                                            {panel.badge}
+                                        </span>
+                                        <span className="text-[13px] font-semibold text-slate-800">{panel.title}</span>
+                                    </div>
+
+                                    <div className="flex flex-1 flex-col gap-3">
+                                        {chunkTrips(panel.trips, columnsPerChunk).map((tripChunk, chunkIndex) => (
+                                            <div key={`${keyPrefix}-${panel.key}-${chunkIndex}`} className="overflow-hidden rounded-[18px] border border-slate-200">
+                                                <table className="w-full table-fixed border-collapse text-[10px]">
+                                                    <thead>
+                                                        <tr className="bg-[#f3f5f4]">
+                                                            <th className="w-[36%] px-2.5 py-2 text-left text-[9px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                                                                Stop
+                                                            </th>
+                                                            {tripChunk.map((trip, tripIndex) => {
+                                                                const firstTime = panel.stops.map(stop => trip.stops[stop.origStop]).find(Boolean);
+                                                                return (
+                                                                    <th
+                                                                        key={`${keyPrefix}-${panel.key}-head-${chunkIndex}-${tripIndex}`}
+                                                                        className="border-l border-slate-200 px-1 py-2 text-center text-[9px] font-bold text-slate-700"
+                                                                    >
+                                                                        {formatBrochureHeaderTime(firstTime)}
+                                                                    </th>
+                                                                );
+                                                            })}
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {panel.stops.map((stop, stopIndex) => (
+                                                            <tr
+                                                                key={`${keyPrefix}-${panel.key}-row-${stop.origStop}`}
+                                                                className={stopIndex % 2 === 0 ? 'bg-white' : 'bg-[#faf9f7]'}
+                                                            >
+                                                                <td className="border-t border-slate-200 px-2.5 py-2 align-top">
+                                                                    <div className="font-semibold text-slate-800">{stop.label}</div>
+                                                                    {stop.stopId ? (
+                                                                        <div className="mt-0.5 text-[9px] font-medium text-slate-400">{stop.stopId}</div>
+                                                                    ) : null}
+                                                                </td>
+                                                                {tripChunk.map((trip, tripIndex) => (
+                                                                    <td
+                                                                        key={`${keyPrefix}-${panel.key}-cell-${stop.origStop}-${chunkIndex}-${tripIndex}`}
+                                                                        className="border-l border-t border-slate-200 px-1.5 py-2 text-center font-medium text-slate-700"
+                                                                    >
+                                                                        {getTripDisplayTime(trip, stop.origStop)}
+                                                                    </td>
+                                                                ))}
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                </table>
+                                            </div>
                                         ))}
-                                        {showSpacer && (
-                                            <td
-                                                key={`${keyPrefix}-spacer-${rowIdx}`}
-                                                className="p-0"
-                                                style={{ width: '4px', minWidth: '4px', maxWidth: '4px', backgroundColor: spacerColor }}
-                                            />
-                                        )}
-                                        {showSouth && southVisibleStops.map((stop, idx) => (
-                                            <td
-                                                key={`${keyPrefix}-s-${stop.origStop}-${rowIdx}`}
-                                                className={`px-0.5 py-[1px] text-center text-gray-800 ${idx < southVisibleStops.length - 1 ? 'border-r border-gray-200' : ''}`}
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+
+                    <div className="mt-3 flex items-end justify-between gap-4 border-t border-slate-200 pt-3">
+                        <div className="flex items-center gap-2 text-[11px] font-medium text-slate-600">
+                            <Clock3 className="h-4 w-4 text-[#0b5d4f]" />
+                            <span>{brochureConfig.disclaimer}</span>
+                        </div>
+
+                        <div className="flex items-end gap-3">
+                            <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                                Scan for real-time info
+                            </span>
+                            <div className="grid grid-cols-4 gap-[2px] rounded-md border border-slate-300 bg-white p-1.5">
+                                {qrPattern.map((cell, index) => (
+                                    <span
+                                        key={`${keyPrefix}-qr-${index}`}
+                                        className={`h-2.5 w-2.5 rounded-[1px] ${cell ? 'bg-slate-900' : 'bg-white'}`}
+                                    />
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
+    const renderFrontCover = (): React.ReactElement => {
+        const serviceCards = Object.values(brochureDays).map(day => summarizeDayService(day));
+        const footerContacts = brochureConfig.contacts.slice(0, 3);
+
+        return (
+            <div className="flex h-full">
+                <div className="flex-1 min-w-0 rounded-[26px] bg-white px-7 py-6 shadow-[0_18px_40px_rgba(15,23,42,0.14)]">
+                    <div className="flex items-start justify-between gap-4">
+                        <div>
+                            <h1 className="text-[62px] font-black leading-[0.95] tracking-[-0.05em] text-[#0b5d4f]">
+                                {selectedRoute ? `Route ${selectedRoute}` : 'Route'}
+                            </h1>
+                            <div className="mt-3 space-y-1">
+                                {coverDirectionLines.length > 0 ? coverDirectionLines.map((line, index) => (
+                                    <div key={`${line.badge}-${index}`} className="flex items-center gap-3">
+                                        <span
+                                            className={`inline-flex min-w-[42px] items-center justify-center rounded-lg px-2 py-1 text-[16px] font-extrabold ${
+                                                index === 0 ? 'bg-[#1f5da8] text-white' : 'bg-[#1f6a45] text-white'
+                                            }`}
+                                        >
+                                            {line.badge}
+                                        </span>
+                                        <span className="text-[18px] font-semibold text-slate-800">{line.text}</span>
+                                    </div>
+                                )) : (
+                                    <p className="text-[18px] font-semibold text-slate-700">{brochurePublicSummary}</p>
+                                )}
+                            </div>
+                        </div>
+
+                        {brochureEffectiveDate ? (
+                            <div className="rounded-2xl bg-[#0b5d4f] px-4 py-3 text-right text-white shadow-sm">
+                                <p className="text-[11px] font-bold uppercase tracking-[0.16em] opacity-80">Effective</p>
+                                <p className="mt-1 text-[14px] font-semibold">{brochureEffectiveDate}</p>
+                            </div>
+                        ) : null}
+                    </div>
+
+                    <div className="mt-5 overflow-hidden rounded-[22px] border border-[#d5ddd8] bg-[#f6f4ef]">
+                        <div
+                            className={`relative overflow-hidden ${isLandscapeMapRoute ? 'h-[220px]' : 'h-[270px]'}`}
+                        >
+                            {mapImageUrl ? (
+                                <img
+                                    src={mapImageUrl}
+                                    alt={`Route ${selectedRoute} map`}
+                                    className="h-full w-full object-contain"
+                                />
+                            ) : (
+                                <div className="flex h-full w-full items-center justify-center bg-[#f8f7f3] text-center text-sm text-slate-400">
+                                    Route map not uploaded yet
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    <div className="mt-4">
+                        <p className="text-[20px] font-extrabold uppercase tracking-[0.03em] text-[#0b5d4f]">Legend</p>
+                        <div className="mt-2 flex flex-wrap gap-2 rounded-[18px] border border-slate-200 bg-white px-3 py-2.5 text-[11px] text-slate-600">
+                            {MAP_LEGEND_ITEMS.map(item => (
+                                <div key={item.label} className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-2.5 py-1">
+                                    {item.line ? (
+                                        <span className="block h-[2px] w-8 rounded-full bg-[#0b5d4f]" />
+                                    ) : (
+                                        <span className={`inline-flex h-4 w-4 items-center justify-center rounded-full text-[10px] ${item.markerClassName}`}>
+                                            {item.label === 'Transfer point' ? '+' : ''}
+                                        </span>
+                                    )}
+                                    <span>{item.label}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="mt-4">
+                        <p className="text-[20px] font-extrabold uppercase tracking-[0.03em] text-[#0b5d4f]">Service Summary</p>
+                        <div className="mt-2 grid grid-cols-3 gap-3">
+                            {serviceCards.map(card => (
+                                <div key={card.label} className="rounded-[18px] border border-slate-200 bg-[#eef2ef] px-3 py-3 text-center shadow-sm">
+                                    <p className="text-[13px] font-extrabold uppercase tracking-[0.06em] text-[#0b5d4f]">{card.label}</p>
+                                    <p className="mt-2 text-[12px] font-semibold text-slate-700">{card.hours}</p>
+                                    <p className="mt-1 text-[12px] font-medium text-slate-600">{card.headway}</p>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="mt-4">
+                        <p className="text-[20px] font-extrabold uppercase tracking-[0.03em] text-[#0b5d4f]">Fares</p>
+                        <p className="mt-1 text-[11px] text-slate-500">Exact fare required. Operators do not carry change.</p>
+                        <div className="mt-2 overflow-hidden rounded-[18px] border border-slate-200">
+                            <table className="w-full border-collapse text-[10px]">
+                                <thead>
+                                    <tr className="bg-[#0b5d4f] text-white">
+                                        {PUBLIC_TIMETABLE_FARE_HEADERS.map((header, index) => (
+                                            <th
+                                                key={header || `fare-head-${index}`}
+                                                className={`px-2 py-2 text-[10px] font-bold uppercase tracking-[0.08em] ${
+                                                    index === 0 ? 'text-left' : 'text-center'
+                                                }`}
                                             >
-                                                {formatCompactTime(southTrip?.stops[stop.origStop])}
-                                            </td>
+                                                {header || 'Category'}
+                                            </th>
                                         ))}
                                     </tr>
-                                );
-                            })}
-                        </tbody>
-                    </table>
+                                </thead>
+                                <tbody>
+                                    {brochureConfig.fareRows.map((row, rowIndex) => (
+                                        <tr key={row.label} className={rowIndex % 2 === 0 ? 'bg-white' : 'bg-[#f8f7f3]'}>
+                                            {[row.label, row.adult, row.student, row.children, row.senior, row.family].map((cell, cellIndex) => (
+                                                <td
+                                                    key={`${row.label}-${cellIndex}`}
+                                                    className={`border-t border-slate-200 px-2 py-1.5 ${
+                                                        cellIndex === 0 ? 'font-semibold text-slate-700' : 'text-center text-slate-600'
+                                                    }`}
+                                                >
+                                                    {cell}
+                                                </td>
+                                            ))}
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                        <p className="mt-2 text-[11px] text-slate-500">{brochureConfig.fareNote}</p>
+                    </div>
+
+                    <div className="mt-5 rounded-[20px] bg-[#0b5d4f] px-5 py-4 text-white">
+                        <div className="flex items-center justify-between gap-4">
+                            <div>
+                                <div className="text-[14px] font-black uppercase tracking-[0.14em]">Barrie Transit</div>
+                                <div className="mt-1 text-[12px] text-white/80">{brochureTitle}</div>
+                            </div>
+                            <div className="flex flex-wrap justify-end gap-x-4 gap-y-2 text-[11px]">
+                                {footerContacts.map((contact) => (
+                                    <div key={contact} className="flex items-center gap-1.5">
+                                        {getContactIcon(contact)}
+                                        <span>{contact}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="ml-5 flex-1 min-w-0">
+                    {renderDayTimetable(brochureDays.sunday, 'sunday')}
                 </div>
             </div>
         );
@@ -1167,185 +1496,46 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
                     ) : (
                         <div className="space-y-6" style={{ fontFamily: 'Arial, sans-serif' }}>
                             {(() => {
-                                const routeColor = getRouteColor(selectedRoute);
                                 const pageStyle = {
-                                    width: '1000px',
-                                    height: '773px',
+                                    width: '1180px',
+                                    height: '770px',
                                     maxWidth: '100%',
                                 };
 
                                 return (
                                     <>
-                                        <div
-                                            ref={brochurePage1Ref}
-                                            className="bg-white border border-gray-300 shadow-lg overflow-hidden mx-auto"
-                                            style={pageStyle}
-                                        >
-                                            <div data-export-ignore="true" className="text-center text-[10px] text-gray-500 py-1 bg-gray-100 border-b">
-                                                Page 1 - Front (Letter Landscape 11" × 8.5")
+                                        <div className="mx-auto" style={pageStyle}>
+                                            <div data-export-ignore="true" className="mb-3">
+                                                <span className="inline-flex rounded-xl border border-slate-300 bg-white px-4 py-1.5 text-[14px] font-semibold text-slate-600 shadow-sm">
+                                                    Side A
+                                                </span>
                                             </div>
-                                            <div className="flex h-[calc(100%-25px)]">
-                                                <div className="flex-1 min-w-0 flex flex-col">
-                                                    {renderDayTimetable(brochureDays.sunday, 'sunday')}
-                                                    <div className="px-2 py-1 text-[7px] text-gray-700 border-t border-gray-300">
-                                                        <p className="font-semibold break-words">{brochureConfig.disclaimer}</p>
-                                                    </div>
-                                                    <div className="px-2 py-1.5 border-t border-gray-300 bg-white">
-                                                        <p className="text-[8px] font-bold text-gray-800 mb-1">
-                                                            Transit Fares - Effective {brochureConfig.fareEffectiveDate}
-                                                        </p>
-                                                        <table className="w-full text-[6px] border-collapse">
-                                                            <thead>
-                                                                <tr className="bg-[#2d6b6b] text-white">
-                                                                    {PUBLIC_TIMETABLE_FARE_HEADERS.map((header, index) => (
-                                                                        <th key={header || `fare-head-${index}`} className={`px-1 py-0.5 ${index === 0 ? 'text-left' : 'text-center'} font-medium ${index < PUBLIC_TIMETABLE_FARE_HEADERS.length - 1 ? 'border-r border-[#4d8b8b]' : ''}`}>
-                                                                            {header}
-                                                                        </th>
-                                                                    ))}
-                                                                </tr>
-                                                            </thead>
-                                                            <tbody>
-                                                                {brochureConfig.fareRows.map((row, rowIndex) => (
-                                                                    <tr key={row.label} className={rowIndex % 2 === 0 ? 'bg-gray-50' : 'bg-white'}>
-                                                                        {[row.label, row.adult, row.student, row.children, row.senior, row.family].map((cell, cellIndex) => (
-                                                                            <td key={`${row.label}-${cellIndex}`} className={`px-1 py-0.5 ${cellIndex === 0 ? 'font-medium text-left' : 'text-center'} ${cellIndex < PUBLIC_TIMETABLE_FARE_HEADERS.length - 1 ? 'border-r border-gray-200' : ''}`}>
-                                                                                <span className="break-words">{cell}</span>
-                                                                            </td>
-                                                                        ))}
-                                                                    </tr>
-                                                                ))}
-                                                            </tbody>
-                                                        </table>
-                                                        <p className="text-[5px] text-gray-600 mt-0.5 break-words">{brochureConfig.fareNote}</p>
-                                                    </div>
-                                                </div>
-
-                                                <div className="flex-1 border-l-2 flex flex-col bg-white" style={{ borderColor: routeColor }}>
-                                                    <div className="border-b border-slate-200 bg-white">
-                                                        <div className="flex items-start gap-3 px-4 py-2.5">
-                                                            <div
-                                                                className="mt-0.5 h-10 w-1 shrink-0 rounded-full"
-                                                                style={{ backgroundColor: routeColor }}
-                                                            />
-                                                            <div className="min-w-0 flex-1">
-                                                                <div className="flex items-center justify-between gap-3">
-                                                                    <div className="min-w-0">
-                                                                        <div className="flex items-center gap-2 flex-wrap">
-                                                                            <span
-                                                                                className="inline-flex items-center justify-center rounded-md px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] shadow-sm"
-                                                                                style={{ backgroundColor: routeColor, color: routeBadgeTextColor }}
-                                                                            >
-                                                                                Route {selectedRoute}
-                                                                            </span>
-                                                                            <span className="text-[9px] font-semibold uppercase tracking-[0.16em] text-slate-500">
-                                                                                Barrie Transit
-                                                                            </span>
-                                                                        </div>
-                                                                        <p className="mt-1.5 text-[17px] font-semibold tracking-tight text-slate-900">
-                                                                            {brochureTitle}
-                                                                        </p>
-                                                                        <p className="mt-0.5 text-[11px] font-medium text-slate-600">
-                                                                            {brochurePublicSummary}
-                                                                        </p>
-                                                                    </div>
-
-                                                                    {brochureEffectiveDate ? (
-                                                                        <div className="shrink-0 rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-right">
-                                                                            <p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-slate-400">
-                                                                                Effective
-                                                                            </p>
-                                                                            <p className="mt-0.5 text-[10px] font-semibold text-slate-700">
-                                                                                {brochureEffectiveDate}
-                                                                            </p>
-                                                                        </div>
-                                                                    ) : null}
-                                                                </div>
-                                                            </div>
-                                                        </div>
-                                                    </div>
-
-                                                    <div className="flex-1 min-h-0 bg-slate-50 px-2.5 py-2.5 overflow-hidden">
-                                                        <div className="h-full rounded-lg border border-slate-200 bg-white p-2 shadow-sm">
-                                                            <div className="mb-1.5 flex items-center gap-1.5 text-slate-500">
-                                                                <Image className="h-3 w-3" />
-                                                                <p className="text-[9px] font-semibold uppercase tracking-[0.12em]">
-                                                                    Route map
-                                                                </p>
-                                                            </div>
-                                                            <div className="flex h-[calc(100%-18px)] items-center justify-center overflow-hidden rounded-md bg-slate-50">
-                                                                {mapImageUrl ? (
-                                                                    <img
-                                                                        src={mapImageUrl}
-                                                                        alt={`Route ${selectedRoute} map`}
-                                                                        className="block max-w-full max-h-full object-contain"
-                                                                    />
-                                                                ) : (
-                                                                    <div className="h-full min-h-[230px] w-full border-2 border-dashed border-gray-300 flex flex-col items-center justify-center px-6 text-center text-gray-400 text-sm">
-                                                                        <p className="font-medium text-gray-500">Route map not available yet</p>
-                                                                        <p className="mt-1 text-xs text-gray-400">Use the timetable panel to check stop times and service days.</p>
-                                                                    </div>
-                                                                )}
-                                                            </div>
-                                                        </div>
-                                                    </div>
-
-                                                    <div className="border-t border-slate-200 bg-white px-3 py-2">
-                                                        <div className="flex items-center justify-between gap-3">
-                                                            <div className="min-w-0 flex flex-wrap gap-1.5 text-[9px] text-slate-600">
-                                                                {[brochureServiceSummary, ...brochureAvailableDays].filter(Boolean).map((item) => (
-                                                                    <span
-                                                                        key={item}
-                                                                        className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 font-medium"
-                                                                    >
-                                                                        {item}
-                                                                    </span>
-                                                                ))}
-                                                            </div>
-                                                            <div className="shrink-0 text-[9px] font-medium text-slate-500">
-                                                                Major stops shown on map
-                                                            </div>
-                                                        </div>
-
-                                                        <div className="mt-1.5 flex items-center justify-between gap-3 border-t border-slate-100 pt-1.5">
-                                                            <div className="flex flex-wrap gap-x-3 gap-y-1 text-[9px] text-slate-600">
-                                                                {brochureConfig.legendItems.slice(0, 3).map((item, index) => (
-                                                                    <div key={item} className="flex items-center gap-1.5">
-                                                                        <div className={`h-3 w-3 rounded-sm flex items-center justify-center text-[7px] font-bold ${
-                                                                            index === 0 ? 'bg-[#2d6b6b] text-white rounded-full' :
-                                                                                index === 1 ? 'border border-[#2d6b6b] bg-white text-[#2d6b6b] rounded-full' :
-                                                                                    'bg-[#2d6b6b] text-white'
-                                                                        }`}>
-                                                                            {index < 2 ? '•' : '#'}
-                                                                        </div>
-                                                                        <span>{item}</span>
-                                                                    </div>
-                                                                ))}
-                                                            </div>
-                                                            <div className="max-w-[38%] text-right text-[9px] text-slate-600 break-words">
-                                                                {brochureConfig.contacts[0] || brochureConfig.contacts[1] || 'barrietransit.ca'}
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                </div>
+                                            <div
+                                                ref={brochurePage1Ref}
+                                                className="h-[calc(100%-44px)] overflow-hidden rounded-[30px] border border-[#d6d6d2] bg-[#ece8e1] p-7 shadow-[0_20px_55px_rgba(15,23,42,0.18)]"
+                                            >
+                                                {renderFrontCover()}
                                             </div>
                                         </div>
 
-                                        <div
-                                            ref={brochurePage2Ref}
-                                            className="bg-white border border-gray-300 shadow-lg overflow-hidden mx-auto"
-                                            style={pageStyle}
-                                        >
-                                            <div data-export-ignore="true" className="text-center text-[10px] text-gray-500 py-1 bg-gray-100 border-b">
-                                                Page 2 - Back (Letter Landscape 11" × 8.5")
+                                        <div className="mx-auto" style={pageStyle}>
+                                            <div data-export-ignore="true" className="mb-3">
+                                                <span className="inline-flex rounded-xl border border-slate-300 bg-white px-4 py-1.5 text-[14px] font-semibold text-slate-600 shadow-sm">
+                                                    Side B
+                                                </span>
                                             </div>
-                                            <div className="flex pb-3 h-[calc(100%-25px)]">
-                                                {renderDayTimetable(brochureDays.weekday, 'weekday')}
-                                                <div className="w-[2px] bg-[#0D6B4B]" />
-                                                {renderDayTimetable(brochureDays.saturday, 'saturday')}
-                                            </div>
-
-                                            <div className="px-2 py-2 text-[6px] text-gray-600 border-t border-gray-300 bg-gray-50">
-                                                <p className="font-semibold break-words">{brochureConfig.disclaimer}</p>
+                                            <div
+                                                ref={brochurePage2Ref}
+                                                className="h-[calc(100%-44px)] overflow-hidden rounded-[30px] border border-[#d6d6d2] bg-[#ece8e1] p-7 shadow-[0_20px_55px_rgba(15,23,42,0.18)]"
+                                            >
+                                                <div className="flex h-full gap-5">
+                                                    <div className="flex-1 min-w-0">
+                                                        {renderDayTimetable(brochureDays.weekday, 'weekday')}
+                                                    </div>
+                                                    <div className="flex-1 min-w-0">
+                                                        {renderDayTimetable(brochureDays.saturday, 'saturday')}
+                                                    </div>
+                                                </div>
                                             </div>
                                         </div>
                                     </>

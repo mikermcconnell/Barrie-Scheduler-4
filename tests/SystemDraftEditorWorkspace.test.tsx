@@ -13,6 +13,11 @@ const { toast, saveSystemDraftMock, publishSystemDraftMock } = vi.hoisted(() => 
   publishSystemDraftMock: vi.fn(),
 }));
 
+const teamContextState = vi.hoisted(() => ({
+  team: { id: 'team-1' },
+  canManageTeam: true,
+}));
+
 const initialSystemDraft = {
   id: 'system-draft-1',
   name: 'Weekday System QA',
@@ -68,9 +73,8 @@ vi.mock('../components/contexts/AuthContext', () => ({
 
 vi.mock('../components/contexts/TeamContext', () => ({
   useTeam: () => ({
-    team: {
-      id: 'team-1',
-    },
+    team: teamContextState.team,
+    canManageTeam: teamContextState.canManageTeam,
   }),
 }));
 
@@ -124,6 +128,8 @@ describe('SystemDraftEditorWorkspace', () => {
     toast.success.mockReset();
     toast.error.mockReset();
     toast.warning.mockReset();
+    teamContextState.team = { id: 'team-1' };
+    teamContextState.canManageTeam = true;
   });
 
   afterEach(() => {
@@ -281,5 +287,18 @@ describe('SystemDraftEditorWorkspace', () => {
         dayType: 'Weekday',
       })
     );
+  });
+
+  it('blocks publish for team members without manage permissions', async () => {
+    teamContextState.canManageTeam = false;
+    saveSystemDraftMock.mockResolvedValue('system-draft-1');
+    renderWorkspace();
+
+    const publishButton = container?.querySelector('[data-testid="publish"]');
+    publishButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await flushPromises();
+
+    expect(publishSystemDraftMock).not.toHaveBeenCalled();
+    expect(toast.warning).toHaveBeenCalled();
   });
 });

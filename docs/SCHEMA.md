@@ -30,6 +30,8 @@ firebase/
 │   │   └── imports/{importId}            # OD import history
 │   └── fleetPlan/default                 # Shared fleet-planning workbook metadata + active storage pointer
 │
+├── teamInvites/{inviteCode}              # Invite lookup -> teamId + teamName
+│
 └── migrations/                           # Data migration tracking
 ```
 
@@ -244,7 +246,7 @@ interface FleetPlanDocumentMetadata {
 }
 ```
 
-The full editable workbook content is stored in Cloud Storage as normalized JSON rather than raw Excel bytes. The current implementation uses a single active team-shared plan at `teams/{teamId}/fleetPlan/default`. Team members can read the shared Fleet Plan, but only team owners/admins should import or update it.
+The full editable workbook content is stored in Cloud Storage as normalized JSON rather than raw Excel bytes. The current implementation uses a single active team-shared plan at `teams/{teamId}/fleetPlan/default`. Team members can read and update the shared Fleet Plan.
 
 ---
 

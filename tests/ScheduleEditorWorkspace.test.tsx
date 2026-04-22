@@ -13,6 +13,11 @@ const { toast, saveDraftMock, publishDraftMock } = vi.hoisted(() => ({
   publishDraftMock: vi.fn(),
 }));
 
+const teamContextState = vi.hoisted(() => ({
+  team: { id: 'team-1' },
+  canManageTeam: true,
+}));
+
 const initialContent = {
   northTable: {
     routeName: '10 (Weekday) (North)',
@@ -60,9 +65,8 @@ vi.mock('../components/contexts/AuthContext', () => ({
 
 vi.mock('../components/contexts/TeamContext', () => ({
   useTeam: () => ({
-    team: {
-      id: 'team-1',
-    },
+    team: teamContextState.team,
+    canManageTeam: teamContextState.canManageTeam,
   }),
 }));
 
@@ -107,6 +111,8 @@ describe('ScheduleEditorWorkspace', () => {
     toast.success.mockReset();
     toast.error.mockReset();
     toast.warning.mockReset();
+    teamContextState.team = { id: 'team-1' };
+    teamContextState.canManageTeam = true;
   });
 
   afterEach(() => {
@@ -212,5 +218,18 @@ describe('ScheduleEditorWorkspace', () => {
 
     expect(publishDraftMock).not.toHaveBeenCalled();
     expect(toast.error).toHaveBeenCalledWith('Publish Failed', 'Save the draft successfully before publishing.');
+  });
+
+  it('blocks publish for team members without manage permissions', async () => {
+    teamContextState.canManageTeam = false;
+    saveDraftMock.mockResolvedValue('draft-1');
+    renderWorkspace();
+
+    const publishButton = container?.querySelector('[data-testid="publish"]');
+    publishButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await flushPromises();
+
+    expect(publishDraftMock).not.toHaveBeenCalled();
+    expect(toast.warning).toHaveBeenCalled();
   });
 });

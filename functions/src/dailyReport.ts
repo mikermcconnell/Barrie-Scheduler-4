@@ -4,9 +4,11 @@ import { onRequest } from 'firebase-functions/v2/https';
 import { defineSecret } from 'firebase-functions/params';
 import { buildReportHtml } from './reportHtml';
 import { PerformanceDataSummary } from './types';
+import { hasValidApiKey } from './requestAuth';
 
 const REPORT_RECIPIENTS = defineSecret('REPORT_RECIPIENTS');
 const REPORT_ALERT_RECIPIENTS = defineSecret('REPORT_ALERT_RECIPIENTS');
+const REPORT_TEST_API_KEY = defineSecret('REPORT_TEST_API_KEY');
 const DEFAULT_TEAM_ID = 'PHICwXGlvDen0RGt7fCG';
 const TEAM_NAME = 'Barrie Transit';
 const REPORT_TIME_ZONE = 'America/Toronto';
@@ -243,8 +245,18 @@ export const sendDailyReport = onSchedule(
 
 /** Temporary test endpoint — send report to a specific email */
 export const testDailyReport = onRequest(
-  { memory: '1GiB', timeoutSeconds: 120, region: 'us-central1' },
+  {
+    memory: '1GiB',
+    timeoutSeconds: 120,
+    region: 'us-central1',
+    secrets: [REPORT_TEST_API_KEY],
+  },
   async (req, res) => {
+    if (!hasValidApiKey(req, REPORT_TEST_API_KEY.value())) {
+      res.status(401).json({ error: 'Invalid or missing API key' });
+      return;
+    }
+
     const to = (req.query.to as string) || '';
     if (!to || !to.includes('@')) {
       res.status(400).json({ error: 'Pass ?to=email@example.com' });
@@ -282,8 +294,18 @@ export const testDailyReport = onRequest(
 
 /** Temporary test endpoint — send the stale-data alert to a specific email */
 export const testStaleReportAlert = onRequest(
-  { memory: '1GiB', timeoutSeconds: 120, region: 'us-central1' },
+  {
+    memory: '1GiB',
+    timeoutSeconds: 120,
+    region: 'us-central1',
+    secrets: [REPORT_TEST_API_KEY],
+  },
   async (req, res) => {
+    if (!hasValidApiKey(req, REPORT_TEST_API_KEY.value())) {
+      res.status(401).json({ error: 'Invalid or missing API key' });
+      return;
+    }
+
     const to = (req.query.to as string) || '';
     if (!to || !to.includes('@')) {
       res.status(400).json({ error: 'Pass ?to=email@example.com' });
