@@ -1,6 +1,7 @@
 import React, { useCallback, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { ArrowLeft, CheckCircle2, Loader2, Upload } from 'lucide-react';
+import { useTeam } from '../contexts/TeamContext';
 import { parseFleetPlanWorkbook } from '../../utils/fleet-plan/fleetPlanParser';
 import { saveFleetPlanWorkbook } from '../../utils/fleet-plan/fleetPlanService';
 import type { FleetPlanWorkbook } from '../../utils/fleet-plan/types';
@@ -23,6 +24,7 @@ export const FleetPlanImport: React.FC<FleetPlanImportProps> = ({
     onImportComplete,
     onCancel,
 }) => {
+    const { canManageTeam } = useTeam();
     const [errorMessage, setErrorMessage] = useState('');
     const [saving, setSaving] = useState(false);
     const [parsedWorkbook, setParsedWorkbook] = useState<FleetPlanWorkbook | null>(null);
@@ -66,10 +68,15 @@ export const FleetPlanImport: React.FC<FleetPlanImportProps> = ({
             'application/vnd.ms-excel': ['.xls'],
         },
         multiple: false,
+        disabled: !canManageTeam || saving,
     });
 
     const handleImport = async () => {
         if (!parsedWorkbook) return;
+        if (!canManageTeam) {
+            setErrorMessage('Only team owners and admins can import or replace the shared Fleet Plan.');
+            return;
+        }
         setSaving(true);
         try {
             await saveFleetPlanWorkbook(teamId, parsedWorkbook);
@@ -99,10 +106,20 @@ export const FleetPlanImport: React.FC<FleetPlanImportProps> = ({
                     Upload the supported Fleet Plan workbook to create the shared team dataset. The app will digitize all 3 sheets and preserve the workbook format on export.
                 </p>
 
+                {!canManageTeam ? (
+                    <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                        You can view shared Fleet Plan data as a team member, but only team owners and admins can import or replace the workbook.
+                    </div>
+                ) : null}
+
                 <div
                     {...getRootProps()}
                     className={`rounded-xl border-2 border-dashed p-10 text-center transition-colors cursor-pointer ${
-                        isDragActive ? 'border-brand-blue bg-blue-50' : 'border-gray-300 hover:border-gray-400 bg-gray-50'
+                        !canManageTeam
+                            ? 'border-gray-200 bg-gray-100 cursor-not-allowed opacity-70'
+                            : isDragActive
+                                ? 'border-brand-blue bg-blue-50'
+                                : 'border-gray-300 hover:border-gray-400 bg-gray-50'
                     }`}
                 >
                     <input {...getInputProps()} />
@@ -155,7 +172,7 @@ export const FleetPlanImport: React.FC<FleetPlanImportProps> = ({
                     </button>
                     <button
                         onClick={() => void handleImport()}
-                        disabled={!parsedWorkbook || saving}
+                        disabled={!parsedWorkbook || saving || !canManageTeam}
                         className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-brand-blue text-white text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed hover:bg-blue-600 transition-colors"
                     >
                         {saving ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}

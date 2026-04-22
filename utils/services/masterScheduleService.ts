@@ -57,8 +57,8 @@ function optionalTimestampToDate(timestamp?: Timestamp | Date): Date | undefined
     return timestampToDate(timestamp);
 }
 
-function decodeStorageBytes(bytes: Uint8Array): string {
-    return new TextDecoder().decode(bytes);
+function decodeStorageBytes(bytes: ArrayBuffer | Uint8Array): string {
+    return new TextDecoder().decode(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes));
 }
 
 async function readStorageJson(storagePath: string): Promise<string> {

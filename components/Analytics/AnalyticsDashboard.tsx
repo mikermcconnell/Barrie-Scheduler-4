@@ -9,9 +9,10 @@ import React, { Suspense, useState, useEffect } from 'react';
 import { Map, ArrowRight, Loader2, Smartphone, Network, GraduationCap, Route, GitBranch, Bus } from 'lucide-react';
 import { useTeam } from '../contexts/TeamContext';
 import { useAuth } from '../contexts/AuthContext';
+import { useToast } from '../contexts/ToastContext';
 import { getTransitAppData, getTransitAppMetadata } from '../../utils/transit-app/transitAppService';
 import { getODMatrixData, getODMatrixMetadata, loadGeocodeCache, setActiveODMatrixImport } from '../../utils/od-matrix/odMatrixService';
-import { getFleetPlanMetadata, getFleetPlanWorkbook } from '../../utils/fleet-plan/fleetPlanService';
+import { getFleetPlanMetadata, getFleetPlanWorkbook, isFleetPlanPermissionError } from '../../utils/fleet-plan/fleetPlanService';
 import { TeamManagement } from '../TeamManagement';
 import { usePerformanceMetadataQuery } from '../../hooks/usePerformanceData';
 import { isFeatureEnabled, isFeatureUnderConstruction } from '../../utils/features';
@@ -209,6 +210,7 @@ const AnalyticsPanelLoading: React.FC<{ label?: string }> = ({ label = 'Loading 
 export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose }) => {
     const { team } = useTeam();
     const { user } = useAuth();
+    const toast = useToast();
     const [view, setView] = useState<AnalyticsView>('dashboard');
     const [transitData, setTransitData] = useState<TransitAppDataSummary | null>(null);
     const [odData, setOdData] = useState<ODMatrixDataSummary | null>(null);
@@ -371,7 +373,11 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
             }
         } catch (error) {
             console.error('Error loading Fleet Plan data:', error);
-            if (opts.fallbackToImport) {
+            toast?.error(
+                'Fleet Plan unavailable',
+                error instanceof Error ? error.message : 'Failed to load Fleet Plan.',
+            );
+            if (opts.fallbackToImport && !isFleetPlanPermissionError(error)) {
                 setHasFleetPlanData(false);
                 setView('fleet-plan-import');
             }

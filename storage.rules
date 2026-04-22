@@ -57,7 +57,8 @@ service firebase.storage {
 
     // Team Fleet Plan data
     match /teams/{teamId}/fleetPlan/{allPaths=**} {
-      allow read, write: if isTeamMember(teamId);
+      allow read: if isTeamMember(teamId);
+      allow write: if isTeamManager(teamId);
     }
   }
 }

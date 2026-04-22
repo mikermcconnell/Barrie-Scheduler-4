@@ -15,6 +15,7 @@ import {
     Users,
 } from 'lucide-react';
 import { useToast } from '../contexts/ToastContext';
+import { useTeam } from '../contexts/TeamContext';
 import { useUndoRedo } from '../../hooks/useUndoRedo';
 import { exportFleetPlanWorkbook } from '../../utils/fleet-plan/fleetPlanExport';
 import { cloneFleetPlanWorkbook, createEmptyFleetPlanRow, replaceFleetPlanSheet, summarizeFleetPlan } from '../../utils/fleet-plan/fleetPlanModel';
@@ -88,6 +89,8 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
     onSaved,
 }) => {
     const toast = useToast();
+    const { canManageTeam } = useTeam();
+    const isReadOnly = !canManageTeam;
     const [activeSheetKey, setActiveSheetKey] = useState<FleetPlanSheetKey>('diesel-12m');
     const [saving, setSaving] = useState(false);
     const [exporting, setExporting] = useState(false);
@@ -189,19 +192,20 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
     }, []);
 
     const handleAddRow = useCallback((focusColumnIndex = 0) => {
+        if (isReadOnly) return;
         if (!activeSheet) return;
         const nextRowIndex = activeSheet.rows.length;
         mutateSheet(activeSheet.key, (rows) => [...rows, createEmptyFleetPlanRow(activeSheet.key)]);
         setPendingFocus({ rowIndex: nextRowIndex, columnIndex: focusColumnIndex });
-    }, [activeSheet, mutateSheet]);
+    }, [activeSheet, isReadOnly, mutateSheet]);
 
     const handleRemoveRow = (rowId: string) => {
-        if (!activeSheet) return;
+        if (isReadOnly || !activeSheet) return;
         mutateSheet(activeSheet.key, (rows) => rows.filter((row) => row.id !== rowId));
     };
 
     const handleDuplicateRow = (rowId: string) => {
-        if (!activeSheet) return;
+        if (isReadOnly || !activeSheet) return;
         const rowIndex = activeSheet.rows.findIndex((row) => row.id === rowId);
         mutateSheet(activeSheet.key, (rows) => insertDuplicatedFleetPlanRow(rows, rowId));
         if (rowIndex >= 0) {
@@ -215,12 +219,12 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
         field: keyof Pick<FleetPlanRow, 'unitNumber' | 'busSize' | 'makeModel' | 'year' | 'comment' | 'electricFlag' | 'onOrder'>,
         value: string,
     ) => {
-        if (!activeSheet) return;
+        if (isReadOnly || !activeSheet) return;
         mutateSheet(activeSheet.key, (rows) => updateRow(rows, rowId, (row) => ({ ...row, [field]: value })));
     };
 
     const handleTimelineChange = (rowId: string, key: string, value: string) => {
-        if (!activeSheet) return;
+        if (isReadOnly || !activeSheet) return;
         mutateSheet(activeSheet.key, (rows) => updateRow(rows, rowId, (row) => ({
             ...row,
             timeline: {
@@ -266,7 +270,7 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
         rowIndex: number,
         columnIndex: number,
     ) => {
-        if (!activeSheet || columnIndex < 0 || editableColumns.length === 0) return;
+        if (isReadOnly || !activeSheet || columnIndex < 0 || editableColumns.length === 0) return;
 
         const clipboardText = event.clipboardData.getData('text/plain');
         if (!clipboardText.includes('\t') && !clipboardText.includes('\n') && !clipboardText.includes('\r')) {
@@ -286,6 +290,10 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
     };
 
     const handleSave = async () => {
+        if (isReadOnly) {
+            toast?.warning('Permission Required', 'Only team owners and admins can update the shared Fleet Plan.');
+            return;
+        }
         setSaving(true);
         try {
             const nextWorkbook: FleetPlanWorkbook = {
@@ -368,7 +376,8 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                             </button>
                             <button
                                 onClick={onReimport}
-                                className="inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50"
+                                disabled={isReadOnly}
+                                className="inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
                             >
                                 <RefreshCw size={16} />
                                 Replace workbook
@@ -383,7 +392,7 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                             </button>
                             <button
                                 onClick={() => void handleSave()}
-                                disabled={saving || !isDirty}
+                                disabled={saving || !isDirty || isReadOnly}
                                 className="inline-flex items-center gap-2 rounded-xl bg-brand-blue px-4 py-2 text-sm font-semibold text-white hover:bg-blue-600 disabled:opacity-50"
                             >
                                 {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
@@ -391,6 +400,12 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                             </button>
                         </div>
                     </div>
+
+                    {isReadOnly ? (
+                        <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                            Read-only access. Team members can view and export the shared Fleet Plan, but only team owners and admins can change it.
+                        </div>
+                    ) : null}
 
                     <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-3">
                         <MetricCard
@@ -482,7 +497,8 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                                         <div className="flex items-center justify-end gap-1 rounded-2xl border border-gray-200 bg-gray-50 p-1">
                                             <button
                                                 onClick={() => handleAddRow()}
-                                                className="inline-flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:text-brand-blue"
+                                                disabled={isReadOnly}
+                                                className="inline-flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:text-brand-blue disabled:cursor-not-allowed disabled:opacity-40"
                                             >
                                                 <Plus size={16} />
                                                 Add row
@@ -534,6 +550,7 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                                                                         }
                                                                     }}
                                                                     value={getBaseFieldValue(row, column.key)}
+                                                                    readOnly={isReadOnly}
                                                                     onChange={(event) => handleFieldChange(row.id, column.key, event.target.value)}
                                                                     onKeyDown={(event) => {
                                                                         if (event.key === 'Tab') {
@@ -543,7 +560,11 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                                                                         }
                                                                     }}
                                                                     onPaste={(event) => handleCellPaste(event, rowIndex, columnIndex)}
-                                                                    className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-blue-100"
+                                                                    className={`w-full rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-800 ${
+                                                                        isReadOnly
+                                                                            ? 'bg-gray-50'
+                                                                            : 'bg-white focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-blue-100'
+                                                                    }`}
                                                                 />
                                                             </td>
                                                         );
@@ -564,6 +585,7 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                                                                         }
                                                                     }}
                                                                     value={row.timeline[column.key] || ''}
+                                                                    readOnly={isReadOnly}
                                                                     onChange={(event) => handleTimelineChange(row.id, column.key, event.target.value)}
                                                                     onKeyDown={(event) => {
                                                                         if (event.key === 'Tab') {
@@ -573,7 +595,11 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                                                                         }
                                                                     }}
                                                                     onPaste={(event) => handleCellPaste(event, rowIndex, columnIndex)}
-                                                                    className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-center text-sm text-gray-800 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-blue-100"
+                                                                    className={`w-full rounded-xl border border-gray-200 px-3 py-2 text-center text-sm text-gray-800 ${
+                                                                        isReadOnly
+                                                                            ? 'bg-gray-50'
+                                                                            : 'bg-white focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-blue-100'
+                                                                    }`}
                                                                 />
                                                             </td>
                                                         );
@@ -584,7 +610,8 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                                                             <button
                                                                 onClick={() => handleDuplicateRow(row.id)}
                                                                 aria-label={`Duplicate row ${rowIndex + 1}`}
-                                                                className="inline-flex items-center gap-1 rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-xs font-semibold text-violet-700 hover:bg-violet-100"
+                                                                disabled={isReadOnly}
+                                                                className="inline-flex items-center gap-1 rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-xs font-semibold text-violet-700 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-40"
                                                             >
                                                                 <Copy size={14} />
                                                                 Duplicate
@@ -592,7 +619,8 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                                                             <button
                                                                 onClick={() => handleRemoveRow(row.id)}
                                                                 aria-label={`Remove row ${rowIndex + 1}`}
-                                                                className="inline-flex items-center gap-1 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-100"
+                                                                disabled={isReadOnly}
+                                                                className="inline-flex items-center gap-1 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-40"
                                                             >
                                                                 <Trash2 size={14} />
                                                                 Remove
