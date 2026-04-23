@@ -3,7 +3,7 @@ import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { onRequest } from 'firebase-functions/v2/https';
 import { defineSecret } from 'firebase-functions/params';
 import { buildReportHtml } from './reportHtml';
-import { PerformanceDataSummary } from './types';
+import { DwellIncident, PerformanceDataSummary } from './types';
 import { hasValidApiKey } from './requestAuth';
 
 const REPORT_RECIPIENTS = defineSecret('REPORT_RECIPIENTS');
@@ -12,6 +12,24 @@ const REPORT_TEST_API_KEY = defineSecret('REPORT_TEST_API_KEY');
 const DEFAULT_TEAM_ID = 'PHICwXGlvDen0RGt7fCG';
 const TEAM_NAME = 'Barrie Transit';
 const REPORT_TIME_ZONE = 'America/Toronto';
+
+function isReportableDwellIncident(incident: DwellIncident): boolean {
+  return incident.severity === 'moderate' || incident.severity === 'high';
+}
+
+function parseServiceHour(time: string): number | null {
+  const match = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(time.trim());
+  if (!match) return null;
+
+  const hour = Number.parseInt(match[1] || '', 10);
+  const minute = Number.parseInt(match[2] || '', 10);
+  const second = match[3] ? Number.parseInt(match[3], 10) : 0;
+
+  if (!Number.isFinite(hour) || !Number.isFinite(minute) || !Number.isFinite(second)) return null;
+  if (hour < 0 || minute < 0 || minute > 59 || second < 0 || second > 59) return null;
+
+  return hour % 24;
+}
 
 function buildReportSubject(latestDay: PerformanceDataSummary['dailySummaries'][number]): string {
   return `${TEAM_NAME} Performance — ${latestDay.date} — OTP ${latestDay.system.otp.onTimePercent.toFixed(1)}%`;
@@ -132,6 +150,70 @@ async function queueMail(params: {
   });
 }
 
+function latestDayHasDwellSnapshotGap(summary: PerformanceDataSummary): boolean {
+  if (summary.dailySummaries.length === 0) return false;
+
+  const latestDay = [...summary.dailySummaries].sort((a, b) => b.date.localeCompare(a.date))[0];
+  const dwell = latestDay.byOperatorDwell;
+  if (!dwell) return false;
+
+  return dwell.totalTrackedDwellMinutes > 0 && (dwell.incidents?.length ?? 0) === 0;
+}
+
+async function loadSummaryJson(
+  bucket: { file(path: string): { download(): Promise<[Buffer]> } },
+  path: string,
+): Promise<PerformanceDataSummary> {
+  const [content] = await bucket.file(path).download();
+  return JSON.parse(content.toString('utf-8')) as PerformanceDataSummary;
+}
+
+async function loadSummaryForEmail(params: {
+  bucket: { file(path: string): { download(): Promise<[Buffer]> } };
+  meta: FirebaseFirestore.DocumentData;
+  forceFullSummary?: boolean;
+}): Promise<{ summary: PerformanceDataSummary; source: 'report' | 'full' }> {
+  const reportStoragePath = typeof params.meta.reportStoragePath === 'string'
+    ? params.meta.reportStoragePath
+    : undefined;
+  const fullStoragePath = typeof params.meta.storagePath === 'string'
+    ? params.meta.storagePath
+    : undefined;
+
+  if (params.forceFullSummary) {
+    if (!fullStoragePath && !reportStoragePath) {
+      throw new Error('No report data path');
+    }
+    const path = fullStoragePath || reportStoragePath!;
+    return {
+      summary: await loadSummaryJson(params.bucket, path),
+      source: 'full',
+    };
+  }
+
+  if (reportStoragePath) {
+    const reportSummary = await loadSummaryJson(params.bucket, reportStoragePath);
+    if (!latestDayHasDwellSnapshotGap(reportSummary) || !fullStoragePath || fullStoragePath === reportStoragePath) {
+      return { summary: reportSummary, source: 'report' };
+    }
+
+    console.warn('Report snapshot missing latest-day dwell incidents; falling back to full summary for email rendering');
+    return {
+      summary: await loadSummaryJson(params.bucket, fullStoragePath),
+      source: 'full',
+    };
+  }
+
+  if (!fullStoragePath) {
+    throw new Error('No report data path');
+  }
+
+  return {
+    summary: await loadSummaryJson(params.bucket, fullStoragePath),
+    source: 'full',
+  };
+}
+
 export const sendDailyReport = onSchedule(
   {
     schedule: 'every day 07:00',
@@ -154,15 +236,13 @@ export const sendDailyReport = onSchedule(
     }
 
     const meta = metadataSnap.data()!;
-    const storagePath = (meta.reportStoragePath as string | undefined)
-      || (meta.storagePath as string | undefined);
-    if (!storagePath) {
-      console.warn('No reportStoragePath or storagePath in metadata — skipping report');
+    let summary: PerformanceDataSummary;
+    try {
+      summary = (await loadSummaryForEmail({ bucket, meta })).summary;
+    } catch (error) {
+      console.warn(`No reportStoragePath or storagePath in metadata — skipping report: ${error instanceof Error ? error.message : String(error)}`);
       return;
     }
-
-    const [content] = await bucket.file(storagePath).download();
-    const summary: PerformanceDataSummary = JSON.parse(content.toString('utf-8'));
 
     if (summary.dailySummaries.length === 0) {
       console.warn('No daily summaries — skipping report');
@@ -262,6 +342,8 @@ export const testDailyReport = onRequest(
       res.status(400).json({ error: 'Pass ?to=email@example.com' });
       return;
     }
+    const useFullSummary = ((req.query.useFullSummary as string) || '') === '1';
+    const debug = ((req.query.debug as string) || '') === '1';
 
     const db = admin.firestore();
     const bucket = admin.storage().bucket();
@@ -272,23 +354,107 @@ export const testDailyReport = onRequest(
     if (!metadataSnap.exists) { res.status(404).json({ error: 'No data' }); return; }
 
     const meta = metadataSnap.data()!;
-    const storagePath = (meta.reportStoragePath as string | undefined)
-      || (meta.storagePath as string | undefined);
-    if (!storagePath) { res.status(404).json({ error: 'No report data path' }); return; }
-    const [content] = await bucket.file(storagePath).download();
-    const summary: PerformanceDataSummary = JSON.parse(content.toString('utf-8'));
+    let summaryResult: { summary: PerformanceDataSummary; source: 'report' | 'full' };
+    try {
+      summaryResult = await loadSummaryForEmail({ bucket, meta, forceFullSummary: useFullSummary });
+    } catch {
+      res.status(404).json({ error: 'No report data path' });
+      return;
+    }
+    const summary = summaryResult.summary;
 
     const sorted = [...summary.dailySummaries].sort((a, b) => b.date.localeCompare(a.date));
     const latestDay = sorted[0];
     const trendDays = sorted.slice(0, 56).reverse();
 
+    if (debug) {
+      const reportableIncidents = (latestDay.byOperatorDwell?.incidents ?? []).filter(isReportableDwellIncident);
+      const routeTotals = new Map<string, number>();
+      const hourTotals = new Map<number, number>();
+      let blankRouteCount = 0;
+      let invalidHourCount = 0;
+      const reportableTrackedDwellSeconds = reportableIncidents.reduce(
+        (sum, incident) => sum + incident.trackedDwellSeconds,
+        0,
+      );
+
+      for (const incident of reportableIncidents) {
+        const routeId = incident.routeId?.trim();
+        if (!routeId) {
+          blankRouteCount++;
+        } else {
+          routeTotals.set(routeId, (routeTotals.get(routeId) ?? 0) + incident.trackedDwellSeconds);
+        }
+
+        const hour = parseServiceHour(incident.observedDepartureTime);
+        if (hour === null) {
+          invalidHourCount++;
+        } else {
+          hourTotals.set(hour, (hourTotals.get(hour) ?? 0) + incident.trackedDwellSeconds);
+        }
+      }
+
+      res.json({
+        success: true,
+        debug: true,
+        useFullSummary,
+        summarySource: summaryResult.source,
+        latestDate: latestDay.date,
+        byRouteCount: latestDay.byRoute.length,
+        byHourCount: latestDay.byHour.length,
+        totalDwellMinutes: latestDay.byOperatorDwell?.totalTrackedDwellMinutes ?? null,
+        totalIncidentCount: latestDay.byOperatorDwell?.incidents?.length ?? 0,
+        reportableIncidentCount: reportableIncidents.length,
+        reportableTrackedDwellSeconds,
+        blankRouteCount,
+        invalidHourCount,
+        latestRoutesSample: latestDay.byRoute.slice(0, 15).map(route => ({
+          routeId: route.routeId,
+          routeName: route.routeName,
+        })),
+        routeTotalsHours: Array.from(routeTotals.entries())
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 20)
+          .map(([routeId, seconds]) => ({
+            routeId,
+            trackedDwellSeconds: seconds,
+            dwellHours: Math.round((seconds / 3600) * 10) / 10,
+          })),
+        hourTotalsHours: Array.from(hourTotals.entries())
+          .sort((a, b) => a[0] - b[0])
+          .map(([hour, seconds]) => ({
+            hour,
+            trackedDwellSeconds: seconds,
+            dwellHours: Math.round((seconds / 3600) * 10) / 10,
+          })),
+        incidentSample: reportableIncidents.slice(0, 10).map(incident => ({
+          routeId: incident.routeId,
+          routeName: incident.routeName,
+          observedDepartureTime: incident.observedDepartureTime,
+          trackedDwellSeconds: incident.trackedDwellSeconds,
+          severity: incident.severity,
+        })),
+      });
+      return;
+    }
+
     await queueMail({
       db,
       to: [to],
       subject: buildReportSubject(latestDay),
-      html: buildReportHtml({ latestDay, trendDays, teamName: TEAM_NAME }),
+      html: buildReportHtml({
+        latestDay,
+        trendDays,
+        teamName: TEAM_NAME,
+      }),
     });
-    res.json({ success: true, sentTo: to, subject: buildReportSubject(latestDay) });
+    res.json({
+      success: true,
+      sentTo: to,
+      subject: buildReportSubject(latestDay),
+      summarySource: summaryResult.source,
+      useFullSummary,
+    });
   }
 );
 

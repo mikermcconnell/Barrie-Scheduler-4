@@ -297,7 +297,7 @@ function buildReportDwellMetrics(
   if (!dwell) return undefined;
 
   return {
-    incidents: [],
+    incidents: isLatestDay ? dwell.incidents : [],
     byOperator: isLatestDay ? dwell.byOperator : [],
     totalIncidents: dwell.totalIncidents,
     totalTrackedDwellMinutes: dwell.totalTrackedDwellMinutes,

@@ -55,7 +55,7 @@ function buildReportDwellMetrics(day: DailySummary, isLatestDay: boolean): Daily
   if (!dwell) return undefined;
 
   return {
-    incidents: [],
+    incidents: isLatestDay ? dwell.incidents : [],
     byOperator: isLatestDay ? dwell.byOperator : [],
     totalIncidents: dwell.totalIncidents,
     totalTrackedDwellMinutes: dwell.totalTrackedDwellMinutes,

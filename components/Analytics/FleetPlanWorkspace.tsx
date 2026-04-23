@@ -495,6 +495,9 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                                     <table className="min-w-full border-separate border-spacing-0">
                                         <thead>
                                             <tr className="bg-gray-50">
+                                                <th className="sticky top-0 z-10 border-b border-r border-gray-200 bg-gray-50 px-3 py-3 text-left text-xs font-bold uppercase tracking-[0.16em] text-gray-500">
+                                                    Row
+                                                </th>
                                                 {activeConfig.baseColumns.map((column) => (
                                                     <th
                                                         key={column.key}
@@ -511,14 +514,31 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                                                         {column.label}
                                                     </th>
                                                 ))}
-                                                <th className="sticky top-0 z-10 border-b border-gray-200 bg-gray-50 px-3 py-3 text-right text-xs font-bold uppercase tracking-[0.16em] text-gray-500">
-                                                    Row
-                                                </th>
                                             </tr>
                                         </thead>
                                         <tbody>
                                             {activeSheet.rows.map((row, rowIndex) => (
                                                 <tr key={row.id} className={rowIndex % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'}>
+                                                    <td className="border-b border-r border-gray-200 px-2 py-2 align-top">
+                                                        <div className="flex flex-wrap gap-2">
+                                                            <button
+                                                                onClick={() => handleDuplicateRow(row.id)}
+                                                                aria-label={`Duplicate row ${rowIndex + 1}`}
+                                                                className="inline-flex items-center gap-1 rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-xs font-semibold text-violet-700 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-40"
+                                                            >
+                                                                <Copy size={14} />
+                                                                Duplicate
+                                                            </button>
+                                                            <button
+                                                                onClick={() => handleRemoveRow(row.id)}
+                                                                aria-label={`Remove row ${rowIndex + 1}`}
+                                                                className="inline-flex items-center gap-1 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-40"
+                                                            >
+                                                                <Trash2 size={14} />
+                                                                Remove
+                                                            </button>
+                                                        </div>
+                                                    </td>
                                                     {activeConfig.baseColumns.map((column) => {
                                                         const columnIndex = resolveGridColumnIndex({
                                                             kind: 'base',
@@ -578,27 +598,6 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                                                             </td>
                                                         );
                                                     })}
-
-                                                    <td className="border-b border-gray-200 px-2 py-2 text-right align-top">
-                                                        <div className="flex justify-end gap-2">
-                                                            <button
-                                                                onClick={() => handleDuplicateRow(row.id)}
-                                                                aria-label={`Duplicate row ${rowIndex + 1}`}
-                                                                className="inline-flex items-center gap-1 rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-xs font-semibold text-violet-700 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-40"
-                                                            >
-                                                                <Copy size={14} />
-                                                                Duplicate
-                                                            </button>
-                                                            <button
-                                                                onClick={() => handleRemoveRow(row.id)}
-                                                                aria-label={`Remove row ${rowIndex + 1}`}
-                                                                className="inline-flex items-center gap-1 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-40"
-                                                            >
-                                                                <Trash2 size={14} />
-                                                                Remove
-                                                            </button>
-                                                        </div>
-                                                    </td>
                                                 </tr>
                                             ))}
 

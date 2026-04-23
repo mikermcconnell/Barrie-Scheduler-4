@@ -2,18 +2,9 @@ rules_version = '2';
 
 service firebase.storage {
   match /b/{bucket}/o {
-    function isTeamLinkedUser(teamId) {
-      return request.auth != null &&
-        firestore.exists(/databases/(default)/documents/users/$(request.auth.uid)) &&
-        firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.teamId == teamId;
-    }
-
     function isTeamMember(teamId) {
       return request.auth != null &&
-        (
-          firestore.exists(/databases/(default)/documents/teams/$(teamId)/members/$(request.auth.uid)) ||
-          isTeamLinkedUser(teamId)
-        );
+        firestore.exists(/databases/(default)/documents/teams/$(teamId)/members/$(request.auth.uid));
     }
 
     function isTeamManager(teamId) {
@@ -31,7 +22,8 @@ service firebase.storage {
 
     // Team master schedules - restricted to members of the team
     match /teams/{teamId}/masterSchedules/{allPaths=**} {
-      allow read, write: if isTeamMember(teamId);
+      allow read: if isTeamMember(teamId);
+      allow write: if isTeamManager(teamId);
     }
 
     // Team route map images

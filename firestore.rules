@@ -17,10 +17,10 @@ service cloud.firestore {
 
     // ========== TEAMS ==========
 
-    // Anyone can read team documents (needed for invite code lookup)
-    // Only owner can update/delete team
+    // Team documents are only readable by team members.
+    // Team creation remains authenticated; updates/deletes stay owner-only.
     match /teams/{teamId} {
-      allow read: if true;
+      allow read: if isTeamMember(teamId);
       allow create: if request.auth != null;
       allow update, delete: if request.auth != null && isTeamOwner(teamId);
 
@@ -39,11 +39,13 @@ service cloud.firestore {
 
       // Master Schedules
       match /masterSchedules/{scheduleId} {
-        allow read, write: if isTeamMember(teamId);
+        allow read: if isTeamMember(teamId);
+        allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
 
         // Version History
         match /versions/{versionId} {
-          allow read, write: if isTeamMember(teamId);
+          allow read: if isTeamMember(teamId);
+          allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
         }
       }
 
@@ -100,17 +102,22 @@ service cloud.firestore {
       }
     }
 
+    // Invite lookup documents support the authenticated join flow.
+    match /teamInvites/{inviteCode} {
+      allow read: if request.auth != null;
+      allow create, update: if request.auth != null &&
+                              request.resource.data.teamId is string &&
+                              isTeamOwnerOrAdmin(request.resource.data.teamId);
+      allow delete: if request.auth != null &&
+                       resource.data.teamId is string &&
+                       isTeamOwnerOrAdmin(resource.data.teamId);
+    }
+
     // ========== HELPER FUNCTIONS ==========
 
     function isTeamMember(teamId) {
       return request.auth != null &&
-             (
-               exists(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid)) ||
-               (
-                 exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-                 get(/databases/$(database)/documents/users/$(request.auth.uid)).data.teamId == teamId
-               )
-             );
+             exists(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid));
     }
 
     function isTeamOwner(teamId) {

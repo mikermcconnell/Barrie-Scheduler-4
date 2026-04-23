@@ -190,6 +190,7 @@ describe('buildReportHtml dwell reporting', () => {
     });
 
     expect(html).toContain('Dwell (hrs)');
+    expect(html).toContain('>4.5 hrs<');
 
     const routeSection = between(html, 'Route Scorecard', 'Last 2 Days Trend');
     const route2Row = rowForText(routeSection, 'Route 2');
@@ -205,6 +206,43 @@ describe('buildReportHtml dwell reporting', () => {
     expect(sevenRow).toContain('>3.5<');
     expect(eightRow).toContain('>0.5<');
     expect(eightRow).not.toContain('>1.0<');
+    expect(routeSection).not.toContain('Total dwell (exact)');
+    expect(hourlySection).not.toContain('Total dwell (exact)');
+  });
+
+  it('does not render total dwell rows in route or hour tables', () => {
+    const latestDay = makeSummary({
+      date: '2026-04-20',
+      routes: [
+        makeRoute('2', 'Route 2'),
+        makeRoute('5', 'Route 5'),
+        makeRoute('7', 'Route 7'),
+      ],
+      hours: [
+        makeHour(7, 30),
+        makeHour(8, 30),
+        makeHour(9, 30),
+      ],
+      incidents: [
+        makeIncident({ date: '2026-04-20', routeId: '2', routeName: 'Route 2', observedDepartureTime: '07:05:00', trackedDwellSeconds: 864, severity: 'moderate' }),
+        makeIncident({ date: '2026-04-20', routeId: '5', routeName: 'Route 5', observedDepartureTime: '08:05:00', trackedDwellSeconds: 864, severity: 'moderate' }),
+        makeIncident({ date: '2026-04-20', routeId: '7', routeName: 'Route 7', observedDepartureTime: '09:05:00', trackedDwellSeconds: 864, severity: 'moderate' }),
+      ],
+    });
+
+    const html = buildReportHtml({
+      latestDay,
+      trendDays: [latestDay],
+      teamName: 'Barrie Transit',
+    });
+
+    const routeSection = between(html, 'Route Scorecard', 'Boardings by Hour');
+    const hourlySection = between(html, 'Boardings by Hour', 'Stop Highlights');
+
+    expect(routeSection).not.toContain('Total dwell (exact)');
+    expect(hourlySection).not.toContain('Total dwell (exact)');
+    expect(routeSection).toContain('rounded to 0.1 hours');
+    expect(hourlySection).toContain('rounded to 0.1 hours');
   });
 
   it('shows daily dwell hours and trailing 7-day average dwell in the trend table using hidden prior history', () => {
@@ -275,5 +313,32 @@ describe('buildReportHtml dwell reporting', () => {
     })).not.toThrow();
     expect(nineRow).toContain('>0.5<');
     expect(nineRow).not.toContain('>2.5<');
+  });
+
+  it('does not render header snapshot or beta labels', () => {
+    const latestDay = makeSummary({
+      date: '2026-04-20',
+      incidents: [
+        makeIncident({ date: '2026-04-20', routeId: '2', routeName: 'Route 2', observedDepartureTime: '07:15:00', trackedDwellSeconds: 1800, severity: 'moderate' }),
+        makeIncident({ date: '2026-04-20', routeId: '2', routeName: 'Route 2', observedDepartureTime: '07:45:00', trackedDwellSeconds: 3600, severity: 'high' }),
+        makeIncident({ date: '2026-04-20', routeId: '5', routeName: 'Route 5', observedDepartureTime: '08:05:00', trackedDwellSeconds: 1800, severity: 'moderate' }),
+      ],
+      routes: [
+        makeRoute('2', 'Route 2', { serviceHours: 5 }),
+        makeRoute('5', 'Route 5', { serviceHours: 5 }),
+      ],
+    });
+
+    const html = buildReportHtml({
+      latestDay,
+      trendDays: [latestDay],
+      teamName: 'Barrie Transit',
+    });
+
+    expect(html).not.toContain('Operator Dwell Snapshot');
+    expect(html).not.toContain('tracked hrs');
+    expect(html).not.toContain('operators flagged');
+    expect(html).not.toContain('BETA');
+    expect(html).not.toContain('under active testing');
   });
 });
