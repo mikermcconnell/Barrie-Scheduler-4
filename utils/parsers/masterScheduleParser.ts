@@ -142,9 +142,9 @@ const toMinutes = (timeStr: string | number): number | null => {
         return null;
     }
 
-    let [hStr, mStr] = str.split(':');
+    const [hStr, mStr] = str.split(':');
     let h = parseInt(hStr);
-    let m = parseInt(mStr?.replace(/\D+/g, '') || '0');
+    const m = parseInt(mStr?.replace(/\D+/g, '') || '0');
 
     if (str.includes('pm') && h !== 12) h += 12;
     if (str.includes('am') && h === 12) h = 0;
@@ -300,8 +300,8 @@ export const parseMasterSchedule = (fileData: ArrayBuffer, mode: 'auto' | 'fixed
         if (stopHeaderRowIdx === -1) return;
 
         const headerRow = data[stopHeaderRowIdx].map(String);
-        let northCols: { name: string, idx: number }[] = [];
-        let southCols: { name: string, idx: number }[] = [];
+        const northCols: { name: string, idx: number }[] = [];
+        const southCols: { name: string, idx: number }[] = [];
         let northRecoveryIdx = -1;
         let southRecoveryIdx = -1;
 

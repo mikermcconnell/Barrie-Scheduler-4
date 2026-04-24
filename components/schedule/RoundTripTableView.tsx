@@ -22,20 +22,19 @@ import {
     buildRoundTripView
 } from '../../utils/parsers/masterScheduleParser';
 import { TimeUtils } from '../../utils/timeUtils';
-import { getRouteVariant, getRouteConfig, getDirectionDisplay, extractDirectionFromName, parseRouteInfo, isBidirectional } from '../../utils/config/routeDirectionConfig';
+import { getRouteConfig, extractDirectionFromName, parseRouteInfo, isBidirectional } from '../../utils/config/routeDirectionConfig';
 import { normalizeStopName, matchesStop } from '../NewSchedule/utils/blockStartDirection';
 import {
     calculateHeadways,
-    getRatioColor,
-    getRecoveryStatus,
     calculatePeakVehicles,
     calculateServiceSpan,
     analyzeHeadways,
     calculateTripsPerHour,
-    getBandRowColor,
     parseTimeInput,
-    validateSchedule,
-    compareBlockIds
+    compareBlockIds,
+    getScheduleArrivalDisplayTime as getArrivalDisplayTime,
+    getScheduleDepartureDisplayTime as getDepartureDisplayTime,
+    getScheduleStopValue as getStopValue
 } from '../../utils/schedule/scheduleEditorUtils';
 import { getOperationalSortTime } from '../../utils/blocks/blockAssignmentCore';
 import {
@@ -44,13 +43,13 @@ import {
     shouldHighlightTrip,
     matchesSearch
 } from '../NewSchedule/QuickActionsBar';
-import { StackedTimeCell, StackedTimeInput } from '../ui/StackedTimeInput';
+import { StackedTimeInput } from '../ui/StackedTimeInput';
 import type { ConnectionLibrary, RouteConnectionConfig } from '../../utils/connections/connectionTypes';
 import type { DayType } from '../../utils/parsers/masterScheduleParser';
 import { getConnectionsForStop } from '../../utils/connections/connectionUtils';
 import { ConnectionIndicator } from './ConnectionIndicator';
 import { useGridNavigation, GridColumn, GridRowInfo } from '../../hooks/useGridNavigation';
-import { getRowInsights, type ScheduleInsight } from '../../utils/schedule/scheduleInsights';
+import { getRowInsights } from '../../utils/schedule/scheduleInsights';
 import {
     buildDetailedMasterComparison,
     buildMasterComparisonChangeSummary,
@@ -241,53 +240,6 @@ const pickDisplayStops = (
     return Array.from(new Set([stops[0], midpoint, stops[stops.length - 1]]));
 };
 
-// --- Helper: Fuzzy stop name lookup ---
-// Handles "(2)", "(3)" suffixes in loop routes where column headers have suffixes
-// but trip data may not
-const getStopValue = <T,>(record: Record<string, T> | undefined, stopName: string): T | undefined => {
-    if (!record) return undefined;
-    // Try exact match first
-    if (record[stopName] !== undefined) return record[stopName];
-    // Strip "(n)" suffix and try base name
-    const baseName = stopName.replace(/\s*\(\d+\)$/, '');
-    if (baseName !== stopName && record[baseName] !== undefined) return record[baseName];
-    const queryHasSuffix = /\s*\(\d+\)$/.test(stopName);
-    // Try case-insensitive match
-    const lowerStop = stopName.toLowerCase();
-    const lowerBase = baseName.toLowerCase();
-    for (const key of Object.keys(record)) {
-        const lowerKey = key.toLowerCase();
-        if (!queryHasSuffix && /\s*\(\d+\)$/.test(key)) continue;
-        if (lowerKey === lowerStop || lowerKey === lowerBase) return record[key];
-    }
-    return undefined;
-};
-
-const getArrivalDisplayTime = (trip: MasterTrip | undefined, stopName: string): string => {
-    if (!trip) return '';
-    return getStopValue(trip.arrivalTimes, stopName) || getStopValue(trip.stops, stopName) || '';
-};
-
-const getDepartureDisplayTime = (
-    trip: MasterTrip | undefined,
-    stopName: string,
-    _routeName?: string,
-    _isLastSouthStop?: boolean
-): string => {
-    if (!trip) return '';
-    const arrival = getArrivalDisplayTime(trip, stopName);
-    const explicitDeparture = getStopValue(trip.stops, stopName) || '';
-    if (!arrival) return explicitDeparture;
-
-    const recovery = getStopValue(trip.recoveryTimes, stopName) || 0;
-
-    if (explicitDeparture && explicitDeparture !== arrival) {
-        return explicitDeparture;
-    }
-
-    return recovery === 0 ? arrival : TimeUtils.addMinutes(arrival, recovery);
-};
-
 const getDeltaMinutes = (currentTime: string, originalTime: string): number | null => {
     const current = TimeUtils.toMinutes(currentTime);
     const original = TimeUtils.toMinutes(originalTime);
@@ -297,16 +249,6 @@ const getDeltaMinutes = (currentTime: string, originalTime: string): number | nu
     if (diff > 720) diff -= 1440;
     if (diff < -720) diff += 1440;
     return diff;
-};
-
-// --- Georgian College Pattern (moved up for use in getArrivalTimeForStop) ---
-const GEORGIAN_COLLEGE_PATTERN = 'georgian college';
-
-/**
- * Check if a stop is Georgian College.
- */
-const isGeorgianCollegeStop = (stopName: string): boolean => {
-    return stopName.toLowerCase().includes(GEORGIAN_COLLEGE_PATTERN);
 };
 
 // Get arrival time for a stop, handling loop routes where final stop uses trip.endTime
@@ -485,11 +427,11 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
     originalSchedules,
     onResetOriginals,
     onDeleteTrip,
-    onDuplicateTrip,
+    onDuplicateTrip: _onDuplicateTrip,
     onAddTrip,
     onTripRightClick,
     onMenuOpen,
-    draftName,
+    draftName: _draftName,
     filter,
     targetCycleTime,
     targetHeadway,
@@ -507,7 +449,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
     const [showDirectionLegend, setShowDirectionLegend] = useState(false);
     const [density, setDensity] = useState<DensityMode>('compact');
     const [timepointOnly, setTimepointOnly] = useState(initialTimepointOnly);
-    const [showMetaCols, setShowMetaCols] = useState(true);
+    const [showMetaCols] = useState(true);
     const [showActionsCol, setShowActionsCol] = useState(true);
     const [showRowNumberCol, setShowRowNumberCol] = useState(false);
     const [showDeltas, setShowDeltas] = useState(() => !(masterBaseline && masterBaseline.length > 0));
@@ -1033,7 +975,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
         if (e.target === e.currentTarget && !gridNav.activeCell) {
             gridNav.focusFirstCell();
         }
-    }, [gridNav.activeCell, gridNav.focusFirstCell]);
+    }, [gridNav]);
 
     // Refocus grid container after edit so arrow keys keep working
     const handleNavAway = useCallback((direction: 'down' | 'right' | 'left' | 'cancel') => {
@@ -1045,7 +987,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
         requestAnimationFrame(() => {
             gridNav.containerRef.current?.focus();
         });
-    }, [gridNav.cancelEdit, gridNav.commitEdit, gridNav.containerRef]);
+    }, [gridNav]);
 
     // Clear active cell when sort changes (row indices shift)
     useEffect(() => {
@@ -1104,12 +1046,6 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                         }
                     });
                 });
-
-                const summaryTable: MasterRouteTable = {
-                    routeName: combined.routeName,
-                    trips: [...allNorthTrips, ...allSouthTrips],
-                    stops: [], stopIds: {}
-                };
 
                 // Detect merged terminus: last North stop = first South stop (for A/B merged routes like 2A+2B)
                 // When merged, the last North stop shows only ARRIVE (not ARR|R|DEP)
@@ -1191,21 +1127,11 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                 const totalTravelSum = combined.rows.reduce((sum, r) => sum + r.totalTravelTime, 0);
                 const totalRecoverySum = combined.rows.reduce((sum, r) => sum + r.totalRecoveryTime, 0);
                 const totalCycleSum = combined.rows.reduce((sum, r) => sum + getRoundTripDisplayedCycleTime(r), 0);
-                const avgTravel = totalTrips > 0 ? (totalTravelSum / totalTrips).toFixed(1) : '0';
-                const avgRecovery = totalTrips > 0 ? (totalRecoverySum / totalTrips).toFixed(1) : '0';
-
-                const overallRatio = totalTravelSum > 0 ? ((totalRecoverySum / totalTravelSum) * 100) : 0;
-                const ratioStatus = getRecoveryStatus(overallRatio);
 
                 const peakVehicles = calculatePeakVehicles(allTrips);
                 const serviceSpan = calculateServiceSpan(allTrips);
                 const headwayAnalysis = analyzeHeadways(allTrips);
                 const tripsPerHour = calculateTripsPerHour(allTrips);
-                const warnings = validateSchedule(allTrips);
-
-                const hours = Object.keys(tripsPerHour).map(Number).sort((a, b) => a - b);
-                const minHour = hours.length > 0 ? hours[0] : 6;
-                const maxHour = hours.length > 0 ? hours[hours.length - 1] : 22;
                 const maxTripsInHour = Math.max(...Object.values(tripsPerHour), 1);
 
                 return (
@@ -1454,7 +1380,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                         </>
                                     )}
                                     {!config && (
-                                        <span className="text-amber-600 italic">âš  Route not in config</span>
+                                        <span className="text-amber-600 italic">⚠ Route not in config</span>
                                     )}
                                 </div>
                             );
@@ -1639,9 +1565,6 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                         const headway = rowHeadways[stableRowKey]
                                             ?? (northTrip ? headways[northTrip.id] : (southTrip ? headways[southTrip.id] : '-'));
 
-                                        const ratioColorClass = getRatioColor(ratio);
-
-                                        const assignedBand = northTrip?.assignedBand || southTrip?.assignedBand;
                                         const northIndex = northTrip ? northTripOrder.get(northTrip.id) : undefined;
                                         const southIndex = southTrip ? southTripOrder.get(southTrip.id) : undefined;
                                         const routeTripNumber = northIndex ?? southIndex ?? rowIdx + 1;
@@ -1689,11 +1612,6 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                         let dataColIdx = 1; // block
                                         if (showRowNum) dataColIdx += 1;
                                         if (showActions) dataColIdx += 1;
-                                        const getCellRef = () => {
-                                            const col = columnMapping[dataColIdx];
-                                            return col ? `${col.letter}${displayRowNum}` : '';
-                                        };
-
                                         // Grid navigation column index (only editable cells)
                                         let gridColIdx = 0;
 
@@ -1846,15 +1764,6 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
 
                                                     // Get actual arrival time at this stop (used to decide if recovery should show)
                                                     const northArrivalAtStop = isPartialTripStartingHere ? '' : getArrivalTimeForStop(northTrip, stop, i, northDisplayStops.length);
-
-                                                    // Check if this trip ends at this north stop (no data at subsequent stops)
-                                                    const isNorthTripEndingHere = !!(northTrip && northArrivalAtStop && (() => {
-                                                        const remainingStops = northDisplayStops.slice(i + 1);
-                                                        return !remainingStops.some(nextStop =>
-                                                            getStopValue(northTrip.stops, nextStop) ||
-                                                            getStopValue(northTrip.arrivalTimes, nextStop)
-                                                        );
-                                                    })());
 
                                                     const canAdjustNorthDep = !!northTrip && (() => {
                                                         const arrival = getArrivalTimeForStop(northTrip, stop, i, northDisplayStops.length);
@@ -2205,15 +2114,6 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                             return stopConnections.filter(connection => connection.busAnchor === 'arrival');
                                                         })()
                                                         : [];
-
-                                                    // Check if this trip ends at this south stop (no data at subsequent stops)
-                                                    const isSouthTripEndingHere = !!(southTrip && southArrivalAtStop && (() => {
-                                                        const remainingStops = southDisplayStops.slice(i + 1);
-                                                        return !remainingStops.some(nextStop =>
-                                                            getStopValue(southTrip.stops, nextStop) ||
-                                                            getStopValue(southTrip.arrivalTimes, nextStop)
-                                                        );
-                                                    })());
 
                                                     return (
                                                     <React.Fragment key={`s-${stop}`}>

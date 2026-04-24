@@ -117,11 +117,14 @@ export interface OperatorDwellMetrics {
   byOperator: OperatorDwellSummary[];
   totalIncidents: number;
   totalTrackedDwellMinutes: number;
+  totalReportableDwellMinutes?: number;
   totalStopVisits?: number;
   totalServiceHours?: number;
   incidentsPer1kVisits?: number;
   incidentsPer100ServiceHours?: number;
 }
+
+export type CascadeThresholdStatus = 'returned-under' | 'stayed-under';
 
 // ─── Dwell Cascade Types ──────────────────────────────────────────────
 
@@ -132,14 +135,15 @@ export interface CascadeTimepointObs {
   routeStopIndex: number;
   scheduledDeparture: string;       // HH:MM
   observedDeparture: string | null; // HH:MM:SS from AVL
-  deviationSeconds: number | null;  // attributed delay after subtracting pre-existing lateness
+  deviationSeconds: number | null;  // associated delay after subtracting pre-existing lateness
   rawDeviationSeconds?: number | null; // raw observed departure deviation vs schedule
-  isLate: boolean;                  // attributed delay > OTP late threshold (300s)
+  isLate: boolean;                  // associated delay > OTP late threshold (300s)
   boardings: number;                // APC-observed boardings at this stop
 }
 
 /** A downstream trip affected by a dwell incident earlier on the same block. */
 export interface CascadeAffectedTrip {
+  phase?: 'same-trip' | 'later-trip';  // incident-trip remainder vs later block carryover
   tripName: string;
   tripId: string;
   routeId: string;
@@ -148,12 +152,17 @@ export interface CascadeAffectedTrip {
   scheduledRecoverySeconds: number;   // recovery before this trip (context only)
   observedRecoverySeconds?: number;   // actual recovery (uses AVL departure from prior trip)
   timepoints: CascadeTimepointObs[];  // every timepoint in the trip
-  lateTimepointCount: number;         // count of attributed late departures (>5 min)
-  affectedTimepointCount: number;     // count of timepoints with any attributable delay (>0)
-  recoveredAtStop: string | null;     // stop where attributed delay fully reached zero
-  otpStatus: OTPStatus;               // derived from attributed delay
-  recoveredHere: boolean;             // true if attributed delay reached zero during this trip
-  lateSeconds: number;                // legacy field: sum of attributed delay seconds across affected timepoints
+  lateTimepointCount: number;         // count of associated late departures (>5 min)
+  affectedTimepointCount: number;     // count of timepoints with any associated delay (>0)
+  backUnderThresholdAtStop?: string | null; // first stop in this trip where associated delay is <= 5 min
+  backUnderThresholdAtStopId?: string | null;
+  thresholdStatus?: CascadeThresholdStatus | null; // returned under after OTP-late, or stayed under throughout observed points
+  recoveredAtStop: string | null;     // stop where associated delay fully reached zero
+  recoveredAtStopId?: string | null;
+  otpStatus: OTPStatus;               // derived from associated delay
+  backUnderThresholdHere?: boolean;   // true if associated delay dropped to <= 5 min during this trip
+  recoveredHere: boolean;             // true if associated delay reached zero during this trip
+  lateSeconds: number;                // legacy field: sum of associated delay seconds across affected timepoints
 }
 
 /** A dwell incident annotated with its downstream cascade through the block. */
@@ -170,16 +179,31 @@ export interface DwellCascade {
   observedDepartureTime: string;
   trackedDwellSeconds: number;
   severity: DwellSeverity;
+  baselineLateSeconds?: number;      // lateness already present on arrival into the dwell stop
+
+  // Data coverage / confidence
+  incidentRecordMatched?: boolean;
+  sameTripObservedTimepointCount?: number;
+  sameTripMissingObservedTimepointCount?: number;
+  laterTripObservedTimepointCount?: number;
+  laterTripMissingObservedTimepointCount?: number;
 
   // Cascade results
+  sameTripImpact?: CascadeAffectedTrip | null; // observed remainder of the incident trip, if available
+  sameTripObserved?: boolean;                  // whether any downstream same-trip observation was available
   cascadedTrips: CascadeAffectedTrip[];
-  blastRadius: number;            // total attributed late departures across all trips
-  affectedTripCount: number;      // number of trips touched before attributed recovery
-  recoveredAtTrip: string | null;
-  recoveredAtStop: string | null; // specific stop where attributed delay reached zero
-  totalLateSeconds: number;       // legacy field: sum of attributed delay across all affected timepoints
-  recoveryTimeAvailableSeconds: number;
-  observedRecoverySeconds?: number;
+  blastRadius: number;            // total associated late departures across later trips
+  affectedTripCount: number;      // number of later trips touched before associated recovery
+  backUnderThresholdAtTrip?: string | null; // first trip where associated delay was <= 5 min
+  backUnderThresholdAtStop?: string | null; // first stop where associated delay was <= 5 min
+  backUnderThresholdAtStopId?: string | null;
+  thresholdStatus?: CascadeThresholdStatus | null;
+  recoveredAtTrip: string | null; // trip name where associated delay fully cleared
+  recoveredAtStop: string | null; // specific stop where associated delay reached zero
+  recoveredAtStopId?: string | null;
+  totalLateSeconds: number;       // legacy field: sum of associated delay across later-trip timepoints
+  recoveryTimeAvailableSeconds: number; // scheduled recovery between incident trip and next trip
+  observedRecoverySeconds?: number;     // actual recovery (AVL-based, less if bus ran late)
 }
 
 export interface CascadeStopImpact {
@@ -214,7 +238,7 @@ export interface DailyCascadeMetrics {
   byTerminal: TerminalRecoveryStats[];
   totalCascaded: number;          // incidents that produced cascade
   totalNonCascaded: number;       // incidents with no downstream impact
-  avgBlastRadius: number;         // avg attributed-late departures per cascading incident
+  avgBlastRadius: number;         // avg associated-late departures per cascading incident
   totalBlastRadius: number;       // sum of all blast radii
 }
 

@@ -650,6 +650,7 @@ function buildOperatorDwellMetrics(records: STREETSRecord[], date: string): Oper
   // routeStopIndex is required so loop routes do not collapse repeated visits to the same stop.
   const groups = new Map<string, STREETSRecord[]>();
   for (const r of records) {
+    if (r.inBetween || r.isTripper || r.isDetour) continue;
     if (!r.timePoint) continue;
     if (!r.observedArrivalTime || !r.observedDepartureTime) continue;
     const key = `${r.tripId}|${r.stopId}|${r.routeStopIndex}`;
@@ -804,12 +805,14 @@ function buildOperatorDwellMetrics(records: STREETSRecord[], date: string): Oper
 
   const classifiedIncidents = incidents.filter(i => i.severity !== 'minor');
   const classifiedCount = classifiedIncidents.length;
+  const totalReportableSeconds = classifiedIncidents.reduce((s, i) => s + i.trackedDwellSeconds, 0);
 
   return {
     incidents,
     byOperator,
     totalIncidents: classifiedCount,
     totalTrackedDwellMinutes: Math.round(totalTrackedSeconds / 60 * 10) / 10,
+    totalReportableDwellMinutes: Math.round(totalReportableSeconds / 60 * 10) / 10,
     totalStopVisits,
     totalServiceHours,
     incidentsPer1kVisits: totalStopVisits > 0

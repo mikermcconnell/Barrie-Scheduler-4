@@ -21,6 +21,10 @@ interface CascadeRouteMapProps {
     stopLoadLookup: Map<string, StopLoadData>;
 }
 
+function thresholdVerb(status?: DwellCascade['thresholdStatus'] | null): string {
+    return status === 'returned-under' ? 'Back under 5 min' : 'Stayed under 5 min';
+}
+
 function devColor(devSec: number | null): string {
     if (devSec == null) return '#9ca3af';
     if (devSec > 300) return '#ef4444';
@@ -29,8 +33,10 @@ function devColor(devSec: number | null): string {
 }
 
 interface StopEntry {
+    entryKey: string;
     stopId: string;
     stopName: string;
+    tripName: string;
     worstDevSec: number | null;
     tripIndex: number;
     phase: 'same-trip' | 'later-trip';
@@ -88,7 +94,8 @@ const CascadeRouteMap: React.FC<CascadeRouteMapProps> = ({
         [storyTrips, timelinePoints],
     );
     const selectedPoint = selectedPointIndex !== null ? timelinePoints[selectedPointIndex] ?? null : null;
-    const thresholdStopName = (cascade.backUnderThresholdAtStop ?? cascade.recoveredAtStop ?? '').toLowerCase();
+    const thresholdStopId = cascade.backUnderThresholdAtStopId ?? null;
+    const recoveryStopId = cascade.recoveredAtStopId ?? null;
     const firstVisibleTrip = storyTrips[0]?.tripName ?? null;
     const traceStartsOnLaterTrip = firstVisibleTrip !== null && firstVisibleTrip !== cascade.tripName;
     const stopPhaseCoverage = useMemo(() => {
@@ -193,18 +200,21 @@ const CascadeRouteMap: React.FC<CascadeRouteMapProps> = ({
             const coords = gtfsCoords.get(pt.stopId);
             if (!coords) continue;
 
-            const existing = stopMap.get(pt.stopId);
+            const entryKey = `${pt.phase}|${pt.tripName}|${pt.stopId}`;
+            const existing = stopMap.get(entryKey);
             if (!existing) {
-                stopMap.set(pt.stopId, {
+                stopMap.set(entryKey, {
+                    entryKey,
                     stopId: pt.stopId,
                     stopName: pt.stopName,
+                    tripName: pt.tripName,
                     worstDevSec: devSec,
                     tripIndex: pt.tripIndex,
                     phase: pt.phase,
                     multiPhase: (stopPhaseCoverage.get(pt.stopId)?.size ?? 0) > 1,
                     tripColor: TRIP_FILL_COLORS[color].stroke,
-                    isBackUnderThreshold: false,
-                    isRecovery: false,
+                    isBackUnderThreshold: thresholdStopId === pt.stopId && cascade.backUnderThresholdAtTrip === pt.tripName,
+                    isRecovery: recoveryStopId === pt.stopId && cascade.recoveredAtTrip === pt.tripName,
                     lat: coords.lat,
                     lon: coords.lon,
                 });
@@ -218,29 +228,13 @@ const CascadeRouteMap: React.FC<CascadeRouteMapProps> = ({
                     existing.tripColor = TRIP_FILL_COLORS[color].stroke;
                 }
                 existing.multiPhase = (stopPhaseCoverage.get(pt.stopId)?.size ?? 0) > 1;
-            }
-        }
-
-        if (thresholdStopName) {
-            for (const entry of stopMap.values()) {
-                if (entry.stopName.toLowerCase() === thresholdStopName) {
-                    entry.isBackUnderThreshold = true;
-                }
-            }
-        }
-
-        // Mark recovery stop
-        if (cascade.recoveredAtStop) {
-            const recoveryName = cascade.recoveredAtStop.toLowerCase();
-            for (const entry of stopMap.values()) {
-                if (entry.stopName.toLowerCase() === recoveryName) {
-                    entry.isRecovery = true;
-                }
+                existing.isBackUnderThreshold = existing.isBackUnderThreshold || (thresholdStopId === pt.stopId && cascade.backUnderThresholdAtTrip === pt.tripName);
+                existing.isRecovery = existing.isRecovery || (recoveryStopId === pt.stopId && cascade.recoveredAtTrip === pt.tripName);
             }
         }
 
         return Array.from(stopMap.values());
-    }, [timelinePoints, cascade, gtfsCoords, storyTrips, thresholdStopName, stopPhaseCoverage]);
+    }, [timelinePoints, cascade, gtfsCoords, storyTrips, thresholdStopId, recoveryStopId, stopPhaseCoverage]);
 
     // ── Fit bounds after map loads ────────────────────────────────────────────
     const handleMapLoad = useCallback(() => {
@@ -285,7 +279,7 @@ const CascadeRouteMap: React.FC<CascadeRouteMapProps> = ({
         let text = entry.isRecovery
             ? `${entry.stopName}\nRecovery stop\n${devLabel}`
             : entry.isBackUnderThreshold
-                ? `${entry.stopName}\nBack under 5 min\n${devLabel}`
+                ? `${entry.stopName}\n${thresholdVerb(cascade.thresholdStatus)}\n${devLabel}`
                 : `${entry.stopName}\n${entry.phase === 'same-trip' ? 'Same-trip impact point' : 'Later-trip carryover point'}\n${devLabel}`;
         if (entry.multiPhase) {
             text += '\nObserved in both same-trip and later-trip phases';
@@ -427,7 +421,7 @@ const CascadeRouteMap: React.FC<CascadeRouteMapProps> = ({
 
                             return (
                                 <Marker
-                                    key={entry.stopId}
+                                    key={entry.entryKey}
                                     longitude={entry.lon}
                                     latitude={entry.lat}
                                     anchor="center"
@@ -621,7 +615,7 @@ const CascadeRouteMap: React.FC<CascadeRouteMapProps> = ({
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4 }}>
                         <span style={{ fontSize: 11, color: '#2563eb' }}>◉</span>
-                        <span>Back under 5 min</span>
+                        <span>{thresholdVerb(cascade.thresholdStatus)}</span>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                         <span style={{ fontSize: 11, color: '#dc2626' }}>⚡</span>

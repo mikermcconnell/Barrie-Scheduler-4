@@ -100,6 +100,7 @@ export const WeeklySummaryReport: React.FC<WeeklySummaryReportProps> = ({
 }) => {
     const [sortField, setSortField] = useState<SortField>('bph');
     const [sortAsc, setSortAsc] = useState(false);
+    const [exporting, setExporting] = useState(false);
 
     const currentKPI = useMemo(() => computeSystemKPI(filteredDays), [filteredDays]);
 
@@ -231,7 +232,6 @@ export const WeeklySummaryReport: React.FC<WeeklySummaryReportProps> = ({
         </th>
     );
 
-    const [exporting, setExporting] = useState(false);
     const handleExport = async () => {
         setExporting(true);
         try { await exportWeeklySummary(filteredDays, startDate, endDate); }

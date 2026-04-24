@@ -676,6 +676,70 @@ function buildPreferredTripPatterns(
   return preferred;
 }
 
+function buildCanonicalTripSegments(
+  trip: DailyTripStopSegmentRuntimeEntry,
+  direction: RouteDirection,
+  canonicalStops: string[] | undefined,
+  stopNameLookup: StopNameLookupByDirection,
+): Array<{ segment: CanonicalSegmentDefinition; runtimeMinutes: number }> {
+  if (!canonicalStops || canonicalStops.length < 2 || trip.segments.length === 0) return [];
+
+  const directionLookup = stopNameLookup.get(direction);
+  const getStopName = (stopId: string): string => directionLookup?.get(stopId) || stopId;
+  const stopPoints: Array<{ stopId: string; stopName: string }> = [];
+
+  const firstSegment = trip.segments[0];
+  stopPoints.push({
+    stopId: firstSegment.fromStopId,
+    stopName: getStopName(firstSegment.fromStopId),
+  });
+
+  trip.segments.forEach((segment) => {
+    const previous = stopPoints[stopPoints.length - 1];
+    if (previous?.stopId === segment.toStopId) return;
+    stopPoints.push({
+      stopId: segment.toStopId,
+      stopName: getStopName(segment.toStopId),
+    });
+  });
+
+  const anchors: Array<{ canonicalIndex: number; stopPointIndex: number }> = [];
+  let previousStopPointIndex = -1;
+  canonicalStops.forEach((canonicalStopName, canonicalIndex) => {
+    const stopPointIndex = stopPoints.findIndex((point, index) => (
+      index > previousStopPointIndex
+      && stopNamesLikelyMatch(point.stopName, canonicalStopName)
+    ));
+    if (stopPointIndex < 0) return;
+    anchors.push({ canonicalIndex, stopPointIndex });
+    previousStopPointIndex = stopPointIndex;
+  });
+
+  if (anchors.length < canonicalStops.length) return [];
+
+  const details: Array<{ segment: CanonicalSegmentDefinition; runtimeMinutes: number }> = [];
+  for (let index = 0; index < anchors.length - 1; index += 1) {
+    const start = anchors[index];
+    const end = anchors[index + 1];
+    if (end.stopPointIndex <= start.stopPointIndex) continue;
+
+    const legs = trip.segments.slice(start.stopPointIndex, end.stopPointIndex);
+    if (legs.length === 0) continue;
+
+    details.push({
+      segment: {
+        segmentKey: getStopSegmentKey(start.canonicalIndex + 1, end.canonicalIndex + 1),
+        segmentName: `${canonicalStops[start.canonicalIndex]} to ${canonicalStops[end.canonicalIndex]}`,
+        fromRouteStopIndex: start.canonicalIndex + 1,
+        toRouteStopIndex: end.canonicalIndex + 1,
+      },
+      runtimeMinutes: Math.round(legs.reduce((sum, leg) => sum + leg.runtimeMinutes, 0) * 100) / 100,
+    });
+  }
+
+  return details;
+}
+
 function tripMatchesPreferredPattern(
   trip: DailyTripStopSegmentRuntimeEntry,
   preferredPattern?: PreferredTripPattern,
@@ -941,6 +1005,16 @@ function buildTripBucketedRuntimesFromTrips(
     trip: DailyTripStopSegmentRuntimeEntry,
     direction: RouteDirection,
   ): Array<{ segment: CanonicalSegmentDefinition; runtimeMinutes: number }> => {
+    const canonicalTripSegments = buildCanonicalTripSegments(
+      trip,
+      direction,
+      canonicalDirectionStops?.[direction],
+      rawStopNameLookup,
+    );
+    if (canonicalTripSegments.length > 0) {
+      return canonicalTripSegments;
+    }
+
     const definitions = canonicalSegmentsByDirection.get(direction);
     if (!definitions || definitions.size === 0) return [];
 

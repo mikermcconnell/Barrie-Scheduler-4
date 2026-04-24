@@ -7,6 +7,7 @@
 
 import { MasterRouteTable, MasterTrip } from '../parsers/masterScheduleParser';
 import { getOperationalSortTime } from '../blocks/blockAssignmentCore';
+import { TimeUtils } from '../timeUtils';
 
 // --- Schedule Data Operations ---
 
@@ -29,6 +30,58 @@ export const findTableAndTrip = (
         if (trip) return { table: schedules[i], trip, tableIdx: i };
     }
     return null;
+};
+
+export const getScheduleStopValue = <T,>(
+    record: Record<string, T> | undefined,
+    stopName: string
+): T | undefined => {
+    if (!record) return undefined;
+    if (record[stopName] !== undefined) return record[stopName];
+
+    const baseName = stopName.replace(/\s*\(\d+\)$/, '');
+    if (baseName !== stopName && record[baseName] !== undefined) return record[baseName];
+
+    const queryHasSuffix = /\s*\(\d+\)$/.test(stopName);
+    const lowerStop = stopName.toLowerCase();
+    const lowerBase = baseName.toLowerCase();
+
+    for (const key of Object.keys(record)) {
+        if (!queryHasSuffix && /\s*\(\d+\)$/.test(key)) continue;
+
+        const lowerKey = key.toLowerCase();
+        if (lowerKey === lowerStop || lowerKey === lowerBase) return record[key];
+    }
+
+    return undefined;
+};
+
+export const getScheduleArrivalDisplayTime = (
+    trip: MasterTrip | undefined,
+    stopName: string
+): string => {
+    if (!trip) return '';
+    return getScheduleStopValue(trip.arrivalTimes, stopName)
+        || getScheduleStopValue(trip.stops, stopName)
+        || '';
+};
+
+export const getScheduleDepartureDisplayTime = (
+    trip: MasterTrip | undefined,
+    stopName: string,
+    _routeName?: string,
+    _isLastSouthStop?: boolean
+): string => {
+    if (!trip) return '';
+
+    const arrival = getScheduleArrivalDisplayTime(trip, stopName);
+    const explicitDeparture = getScheduleStopValue(trip.stops, stopName) || '';
+    if (!arrival) return explicitDeparture;
+
+    const recovery = getScheduleStopValue(trip.recoveryTimes, stopName) || 0;
+    if (explicitDeparture && explicitDeparture !== arrival) return explicitDeparture;
+
+    return recovery === 0 ? arrival : TimeUtils.addMinutes(arrival, recovery);
 };
 
 // --- Headway & Trip Analysis ---
@@ -114,7 +167,7 @@ export const analyzeHeadways = (trips: MasterTrip[]): { avg: number; irregular: 
     const allHeadways: number[] = [];
     const irregular: string[] = [];
 
-    Object.entries(byDir).forEach(([dir, dirTrips]) => {
+    Object.entries(byDir).forEach(([, dirTrips]) => {
         // Midnight-4AM trips are late-night, not early morning
         const sorted = [...dirTrips].sort((a, b) => getOperationalSortTime(a.startTime) - getOperationalSortTime(b.startTime));
         for (let i = 1; i < sorted.length; i++) {

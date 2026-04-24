@@ -194,6 +194,7 @@ function computeRecoveryTime(currentTrip: BlockTrip, nextTrip: BlockTrip): { sch
 interface TracedTripSummary {
   trip: CascadeAffectedTrip | null;
   observedTimepointCount: number;
+  missingObservedTimepointCount: number;
 }
 
 function buildTracedTrip(
@@ -204,6 +205,7 @@ function buildTracedTrip(
     scheduledRecoverySeconds: number;
     observedRecoverySeconds?: number;
     startAfterRouteStopIndex?: number;
+    hadPriorOtpLate?: boolean;
   },
 ): TracedTripSummary {
   const maxStopIdx = Math.max(...trip.records.map(r => r.routeStopIndex));
@@ -219,8 +221,13 @@ function buildTracedTrip(
   let lateCount = 0;
   let affectedCount = 0;
   let observedTimepointCount = 0;
+  let missingObservedTimepointCount = 0;
+  let sawOtpLateBeforeThreshold = options.hadPriorOtpLate ?? false;
   let tripBackUnderThresholdStop: string | null = null;
+  let tripBackUnderThresholdStopId: string | null = null;
+  let tripThresholdStatus: 'returned-under' | 'stayed-under' | null = null;
   let tripRecoveredAtStop: string | null = null;
+  let tripRecoveredAtStopId: string | null = null;
 
   for (const rec of timepointRecords) {
     let deviationSeconds: number | null = null;
@@ -239,13 +246,19 @@ function buildTracedTrip(
       if ((deviationSeconds ?? 0) > OTP_THRESHOLDS.lateSeconds) {
         isLate = true;
         lateCount++;
+        sawOtpLateBeforeThreshold = true;
       } else if (tripBackUnderThresholdStop === null) {
         tripBackUnderThresholdStop = rec.stopName;
+        tripBackUnderThresholdStopId = rec.stopId;
+        tripThresholdStatus = sawOtpLateBeforeThreshold ? 'returned-under' : 'stayed-under';
       }
 
       if ((deviationSeconds ?? 0) === 0) {
         tripRecoveredAtStop = rec.stopName;
+        tripRecoveredAtStopId = rec.stopId;
       }
+    } else {
+      missingObservedTimepointCount++;
     }
 
     timepoints.push({
@@ -269,13 +282,14 @@ function buildTracedTrip(
     return {
       trip: null,
       observedTimepointCount,
+      missingObservedTimepointCount,
     };
   }
 
   let tripLateSeconds = 0;
   for (const tp of timepoints) {
     if ((tp.deviationSeconds ?? 0) > 0) {
-      tripLateSeconds += tp.deviationSeconds;
+      tripLateSeconds += tp.deviationSeconds ?? 0;
     }
   }
 
@@ -293,13 +307,17 @@ function buildTracedTrip(
       lateTimepointCount: lateCount,
       affectedTimepointCount: affectedCount,
       backUnderThresholdAtStop: tripBackUnderThresholdStop,
+      backUnderThresholdAtStopId: tripBackUnderThresholdStopId,
+      thresholdStatus: tripThresholdStatus,
       recoveredAtStop: tripRecoveredAtStop,
+      recoveredAtStopId: tripRecoveredAtStopId,
       otpStatus: lateCount > 0 ? 'late' : 'on-time',
       backUnderThresholdHere: tripBackUnderThresholdStop !== null,
       recoveredHere: tripRecoveredAtStop !== null,
       lateSeconds: tripLateSeconds,
     },
     observedTimepointCount,
+    missingObservedTimepointCount,
   };
 }
 
@@ -314,8 +332,16 @@ function traceCascade(
   let chainBroken = false;
   let backUnderThresholdAtTrip: string | null = null;
   let backUnderThresholdAtStop: string | null = null;
+  let backUnderThresholdAtStopId: string | null = null;
+  let thresholdStatus: 'returned-under' | 'stayed-under' | null = null;
   let recoveredAtTrip: string | null = null;
   let recoveredAtStop: string | null = null;
+  let recoveredAtStopId: string | null = null;
+  let sameTripObservedTimepointCount = 0;
+  let sameTripMissingObservedTimepointCount = 0;
+  let laterTripObservedTimepointCount = 0;
+  let laterTripMissingObservedTimepointCount = 0;
+  let storyHasSeenOtpLate = false;
   const incidentRecord = findIncidentRecord(incidentTrip, incident);
   const baselineArrivalDeviation = incidentRecord
     ? computeObservedDeviationSeconds(incidentRecord.arrivalTime, incidentRecord.observedArrivalTime)
@@ -334,19 +360,29 @@ function traceCascade(
       phase: 'same-trip',
       scheduledRecoverySeconds: 0,
       startAfterRouteStopIndex: incidentRecord.routeStopIndex,
+      hadPriorOtpLate: storyHasSeenOtpLate,
     });
 
+    sameTripObservedTimepointCount = sameTripSummary.observedTimepointCount;
+    sameTripMissingObservedTimepointCount = sameTripSummary.missingObservedTimepointCount;
     sameTripObserved = sameTripSummary.observedTimepointCount > 0;
     sameTripImpact = sameTripSummary.trip;
+
+    if ((sameTripImpact?.lateTimepointCount ?? 0) > 0) {
+      storyHasSeenOtpLate = true;
+    }
 
     if (sameTripImpact?.backUnderThresholdHere) {
       backUnderThresholdAtTrip = incidentTrip.tripName;
       backUnderThresholdAtStop = sameTripImpact.backUnderThresholdAtStop ?? null;
+      backUnderThresholdAtStopId = sameTripImpact.backUnderThresholdAtStopId ?? null;
+      thresholdStatus = sameTripImpact.thresholdStatus ?? null;
     }
 
     if (sameTripImpact?.recoveredHere) {
       recoveredAtTrip = incidentTrip.tripName;
       recoveredAtStop = sameTripImpact.recoveredAtStop;
+      recoveredAtStopId = sameTripImpact.recoveredAtStopId ?? null;
       chainBroken = true;
     }
   }
@@ -362,7 +398,11 @@ function traceCascade(
       phase: 'later-trip',
       scheduledRecoverySeconds: recoveryResult.scheduled,
       observedRecoverySeconds: recoveryResult.observed,
+      hadPriorOtpLate: storyHasSeenOtpLate,
     });
+
+    laterTripObservedTimepointCount += tripSummary.observedTimepointCount;
+    laterTripMissingObservedTimepointCount += tripSummary.missingObservedTimepointCount;
 
     if (!tripSummary.trip) {
       continue;
@@ -370,19 +410,26 @@ function traceCascade(
 
     cascadedTrips.push(tripSummary.trip);
 
+    if (tripSummary.trip.lateTimepointCount > 0) {
+      storyHasSeenOtpLate = true;
+    }
+
     if (!backUnderThresholdAtTrip && tripSummary.trip.backUnderThresholdHere) {
       backUnderThresholdAtTrip = nextTrip.tripName;
       backUnderThresholdAtStop = tripSummary.trip.backUnderThresholdAtStop ?? null;
+      backUnderThresholdAtStopId = tripSummary.trip.backUnderThresholdAtStopId ?? null;
+      thresholdStatus = tripSummary.trip.thresholdStatus ?? null;
     }
 
     if (tripSummary.trip.recoveredHere) {
       recoveredAtTrip = nextTrip.tripName;
       recoveredAtStop = tripSummary.trip.recoveredAtStop;
+      recoveredAtStopId = tripSummary.trip.recoveredAtStopId ?? null;
       chainBroken = true;
     }
   }
 
-  // Remove trailing trips with no attributable delay.
+  // Remove trailing trips with no associated delay.
   while (cascadedTrips.length > 0) {
     const last = cascadedTrips[cascadedTrips.length - 1];
     if (last.affectedTimepointCount === 0 && !last.backUnderThresholdHere && !last.recoveredHere) {
@@ -413,6 +460,11 @@ function traceCascade(
     trackedDwellSeconds: incident.trackedDwellSeconds,
     severity: incident.severity,
     baselineLateSeconds,
+    incidentRecordMatched: incidentRecord !== null,
+    sameTripObservedTimepointCount,
+    sameTripMissingObservedTimepointCount,
+    laterTripObservedTimepointCount,
+    laterTripMissingObservedTimepointCount,
     sameTripImpact,
     sameTripObserved,
     cascadedTrips,
@@ -420,8 +472,11 @@ function traceCascade(
     affectedTripCount: cascadedTrips.filter(trip => trip.affectedTimepointCount > 0).length,
     backUnderThresholdAtTrip,
     backUnderThresholdAtStop,
+    backUnderThresholdAtStopId,
+    thresholdStatus,
     recoveredAtTrip,
     recoveredAtStop,
+    recoveredAtStopId,
     totalLateSeconds,
     recoveryTimeAvailableSeconds,
     observedRecoverySeconds,

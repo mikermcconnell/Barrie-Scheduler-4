@@ -10,7 +10,7 @@
     "test:coverage": "vitest run --coverage",
     "test:smoke": "npm run build && node scripts/browserSmoke.mjs",
     "build": "vite build",
-    "lint": "eslint . --max-warnings 20",
+    "lint": "eslint .",
     "preview": "vite preview",
     "prepare": "husky",
     "gtfs:index": "npx tsx scripts/buildGtfsTripIndex.ts",

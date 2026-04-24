@@ -10,7 +10,9 @@ Audience: Engineers working on the New Schedule wizard rebuild before implementa
 
 This document defines the clean-slate rebuild of **Step 2: Runtime Review** in the New Schedule wizard.
 
-The goal is to replace the current Step 2 with a contract-first workflow that produces one trusted, planner-approved runtime model for downstream schedule building and generation.
+The goal is to replace the current Step 2 with a contract-first workflow that produces one trusted runtime model for downstream schedule building and generation.
+
+Internal workflow note: Step 2 should not force a separate human decision gate. It may auto-approve the current review when the user continues, while still saving the same durable runtime contract for Step 3 and Step 4.
 
 This is a pre-implementation spec. It defines the target behavior, architecture, boundaries, and edge-case handling that future code must satisfy.
 
@@ -24,8 +26,8 @@ The current Step 2 has valuable logic and test coverage, but the overall structu
 
 Current issues:
 
-- Step 2 presents itself as a gate, but `blocked` does not truly block progress.
-- The so-called approved runtime model is auto-derived, not explicitly approved by the planner.
+- Step 2 presents itself as a gate, but the internal flow should be a safe review-and-continue workflow instead of a separate decision gate.
+- The so-called approved runtime model is not captured as a durable contract clearly enough.
 - Planning data and troubleshooting data are mixed together in one UI-heavy step.
 - Important readiness logic lives partly in orchestration code and partly in view code.
 - Canonical route-chain loading and Step 2 derivation happen in multiple places.
@@ -43,9 +45,9 @@ The rebuilt Step 2 must:
 2. Let the planner inspect that data in route order using the approved planning chain.
 3. Let the planner switch to P80 without changing median-based band membership.
 4. Produce a **single approved runtime contract** for later steps.
-5. Make planner approval **explicit**, not implied.
+5. Allow internal auto-approval on continue instead of requiring a separate decision gate.
 6. Separate **planning truth** from **diagnostic/troubleshooting views**.
-7. Use **real gate rules** to determine whether the wizard can continue.
+7. Use readiness rules to stop only genuinely blocked data from continuing.
 8. Keep locked schedule logic intact.
 9. Preserve the runtime-analysis edge cases already proven by tests.
 10. Be understandable enough that future Step 2 work does not require reverse-engineering UI code.
@@ -54,7 +56,7 @@ The rebuilt Step 2 must:
 
 ## 4. Primary User Outcome
 
-Before Step 2 is treated as a gate, it must first succeed as an analysis tool.
+Step 2 must first succeed as an analysis tool.
 
 The planner’s core job-to-be-done is:
 
@@ -67,7 +69,7 @@ In practical terms, Step 2 must first answer:
 - Which buckets are complete and trustworthy?
 - Which data should be excluded before schedule generation?
 
-Only after that review is complete should Step 2 serve as the approval gate for later steps.
+After that review is complete, Step 2 should save a valid runtime contract for later steps without adding an extra approval decision.
 
 ---
 
@@ -94,7 +96,7 @@ Step 2 must allow the planner to:
 5. see full bucket totals and segment-level breakdowns together
 6. see incomplete or low-confidence buckets clearly flagged
 7. exclude bad buckets from the planning model
-8. approve the reviewed runtime model for downstream steps
+8. save the reviewed runtime model for downstream steps
 
 If the rebuild does not satisfy these analytic outcomes, it has not met the Step 2 goal even if the approval flow is clean.
 
@@ -102,7 +104,7 @@ If the rebuild does not satisfy these analytic outcomes, it has not met the Step
 
 ## 7. Definition of Success
 
-Step 2 is successful only when the planner leaves the step with an **explicitly approved, generation-ready runtime model**.
+Step 2 is successful only when the planner leaves the step with a **generation-ready runtime model saved as an approved contract**.
 
 That means all of the following are true:
 
@@ -119,18 +121,18 @@ That means all of the following are true:
    - blocked
    - warning
    - ready
-7. The planner explicitly approves the runtime model.
+7. The current runtime model is approved automatically as part of continuing when it is not blocked.
 8. Step 3 and Step 4 consume only the approved runtime model, not ad hoc re-derived substitutes.
 
 Short version:
 
-> Step 2 succeeds when it produces one trusted, planner-approved runtime contract that downstream steps can use without re-deriving or second-guessing it.
+> Step 2 succeeds when it produces one trusted runtime contract that downstream steps can use without re-deriving or second-guessing it.
 
 ---
 
 ## 8. Step 2 Product Role
 
-Step 2 is the wizard’s **runtime contract gate**.
+Step 2 is the wizard’s **runtime contract review**.
 
 It is not just an analysis dashboard. It is the point where the system turns imported runtime evidence into a reviewed planning model.
 
@@ -199,15 +201,15 @@ The planner can:
 - inspect troubleshooting matrix
 - exclude or restore buckets from the planning model
 
-### 9.5 Approval
+### 9.5 Contract Approval
 
-The planner explicitly clicks an approval action.
+For this internal tool, approval is a contract-saving step, not a separate decision gate.
 
-Approval creates a persisted runtime contract snapshot.
+Continuing from Step 2 may create or replace the persisted runtime contract snapshot automatically when readiness is not blocked.
 
 ### 9.6 Continue
 
-The wizard may only continue once the approved runtime contract is valid for the current Step 1 inputs.
+The wizard may continue once the runtime contract is valid for the current Step 1 inputs and readiness is not blocked.
 
 ---
 
@@ -240,12 +242,11 @@ The step may continue only when:
 
 - lifecycle state is `reviewable`
 - readiness state is `ready` or `warning`
-- approval state is `approved`
-- the approved artifact still matches current Step 1 inputs
+- the current review can produce an approved contract for the current Step 1 inputs
 
-If readiness is `warning`, approval is still allowed, but the warning reasons must stay visible in Step 2 health/review surfaces and be captured in the approved contract snapshot.
+If readiness is `warning`, continue is still allowed, but the warning reasons must stay visible in Step 2 health/review surfaces and be captured in the approved contract snapshot.
 
-If readiness is `blocked`, approval is unavailable.
+If readiness is `blocked`, continue is unavailable.
 
 ---
 
@@ -323,7 +324,7 @@ Minimum contents:
 - readiness status
 - approval eligibility
 
-The approval action must produce an `ApprovedRuntimeContract`.
+Continuing from Step 2 must produce an `ApprovedRuntimeContract` when the current review is not blocked.
 
 ---
 
@@ -356,11 +357,11 @@ The contract must be treated as:
 
 ---
 
-## 14. Gate Rules
+## 14. Readiness Rules
 
 ## 14.1 Blocked
 
-Blocked means the planner cannot approve or continue.
+Blocked means the planner cannot continue.
 
 Blocked conditions include:
 
@@ -593,16 +594,15 @@ The Step 2 UI must make these points obvious:
 5. whether the planner has approved the model
 6. whether later steps are using the approved model or are waiting for approval
 
-The step footer should carry the primary action, not bury approval inside the page body.
+The step footer should carry the primary action.
 
 Recommended footer actions:
 
 - `Back`
-- `Approve Runtime Model`
 - `Continue to Step 3`
 
-The Continue action should remain disabled until approval exists and is valid.
-The in-page Step 2 approval strip is not required for this internal tool; approval should stay in the footer and warnings should be communicated through Data Health / review content instead of a duplicate acknowledgement banner.
+The Continue action should create or replace the approved runtime contract when the current review is ready or warning, and should remain disabled only when the review is blocked or missing.
+The in-page Step 2 approval strip is not required for this internal tool; warnings should be communicated through Data Health / review content instead of a duplicate acknowledgement banner.
 
 ---
 
@@ -621,15 +621,15 @@ Minimum test layers:
 
 ### 22.2 UI Integration Tests
 
-- blocked state disables approval and continue
-- warning state remains approvable without a separate acknowledgement control
-- approval enables continue
+- blocked state disables continue
+- warning state can continue without a separate acknowledgement control
+- continue creates or refreshes the approved contract
 - changing Step 1 inputs invalidates approval
 - troubleshooting fallback state renders correctly
 
 ### 22.3 Wizard Flow Tests
 
-- Step 3 cannot proceed without a valid approved contract
+- Step 3 cannot proceed without a valid runtime contract
 - Step 4 consumes only the approved contract
 - resume correctly restores or invalidates approval
 
@@ -640,9 +640,9 @@ Minimum test layers:
 The Step 2 rebuild is not done until all are true:
 
 - [ ] Step 2 has an explicit runtime review state model
-- [ ] Step 2 has an explicit approval action
+- [ ] Step 2 auto-approves the current contract on continue for this internal workflow
 - [ ] `blocked` truly prevents progress
-- [ ] `warning` remains approvable while warning reasons stay visible and persisted in the approval snapshot
+- [ ] `warning` remains continuable while warning reasons stay visible and persisted in the contract snapshot
 - [ ] Step 3 depends on the approved contract only
 - [ ] Step 4 depends on the approved contract only
 - [ ] troubleshooting data is separated from the planning contract

@@ -2,6 +2,7 @@ import { getRouteConfig } from '../config/routeDirectionConfig';
 import { RoundTripRow, RoundTripTable, MasterTrip } from '../parsers/masterScheduleParser';
 import { TimeUtils } from '../timeUtils';
 import { getOperationalSortTime } from '../blocks/blockAssignmentCore';
+import { getScheduleDepartureDisplayTime } from './scheduleEditorUtils';
 
 const serializeRecord = (record: Record<string, unknown> | undefined): string => {
     if (!record) return '';
@@ -54,13 +55,7 @@ const getArrivalDisplayTime = (trip: MasterTrip | undefined, stopName: string): 
 };
 
 const getDepartureDisplayTime = (trip: MasterTrip | undefined, stopName: string): string => {
-    if (!trip) return '';
-
-    const arrival = getArrivalDisplayTime(trip, stopName);
-    if (!arrival) return '';
-
-    const recovery = getStopValue(trip.recoveryTimes, stopName) || 0;
-    return recovery === 0 ? arrival : TimeUtils.addMinutes(arrival, recovery);
+    return getScheduleDepartureDisplayTime(trip, stopName);
 };
 
 const getFirstDepartureCellMinutes = (

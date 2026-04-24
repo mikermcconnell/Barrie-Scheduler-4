@@ -1,44 +1,9 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import {
-    Bus,
-    TrendingUp,
-    Plus,
-    FileSpreadsheet,
-    Download,
-    Trash2,
-    Copy,
-    Zap,
-    CheckCircle2,
-    Check,
     ChevronDown,
     ChevronRight,
-    ChevronUp,
-    ArrowRight,
     ArrowLeft,
-    Loader2,
-    AlertCircle,
-    Sparkles,
-    XCircle,
-    BarChart2,
-    Settings2,
-    CalendarPlus,
-    Timer,
-    MousePointerClick,
-    FileText,
-    Save,
-    Cloud,
-    CloudOff,
-    History,
-    Maximize2,
-    Minimize2,
-    Minus,
-    Clock,
-    AlertTriangle,
-    Car,
-    MoreVertical,
-    Pencil,
 } from 'lucide-react';
-import * as XLSX from 'xlsx';
 import ExcelJS from 'exceljs';
 import {
     MasterRouteTable,
@@ -51,50 +16,28 @@ import { ConnectionsPanel } from './connections/ConnectionsPanel';
 import { AIReviewPanel } from './ai/AIReviewPanel';
 import type { ConnectionLibrary, RouteConnectionConfig } from '../utils/connections/connectionTypes';
 import { getConnectionLibrary, getRouteConnectionConfig } from '../utils/connections/connectionLibraryService';
-import { RouteSummary } from './RouteSummary';
 import { WorkspaceHeader } from './layout/WorkspaceHeader';
 import { AutoSaveStatus } from '../hooks/useAutoSave';
 import { TimeUtils } from '../utils/timeUtils';
 import { getRouteColor, getRouteTextColor } from '../utils/config/routeColors';
-import { AddTripModal, AddTripModalContext } from './modals/AddTripModal';
+import { AddTripModal } from './modals/AddTripModal';
 import { ExtendTripModal } from './modals/ExtendTripModal';
 import { useAddTrip } from '../hooks/useAddTrip';
 import { TravelTimeGrid } from './TravelTimeGrid';
 import { AuditLogPanel, useAuditLog } from './AuditLogPanel';
 import { TripContextMenu, TripContextMenuAction } from './NewSchedule/TripContextMenu';
-import { SegmentTimeEditor } from './NewSchedule/SegmentTimeEditor';
 import { FilterState } from './NewSchedule/QuickActionsBar';
 import { TimelineView } from './NewSchedule/TimelineView';
 import {
-    cascadeTripTimes,
-    updateSegmentTime,
     endBlockAtTrip,
     setTripStartStop,
     setTripEndStop
 } from './NewSchedule/utils/timeCascade';
-import {
-    extractRouteNumber,
-    extractDayType,
-    type DayType
-} from '../utils/masterScheduleTypes';
+import { type DayType } from '../utils/masterScheduleTypes';
 import {
     deepCloneSchedules,
     findTableAndTrip,
-    calculateHeadways,
-    getRatioColor,
-    getRecoveryStatus,
-    calculatePeakVehicles,
-    calculateServiceSpan,
-    analyzeHeadways,
-    calculateTripsPerHour,
-    getBandRowColor,
-    parseTimeInput,
-    sanitizeInput,
-    parseStackedTime,
-    validateSchedule,
-    type ValidationWarning
 } from '../utils/schedule/scheduleEditorUtils';
-import { StackedTimeCell, StackedTimeInput } from './ui/StackedTimeInput';
 import { RoundTripTableView } from './schedule/RoundTripTableView';
 import { getRouteConfig, extractDirectionFromName, parseRouteInfo } from '../utils/config/routeDirectionConfig';
 import { reassignBlocksForTables, MatchConfigPresets } from '../utils/blocks/blockAssignmentCore';
@@ -116,6 +59,7 @@ import {
     buildMasterComparisonChangeSummary,
     type MasterComparisonChangeCounts,
 } from '../utils/schedule/masterComparison';
+import { openTimetablePublisher } from '../utils/reports/timetableNavigation';
 // --- Main Editor Component ---
 
 // Time Band type for display
@@ -298,30 +242,6 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         const resolvedKey = resolveTripStopKey(record, stopName);
         return resolvedKey ? record?.[resolvedKey] : undefined;
     };
-    const setTripStopValue = <T,>(record: Record<string, T> | undefined, stopName: string, value: T): Record<string, T> => {
-        const target = record ?? {};
-        const resolvedKey = resolveTripStopKey(target, stopName) ?? stopName;
-        target[resolvedKey] = value;
-        return target;
-    };
-    const getDisplayedDepartureAtStop = (trip: MasterTrip, stopName: string): string => {
-        const arrival = getTripStopValue(trip.arrivalTimes, stopName);
-        const recoveryAtStop = getTripStopValue(trip.recoveryTimes, stopName);
-
-        if (arrival !== undefined && arrival !== null && arrival !== '' && recoveryAtStop !== undefined) {
-            return recoveryAtStop > 0 ? TimeUtils.addMinutes(arrival, recoveryAtStop) : arrival;
-        }
-
-        const dep = getTripStopValue(trip.stops, stopName);
-        if (dep !== undefined && dep !== null && dep !== '') return dep;
-
-        if (arrival !== undefined && arrival !== null && arrival !== '') {
-            const recovery = recoveryAtStop || 0;
-            return recovery > 0 ? TimeUtils.addMinutes(arrival, recovery) : arrival;
-        }
-
-        return '';
-    };
     const [activeRouteIdx, setActiveRouteIdx] = useState(0);
     const [activeDay, setActiveDay] = useState<string>('Weekday');
     const [subView, setSubView] = useState<'editor' | 'matrix' | 'timeline'>('editor');
@@ -346,16 +266,24 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
             setConnectionLibrary(null);
             return;
         }
+
+        let cancelled = false;
         getConnectionLibrary(teamId)
-            .then(lib => setConnectionLibrary(lib))
+            .then(lib => {
+                if (!cancelled) setConnectionLibrary(lib);
+            })
             .catch(err => {
                 console.error('Failed to load connection library:', err);
-                setConnectionLibrary(null);
+                if (!cancelled) setConnectionLibrary(null);
             });
+
+        return () => {
+            cancelled = true;
+        };
     }, [teamId]);
 
     // Quick Actions Bar Filter State
-    const [filter, setFilter] = useState<FilterState>({
+    const [filter] = useState<FilterState>({
         timeRange: { start: null, end: null },
         highlight: null,
         search: ''
@@ -486,11 +414,9 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         });
     };
 
-    const consolidatedRoutes = useMemo(() => {
-        return consolidateRoutes(schedules);
-    }, [schedules]);
+    const consolidatedRoutes = useMemo(() => consolidateRoutes(schedules), [schedules]); // eslint-disable-line react-hooks/exhaustive-deps
     const exportableTables = exportScopeSchedules ?? schedules;
-    const exportableRouteCount = useMemo(() => consolidateRoutes(exportableTables).length, [exportableTables]);
+    const exportableRouteCount = useMemo(() => consolidateRoutes(exportableTables).length, [exportableTables]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Travel Time Grid Hook
     const gridHandlers = useTravelTimeGrid(schedules, onSchedulesChange, logAction);
@@ -640,6 +566,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         handleCellEdit,
         handleRecoveryEdit,
         handleTimeAdjust,
+        handleDuplicateTrip,
     } = useScheduleEditing(schedules, onSchedulesChange ?? (() => {}), {
         cascadeMode,
         logAction,
@@ -678,35 +605,6 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
 
     const handleDeleteTrip = (tripId: string) => {
         handleDeleteTrips([tripId], { treatAsRoundTrip: false });
-    };
-
-    // Handle direction change from SingleRouteView dropdown
-    const handleDirectionChange = (tableRouteName: string, direction: 'North' | 'South') => {
-        const newScheds = deepCloneSchedules(schedules);
-        const table = newScheds.find(t => t.routeName === tableRouteName);
-        if (!table) return;
-
-        // Update route name to include direction
-        // Remove any existing direction suffix first, then add new one
-        let newName = table.routeName
-            .replace(/\s*\((North|South)\)/gi, '')
-            .trim();
-        newName = `${newName} (${direction})`;
-
-        table.routeName = newName;
-
-        // Also update direction on all trips in this table
-        table.trips.forEach(trip => {
-            trip.direction = direction;
-        });
-
-        logAction('edit', `Set direction to ${direction}`, {
-            field: 'direction',
-            oldValue: tableRouteName,
-            newValue: newName
-        });
-
-        onSchedulesChange(newScheds);
     };
 
     // Context Menu Action Handler
@@ -792,59 +690,6 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
             }
         }
         setContextMenu(null);
-    };
-
-    // Duplicate trip handler - clones a trip with +1 minute offset
-    const handleDuplicateTrip = (tripId: string) => {
-        const newScheds = deepCloneSchedules(schedules);
-        const result = findTableAndTrip(newScheds, tripId);
-        if (!result) return;
-
-        const { table, trip } = result;
-
-        // Create a new trip as a clone
-        const newTrip: MasterTrip = {
-            ...JSON.parse(JSON.stringify(trip)),
-            id: `${trip.id}-dup-${Date.now()}`,
-            tripNumber: 0, // Will be set by renumbering after sort
-            blockId: '', // Clear blockId - let block reassignment handle it
-            startTime: trip.startTime + 1, // Offset by 1 minute
-            endTime: trip.endTime + 1,
-        };
-
-        // Shift all stop times and arrival times by 1 minute
-        Object.keys(newTrip.stops).forEach(stop => {
-            if (newTrip.stops[stop]) {
-                newTrip.stops[stop] = TimeUtils.addMinutes(newTrip.stops[stop], 1);
-            }
-            if (newTrip.arrivalTimes?.[stop]) {
-                newTrip.arrivalTimes[stop] = TimeUtils.addMinutes(newTrip.arrivalTimes[stop], 1);
-            }
-        });
-
-        // Insert after the source trip
-        const tripIndex = table.trips.findIndex(t => t.id === tripId);
-        table.trips.splice(tripIndex + 1, 0, newTrip);
-
-        // Re-sort by start time
-        table.trips.sort((a, b) => a.startTime - b.startTime);
-
-        // Reassign trip numbers
-        table.trips.forEach((t, i) => { t.tripNumber = i + 1; });
-
-        validateRouteTable(table);
-
-        // Reassign blocks to assign proper blockId to the new trip
-        reassignBlocksForRelatedTables(newScheds, getTrueBaseRoute(table.routeName));
-
-        logAction('add', `Duplicated trip from Block ${newTrip.blockId || 'new'}`, {
-            tripId: newTrip.id,
-            blockId: newTrip.blockId,
-            field: 'trip'
-        });
-
-        onSchedulesChange(newScheds);
-        showSuccessToast('Trip duplicated');
     };
 
     // Right-click handler for trip rows
@@ -1035,7 +880,12 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
     // NOTE: Travel time grid handlers moved to useTravelTimeGrid hook (see gridHandlers.* above)
 
     const sanitizeExportFileNamePart = (value: string): string => value
-            .replace(/[<>:"/\\|?*\u0000-\u001F]/g, ' ')
+            .split('')
+            .map(char => {
+                const code = char.charCodeAt(0);
+                return code <= 31 || /[<>:"/\\|?*]/.test(char) ? ' ' : char;
+            })
+            .join('')
             .replace(/\s+/g, ' ')
             .trim();
 
@@ -1619,7 +1469,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
             annualGrandTotal.toFixed(0)
         ]);
         totalRow.height = 24;
-        totalRow.eachCell((cell, col) => {
+        totalRow.eachCell((cell) => {
             cell.font = { bold: true, size: 11 };
             cell.alignment = cellAlignment;
             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F2937' } };
@@ -1728,6 +1578,13 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
     ]);
 
     if (!activeRouteGroup || !activeRoute) return <div className="p-8 text-center text-gray-600">No Routes Loaded</div>;
+
+    const handleOpenTimetable = () => {
+        openTimetablePublisher({
+            routeNumber: activeRouteGroup.name,
+            dayType: activeDay as DayType,
+        });
+    };
 
     return (
         <>
@@ -1888,6 +1745,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                             setShowConnectionsPanel(false);
                             setShowAiReviewPanel(true);
                         } : undefined}
+                        onOpenTimetable={handleOpenTimetable}
                     />
                 )}
 

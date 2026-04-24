@@ -654,7 +654,7 @@ export const FixedRouteWorkspace: React.FC = () => {
 
                     {isFeatureEnabled('fixedReports') && (
                         <DashboardCard onClick={() => setViewMode('reports')} icon={<FileText size={20} />} color="amber"
-                            title="Timetable Publisher" description="Generate public timetables and GTFS exports." />
+                            title="Timetable Publisher" description="Generate public timetables." />
                     )}
 
                     {isFeatureEnabled('fixedAnalytics') && (

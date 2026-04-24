@@ -4,7 +4,7 @@ import reactHooks from 'eslint-plugin-react-hooks';
 
 export default tseslint.config(
   // Ignore build output and dependencies
-  { ignores: ['dist/**', 'node_modules/**', '.claude/**', 'api/**'] },
+  { ignores: ['dist/**', 'node_modules/**', '.claude/**', '.codex-temp/**', '.tmp/**', '.worktrees/**', 'android/**/build/**', 'android/**/assets/**', 'api/**', 'functions/lib/**'] },
 
   // Base JS recommended rules
   js.configs.recommended,
@@ -18,6 +18,23 @@ export default tseslint.config(
     rules: {
       'react-hooks/rules-of-hooks': 'error',
       'react-hooks/exhaustive-deps': 'warn',
+    },
+  },
+
+
+  // Node-based utility scripts
+  {
+    files: ['scripts/**/*.{js,cjs,mjs,ts}', 'functions/scripts/**/*.{js,cjs,mjs,ts}'],
+    languageOptions: {
+      globals: {
+        Buffer: 'readonly',
+        URL: 'readonly',
+        console: 'readonly',
+        fetch: 'readonly',
+        process: 'readonly',
+        require: 'readonly',
+        setTimeout: 'readonly',
+      },
     },
   },
 

@@ -13,6 +13,7 @@ import type {
  *  Single source of truth for the dashboard module, report, and exporter. */
 export function aggregateDwellAcrossDays(days: DailySummary[]): OperatorDwellMetrics {
   const incidents: DwellIncident[] = days.flatMap(d => d.byOperatorDwell?.incidents ?? []);
+  const reportableIncidents = incidents.filter(i => i.severity === 'moderate' || i.severity === 'high');
 
   if (incidents.length === 0) {
     return { incidents: [], byOperator: [], totalIncidents: 0, totalTrackedDwellMinutes: 0 };
@@ -43,9 +44,11 @@ export function aggregateDwellAcrossDays(days: DailySummary[]): OperatorDwellMet
 
     for (const inc of opIncidents) {
       if (inc.severity === 'moderate') moderateCount++;
-      else highCount++;
+      else if (inc.severity === 'high') highCount++;
       totalTrackedDwellSeconds += inc.trackedDwellSeconds;
     }
+
+    const reportableCount = moderateCount + highCount;
 
     const visits = opVisitsMap.get(operatorId) ?? 0;
     const hours = opHoursMap.get(operatorId) ?? 0;
@@ -54,7 +57,7 @@ export function aggregateDwellAcrossDays(days: DailySummary[]): OperatorDwellMet
       operatorId,
       moderateCount,
       highCount,
-      totalIncidents: opIncidents.length,
+      totalIncidents: reportableCount,
       totalTrackedDwellSeconds,
       avgTrackedDwellSeconds: opIncidents.length > 0
         ? totalTrackedDwellSeconds / opIncidents.length
@@ -62,10 +65,10 @@ export function aggregateDwellAcrossDays(days: DailySummary[]): OperatorDwellMet
       stopVisitCount: visits,
       serviceHours: Math.round(hours * 100) / 100,
       incidentsPer1kVisits: visits > 0
-        ? Math.round(opIncidents.length / visits * 1000 * 100) / 100
+        ? Math.round(reportableCount / visits * 1000 * 100) / 100
         : undefined,
       incidentsPer100ServiceHours: hours > 0
-        ? Math.round(opIncidents.length / hours * 100 * 100) / 100
+        ? Math.round(reportableCount / hours * 100 * 100) / 100
         : undefined,
     });
   }
@@ -81,15 +84,15 @@ export function aggregateDwellAcrossDays(days: DailySummary[]): OperatorDwellMet
   return {
     incidents,
     byOperator,
-    totalIncidents: incidents.length,
+    totalIncidents: reportableIncidents.length,
     totalTrackedDwellMinutes: Math.round(totalTrackedSeconds / 60 * 10) / 10,
     totalStopVisits,
     totalServiceHours,
     incidentsPer1kVisits: totalStopVisits > 0
-      ? Math.round(incidents.length / totalStopVisits * 1000 * 100) / 100
+      ? Math.round(reportableIncidents.length / totalStopVisits * 1000 * 100) / 100
       : undefined,
     incidentsPer100ServiceHours: totalServiceHours > 0
-      ? Math.round(incidents.length / totalServiceHours * 100 * 100) / 100
+      ? Math.round(reportableIncidents.length / totalServiceHours * 100 * 100) / 100
       : undefined,
   };
 }

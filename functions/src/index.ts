@@ -301,6 +301,7 @@ function buildReportDwellMetrics(
     byOperator: isLatestDay ? dwell.byOperator : [],
     totalIncidents: dwell.totalIncidents,
     totalTrackedDwellMinutes: dwell.totalTrackedDwellMinutes,
+    totalReportableDwellMinutes: dwell.totalReportableDwellMinutes,
     totalStopVisits: dwell.totalStopVisits,
     totalServiceHours: dwell.totalServiceHours,
     incidentsPer1kVisits: dwell.incidentsPer1kVisits,

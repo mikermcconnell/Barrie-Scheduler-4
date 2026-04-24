@@ -166,7 +166,8 @@ describe('dwell cascade honesty pass UI', () => {
         expect(container.textContent).toContain('Incident Summary');
         expect(container.textContent).toContain('Same-Trip OTP-Late Departures');
         expect(container.textContent).toContain('Later-Trip OTP-Late Departures');
-        expect(container.textContent).toContain('First back under 5 min');
+        expect(container.textContent).toContain('Stayed under 5 min');
+        expect(container.textContent).toContain('Data Confidence');
         expect(container.textContent).toContain('Recovered to zero');
     });
 

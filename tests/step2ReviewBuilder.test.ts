@@ -341,4 +341,81 @@ describe('step2ReviewBuilder', () => {
         expect(result.health.runtimeSourceSummary).toContain('Using master schedule stop order fallback');
         expect(result.health.warnings).toContain('Observed stop order still needs planner review before it should replace the current stop chain.');
     });
+
+    it('uses resolved stop-order health as provenance when diagnostics metadata omits it', () => {
+        const input = {
+            routeIdentity: '7-Weekday',
+            routeNumber: '7',
+            dayType: 'Weekday' as const,
+            importMode: 'performance' as const,
+            performanceConfig: {
+                routeId: ' 7 ',
+                dateRange: { start: ' 2026-03-01 ', end: ' 2026-03-07 ' },
+            },
+            performanceDiagnostics: {
+                routeId: ' 7 ',
+                dateRange: { start: ' 2026-03-01 ', end: ' 2026-03-07 ' },
+                runtimeLogicVersion: 2,
+                importedAt: ' 2026-03-24T12:00:00.000Z ',
+            },
+            parsedDataFingerprint: 'runtime-data-v1',
+            canonicalDirectionStops: {
+                North: ['Park Place', 'Downtown Hub'],
+                South: ['Downtown Hub', 'Park Place'],
+            },
+            canonicalRouteSource: {
+                type: 'runtime-derived' as const,
+                routeIdentity: '7-Weekday',
+                versionHint: 'performance-stop-order',
+            },
+            plannerOverrides: { excludedBuckets: [] },
+            analysis: [{
+                timeBucket: '15:00 - 15:29',
+                totalP50: 30,
+                totalP80: 35,
+                observedCycleP50: 30,
+                observedCycleP80: 35,
+                assignedBand: 'A',
+                isOutlier: false,
+                ignored: false,
+                sampleCountMode: 'days' as const,
+                details: [
+                    { segmentName: 'Park Place to Downtown Hub', p50: 15, p80: 18, n: 6 },
+                    { segmentName: 'Downtown Hub to Park Place', p50: 15, p80: 17, n: 6 },
+                ],
+            }],
+            bands: [{
+                id: 'A',
+                label: 'Band A',
+                min: 25,
+                max: 35,
+                avg: 30,
+                color: '#22c55e',
+                count: 1,
+            }],
+            segmentsMap: {
+                North: [{ segmentName: 'Park Place to Downtown Hub', timeBuckets: {} }],
+                South: [{ segmentName: 'Downtown Hub to Park Place', timeBuckets: {} }],
+            } as any,
+            stopOrder: {
+                decision: 'accept' as const,
+                confidence: 'high' as const,
+                sourceUsed: 'runtime-derived' as const,
+                usedForPlanning: true,
+                summary: 'Runtime order accepted',
+                warnings: [],
+                directionStats: {},
+            },
+        };
+
+        const result = buildStep2ReviewResult(input);
+        expect(result.health.runtimeSourceSummary).toContain('Resolved stop order accept (high confidence)');
+
+        expect(buildStep2SourceSnapshot(input)).toMatchObject({
+            performanceRouteId: '7',
+            stopOrderDecision: 'accept',
+            stopOrderConfidence: 'high',
+            stopOrderSource: 'runtime-derived',
+        });
+    });
 });

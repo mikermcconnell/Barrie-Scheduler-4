@@ -96,6 +96,37 @@ describe('Operator Dwell Normalization', () => {
       // Only 1 non-detour record counted
       expect(dwell.totalStopVisits).toBe(1);
     });
+
+    it('excludes in-between, tripper, and detour records from dwell incident detection', () => {
+      const records = [
+        makeRecord({ operatorId: 'OP001', tripId: 'normal-trip', routeStopIndex: 1, stopId: 'S0' }),
+        makeRecord({
+          operatorId: 'OP001', tripId: 'in-between-trip', routeStopIndex: 1, stopId: 'S1',
+          observedArrivalTime: '10:00:00', observedDepartureTime: '10:08:00',
+          stopTime: '10:00',
+          inBetween: true,
+        }),
+        makeRecord({
+          operatorId: 'OP001', tripId: 'tripper-trip', routeStopIndex: 1, stopId: 'S2',
+          observedArrivalTime: '10:10:00', observedDepartureTime: '10:18:00',
+          stopTime: '10:10',
+          isTripper: true,
+        }),
+        makeRecord({
+          operatorId: 'OP001', tripId: 'detour-trip', routeStopIndex: 1, stopId: 'S3',
+          observedArrivalTime: '10:20:00', observedDepartureTime: '10:28:00',
+          stopTime: '10:20',
+          isDetour: true,
+        }),
+      ];
+
+      const [day] = aggregateDailySummaries(records);
+      const dwell = day.byOperatorDwell!;
+
+      expect(dwell.incidents).toHaveLength(0);
+      expect(dwell.totalIncidents).toBe(0);
+      expect(dwell.totalStopVisits).toBe(1);
+    });
   });
 
   describe('incidentsPer1kVisits calculation', () => {
@@ -245,6 +276,42 @@ describe('Operator Dwell Normalization', () => {
       expect(op1.incidentsPer1kVisits).toBe(20);
       // 2 / 5 * 100 = 40
       expect(op1.incidentsPer100ServiceHours).toBe(40);
+    });
+
+    it('does not count minor dwell as reportable incidents or high severity in multi-day totals', () => {
+      const baseDay: DailySummary = {
+        date: '2025-01-06',
+        dayType: 'weekday',
+        system: { otp: { total: 0, onTime: 0, early: 0, late: 0, onTimePercent: 0, earlyPercent: 0, latePercent: 0, avgDeviationSeconds: 0 }, totalRidership: 0, totalBoardings: 0, totalAlightings: 0, vehicleCount: 0, tripCount: 0, wheelchairTrips: 0, avgSystemLoad: 0, peakLoad: 0 },
+        byRoute: [], byHour: [], byStop: [], byTrip: [], loadProfiles: [],
+        dataQuality: { totalRecords: 0, inBetweenFiltered: 0, missingAVL: 0, missingAPC: 0, detourRecords: 0, tripperRecords: 0, loadCapped: 0, apcExcludedFromLoad: 0 },
+        schemaVersion: 3,
+        byOperatorDwell: {
+          incidents: [
+            { operatorId: 'OP001', date: '2025-01-06', routeId: '10', routeName: 'NORTH', stopName: 'Hub', stopId: 'S1', tripName: 'T1', block: 'B1', observedArrivalTime: '10:00:00', observedDepartureTime: '10:04:00', rawDwellSeconds: 240, trackedDwellSeconds: 240, severity: 'moderate' },
+            { operatorId: 'OP001', date: '2025-01-06', routeId: '10', routeName: 'NORTH', stopName: 'Hub', stopId: 'S2', tripName: 'T2', block: 'B1', observedArrivalTime: '11:00:00', observedDepartureTime: '11:01:00', rawDwellSeconds: 60, trackedDwellSeconds: 60, severity: 'minor' },
+          ],
+          byOperator: [
+            { operatorId: 'OP001', moderateCount: 1, highCount: 0, totalIncidents: 1, totalTrackedDwellSeconds: 300, avgTrackedDwellSeconds: 150, stopVisitCount: 10, serviceHours: 2 },
+          ],
+          totalIncidents: 1,
+          totalTrackedDwellMinutes: 5,
+          totalStopVisits: 10,
+          totalServiceHours: 2,
+        },
+      };
+
+      const result = aggregateDwellAcrossDays([baseDay]);
+      const op1 = result.byOperator.find(o => o.operatorId === 'OP001')!;
+
+      expect(result.incidents).toHaveLength(2);
+      expect(result.totalIncidents).toBe(1);
+      expect(result.totalTrackedDwellMinutes).toBe(5);
+      expect(op1.moderateCount).toBe(1);
+      expect(op1.highCount).toBe(0);
+      expect(op1.totalIncidents).toBe(1);
+      expect(op1.incidentsPer1kVisits).toBe(100);
+      expect(op1.incidentsPer100ServiceHours).toBe(50);
     });
   });
 

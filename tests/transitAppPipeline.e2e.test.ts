@@ -50,7 +50,7 @@ describe('transit app pipeline e2e', () => {
                 'go_trip_legs_2025-01-08.csv',
                 [
                     'user_trip_id,start_time,end_time,start_longitude,start_latitude,end_longitude,end_latitude,distance,progression,users_helped,service_name,route_short_name,mode,start_stop_name,end_stop_name',
-                    'trip-1,2025-01-08 13:00:00 UTC,2025-01-08 13:10:00 UTC,-79.6900,44.3800,-79.6902,44.3877,2.1,0,0,Barrie Transit,101,Transit,\"Barrie, Georgian College\",Downtown Hub',
+                    'trip-1,2025-01-08 13:00:00 UTC,2025-01-08 13:10:00 UTC,-79.6900,44.3800,-79.6902,44.3877,2.1,0,0,Barrie Transit,101,Transit,"Barrie, Georgian College",Downtown Hub',
                     'trip-1,2025-01-08 13:14:00 UTC,2025-01-08 13:32:00 UTC,-79.6902,44.3877,-79.6700,44.4000,4.2,0,0,Barrie Transit,400,Transit,Downtown Hub,Georgian Mall',
                 ].join('\n'),
                 'barron/go_trip_legs_2025-01-08.csv'
@@ -59,7 +59,7 @@ describe('transit app pipeline e2e', () => {
                 'tapped_trip_view_legs_2025-01-08.csv',
                 [
                     'user_trip_id,start_time,end_time,start_longitude,start_latitude,end_longitude,end_latitude,service_name,route_short_name,mode,start_stop_name,end_stop_name',
-                    'trip-1,2025-01-08 13:00:00 UTC,2025-01-08 13:10:00 UTC,-79.6900,44.3800,-79.6902,44.3877,Barrie Transit,101,Transit,\"Barrie, Georgian College\",Downtown Hub',
+                    'trip-1,2025-01-08 13:00:00 UTC,2025-01-08 13:10:00 UTC,-79.6900,44.3800,-79.6902,44.3877,Barrie Transit,101,Transit,"Barrie, Georgian College",Downtown Hub',
                     'trip-1,2025-01-08 13:14:00 UTC,2025-01-08 13:32:00 UTC,-79.6902,44.3877,-79.6700,44.4000,Barrie Transit,400,Transit,Downtown Hub,Georgian Mall',
                 ].join('\n'),
                 'barron/tapped_trip_view_legs_2025-01-08.csv'

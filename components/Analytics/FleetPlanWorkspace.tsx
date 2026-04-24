@@ -2,9 +2,12 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
     ArrowLeft,
     Bus,
+    ChevronDown,
     Copy,
     Download,
+    ExternalLink,
     FileSpreadsheet,
+    Grid3X3,
     Loader2,
     Plus,
     Redo2,
@@ -44,23 +47,33 @@ interface MetricCardProps {
     label: string;
     value: string;
     tone: 'blue' | 'green' | 'violet';
+    children?: React.ReactNode;
 }
 
-const toneStyles: Record<MetricCardProps['tone'], string> = {
-    blue: 'bg-blue-50 border-blue-200 text-blue-900',
-    green: 'bg-emerald-50 border-emerald-200 text-emerald-900',
-    violet: 'bg-violet-50 border-violet-200 text-violet-900',
+const toneStyles: Record<MetricCardProps['tone'], { icon: string; value: string }> = {
+    blue: { icon: 'bg-blue-50 text-brand-blue', value: 'text-gray-900' },
+    green: { icon: 'bg-emerald-50 text-emerald-600', value: 'text-gray-900' },
+    violet: { icon: 'bg-violet-50 text-violet-600', value: 'text-gray-900' },
 };
 
-const MetricCard: React.FC<MetricCardProps> = ({ icon, label, value, tone }) => (
-    <div className={`rounded-2xl border-2 p-4 ${toneStyles[tone]}`}>
-        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] opacity-80">
-            {icon}
-            <span>{label}</span>
+const MetricCard: React.FC<MetricCardProps> = ({ icon, label, value, tone, children }) => {
+    const styles = toneStyles[tone];
+
+    return (
+        <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+            <div className="flex items-center gap-4">
+                <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl ${styles.icon}`}>
+                    {icon}
+                </div>
+                <div className="min-w-0">
+                    <div className="text-sm font-medium text-gray-500">{label}</div>
+                    <div className={`mt-1 truncate text-xl font-bold ${styles.value}`}>{value}</div>
+                </div>
+                {children ? <div className="ml-auto shrink-0">{children}</div> : null}
+            </div>
         </div>
-        <div className="mt-2 text-2xl font-extrabold">{value}</div>
-    </div>
-);
+    );
+};
 
 function updateRow(rows: FleetPlanRow[], rowId: string, updater: (row: FleetPlanRow) => FleetPlanRow): FleetPlanRow[] {
     return rows.map((row) => (row.id === rowId ? updater(row) : row));
@@ -77,6 +90,23 @@ function getBaseFieldValue(
     if (field === 'comment') return row.comment || '';
     if (field === 'onOrder') return row.onOrder || '';
     return row.electricFlag || '';
+}
+
+function getTimelineInputClass(value: string): string {
+    const normalized = value.trim().toUpperCase();
+    if (normalized === 'RETIRE') {
+        return 'border-red-200 bg-red-50 text-red-700 font-bold';
+    }
+    if (normalized === 'PURCHASE') {
+        return 'border-emerald-200 bg-emerald-50 text-emerald-700 font-bold';
+    }
+    if (normalized === 'GROWTH') {
+        return 'border-amber-200 bg-amber-50 text-amber-700 font-bold';
+    }
+    if (normalized === 'TRADED' || normalized === 'TRADE') {
+        return 'border-violet-200 bg-violet-50 text-violet-700 font-bold';
+    }
+    return 'border-gray-200 bg-white text-gray-800';
 }
 
 export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
@@ -115,6 +145,24 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
         () => (activeConfig ? getFleetPlanGridColumns(activeConfig) : []),
         [activeConfig],
     );
+    const visibleSheets = draft.sheets.slice(0, 4);
+    const hiddenSheetCount = Math.max(0, draft.sheets.length - visibleSheets.length);
+    const makeModelOptions = useMemo(() => Array.from(new Set(
+        draft.sheets
+            .flatMap((sheet) => sheet.rows.map((row) => row.makeModel.trim()))
+            .filter(Boolean),
+    )).sort(), [draft.sheets]);
+    const yearOptions = useMemo(() => Array.from(new Set(
+        draft.sheets
+            .flatMap((sheet) => sheet.rows.map((row) => row.year.trim()))
+            .filter(Boolean),
+    )).sort(), [draft.sheets]);
+    const activeSheetIssueCount = useMemo(() => {
+        if (!activeSheet) return 0;
+        return activeSheet.rows.filter((row) => !row.unitNumber.trim()).length;
+    }, [activeSheet]);
+    const makeModelListId = `fleet-plan-make-model-${activeSheet?.key ?? 'sheet'}`;
+    const yearListId = `fleet-plan-year-${activeSheet?.key ?? 'sheet'}`;
 
     useEffect(() => {
         draftRef.current = draft;
@@ -327,32 +375,30 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
     }
 
     return (
-        <div className="space-y-6">
-            <div className="overflow-hidden rounded-3xl border-2 border-gray-200 bg-white shadow-sm">
-                <div className="border-b border-gray-200 bg-[#F7F7F7] px-6 py-5">
-                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                        <div className="space-y-2">
-                            <button
-                                onClick={onBack}
-                                className="inline-flex items-center gap-2 text-sm font-semibold text-gray-500 hover:text-gray-700"
-                            >
-                                <ArrowLeft size={16} />
-                                Back to Analytics
-                            </button>
-                            <div>
-                                <h2 className="text-3xl font-extrabold tracking-tight text-gray-900">Fleet Plan Workspace</h2>
-                                <p className="mt-1 text-sm text-gray-500">
-                                    Digitize the shared fleet workbook, edit structured rows, and export back to Excel in the same planning format.
-                                </p>
-                            </div>
-                        </div>
+        <div className="space-y-5">
+            <div className="rounded-2xl border border-gray-200 bg-white px-6 py-5 shadow-sm">
+                <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+                    <div className="min-w-0">
+                        <button
+                            onClick={onBack}
+                            className="mb-2 inline-flex items-center gap-2 text-sm font-semibold text-gray-500 hover:text-gray-700"
+                        >
+                            <ArrowLeft size={16} />
+                            Back to Analytics
+                        </button>
+                        <h2 className="text-4xl font-extrabold tracking-tight text-gray-950">Fleet Plan Workspace</h2>
+                        <p className="mt-2 text-sm text-gray-500">
+                            Digitize the shared fleet workbook, edit structured rows, and export back to Excel.
+                        </p>
+                    </div>
 
-                        <div className="flex flex-wrap items-center gap-1 rounded-2xl border border-gray-200 bg-white p-1 shadow-sm">
+                    <div className="flex flex-wrap items-center gap-3">
+                        <div className="flex flex-wrap items-center gap-2">
                             <button
                                 onClick={undo}
                                 disabled={!canUndo}
                                 title="Undo (Ctrl+Z)"
-                                className="inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+                                className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
                             >
                                 <Undo2 size={16} />
                                 Undo
@@ -361,14 +407,14 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                                 onClick={redo}
                                 disabled={!canRedo}
                                 title="Redo (Ctrl+Y)"
-                                className="inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+                                className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
                             >
                                 <Redo2 size={16} />
                                 Redo
                             </button>
                             <button
                                 onClick={onReimport}
-                                className="inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+                                className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50"
                             >
                                 <RefreshCw size={16} />
                                 Replace workbook
@@ -376,7 +422,7 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                             <button
                                 onClick={() => void handleExport()}
                                 disabled={exporting}
-                                className="inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                                className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50 disabled:opacity-50"
                             >
                                 {exporting ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
                                 Export
@@ -384,124 +430,168 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                             <button
                                 onClick={() => void handleSave()}
                                 disabled={saving || !isDirty}
-                                className="inline-flex items-center gap-2 rounded-xl bg-brand-blue px-4 py-2 text-sm font-semibold text-white hover:bg-blue-600 disabled:opacity-50"
+                                className="inline-flex items-center gap-2 rounded-lg bg-brand-blue px-5 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-blue-600 disabled:opacity-50"
                             >
                                 {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
                                 Save shared plan
                             </button>
                         </div>
                     </div>
-
-                    <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-3">
-                        <MetricCard
-                            icon={<FileSpreadsheet size={14} />}
-                            label="Workbook"
-                            value={draft.metadata.sourceFileName}
-                            tone="blue"
-                        />
-                        <MetricCard
-                            icon={<Bus size={14} />}
-                            label="Fleet rows"
-                            value={summary.totalRows.toLocaleString()}
-                            tone="green"
-                        />
-                        <MetricCard
-                            icon={<Users size={14} />}
-                            label="Workspace"
-                            value="Team Shared"
-                            tone="violet"
-                        />
-                    </div>
                 </div>
+            </div>
 
-                <div className="bg-white px-6 py-5">
-                    <div className="flex flex-col gap-4 xl:flex-row">
-                        <aside className="shrink-0 xl:w-72">
-                            <div className="space-y-4 rounded-3xl border-2 border-gray-200 bg-gray-50 p-4">
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+                <MetricCard
+                    icon={<FileSpreadsheet size={24} />}
+                    label="Workbook"
+                    value={draft.metadata.sourceFileName}
+                    tone="green"
+                />
+                <MetricCard
+                    icon={<Bus size={24} />}
+                    label="Fleet rows"
+                    value={summary.totalRows.toLocaleString()}
+                    tone="blue"
+                />
+                <MetricCard
+                    icon={<Users size={24} />}
+                    label="Workspace"
+                    value="Team Shared"
+                    tone="violet"
+                >
+                    <div className="flex items-center gap-3 border-l border-gray-200 pl-4">
+                        <div className="flex -space-x-2">
+                            <span className="flex h-8 w-8 items-center justify-center rounded-full border-2 border-white bg-gray-100 text-[11px] font-bold text-gray-600">ME</span>
+                            <span className="flex h-8 w-8 items-center justify-center rounded-full border-2 border-white bg-emerald-100 text-[11px] font-bold text-emerald-700">TM</span>
+                            <span className="flex h-8 w-8 items-center justify-center rounded-full border-2 border-white bg-amber-100 text-[11px] font-bold text-amber-700">+2</span>
+                        </div>
+                        <button className="text-xs font-bold text-brand-blue hover:text-blue-700">
+                            Manage
+                        </button>
+                    </div>
+                </MetricCard>
+            </div>
+
+            <div className="flex flex-col gap-5 xl:flex-row">
+                <aside className="shrink-0 xl:w-72">
+                    <div className="space-y-4">
+                        <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+                            <div className="mb-3 flex items-center justify-between">
+                                <div className="flex items-center gap-2 text-sm font-bold text-gray-900">
+                                    <Grid3X3 size={18} className="text-gray-500" />
+                                    Sheets
+                                </div>
+                                <ChevronDown size={16} className="text-gray-400" />
+                            </div>
+                            <div className="space-y-2">
+                                {visibleSheets.map((sheet) => {
+                                    const isActive = sheet.key === activeSheet.key;
+                                    return (
+                                        <button
+                                            key={sheet.key}
+                                            onClick={() => setActiveSheetKey(sheet.key)}
+                                            className={`flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left text-sm font-semibold transition-all ${
+                                                isActive
+                                                    ? 'border-brand-blue bg-blue-50 text-brand-blue'
+                                                    : 'border-transparent bg-white text-gray-700 hover:bg-gray-50'
+                                            }`}
+                                        >
+                                            <Grid3X3 size={18} />
+                                            <span className="truncate">{sheet.name}</span>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                            {hiddenSheetCount > 0 ? (
+                                <button className="mt-3 text-sm font-medium text-gray-500 hover:text-gray-700">
+                                    + {hiddenSheetCount} more sheets
+                                </button>
+                            ) : null}
+                        </div>
+
+                        <div className="rounded-2xl border border-cyan-200 bg-cyan-50 p-4">
+                            <div className="flex items-start gap-3">
+                                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-cyan-500 text-white">
+                                    <Grid3X3 size={20} />
+                                </div>
                                 <div>
-                                    <div className="mb-2 text-xs font-bold uppercase tracking-[0.18em] text-gray-400">Sheets</div>
-                                    <div className="space-y-2">
-                                        {draft.sheets.map((sheet) => {
-                                            const isActive = sheet.key === activeSheet.key;
-                                            return (
-                                                <button
-                                                    key={sheet.key}
-                                                    onClick={() => setActiveSheetKey(sheet.key)}
-                                                    className={`w-full rounded-2xl border-2 px-4 py-3 text-left transition-all ${
-                                                        isActive
-                                                            ? 'border-brand-blue bg-white shadow-sm'
-                                                            : 'border-gray-200 bg-white hover:border-gray-300'
-                                                    }`}
-                                                >
-                                                    <div className="font-bold text-gray-900">{sheet.name}</div>
-                                                    <div className="mt-1 text-sm text-gray-500">
-                                                        {sheet.rows.length} rows
-                                                    </div>
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
-                                </div>
-
-                                <div className="rounded-2xl border border-cyan-200 bg-cyan-50 p-4">
-                                    <div className="mb-2 text-xs font-bold uppercase tracking-[0.18em] text-cyan-700">Spreadsheet mode</div>
-                                    <ul className="space-y-1 text-sm text-cyan-950">
-                                        <li>• Tab moves across and wraps to the next row</li>
-                                        <li>• Enter moves down the same column</li>
-                                        <li>• Paste copied Excel grids directly into the table</li>
-                                        <li>• Toolbar undo/redo keeps sheet edits recoverable</li>
-                                    </ul>
-                                </div>
-
-                                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
-                                    <div className="mb-2 text-xs font-bold uppercase tracking-[0.18em] text-amber-700">V1 rules</div>
-                                    <ul className="space-y-1 text-sm text-amber-900">
-                                        <li>• Add, duplicate, remove, and edit fleet rows</li>
-                                        <li>• Summary/footer totals are regenerated on export</li>
-                                        <li>• Sheet structure stays template-based</li>
-                                    </ul>
+                                    <div className="text-sm font-bold text-cyan-800">Spreadsheet mode</div>
+                                    <p className="mt-2 text-sm leading-relaxed text-gray-600">
+                                        Work in a familiar grid. Tab, Enter, paste, and undo/redo all preserve the workbook structure.
+                                    </p>
+                                    <button className="mt-3 inline-flex items-center gap-1 text-sm font-semibold text-brand-blue hover:text-blue-700">
+                                        Learn more <ExternalLink size={13} />
+                                    </button>
                                 </div>
                             </div>
-                        </aside>
+                        </div>
 
-                        <section className="min-w-0 flex-1 space-y-4">
-                            <div className="rounded-3xl border-2 border-gray-200 bg-white shadow-sm">
-                                <div className="flex flex-col gap-3 border-b border-gray-200 px-5 py-4 md:flex-row md:items-start md:justify-between">
-                                    <div>
-                                        <div className="mb-1 text-xs font-bold uppercase tracking-[0.18em] text-gray-400">Editing sheet</div>
-                                        <h3 className="text-xl font-extrabold text-gray-900">{activeSheet.name}</h3>
-                                        <p className="mt-1 text-sm text-gray-500">
-                                            Edit planner-owned row data. Footer totals and workbook formatting are rebuilt on export.
-                                        </p>
-                                    </div>
-                                    <div className="space-y-3">
-                                        <div className="rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm text-violet-950">
-                                            <div className="text-[11px] font-extrabold uppercase tracking-[0.16em] text-violet-700">Speed tools</div>
-                                            <div className="mt-1">Duplicate rows inline, paste blocks from Excel, and recover previous steps with undo/redo.</div>
-                                        </div>
-                                        <div className="flex items-center justify-end gap-1 rounded-2xl border border-gray-200 bg-gray-50 p-1">
-                                            <button
-                                                onClick={() => handleAddRow()}
-                                                className="inline-flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:text-brand-blue disabled:cursor-not-allowed disabled:opacity-40"
-                                            >
-                                                <Plus size={16} />
-                                                Add row
-                                            </button>
-                                        </div>
-                                    </div>
+                        <div className="rounded-2xl border border-violet-200 bg-violet-50 p-4">
+                            <div className="flex items-start gap-3">
+                                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-violet-600 text-white">
+                                    <Users size={20} />
                                 </div>
+                                <div>
+                                    <div className="text-sm font-bold text-violet-800">V1 rules</div>
+                                    <p className="mt-2 text-sm leading-relaxed text-gray-600">
+                                        {activeSheetIssueCount > 0
+                                            ? `${activeSheetIssueCount} row${activeSheetIssueCount === 1 ? '' : 's'} need a unit number.`
+                                            : 'Validation rules are active for this sheet. No issue cells found.'}
+                                    </p>
+                                    <button className="mt-3 inline-flex items-center gap-1 text-sm font-semibold text-violet-700 hover:text-violet-900">
+                                        View rules <ExternalLink size={13} />
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </aside>
 
-                                <div className="overflow-auto">
+                <section className="min-w-0 flex-1 space-y-4">
+                    <div className="rounded-2xl border border-gray-200 bg-white shadow-sm">
+                        <div className="flex flex-col gap-3 border-b border-gray-200 px-6 py-5 md:flex-row md:items-center md:justify-between">
+                            <div>
+                                <h3 className="text-xl font-extrabold text-gray-950">
+                                    Editing sheet <span className="ml-2 text-brand-blue">{activeSheet.name}</span>
+                                </h3>
+                                <p className="mt-1 text-sm text-gray-500">
+                                    Edit planner-owned rows. Footer totals and Excel formatting are rebuilt on export.
+                                </p>
+                            </div>
+                            <button
+                                onClick={() => handleAddRow()}
+                                className="inline-flex items-center justify-center gap-2 rounded-lg border border-blue-200 bg-white px-4 py-2 text-sm font-bold text-brand-blue shadow-sm hover:bg-blue-50"
+                            >
+                                Add row
+                                <Plus size={16} />
+                            </button>
+                        </div>
+
+                        <datalist id={makeModelListId}>
+                            {makeModelOptions.map((option) => (
+                                <option key={option} value={option} />
+                            ))}
+                        </datalist>
+                        <datalist id={yearListId}>
+                            {yearOptions.map((option) => (
+                                <option key={option} value={option} />
+                            ))}
+                        </datalist>
+
+                        <div className="overflow-auto">
                                     <table className="min-w-full border-separate border-spacing-0">
                                         <thead>
                                             <tr className="bg-gray-50">
-                                                <th className="sticky top-0 z-10 border-b border-r border-gray-200 bg-gray-50 px-3 py-3 text-left text-xs font-bold uppercase tracking-[0.16em] text-gray-500">
+                                                <th className="sticky top-0 z-10 w-36 border-b border-r border-gray-200 bg-gray-50 px-3 py-3 text-left text-xs font-bold text-gray-500">
+                                                    Actions
+                                                </th>
+                                                <th className="sticky top-0 z-10 w-16 border-b border-r border-gray-200 bg-gray-50 px-3 py-3 text-right text-xs font-bold text-gray-500">
                                                     Row
                                                 </th>
                                                 {activeConfig.baseColumns.map((column) => (
                                                     <th
                                                         key={column.key}
-                                                        className="sticky top-0 z-10 border-b border-r border-gray-200 bg-gray-50 px-3 py-3 text-left text-xs font-bold uppercase tracking-[0.16em] text-gray-500"
+                                                        className="sticky top-0 z-10 border-b border-r border-gray-200 bg-gray-50 px-3 py-3 text-left text-xs font-bold text-gray-700"
                                                     >
                                                         {column.label}
                                                     </th>
@@ -509,7 +599,7 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                                                 {activeConfig.timelineColumns.map((column) => (
                                                     <th
                                                         key={column.key}
-                                                        className="sticky top-0 z-10 min-w-[110px] border-b border-r border-gray-200 bg-gray-50 px-3 py-3 text-center text-xs font-bold uppercase tracking-[0.16em] text-gray-500"
+                                                        className="sticky top-0 z-10 min-w-[86px] border-b border-r border-gray-200 bg-gray-50 px-3 py-3 text-center text-xs font-bold text-gray-700"
                                                     >
                                                         {column.label}
                                                     </th>
@@ -518,26 +608,29 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                                         </thead>
                                         <tbody>
                                             {activeSheet.rows.map((row, rowIndex) => (
-                                                <tr key={row.id} className={rowIndex % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'}>
-                                                    <td className="border-b border-r border-gray-200 px-2 py-2 align-top">
-                                                        <div className="flex flex-wrap gap-2">
+                                                <tr key={row.id} className="bg-white hover:bg-blue-50/30">
+                                                    <td className="border-b border-r border-gray-200 px-2 py-2 align-middle">
+                                                        <div className="flex items-center gap-1">
                                                             <button
                                                                 onClick={() => handleDuplicateRow(row.id)}
                                                                 aria-label={`Duplicate row ${rowIndex + 1}`}
-                                                                className="inline-flex items-center gap-1 rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-xs font-semibold text-violet-700 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-40"
+                                                                className="inline-flex items-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-2 py-1.5 text-[11px] font-semibold text-brand-blue hover:bg-blue-100"
                                                             >
-                                                                <Copy size={14} />
+                                                                <Copy size={13} />
                                                                 Duplicate
                                                             </button>
                                                             <button
                                                                 onClick={() => handleRemoveRow(row.id)}
                                                                 aria-label={`Remove row ${rowIndex + 1}`}
-                                                                className="inline-flex items-center gap-1 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-40"
+                                                                className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2 py-1.5 text-[11px] font-semibold text-red-600 hover:bg-red-100"
                                                             >
-                                                                <Trash2 size={14} />
+                                                                <Trash2 size={13} />
                                                                 Remove
                                                             </button>
                                                         </div>
+                                                    </td>
+                                                    <td className="border-b border-r border-gray-200 px-3 py-2 text-right text-sm font-semibold text-gray-700 align-middle">
+                                                        {rowIndex + 1}
                                                     </td>
                                                     {activeConfig.baseColumns.map((column) => {
                                                         const columnIndex = resolveGridColumnIndex({
@@ -555,6 +648,7 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                                                                     }}
                                                                     value={getBaseFieldValue(row, column.key)}
                                                                     onChange={(event) => handleFieldChange(row.id, column.key, event.target.value)}
+                                                                    list={column.key === 'makeModel' ? makeModelListId : column.key === 'year' ? yearListId : undefined}
                                                                     onKeyDown={(event) => {
                                                                         if (event.key === 'Tab') {
                                                                             handleKeyboardNavigation(event, rowIndex, columnIndex, 'horizontal');
@@ -563,7 +657,7 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                                                                         }
                                                                     }}
                                                                     onPaste={(event) => handleCellPaste(event, rowIndex, columnIndex)}
-                                                                    className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-blue-100"
+                                                                    className="h-8 w-full min-w-[74px] rounded border border-gray-200 bg-white px-2 text-sm text-gray-800 shadow-inner shadow-gray-100/60 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-blue-100"
                                                                 />
                                                             </td>
                                                         );
@@ -593,7 +687,7 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                                                                         }
                                                                     }}
                                                                     onPaste={(event) => handleCellPaste(event, rowIndex, columnIndex)}
-                                                                    className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-center text-sm text-gray-800 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-blue-100"
+                                                                    className={`h-8 w-full rounded px-2 text-center text-xs shadow-inner shadow-gray-100/60 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-blue-100 ${getTimelineInputClass(row.timeline[column.key] || '')}`}
                                                                 />
                                                             </td>
                                                         );
@@ -604,7 +698,7 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                                             {activeSheet.rows.length === 0 ? (
                                                 <tr>
                                                     <td
-                                                        colSpan={activeConfig.baseColumns.length + activeConfig.timelineColumns.length + 1}
+                                                        colSpan={activeConfig.baseColumns.length + activeConfig.timelineColumns.length + 2}
                                                         className="px-4 py-12 text-center text-sm text-gray-500"
                                                     >
                                                         No fleet rows on this sheet yet. Add a row to start building the plan.
@@ -618,7 +712,5 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                         </section>
                     </div>
                 </div>
-            </div>
-        </div>
     );
 };

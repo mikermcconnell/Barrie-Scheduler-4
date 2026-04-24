@@ -72,7 +72,7 @@ const resolveInitialDirection = (
     timepointsMap: Record<string, string[]>,
     blockStartDirection?: 'North' | 'South'
 ): string => {
-    let initialDirection = hasNorth ? 'North' : directions[0];
+    const initialDirection = hasNorth ? 'North' : directions[0];
     if (!isRoundTrip || !blockStartStop) return initialDirection;
 
     const normalizedStart = normalizeStopNameForDirectionMatch(blockStartStop);
@@ -401,7 +401,7 @@ export const generateSchedule = (
                 const toStop = dirTimepoints[i + 1];
 
                 const reliable = getReliableSegmentTime(fromStop, toStop);
-                let segTime: number | null = reliable.time;
+                const segTime: number | null = reliable.time;
                 const segmentName = `${fromStop} to ${toStop}`;
 
                 rawSegmentTimes.push(segTime);

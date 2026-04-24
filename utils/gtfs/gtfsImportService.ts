@@ -301,7 +301,7 @@ export function processTripsForRoute(
     const processed: ProcessedGTFSTrip[] = [];
 
     for (const trip of routeTrips) {
-        let stopTimes = stopTimesByTrip.get(trip.trip_id) || [];
+        const stopTimes = stopTimesByTrip.get(trip.trip_id) || [];
         if (stopTimes.length === 0) continue;
 
         // Sort by sequence

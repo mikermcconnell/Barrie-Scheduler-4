@@ -11,7 +11,9 @@ Related: `docs/NEW_SCHEDULE_STOP_ORDER_RESOLUTION.md`
 
 This document locks the concrete Step 2 contract design before implementation starts.
 
-The design assumes the core analytic outcome of Step 2 is to let the planner review the **median travel time for each route segment by 30-minute time bucket**, then approve the resulting planning contract for later steps.
+The design assumes the core analytic outcome of Step 2 is to let the planner review the **median travel time for each route segment by 30-minute time bucket**, then save the resulting planning contract for later steps.
+
+Internal workflow note: Step 2 should not force a separate approval decision gate. The app may create or replace the approved contract automatically when the user continues from a non-blocked review.
 
 It answers three practical questions:
 
@@ -34,7 +36,7 @@ The rebuilt Step 2 will use three top-level objects:
    Built review state used to render Step 2 and decide readiness.
 
 3. **`ApprovedRuntimeContract`**  
-   Explicit, persisted snapshot created only when the planner approves.
+   Explicit, persisted snapshot created when Step 2 continues from a non-blocked review.
 
 The UI must never invent these objects for itself. They are domain objects first and UI props second.
 
@@ -42,9 +44,9 @@ The UI must never invent these objects for itself. They are domain objects first
 
 ## 3. Core Design Principles
 
-### 3.1 Approval is explicit
+### 3.1 Approval is a saved contract, not a separate decision gate
 
-The approved runtime contract is not a live memoized view. It is a frozen planner-approved snapshot.
+The approved runtime contract is not a live memoized view. It is a frozen snapshot saved from the reviewed Step 2 state.
 
 ### 3.2 Review state and approved state are separate
 
@@ -556,15 +558,14 @@ This replaces the misleading current “Approved Runtime Model” panel.
 Owns:
 
 - Back
-- Approve / Replace Approval
 - Continue to Step 3
 
-This must be the main gate surface.
+This is the primary action surface.
 
 Continue should be disabled unless:
 
-- approval state = `approved`
-- approval is not stale
+- the current review is ready or warning
+- the current review can produce a valid contract
 
 ---
 

@@ -43,6 +43,7 @@ import {
 } from './utils/masterCompareState';
 import {
     buildCanonicalSegmentColumnsFromMasterStops,
+    buildRuntimeDerivedCanonicalDirectionStops,
     buildSegmentsMapFromParsedData,
     clampWizardStepToCurrentStep2Approval,
     createDefaultPerformanceConfig,
@@ -350,6 +351,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
             ? buildRouteIdentity(config.routeNumber.trim(), dayType)
             : undefined
     ), [config.routeNumber, dayType]);
+    const step2ImportMode = importMode === 'performance' ? 'performance' : 'csv';
 
     currentConfiguredRouteIdentityRef.current = currentConfiguredRouteIdentity;
     step4EditorSessionKeyRef.current = step4EditorSessionKey;
@@ -372,6 +374,41 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
             : undefined
     ), [canonicalRouteIdentity, canonicalRouteSource, currentConfiguredRouteIdentity]);
 
+    const runtimeDerivedCanonicalDirectionStops = useMemo(() => {
+        if (step2ImportMode !== 'csv' || activeCanonicalDirectionStops || Object.keys(segmentsMap).length === 0) {
+            return undefined;
+        }
+
+        return buildRuntimeDerivedCanonicalDirectionStops(
+            (config.routeNumber || DEFAULT_ROUTE_NUMBER).trim(),
+            segmentsMap
+        );
+    }, [activeCanonicalDirectionStops, config.routeNumber, segmentsMap, step2ImportMode]);
+
+    const runtimeDerivedCanonicalSegmentColumns = useMemo(() => {
+        if (!runtimeDerivedCanonicalDirectionStops) return undefined;
+
+        return buildCanonicalSegmentColumnsFromMasterStops(
+            (config.routeNumber || DEFAULT_ROUTE_NUMBER).trim(),
+            runtimeDerivedCanonicalDirectionStops.North ?? [],
+            runtimeDerivedCanonicalDirectionStops.South ?? []
+        );
+    }, [config.routeNumber, runtimeDerivedCanonicalDirectionStops]);
+
+    const effectiveCanonicalDirectionStops = activeCanonicalDirectionStops ?? runtimeDerivedCanonicalDirectionStops;
+    const effectiveCanonicalSegmentColumns = activeCanonicalSegmentColumns ?? runtimeDerivedCanonicalSegmentColumns;
+    const effectiveCanonicalRouteSource = useMemo(() => (
+        activeCanonicalRouteSource ?? (
+            runtimeDerivedCanonicalDirectionStops
+                ? {
+                    type: 'runtime-derived' as const,
+                    routeIdentity: currentConfiguredRouteIdentity,
+                    versionHint: 'csv-runtime-segment-chain',
+                }
+                : undefined
+        )
+    ), [activeCanonicalRouteSource, currentConfiguredRouteIdentity, runtimeDerivedCanonicalDirectionStops]);
+
     const parsedDataFingerprint = useMemo(
         () => buildStep2ParsedDataFingerprint(parsedData, {
             analysis,
@@ -380,14 +417,14 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
             matrixAnalysis,
             matrixSegmentsMap,
             troubleshootingPatternWarning,
-            canonicalDirectionStops: activeCanonicalDirectionStops,
-            canonicalSegmentColumns: activeCanonicalSegmentColumns,
+            canonicalDirectionStops: effectiveCanonicalDirectionStops,
+            canonicalSegmentColumns: effectiveCanonicalSegmentColumns,
         }),
         [
-            activeCanonicalDirectionStops,
-            activeCanonicalSegmentColumns,
             analysis,
             bands,
+            effectiveCanonicalDirectionStops,
+            effectiveCanonicalSegmentColumns,
             matrixAnalysis,
             matrixSegmentsMap,
             parsedData,
@@ -401,7 +438,6 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
             .filter(bucket => bucket.ignored)
             .map(bucket => bucket.timeBucket),
     }), [analysis]);
-    const step2ImportMode = importMode === 'performance' ? 'performance' : 'csv';
 
     const step2ReviewBuilderInput = useMemo<Step2ReviewBuilderInput | null>(() => {
         if (analysis.length === 0) return null;
@@ -429,8 +465,8 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                 }
                 : null,
             parsedDataFingerprint,
-            canonicalDirectionStops: activeCanonicalDirectionStops ?? null,
-            canonicalRouteSource: activeCanonicalRouteSource ?? {
+            canonicalDirectionStops: effectiveCanonicalDirectionStops ?? null,
+            canonicalRouteSource: effectiveCanonicalRouteSource ?? {
                 type: 'runtime-derived',
                 routeIdentity: currentConfiguredRouteIdentity,
                 versionHint: 'runtime-derived',
@@ -442,13 +478,11 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
             matrixAnalysis,
             matrixSegmentsMap,
             troubleshootingPatternWarning,
-            canonicalSegmentColumns: activeCanonicalSegmentColumns ?? null,
+            canonicalSegmentColumns: effectiveCanonicalSegmentColumns ?? null,
             runtimeDiagnostics: step2ImportMode === 'performance' ? performanceDiagnostics : null,
             stopOrder: step2StopOrderHealth,
         };
     }, [
-        activeCanonicalDirectionStops,
-        activeCanonicalSegmentColumns,
         analysis,
         bands,
         config.routeNumber,
@@ -465,7 +499,9 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         step2ImportMode,
         segmentsMap,
         step2PlannerOverrides,
-        activeCanonicalRouteSource,
+        effectiveCanonicalDirectionStops,
+        effectiveCanonicalRouteSource,
+        effectiveCanonicalSegmentColumns,
         troubleshootingPatternWarning,
     ]);
 
@@ -1798,8 +1834,8 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                                 segmentsMap={segmentsMap}
                                 matrixAnalysis={matrixAnalysis}
                                 matrixSegmentsMap={matrixSegmentsMap}
-                                canonicalSegmentColumns={activeCanonicalSegmentColumns}
-                                canonicalDirectionStops={activeCanonicalDirectionStops}
+                                canonicalSegmentColumns={effectiveCanonicalSegmentColumns}
+                                canonicalDirectionStops={effectiveCanonicalDirectionStops}
                                 healthReport={step2HealthReport}
                                 approvedRuntimeModel={approvedRuntimeModel}
                                 approvalState={approvalState}

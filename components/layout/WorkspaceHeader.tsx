@@ -19,7 +19,8 @@ import {
     FolderOpen,
     Pencil,
     Plus,
-    Copy
+    Copy,
+    CalendarDays
 } from 'lucide-react';
 import { MasterRouteTable } from '../../utils/parsers/masterScheduleParser';
 import { AutoSaveStatus } from '../../hooks/useAutoSave';
@@ -73,6 +74,8 @@ interface WorkspaceHeaderProps {
     onOpenConnections?: () => void;
     // AI review panel
     onOpenAiReview?: () => void;
+    // Timetable publisher shortcut
+    onOpenTimetable?: () => void;
     // Preview-specific compact mode
     hideRouteIdentity?: boolean;
 }
@@ -109,6 +112,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
     publishDisabled = false,
     onOpenConnections,
     onOpenAiReview,
+    onOpenTimetable,
     hideRouteIdentity = false
 }) => {
     const [isRenamingDraft, setIsRenamingDraft] = React.useState(false);
@@ -315,6 +319,17 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
                             >
                                 <Download size={14} />
                                 Export Draft
+                            </button>
+                        )}
+
+                        {onOpenTimetable && (
+                            <button
+                                onClick={onOpenTimetable}
+                                className="px-3 py-2 rounded-lg text-sm font-semibold text-amber-700 bg-amber-50 hover:bg-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300 flex items-center gap-2 flex-shrink-0"
+                                title="Open the public timetable for this route"
+                            >
+                                <CalendarDays size={14} />
+                                Timetable
                             </button>
                         )}
 

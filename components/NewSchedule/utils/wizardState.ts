@@ -266,6 +266,49 @@ const getOrderedDirections = (segmentsMap: Record<string, SegmentRawData[]>): st
     });
 };
 
+const toCanonicalRuntimeDirection = (direction: string): 'North' | 'South' => (
+    direction === 'South' || direction === 'B' ? 'South' : 'North'
+);
+
+const appendUniqueStop = (stops: string[], nextStop: string): void => {
+    const cleaned = nextStop.trim();
+    if (!cleaned) return;
+
+    const lastStop = stops[stops.length - 1];
+    if (lastStop && normalizeSegmentStopKey(lastStop) === normalizeSegmentStopKey(cleaned)) {
+        return;
+    }
+
+    stops.push(cleaned);
+};
+
+export const buildRuntimeDerivedCanonicalDirectionStops = (
+    routeNumber: string | undefined,
+    segmentsMap: Record<string, SegmentRawData[]>
+): Record<string, string[]> | undefined => {
+    const directionStops: Record<'North' | 'South', string[]> = {
+        North: [],
+        South: [],
+    };
+
+    getOrderedDirections(segmentsMap).forEach((rawDirection) => {
+        const canonicalDirection = toCanonicalRuntimeDirection(rawDirection);
+        const stops = directionStops[canonicalDirection];
+
+        segmentsMap[rawDirection].forEach((segment) => {
+            const [fromStop, toStop] = segment.segmentName.split(' to ').map(part => part.trim());
+            if (!fromStop || !toStop) return;
+
+            if (stops.length === 0) {
+                appendUniqueStop(stops, fromStop);
+            }
+            appendUniqueStop(stops, toStop);
+        });
+    });
+
+    return getUsableCanonicalDirectionStops(routeNumber, directionStops);
+};
+
 const getDirectionGroupLabel = (routeNumber: string | undefined, direction: string): string | undefined => {
     if (!direction) return undefined;
     if (!routeNumber) return direction;

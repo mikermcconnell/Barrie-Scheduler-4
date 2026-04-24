@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildDailyCascadeMetrics } from '../utils/schedule/dwellCascadeComputer';
+import { buildDailyCascadeMetrics as buildServerDailyCascadeMetrics } from '../functions/src/dwellCascadeComputer';
 import type { STREETSRecord, DwellIncident, DwellSeverity } from '../utils/performanceDataTypes';
 
 // ─── Test Helpers ─────────────────────────────────────────────────────
@@ -213,8 +214,11 @@ describe('dwellCascadeComputer.buildDailyCascadeMetrics', () => {
     expect(cascade.cascadedTrips).toHaveLength(1);
     expect(cascade.backUnderThresholdAtTrip).toBe('Trip-2');
     expect(cascade.backUnderThresholdAtStop).toBe('Terminal North');
+    expect(cascade.backUnderThresholdAtStopId).toBe('TN');
+    expect(cascade.thresholdStatus).toBe('stayed-under');
     expect(cascade.recoveredAtTrip).toBe('Trip-2');
     expect(cascade.recoveredAtStop).toBe('Terminal North');
+    expect(cascade.recoveredAtStopId).toBe('TN');
     expect(cascade.totalLateSeconds).toBe(0);
     expect(result.totalNonCascaded).toBe(1);
     expect(result.totalCascaded).toBe(0);
@@ -234,6 +238,9 @@ describe('dwellCascadeComputer.buildDailyCascadeMetrics', () => {
     const cascade = result.cascades[0];
 
     expect(cascade.sameTripObserved).toBe(true);
+    expect(cascade.incidentRecordMatched).toBe(true);
+    expect(cascade.sameTripObservedTimepointCount).toBe(1);
+    expect(cascade.sameTripMissingObservedTimepointCount).toBe(0);
     expect(cascade.sameTripImpact).toBeTruthy();
     expect(cascade.sameTripImpact?.phase).toBe('same-trip');
     expect(cascade.sameTripImpact?.tripName).toBe('Trip-1');
@@ -243,6 +250,7 @@ describe('dwellCascadeComputer.buildDailyCascadeMetrics', () => {
     expect(cascade.sameTripImpact?.recoveredHere).toBe(true);
     expect(cascade.backUnderThresholdAtTrip).toBe('Trip-1');
     expect(cascade.backUnderThresholdAtStop).toBe('Midway');
+    expect(cascade.thresholdStatus).toBe('stayed-under');
     expect(cascade.recoveredAtTrip).toBe('Trip-1');
     expect(cascade.recoveredAtStop).toBe('Midway');
     expect(cascade.cascadedTrips).toHaveLength(0);
@@ -276,9 +284,38 @@ describe('dwellCascadeComputer.buildDailyCascadeMetrics', () => {
     expect(cascade.cascadedTrips[0].lateTimepointCount).toBe(0);
     expect(cascade.backUnderThresholdAtTrip).toBe('Trip-2');
     expect(cascade.backUnderThresholdAtStop).toBe('Terminal North');
+    expect(cascade.backUnderThresholdAtStopId).toBe('TN');
+    expect(cascade.thresholdStatus).toBe('returned-under');
     expect(cascade.recoveredAtTrip).toBe('Trip-2');
     expect(cascade.recoveredAtStop).toBe('Stop C');
+    expect(cascade.recoveredAtStopId).toBe('SC');
     expect(cascade.affectedTripCount).toBe(1);
+  });
+
+  it('keeps Cloud Function cascade behavior synced with same-trip-first app behavior', () => {
+    const records = buildSameTripStoryRecords({
+      sameTripObservedDeparture: '08:24:00',
+      laterTripObservedDepartures: {
+        1: '08:34:00',
+        2: '08:40:00',
+      },
+    });
+    const incident = makeIncident({ tripName: 'Trip-1', block: '10-02' });
+
+    const appCascade = buildDailyCascadeMetrics(records, [incident]).cascades[0];
+    const serverCascade = buildServerDailyCascadeMetrics(records as any, [incident as any]).cascades[0];
+
+    expect(serverCascade.sameTripObserved).toBe(true);
+    expect(serverCascade.sameTripImpact?.phase).toBe('same-trip');
+    expect(serverCascade.sameTripImpact?.tripName).toBe(appCascade.sameTripImpact?.tripName);
+    expect(serverCascade.cascadedTrips.map(t => t.phase)).toEqual(appCascade.cascadedTrips.map(t => t.phase));
+    expect(serverCascade.backUnderThresholdAtTrip).toBe(appCascade.backUnderThresholdAtTrip);
+    expect(serverCascade.backUnderThresholdAtStop).toBe(appCascade.backUnderThresholdAtStop);
+    expect(serverCascade.recoveredAtTrip).toBe(appCascade.recoveredAtTrip);
+    expect(serverCascade.recoveredAtStop).toBe(appCascade.recoveredAtStop);
+    expect(serverCascade.baselineLateSeconds).toBe(appCascade.baselineLateSeconds);
+    expect(serverCascade.thresholdStatus).toBe(appCascade.thresholdStatus);
+    expect(serverCascade.laterTripObservedTimepointCount).toBe(appCascade.laterTripObservedTimepointCount);
   });
 
   it('tracks back-under-threshold separately from full recovery', () => {
@@ -337,6 +374,8 @@ describe('dwellCascadeComputer.buildDailyCascadeMetrics', () => {
     expect(trip3.lateTimepointCount).toBe(1);
     expect(trip3.affectedTimepointCount).toBe(2);
     expect(trip3.backUnderThresholdAtStop).toBe('Stop B');
+    expect(trip3.backUnderThresholdAtStopId).toBe('SB');
+    expect(trip3.thresholdStatus).toBe('returned-under');
     expect(trip3.recoveredAtStop).toBeNull();
     // Trip-3 has 2 timepoints in output (late one + the below-threshold point)
     expect(trip3.timepoints).toHaveLength(2);
@@ -348,6 +387,7 @@ describe('dwellCascadeComputer.buildDailyCascadeMetrics', () => {
     // Top-level milestone fields
     expect(cascade.backUnderThresholdAtTrip).toBe('Trip-3');
     expect(cascade.backUnderThresholdAtStop).toBe('Stop B');
+    expect(cascade.thresholdStatus).toBe('returned-under');
     expect(cascade.recoveredAtTrip).toBeNull();
     expect(cascade.recoveredAtStop).toBeNull();
     expect(cascade.affectedTripCount).toBe(2);
@@ -377,6 +417,7 @@ describe('dwellCascadeComputer.buildDailyCascadeMetrics', () => {
     expect(cascade.backUnderThresholdAtStop).toBe('Stop B');
     expect(cascade.recoveredAtTrip).toBe('Trip-4');
     expect(cascade.recoveredAtStop).toBe('Stop B');
+    expect(cascade.recoveredAtStopId).toBe('SB');
     expect(cascade.affectedTripCount).toBe(3);
     expect(cascade.totalLateSeconds).toBe(1560);
 
@@ -522,6 +563,8 @@ describe('dwellCascadeComputer.buildDailyCascadeMetrics', () => {
     expect(cascade.blastRadius).toBe(1);
     expect(cascade.cascadedTrips).toHaveLength(2);
     expect(cascade.recoveredAtTrip).toBe('Trip-3');
+    expect(cascade.laterTripObservedTimepointCount).toBe(2);
+    expect(cascade.laterTripMissingObservedTimepointCount).toBe(1);
   });
 
   it('does not treat a fully missing-AVL downstream trip as recovery', () => {

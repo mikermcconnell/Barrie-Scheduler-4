@@ -3,16 +3,18 @@ import { AlertTriangle } from 'lucide-react';
 
 interface Step2TravelViewsPanelProps {
     troubleshootingPatternWarning?: string | null;
+    bucketMatrixView: React.ReactNode;
     bandSummaryView: React.ReactNode;
     troubleshootingView: React.ReactNode;
 }
 
 export const Step2TravelViewsPanel: React.FC<Step2TravelViewsPanelProps> = ({
     troubleshootingPatternWarning,
+    bucketMatrixView,
     bandSummaryView,
     troubleshootingView,
 }) => {
-    const [matrixView, setMatrixView] = useState<'band-summary' | 'segment-matrix'>('band-summary');
+    const [matrixView, setMatrixView] = useState<'bucket-matrix' | 'band-summary' | 'diagnostics'>('bucket-matrix');
 
     return (
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
@@ -20,10 +22,22 @@ export const Step2TravelViewsPanel: React.FC<Step2TravelViewsPanelProps> = ({
                 <div>
                     <h3 className="font-bold text-gray-900">Segment Travel Views</h3>
                     <p className="mt-1 text-xs text-gray-500">
-                        Switch between the planning band summary and a troubleshooting view that follows the bus stop-by-stop through the dominant full route.
+                        Start with the 30-minute bucket matrix for planning, then compare band summaries or diagnostics when needed.
                     </p>
                 </div>
                 <div className="inline-flex rounded-lg bg-gray-100 p-1">
+                    <button
+                        type="button"
+                        onClick={() => setMatrixView('bucket-matrix')}
+                        data-testid="step2-view-bucket-matrix"
+                        className={`rounded-md px-4 py-2 text-sm font-bold transition-all ${
+                            matrixView === 'bucket-matrix'
+                                ? 'bg-white text-brand-blue shadow-sm'
+                                : 'text-gray-500 hover:text-gray-700'
+                        }`}
+                    >
+                        Bucket Matrix
+                    </button>
                     <button
                         type="button"
                         onClick={() => setMatrixView('band-summary')}
@@ -38,20 +52,24 @@ export const Step2TravelViewsPanel: React.FC<Step2TravelViewsPanelProps> = ({
                     </button>
                     <button
                         type="button"
-                        onClick={() => setMatrixView('segment-matrix')}
+                        onClick={() => setMatrixView('diagnostics')}
                         data-testid="step2-view-segment-matrix"
                         className={`rounded-md px-4 py-2 text-sm font-bold transition-all ${
-                            matrixView === 'segment-matrix'
+                            matrixView === 'diagnostics'
                                 ? 'bg-white text-brand-blue shadow-sm'
                                 : 'text-gray-500 hover:text-gray-700'
                         }`}
                     >
-                        Troubleshooting View
+                        Diagnostics
                     </button>
                 </div>
             </div>
             <div className="p-4 bg-gray-50/40">
-                {matrixView === 'band-summary' ? (
+                {matrixView === 'bucket-matrix' ? (
+                    <div data-testid="step2-bucket-matrix-view">
+                        {bucketMatrixView}
+                    </div>
+                ) : matrixView === 'band-summary' ? (
                     <div data-testid="step2-band-summary-view">
                         {bandSummaryView}
                     </div>

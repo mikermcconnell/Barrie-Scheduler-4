@@ -16,7 +16,10 @@ import {
 import type { MonthlySnapshot, MonthlyRouteSnapshot, MonthlyDayTypeSnapshot } from './performanceSnapshotTypes';
 import { SNAPSHOT_VERSION } from './performanceSnapshotTypes';
 import { compareDateStrings } from './performanceDateUtils';
+import { mergeOTPBreakdowns } from './performanceOtpUtils';
 import { buildDailyCascadeMetrics } from './schedule/dwellCascadeComputer';
+
+export { mergeOTPBreakdowns } from './performanceOtpUtils';
 
 // ─── Helpers ──────────────────────────────────────────────────────────
 
@@ -772,6 +775,7 @@ function buildOperatorDwellMetrics(records: STREETSRecord[], date: string): Oper
   // routeStopIndex is required so loop routes do not collapse repeated visits to the same stop.
   const groups = new Map<string, STREETSRecord[]>();
   for (const r of records) {
+    if (r.inBetween || r.isTripper || r.isDetour) continue;
     if (!r.timePoint) continue;
     if (!r.observedArrivalTime || !r.observedDepartureTime) continue;
     const key = `${r.tripId}|${r.stopId}|${r.routeStopIndex}`;
@@ -934,12 +938,14 @@ function buildOperatorDwellMetrics(records: STREETSRecord[], date: string): Oper
 
   const classifiedIncidents = incidents.filter(i => i.severity !== 'minor');
   const classifiedCount = classifiedIncidents.length;
+  const totalReportableSeconds = classifiedIncidents.reduce((s, i) => s + i.trackedDwellSeconds, 0);
 
   return {
     incidents,
     byOperator,
     totalIncidents: classifiedCount,
     totalTrackedDwellMinutes: Math.round(totalTrackedSeconds / 60 * 10) / 10,
+    totalReportableDwellMinutes: Math.round(totalReportableSeconds / 60 * 10) / 10,
     totalStopVisits,
     totalServiceHours,
     incidentsPer1kVisits: totalStopVisits > 0
@@ -1384,35 +1390,6 @@ export function aggregateDailySummaries(
 }
 
 // ─── Monthly Snapshot Aggregation ──────────────────────────────────────
-
-/** Merge multiple OTP breakdowns by summing raw counts, then recomputing percentages.
- *  This avoids the "averaging percentages" error. */
-export function mergeOTPBreakdowns(breakdowns: OTPBreakdown[]): OTPBreakdown {
-  let total = 0;
-  let onTime = 0;
-  let early = 0;
-  let late = 0;
-  let weightedDeviation = 0;
-
-  for (const b of breakdowns) {
-    total += b.total;
-    onTime += b.onTime;
-    early += b.early;
-    late += b.late;
-    weightedDeviation += b.avgDeviationSeconds * b.total;
-  }
-
-  return {
-    total,
-    onTime,
-    early,
-    late,
-    onTimePercent: safeDivide(onTime * 100, total),
-    earlyPercent: safeDivide(early * 100, total),
-    latePercent: safeDivide(late * 100, total),
-    avgDeviationSeconds: safeDivide(weightedDeviation, total),
-  };
-}
 
 /** Roll up daily summaries into compact monthly snapshots. */
 export function aggregateMonthlySnapshots(dailySummaries: DailySummary[]): MonthlySnapshot[] {

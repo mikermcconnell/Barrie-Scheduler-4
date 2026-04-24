@@ -155,7 +155,7 @@ export const normalizeTimeForSort = (minutes: number | null): number => {
 // Export for testing
 export const smartSortTrips = (trips: MasterTrip[]): MasterTrip[] => {
     // 1. Initial rough sort by startTime (normalized for midnight crossing)
-    let sorted = [...trips].sort((a, b) =>
+    const sorted = [...trips].sort((a, b) =>
         normalizeTimeForSort(a.startTime) - normalizeTimeForSort(b.startTime)
     );
 

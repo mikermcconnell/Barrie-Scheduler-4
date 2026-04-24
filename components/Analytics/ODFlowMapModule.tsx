@@ -775,6 +775,12 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
         };
     }, [isFullscreen]);
 
+    useEffect(() => {
+        if (mapReady && mapHostRef.current) {
+            onMapReady?.(mapHostRef.current);
+        }
+    }, [mapReady, onMapReady]);
+
     if (geocodedCount === 0) {
         return (
             <ChartCard title="Origin-Destination Map" subtitle="No valid station coordinates to render">
@@ -786,12 +792,6 @@ export const ODFlowMapModule: React.FC<ODFlowMapModuleProps> = ({
             </ChartCard>
         );
     }
-
-    useEffect(() => {
-        if (mapReady && mapHostRef.current) {
-            onMapReady?.(mapHostRef.current);
-        }
-    }, [mapReady, onMapReady]);
 
     return (
         <>

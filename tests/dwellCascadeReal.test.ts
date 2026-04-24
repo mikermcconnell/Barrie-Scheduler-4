@@ -52,7 +52,7 @@ function buildDwellIncidentsOld(records: STREETSRecord[], date: string): DwellIn
     for (const r of records) {
         if (!r.timePoint) continue;
         if (!r.observedArrivalTime || !r.observedDepartureTime) continue;
-        let arrSec = timeToSeconds(r.observedArrivalTime);
+        const arrSec = timeToSeconds(r.observedArrivalTime);
         let depSec = timeToSeconds(r.observedDepartureTime);
         if (depSec < arrSec) depSec += 86400;
         const rawDwell = depSec - arrSec;
@@ -85,7 +85,7 @@ function buildDwellIncidentsNew(records: STREETSRecord[], date: string): DwellIn
     for (const r of records) {
         if (!r.timePoint) continue;
         if (!r.observedArrivalTime || !r.observedDepartureTime) continue;
-        let arrSec = timeToSeconds(r.observedArrivalTime);
+        const arrSec = timeToSeconds(r.observedArrivalTime);
         let depSec = timeToSeconds(r.observedDepartureTime);
         if (depSec < arrSec) depSec += 86400;
         const rawDwell = depSec - arrSec;
@@ -321,14 +321,14 @@ describe.skipIf(!march3Exists())('Dwell Fix Comparison — March 3 Data', () => 
         let legacyTotalMin = 0;
         let branch1Count = 0, branch1TotalMin = 0;
         let branch2Count = 0, branch2TotalMin = 0;
-        let newBranch1Count = 0, newBranch1TotalMin = 0;
-        let newBranch2Count = 0, newBranch2TotalMin = 0;
-        let floorFilteredCount = 0, floorFilteredMin = 0;
+        const newBranch1Count = 0, newBranch1TotalMin = 0;
+        const newBranch2Count = 0, newBranch2TotalMin = 0;
+        const floorFilteredCount = 0, floorFilteredMin = 0;
 
         for (const r of records) {
             if (!r.timePoint) continue;
             if (!r.observedArrivalTime || !r.observedDepartureTime) continue;
-            let arrSec = timeToSeconds(r.observedArrivalTime);
+            const arrSec = timeToSeconds(r.observedArrivalTime);
             let depSec = timeToSeconds(r.observedDepartureTime);
             if (depSec < arrSec) depSec += 86400;
 
@@ -385,7 +385,7 @@ describe.skipIf(!march3Exists())('Dwell Fix Comparison — March 3 Data', () => 
         for (const r of records) {
             if (!r.timePoint) continue;
             if (!r.observedArrivalTime || !r.observedDepartureTime) continue;
-            let arrSec = timeToSeconds(r.observedArrivalTime);
+            const arrSec = timeToSeconds(r.observedArrivalTime);
             let depSec = timeToSeconds(r.observedDepartureTime);
             if (depSec < arrSec) depSec += 86400;
             const schedDepSec = timeToSeconds(r.stopTime);

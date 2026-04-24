@@ -6,7 +6,7 @@
  */
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { ArrowLeft, Download, RefreshCw, Eye, Trash2, Image, ChevronDown, ChevronUp, Save, RotateCcw, Phone, Mail, Globe, Clock3 } from 'lucide-react';
+import { ArrowLeft, Download, RefreshCw, Eye, Trash2, Image, ChevronDown, ChevronUp, Save, RotateCcw, Phone, Mail, Globe, Clock3, Maximize2, X } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import { useTeam } from '../contexts/TeamContext';
 import { useToast } from '../contexts/ToastContext';
@@ -37,6 +37,7 @@ import {
 
 interface PublicTimetableProps {
     onBack: () => void;
+    initialRouteNumber?: string;
 }
 
 type DayStatus = 'idle' | 'loading' | 'ready' | 'missing' | 'error';
@@ -55,7 +56,11 @@ const createEmptyBrochureDays = (): BrochureDayRecord => ({
 });
 
 const LANDSCAPE_MAP_ROUTES = new Set(['10', '11', '100', '101']);
-const MAP_LEGEND_ITEMS = [
+type MapLegendItem =
+    | { label: string; markerClassName: string; line?: false }
+    | { label: string; line: true };
+
+const MAP_LEGEND_ITEMS: MapLegendItem[] = [
     { label: 'Timepoint stop', markerClassName: 'border-2 border-[#0b5d4f] bg-white' },
     { label: 'Regular stop', markerClassName: 'border border-slate-500 bg-white' },
     { label: 'Transfer point', markerClassName: 'bg-[#0b5d4f] text-white' },
@@ -212,7 +217,7 @@ const getContactIcon = (contact: string): React.ReactElement => {
     return <Globe size={12} />;
 };
 
-export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
+export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initialRouteNumber }) => {
     const { team, canManageTeam } = useTeam();
     const { user } = useAuth();
     const toast = useToast();
@@ -239,6 +244,14 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
     const [savingConfig, setSavingConfig] = useState(false);
     const [configWarning, setConfigWarning] = useState<string | null>(null);
     const [showConfigEditor, setShowConfigEditor] = useState(false);
+    const [isFullscreenPreview, setIsFullscreenPreview] = useState(false);
+
+    useEffect(() => {
+        const routeNumber = initialRouteNumber?.trim();
+        if (!routeNumber) return;
+        setSelectedRoute(routeNumber);
+        setSelectedDirection('Both');
+    }, [initialRouteNumber]);
 
     // Load available schedules
     useEffect(() => {
@@ -259,15 +272,40 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
         loadEntries();
     }, [team?.id]);
 
+    useEffect(() => {
+        if (!isFullscreenPreview) {
+            return;
+        }
+
+        const previousOverflow = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+
+        const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') {
+                setIsFullscreenPreview(false);
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+
+        return () => {
+            document.body.style.overflow = previousOverflow;
+            window.removeEventListener('keydown', handleKeyDown);
+        };
+    }, [isFullscreenPreview]);
+
     // Get unique routes
     const routes = useMemo(() => {
         const routeSet = new Set(entries.map(e => e.routeNumber));
+        if (selectedRoute) {
+            routeSet.add(selectedRoute);
+        }
         return Array.from(routeSet).sort((a, b) => {
             const numA = parseInt(a.replace(/\D/g, '')) || 0;
             const numB = parseInt(b.replace(/\D/g, '')) || 0;
             return numA - numB;
         });
-    }, [entries]);
+    }, [entries, selectedRoute]);
 
     useEffect(() => {
         const loadBrochureConfig = async () => {
@@ -1083,6 +1121,53 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
         );
     };
 
+    const renderBrochurePages = (): React.ReactElement => {
+        const pageStyle: React.CSSProperties = {
+            width: '1180px',
+            height: '770px',
+            minWidth: '1180px',
+        };
+
+        return (
+            <>
+                <div className="mx-auto" style={pageStyle}>
+                    <div data-export-ignore="true" className="mb-3">
+                        <span className="inline-flex rounded-xl border border-slate-300 bg-white px-4 py-1.5 text-[14px] font-semibold text-slate-600 shadow-sm">
+                            Side A
+                        </span>
+                    </div>
+                    <div
+                        ref={brochurePage1Ref}
+                        className="h-[calc(100%-44px)] overflow-hidden rounded-[30px] border border-[#d6d6d2] bg-[#ece8e1] p-7 shadow-[0_20px_55px_rgba(15,23,42,0.18)]"
+                    >
+                        {renderFrontCover()}
+                    </div>
+                </div>
+
+                <div className="mx-auto" style={pageStyle}>
+                    <div data-export-ignore="true" className="mb-3">
+                        <span className="inline-flex rounded-xl border border-slate-300 bg-white px-4 py-1.5 text-[14px] font-semibold text-slate-600 shadow-sm">
+                            Side B
+                        </span>
+                    </div>
+                    <div
+                        ref={brochurePage2Ref}
+                        className="h-[calc(100%-44px)] overflow-hidden rounded-[30px] border border-[#d6d6d2] bg-[#ece8e1] p-7 shadow-[0_20px_55px_rgba(15,23,42,0.18)]"
+                    >
+                        <div className="flex h-full gap-5">
+                            <div className="flex-1 min-w-0">
+                                {renderDayTimetable(brochureDays.weekday, 'weekday')}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                                {renderDayTimetable(brochureDays.saturday, 'saturday')}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </>
+        );
+    };
+
     if (loading) {
         return (
             <div className="h-full flex items-center justify-center">
@@ -1097,7 +1182,7 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
                 <div className="text-center">
                     <p className="text-gray-500 mb-4">Join a team to access master schedules.</p>
                     <button onClick={onBack} className="text-blue-600 hover:underline">
-                        ← Back to Reports
+                        ← Back
                     </button>
                 </div>
             </div>
@@ -1135,7 +1220,7 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
             {/* Content */}
             <div className="flex-1 flex overflow-hidden">
                 {/* Left Panel - Configuration */}
-                <div className="w-80 border-r border-gray-200 overflow-y-auto p-4 bg-gray-50">
+                <div className="w-72 shrink-0 border-r border-gray-200 overflow-y-auto p-4 bg-gray-50">
                     <div className="space-y-6">
                         {/* Route Selection */}
                         <div>
@@ -1478,11 +1563,22 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
                 </div>
 
                 {/* Right Panel - Preview */}
-                <div className="flex-1 overflow-auto p-6 bg-white">
-                    <div className="flex items-center gap-2 mb-4">
-                        <Eye size={18} className="text-gray-400" />
-                        <h3 className="text-lg font-bold text-gray-900">Preview</h3>
-                        <span className="text-sm text-gray-500">Export captures these brochure pages exactly.</span>
+                <div className="flex-1 min-w-0 overflow-auto bg-white p-4">
+                    <div className="mb-4 flex items-center justify-between gap-3">
+                        <div className="flex min-w-0 items-center gap-2">
+                            <Eye size={18} className="text-gray-400" />
+                            <h3 className="text-lg font-bold text-gray-900">Preview</h3>
+                            <span className="truncate text-sm text-gray-500">Export captures these brochure pages exactly.</span>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => setIsFullscreenPreview(true)}
+                            disabled={!selectedRoute || !hasReadyBrochureDay}
+                            className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-700 shadow-sm transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                            <Maximize2 size={16} />
+                            Full screen
+                        </button>
                     </div>
 
                     {!selectedRoute ? (
@@ -1494,57 +1590,48 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack }) => {
                             <p className="text-gray-400">No published timetable data is available for this route yet.</p>
                         </div>
                     ) : (
-                        <div className="space-y-6" style={{ fontFamily: 'Arial, sans-serif' }}>
-                            {(() => {
-                                const pageStyle = {
-                                    width: '1180px',
-                                    height: '770px',
-                                    maxWidth: '100%',
-                                };
-
-                                return (
-                                    <>
-                                        <div className="mx-auto" style={pageStyle}>
-                                            <div data-export-ignore="true" className="mb-3">
-                                                <span className="inline-flex rounded-xl border border-slate-300 bg-white px-4 py-1.5 text-[14px] font-semibold text-slate-600 shadow-sm">
-                                                    Side A
-                                                </span>
-                                            </div>
-                                            <div
-                                                ref={brochurePage1Ref}
-                                                className="h-[calc(100%-44px)] overflow-hidden rounded-[30px] border border-[#d6d6d2] bg-[#ece8e1] p-7 shadow-[0_20px_55px_rgba(15,23,42,0.18)]"
-                                            >
-                                                {renderFrontCover()}
-                                            </div>
-                                        </div>
-
-                                        <div className="mx-auto" style={pageStyle}>
-                                            <div data-export-ignore="true" className="mb-3">
-                                                <span className="inline-flex rounded-xl border border-slate-300 bg-white px-4 py-1.5 text-[14px] font-semibold text-slate-600 shadow-sm">
-                                                    Side B
-                                                </span>
-                                            </div>
-                                            <div
-                                                ref={brochurePage2Ref}
-                                                className="h-[calc(100%-44px)] overflow-hidden rounded-[30px] border border-[#d6d6d2] bg-[#ece8e1] p-7 shadow-[0_20px_55px_rgba(15,23,42,0.18)]"
-                                            >
-                                                <div className="flex h-full gap-5">
-                                                    <div className="flex-1 min-w-0">
-                                                        {renderDayTimetable(brochureDays.weekday, 'weekday')}
-                                                    </div>
-                                                    <div className="flex-1 min-w-0">
-                                                        {renderDayTimetable(brochureDays.saturday, 'saturday')}
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </>
-                                );
-                            })()}
+                        <div className="space-y-6 overflow-x-auto pb-4" style={{ fontFamily: 'Arial, sans-serif' }}>
+                            {renderBrochurePages()}
                         </div>
                     )}
                 </div>
             </div>
+
+            {isFullscreenPreview && selectedRoute && hasReadyBrochureDay ? (
+                <div className="fixed inset-0 z-[100] flex flex-col bg-slate-950/95">
+                    <div className="flex shrink-0 items-center justify-between gap-4 border-b border-white/10 bg-slate-950 px-5 py-3 text-white">
+                        <div className="min-w-0">
+                            <p className="text-sm font-semibold uppercase tracking-[0.16em] text-white/55">Brochure preview</p>
+                            <h3 className="truncate text-xl font-bold">{brochureTitle}</h3>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-3">
+                            <button
+                                type="button"
+                                onClick={generatePDF}
+                                disabled={generating || selectedStops.length === 0}
+                                className="inline-flex items-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                                {generating ? <RefreshCw className="animate-spin" size={16} /> : <Download size={16} />}
+                                Export PDF
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setIsFullscreenPreview(false)}
+                                className="inline-flex items-center gap-2 rounded-lg border border-white/20 bg-white/10 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-white/20"
+                            >
+                                <X size={16} />
+                                Close
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="flex-1 overflow-auto p-6">
+                        <div className="mx-auto w-max space-y-8" style={{ fontFamily: 'Arial, sans-serif' }}>
+                            {renderBrochurePages()}
+                        </div>
+                    </div>
+                </div>
+            ) : null}
         </div>
     );
 };

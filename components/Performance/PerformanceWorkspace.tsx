@@ -49,6 +49,26 @@ const DAY_TYPE_LABELS: Record<DayType, string> = { weekday: 'Weekday', saturday:
 const LOCALHOST_HOSTNAMES = new Set(['localhost', '127.0.0.1', '::1']);
 const isLocalhost = () => typeof window !== 'undefined' && LOCALHOST_HOSTNAMES.has(window.location.hostname);
 
+function withFilteredMetadata(
+    data: PerformanceDataSummary,
+    dailySummaries: PerformanceDataSummary['dailySummaries'],
+): PerformanceDataSummary {
+    const sortedDates = dailySummaries.map(day => day.date).sort();
+    const totalRecords = dailySummaries.reduce((sum, day) => sum + day.dataQuality.totalRecords, 0);
+    return {
+        ...data,
+        dailySummaries,
+        metadata: {
+            ...data.metadata,
+            dateRange: sortedDates.length > 0
+                ? { start: sortedDates[0], end: sortedDates[sortedDates.length - 1] }
+                : data.metadata.dateRange,
+            dayCount: dailySummaries.length,
+            totalRecords,
+        },
+    };
+}
+
 const SystemOverviewModule = lazyWithRetry(
     () => import('./SystemOverviewModule').then(module => ({ default: module.SystemOverviewModule })),
     'performance-system-overview',
@@ -128,10 +148,10 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data
         setSelectedDate(null);
     }, [activeTab, latestAvailableDate]);
 
-    const filteredData = useMemo((): PerformanceDataSummary => ({
-        ...data,
-        dailySummaries: filterDailySummaries(data.dailySummaries, timeRange, dayTypeFilter, selectedDate),
-    }), [data, timeRange, dayTypeFilter, selectedDate]);
+    const filteredData = useMemo((): PerformanceDataSummary => {
+        const dailySummaries = filterDailySummaries(data.dailySummaries, timeRange, dayTypeFilter, selectedDate);
+        return withFilteredMetadata(data, dailySummaries);
+    }, [data, timeRange, dayTypeFilter, selectedDate]);
 
     useEffect(() => {
         if (timeRange !== 'single-day') return;
@@ -190,6 +210,7 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data
                 return (
                     <SystemOverviewModule
                         data={filteredData}
+                        allData={data}
                         onNavigate={handleNavigate}
                         scope={filteredScope}
                         scopeLabel={filteredScopeLabel}

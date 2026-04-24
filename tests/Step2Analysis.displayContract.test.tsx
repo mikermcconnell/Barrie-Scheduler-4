@@ -96,6 +96,12 @@ describe('Step2Analysis display and planner actions', () => {
             );
         });
 
+        const bandSummaryToggle = container.querySelector('[data-testid="step2-view-band-summary"]') as HTMLButtonElement | null;
+        expect(bandSummaryToggle).toBeTruthy();
+        flushSync(() => {
+            bandSummaryToggle?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        });
+
         expect(container.textContent).toContain('Band A (12.0m actual avg)');
         expect(container.textContent).toContain('weighted median (P50) summaries');
 

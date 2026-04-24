@@ -143,7 +143,7 @@ export const StopActivityMap: React.FC<StopActivityMapProps> = ({ stops }) => {
     return result;
   }, [enrichedStops, selectedRoute]);
   const filteredStops = useMemo(() => {
-    let result = routeFilteredStops.filter((stop) => hasUsableBarrieCoords(stop.lat, stop.lon));
+    const result = routeFilteredStops.filter((stop) => hasUsableBarrieCoords(stop.lat, stop.lon));
     return result.map((stop) => {
       const filtered = getStopActivityBreakdown(stop, activeHours);
       return { ...stop, filteredBoardings: filtered.boardings, filteredAlightings: filtered.alightings, activity: getStopActivityValue(stop, viewMode, activeHours) };

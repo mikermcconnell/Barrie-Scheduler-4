@@ -251,6 +251,23 @@ describe('getRoundTripLastDepartureTime', () => {
 
         expect(anchor).toBe(399);
     });
+
+    it('uses a manually edited explicit departure instead of arrival plus recovery', () => {
+        const southTrip = {
+            ...makeTrip('south-1', 'South', 480, { 'South Terminal': '08:00', 'Outer Terminal': '08:12' }),
+            arrivalTimes: { 'South Terminal': '08:00', 'Outer Terminal': '08:00' },
+            recoveryTimes: { 'Outer Terminal': 5 },
+        };
+        const row = makeRow([southTrip]);
+
+        const anchor = getRoundTripLastDepartureTime(row, {
+            routeName: '12 (Weekday)',
+            northStops: [],
+            southStops: ['South Terminal', 'Outer Terminal'],
+        });
+
+        expect(anchor).toBe(492);
+    });
 });
 
 describe('getRoundTripDisplayedHeadways', () => {

@@ -1289,6 +1289,132 @@ describe('performanceRuntimeComputer.computeRuntimesFromPerformance', () => {
         ]);
     });
 
+    it('rolls full trip stop legs up to canonical timepoint segments before bucket coverage checks', () => {
+        const summaries: DailySummary[] = [
+            makeSummary({
+                date: '2026-01-06',
+                dayType: 'weekday',
+                routeNames: { '7A': 'Route Seven A', '7B': 'Route Seven B' },
+                stopEntries: [
+                    {
+                        routeId: '7A',
+                        direction: 'N',
+                        fromStopId: 'park',
+                        toStopId: 'local1',
+                        fromStopName: 'Park Place',
+                        toStopName: 'Local 1',
+                        fromRouteStopIndex: 0,
+                        toRouteStopIndex: 9,
+                        segmentName: 'Park Place to Local 1',
+                        observations: [{ timeBucket: '10:00', runtimeMinutes: 5 }],
+                    },
+                    {
+                        routeId: '7A',
+                        direction: 'N',
+                        fromStopId: 'local1',
+                        toStopId: 'peggy',
+                        fromStopName: 'Local 1',
+                        toStopName: 'Peggy Hill Community Centre',
+                        fromRouteStopIndex: 9,
+                        toRouteStopIndex: 56,
+                        segmentName: 'Local 1 to Peggy Hill Community Centre',
+                        observations: [{ timeBucket: '10:00', runtimeMinutes: 7 }],
+                    },
+                    {
+                        routeId: '7A',
+                        direction: 'N',
+                        fromStopId: 'peggy',
+                        toStopId: 'hub',
+                        fromStopName: 'Peggy Hill Community Centre',
+                        toStopName: 'Downtown Hub',
+                        fromRouteStopIndex: 56,
+                        toRouteStopIndex: 123,
+                        segmentName: 'Peggy Hill Community Centre to Downtown Hub',
+                        observations: [{ timeBucket: '10:00', runtimeMinutes: 18 }],
+                    },
+                    {
+                        routeId: '7B',
+                        direction: 'S',
+                        fromStopId: 'hub',
+                        toStopId: 'peggy',
+                        fromStopName: 'Downtown Hub',
+                        toStopName: 'Peggy Hill Community Centre',
+                        fromRouteStopIndex: 0,
+                        toRouteStopIndex: 50,
+                        segmentName: 'Downtown Hub to Peggy Hill Community Centre',
+                        observations: [{ timeBucket: '10:30', runtimeMinutes: 17 }],
+                    },
+                    {
+                        routeId: '7B',
+                        direction: 'S',
+                        fromStopId: 'peggy',
+                        toStopId: 'park',
+                        fromStopName: 'Peggy Hill Community Centre',
+                        toStopName: 'Park Place',
+                        fromRouteStopIndex: 50,
+                        toRouteStopIndex: 99,
+                        segmentName: 'Peggy Hill Community Centre to Park Place',
+                        observations: [{ timeBucket: '10:30', runtimeMinutes: 14 }],
+                    },
+                ],
+                tripEntries: [
+                    {
+                        tripId: 'north-1',
+                        tripName: '7A 10:00',
+                        routeId: '7A',
+                        direction: 'N',
+                        terminalDepartureTime: '10:00',
+                        segments: [
+                            { fromStopId: 'park', toStopId: 'local1', fromRouteStopIndex: 0, toRouteStopIndex: 9, runtimeMinutes: 5, timeBucket: '10:00' },
+                            { fromStopId: 'local1', toStopId: 'peggy', fromRouteStopIndex: 9, toRouteStopIndex: 56, runtimeMinutes: 7, timeBucket: '10:00' },
+                            { fromStopId: 'peggy', toStopId: 'hub', fromRouteStopIndex: 56, toRouteStopIndex: 123, runtimeMinutes: 18, timeBucket: '10:00' },
+                        ],
+                    },
+                    {
+                        tripId: 'south-1',
+                        tripName: '7B 10:35',
+                        routeId: '7B',
+                        direction: 'S',
+                        terminalDepartureTime: '10:35',
+                        segments: [
+                            { fromStopId: 'hub', toStopId: 'peggy', fromRouteStopIndex: 0, toRouteStopIndex: 50, runtimeMinutes: 17, timeBucket: '10:30' },
+                            { fromStopId: 'peggy', toStopId: 'park', fromRouteStopIndex: 50, toRouteStopIndex: 99, runtimeMinutes: 14, timeBucket: '11:00' },
+                        ],
+                    },
+                ],
+            }),
+        ];
+
+        const result = computeRuntimesFromPerformance(summaries, {
+            routeId: '7',
+            dayType: 'weekday',
+            canonicalDirectionStops: {
+                North: ['Park Place', 'Peggy Hill Community Centre', 'Downtown Hub'],
+                South: ['Downtown Hub', 'Peggy Hill Community Centre', 'Park Place'],
+            },
+            patternAnchorStops: {
+                North: ['Park Place', 'Downtown Hub'],
+                South: ['Downtown Hub', 'Park Place'],
+            },
+            fullPatternOnly: true,
+        });
+
+        expect(result.find(item => item.detectedDirection === 'North')?.segments.map(segment => segment.segmentName)).toEqual([
+            'Park Place to Peggy Hill Community Centre',
+            'Peggy Hill Community Centre to Downtown Hub',
+        ]);
+        expect(result.find(item => item.detectedDirection === 'South')?.segments.map(segment => segment.segmentName)).toEqual([
+            'Downtown Hub to Peggy Hill Community Centre',
+            'Peggy Hill Community Centre to Park Place',
+        ]);
+
+        const analysis = calculateTotalTripTimes(result);
+        expect(analysis).toHaveLength(1);
+        expect(analysis[0].timeBucket).toBe('10:00');
+        expect(analysis[0].observedSegmentCount).toBe(4);
+        expect(analysis[0].expectedSegmentCount).toBe(4);
+    });
+
     it('keeps Route 7 handoff segments on the outbound chain so Step 2 does not lose one return segment', () => {
         const canonicalDirectionStops = getUsableCanonicalDirectionStops('7', {
             North: ['Park Place', 'Peggy Hill Community Centre', 'Allandale GO Station', 'Downtown', 'Georgian College'],

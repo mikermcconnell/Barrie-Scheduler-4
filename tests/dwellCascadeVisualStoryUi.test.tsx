@@ -196,13 +196,65 @@ describe('dwell cascade visual story UI', () => {
                     selectedTripIndex={null}
                     onSelectPoint={() => {}}
                     stopLoadLookup={new Map()}
+                    dwellOriginStopName="Park Place"
+                    dwellExcessMinutes={6}
                 />,
             );
         });
 
+        expect(container.textContent).toContain('Dwell origin');
+        expect(container.textContent).toContain('Park Place');
+        expect(container.textContent).toContain('Timeline starts at the first observed downstream point');
         expect(container.textContent).toContain('Same-trip impact · 2 points');
         expect(container.textContent).toContain('Later-trip carryover · 1 points');
         expect(container.textContent).toContain('Later-trip carryover');
         expect(container.textContent).toContain('Same-trip impact · Trip-A');
+    });
+
+    it('uses stayed-under wording when delay never exceeded the OTP threshold', () => {
+        const sameTripImpact = makeAffectedTrip({
+            tripName: 'Trip-A',
+            tripId: 'trip-a',
+            phase: 'same-trip',
+            lateTimepointCount: 0,
+            affectedTimepointCount: 1,
+            backUnderThresholdAtStop: 'Maple View',
+            thresholdStatus: 'stayed-under',
+            timepoints: [
+                {
+                    stopName: 'Maple View',
+                    stopId: 'MV',
+                    routeStopIndex: 9,
+                    scheduledDeparture: '08:22',
+                    observedDeparture: '08:24:00',
+                    deviationSeconds: 120,
+                    rawDeviationSeconds: 180,
+                    isLate: false,
+                    boardings: 4,
+                },
+            ],
+            lateSeconds: 120,
+        });
+        const cascade = makeCascade({
+            sameTripImpact,
+            sameTripObserved: true,
+            cascadedTrips: [],
+            backUnderThresholdAtTrip: 'Trip-A',
+            backUnderThresholdAtStop: 'Maple View',
+            thresholdStatus: 'stayed-under',
+        });
+
+        flushSync(() => {
+            root.render(
+                <CascadeTripChain
+                    cascade={cascade}
+                    selectedTripIndex={null}
+                    onSelectTrip={() => {}}
+                />,
+            );
+        });
+
+        expect(container.textContent).toContain('Stayed under 5 min');
+        expect(container.textContent).not.toContain('Back under 5 min at Maple View');
     });
 });

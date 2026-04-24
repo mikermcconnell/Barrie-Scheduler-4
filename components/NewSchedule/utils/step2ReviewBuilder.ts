@@ -127,23 +127,32 @@ export const buildStep2ReviewResult = (
         }
         : input.performanceConfig;
 
-    const normalizedPerformanceDiagnostics: Step2PerformanceDiagnostics | null | undefined = input.performanceDiagnostics
+    const stopOrderDecision = input.performanceDiagnostics?.stopOrderDecision ?? input.stopOrder?.decision;
+    const stopOrderConfidence = input.performanceDiagnostics?.stopOrderConfidence ?? input.stopOrder?.confidence;
+    const stopOrderSource = input.performanceDiagnostics?.stopOrderSource ?? input.stopOrder?.sourceUsed;
+
+    const normalizedPerformanceDiagnostics: Step2PerformanceDiagnostics | null | undefined = input.performanceDiagnostics || input.stopOrder
         ? {
-            routeId: input.performanceDiagnostics.routeId.trim(),
-            dateRange: input.performanceDiagnostics.dateRange
+            routeId: (input.performanceDiagnostics?.routeId ?? input.performanceConfig?.routeId ?? input.routeNumber).trim(),
+            dateRange: input.performanceDiagnostics?.dateRange
                 ? {
                     start: input.performanceDiagnostics.dateRange.start.trim(),
                     end: input.performanceDiagnostics.dateRange.end.trim(),
                 }
-                : null,
-            runtimeLogicVersion: input.performanceDiagnostics.runtimeLogicVersion,
-            importedAt: input.performanceDiagnostics.importedAt?.trim(),
-            cleanHistoryStartDate: input.performanceDiagnostics.cleanHistoryStartDate?.trim(),
-            excludedLegacyDayCount: input.performanceDiagnostics.excludedLegacyDayCount,
-            usesCleanHistoryCutoff: input.performanceDiagnostics.usesCleanHistoryCutoff,
-            stopOrderDecision: input.performanceDiagnostics.stopOrderDecision,
-            stopOrderConfidence: input.performanceDiagnostics.stopOrderConfidence,
-            stopOrderSource: input.performanceDiagnostics.stopOrderSource,
+                : input.performanceConfig?.dateRange
+                    ? {
+                        start: input.performanceConfig.dateRange.start.trim(),
+                        end: input.performanceConfig.dateRange.end.trim(),
+                    }
+                    : null,
+            runtimeLogicVersion: input.performanceDiagnostics?.runtimeLogicVersion,
+            importedAt: input.performanceDiagnostics?.importedAt?.trim(),
+            cleanHistoryStartDate: input.performanceDiagnostics?.cleanHistoryStartDate?.trim(),
+            excludedLegacyDayCount: input.performanceDiagnostics?.excludedLegacyDayCount,
+            usesCleanHistoryCutoff: input.performanceDiagnostics?.usesCleanHistoryCutoff,
+            stopOrderDecision,
+            stopOrderConfidence,
+            stopOrderSource,
         }
         : input.performanceDiagnostics;
 
@@ -243,22 +252,25 @@ export const buildStep2ReviewResult = (
 
 export const buildStep2SourceSnapshot = (
     input: Step2ReviewBuilderInput
-): Step2SourceSnapshot => ({
-    performanceRouteId: input.performanceDiagnostics?.routeId?.trim(),
-    performanceDateRange: input.performanceDiagnostics?.dateRange
-        ? {
-            start: input.performanceDiagnostics.dateRange.start.trim(),
-            end: input.performanceDiagnostics.dateRange.end.trim(),
-        }
-        : null,
-    runtimeLogicVersion: input.performanceDiagnostics?.runtimeLogicVersion,
-    importedAt: input.performanceDiagnostics?.importedAt?.trim(),
-    ...(input.performanceDiagnostics?.cleanHistoryStartDate?.trim()
-        ? { cleanHistoryStartDate: input.performanceDiagnostics.cleanHistoryStartDate.trim() }
-        : {}),
-    stopOrderDecision: input.performanceDiagnostics?.stopOrderDecision,
-    stopOrderConfidence: input.performanceDiagnostics?.stopOrderConfidence,
-    stopOrderSource: input.performanceDiagnostics?.stopOrderSource,
-});
+): Step2SourceSnapshot => {
+    const dateRange = input.performanceDiagnostics?.dateRange ?? input.performanceConfig?.dateRange ?? null;
+    const cleanHistoryStartDate = input.performanceDiagnostics?.cleanHistoryStartDate?.trim();
+
+    return {
+        performanceRouteId: (input.performanceDiagnostics?.routeId ?? input.performanceConfig?.routeId)?.trim(),
+        performanceDateRange: dateRange
+            ? {
+                start: dateRange.start.trim(),
+                end: dateRange.end.trim(),
+            }
+            : null,
+        runtimeLogicVersion: input.performanceDiagnostics?.runtimeLogicVersion,
+        importedAt: input.performanceDiagnostics?.importedAt?.trim(),
+        ...(cleanHistoryStartDate ? { cleanHistoryStartDate } : {}),
+        stopOrderDecision: input.performanceDiagnostics?.stopOrderDecision ?? input.stopOrder?.decision,
+        stopOrderConfidence: input.performanceDiagnostics?.stopOrderConfidence ?? input.stopOrder?.confidence,
+        stopOrderSource: input.performanceDiagnostics?.stopOrderSource ?? input.stopOrder?.sourceUsed,
+    };
+};
 
 export type { ApprovedRuntimeContract };

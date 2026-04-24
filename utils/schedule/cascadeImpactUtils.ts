@@ -64,9 +64,10 @@ export function buildCascadeLateTripsByRoute(
   return rows.sort((a, b) => b.otpPenaltyPp - a.otpPenaltyPp || b.cascadeCausedTrips - a.cascadeCausedTrips);
 }
 
-export function buildCascadeLateDepartureImpactByRoute(
+function buildLateDepartureImpactRows(
   cascade: DwellCascade,
   dailySummaries: DailySummary[],
+  includeSameTrip: boolean,
 ): CascadeLateDepartureImpactRow[] {
   const routeTotals = new Map<string, { routeName: string; assessedDepartures: number }>();
   for (const day of dailySummaries) {
@@ -83,8 +84,12 @@ export function buildCascadeLateDepartureImpactByRoute(
     }
   }
 
+  const trips = includeSameTrip && cascade.sameTripImpact
+    ? [cascade.sameTripImpact, ...cascade.cascadedTrips]
+    : cascade.cascadedTrips;
+
   const lateDeparturesByRoute = new Map<string, { routeName: string; lateDepartures: number }>();
-  for (const trip of cascade.cascadedTrips) {
+  for (const trip of trips) {
     if (trip.lateTimepointCount <= 0) continue;
     const existing = lateDeparturesByRoute.get(trip.routeId);
     if (existing) {
@@ -111,4 +116,18 @@ export function buildCascadeLateDepartureImpactByRoute(
   }
 
   return rows.sort((a, b) => b.lateDepartures - a.lateDepartures || a.routeId.localeCompare(b.routeId));
+}
+
+export function buildCascadeLateDepartureImpactByRoute(
+  cascade: DwellCascade,
+  dailySummaries: DailySummary[],
+): CascadeLateDepartureImpactRow[] {
+  return buildLateDepartureImpactRows(cascade, dailySummaries, false);
+}
+
+export function buildIncidentLateDepartureImpactByRoute(
+  cascade: DwellCascade,
+  dailySummaries: DailySummary[],
+): CascadeLateDepartureImpactRow[] {
+  return buildLateDepartureImpactRows(cascade, dailySummaries, true);
 }

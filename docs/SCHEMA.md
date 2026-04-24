@@ -66,6 +66,8 @@ storage/
 - `overviewStoragePath`: lightweight recent overview payload for dashboard first-load
 - `reportStoragePath`: report-focused snapshot used by the daily email
 
+Daily performance summaries may include `byOperatorDwell.totalReportableDwellMinutes`, an optional moderate/high-only dwell total used by compact report snapshots when older incident arrays are trimmed.
+
 ---
 
 ## Core Types

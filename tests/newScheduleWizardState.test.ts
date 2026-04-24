@@ -5,6 +5,7 @@ import {
     buildStep2DataHealthReport,
     buildCanonicalSegmentColumnsFromMasterStops,
     buildNormalizedSegmentNameLookup,
+    buildRuntimeDerivedCanonicalDirectionStops,
     buildSegmentsMapFromParsedData,
     clampWizardStepToCurrentStep2Approval,
     deriveWizardStepFromProject,
@@ -217,6 +218,30 @@ describe('newSchedule wizard state helpers', () => {
             '2A',
             '2B',
         ]);
+    });
+
+    it('derives a planning stop chain from CSV runtime segments when no master chain is available', () => {
+        const grouped = buildSegmentsMapFromParsedData([
+            {
+                detectedDirection: 'A',
+                segments: [
+                    { segmentName: 'Downtown Hub to Cundles', timeBuckets: {} },
+                    { segmentName: 'Park Place to Downtown Hub', timeBuckets: {} },
+                ],
+            },
+            {
+                detectedDirection: 'B',
+                segments: [
+                    { segmentName: 'Downtown Hub to Park Place', timeBuckets: {} },
+                    { segmentName: 'Cundles to Downtown Hub', timeBuckets: {} },
+                ],
+            },
+        ] as any);
+
+        expect(buildRuntimeDerivedCanonicalDirectionStops('2', grouped)).toEqual({
+            North: ['Park Place', 'Downtown Hub', 'Cundles'],
+            South: ['Cundles', 'Downtown Hub', 'Park Place'],
+        });
     });
 
     it('builds canonical out-and-back columns from master stops', () => {

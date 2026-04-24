@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildCascadeLateDepartureImpactByRoute,
   buildCascadeLateTripsByRoute,
+  buildIncidentLateDepartureImpactByRoute,
 } from '../utils/schedule/cascadeImpactUtils';
 import type {
   CascadeAffectedTrip,
@@ -168,5 +169,40 @@ describe('cascadeImpactUtils', () => {
     expect(impact[0].penaltyPct).toBeCloseTo(8.33, 1);
     expect(impact[1].lateDepartures).toBe(1);
     expect(impact[1].assessedDepartures).toBe(12);
+  });
+
+  it('can include same-trip OTP impact for total incident route impact', () => {
+    const cascade = makeCascade({
+      routeId: '10',
+      routeName: 'Route 10',
+      sameTripImpact: makeTrip({
+        phase: 'same-trip',
+        routeId: '10',
+        routeName: 'Route 10',
+        tripId: 'trip-1',
+        lateTimepointCount: 1,
+      }),
+      cascadedTrips: [
+        makeTrip({ phase: 'later-trip', routeId: '20', routeName: 'Route 20', tripId: 'trip-20', lateTimepointCount: 2 }),
+      ],
+      blastRadius: 2,
+    });
+
+    const days = [
+      makeDaySummary({
+        byRoute: [
+          { routeId: '10', routeName: 'Route 10', tripCount: 8, otp: makeOtp(16, 15) } as any,
+          { routeId: '20', routeName: 'Route 20', tripCount: 12, otp: makeOtp(24, 22) } as any,
+        ],
+      }),
+    ];
+
+    const carryoverOnly = buildCascadeLateDepartureImpactByRoute(cascade, days);
+    const totalIncident = buildIncidentLateDepartureImpactByRoute(cascade, days);
+
+    expect(carryoverOnly.map(row => row.routeId)).toEqual(['20']);
+    expect(totalIncident.map(row => row.routeId)).toEqual(['20', '10']);
+    expect(totalIncident.find(row => row.routeId === '10')?.lateDepartures).toBe(1);
+    expect(totalIncident.find(row => row.routeId === '20')?.lateDepartures).toBe(2);
   });
 });

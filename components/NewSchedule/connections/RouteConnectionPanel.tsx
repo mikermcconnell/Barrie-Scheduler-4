@@ -87,12 +87,11 @@ export const RouteConnectionPanel: React.FC<RouteConnectionPanelProps> = ({
     }
   }, [availableStops, selectedOtherRouteStopCode]);
 
-  if (!config || !library) {
-    return <div className="p-4 text-center text-gray-500">Loading configuration...</div>;
-  }
+  const activeConfig: RouteConnectionConfig = config ?? { routeIdentity: '', connections: [] };
+  const activeLibrary: ConnectionLibrary = library ?? { targets: [], updatedAt: '', updatedBy: '' };
 
-  const connections = config.connections;
-  const getTarget = (targetId: string): ConnectionTarget | undefined => library.targets.find(t => t.id === targetId);
+  const connections = activeConfig.connections;
+  const getTarget = (targetId: string): ConnectionTarget | undefined => activeLibrary.targets.find(t => t.id === targetId);
   const getTargetIntentLabel = (target?: Pick<ConnectionTarget, 'type' | 'icon' | 'routeIdentity' | 'name'>): string => {
     if (target?.type === 'route') {
       const routeLabel = target.routeIdentity?.replace(/-(Weekday|Saturday|Sunday)$/i, '').trim() || target.name || 'route';
@@ -133,53 +132,53 @@ export const RouteConnectionPanel: React.FC<RouteConnectionPanelProps> = ({
 
   const handleToggleConnection = (connectionId: string) => {
     onUpdateConfig({
-      ...config,
-      connections: config.connections.map(c => (c.id === connectionId ? { ...c, enabled: !c.enabled } : c)),
+      ...activeConfig,
+      connections: activeConfig.connections.map(c => (c.id === connectionId ? { ...c, enabled: !c.enabled } : c)),
     });
   };
 
   const handleDeleteConnection = (connectionId: string) => {
     onUpdateConfig({
-      ...config,
-      connections: config.connections.filter(c => c.id !== connectionId),
+      ...activeConfig,
+      connections: activeConfig.connections.filter(c => c.id !== connectionId),
     });
   };
 
   const handleUpdateBuffer = (connectionId: string, buffer: number) => {
     onUpdateConfig({
-      ...config,
-      connections: config.connections.map(c => (c.id === connectionId ? { ...c, bufferMinutes: buffer } : c)),
+      ...activeConfig,
+      connections: activeConfig.connections.map(c => (c.id === connectionId ? { ...c, bufferMinutes: buffer } : c)),
     });
   };
 
   const handleUpdateStop = (connectionId: string, stopCode: string) => {
     const stopInfo = availableStops.find(s => s.code === stopCode);
     onUpdateConfig({
-      ...config,
-      connections: config.connections.map(c => (c.id === connectionId ? { ...c, stopCode, stopName: stopInfo?.name } : c)),
+      ...activeConfig,
+      connections: activeConfig.connections.map(c => (c.id === connectionId ? { ...c, stopCode, stopName: stopInfo?.name } : c)),
     });
   };
 
   const handleUpdateConnectionType = (connectionId: string, connectionType: ConnectionType) => {
     onUpdateConfig({
-      ...config,
-      connections: config.connections.map(c => (c.id === connectionId ? { ...c, connectionType } : c)),
+      ...activeConfig,
+      connections: activeConfig.connections.map(c => (c.id === connectionId ? { ...c, connectionType } : c)),
     });
   };
 
   const routeConnections = useMemo(
     () => connections.filter(connection => getTarget(connection.targetId)?.type === 'route'),
-    [connections, library.targets],
+    [connections, activeLibrary.targets],
   );
   const standardConnections = useMemo(
     () => connections.filter(connection => getTarget(connection.targetId)?.type !== 'route'),
-    [connections, library.targets],
+    [connections, activeLibrary.targets],
   );
   const usedTargetIds = useMemo(() => new Set(connections.map(c => c.targetId)), [connections]);
 
   const existingTargetCards = useMemo(
     () =>
-      library.targets
+      activeLibrary.targets
         .filter(target => target.type !== 'route' && !usedTargetIds.has(target.id))
         .map((target, index) => ({
           target,
@@ -192,7 +191,7 @@ export const RouteConnectionPanel: React.FC<RouteConnectionPanelProps> = ({
           if (stopCompare !== 0) return stopCompare;
           return a.target.name.localeCompare(b.target.name, undefined, { sensitivity: 'base' });
         }),
-    [availableStops, connections.length, library.targets, usedTargetIds],
+    [availableStops, connections.length, activeLibrary.targets, usedTargetIds],
   );
   const visibleExistingTargetCards = useMemo(
     () => existingTargetCards.filter(entry => !!entry.candidate),
@@ -220,6 +219,10 @@ export const RouteConnectionPanel: React.FC<RouteConnectionPanelProps> = ({
     });
     return keys;
   }, [routeConnections]);
+
+  if (!config || !library) {
+    return <div className="p-4 text-center text-gray-500">Loading configuration...</div>;
+  }
 
   const toggleExistingTarget = (targetId: string, disabled: boolean) => {
     if (disabled) return;

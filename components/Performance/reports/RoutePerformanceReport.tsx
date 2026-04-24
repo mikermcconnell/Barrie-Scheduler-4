@@ -216,7 +216,7 @@ export const RoutePerformanceReport: React.FC<RoutePerformanceReportProps> = ({ 
     }, [filteredDays, activeRoute]);
 
     const filteredTrips = useMemo(() => {
-        let trips = showWorstOnly ? tripData.filter(t => t.avgOtp <= 75) : tripData;
+        const trips = showWorstOnly ? tripData.filter(t => t.avgOtp <= 75) : tripData;
         return [...trips].sort((a, b) => {
             let aVal: string | number, bVal: string | number;
             switch (tripSortField) {

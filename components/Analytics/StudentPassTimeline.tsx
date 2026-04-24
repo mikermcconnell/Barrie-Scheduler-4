@@ -215,16 +215,16 @@ export default function StudentPassTimeline({
   journeyMode,
   routeLoadLookup,
 }: StudentPassTimelineProps) {
-  if (!result?.found) return null;
-
   const morningSegments = useMemo(
-    () => buildMorningSegments(result, routeLoadLookup),
+    () => (result?.found ? buildMorningSegments(result, routeLoadLookup) : []),
     [result, routeLoadLookup]
   );
   const afternoonSegments = useMemo(
-    () => buildAfternoonSegments(result, routeLoadLookup),
+    () => (result?.found ? buildAfternoonSegments(result, routeLoadLookup) : []),
     [result, routeLoadLookup]
   );
+
+  if (!result?.found) return null;
 
   const segments = journeyMode === 'am' ? morningSegments : afternoonSegments;
   const totalMinutes = segments.reduce((sum, s) => sum + s.durationMinutes, 0);

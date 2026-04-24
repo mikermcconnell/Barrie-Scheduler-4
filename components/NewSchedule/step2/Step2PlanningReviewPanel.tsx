@@ -349,7 +349,19 @@ const StopToStopMatrix: React.FC<{
         hasMissingSegments: boolean;
         isLowConfidence: boolean;
     }>;
-}> = ({ analysis, bands, viewMetric, segmentColumns, bucketConfidence }) => {
+    title?: string;
+    description?: string;
+    badges?: string[];
+}> = ({
+    analysis,
+    bands,
+    viewMetric,
+    segmentColumns,
+    bucketConfidence,
+    title = 'Stop-to-Stop by 30-Minute Bucket',
+    description,
+    badges = ['Full route only', 'Partial / short turns removed'],
+}) => {
     const segmentNames = segmentColumns.map(column => column.segmentName);
     const segmentLookup = useMemo(
         () => buildNormalizedSegmentNameLookup(segmentNames),
@@ -408,19 +420,29 @@ const StopToStopMatrix: React.FC<{
                 <div>
                     <div className="flex items-center gap-2">
                         <Table size={18} className="text-gray-500" />
-                        <h3 className="font-bold text-gray-900">Stop-to-Stop by 30-Minute Bucket</h3>
+                        <h3 className="font-bold text-gray-900">{title}</h3>
                     </div>
                     <p className="mt-1 text-xs text-gray-500">
-                        Each cell shows the selected {viewMetric === 'p50' ? 'median (P50)' : 'reliable (P80)'} travel time for that stop pair in that 30-minute bucket.
-                        Rows follow the dominant full-route stop chain in bus order, with partial and short-turn patterns removed.
+                        {description ?? (
+                            <>
+                                Each cell shows the selected {viewMetric === 'p50' ? 'median (P50)' : 'reliable (P80)'} travel time for that route segment in that 30-minute bucket.
+                                Rows follow the approved planning route chain in bus order.
+                            </>
+                        )}
                     </p>
                     <div className="mt-2 flex flex-wrap gap-2">
-                        <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700">
-                            Full route only
-                        </span>
-                        <span className="rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-[11px] font-semibold text-sky-700">
-                            Partial / short turns removed
-                        </span>
+                        {badges.map((badge, index) => (
+                            <span
+                                key={badge}
+                                className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${
+                                    index === 0
+                                        ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                        : 'border-sky-200 bg-sky-50 text-sky-700'
+                                }`}
+                            >
+                                {badge}
+                            </span>
+                        ))}
                     </div>
                 </div>
                 <span className="text-xs text-gray-500">
@@ -880,6 +902,17 @@ export const Step2PlanningReviewPanel: React.FC<Step2Props> = ({
 
             <Step2TravelViewsPanel
                 troubleshootingPatternWarning={troubleshootingPatternWarning}
+                bucketMatrixView={(
+                    <StopToStopMatrix
+                        analysis={analysis}
+                        bands={bands}
+                        viewMetric={viewMetric}
+                        segmentColumns={displaySegmentColumns}
+                        bucketConfidence={bucketConfidence}
+                        title="Planning Segments by 30-Minute Bucket"
+                        badges={['Planning route chain', 'Approved model input']}
+                    />
+                )}
                 bandSummaryView={(
                     <SegmentBreakdownMatrix
                         analysis={analysis}
@@ -895,6 +928,13 @@ export const Step2PlanningReviewPanel: React.FC<Step2Props> = ({
                         viewMetric={viewMetric}
                         segmentColumns={matrixDisplaySegmentColumns}
                         bucketConfidence={matrixBucketConfidence}
+                        title="Diagnostic Stop-to-Stop by 30-Minute Bucket"
+                        description={(
+                            <>
+                                Each cell shows the selected {viewMetric === 'p50' ? 'median (P50)' : 'reliable (P80)'} travel time for that stop pair in that 30-minute bucket.
+                                Rows follow the dominant full-route stop chain in bus order, with partial and short-turn patterns removed.
+                            </>
+                        )}
                     />
                 )}
             />

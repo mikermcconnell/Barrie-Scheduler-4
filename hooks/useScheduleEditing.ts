@@ -179,8 +179,8 @@ const recalculateTrip = (trip: MasterTrip, cols: string[]) => {
         trip.startTime = start;
         trip.endTime = end;
         trip.stopMinutes = stopMinutes;
-        trip.travelTime = runtime;
-        trip.cycleTime = runtime + Math.max(0, trip.recoveryTime || 0);
+        trip.cycleTime = runtime;
+        trip.travelTime = Math.max(0, runtime - Math.max(0, trip.recoveryTime || 0));
     }
 };
 
@@ -477,6 +477,9 @@ export function useScheduleEditing(
             ...JSON.parse(JSON.stringify(trip)),
             id: `${trip.id}-dup-${Date.now()}`,
             lineageId: createTripLineageId(),
+            deltaSourceTripId: undefined,
+            deltaSourceLineageId: undefined,
+            deltaSourceRouteName: undefined,
             tripNumber: 0,
             blockId: '',
             startTime: trip.startTime + 1,

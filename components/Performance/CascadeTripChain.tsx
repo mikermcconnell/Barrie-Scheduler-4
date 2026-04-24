@@ -17,6 +17,8 @@ const ORIGIN_WIDTH = 156;
 const fmtMin = (s: number): string => (s / 60).toFixed(0);
 const phaseLabel = (phase: 'same-trip' | 'later-trip'): string =>
     phase === 'same-trip' ? 'Same-trip impact' : 'Later-trip carryover';
+const thresholdVerb = (status?: CascadeAffectedTrip['thresholdStatus'] | null): string =>
+    status === 'returned-under' ? 'Back under 5 min' : 'Stayed under 5 min';
 
 type ColorConfig = {
     bg: string;
@@ -136,7 +138,7 @@ const CascadeTripChain: React.FC<CascadeTripChainProps> = ({
                     const recoveryMin = Math.round(trip.scheduledRecoverySeconds / 60);
                     const isSameTrip = trip.phase === 'same-trip';
                     const backUnderThresholdHere = hasExplicitThresholdMilestone
-                        ? !!trip.backUnderThresholdHere
+                        ? !!trip.backUnderThresholdHere || !!trip.backUnderThresholdAtStop
                         : !!trip.recoveredHere;
                     const recoveredHere = hasExplicitThresholdMilestone
                         ? !!trip.recoveredHere
@@ -220,7 +222,7 @@ const CascadeTripChain: React.FC<CascadeTripChainProps> = ({
                                     {recoveredHere
                                         ? `Cleared to zero at ${trip.recoveredAtStop}`
                                         : backUnderThresholdHere
-                                            ? `Back under 5 min at ${trip.backUnderThresholdAtStop}`
+                                            ? `${thresholdVerb(trip.thresholdStatus)} at ${trip.backUnderThresholdAtStop}`
                                             : trip.lateTimepointCount > 0
                                                 ? `${trip.lateTimepointCount}/${trip.timepoints.length} OTP-late departures`
                                                 : trip.affectedTimepointCount > 0
@@ -242,7 +244,7 @@ const CascadeTripChain: React.FC<CascadeTripChainProps> = ({
                         </span>
                     ) : (hasExplicitThresholdMilestone ? cascade.backUnderThresholdAtTrip : cascade.recoveredAtTrip) ? (
                         <span className="inline-flex items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-semibold text-brand-blue whitespace-nowrap">
-                            ↓ Under 5 Min
+                            {thresholdVerb(cascade.thresholdStatus)}
                         </span>
                     ) : (
                         <span className="inline-flex items-center gap-1 rounded-full border border-red-200 bg-red-50 px-3 py-1 text-xs font-semibold text-red-600 whitespace-nowrap">

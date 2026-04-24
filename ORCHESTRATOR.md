@@ -109,7 +109,7 @@ High-value reminders:
 - Fixed-route work follows **draft → publish**. Do not treat master schedules as editable working copies.
 - Segment rounding, gap-based block assignment, trip pairing, cycle-time semantics, and post-midnight ordering are locked behavior.
 - AI suggests; planners decide.
-- New Schedule Step 2 approval is a real gate. Step 3 and Step 4 should trust the approved runtime contract, not re-derive their own Step 2 truth.
+- New Schedule Step 2 is an internal workflow, not a hard human decision gate. Step 3 and Step 4 should still trust the approved runtime contract, but the UX may auto-approve on continue instead of forcing a separate approval decision.
 - Route 8 sandbox work is intentionally isolated from live 8A/8B master/editor paths.
 - Brand-new added trips should not inherit delta-source fallback from template trips; compare-to-master deltas should only render when a real original/reference match exists.
 
@@ -141,6 +141,7 @@ These are worth remembering, but should still be verified before relying on them
 - Build output has shown large bundle/chunk warnings.
 - The test suite has known student-pass timeout failures; do not treat a partial red test run as proof that unrelated work is broken.
 - Performance/import flows and New Schedule Step 2 are active areas of recent hardening; verify behavior directly when changing them.
+- Dwell cascade logic exists in both `utils/schedule/dwellCascadeComputer.ts` and `functions/src/dwellCascadeComputer.ts`; keep them behaviorally synced and run the cascade/function sync tests when changing it.
 - Public timetable content is now team-managed config, not only static copy in the component.
 
 ## 8) Guidance for future subagents

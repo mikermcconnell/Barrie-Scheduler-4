@@ -151,12 +151,13 @@ export const ConnectionIndicator: React.FC<ConnectionIndicatorProps> = ({
     connections,
     popoverAlign = 'center'
 }) => {
+    const tooltipId = useId();
+
     if (!connections || connections.length === 0) return null;
 
     const orderedConnections = sortConnectionsForDisplay(connections);
     const titleText = buildTitle(orderedConnections);
     const ariaLabel = buildAriaLabel(orderedConnections);
-    const tooltipId = useId();
     const missedCount = orderedConnections.filter(connection => !connection.meetsConnection).length;
     const metCount = orderedConnections.length - missedCount;
     const popoverPositionClasses = getPopoverPositionClasses(popoverAlign);

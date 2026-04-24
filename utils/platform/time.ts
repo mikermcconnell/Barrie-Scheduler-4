@@ -26,7 +26,7 @@ export function parseTimeToMinutes(timeStr: string): number {
     const lowerStr = str.toLowerCase();
     const [hStr, mStr] = str.split(':');
     let h = parseInt(hStr);
-    let m = parseInt(mStr?.replace(/\D+/g, '') || '0');
+    const m = parseInt(mStr?.replace(/\D+/g, '') || '0');
 
     if (isNaN(h) || isNaN(m)) return -1;
 

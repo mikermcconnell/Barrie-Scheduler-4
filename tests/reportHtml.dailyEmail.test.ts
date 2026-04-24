@@ -72,6 +72,8 @@ function makeIncident(params: {
   routeId?: string;
   routeName?: string;
   observedDepartureTime?: string;
+  stopName?: string;
+  stopId?: string;
   trackedDwellSeconds: number;
   severity: DwellSeverity;
 }): DwellIncident {
@@ -80,8 +82,8 @@ function makeIncident(params: {
     date: params.date,
     routeId: params.routeId ?? '2',
     routeName: params.routeName ?? 'Route 2',
-    stopName: 'Downtown',
-    stopId: '1',
+    stopName: params.stopName ?? 'Downtown',
+    stopId: params.stopId ?? '1',
     tripName: 'Trip 1',
     block: 'block-1',
     observedArrivalTime: '07:00:00',
@@ -133,6 +135,9 @@ function makeSummary(params: {
       }],
       totalIncidents: moderateCount + highCount,
       totalTrackedDwellMinutes: incidents.reduce((sum, incident) => sum + incident.trackedDwellSeconds, 0) / 60,
+      totalReportableDwellMinutes: incidents
+        .filter((incident) => incident.severity === 'moderate' || incident.severity === 'high')
+        .reduce((sum, incident) => sum + incident.trackedDwellSeconds, 0) / 60,
     },
     dataQuality: {
       totalRecords: 100,
@@ -192,14 +197,14 @@ describe('buildReportHtml dwell reporting', () => {
     expect(html).toContain('Dwell (hrs)');
     expect(html).toContain('>4.5 hrs<');
 
-    const routeSection = between(html, 'Route Scorecard', 'Last 2 Days Trend');
+    const routeSection = between(html, 'Route Scorecard', 'Boardings by Hour');
     const route2Row = rowForText(routeSection, 'Route 2');
     const route5Row = rowForText(routeSection, 'Route 5');
 
     expect(route2Row).toContain('>1.5<');
     expect(route5Row).toContain('>1.0<');
 
-    const hourlySection = between(html, 'Boardings by Hour', 'Stop Highlights');
+    const hourlySection = between(html, 'Boardings by Hour', 'Operator Dwell by Stop');
     const sevenRow = rowForText(hourlySection, '07:00');
     const eightRow = rowForText(hourlySection, '08:00');
 
@@ -209,6 +214,103 @@ describe('buildReportHtml dwell reporting', () => {
     expect(routeSection).not.toContain('Total dwell (exact)');
     expect(hourlySection).not.toContain('Total dwell (exact)');
   });
+
+
+
+  it('adds a standalone operator dwell by stop table sorted highest to lowest', () => {
+    const latestDay = makeSummary({
+      date: '2026-04-20',
+      incidents: [
+        makeIncident({ date: '2026-04-20', routeId: '5', stopName: 'Georgian College', stopId: '327', trackedDwellSeconds: 1800, severity: 'moderate' }),
+        makeIncident({ date: '2026-04-20', routeId: '2', stopName: 'Downtown', stopId: '1', trackedDwellSeconds: 5400, severity: 'high' }),
+        makeIncident({ date: '2026-04-20', routeId: '8A', stopName: 'Park Place', stopId: '777', trackedDwellSeconds: 3600, severity: 'moderate' }),
+        makeIncident({ date: '2026-04-20', routeId: '2', stopName: 'Downtown', stopId: '1', trackedDwellSeconds: 1800, severity: 'moderate' }),
+        makeIncident({ date: '2026-04-20', routeId: '5', stopName: 'Georgian College', stopId: '327', trackedDwellSeconds: 60, severity: 'minor' }),
+        makeIncident({ date: '2026-04-20', routeId: '11', stopName: 'One-off Stop', stopId: '111', trackedDwellSeconds: 1200, severity: 'moderate' }),
+        makeIncident({ date: '2026-04-20', routeId: '12A', stopName: 'Repeated Stop', stopId: '222', trackedDwellSeconds: 300, severity: 'moderate' }),
+        makeIncident({ date: '2026-04-20', routeId: '12A', stopName: 'Repeated Stop', stopId: '222', trackedDwellSeconds: 300, severity: 'moderate' }),
+        makeIncident({ date: '2026-04-20', routeId: '12A', stopName: 'Repeated Stop', stopId: '222', trackedDwellSeconds: 300, severity: 'moderate' }),
+      ],
+    });
+
+    const html = buildReportHtml({
+      latestDay,
+      trendDays: [latestDay],
+      teamName: 'Barrie Transit',
+    });
+
+    const stopSection = between(html, 'Operator Dwell by Stop', 'Stop Highlights');
+    const downtownIndex = stopSection.indexOf('Downtown');
+    const parkPlaceIndex = stopSection.indexOf('Park Place');
+    const georgianIndex = stopSection.indexOf('Georgian College');
+    const downtownRow = rowForText(stopSection, 'Downtown');
+
+    expect(stopSection).toContain('3+ incidents or at least 0.5 dwell hours');
+    expect(downtownIndex).toBeGreaterThan(-1);
+    expect(parkPlaceIndex).toBeGreaterThan(downtownIndex);
+    expect(georgianIndex).toBeGreaterThan(parkPlaceIndex);
+    expect(downtownRow).toContain('>2.0<');
+    expect(downtownRow).toContain('>2<');
+    expect(stopSection).toContain('Repeated Stop');
+    expect(stopSection).not.toContain('One-off Stop');
+    expect(stopSection).not.toContain('>0.0<');
+  });
+
+  it('merges platform stop IDs into the same hub row in operator dwell by stop', () => {
+    const latestDay = makeSummary({
+      date: '2026-04-20',
+      incidents: [
+        makeIncident({ date: '2026-04-20', routeId: '2A', stopName: 'Allandale Platform 1', stopId: '9003', trackedDwellSeconds: 1800, severity: 'moderate' }),
+        makeIncident({ date: '2026-04-20', routeId: '7A', stopName: 'Allandale Platform 2', stopId: '9004', trackedDwellSeconds: 3600, severity: 'high' }),
+        makeIncident({ date: '2026-04-20', routeId: '8A', stopName: 'Park Place Platform', stopId: '777', trackedDwellSeconds: 1200, severity: 'moderate' }),
+      ],
+    });
+
+    const html = buildReportHtml({
+      latestDay,
+      trendDays: [latestDay],
+      teamName: 'Barrie Transit',
+    });
+
+    const stopSection = between(html, 'Operator Dwell by Stop', 'Stop Highlights');
+    const allandaleRow = rowForText(stopSection, 'Allandale Terminal');
+
+    expect(allandaleRow).toContain('>1.5<');
+    expect(allandaleRow).toContain('2A, 7A');
+    expect(stopSection).not.toContain('Allandale Platform 1');
+    expect(stopSection).not.toContain('Allandale Platform 2');
+  });
+
+  it('uses trimmed report snapshot totals for historical weekday dwell averages', () => {
+    const latestDay = makeSummary({
+      date: '2026-04-20',
+      incidents: [
+        makeIncident({ date: '2026-04-20', trackedDwellSeconds: 3600, severity: 'moderate' }),
+      ],
+    });
+    const priorWeekday = makeSummary({
+      date: '2026-04-17',
+      incidents: [
+        makeIncident({ date: '2026-04-17', trackedDwellSeconds: 7200, severity: 'moderate' }),
+      ],
+    });
+    priorWeekday.byOperatorDwell = {
+      ...priorWeekday.byOperatorDwell!,
+      incidents: [],
+      byOperator: [],
+      totalTrackedDwellMinutes: 120,
+      totalReportableDwellMinutes: 120,
+    };
+
+    const html = buildReportHtml({
+      latestDay,
+      trendDays: [priorWeekday, latestDay],
+      teamName: 'Barrie Transit',
+    });
+
+    expect(html).toContain('Weekday avg: 1.5 hrs');
+  });
+
 
   it('does not render total dwell rows in route or hour tables', () => {
     const latestDay = makeSummary({
@@ -237,7 +339,7 @@ describe('buildReportHtml dwell reporting', () => {
     });
 
     const routeSection = between(html, 'Route Scorecard', 'Boardings by Hour');
-    const hourlySection = between(html, 'Boardings by Hour', 'Stop Highlights');
+    const hourlySection = between(html, 'Boardings by Hour', 'Operator Dwell by Stop');
 
     expect(routeSection).not.toContain('Total dwell (exact)');
     expect(hourlySection).not.toContain('Total dwell (exact)');
@@ -303,7 +405,7 @@ describe('buildReportHtml dwell reporting', () => {
       teamName: 'Barrie Transit',
     });
 
-    const hourlySection = between(html, 'Boardings by Hour', 'Stop Highlights');
+    const hourlySection = between(html, 'Boardings by Hour', 'Operator Dwell by Stop');
     const nineRow = rowForText(hourlySection, '09:00');
 
     expect(() => buildReportHtml({

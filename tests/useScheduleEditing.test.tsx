@@ -104,7 +104,7 @@ const buildSchedules = (): MasterRouteTable[] => ([
 const Harness: React.FC = () => {
   const [schedules, setSchedules] = useState<MasterRouteTable[]>(buildSchedules());
   const [cascadeMode, setCascadeMode] = useState<CascadeMode>('always');
-  const { handleCellEdit, handleRecoveryEdit } = useScheduleEditing(schedules, setSchedules, { cascadeMode });
+  const { handleCellEdit, handleRecoveryEdit, handleDuplicateTrip } = useScheduleEditing(schedules, setSchedules, { cascadeMode });
 
   return (
     <div>
@@ -125,6 +125,9 @@ const Harness: React.FC = () => {
       </button>
       <button data-testid="edit-terminal-recovery" onClick={() => handleRecoveryEdit('north-trip', 'Stop 3', 2)}>
         edit terminal recovery
+      </button>
+      <button data-testid="duplicate-trip" onClick={() => handleDuplicateTrip('north-trip')}>
+        duplicate trip
       </button>
       <pre data-testid="state">{JSON.stringify(schedules)}</pre>
     </div>
@@ -293,5 +296,40 @@ describe('useScheduleEditing cascade modes', () => {
     expect(southTrip.stops['Stop A']).toBe('8:07 AM');
     expect(southTrip.stops['Stop B']).toBe('8:37 AM');
     expect(laterNorthTrip.stops['Stop 1']).toBe('8:40 AM');
+  });
+
+  it('keeps travel and cycle metrics consistent after a cascaded edit', () => {
+    const editButton = container?.querySelector('[data-testid="edit-departure"]') as HTMLButtonElement | null;
+
+    flushSync(() => {
+      editButton?.click();
+    });
+
+    const schedules = getState();
+    const northTrip = schedules[0].trips[0];
+
+    expect(northTrip.startTime).toBe(425);
+    expect(northTrip.endTime).toBe(485);
+    expect(northTrip.travelTime).toBe(55);
+    expect(northTrip.cycleTime).toBe(60);
+  });
+
+  it('assigns duplicated trips a new lineage and clears delta source anchors', () => {
+    const duplicateButton = container?.querySelector('[data-testid="duplicate-trip"]') as HTMLButtonElement | null;
+
+    flushSync(() => {
+      duplicateButton?.click();
+    });
+
+    const schedules = getState();
+    const originalTrip = schedules[0].trips.find((trip: any) => trip.id === 'north-trip');
+    const duplicatedTrip = schedules[0].trips.find((trip: any) => String(trip.id).startsWith('north-trip-dup-'));
+
+    expect(duplicatedTrip).toBeTruthy();
+    expect(duplicatedTrip.lineageId).toBeTruthy();
+    expect(duplicatedTrip.lineageId).not.toBe(originalTrip.lineageId);
+    expect(duplicatedTrip.deltaSourceTripId).toBeUndefined();
+    expect(duplicatedTrip.deltaSourceLineageId).toBeUndefined();
+    expect(duplicatedTrip.deltaSourceRouteName).toBeUndefined();
   });
 });

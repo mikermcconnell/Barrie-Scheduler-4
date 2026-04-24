@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { MetricCard, ChartCard } from '../Analytics/AnalyticsShared';
 import type { PerformanceDataSummary, DayType, DataQuality } from '../../utils/performanceDataTypes';
+import { mergeOTPBreakdowns } from '../../utils/performanceOtpUtils';
 import {
     aggregateStoredMissedTrips,
     computeAggregatedMissedTrips,
@@ -19,6 +20,7 @@ import type { PerformanceDataScope } from '../../utils/performanceDataScope';
 
 interface SystemOverviewModuleProps {
     data: PerformanceDataSummary;
+    allData?: PerformanceDataSummary;
     onNavigate: (tabId: string) => void;
     scope: PerformanceDataScope;
     scopeLabel: string;
@@ -39,6 +41,7 @@ type RouteScoreSortKey = 'routeId' | 'routeName' | 'avgOtp' | 'avgEarly' | 'avgL
 
 type ActionQueueItemType = 'route' | 'trip';
 type ActionQueueBand = 'Act now' | 'Watch' | 'Monitor';
+type ActionQueuePeerDayType = DayType | 'all';
 
 interface ActionQueueItem {
     id: string;
@@ -119,6 +122,26 @@ function compareTrend(a: '↑' | '↓' | '–', b: '↑' | '↓' | '–'): numbe
     return order[a] - order[b];
 }
 
+function roundPercent(numerator: number, denominator: number): number {
+    return denominator > 0 ? Math.round((numerator / denominator) * 100) : 0;
+}
+
+function displayPeerDayType(dayType: ActionQueuePeerDayType): string {
+    return dayType === 'all' ? 'all' : DAY_TYPE_LABELS[dayType];
+}
+
+function filteredDateRangeLabel(days: PerformanceDataSummary['dailySummaries']): string {
+    const dates = days
+        .map(day => normalizeToISODate(day.date))
+        .filter((date): date is string => !!date)
+        .sort(compareDateStrings);
+
+    if (dates.length === 0) return `${days.length} days`;
+    const first = dates[0];
+    const last = dates[dates.length - 1];
+    return first === last ? formatDateShort(first) : formatDateRange(first, last);
+}
+
 function SortableHeader({
     label,
     sortKey,
@@ -157,38 +180,51 @@ function SortableHeader({
 }
 
 
-export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data, onNavigate, scope, scopeLabel, dayTypeFilter }) => {
+export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data, allData, onNavigate, scope, scopeLabel, dayTypeFilter }) => {
     const filtered = data.dailySummaries;
+    const allDailySummaries = allData?.dailySummaries ?? data.dailySummaries;
     const [routeScoreSortKey, setRouteScoreSortKey] = React.useState<RouteScoreSortKey>('avgOtp');
     const [routeScoreSortDir, setRouteScoreSortDir] = React.useState<SortDir>('desc');
     const [computedMissedTrips, setComputedMissedTrips] = useState<ReturnType<typeof aggregateStoredMissedTrips> | null>(null);
     const [isLoadingMissedTripsFallback, setIsLoadingMissedTripsFallback] = useState(false);
 
-    // ── Peer days (same day type for trend context in Action Queue) ───
-    const peerDays = useMemo(() => {
-        if (filtered.length === 0) return data.dailySummaries;
-        const dayType = filtered[0].dayType;
-        return data.dailySummaries.filter(d => d.dayType === dayType);
-    }, [data, filtered]);
+    const selectedDayTypes = useMemo(() => new Set(filtered.map(day => day.dayType)), [filtered]);
+
+    // ── Peer days for Action Queue use full loaded data, not only the current filter. ───
+    const actionQueuePeerContext = useMemo(() => {
+        let peerDayType: ActionQueuePeerDayType = 'all';
+        if (dayTypeFilter !== 'all') {
+            peerDayType = dayTypeFilter;
+        } else if (selectedDayTypes.size === 1) {
+            peerDayType = Array.from(selectedDayTypes)[0];
+        }
+
+        const peerDays = peerDayType === 'all'
+            ? allDailySummaries
+            : allDailySummaries.filter(d => d.dayType === peerDayType);
+
+        return { peerDays, peerDayType };
+    }, [allDailySummaries, dayTypeFilter, selectedDayTypes]);
+
+    const systemOtp = useMemo(() => (
+        filtered.length > 0 ? mergeOTPBreakdowns(filtered.map(d => d.system.otp)) : null
+    ), [filtered]);
 
     // ── System averages (expanded) ─────────────────────────────────
     const systemAvg = useMemo(() => {
-        if (filtered.length === 0) return null;
+        if (filtered.length === 0 || !systemOtp) return null;
         const n = filtered.length;
-        const totalOTP = filtered.reduce((s, d) => s + d.system.otp.onTimePercent, 0);
-        const totalEarly = filtered.reduce((s, d) => s + d.system.otp.earlyPercent, 0);
-        const totalLate = filtered.reduce((s, d) => s + d.system.otp.latePercent, 0);
         const totalRidership = filtered.reduce((s, d) => s + d.system.totalRidership, 0);
         const totalAlightings = filtered.reduce((s, d) => s + d.system.totalAlightings, 0);
         return {
-            otp: Math.round(totalOTP / n),
-            earlyPct: Math.round(totalEarly / n),
-            latePct: Math.round(totalLate / n),
+            otp: Math.round(systemOtp.onTimePercent),
+            earlyPct: Math.round(systemOtp.earlyPercent),
+            latePct: Math.round(systemOtp.latePercent),
             ridership: totalRidership,
             alightings: totalAlightings,
             avgRidershipPerDay: Math.round(totalRidership / n),
         };
-    }, [filtered]);
+    }, [filtered, systemOtp]);
 
     // ── Busiest trips (by avg boardings) with stable load sample size ──
     const busiestTrips = useMemo(() => {
@@ -240,21 +276,18 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
 
     // ── OTP donut data ─────────────────────────────────────────────
     const otpDonutData = useMemo(() => {
-        if (filtered.length === 0) return [];
-        const early = filtered.reduce((s, d) => s + d.system.otp.early, 0);
-        const onTime = filtered.reduce((s, d) => s + d.system.otp.onTime, 0);
-        const late = filtered.reduce((s, d) => s + d.system.otp.late, 0);
+        if (!systemOtp) return [];
         return [
-            { name: 'Early', value: early, color: DONUT_COLORS.early },
-            { name: 'On Time', value: onTime, color: DONUT_COLORS.onTime },
-            { name: 'Late', value: late, color: DONUT_COLORS.late },
+            { name: 'Early', value: systemOtp.early, color: DONUT_COLORS.early },
+            { name: 'On Time', value: systemOtp.onTime, color: DONUT_COLORS.onTime },
+            { name: 'Late', value: systemOtp.late, color: DONUT_COLORS.late },
         ];
-    }, [filtered]);
+    }, [systemOtp]);
 
     // ── Action Queue (severity x persistence x impact, min 3 days) ───
     const actionQueue = useMemo(() => {
+        const { peerDays, peerDayType } = actionQueuePeerContext;
         const peerCount = peerDays.length;
-        const peerDayType = peerDays[0]?.dayType ?? 'weekday';
         if (peerCount < MIN_ACTION_QUEUE_DAYS) {
             return { items: [] as ActionQueueItem[], peerDayType, peerCount };
         }
@@ -264,8 +297,7 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
             routeName: string;
             daysObserved: number;
             daysBelowTarget: number;
-            otpTotal: number;
-            latePctTotal: number;
+            otps: typeof peerDays[number]['byRoute'][number]['otp'][];
             ridershipTotal: number;
         }>();
         const tripRollups = new Map<string, {
@@ -285,13 +317,11 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                     routeName: r.routeName,
                     daysObserved: 0,
                     daysBelowTarget: 0,
-                    otpTotal: 0,
-                    latePctTotal: 0,
+                    otps: [],
                     ridershipTotal: 0,
                 };
                 existing.daysObserved++;
-                existing.otpTotal += r.otp.onTimePercent;
-                existing.latePctTotal += r.otp.latePercent;
+                existing.otps.push(r.otp);
                 existing.ridershipTotal += r.ridership;
                 if (r.otp.onTimePercent < 80) existing.daysBelowTarget++;
                 routeRollups.set(r.routeId, existing);
@@ -322,8 +352,9 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
 
         const routeCandidates = Array.from(routeRollups.values())
             .map(row => {
-                const avgOtp = row.otpTotal / row.daysObserved;
-                const avgLatePct = row.latePctTotal / row.daysObserved;
+                const otp = mergeOTPBreakdowns(row.otps);
+                const avgOtp = otp.onTimePercent;
+                const avgLatePct = otp.latePercent;
                 const avgRidershipPerDay = row.ridershipTotal / row.daysObserved;
                 const persistence = row.daysBelowTarget / row.daysObserved;
                 const severity = clamp01((((80 - avgOtp) / 25) * 0.75) + ((avgLatePct / 35) * 0.25));
@@ -387,7 +418,7 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
             .slice(0, 5);
 
         return { items, peerDayType, peerCount };
-    }, [peerDays]);
+    }, [actionQueuePeerContext]);
 
     const storedMissedTrips = useMemo(() => aggregateStoredMissedTrips(filtered), [filtered]);
     const shouldLoadMissedTripsFallback = filtered.length > 0 && storedMissedTrips.missingStoredDays > 0;
@@ -439,14 +470,14 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
 
     // ── OTP trend (always all days, independent of date selector) ──
     const otpTrend = useMemo(() =>
-        data.dailySummaries.map(d => ({
+        allDailySummaries.map(d => ({
             date: shortDateLabel(d.date),
             weekdayDate: shortWeekdayDateLabel(d.date),
             fullDate: d.date,
             otp: d.system.otp.onTimePercent,
             ridership: d.system.totalRidership,
         })).sort((a, b) => compareDateStrings(a.fullDate, b.fullDate)),
-        [data]
+        [allDailySummaries]
     );
 
     // ── Hourly boardings + BPH line (aggregated across filtered days) ─
@@ -492,20 +523,18 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
     // ── Route ranking (expanded) ───────────────────────────────────
     const routeRanking = useMemo(() => {
         const routeMap = new Map<string, {
-            otp: number[]; earlyPct: number[]; latePct: number[];
+            otps: typeof filtered[number]['byRoute'][number]['otp'][];
             ridership: number; alightings: number; serviceHours: number;
             routeId: string; routeName: string;
         }>();
         for (const day of filtered) {
             for (const r of day.byRoute) {
                 const existing = routeMap.get(r.routeId) || {
-                    otp: [], earlyPct: [], latePct: [],
+                    otps: [],
                     ridership: 0, alightings: 0, serviceHours: 0,
                     routeId: r.routeId, routeName: r.routeName,
                 };
-                existing.otp.push(r.otp.onTimePercent);
-                existing.earlyPct.push(r.otp.earlyPercent);
-                existing.latePct.push(r.otp.latePercent);
+                existing.otps.push(r.otp);
                 existing.ridership += r.ridership;
                 existing.alightings += r.alightings;
                 existing.serviceHours += r.serviceHours;
@@ -514,15 +543,16 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
         }
         return Array.from(routeMap.values())
             .map(r => {
-                const avgOtp = Math.round(r.otp.reduce((a, b) => a + b, 0) / r.otp.length);
-                const avgEarly = Math.round(r.earlyPct.reduce((a, b) => a + b, 0) / r.earlyPct.length);
-                const avgLate = Math.round(r.latePct.reduce((a, b) => a + b, 0) / r.latePct.length);
+                const mergedOtp = mergeOTPBreakdowns(r.otps);
+                const avgOtp = Math.round(mergedOtp.onTimePercent);
+                const avgEarly = Math.round(mergedOtp.earlyPercent);
+                const avgLate = Math.round(mergedOtp.latePercent);
                 const bph = r.serviceHours > 0 ? Math.round(r.ridership / r.serviceHours * 10) / 10 : 0;
                 let trend: '↑' | '↓' | '–' = '–';
-                if (r.otp.length >= 2) {
-                    const mid = Math.floor(r.otp.length / 2);
-                    const firstHalf = r.otp.slice(0, mid).reduce((a, b) => a + b, 0) / mid;
-                    const secondHalf = r.otp.slice(mid).reduce((a, b) => a + b, 0) / (r.otp.length - mid);
+                if (r.otps.length >= 2) {
+                    const mid = Math.floor(r.otps.length / 2);
+                    const firstHalf = mergeOTPBreakdowns(r.otps.slice(0, mid)).onTimePercent;
+                    const secondHalf = mergeOTPBreakdowns(r.otps.slice(mid)).onTimePercent;
                     if (secondHalf - firstHalf >= 2) trend = '↑';
                     else if (firstHalf - secondHalf >= 2) trend = '↓';
                 }
@@ -616,9 +646,10 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
     const isSingleDate = scope === 'yesterday' && filtered.length === 1;
     const canShowActionQueue = actionQueue.peerCount >= MIN_ACTION_QUEUE_DAYS;
     const hasActionQueue = actionQueue.items.length > 0;
-    const avlPct = dataQuality ? Math.round((dataQuality.missingAVL / dataQuality.totalRecords) * 100) : 0;
-    const apcPct = dataQuality ? Math.round((dataQuality.missingAPC / dataQuality.totalRecords) * 100) : 0;
+    const avlPct = dataQuality ? roundPercent(dataQuality.missingAVL, dataQuality.totalRecords) : 0;
+    const apcPct = dataQuality ? roundPercent(dataQuality.missingAPC, dataQuality.totalRecords) : 0;
     const singleDate = filtered[0]?.date;
+    const displayedDateRange = filteredDateRangeLabel(filtered);
 
     return (
         <PerformanceScopeProvider scope={scope} label={scopeLabel}>
@@ -634,9 +665,7 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                             <p className="text-sm font-bold text-gray-900">
                                 {isSingleDate && singleDate
                                     ? formatDateShort(singleDate)
-                                    : data.metadata.dateRange
-                                        ? formatDateRange(data.metadata.dateRange.start, data.metadata.dateRange.end)
-                                        : `${filtered.length} days`}
+                                    : displayedDateRange}
                             </p>
                             <p className="text-xs text-gray-400">
                                 {isSingleDate
@@ -754,7 +783,7 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                     <AlertTriangle size={14} /> Action Queue
                 </h3>
                 <p className="text-xs text-amber-700 mb-3">
-                    Ranked by severity, persistence, and rider impact using {DAY_TYPE_LABELS[actionQueue.peerDayType]} peer days ({actionQueue.peerCount} loaded). Minimum {MIN_ACTION_QUEUE_DAYS} days per route/trip.
+                    Ranked by severity, persistence, and rider impact using {displayPeerDayType(actionQueue.peerDayType)} peer days ({actionQueue.peerCount} loaded). Minimum {MIN_ACTION_QUEUE_DAYS} days per route/trip.
                 </p>
                 <div className="space-y-2">
                     {actionQueue.items.map(item => (
@@ -973,7 +1002,7 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
 
             {/* ── 6. Boardings by Hour of Day ────────────────────────── */}
             {hourlyData.length > 0 && (
-                <ChartCard title="Boardings by Hour" subtitle="Total boardings (bars) and boardings per service hour (line)">
+                <ChartCard title="Boardings by Hour" subtitle="Total boardings (bars) and estimated boardings per service-hour proxy (line)">
                     <ResponsiveContainer width="100%" height={280}>
                         <ComposedChart data={hourlyData} margin={{ top: 5, right: 10, bottom: 5, left: -10 }}>
                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
@@ -983,7 +1012,7 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                             <Tooltip
                                 formatter={(v: number, name: string) => [
                                     name === 'boardings' ? v.toLocaleString() : v.toFixed(1),
-                                    name === 'boardings' ? 'Total Boardings' : 'BPH',
+                                    name === 'boardings' ? 'Total Boardings' : 'Estimated BPH',
                                 ]}
                             />
                             <Bar yAxisId="total" dataKey="boardings" fill="#06b6d4" radius={[4, 4, 0, 0]} opacity={0.8} />
@@ -997,7 +1026,7 @@ export const SystemOverviewModule: React.FC<SystemOverviewModuleProps> = ({ data
                         </div>
                         <div className="flex items-center gap-1.5 text-xs text-gray-500">
                             <span className="inline-block w-3 h-0.5 bg-purple-500 rounded" />
-                            Boardings per Service Hour
+                            Estimated BPH proxy
                         </div>
                     </div>
                 </ChartCard>

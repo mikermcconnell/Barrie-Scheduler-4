@@ -312,7 +312,7 @@ const parseSheet = (sheet: XLSX.WorkSheet, sheetName: string): ParsedRoute => {
 
         // Check if this looks like a data row (has time values)
         // Robustness: ensure we check actual columns mapped to stops
-        let validTimeCount = 0;
+        const validTimeCount = 0;
 
         // Check only non-recovery columns for time data
         // Recovery columns have small values (5, 10, 15) that could be confused with early AM times

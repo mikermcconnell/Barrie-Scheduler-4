@@ -76,6 +76,9 @@ const tripRecoveredToZero = (cascade: DwellCascade, trip: DwellCascade['cascaded
 const tripBackUnderThreshold = (cascade: DwellCascade, trip: DwellCascade['cascadedTrips'][number]): boolean =>
     hasExplicitThresholdMilestone(cascade) ? !!trip.backUnderThresholdHere : !!trip.recoveredHere;
 
+const thresholdVerb = (status?: CascadeAffectedTrip['thresholdStatus'] | null): string =>
+    status === 'returned-under' ? 'Back under 5 min' : 'Stayed under 5 min';
+
 function compareText(a: string, b: string): number {
     return collator.compare(a ?? '', b ?? '');
 }
@@ -887,7 +890,7 @@ export const DwellCascadeSection: React.FC<DwellCascadeSectionProps> = ({ data }
                                                                                                 {tripRecoveredToZero(cascade, ct) ? (
                                                                                                     <span className="text-emerald-600 font-medium">Recovered to zero</span>
                                                                                                 ) : tripBackUnderThreshold(cascade, ct) ? (
-                                                                                                    <span className="text-blue-600 font-medium">Back under 5 min</span>
+                                                                                                    <span className="text-blue-600 font-medium">{thresholdVerb(ct.thresholdStatus)}</span>
                                                                                             ) : (
                                                                                                 <span className="text-red-500">Delay carried forward</span>
                                                                                             )}

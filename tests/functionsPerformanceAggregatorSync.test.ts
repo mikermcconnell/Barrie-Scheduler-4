@@ -347,4 +347,45 @@ describe('functions performance aggregation stays aligned with app runtime logic
     expect(backend[0].ridershipHeatmaps).toEqual(frontend[0].ridershipHeatmaps);
     expect(backend[0].routeStopDeviations).toEqual(frontend[0].routeStopDeviations);
   });
+
+  it('keeps operator dwell incident eligibility aligned for in-between, tripper, and detour records', () => {
+    const records = [
+      makeRecord({ operatorId: '4486', tripId: 'normal-trip', stopId: 'normal-stop' }),
+      makeRecord({
+        operatorId: '4486',
+        tripId: 'in-between-trip',
+        stopId: 'in-between-stop',
+        observedArrivalTime: '07:00:00',
+        observedDepartureTime: '07:08:00',
+        stopTime: '07:00',
+        inBetween: true,
+      }),
+      makeRecord({
+        operatorId: '4486',
+        tripId: 'tripper-trip',
+        stopId: 'tripper-stop',
+        observedArrivalTime: '07:10:00',
+        observedDepartureTime: '07:18:00',
+        stopTime: '07:10',
+        isTripper: true,
+      }),
+      makeRecord({
+        operatorId: '4486',
+        tripId: 'detour-trip',
+        stopId: 'detour-stop',
+        observedArrivalTime: '07:20:00',
+        observedDepartureTime: '07:28:00',
+        stopTime: '07:20',
+        isDetour: true,
+      }),
+    ];
+
+    const frontend = aggregateFrontend(records);
+    const backend = aggregateBackend(records as any);
+
+    expect(backend[0].byOperatorDwell).toEqual(frontend[0].byOperatorDwell);
+    expect(backend[0].byOperatorDwell?.incidents).toHaveLength(0);
+    expect(backend[0].byOperatorDwell?.totalIncidents).toBe(0);
+    expect(backend[0].byOperatorDwell?.totalStopVisits).toBe(1);
+  });
 });

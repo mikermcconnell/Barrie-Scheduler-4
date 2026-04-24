@@ -183,7 +183,7 @@ export function optimizeForConnections(
         case 'individual':
             return optimizeIndividualTrips(schedules, pairs, initialGaps, config);
 
-        case 'hybrid':
+        case 'hybrid': {
             // First shift, then fine-tune
             const shiftResult = optimizeByShift(schedules, pairs, initialGaps, config);
             const shiftedPairs = buildConnectionPairs(
@@ -199,6 +199,7 @@ export function optimizeForConnections(
                 config,
                 shiftResult.shiftApplied
             );
+        }
 
         default:
             return {

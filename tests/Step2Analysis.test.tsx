@@ -187,7 +187,8 @@ describe('Step2Analysis', () => {
 
         expect(container.textContent).not.toContain('Runtime source');
         expect(container.textContent).not.toContain('Generation basis');
-        expect(container.querySelector('[data-testid="step2-band-summary-view"]')).toBeTruthy();
+        expect(container.querySelector('[data-testid="step2-bucket-matrix-view"]')).toBeTruthy();
+        expect(container.querySelector('[data-testid="step2-band-summary-view"]')).toBeNull();
         expect(container.querySelector('[data-testid="step2-segment-matrix-view"]')).toBeNull();
 
         const dataHealthToggle = Array.from(container.querySelectorAll('button')).find(
@@ -219,7 +220,7 @@ describe('Step2Analysis', () => {
 
         expect(container.querySelector('[data-testid="step2-band-summary-view"]')).toBeNull();
         expect(container.querySelector('[data-testid="step2-segment-matrix-view"]')).toBeTruthy();
-        expect(container.textContent).toContain('Stop-to-Stop by 30-Minute Bucket');
+        expect(container.textContent).toContain('Diagnostic Stop-to-Stop by 30-Minute Bucket');
         expect(container.textContent).toContain('Bucket total');
         expect(container.textContent).toContain('12.0 min');
         expect(container.textContent).toContain('9.0 min');

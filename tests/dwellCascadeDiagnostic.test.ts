@@ -81,7 +81,7 @@ function buildDwellIncidents(records: STREETSRecord[], date: string): DwellIncid
 
         const observedArrival = chosen.observedArrivalTime!;
         const observedDeparture = chosen.observedDepartureTime!;
-        let arrSec = timeToSeconds(observedArrival);
+        const arrSec = timeToSeconds(observedArrival);
         let depSec = timeToSeconds(observedDeparture);
 
         if (depSec < arrSec) {

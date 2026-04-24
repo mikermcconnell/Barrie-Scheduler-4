@@ -15,7 +15,8 @@ import {
     Maximize2,
     Minimize2,
     Download,
-    RotateCcw
+    RotateCcw,
+    FileText
 } from 'lucide-react';
 import ExcelJS from 'exceljs';
 import { useTeam } from './contexts/TeamContext';
@@ -48,6 +49,7 @@ import {
     mergeScheduleColumnWidths,
     type ExportStopColumn,
 } from '../utils/reports/masterScheduleExportLayout';
+import { openTimetablePublisher } from '../utils/reports/timetableNavigation';
 
 // Constants
 const ROUTE_ORDER = ['400', '100', '101', '2', '7', '8A', '8B', '10', '11', '12'] as const;
@@ -1550,6 +1552,17 @@ export const MasterScheduleBrowser: React.FC<MasterScheduleBrowserProps> = ({
                         {/* Action buttons - only for routes */}
                         {selectedRoute !== 'platforms' && selectedRoute !== 'overview' && (
                             <div className="flex items-center gap-2">
+                                <button
+                                    onClick={() => openTimetablePublisher({
+                                        routeNumber: selectedRoute as string,
+                                        dayType: selectedDayType,
+                                    })}
+                                    className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold bg-amber-50 text-amber-700 rounded-lg hover:bg-amber-100 transition-colors"
+                                    title="Open the public timetable for this route"
+                                >
+                                    <FileText size={14} />
+                                    Timetable
+                                </button>
                                 <button
                                     onClick={() => handleCopyToDraft(buildRouteIdentity(selectedRoute as string, selectedDayType))}
                                     disabled={!onCopyToDraft}
