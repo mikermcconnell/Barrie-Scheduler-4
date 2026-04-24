@@ -1118,21 +1118,19 @@ export function buildReportHtml(data: ReportData): string {
       <!-- ═══ 3. ROUTE SCORECARD ═══ -->
       ${buildRouteScorecard(latestDay.byRoute, dwellByRoute)}
 
-      <!-- ═══ 4. TREND + BOARDINGS ═══ -->
-      <table width="100%" cellpadding="0" cellspacing="0">
-        <tr>
-          <td style="width:52%;padding:0 6px 0 0;vertical-align:top;">${buildTrendTable(trendRows, latestDay.date)}</td>
-          <td style="width:48%;padding:0 0 0 6px;vertical-align:top;">${buildHourlyTable(latestDay.byHour, totalServiceHours, dwellByHour)}</td>
-        </tr>
-      </table>
+      <!-- ═══ 4. LAST 7 DAYS TREND ═══ -->
+      ${buildTrendTable(trendRows, latestDay.date)}
 
-      <!-- ═══ 5. MISSED TRIPS - EXCEPTION ONLY ═══ -->
+      <!-- ═══ 5. BOARDINGS BY HOUR ═══ -->
+      ${buildHourlyTable(latestDay.byHour, totalServiceHours, dwellByHour)}
+
+      <!-- ═══ 6. MISSED TRIPS - EXCEPTION ONLY ═══ -->
       ${missedTripsSection}
 
-      <!-- ═══ 6. OPERATOR DWELL BY STOP ═══ -->
+      <!-- ═══ 7. OPERATOR DWELL BY STOP ═══ -->
       ${buildStopDwellTable(latestDay)}
 
-      <!-- ═══ 7. STOP HIGHLIGHTS ═══ -->
+      <!-- ═══ 8. STOP HIGHLIGHTS ═══ -->
       ${buildTopStops(latestDay.byStop)}
 
     </div>
