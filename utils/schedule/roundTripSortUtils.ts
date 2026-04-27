@@ -292,27 +292,112 @@ export const getRoundTripLastDepartureTime = (
         ?? null;
 };
 
+type HeadwayAnchor = {
+    key: string;
+    minute: number;
+    displayOrder: number;
+};
+
+const normalizeHeadwayStopKey = (stopName: string): string => (
+    stopName
+        .replace(/\s*\(\d+\)$/, '')
+        .trim()
+        .toLowerCase()
+);
+
+const getTripTimepointMinute = (
+    trip: MasterTrip | undefined,
+    stopName: string
+): number | null => {
+    if (!trip) return null;
+
+    const stopMinute = getStopMinutesValue(trip.stopMinutes, stopName);
+    if (stopMinute !== undefined) return stopMinute;
+
+    const departure = getDepartureDisplayTime(trip, stopName);
+    const departureMinute = departure ? TimeUtils.toMinutes(departure) : null;
+    if (departureMinute !== null) return departureMinute;
+
+    const arrival = getArrivalDisplayTime(trip, stopName);
+    return arrival ? TimeUtils.toMinutes(arrival) : null;
+};
+
+const getRowHeadwayAnchors = (
+    row: RoundTripRow,
+    combined: Pick<RoundTripTable, 'northStops' | 'southStops'>
+): HeadwayAnchor[] => {
+    const anchors: HeadwayAnchor[] = [];
+    const northTrip = row.trips.find(t => t.direction === 'North');
+    const southTrip = row.trips.find(t => t.direction === 'South');
+    const southOffset = combined.northStops.length;
+
+    combined.northStops.forEach((stopName, index) => {
+        const minute = getTripTimepointMinute(northTrip, stopName);
+        if (minute === null) return;
+        anchors.push({
+            key: `North:${normalizeHeadwayStopKey(stopName)}`,
+            minute,
+            displayOrder: index,
+        });
+    });
+
+    combined.southStops.forEach((stopName, index) => {
+        const minute = getTripTimepointMinute(southTrip, stopName);
+        if (minute === null) return;
+        anchors.push({
+            key: `South:${normalizeHeadwayStopKey(stopName)}`,
+            minute,
+            displayOrder: southOffset + index,
+        });
+    });
+
+    return anchors;
+};
+
+const getSharedHeadwayMinutes = (
+    previousRow: RoundTripRow,
+    currentRow: RoundTripRow,
+    combined: Pick<RoundTripTable, 'northStops' | 'southStops'>
+): number | null => {
+    const previousAnchors = new Map(getRowHeadwayAnchors(previousRow, combined).map(anchor => [anchor.key, anchor]));
+    const sharedAnchors = getRowHeadwayAnchors(currentRow, combined)
+        .map(current => {
+            const previous = previousAnchors.get(current.key);
+            return previous ? { current, previous } : null;
+        })
+        .filter((entry): entry is { current: HeadwayAnchor; previous: HeadwayAnchor } => !!entry)
+        .sort((a, b) => (
+            b.current.displayOrder - a.current.displayOrder
+            || getOperationalSortTime(b.current.minute) - getOperationalSortTime(a.current.minute)
+        ));
+
+    const bestSharedAnchor = sharedAnchors[0];
+    if (!bestSharedAnchor) return null;
+
+    return getOperationalSortTime(bestSharedAnchor.current.minute) - getOperationalSortTime(bestSharedAnchor.previous.minute);
+};
+
 /**
  * Calculate displayed round-trip headways in the order rows are shown.
  *
  * This intentionally does not re-sort rows. The first displayed row should
- * have no headway, and subsequent rows compare their last displayed departure
- * against the previous displayed row's last displayed departure.
+ * have no headway, and subsequent rows compare the most downstream shared
+ * timepoint with the nearest prior row that serves that same timepoint. This
+ * keeps short-turn and unique trips from producing misleading negative or
+ * inflated headways at stops they do not serve.
  */
 export const getRoundTripDisplayedHeadways = (
     rows: RoundTripRow[],
     combined: Pick<RoundTripTable, 'routeName' | 'northStops' | 'southStops'>
 ): Record<string, number> => {
     const headways: Record<string, number> = {};
-    let previousAnchor: number | null = null;
 
-    rows.forEach(row => {
-        const currentAnchor = getRoundTripLastDepartureTime(row, combined);
-        if (currentAnchor !== null && previousAnchor !== null) {
-            headways[getRoundTripRowKey(row)] = getOperationalSortTime(currentAnchor) - getOperationalSortTime(previousAnchor);
-        }
-        if (currentAnchor !== null) {
-            previousAnchor = currentAnchor;
+    rows.forEach((row, index) => {
+        for (let previousIndex = index - 1; previousIndex >= 0; previousIndex -= 1) {
+            const headway = getSharedHeadwayMinutes(rows[previousIndex], row, combined);
+            if (headway === null) continue;
+            headways[getRoundTripRowKey(row)] = headway;
+            break;
         }
     });
 

@@ -443,4 +443,26 @@ describe('buildReportHtml dwell reporting', () => {
     expect(html).not.toContain('BETA');
     expect(html).not.toContain('under active testing');
   });
+
+  it('does not render the review status banner above the KPI cards', () => {
+    const latestDay = makeSummary({
+      date: '2026-04-20',
+      routes: [
+        makeRoute('2', 'Route 2', {
+          otp: makeOtp({ onTimePercent: 80, earlyPercent: 8, latePercent: 12 }),
+        }),
+      ],
+    });
+
+    const html = buildReportHtml({
+      latestDay,
+      trendDays: [latestDay],
+      teamName: 'Barrie Transit',
+    });
+
+    const beforeKpis = between(html, '<div style="padding:18px;background:#f8fafc;">', '<!-- ═══ 1. KPI CARDS ═══ -->');
+
+    expect(beforeKpis).not.toContain('REVIEW');
+    expect(beforeKpis).not.toContain('Mostly stable');
+  });
 });

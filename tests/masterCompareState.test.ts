@@ -20,6 +20,13 @@ const southTable: MasterRouteTable = {
     trips: [],
 };
 
+const makeTable = (routeName: string): MasterRouteTable => ({
+    routeName,
+    stops: ['Terminal'],
+    stopIds: {},
+    trips: [],
+});
+
 describe('masterCompareState', () => {
     it('keeps compare active when route identity and session still match', () => {
         const scope = createMasterCompareScope('10-Weekday', 4);
@@ -40,20 +47,25 @@ describe('masterCompareState', () => {
         expect(shouldClearMasterCompare(scope, '10-Weekday', 5)).toBe(true);
     });
 
-    it('only returns a compare baseline when both North and South tables are available', () => {
+    it('returns a compare baseline when both North and South tables are available', () => {
         expect(extractMasterCompareBaseline({
             content: {
                 northTable,
                 southTable,
             },
         })).toEqual([northTable, southTable]);
+    });
 
+    it('accepts a single usable master table for loop or one-way schedules', () => {
         expect(extractMasterCompareBaseline({
             content: {
-                northTable,
+                northTable: makeTable('10 (Weekday)'),
             },
-        })).toBeNull();
+        })).toHaveLength(1);
+    });
 
+    it('returns null when no master tables are available', () => {
+        expect(extractMasterCompareBaseline({ content: {} })).toBeNull();
         expect(extractMasterCompareBaseline(null)).toBeNull();
     });
 });

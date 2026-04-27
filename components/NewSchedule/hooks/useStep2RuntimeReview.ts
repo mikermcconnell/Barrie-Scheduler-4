@@ -288,6 +288,12 @@ export const useStep2RuntimeReview = ({
         }),
         [analysis, canonicalSegmentColumns, healthReport, resolvedSegmentsMap, routeNumber]
     );
+
+    useEffect(() => {
+        if (displayedHealthReport.status === 'blocked' || displayedHealthReport.status === 'warning') {
+            setShowDataHealth(true);
+        }
+    }, [displayedHealthReport.status]);
     const displayedApprovedRuntimeModel = useMemo(
         () => approvedRuntimeModel ?? buildApprovedRuntimeModel({
             dayType,

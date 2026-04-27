@@ -160,6 +160,9 @@ describe('Step4Schedule', () => {
 
         const latestCall = scheduleEditorSpy.mock.calls.at(-1)?.[0];
         expect(latestCall?.useAuthoritativeTimepoints).toBe(true);
+        expect(latestCall?.initialTimepointOnly).toBe(true);
+        expect(latestCall?.condensedTimepointView).toBe(true);
+        expect(latestCall?.initialShowDeltas).toBe(false);
         expect(latestCall?.bands).toEqual([
             { id: 'A', label: 'Band A', min: 35, max: 45, avg: 40, color: '#2563eb', count: 1 },
         ]);
@@ -248,6 +251,9 @@ describe('Step4Schedule', () => {
 
         const latestCall = scheduleEditorSpy.mock.calls.at(-1)?.[0];
         expect(latestCall?.useAuthoritativeTimepoints).toBe(true);
+        expect(latestCall?.initialTimepointOnly).toBe(true);
+        expect(latestCall?.condensedTimepointView).toBe(true);
+        expect(latestCall?.initialShowDeltas).toBe(false);
         expect(latestCall?.bands).toEqual([
             { id: 'Z', label: 'Legacy', min: 1, max: 2, avg: 1, color: '#999999', count: 1 },
         ]);
@@ -264,6 +270,34 @@ describe('Step4Schedule', () => {
         ]);
         expect(latestCall?.segmentNames).toEqual(['Live Step 4 Segment']);
         expect(container.textContent).not.toContain('Approved runtime contract');
+    });
+
+    it('does not immediately sync unchanged initial schedules back to the wizard parent', () => {
+        container = document.createElement('div');
+        document.body.appendChild(container);
+        root = createRoot(container);
+
+        const initialSchedules = [{ routeName: '10 (Weekday) (North)', stops: [], trips: [] }] as any[];
+        const onUpdateSchedules = vi.fn();
+
+        flushSync(() => {
+            root?.render(
+                <Step4Schedule
+                    initialSchedules={initialSchedules}
+                    originalSchedules={initialSchedules}
+                    editorSessionKey={1}
+                    bands={[]}
+                    analysis={[]}
+                    segmentNames={[]}
+                    onUpdateSchedules={onUpdateSchedules}
+                    projectName="Test Project"
+                    approvedRuntimeContract={null}
+                    approvedRuntimeModel={null}
+                />
+            );
+        });
+
+        expect(onUpdateSchedules).not.toHaveBeenCalled();
     });
 
 });

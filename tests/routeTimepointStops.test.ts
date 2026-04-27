@@ -30,7 +30,9 @@ describe('buildRouteTimepointStopOptions', () => {
 
     expect(stops).toEqual([
       { code: '777', name: 'Park Pl' },
-      { code: '1', name: 'Downtown Hub' }
+      { code: '627', name: 'Sproule at Kraus' },
+      { code: '1', name: 'Downtown Hub' },
+      { code: '626', name: 'Sproule at Kraus' },
     ]);
   });
 });

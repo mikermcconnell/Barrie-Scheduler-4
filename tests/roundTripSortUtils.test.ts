@@ -325,6 +325,69 @@ describe('getRoundTripDisplayedHeadways', () => {
 
         expect(headways[getRoundTripRowKey(afterMidnight)]).toBe(25);
     });
+
+    it('uses the most downstream shared timepoint for a short-turn row instead of the previous full row terminal', () => {
+        const fullRow = {
+            ...makeRow([
+                makeTrip('north-full', 'North', 545, {
+                    'Park Place': '9:05 AM',
+                    'Sproule at Kraus': '9:26 AM',
+                    'Downtown Hub': '9:38 AM',
+                }),
+                makeTrip('south-full', 'South', 588, {
+                    'Downtown Hub': '9:48 AM',
+                    'Park Place': '10:22 AM',
+                }),
+            ]),
+            blockId: '2-1',
+        };
+        const shortTurnRow = {
+            ...makeRow([
+                makeTrip('north-short', 'North', 575, {
+                    'Park Place': '9:35 AM',
+                    'Sproule at Kraus': '9:56 AM',
+                    'Downtown Hub': '10:08 AM',
+                }),
+            ]),
+            blockId: '2-2',
+        };
+
+        const combined = {
+            routeName: '2 (Sunday)',
+            northStops: ['Park Place', 'Sproule at Kraus', 'Downtown Hub'],
+            southStops: ['Downtown Hub', 'Park Place'],
+        };
+
+        const headways = getRoundTripDisplayedHeadways([fullRow, shortTurnRow], combined);
+
+        expect(headways[getRoundTripRowKey(shortTurnRow)]).toBe(30);
+    });
+
+    it('walks back to the nearest row with a shared served timepoint', () => {
+        const firstNorthRow = {
+            ...makeRow([makeTrip('north-first', 'North', 480, { A: '8:00 AM', B: '8:20 AM' })]),
+            blockId: '1-1',
+        };
+        const southOnlyRow = {
+            ...makeRow([makeTrip('south-only', 'South', 500, { C: '8:20 AM', D: '8:40 AM' })]),
+            blockId: '1-2',
+        };
+        const secondNorthRow = {
+            ...makeRow([makeTrip('north-second', 'North', 510, { A: '8:30 AM', B: '8:50 AM' })]),
+            blockId: '1-3',
+        };
+
+        const combined = {
+            routeName: '1 (Weekday)',
+            northStops: ['A', 'B'],
+            southStops: ['C', 'D'],
+        };
+
+        const headways = getRoundTripDisplayedHeadways([firstNorthRow, southOnlyRow, secondNorthRow], combined);
+
+        expect(headways[getRoundTripRowKey(southOnlyRow)]).toBeUndefined();
+        expect(headways[getRoundTripRowKey(secondNorthRow)]).toBe(30);
+    });
 });
 
 describe('getRoundTripDisplayedCycleTime', () => {

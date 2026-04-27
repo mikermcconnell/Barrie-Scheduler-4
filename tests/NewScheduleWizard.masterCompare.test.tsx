@@ -291,4 +291,5 @@ describe('NewScheduleWizard compare to master', () => {
         expect(headerSpy.mock.calls.at(-1)?.[0].isMasterCompareActive).toBe(false);
         expect(toast.error).not.toHaveBeenCalled();
     });
+
 });

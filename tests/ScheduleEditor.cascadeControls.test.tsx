@@ -63,7 +63,9 @@ vi.mock('../components/layout/WorkspaceHeader', () => ({
 }));
 
 vi.mock('../components/schedule/RoundTripTableView', () => ({
-  RoundTripTableView: (): React.ReactElement => <div data-testid="round-trip-table" />,
+  RoundTripTableView: ({ toolbarSlot }: { toolbarSlot?: React.ReactNode }): React.ReactElement => (
+    <div data-testid="round-trip-table">{toolbarSlot}</div>
+  ),
 }));
 
 import { ScheduleEditor } from '../components/ScheduleEditor';
@@ -138,7 +140,6 @@ describe('ScheduleEditor cascade controls', () => {
       );
     });
 
-    expect(container?.textContent).toContain('Cascading');
     expect(container?.textContent).toContain('Cascade On');
 
     const toggleButton = Array.from(container?.querySelectorAll('button') ?? []).find(
@@ -208,7 +209,6 @@ describe('ScheduleEditor cascade controls', () => {
       );
     });
 
-    expect(container?.textContent).toContain('Cascading');
     expect(container?.textContent).toContain('Cascade On');
   });
 });

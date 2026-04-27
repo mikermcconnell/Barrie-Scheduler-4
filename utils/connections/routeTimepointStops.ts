@@ -14,6 +14,7 @@ const isMajorTimepointStop = (stopName: string, index: number, stops: string[]):
         || normalized.includes('allandale')
         || normalized.includes('georgian')
         || normalized.includes('park place')
+        || (normalized.includes('sproule') && normalized.includes('kraus'))
         || normalized.includes('college')
         || normalized.includes('go')
     );

@@ -339,6 +339,27 @@ describe('ScheduleEditor interactions', () => {
     });
   };
 
+  it('defers loading the connection library until after the editor first renders', async () => {
+    vi.useFakeTimers();
+
+    try {
+      renderEditor();
+      await flushPromises();
+
+      expect(getConnectionLibraryMock).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(399);
+      await flushPromises();
+      expect(getConnectionLibraryMock).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(1);
+      await flushPromises();
+      expect(getConnectionLibraryMock).toHaveBeenCalledWith('team-1');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('re-runs block reassignment after a timeline trip edit', async () => {
     renderEditor();
     await flushPromises();

@@ -45,7 +45,6 @@ import {
     buildCanonicalSegmentColumnsFromMasterStops,
     buildRuntimeDerivedCanonicalDirectionStops,
     buildSegmentsMapFromParsedData,
-    clampWizardStepToCurrentStep2Approval,
     createDefaultPerformanceConfig,
     createDefaultScheduleConfig,
     deriveWizardStepFromProject,
@@ -293,6 +292,10 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
     const [showUploadModal, setShowUploadModal] = useState(false);
     const [uploadConfirmation, setUploadConfirmation] = useState<UploadConfirmation | null>(null);
     const [isUploading, setIsUploading] = useState(false);
+    const [isPreparingStep2, setIsPreparingStep2] = useState(false);
+    const [step2LoadingMessage, setStep2LoadingMessage] = useState('Analyzing runtime data...');
+    const [isPreparingStep4, setIsPreparingStep4] = useState(false);
+    const [step4LoadingMessage, setStep4LoadingMessage] = useState('Generating schedule...');
 
     // Compare to Master State (inline toggle, not modal)
     const [isMasterCompareActive, setIsMasterCompareActive] = useState(false);
@@ -529,20 +532,12 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
     );
 
     const approvedRuntimeModel = useMemo<ApprovedRuntimeModel | null>(() => {
-        if (approvalState !== 'approved') return null;
         return approvedContractRuntimeModel ?? legacyApprovedRuntimeModel;
-    }, [approvalState, approvedContractRuntimeModel, legacyApprovedRuntimeModel]);
+    }, [approvedContractRuntimeModel, legacyApprovedRuntimeModel]);
 
     const currentApprovedRuntimeContract = useMemo<ApprovedRuntimeContract | null>(() => (
-        approvalState === 'approved' ? approvedRuntimeContract : null
-    ), [approvalState, approvedRuntimeContract]);
-
-    useEffect(() => {
-        const gatedStep = clampWizardStepToCurrentStep2Approval(step as 1 | 2 | 3 | 4, approvalState);
-        if (gatedStep !== step) {
-            setStep(gatedStep);
-        }
-    }, [approvalState, step]);
+        approvedRuntimeContract
+    ), [approvedRuntimeContract]);
 
     useEffect(() => {
         if (!step2ReviewResult) {
@@ -1236,6 +1231,30 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         setStep(2);
     };
 
+    const showStep2Loading = async (message: string) => {
+        setStep2LoadingMessage(message);
+        setIsPreparingStep2(true);
+        await new Promise<void>((resolve) => {
+            requestAnimationFrame(() => resolve());
+        });
+    };
+
+    const showStep4Loading = async (message: string) => {
+        setStep4LoadingMessage(message);
+        setIsPreparingStep4(true);
+        await new Promise<void>((resolve) => {
+            requestAnimationFrame(() => resolve());
+        });
+    };
+
+    const hideStep4LoadingAfterPaint = () => {
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                setIsPreparingStep4(false);
+            });
+        });
+    };
+
     const handleNext = async () => {
         if (step === 1) {
             if (importMode === 'gtfs') {
@@ -1273,6 +1292,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                     );
                     return;
                 }
+                await showStep2Loading('Analyzing performance runtimes...');
                 try {
                     const selectedRouteMetadata = availableRoutes.find(route => route.routeId === performanceConfig.routeId);
                     if (selectedRouteMetadata && selectedRouteMetadata.stopLevelDayCount === 0) {
@@ -1383,6 +1403,8 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                 } catch (error) {
                     console.error(error);
                     toast.error('Compute Error', 'Failed to compute runtimes from performance data.');
+                } finally {
+                    setIsPreparingStep2(false);
                 }
             } else {
                 // CSV mode
@@ -1390,6 +1412,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                     toast.warning('No Files', 'Please upload at least one CSV file');
                     return;
                 }
+                await showStep2Loading('Parsing runtime CSV files...');
                 try {
                     const results = await Promise.all(files.map(f => parseRuntimeCSV(f)));
                     processRuntimeResults(results);
@@ -1397,20 +1420,16 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                 } catch (error) {
                     console.error(error);
                     toast.error('Parse Error', 'Failed to parse CSV files. Please check the format.');
+                } finally {
+                    setIsPreparingStep2(false);
                 }
             }
         } else if (step === 2) {
-            if (step2HealthReport?.status === 'blocked') {
-                toast.warning(
-                    'Step 2 Needs Fixes',
-                    'Resolve the Step 2 issues before moving to schedule building.'
-                );
-                return;
-            }
-
             if (approvalState !== 'approved') {
                 const approved = handleApproveStep2(step2ApprovalWarnings, { silent: true });
-                if (!approved) return;
+                if (!approved) {
+                    console.warn('Step 2 auto-approval contract was unavailable; continuing with current runtime review.');
+                }
             }
             // Initialize one block for convenience if empty
             if (config.blocks.length === 0) {
@@ -1427,12 +1446,12 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                 return;
             }
 
-            const activeApprovedPlanning = currentApprovedRuntimeContract?.planning ?? null;
+            const activeApprovedPlanning = currentApprovedRuntimeContract?.planning ?? step2ReviewResult?.planning ?? null;
             const activeRuntimeModel = currentApprovedRuntimeContract
                 ? buildStep2ApprovedRuntimeModelFromContract(currentApprovedRuntimeContract)
-                : null;
-            if (!activeApprovedPlanning || !activeRuntimeModel) {
-                toast.error('Runtime Model Missing', 'Return to Step 2 and confirm the runtime analysis before generating.');
+                : lastApprovedRuntimeModel;
+            if (!activeApprovedPlanning && !activeRuntimeModel) {
+                toast.error('Runtime Model Missing', 'Runtime analysis is not available. Return to Step 2 and rebuild the runtime review.');
                 return;
             }
 
@@ -1476,35 +1495,39 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
             const groupedData = buildSegmentsMapFromParsedData(sortedParsedData);
             setSegmentsMap(groupedData);
 
-            const generationCanonicalStops = activeApprovedPlanning?.canonicalDirectionStops;
-
-            if (!generationCanonicalStops) {
-                toast.error(
-                    'Runtime Model Missing',
-                    'The approved Step 2 planning stop chain is unavailable. Return to Step 2, rebuild the runtime review, and try again.'
-                );
-                return;
-            }
+            const generationCanonicalStops = activeApprovedPlanning?.canonicalDirectionStops
+                ?? effectiveCanonicalDirectionStops;
 
             if (!approvedDirectionBandSummary) {
-                toast.error('Runtime Model Missing', 'The approved Step 2 direction summary is unavailable. Re-approve Step 2 and try again.');
+                toast.error('Runtime Model Missing', 'The Step 2 direction summary is unavailable. Return to Step 2 and rebuild the runtime review.');
                 return;
             }
 
+            await showStep4Loading('Generating your schedule from the runtime analysis...');
+
             // Generate schedule
-            const generatedTables = generateSchedule(
-                config,
-                approvedBuckets,
-                approvedBands,
-                approvedDirectionBandSummary,
-                groupedData,
-                dayType,
-                gtfsStopLookup,
-                masterStopCodes,
-                generationCanonicalStops
-            );
+            let generatedTables: MasterRouteTable[];
+            try {
+                generatedTables = generateSchedule(
+                    config,
+                    approvedBuckets,
+                    approvedBands,
+                    approvedDirectionBandSummary,
+                    groupedData,
+                    dayType,
+                    gtfsStopLookup,
+                    masterStopCodes,
+                    generationCanonicalStops
+                );
+            } catch (error) {
+                console.error(error);
+                setIsPreparingStep4(false);
+                toast.error('Generation Failed', 'Could not generate schedule. Check cycle time and data format.');
+                return;
+            }
 
             if (generatedTables.length === 0) {
+                setIsPreparingStep4(false);
                 toast.error('Generation Failed', 'Could not generate schedule. Check cycle time and data format.');
                 return;
             }
@@ -1550,8 +1573,10 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
             });
             setConfig({ ...config, blocks: updatedBlocks });
 
+            setStep4LoadingMessage('Opening the schedule editor...');
             setStep(4);
             toast.success('Schedule Generated', `Created ${generatedTables.length} schedule(s)`);
+            hideStep4LoadingAfterPaint();
 
             // Save generated schedule - localStorage backup + Firebase (uses consolidated helpers)
             // Note: Pass generatedTables directly since state hasn't updated yet
@@ -1664,7 +1689,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
 
             if (!baseline) {
                 clearMasterCompare();
-                toast.warning('Master Incomplete', `Master compare needs both North and South tables for Route ${config.routeNumber} ${dayType}.`);
+                toast.warning('Master Incomplete', `Master compare needs at least one usable table for Route ${config.routeNumber} ${dayType}.`);
                 return;
             }
 
@@ -1763,7 +1788,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         || approvalState === 'approved'
         || step2HealthReport?.status === 'blocked'
     );
-    const primaryActionDisabled = step === 3 && approvalState !== 'approved';
+    const primaryActionDisabled = isPreparingStep2 || isPreparingStep4;
     const primaryActionLabel = step === 3
         ? 'Generate Schedule'
         : step === 2
@@ -1773,6 +1798,31 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
     return (
         <>
             <div className="flex flex-col h-full bg-gray-50/50">
+                {(isPreparingStep2 || isPreparingStep4) && (
+                    <div
+                        className="fixed inset-0 z-[1000] flex items-center justify-center bg-slate-900/35 px-4 backdrop-blur-sm"
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="wizard-loading-title"
+                        aria-busy="true"
+                    >
+                        <div className="w-full max-w-sm rounded-2xl border border-white/70 bg-white p-6 text-center shadow-2xl">
+                            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-blue-50 text-brand-blue">
+                                <Loader2 size={28} className="animate-spin" />
+                            </div>
+                            <h3 id="wizard-loading-title" className="mt-4 text-lg font-bold text-gray-900">
+                                {isPreparingStep4 ? 'Generating schedule' : 'Preparing runtime analysis'}
+                            </h3>
+                            <p className="mt-2 text-sm text-gray-600">
+                                {isPreparingStep4 ? step4LoadingMessage : step2LoadingMessage}
+                            </p>
+                            <p className="mt-3 text-xs text-gray-400">
+                                This can take a few seconds.
+                            </p>
+                        </div>
+                    </div>
+                )}
+
                 {/* Wizard Header */}
                 <NewScheduleHeader
                     currentStep={step}
@@ -1783,7 +1833,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                     onNewProject={handleNewProject}
                     onSaveVersion={handleSaveProgress}
                     onClose={onBack}
-                    onStepClick={(s) => setStep(clampWizardStepToCurrentStep2Approval(s as 1 | 2 | 3 | 4, approvalState))}
+                    onStepClick={(s) => setStep(s as 1 | 2 | 3 | 4)}
                     maxStepReached={maxStepReached}
                     cloudSaveStatus={cloudSaveStatus}
                     lastCloudSaveTime={lastCloudSaveTime}
@@ -1867,9 +1917,9 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                                 initialSchedules={generatedSchedules}
                                 originalSchedules={originalGeneratedSchedules}
                                 editorSessionKey={step4EditorSessionKey}
-                                bands={currentApprovedRuntimeContract?.planning.bands ?? bands}
-                                analysis={currentApprovedRuntimeContract?.planning.buckets ?? analysis}
-                                segmentNames={currentApprovedRuntimeContract?.planning.segmentColumns.map(column => column.segmentName) ?? segmentNames}
+                                bands={currentApprovedRuntimeContract?.planning.bands ?? step2ReviewResult?.planning.bands ?? bands}
+                                analysis={currentApprovedRuntimeContract?.planning.buckets ?? step2ReviewResult?.planning.buckets ?? analysis}
+                                segmentNames={currentApprovedRuntimeContract?.planning.segmentColumns.map(column => column.segmentName) ?? step2ReviewResult?.planning.segmentColumns.map(column => column.segmentName) ?? segmentNames}
                                 onUpdateSchedules={setGeneratedSchedules}
                                 projectName={projectName}
                                 autoSaveStatus={autoSaveStatus}
@@ -1888,7 +1938,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                 </div>
 
                 {/* Footer / Actions */}
-                <div className="bg-white border-t border-gray-200 p-4 px-8 flex justify-between items-center">
+                <div className="flex flex-col gap-3 border-t border-gray-200 bg-white p-4 sm:flex-row sm:items-center sm:justify-between sm:px-8">
                     <button
                         onClick={() => setStep(s => Math.max(1, s - 1))}
                         disabled={step === 1}
@@ -1897,13 +1947,13 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                         Back
                     </button>
 
-                    <div className="flex items-center gap-3">
+                    <div className="flex w-full flex-col items-stretch gap-3 sm:w-auto sm:flex-row sm:items-center">
                         {/* Save Progress Button - context-aware */}
                         {hasProjectContent && (
                             <button
                                 onClick={handleSaveProgress}
                                 disabled={isManualSaving || (!isDirty && cloudSaveStatus === 'saved')}
-                                className={`px-4 py-2 rounded-lg border font-bold flex items-center gap-2 transition-all ${
+                                className={`whitespace-nowrap px-4 py-2 rounded-lg border font-bold flex items-center justify-center gap-2 transition-all ${
                                     cloudSaveStatus === 'error'
                                         ? 'border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100'
                                         : manualSaveSuccess
@@ -1958,11 +2008,19 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                                 approvalRequiresAcknowledgement={step2ApprovalRequiresAcknowledgement}
                                 warningAcknowledged={step2WarningsAcknowledged}
                                 approvedAtLabel={formatFooterTimestamp(approvedRuntimeContract?.approvedAt)}
-                                statusLabel={step2HealthReport?.status === 'blocked' ? 'Needs fixes' : 'Ready'}
+                                statusLabel={
+                                    step2HealthReport?.status === 'blocked'
+                                        ? 'Needs fixes'
+                                        : step2HealthReport?.status === 'warning'
+                                            ? 'Continue with warnings'
+                                            : 'Ready'
+                                }
                                 statusMessage={
                                     step2HealthReport?.status === 'blocked'
                                         ? 'Resolve the Step 2 issues before continuing to schedule building.'
-                                        : 'If this looks right, continue to build the schedule.'
+                                        : step2HealthReport?.status === 'warning'
+                                            ? 'Review the warnings above, then continue if these runtimes are acceptable.'
+                                            : 'If this looks right, continue to build the schedule.'
                                 }
                                 approvalActionDisabled={false}
                                 continueActionDisabled={step2HealthReport?.status === 'blocked'}
@@ -2008,10 +2066,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                                 restoreProjectData(fullProject);
 
                                 // Calculate which step to go to based on what data exists
-                                const nextStep = clampWizardStepToCurrentStep2Approval(
-                                    deriveWizardStepFromProject(fullProject),
-                                    fullProject.approvedRuntimeContract ? 'approved' : 'unapproved'
-                                );
+                                const nextStep = deriveWizardStepFromProject(fullProject);
                                 setStep(nextStep);
                                 setMaxStepReached(nextStep);
                                 toast.success('Project Loaded', `${fullProject.name} - Step ${nextStep}`);
@@ -2035,10 +2090,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                     clearMasterCompare();
                     restoreProjectData(fullProject);
 
-                    const nextStep = clampWizardStepToCurrentStep2Approval(
-                        deriveWizardStepFromProject(fullProject),
-                        fullProject.approvedRuntimeContract ? 'approved' : 'unapproved'
-                    );
+                    const nextStep = deriveWizardStepFromProject(fullProject);
                     setStep(nextStep);
                     setMaxStepReached(nextStep);
                     toast.success('Schedule Loaded', `${fullProject.name} - Step ${nextStep}`);

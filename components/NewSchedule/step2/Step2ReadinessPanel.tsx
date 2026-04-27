@@ -32,6 +32,15 @@ const formatServiceDate = (value?: string): string | null => {
     }).format(parsed);
 };
 
+const getCollapsedSummary = (healthReport: Step2DataHealthReport): string => {
+    if (healthReport.blockers.length > 0) return healthReport.blockers[0];
+    if (healthReport.warnings.length > 0) return healthReport.warnings[0];
+    if (healthReport.expectedSegmentCount > 0) {
+        return `${healthReport.completeBucketCount}/${healthReport.availableBucketCount} complete buckets ready for scheduling.`;
+    }
+    return 'Review route readiness before continuing.';
+};
+
 export const Step2ReadinessPanel: React.FC<Step2ReadinessPanelProps> = ({
     healthReport,
     showDataHealth,
@@ -56,7 +65,7 @@ export const Step2ReadinessPanel: React.FC<Step2ReadinessPanelProps> = ({
                     <div>
                         <h3 className="font-bold text-gray-900">Data Health</h3>
                         <p className="text-xs text-gray-500">
-                            {showDataHealth ? 'Hide route readiness details' : 'Show route readiness details'}
+                            {showDataHealth ? 'Hide route readiness details' : getCollapsedSummary(healthReport)}
                         </p>
                     </div>
                     <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide ${
@@ -73,6 +82,11 @@ export const Step2ReadinessPanel: React.FC<Step2ReadinessPanelProps> = ({
                     {showDataHealth ? 'Hide' : 'Show'}
                 </span>
             </button>
+            {!showDataHealth && healthReport.status !== 'ready' && (
+                <div className="border-t border-gray-100 bg-amber-50/50 px-5 py-3 text-sm text-amber-900">
+                    {getCollapsedSummary(healthReport)}
+                </div>
+            )}
             {showDataHealth && (
                 <div className="border-t border-gray-200 bg-gray-50/60 p-5">
                     <div className="flex items-start justify-between gap-4">

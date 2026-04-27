@@ -96,13 +96,41 @@ function otpPill(value: number): string {
   return `<span style="background:${otpBg(value)};color:${otpColor(value)};padding:2px 8px;border-radius:4px;font-weight:600;font-size:12px;">${pct(value)}</span>`;
 }
 
-function kpiCard(label: string, value: string, subtitle?: string, accentColor = '#2563eb', subtitleColor?: string, icon = ''): string {
+type EmailIconName = 'bus' | 'performance' | 'ridership' | 'trips' | 'dwell' | 'alert' | 'stable';
+
+function emailIcon(name: EmailIconName, color = '#0f3a76', size = 24): string {
+  const common = `width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"`;
+  const stroke = `stroke="${color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"`;
+  const fillSoft = color;
+
+  switch (name) {
+    case 'performance':
+      return `<svg ${common} aria-hidden="true"><path ${stroke} d="M4.5 15.5a7.5 7.5 0 1 1 15 0"/><path ${stroke} d="M12 15.5l4-5"/><path ${stroke} d="M7.5 15.5h9"/><circle cx="12" cy="15.5" r="1.6" fill="${fillSoft}"/></svg>`;
+    case 'ridership':
+      return `<svg ${common} aria-hidden="true"><circle ${stroke} cx="9" cy="8" r="2.8"/><circle ${stroke} cx="16.5" cy="9" r="2.2"/><path ${stroke} d="M4.5 19c.7-3.1 2.3-4.7 4.7-4.7s4 1.6 4.7 4.7"/><path ${stroke} d="M13.8 18.8c.5-2.3 1.7-3.4 3.4-3.4 1.5 0 2.6.9 3.2 2.8"/></svg>`;
+    case 'trips':
+    case 'bus':
+      return `<svg ${common} aria-hidden="true"><rect ${stroke} x="4" y="5" width="16" height="12" rx="2.2"/><path ${stroke} d="M7 5V3.8h10V5"/><path ${stroke} d="M7 9h10"/><path ${stroke} d="M7.5 13h.1M16.5 13h.1"/><circle cx="8" cy="18.5" r="1.4" fill="${fillSoft}"/><circle cx="16" cy="18.5" r="1.4" fill="${fillSoft}"/></svg>`;
+    case 'dwell':
+      return `<svg ${common} aria-hidden="true"><path ${stroke} d="M9 3.5h6"/><path ${stroke} d="M12 3.5v2.2"/><circle ${stroke} cx="12" cy="13.2" r="7"/><path ${stroke} d="M12 9.5v4.1l2.8 1.7"/><path ${stroke} d="M17.1 6.8l1.4-1.4"/></svg>`;
+    case 'alert':
+      return `<svg ${common} aria-hidden="true"><path ${stroke} d="M12 4.2 21 19H3L12 4.2Z"/><path ${stroke} d="M12 9.2v4.5"/><circle cx="12" cy="16.8" r="1" fill="${fillSoft}"/></svg>`;
+    case 'stable':
+      return `<svg ${common} aria-hidden="true"><circle ${stroke} cx="12" cy="12" r="8"/><path ${stroke} d="m8.5 12.2 2.2 2.2 4.8-5"/></svg>`;
+  }
+}
+
+function iconBadge(name: EmailIconName, color = '#0f3a76', bg = '#eff6ff', size = 24): string {
+  return `<span style="display:inline-flex;align-items:center;justify-content:center;width:${size + 14}px;height:${size + 14}px;border-radius:14px;background:${bg};border:1px solid ${color}22;color:${color};">${emailIcon(name, color, size)}</span>`;
+}
+
+function kpiCard(label: string, value: string, subtitle?: string, accentColor = '#2563eb', subtitleColor?: string, icon?: EmailIconName): string {
   const subColor = subtitleColor || '#9ca3af';
   const subWeight = subtitleColor ? 'font-weight:600;' : '';
   return `
     <td style="width:25%;padding:6px;vertical-align:top;">
       <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:16px 12px;text-align:center;border-left:4px solid ${accentColor};box-shadow:0 2px 8px rgba(15,23,42,0.06);">
-        ${icon ? `<div style="font-size:22px;line-height:1;margin-bottom:8px;">${icon}</div>` : ''}
+        ${icon ? `<div style="line-height:1;margin-bottom:8px;">${iconBadge(icon, accentColor, '#f8fafc', 18)}</div>` : ''}
         <div style="font-size:13px;color:#1e3a5f;font-weight:700;">${label}</div>
         <div style="font-size:28px;font-weight:800;color:${accentColor};margin:8px 0 4px;letter-spacing:-0.5px;">${value}</div>
         ${subtitle ? `<div style="font-size:11px;color:${subColor};${subWeight}">${subtitle}</div>` : ''}
@@ -311,7 +339,7 @@ function buildDwellKpiCard(latestDay: DailySummary, trendDays: DailySummary[]): 
     return `
       <td style="width:25%;padding:6px;vertical-align:top;">
         <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:16px 12px;text-align:center;border-left:4px solid #0891b2;box-shadow:0 2px 8px rgba(15,23,42,0.06);">
-          <div style="font-size:22px;line-height:1;margin-bottom:8px;">⏱️</div>
+          <div style="line-height:1;margin-bottom:8px;">${iconBadge('dwell', '#0891b2', '#f8fafc', 18)}</div>
           <div style="font-size:13px;color:#1e3a5f;font-weight:700;">Operator Dwell</div>
           <div style="font-size:28px;font-weight:800;color:#0891b2;margin:8px 0 4px;letter-spacing:-0.5px;">—</div>
           <div style="font-size:11px;color:#9ca3af;">No dwell data</div>
@@ -357,7 +385,7 @@ function buildDwellKpiCard(latestDay: DailySummary, trendDays: DailySummary[]): 
   return `
     <td style="width:25%;padding:6px;vertical-align:top;">
       <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:16px 12px;text-align:center;border-left:4px solid ${accentColor};box-shadow:0 2px 8px rgba(15,23,42,0.06);">
-        <div style="font-size:22px;line-height:1;margin-bottom:8px;">⏱️</div>
+        <div style="line-height:1;margin-bottom:8px;">${iconBadge('dwell', accentColor, '#f8fafc', 18)}</div>
         <div style="font-size:13px;color:#1e3a5f;font-weight:700;">Operator Dwell</div>
         <div style="font-size:28px;font-weight:800;color:${valueColor};margin:8px 0 4px;letter-spacing:-0.5px;">${totalHours} hrs</div>
         <div style="font-size:11px;color:#9ca3af;">${highCount} high · ${moderateCount} moderate</div>
@@ -539,17 +567,6 @@ function buildTrendRows(trendDays: DailySummary[]): Array<{
       rollingAverageSeconds: windowAverage,
     };
   });
-}
-
-function buildStatusBanner(latestDay: DailySummary): string {
-  const status = deriveReportStatus(latestDay);
-  const icon = status.label === 'STABLE' ? '✓' : status.label === 'REVIEW' ? '⚠' : '!';
-  return `
-    <div style="background:${status.bg};border:1px solid ${status.border};border-radius:10px;padding:12px 14px;margin:0 0 14px;color:${status.color};">
-      <span style="display:inline-block;width:26px;font-size:20px;font-weight:800;vertical-align:middle;">${icon}</span>
-      <span style="font-size:14px;font-weight:800;vertical-align:middle;">${status.label}</span>
-      <span style="font-size:14px;color:#111827;vertical-align:middle;"> · ${status.message}</span>
-    </div>`;
 }
 
 function buildActionFocus(latestDay: DailySummary): string {
@@ -1080,7 +1097,7 @@ export function buildReportHtml(data: ReportData): string {
   <div style="max-width:760px;margin:0 auto;background:#ffffff;">
     <!-- Header -->
     <div style="background:#082f69;padding:26px 24px 20px;text-align:center;border-bottom:4px solid #3b82f6;">
-      <div style="display:inline-block;background:#2563eb;color:#ffffff;border-radius:10px;padding:7px 9px;font-size:24px;line-height:1;margin-bottom:8px;">🚌</div>
+      <div style="line-height:1;margin-bottom:8px;">${iconBadge('bus', '#ffffff', '#0f3a76', 24)}</div>
       <div style="font-size:30px;font-weight:900;color:#ffffff;line-height:1.15;">${teamName}</div>
       <div style="font-size:27px;font-weight:900;color:#ffffff;margin-top:8px;line-height:1.15;">Daily Performance Report</div>
       <div style="font-size:17px;color:#60a5fa;font-weight:800;margin-top:10px;">${formatDateLong(latestDay.date)}</div>
@@ -1092,14 +1109,18 @@ export function buildReportHtml(data: ReportData): string {
 
     <div style="padding:18px;background:#f8fafc;">
 
-      ${buildStatusBanner(latestDay)}
+      <div style="background:${status.bg};border:1px solid ${status.border};border-radius:10px;padding:11px 14px;margin:0 0 12px;color:${status.color};font-size:13px;font-weight:700;">
+        <span style="vertical-align:middle;margin-right:8px;">${emailIcon(status.label === 'STABLE' ? 'stable' : 'alert', status.color, 18)}</span>
+        <span style="vertical-align:middle;text-transform:uppercase;letter-spacing:0.2px;">${status.label}</span>
+        <span style="vertical-align:middle;color:#111827;font-weight:600;"> · ${status.message}</span>
+      </div>
 
       <!-- ═══ 1. KPI CARDS ═══ -->
       <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:4px;">
         <tr>
-          ${kpiCard('On-time performance', pct(sys.otp.onTimePercent), `${pct(sys.otp.earlyPercent)} early · ${pct(sys.otp.latePercent)} late`, otpColor(sys.otp.onTimePercent), undefined, '↻')}
-          ${kpiCard('Total ridership', num(sys.totalRidership), `${num(sys.totalAlightings)} alightings`, '#2563eb', undefined, '👥')}
-          ${kpiCard('Trips operated', tripsOperatedValue, tripsOperatedSubtitle, status.label === 'NEEDS ATTENTION' ? '#dc2626' : '#6d28d9', status.label === 'NEEDS ATTENTION' ? '#dc2626' : undefined, '🚌')}
+          ${kpiCard('On-time performance', pct(sys.otp.onTimePercent), `${pct(sys.otp.earlyPercent)} early · ${pct(sys.otp.latePercent)} late`, otpColor(sys.otp.onTimePercent), undefined, 'performance')}
+          ${kpiCard('Total ridership', num(sys.totalRidership), `${num(sys.totalAlightings)} alightings`, '#2563eb', undefined, 'ridership')}
+          ${kpiCard('Trips operated', tripsOperatedValue, tripsOperatedSubtitle, status.label === 'NEEDS ATTENTION' ? '#dc2626' : '#6d28d9', status.label === 'NEEDS ATTENTION' ? '#dc2626' : undefined, 'trips')}
           ${buildDwellKpiCard(latestDay, trendDays)}
         </tr>
       </table>

@@ -887,12 +887,8 @@ export const deriveWizardStepFromProject = (
 
 export const clampWizardStepToCurrentStep2Approval = (
     step: 1 | 2 | 3 | 4,
-    approvalState: Step2ApprovalState
-): 1 | 2 | 3 | 4 => (
-    step > 2 && approvalState !== 'approved'
-        ? 2
-        : step
-);
+    _approvalState: Step2ApprovalState
+): 1 | 2 | 3 | 4 => step;
 
 export const hasRestorableWizardProgress = (
     progress: WizardProgressLike | null

@@ -30,6 +30,7 @@ const getStatusToneClasses = (
 ): string => {
     if (mode === 'next-step') {
         if (readinessStatus === 'blocked') return 'border-red-200 bg-red-50/80';
+        if (readinessStatus === 'warning') return 'border-amber-200 bg-amber-50/80';
         return 'border-blue-200 bg-blue-50/80';
     }
 
@@ -48,6 +49,9 @@ const getStatusIcon = (
     if (mode === 'next-step') {
         if (readinessStatus === 'blocked') {
             return <AlertTriangle className="text-red-600" size={18} />;
+        }
+        if (readinessStatus === 'warning') {
+            return <AlertTriangle className="text-amber-600" size={18} />;
         }
         return <CheckCircle2 className="text-blue-600" size={18} />;
     }
@@ -200,11 +204,11 @@ export const Step2ApprovalFooter: React.FC<Step2ApprovalFooterProps> = ({
     return (
         <div
             data-testid="step2-approval-footer"
-            className={`rounded-xl border shadow-sm overflow-hidden ${getStatusToneClasses(mode, approvalState, readinessStatus)}`}
+            className={`w-full rounded-xl border shadow-sm overflow-hidden ${getStatusToneClasses(mode, approvalState, readinessStatus)}`}
         >
             <div className="flex flex-col gap-4 px-5 py-4 md:flex-row md:items-center md:justify-between">
                 <div className="space-y-2">
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                         {getStatusIcon(mode, approvalState, readinessStatus)}
                         <h3 className="font-bold text-gray-900">{title?.trim() || 'Step 2 approval'}</h3>
                         <span
@@ -213,7 +217,9 @@ export const Step2ApprovalFooter: React.FC<Step2ApprovalFooterProps> = ({
                                 mode === 'next-step'
                                     ? readinessStatus === 'blocked'
                                         ? 'bg-red-100 text-red-700'
-                                        : 'bg-blue-100 text-blue-700'
+                                        : readinessStatus === 'warning'
+                                            ? 'bg-amber-100 text-amber-700'
+                                            : 'bg-blue-100 text-blue-700'
                                     : approvalState === 'approved'
                                     ? 'bg-emerald-100 text-emerald-700'
                                     : approvalState === 'stale'
@@ -247,7 +253,7 @@ export const Step2ApprovalFooter: React.FC<Step2ApprovalFooterProps> = ({
                         data-testid="step2-approval-footer-primary"
                         disabled={primaryDisabled}
                         onClick={handlePrimaryAction}
-                        className={`rounded-lg px-4 py-2 text-sm font-bold transition-colors ${
+                        className={`w-full rounded-lg px-4 py-2 text-sm font-bold transition-colors md:w-auto ${
                             primaryDisabled
                                 ? 'cursor-not-allowed bg-gray-200 text-gray-500'
                                 : primaryActionVariant === 'continue'

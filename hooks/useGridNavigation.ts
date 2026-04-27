@@ -157,8 +157,7 @@ export function useGridNavigation({
         const address = buildAddress(rowIndex, colIndex);
         if (!address) return;
 
-        // Recovery cells have no input — never enter edit mode for them
-        const shouldEdit = andEdit && address.cellType !== 'recovery';
+        const shouldEdit = andEdit;
 
         setActiveCell(address);
         setIsEditing(shouldEdit);
@@ -224,11 +223,8 @@ export function useGridNavigation({
                 const addr = buildAddress(next.row, next.col);
                 if (addr) {
                     setActiveCell(addr);
-                    // Recovery cells have no input — don't enter edit mode
-                    if (addr.cellType !== 'recovery') {
-                        setIsEditing(true);
-                        callbacks.onStartEdit?.(addr);
-                    }
+                    setIsEditing(true);
+                    callbacks.onStartEdit?.(addr);
                 }
             }
         } else if (moveDirection === 'left') {
@@ -237,10 +233,8 @@ export function useGridNavigation({
                 const addr = buildAddress(next.row, next.col);
                 if (addr) {
                     setActiveCell(addr);
-                    if (addr.cellType !== 'recovery') {
-                        setIsEditing(true);
-                        callbacks.onStartEdit?.(addr);
-                    }
+                    setIsEditing(true);
+                    callbacks.onStartEdit?.(addr);
                 }
             }
         }
@@ -361,17 +355,13 @@ export function useGridNavigation({
             }
             case 'Enter': {
                 e.preventDefault();
-                if (activeCell.cellType !== 'recovery') {
-                    startEditing();
-                }
+                startEditing();
                 break;
             }
             case 'F2':
             case ' ': {
                 e.preventDefault();
-                if (activeCell.cellType !== 'recovery') {
-                    startEditing();
-                }
+                startEditing();
                 break;
             }
             case 'Tab': {

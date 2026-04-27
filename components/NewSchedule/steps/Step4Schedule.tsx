@@ -1,5 +1,5 @@
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { MasterRouteTable } from '../../../utils/parsers/masterScheduleParser';
 import { ScheduleEditor } from '../../ScheduleEditor';
 import { useUndoRedo } from '../../../hooks/useUndoRedo';
@@ -57,6 +57,7 @@ export const Step4Schedule: React.FC<Step4ScheduleProps> = ({
     // Snapshot the original schedules on first mount so deltas remain stable
     // even after edits sync back to the parent via onUpdateSchedules
     const [originalSnapshot, setOriginalSnapshot] = useState<MasterRouteTable[]>(() => resolvedOriginalSchedules);
+    const lastSyncedSchedulesRef = useRef<MasterRouteTable[] | null>(initialSchedules);
 
     const resolvedApprovedRuntimeModel = React.useMemo(
         () => buildStep2ApprovedRuntimeModelFromContract(approvedRuntimeContract),
@@ -73,11 +74,12 @@ export const Step4Schedule: React.FC<Step4ScheduleProps> = ({
         set: setSchedules,
         undo, redo, canUndo, canRedo,
         reset: resetSchedules
-    } = useUndoRedo<MasterRouteTable[]>(initialSchedules, { maxHistory: 50 });
+    } = useUndoRedo<MasterRouteTable[]>(initialSchedules, { maxHistory: 50, deepCompare: false });
 
     // Only reset the local Step 4 editor session when the wizard explicitly starts
     // a new Step 4 payload (fresh generation, resume, or project load).
     useEffect(() => {
+        lastSyncedSchedulesRef.current = initialSchedules;
         setOriginalSnapshot(resolvedOriginalSchedules);
         resetSchedules(initialSchedules);
     }, [editorSessionKey, initialSchedules, resetSchedules, resolvedOriginalSchedules]);
@@ -88,6 +90,8 @@ export const Step4Schedule: React.FC<Step4ScheduleProps> = ({
 
     // Sync back to parent whenever schedules change
     useEffect(() => {
+        if (lastSyncedSchedulesRef.current === schedules) return;
+        lastSyncedSchedulesRef.current = schedules;
         onUpdateSchedules(schedules);
     }, [schedules, onUpdateSchedules]);
 
@@ -117,8 +121,11 @@ export const Step4Schedule: React.FC<Step4ScheduleProps> = ({
                 <ScheduleEditor
                     schedules={schedules}
                     useAuthoritativeTimepoints={true}
+                    initialTimepointOnly={true}
+                    condensedTimepointView={true}
                     onSchedulesChange={setSchedules}
                     originalSchedules={originalSnapshot}
+                    initialShowDeltas={false}
                     onResetOriginals={handleResetOriginals}
                     draftName={projectName}
                     onRenameDraft={() => { }}

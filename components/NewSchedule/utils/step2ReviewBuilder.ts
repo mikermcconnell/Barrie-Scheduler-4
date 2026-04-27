@@ -168,14 +168,14 @@ export const buildStep2ReviewResult = (
     const warnings = [...baseHealth.warnings];
 
     if (normalizedPerformanceDiagnostics?.stopOrderDecision === 'blocked') {
-        blockers.push('Observed stop order could not be resolved from recent trips. Step 2 cannot trust an automatic stop chain yet.');
+        warnings.push('Observed stop order could not be resolved from recent trips. The schedule will use the best available runtime stop order.');
     } else if (normalizedPerformanceDiagnostics?.stopOrderDecision === 'review') {
         warnings.push('Observed stop order still needs planner review before it should replace the current stop chain.');
     }
 
     const normalizedDirectionStops = normalizeDirectionStops(input.canonicalDirectionStops ?? null);
     if (!hasUsableCanonicalDirectionStops(normalizedDirectionStops)) {
-        blockers.push('No approved planning stop chain is available for schedule generation.');
+        warnings.push('No planning stop chain is available; schedule generation will infer timepoints from the runtime data.');
     }
 
     const approvedRuntimeModel = buildApprovedRuntimeModel({
@@ -245,8 +245,7 @@ export const buildStep2ReviewResult = (
         plannerOverrides: normalizedPlannerOverrides,
         approvalEligible: health.status !== 'blocked'
             && approvedRuntimeModel.usableBucketCount > 0
-            && approvedRuntimeModel.usableBandCount > 0
-            && hasUsableCanonicalDirectionStops(normalizedDirectionStops),
+            && approvedRuntimeModel.usableBandCount > 0,
     };
 };
 

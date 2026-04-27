@@ -62,6 +62,29 @@ import {
 import { openTimetablePublisher } from '../utils/reports/timetableNavigation';
 // --- Main Editor Component ---
 
+export const tableMatchesActiveCompareScope = (
+    baselineTable: MasterRouteTable,
+    routeTables: MasterRouteTable[]
+): boolean => {
+    if (routeTables.length === 0) return false;
+    if (routeTables.some(routeTable => routeTable.routeName === baselineTable.routeName)) {
+        return true;
+    }
+
+    const baselineDirection = extractDirectionFromName(baselineTable.routeName);
+    const activeDirections = routeTables.map(routeTable => extractDirectionFromName(routeTable.routeName));
+
+    // Master and generated tables can use different display names for the
+    // same route/day, so compare by direction when exact names differ.
+    // If either side has no explicit direction, treat it as a loop/single
+    // table and keep it in scope for this route identity.
+    if (!baselineDirection || activeDirections.some(direction => !direction)) {
+        return true;
+    }
+
+    return activeDirections.includes(baselineDirection);
+};
+
 // Time Band type for display
 interface TimeBandDisplay {
     id: string;
@@ -101,6 +124,8 @@ type ExportScope = 'current-route' | 'all-routes';
 export interface ScheduleEditorProps {
     schedules: MasterRouteTable[];
     useAuthoritativeTimepoints?: boolean;
+    initialTimepointOnly?: boolean;
+    condensedTimepointView?: boolean;
     // Optional schedule scope used by Connections library validation/resolution.
     // If omitted, defaults to the currently edited schedules.
     connectionScopeSchedules?: MasterRouteTable[];
@@ -109,6 +134,7 @@ export interface ScheduleEditorProps {
     exportScopeSchedules?: MasterRouteTable[];
     onSchedulesChange?: (schedules: MasterRouteTable[]) => void;
     originalSchedules?: MasterRouteTable[];
+    initialShowDeltas?: boolean;
     onResetOriginals?: () => void;
     draftName?: string;
     onRenameDraft?: (name: string) => void;
@@ -170,10 +196,13 @@ export interface ScheduleEditorProps {
 export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
     schedules,
     useAuthoritativeTimepoints = false,
+    initialTimepointOnly = false,
+    condensedTimepointView = false,
     connectionScopeSchedules,
     exportScopeSchedules,
     onSchedulesChange,
     originalSchedules,
+    initialShowDeltas,
     onResetOriginals,
     draftName = 'Schedule',
     onRenameDraft,
@@ -260,7 +289,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
     void uploaderName;
     const aiReviewEnabled = isFeatureEnabled('fixedLocalAiReview');
 
-    // Load connection library when teamId is available
+    // Load connection data after the first paint so the editor becomes usable first.
     useEffect(() => {
         if (!teamId) {
             setConnectionLibrary(null);
@@ -268,17 +297,39 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         }
 
         let cancelled = false;
-        getConnectionLibrary(teamId)
-            .then(lib => {
-                if (!cancelled) setConnectionLibrary(lib);
-            })
-            .catch(err => {
-                console.error('Failed to load connection library:', err);
-                if (!cancelled) setConnectionLibrary(null);
-            });
+        let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+        const loadConnectionLibrary = () => {
+            getConnectionLibrary(teamId)
+                .then(lib => {
+                    if (!cancelled) setConnectionLibrary(lib);
+                })
+                .catch(err => {
+                    console.error('Failed to load connection library:', err);
+                    if (!cancelled) setConnectionLibrary(null);
+                });
+        };
+
+        const scheduleIdleLoad = typeof window !== 'undefined' && 'requestIdleCallback' in window
+            ? (window as Window & {
+                requestIdleCallback: (callback: () => void, options?: { timeout?: number }) => number;
+                cancelIdleCallback: (id: number) => void;
+            }).requestIdleCallback
+            : null;
+
+        if (scheduleIdleLoad) {
+            const idleId = scheduleIdleLoad(loadConnectionLibrary, { timeout: 1200 });
+            return () => {
+                cancelled = true;
+                (window as Window & { cancelIdleCallback: (id: number) => void }).cancelIdleCallback(idleId);
+            };
+        }
+
+        timeoutId = setTimeout(loadConnectionLibrary, 400);
 
         return () => {
             cancelled = true;
+            if (timeoutId) clearTimeout(timeoutId);
         };
     }, [teamId]);
 
@@ -1542,7 +1593,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
         [activeRoute?.north, activeRoute?.south].filter((table): table is MasterRouteTable => !!table)
     ), [activeRoute?.north, activeRoute?.south]);
     const activeRouteMasterBaseline = useMemo(() => (
-        (masterBaseline || []).filter(table => activeRouteTables.some(routeTable => routeTable.routeName === table.routeName))
+        (masterBaseline || []).filter(table => tableMatchesActiveCompareScope(table, activeRouteTables))
     ), [activeRouteTables, masterBaseline]);
     const activeRouteExportChangeSummary = useMemo(() => {
         if (activeRouteTables.length === 0 || activeRouteMasterBaseline.length === 0) return null;
@@ -1752,35 +1803,40 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                 <div className="flex-grow flex flex-col lg:flex-row overflow-hidden">
                     {/* Sidebar - hidden in embedded mode or when hideSidebar is true */}
                     {!isFullScreen && !embedded && !hideSidebar && (
-                        <div className="w-full lg:w-72 lg:min-w-[280px] lg:max-w-[320px] flex-shrink-0 bg-white border-b lg:border-b-0 lg:border-r border-gray-200 flex flex-col overflow-hidden z-20">
+                        <div className="w-full lg:w-72 lg:min-w-[280px] lg:max-w-[320px] flex-shrink-0 bg-[#F7F7F7] border-b lg:border-b-0 lg:border-r border-gray-200 flex flex-col overflow-hidden z-20">
                             {/* Header */}
-                            <div className="p-4 border-b border-gray-100 flex justify-between items-center">
-                                <h2 className="text-sm font-bold uppercase tracking-wider text-gray-700">{readOnly ? 'Master Schedule' : 'Route Editor'}</h2>
-                                {onClose && <button onClick={onClose} className="text-sm text-blue-700 hover:text-blue-800 flex items-center gap-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 rounded px-1"><ArrowLeft size={12} /> Back</button>}
+                            <div className="p-4 border-b border-gray-200 bg-white flex justify-between items-center">
+                                <div>
+                                    <h2 className="text-sm font-extrabold uppercase tracking-wider text-gray-800">{readOnly ? 'Master Schedule' : 'Route Editor'}</h2>
+                                    <div className="mt-1 text-xs font-medium text-gray-500">
+                                        {consolidatedRoutes.length} route{consolidatedRoutes.length === 1 ? '' : 's'} loaded
+                                    </div>
+                                </div>
+                                {onClose && <button onClick={onClose} className="text-sm font-semibold text-blue-700 hover:text-blue-800 flex items-center gap-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 rounded-lg px-2 py-1 hover:bg-blue-50"><ArrowLeft size={12} /> Back</button>}
                             </div>
 
                             {/* Route List */}
-                            <div className="overflow-y-auto custom-scrollbar flex-grow p-4 space-y-2">
+                            <div className="overflow-y-auto custom-scrollbar flex-grow p-3 space-y-2">
                                 {consolidatedRoutes.map((route, i) => (
                                     <div key={route.name} className="space-y-1">
                                         <button
                                             onClick={() => setActiveRouteIdx(i)}
-                                            className={`w-full text-left px-3 py-2 rounded-lg text-sm font-bold flex justify-between items-center ${i === activeRouteIdx ? 'bg-blue-50 text-blue-800' : 'text-gray-700 hover:bg-gray-50'}`}
-                                            style={i === activeRouteIdx ? { backgroundColor: getRouteColor(route.name), color: getRouteTextColor(route.name) } : undefined}
+                                            className={`w-full text-left px-3 py-2.5 rounded-2xl text-sm font-extrabold flex justify-between items-center border transition-all ${i === activeRouteIdx ? 'shadow-sm ring-2 ring-offset-1 ring-offset-[#F7F7F7]' : 'border-gray-200 bg-white text-gray-700 hover:border-blue-200 hover:bg-blue-50/40'}`}
+                                            style={i === activeRouteIdx ? { backgroundColor: getRouteColor(route.name), color: getRouteTextColor(route.name), borderColor: getRouteColor(route.name) } : undefined}
                                         >
-                                            Route {route.name}
+                                            <span>Route {route.name}</span>
                                             {i === activeRouteIdx ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                                         </button>
 
                                         {i === activeRouteIdx && (
-                                            <div className="pl-3 space-y-1">
+                                            <div className="ml-2 border-l-2 border-gray-200 pl-2 space-y-1">
                                                 {['Weekday', 'Saturday', 'Sunday'].filter(d => Object.keys(route.days).includes(d)).map(day => (
                                                     <div key={day} className="flex items-center gap-1">
                                                         <button
                                                             onClick={() => setActiveDay(day)}
-                                                            className={`flex-1 text-left px-3 py-1.5 rounded text-sm flex items-center gap-2 ${activeDay === day ? 'bg-blue-100 font-bold text-blue-800' : 'text-gray-700 hover:bg-gray-50'}`}
+                                                            className={`flex-1 text-left px-3 py-1.5 rounded-xl text-sm flex items-center gap-2 border ${activeDay === day ? 'bg-blue-50 border-blue-200 font-extrabold text-blue-800 shadow-sm' : 'border-transparent text-gray-700 hover:bg-white hover:border-gray-200'}`}
                                                         >
-                                                            <div className={`w-1.5 h-1.5 rounded-full ${activeDay === day ? 'bg-blue-600' : 'bg-gray-300'}`} />
+                                                            <div className={`w-1.5 h-1.5 rounded-full ${activeDay === day ? 'bg-blue-600 ring-2 ring-blue-100' : 'bg-gray-300'}`} />
                                                             {day}
                                                         </button>
                                                     </div>
@@ -1800,7 +1856,7 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                     )}
 
                     {/* Editor Content */}
-                    <div className="flex-grow min-w-0 overflow-auto flex flex-col p-2 md:p-4">
+                    <div className={`flex-grow min-w-0 overflow-auto flex flex-col bg-[#F7F7F7] px-2 pb-2 md:px-4 md:pb-4 ${subView === 'editor' ? 'pt-0' : 'pt-2 md:pt-4'}`}>
                         {subView === 'matrix' ? (
                             <TravelTimeGrid
                                 schedules={[activeRoute.north, activeRoute.south].filter((t): t is MasterRouteTable => !!t)}
@@ -1826,25 +1882,19 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                             />
                         ) : (
                             <>
-                                {!readOnly && (
-                                    <div className="mb-3 flex items-center justify-end gap-2">
-                                        <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                                            Cascading
-                                        </span>
-                                        <CascadeModeSelector
-                                            mode={cascadeMode}
-                                            onChange={setCascadeMode}
-                                            allowedModes={['always', 'within-trip', 'none']}
-                                        />
-                                    </div>
-                                )}
                                 <RoundTripTableView
-                                    schedules={schedules}
+                                    schedules={activeRouteTables}
                                     useAuthoritativeTimepoints={useAuthoritativeTimepoints}
+                                    initialTimepointOnly={initialTimepointOnly}
+                                    condensedTimepointView={condensedTimepointView}
                                     onCellEdit={readOnly ? undefined : handleCellEdit}
                                     onTimeAdjust={readOnly ? undefined : handleTimeAdjust}
                                     onRecoveryEdit={readOnly ? undefined : handleRecoveryEdit}
-                                    originalSchedules={originalSchedules}
+                                    originalSchedules={originalSchedules?.filter(table => (
+                                        table.routeName === activeRoute.north?.routeName ||
+                                        table.routeName === activeRoute.south?.routeName
+                                    ))}
+                                    initialShowDeltas={initialShowDeltas}
                                     onResetOriginals={onResetOriginals}
                                     onDeleteTrip={readOnly ? undefined : handleDeleteTrips}
                                     onDuplicateTrip={readOnly ? undefined : handleDuplicateTrip}
@@ -1860,9 +1910,16 @@ export const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                                     connectionLibrary={connectionLibrary}
                                     routeConnectionConfig={activeRouteConnectionConfig}
                                     dayType={activeDay as DayType}
-                                    masterBaseline={masterBaseline}
+                                    masterBaseline={activeRouteMasterBaseline}
                                     compareBaselineLabel={compareBaselineLabel}
                                     highlightedTripId={recentlyAddedTripId}
+                                    toolbarSlot={!readOnly ? (
+                                        <CascadeModeSelector
+                                            mode={cascadeMode}
+                                            onChange={setCascadeMode}
+                                            allowedModes={['always', 'within-trip', 'none']}
+                                        />
+                                    ) : undefined}
                                 />
                             </>
                         )}

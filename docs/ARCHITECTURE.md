@@ -79,7 +79,7 @@ Broader planning and analysis tools mostly live under `components/Analytics/` pl
 Notable areas:
 - Transit App analytics → `components/Analytics/TransitApp*`, `utils/transit-app/`
 - OD analysis → `components/Analytics/OD*`, `utils/od-matrix/`
-- Fleet Plan → `components/Analytics/FleetPlan*.tsx`, `utils/fleet-plan/`
+- Fleet Plan → `components/Analytics/FleetPlan*.tsx`, `utils/fleet-plan/`; imports the legacy three-tab Excel template, but the app/editor and export present one combined Fleet Plan sheet with a Bus Type column.
 - Route Planner → `components/Analytics/RoutePlannerWorkspace.tsx`, `utils/route-planner/`
 - Shuttle Planner → `components/Analytics/ShuttlePlannerWorkspace.tsx`, `utils/shuttle/`
 - Network Connections → `components/Analytics/NetworkConnectionsWorkspace.tsx`, `utils/network-connections/`

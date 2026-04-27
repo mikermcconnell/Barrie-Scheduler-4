@@ -81,6 +81,20 @@ interface DirectionPanelData {
     stops: VisibleBrochureStop[];
 }
 
+interface CombinedRoute2Column {
+    key: string;
+    label: string;
+    stopId: string;
+    direction: 'North' | 'South';
+    stopKey: string;
+}
+
+interface CombinedRoute2Row {
+    key: string;
+    northTrip: MasterTrip | null;
+    southTrip: MasterTrip | null;
+}
+
 const formatMinutesForBrochure = (minutes: number | null | undefined): string => {
     if (minutes === null || minutes === undefined || Number.isNaN(minutes)) {
         return '';
@@ -159,10 +173,10 @@ const getTripDisplayTime = (trip: MasterTrip, stopKey: string): string => {
     return formatBrochureCellTime(trip.stops[stopKey]);
 };
 
-const chunkTrips = (trips: MasterTrip[], chunkSize: number): MasterTrip[][] => {
-    const chunks: MasterTrip[][] = [];
-    for (let index = 0; index < trips.length; index += chunkSize) {
-        chunks.push(trips.slice(index, index + chunkSize));
+const chunkItems = <T,>(items: T[], chunkSize: number): T[][] => {
+    const chunks: T[][] = [];
+    for (let index = 0; index < items.length; index += chunkSize) {
+        chunks.push(items.slice(index, index + chunkSize));
     }
     return chunks;
 };
@@ -784,6 +798,67 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
         return panels;
     };
 
+    const buildRoute2RoundTripRows = (
+        day: BrochureDayRecord[keyof BrochureDayRecord],
+    ): { columns: CombinedRoute2Column[]; rows: CombinedRoute2Row[] } | null => {
+        if (day.status !== 'ready' || !day.table || selectedRoute !== '2' || selectedDirection !== 'Both') {
+            return null;
+        }
+
+        const sortTrips = (trips: MasterTrip[]) => [...trips].sort((a, b) => {
+            if (a.startTime !== b.startTime) return a.startTime - b.startTime;
+            if (a.blockId !== b.blockId) return a.blockId.localeCompare(b.blockId, undefined, { numeric: true });
+            return a.tripNumber - b.tripNumber;
+        });
+
+        const northTrips = sortTrips(day.table.rows.flatMap(row => row.trips.filter(trip => trip.direction === 'North')));
+        const southTrips = sortTrips(day.table.rows.flatMap(row => row.trips.filter(trip => trip.direction === 'South')));
+        const northStops = getVisibleStopsForDirection(day.table.northStops, day.table.northStopIds, selectedStops);
+        const southStops = getVisibleStopsForDirection(day.table.southStops, day.table.southStopIds, selectedStops);
+
+        const findStop = (stops: VisibleBrochureStop[], matcher: (label: string) => boolean): VisibleBrochureStop | null =>
+            stops.find(stop => matcher(stop.label.toLowerCase())) ?? null;
+
+        const northParkPlace = findStop(northStops, label => label.includes('park place'));
+        const northVeterans = findStop(northStops, label => label.includes("veteran"));
+        const northSproule = findStop(northStops, label => label.includes('sproule'));
+        const southDowntown = findStop(southStops, label => label.includes('downtown hub') || label === 'downtown');
+        const southFerndale = findStop(southStops, label => label.includes('ferndale woods'))
+            ?? findStop(southStops, label => label.includes('ferndale'));
+        const southVeterans = findStop(southStops, label => label.includes("veteran"));
+        const southParkPlace = findStop(southStops, label => label.includes('park place'));
+
+        const columnStops = [
+            northParkPlace ? { ...northParkPlace, key: 'north-park-place', direction: 'North' as const } : null,
+            northVeterans ? { ...northVeterans, key: 'north-veterans', direction: 'North' as const } : null,
+            northSproule ? { ...northSproule, key: 'north-sproule', direction: 'North' as const } : null,
+            southDowntown ? { ...southDowntown, key: 'south-downtown', direction: 'South' as const } : null,
+            southFerndale ? { ...southFerndale, key: 'south-ferndale', direction: 'South' as const } : null,
+            southVeterans ? { ...southVeterans, key: 'south-veterans', direction: 'South' as const } : null,
+            southParkPlace ? { ...southParkPlace, key: 'south-park-place', direction: 'South' as const } : null,
+        ].filter((stop): stop is VisibleBrochureStop & { key: string; direction: 'North' | 'South' } => stop !== null);
+
+        const columns = columnStops.map(stop => ({
+            key: stop.key,
+            label: stop.label,
+            stopId: stop.stopId,
+            direction: stop.direction,
+            stopKey: stop.origStop,
+        }));
+
+        if (columns.length < 2 || northTrips.length === 0) {
+            return null;
+        }
+
+        const rows = northTrips.map((northTrip, index) => ({
+            key: `${northTrip.id}-${southTrips[index]?.id ?? index}`,
+            northTrip,
+            southTrip: southTrips[index] ?? null,
+        }));
+
+        return { columns, rows };
+    };
+
     const summarizeDayService = (day: BrochureDayRecord[keyof BrochureDayRecord]) => {
         if (day.status !== 'ready' || !day.table) {
             return {
@@ -794,14 +869,13 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
             };
         }
 
-        const panels = buildDayDirectionPanels(day);
-        const allTrips = panels.flatMap(panel => panel.trips);
+        const allTrips = day.table.rows.flatMap(row => row.trips);
 
         if (allTrips.length === 0) {
             return {
                 label: day.label.replace(' & Holidays', ''),
-                hours: 'Adjust stop filters',
-                headway: 'Hidden by filters',
+                hours: 'No trips published',
+                headway: 'Unavailable',
                 isAvailable: false,
             };
         }
@@ -822,14 +896,14 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
         keyPrefix: string,
     ): React.ReactElement => {
         const panels = buildDayDirectionPanels(day);
-        const dayFrequency = formatFrequencyLabel(estimateHeadwayMinutes(panels.flatMap(panel => panel.trips)));
-        const columnsPerChunk = panels.length > 1 ? 5 : 6;
+        const rowsPerChunk = panels.length > 1 ? 20 : 12;
+        const route2RoundTrip = buildRoute2RoundTripRows(day);
 
         if (day.status !== 'ready' || !day.table) {
             return (
-                <div className="flex-1 min-w-0 flex flex-col rounded-[26px] bg-white shadow-[0_18px_40px_rgba(15,23,42,0.14)]">
-                    <div className="flex items-center justify-between rounded-t-[26px] bg-[#0b5d4f] px-5 py-3 text-white">
-                        <span className="text-[18px] font-extrabold uppercase tracking-[0.04em]">{day.label.replace(' & Holidays', '')}</span>
+                <div className="flex-1 min-w-0 flex flex-col rounded-[18px] border border-slate-200 bg-white">
+                    <div className="flex items-center justify-between rounded-t-[18px] bg-[#0b5d4f] px-4 py-2.5 text-white">
+                        <span className="text-[16px] font-extrabold uppercase tracking-[0.04em]">{day.label.replace(' & Holidays', '')}</span>
                         <span className="text-[11px] font-semibold tracking-wide opacity-90">Unavailable</span>
                     </div>
                     <div className="flex flex-1 items-center justify-center rounded-b-[26px] border border-t-0 border-slate-200 bg-white px-8 text-center text-sm text-slate-500">
@@ -841,9 +915,9 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
 
         if (panels.length === 0) {
             return (
-                <div className="flex-1 min-w-0 flex flex-col rounded-[26px] bg-white shadow-[0_18px_40px_rgba(15,23,42,0.14)]">
-                    <div className="flex items-center justify-between rounded-t-[26px] bg-[#0b5d4f] px-5 py-3 text-white">
-                        <span className="text-[18px] font-extrabold uppercase tracking-[0.04em]">{day.label.replace(' & Holidays', '')}</span>
+                <div className="flex-1 min-w-0 flex flex-col rounded-[18px] border border-slate-200 bg-white">
+                    <div className="flex items-center justify-between rounded-t-[18px] bg-[#0b5d4f] px-4 py-2.5 text-white">
+                        <span className="text-[16px] font-extrabold uppercase tracking-[0.04em]">{day.label.replace(' & Holidays', '')}</span>
                         <span className="text-[11px] font-semibold tracking-wide opacity-90">Filtered</span>
                     </div>
                     <div className="flex flex-1 items-center justify-center rounded-b-[26px] border border-t-0 border-slate-200 bg-white px-8 text-center text-sm text-slate-500">
@@ -856,21 +930,81 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
         const qrPattern = [1, 1, 1, 1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1];
 
         return (
-            <div className="flex-1 min-w-0 flex flex-col rounded-[26px] bg-white shadow-[0_18px_40px_rgba(15,23,42,0.14)]">
-                <div className="flex items-center justify-between rounded-t-[26px] bg-[#0b5d4f] px-5 py-3 text-white">
-                    <span className="text-[18px] font-extrabold uppercase tracking-[0.04em]">
+            <div className="flex-1 min-w-0 flex flex-col rounded-[18px] border border-slate-200 bg-white">
+                <div className="flex items-center justify-between rounded-t-[18px] bg-[#0b5d4f] px-4 py-2.5 text-white">
+                    <span className="text-[16px] font-extrabold uppercase tracking-[0.04em]">
                         {day.label.replace(' & Holidays', '')}
                     </span>
-                    <span className="text-[11px] font-semibold tracking-wide opacity-90">{dayFrequency}</span>
                 </div>
 
-                <div className="flex flex-1 flex-col rounded-b-[26px] border border-t-0 border-slate-200 bg-white px-4 pb-3 pt-3">
-                    <p className="mb-3 text-[11px] text-slate-600">All timepoints and every trip are shown.</p>
+                <div className="flex flex-1 flex-col rounded-b-[18px] border border-t-0 border-slate-200 bg-white px-3 pb-2 pt-2">
+                    <p className="mb-1.5 rounded-md bg-emerald-50 px-2.5 py-1.5 text-[11px] font-bold leading-none text-[#0b5d4f]">Scheduled departure times are shown for each listed timepoint and trip.</p>
 
-                    <div className={`grid flex-1 gap-3 ${panels.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
-                        {panels.map((panel) => {
+                    {route2RoundTrip ? (
+                        <div className="flex min-h-0 flex-1 flex-col gap-1.5">
+                            <div className="flex items-center gap-2">
+                                <span className="inline-flex min-w-[30px] items-center justify-center rounded-md bg-[#1f6a45] px-1.5 py-0.5 text-[11px] font-extrabold text-white">
+                                    2A
+                                </span>
+                                <span className="text-[12px] font-semibold text-slate-800">Park Place → Downtown Hub</span>
+                                <span className="text-[11px] font-bold text-slate-400">then</span>
+                                <span className="inline-flex min-w-[30px] items-center justify-center rounded-md bg-[#1f6a45] px-1.5 py-0.5 text-[11px] font-extrabold text-white">
+                                    2B
+                                </span>
+                                <span className="text-[12px] font-semibold text-slate-800">Downtown Hub → Park Place</span>
+                            </div>
+
+                            <div className="flex flex-1 flex-col gap-1.5">
+                                {chunkItems(route2RoundTrip.rows, 20).map((rowChunk, chunkIndex) => (
+                                    <div key={`${keyPrefix}-route2-round-${chunkIndex}`} className="flex-1 overflow-hidden rounded-[14px] border border-slate-200">
+                                        <table className="h-full w-full table-fixed border-collapse text-[9px] leading-none">
+                                            <thead>
+                                                <tr className="bg-[#f3f5f4]">
+                                                    {route2RoundTrip.columns.map((column, columnIndex) => (
+                                                        <th
+                                                            key={`${keyPrefix}-route2-head-${chunkIndex}-${column.key}`}
+                                                            className={`border-l border-slate-200 px-1.5 py-1.5 text-center align-middle text-[8px] font-bold leading-[1.05] text-slate-700 first:border-l-0 ${columnIndex === 3 ? 'border-l-2 border-l-[#0b5d4f]' : ''}`}
+                                                        >
+                                                            <span className="block">{column.label}</span>
+                                                            {column.stopId ? (
+                                                                <span className="mt-0.5 block text-[6.5px] font-medium leading-none text-slate-400">{column.stopId}</span>
+                                                            ) : null}
+                                                        </th>
+                                                    ))}
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {rowChunk.map((row, rowIndex) => {
+                                                    return (
+                                                        <tr
+                                                            key={`${keyPrefix}-route2-row-${chunkIndex}-${row.key}`}
+                                                            className={rowIndex % 2 === 0 ? 'bg-white' : 'bg-[#faf9f7]'}
+                                                        >
+                                                            {route2RoundTrip.columns.map((column, columnIndex) => {
+                                                                const trip = column.direction === 'North' ? row.northTrip : row.southTrip;
+                                                                return (
+                                                                    <td
+                                                                        key={`${keyPrefix}-route2-cell-${chunkIndex}-${row.key}-${column.key}`}
+                                                                        className={`border-l border-t border-slate-200 px-1.5 py-1.5 text-center align-middle text-[9.5px] font-semibold leading-none text-slate-700 first:border-l-0 ${columnIndex === 3 ? 'border-l-2 border-l-[#0b5d4f]' : ''}`}
+                                                                    >
+                                                                        {trip ? getTripDisplayTime(trip, column.stopKey) : '—'}
+                                                                    </td>
+                                                                );
+                                                            })}
+                                                        </tr>
+                                                    );
+                                                })}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="grid flex-1 grid-cols-1 gap-1.5">
+                            {panels.map((panel) => {
                             const badgeClassName = panel.key.includes('north')
-                                ? 'bg-[#1f5da8] text-white'
+                                ? 'bg-[#1f6a45] text-white'
                                 : panel.key.includes('south')
                                     ? 'bg-[#1f6a45] text-white'
                                     : '';
@@ -879,61 +1013,54 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
                                 : { backgroundColor: getRouteColor(selectedRoute), color: getRouteTextColor(selectedRoute) };
 
                             return (
-                                <div key={`${keyPrefix}-${panel.key}`} className="flex min-h-0 flex-col gap-3">
+                                <div key={`${keyPrefix}-${panel.key}`} className="flex min-h-0 flex-col gap-1.5">
                                     <div className="flex items-center gap-2">
                                         <span
-                                            className={`inline-flex min-w-[34px] items-center justify-center rounded-md px-2 py-1 text-[12px] font-extrabold ${badgeClassName}`}
+                                            className={`inline-flex min-w-[30px] items-center justify-center rounded-md px-1.5 py-0.5 text-[11px] font-extrabold ${badgeClassName}`}
                                             style={loopBadgeStyle}
                                         >
                                             {panel.badge}
                                         </span>
-                                        <span className="text-[13px] font-semibold text-slate-800">{panel.title}</span>
+                                        <span className="text-[12px] font-semibold text-slate-800">{panel.title}</span>
                                     </div>
 
-                                    <div className="flex flex-1 flex-col gap-3">
-                                        {chunkTrips(panel.trips, columnsPerChunk).map((tripChunk, chunkIndex) => (
-                                            <div key={`${keyPrefix}-${panel.key}-${chunkIndex}`} className="overflow-hidden rounded-[18px] border border-slate-200">
-                                                <table className="w-full table-fixed border-collapse text-[10px]">
+                                    <div className="flex flex-1 flex-col gap-1.5">
+                                        {chunkItems(panel.trips, rowsPerChunk).map((tripChunk, chunkIndex) => (
+                                            <div key={`${keyPrefix}-${panel.key}-${chunkIndex}`} className="flex-1 overflow-hidden rounded-[14px] border border-slate-200">
+                                                <table className="h-full w-full table-fixed border-collapse text-[9px] leading-none">
                                                     <thead>
                                                         <tr className="bg-[#f3f5f4]">
-                                                            <th className="w-[36%] px-2.5 py-2 text-left text-[9px] font-bold uppercase tracking-[0.16em] text-slate-500">
-                                                                Stop
-                                                            </th>
-                                                            {tripChunk.map((trip, tripIndex) => {
-                                                                const firstTime = panel.stops.map(stop => trip.stops[stop.origStop]).find(Boolean);
-                                                                return (
-                                                                    <th
-                                                                        key={`${keyPrefix}-${panel.key}-head-${chunkIndex}-${tripIndex}`}
-                                                                        className="border-l border-slate-200 px-1 py-2 text-center text-[9px] font-bold text-slate-700"
-                                                                    >
-                                                                        {formatBrochureHeaderTime(firstTime)}
-                                                                    </th>
-                                                                );
-                                                            })}
+                                                            {panel.stops.map((stop) => (
+                                                                <th
+                                                                    key={`${keyPrefix}-${panel.key}-head-${chunkIndex}-${stop.origStop}`}
+                                                                    className="border-l border-slate-200 px-1.5 py-1.5 text-center align-middle text-[8px] font-bold leading-[1.05] text-slate-700 first:border-l-0"
+                                                                >
+                                                                    <span className="block">{stop.label}</span>
+                                                                    {stop.stopId ? (
+                                                                        <span className="mt-0.5 block text-[6.5px] font-medium leading-none text-slate-400">{stop.stopId}</span>
+                                                                    ) : null}
+                                                                </th>
+                                                            ))}
                                                         </tr>
                                                     </thead>
                                                     <tbody>
-                                                        {panel.stops.map((stop, stopIndex) => (
+                                                        {tripChunk.map((trip, tripIndex) => {
+                                                            return (
                                                             <tr
-                                                                key={`${keyPrefix}-${panel.key}-row-${stop.origStop}`}
-                                                                className={stopIndex % 2 === 0 ? 'bg-white' : 'bg-[#faf9f7]'}
+                                                                key={`${keyPrefix}-${panel.key}-row-${chunkIndex}-${tripIndex}`}
+                                                                className={tripIndex % 2 === 0 ? 'bg-white' : 'bg-[#faf9f7]'}
                                                             >
-                                                                <td className="border-t border-slate-200 px-2.5 py-2 align-top">
-                                                                    <div className="font-semibold text-slate-800">{stop.label}</div>
-                                                                    {stop.stopId ? (
-                                                                        <div className="mt-0.5 text-[9px] font-medium text-slate-400">{stop.stopId}</div>
-                                                                    ) : null}
-                                                                </td>
-                                                                {tripChunk.map((trip, tripIndex) => (
+                                                                {panel.stops.map((stop) => (
                                                                     <td
-                                                                        key={`${keyPrefix}-${panel.key}-cell-${stop.origStop}-${chunkIndex}-${tripIndex}`}
-                                                                        className="border-l border-t border-slate-200 px-1.5 py-2 text-center font-medium text-slate-700"
+                                                                        key={`${keyPrefix}-${panel.key}-cell-${chunkIndex}-${tripIndex}-${stop.origStop}`}
+                                                                        className="border-l border-t border-slate-200 px-1.5 py-1.5 text-center align-middle text-[9.5px] font-semibold leading-none text-slate-700 first:border-l-0"
                                                                     >
                                                                         {getTripDisplayTime(trip, stop.origStop)}
                                                                     </td>
                                                                 ))}
                                                             </tr>
-                                                        ))}
+                                                            );
+                                                        })}
                                                     </tbody>
                                                 </table>
                                             </div>
@@ -941,10 +1068,11 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
                                     </div>
                                 </div>
                             );
-                        })}
-                    </div>
+                            })}
+                        </div>
+                    )}
 
-                    <div className="mt-3 flex items-end justify-between gap-4 border-t border-slate-200 pt-3">
+                    <div className={`mt-2 items-end justify-between gap-4 border-t border-slate-200 pt-2 ${panels.length > 1 ? 'hidden' : 'flex'}`}>
                         <div className="flex items-center gap-2 text-[11px] font-medium text-slate-600">
                             <Clock3 className="h-4 w-4 text-[#0b5d4f]" />
                             <span>{brochureConfig.disclaimer}</span>
@@ -972,149 +1100,241 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
     const renderFrontCover = (): React.ReactElement => {
         const serviceCards = Object.values(brochureDays).map(day => summarizeDayService(day));
         const footerContacts = brochureConfig.contacts.slice(0, 3);
+        const singleRideFare = brochureConfig.fareRows.find(row => /single/i.test(row.label));
+        const dayPassFare = brochureConfig.fareRows.find(row => /day/i.test(row.label));
+        const monthlyFare = brochureConfig.fareRows.find(row => /monthly/i.test(row.label));
+        const primaryFareItems = [
+            singleRideFare ? { label: 'Adult / Student', value: singleRideFare.adult || singleRideFare.student } : null,
+            singleRideFare ? { label: 'Senior', value: singleRideFare.senior } : null,
+            singleRideFare ? { label: 'Children', value: singleRideFare.children } : null,
+            dayPassFare ? { label: 'Day Pass', value: dayPassFare.adult } : null,
+            dayPassFare ? { label: 'Family Day Pass', value: dayPassFare.family } : null,
+            monthlyFare ? { label: 'Monthly Adult', value: monthlyFare.adult } : null,
+        ].filter((item): item is { label: string; value: string } => Boolean(item?.value && item.value !== '-'));
+        const fareTitle = brochureConfig.fareEffectiveDate.toLowerCase().includes('current')
+            ? 'Fares'
+            : `Fares - ${brochureConfig.fareEffectiveDate}`;
 
         return (
-            <div className="flex h-full">
-                <div className="flex-1 min-w-0 rounded-[26px] bg-white px-7 py-6 shadow-[0_18px_40px_rgba(15,23,42,0.14)]">
+            <div className="flex h-full gap-4">
+                <div className="flex flex-[1.05] min-w-0 flex-col rounded-[18px] border border-slate-200 bg-white px-5 py-4">
                     <div className="flex items-start justify-between gap-4">
                         <div>
-                            <h1 className="text-[62px] font-black leading-[0.95] tracking-[-0.05em] text-[#0b5d4f]">
+                            <h1 className="text-[46px] font-black leading-[0.95] tracking-[-0.05em] text-[#0b5d4f]">
                                 {selectedRoute ? `Route ${selectedRoute}` : 'Route'}
                             </h1>
-                            <div className="mt-3 space-y-1">
+                            <div className="mt-2 space-y-1.5">
                                 {coverDirectionLines.length > 0 ? coverDirectionLines.map((line, index) => (
-                                    <div key={`${line.badge}-${index}`} className="flex items-center gap-3">
+                                    <div key={`${line.badge}-${index}`} className="flex items-center gap-3 leading-none">
                                         <span
-                                            className={`inline-flex min-w-[42px] items-center justify-center rounded-lg px-2 py-1 text-[16px] font-extrabold ${
-                                                index === 0 ? 'bg-[#1f5da8] text-white' : 'bg-[#1f6a45] text-white'
+                                            className={`inline-flex min-w-[42px] items-center justify-center rounded-lg px-2 py-1.5 text-[16px] font-extrabold leading-none ${
+                                                index === 0 ? 'bg-[#1f6a45] text-white' : 'bg-[#1f6a45] text-white'
                                             }`}
                                         >
                                             {line.badge}
                                         </span>
-                                        <span className="text-[18px] font-semibold text-slate-800">{line.text}</span>
+                                        <span className="text-[17px] font-semibold leading-none text-slate-800">{line.text}</span>
                                     </div>
                                 )) : (
-                                    <p className="text-[18px] font-semibold text-slate-700">{brochurePublicSummary}</p>
+                                    <p className="text-[17px] font-semibold text-slate-700">{brochurePublicSummary}</p>
                                 )}
                             </div>
                         </div>
 
-                        {brochureEffectiveDate ? (
-                            <div className="rounded-2xl bg-[#0b5d4f] px-4 py-3 text-right text-white shadow-sm">
-                                <p className="text-[11px] font-bold uppercase tracking-[0.16em] opacity-80">Effective</p>
-                                <p className="mt-1 text-[14px] font-semibold">{brochureEffectiveDate}</p>
+                        <div className="flex flex-col items-end gap-2 text-right">
+                            <div className="rounded-xl bg-white px-2.5 py-1.5 text-[#00518c]">
+                                <div className="flex items-center gap-2">
+                                    <div className="text-right text-[22px] font-black leading-[0.82] tracking-[-0.055em]">
+                                        <div>Barrie</div>
+                                        <div>Transit</div>
+                                    </div>
+                                    <svg viewBox="0 0 74 56" className="h-11 w-14 shrink-0" aria-label="Barrie Transit chevron">
+                                        <path d="M31 4h27L73 28 58 52H31l16-24L31 4Z" fill="currentColor" />
+                                        <path d="M19 4h7l16 24-16 24h-7l16-24L19 4Z" fill="currentColor" />
+                                        <path d="M7 4h7l16 24-16 24H7l16-24L7 4Z" fill="currentColor" />
+                                    </svg>
+                                </div>
                             </div>
-                        ) : null}
+
+                            {brochureEffectiveDate ? (
+                                <div className="rounded-xl bg-[#0b5d4f] px-3 py-2 text-right text-white shadow-sm">
+                                    <p className="text-[9px] font-bold uppercase tracking-[0.16em] opacity-80">Effective</p>
+                                    <p className="mt-0.5 text-[12px] font-semibold">{brochureEffectiveDate}</p>
+                                </div>
+                            ) : null}
+                        </div>
                     </div>
 
-                    <div className="mt-5 overflow-hidden rounded-[22px] border border-[#d5ddd8] bg-[#f6f4ef]">
-                        <div
-                            className={`relative overflow-hidden ${isLandscapeMapRoute ? 'h-[220px]' : 'h-[270px]'}`}
-                        >
+                    {isLandscapeMapRoute ? (
+                        <div className="relative mt-3 min-h-0 flex-1 overflow-hidden rounded-[18px] border border-[#d5ddd8] bg-[#f6f4ef]">
                             {mapImageUrl ? (
                                 <img
                                     src={mapImageUrl}
                                     alt={`Route ${selectedRoute} map`}
-                                    className="h-full w-full object-contain"
+                                    className="h-full w-full object-contain object-center"
                                 />
                             ) : (
                                 <div className="flex h-full w-full items-center justify-center bg-[#f8f7f3] text-center text-sm text-slate-400">
                                     Route map not uploaded yet
                                 </div>
                             )}
-                        </div>
-                    </div>
 
-                    <div className="mt-4">
-                        <p className="text-[20px] font-extrabold uppercase tracking-[0.03em] text-[#0b5d4f]">Legend</p>
-                        <div className="mt-2 flex flex-wrap gap-2 rounded-[18px] border border-slate-200 bg-white px-3 py-2.5 text-[11px] text-slate-600">
-                            {MAP_LEGEND_ITEMS.map(item => (
-                                <div key={item.label} className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-2.5 py-1">
-                                    {item.line ? (
-                                        <span className="block h-[2px] w-8 rounded-full bg-[#0b5d4f]" />
-                                    ) : (
-                                        <span className={`inline-flex h-4 w-4 items-center justify-center rounded-full text-[10px] ${item.markerClassName}`}>
-                                            {item.label === 'Transfer point' ? '+' : ''}
-                                        </span>
-                                    )}
-                                    <span>{item.label}</span>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-
-                    <div className="mt-4">
-                        <p className="text-[20px] font-extrabold uppercase tracking-[0.03em] text-[#0b5d4f]">Service Summary</p>
-                        <div className="mt-2 grid grid-cols-3 gap-3">
-                            {serviceCards.map(card => (
-                                <div key={card.label} className="rounded-[18px] border border-slate-200 bg-[#eef2ef] px-3 py-3 text-center shadow-sm">
-                                    <p className="text-[13px] font-extrabold uppercase tracking-[0.06em] text-[#0b5d4f]">{card.label}</p>
-                                    <p className="mt-2 text-[12px] font-semibold text-slate-700">{card.hours}</p>
-                                    <p className="mt-1 text-[12px] font-medium text-slate-600">{card.headway}</p>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-
-                    <div className="mt-4">
-                        <p className="text-[20px] font-extrabold uppercase tracking-[0.03em] text-[#0b5d4f]">Fares</p>
-                        <p className="mt-1 text-[11px] text-slate-500">Exact fare required. Operators do not carry change.</p>
-                        <div className="mt-2 overflow-hidden rounded-[18px] border border-slate-200">
-                            <table className="w-full border-collapse text-[10px]">
-                                <thead>
-                                    <tr className="bg-[#0b5d4f] text-white">
-                                        {PUBLIC_TIMETABLE_FARE_HEADERS.map((header, index) => (
-                                            <th
-                                                key={header || `fare-head-${index}`}
-                                                className={`px-2 py-2 text-[10px] font-bold uppercase tracking-[0.08em] ${
-                                                    index === 0 ? 'text-left' : 'text-center'
-                                                }`}
-                                            >
-                                                {header || 'Category'}
-                                            </th>
-                                        ))}
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {brochureConfig.fareRows.map((row, rowIndex) => (
-                                        <tr key={row.label} className={rowIndex % 2 === 0 ? 'bg-white' : 'bg-[#f8f7f3]'}>
-                                            {[row.label, row.adult, row.student, row.children, row.senior, row.family].map((cell, cellIndex) => (
-                                                <td
-                                                    key={`${row.label}-${cellIndex}`}
-                                                    className={`border-t border-slate-200 px-2 py-1.5 ${
-                                                        cellIndex === 0 ? 'font-semibold text-slate-700' : 'text-center text-slate-600'
-                                                    }`}
-                                                >
-                                                    {cell}
-                                                </td>
-                                            ))}
-                                        </tr>
+                            <div className="absolute right-3 top-3 w-[205px] rounded-[16px] border border-slate-200 bg-white/95 p-2.5 shadow-sm">
+                                <p className="text-[15px] font-extrabold uppercase tracking-[0.03em] text-[#0b5d4f]">Legend</p>
+                                <div className="mt-1.5 grid grid-cols-1 gap-1.5 text-[9px] text-slate-600">
+                                    {MAP_LEGEND_ITEMS.map(item => (
+                                        <div key={item.label} className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-2 py-1 leading-none">
+                                            {'markerClassName' in item ? (
+                                                <span className={`inline-flex h-4 w-4 items-center justify-center rounded-full text-[10px] ${item.markerClassName}`}>
+                                                    {item.label === 'Transfer point' ? '+' : ''}
+                                                </span>
+                                            ) : (
+                                                <span className="block h-[2px] w-8 rounded-full bg-[#0b5d4f]" />
+                                            )}
+                                            <span className="leading-none">{item.label}</span>
+                                        </div>
                                     ))}
-                                </tbody>
-                            </table>
-                        </div>
-                        <p className="mt-2 text-[11px] text-slate-500">{brochureConfig.fareNote}</p>
-                    </div>
+                                </div>
+                            </div>
 
-                    <div className="mt-5 rounded-[20px] bg-[#0b5d4f] px-5 py-4 text-white">
-                        <div className="flex items-center justify-between gap-4">
-                            <div>
-                                <div className="text-[14px] font-black uppercase tracking-[0.14em]">Barrie Transit</div>
-                                <div className="mt-1 text-[12px] text-white/80">{brochureTitle}</div>
-                            </div>
-                            <div className="flex flex-wrap justify-end gap-x-4 gap-y-2 text-[11px]">
-                                {footerContacts.map((contact) => (
-                                    <div key={contact} className="flex items-center gap-1.5">
-                                        {getContactIcon(contact)}
-                                        <span>{contact}</span>
+                            <div className="absolute bottom-3 left-3 right-3 grid grid-cols-[0.95fr_1.05fr] gap-2">
+                                <div className="rounded-[16px] border border-slate-200 bg-white/95 p-2.5 shadow-sm">
+                                    <p className="text-[14px] font-extrabold uppercase tracking-[0.03em] text-[#0b5d4f]">Service Summary</p>
+                                    <div className="mt-1.5 grid grid-cols-1 gap-1.5">
+                                        {serviceCards.map(card => (
+                                            <div key={card.label} className="rounded-[12px] border border-slate-200 bg-[#eef2ef] px-2 py-1 text-center">
+                                                <p className="text-[10px] font-extrabold uppercase leading-none tracking-[0.06em] text-[#0b5d4f]">{card.label}</p>
+                                                <p className="mt-1 text-[9px] font-semibold leading-none text-slate-700">{card.hours}</p>
+                                            </div>
+                                        ))}
                                     </div>
-                                ))}
+                                </div>
+
+                                <div className="rounded-[16px] border border-slate-200 bg-white/95 p-2.5 shadow-sm">
+                                    <p className="text-[14px] font-extrabold uppercase tracking-[0.03em] text-[#0b5d4f]">{fareTitle}</p>
+                                    <p className="text-[8px] text-slate-500">Exact fare required.</p>
+                                    <div className="mt-1 overflow-hidden rounded-[12px] border border-slate-200">
+                                        <table className="w-full border-collapse text-[7.5px]">
+                                            <thead>
+                                                <tr className="bg-[#0b5d4f] text-white">
+                                                    {PUBLIC_TIMETABLE_FARE_HEADERS.map((header, index) => (
+                                                        <th
+                                                            key={header || `fare-head-${index}`}
+                                                            className={`px-0.5 py-1 text-[6.5px] font-bold uppercase ${index === 0 ? 'text-left' : 'text-center'}`}
+                                                        >
+                                                            {header || 'Category'}
+                                                        </th>
+                                                    ))}
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {brochureConfig.fareRows.map((row, rowIndex) => (
+                                                    <tr key={row.label} className={rowIndex % 2 === 0 ? 'bg-white' : 'bg-[#f8f7f3]'}>
+                                                        {[row.label, row.adult, row.student, row.children, row.senior, row.family].map((cell, cellIndex) => (
+                                                <td
+                                                                key={`${row.label}-${cellIndex}`}
+                                                                className={`border-t border-slate-200 px-0.5 py-1 align-middle leading-none ${cellIndex === 0 ? 'font-semibold text-slate-700' : 'text-center text-slate-600'}`}
+                                                            >
+                                                                {cell}
+                                                            </td>
+                                                        ))}
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    <div className="mt-1 rounded-[12px] bg-[#0b5d4f] px-2 py-1 text-white">
+                                        <div className="text-[9px] font-black uppercase tracking-[0.1em]">Barrie Transit</div>
+                                        <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 text-[7.5px]">
+                                            {footerContacts.map((contact) => (
+                                                <div key={contact} className="flex items-center gap-1">
+                                                    {getContactIcon(contact)}
+                                                    <span>{contact}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
-                    </div>
+                    ) : (
+                        <div className="mt-3 grid min-h-0 flex-1 grid-cols-[minmax(0,1.32fr)_minmax(185px,0.68fr)] gap-3">
+                            <div className="relative min-h-0 overflow-hidden rounded-[18px] border border-[#d5ddd8] bg-[#f6f4ef]">
+                                {mapImageUrl ? (
+                                    <img
+                                        src={mapImageUrl}
+                                        alt={`Route ${selectedRoute} map`}
+                                    className="absolute inset-0 h-full w-full scale-[1.04] object-cover object-[64%_50%]"
+                                    />
+                                ) : (
+                                    <div className="flex h-full w-full items-center justify-center bg-[#f8f7f3] px-6 text-center text-sm text-slate-400">
+                                        Portrait route map not uploaded yet
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="flex min-h-0 flex-col gap-2 overflow-hidden">
+                                <div className="shrink-0 rounded-[16px] border border-slate-200 bg-white p-2.5 shadow-sm">
+                                    <p className="text-[15px] font-extrabold uppercase tracking-[0.03em] text-[#0b5d4f]">Legend</p>
+                                    <div className="mt-1.5 grid grid-cols-1 gap-1.5 text-[9px] text-slate-600">
+                                        {MAP_LEGEND_ITEMS.map(item => (
+                                            <div key={item.label} className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-2 py-1 leading-none">
+                                                {'markerClassName' in item ? (
+                                                    <span className={`inline-flex h-4 w-4 items-center justify-center rounded-full text-[10px] ${item.markerClassName}`}>
+                                                        {item.label === 'Transfer point' ? '+' : ''}
+                                                    </span>
+                                                ) : (
+                                                    <span className="block h-[2px] w-7 rounded-full bg-[#0b5d4f]" />
+                                                )}
+                                                <span className="leading-none">{item.label}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <div className="shrink-0 rounded-[16px] border border-slate-200 bg-white p-2.5 shadow-sm">
+                                    <p className="text-[14px] font-extrabold uppercase tracking-[0.03em] text-[#0b5d4f]">Service Summary</p>
+                                    <div className="mt-1.5 grid grid-cols-1 gap-1.5">
+                                        {serviceCards.map(card => (
+                                            <div key={card.label} className="rounded-[12px] border border-slate-200 bg-[#eef2ef] px-2 py-1.5 text-center">
+                                                <p className="text-[10px] font-extrabold uppercase leading-none tracking-[0.06em] text-[#0b5d4f]">{card.label}</p>
+                                                <p className="mt-1 text-[8.5px] font-semibold leading-none text-slate-700">{card.hours}</p>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <div className="min-h-0 flex-1 overflow-hidden rounded-[16px] border border-slate-200 bg-white p-2.5 shadow-sm">
+                                    <p className="text-[14px] font-extrabold uppercase tracking-[0.03em] text-[#0b5d4f]">{fareTitle}</p>
+                                    <p className="text-[8.5px] leading-tight text-slate-500">Exact fare required. Common fares shown.</p>
+                                    <div className="mt-1.5 grid grid-cols-2 gap-1.5">
+                                        {primaryFareItems.map(item => (
+                                            <div key={item.label} className="rounded-[10px] border border-slate-200 bg-[#f8faf8] px-2 py-1.5">
+                                                <p className="text-[7px] font-bold uppercase leading-none tracking-[0.05em] text-slate-500">{item.label}</p>
+                                                <p className="mt-1 text-[13px] font-black leading-none text-[#0b5d4f]">{item.value}</p>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <p className="mt-1.5 text-[7.5px] leading-tight text-slate-500">{brochureConfig.fareNote}</p>
+                                </div>
+
+                                <div className="shrink-0 rounded-[14px] bg-[#0b5d4f] px-3 py-2 text-white">
+                                    <div className="text-[10px] font-black uppercase tracking-[0.1em]">Barrie Transit</div>
+                                    <div className="mt-1 grid gap-1 text-[7.5px] leading-none">
+                                        {footerContacts.map((contact) => (
+                                            <div key={contact} className="flex items-center gap-1 leading-none">
+                                                {getContactIcon(contact)}
+                                                <span className="leading-none">{contact}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
                 </div>
 
-                <div className="ml-5 flex-1 min-w-0">
+                <div className="flex h-full flex-1 min-w-0">
                     {renderDayTimetable(brochureDays.sunday, 'sunday')}
                 </div>
             </div>
@@ -1123,9 +1343,9 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
 
     const renderBrochurePages = (): React.ReactElement => {
         const pageStyle: React.CSSProperties = {
-            width: '1180px',
-            height: '770px',
-            minWidth: '1180px',
+            width: '1100px',
+            height: '894px',
+            minWidth: '1100px',
         };
 
         return (
@@ -1138,7 +1358,7 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
                     </div>
                     <div
                         ref={brochurePage1Ref}
-                        className="h-[calc(100%-44px)] overflow-hidden rounded-[30px] border border-[#d6d6d2] bg-[#ece8e1] p-7 shadow-[0_20px_55px_rgba(15,23,42,0.18)]"
+                        className="h-[calc(100%-44px)] overflow-hidden rounded-[18px] border border-[#d6d6d2] bg-[#ece8e1] p-4 shadow-none"
                     >
                         {renderFrontCover()}
                     </div>
@@ -1152,13 +1372,13 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
                     </div>
                     <div
                         ref={brochurePage2Ref}
-                        className="h-[calc(100%-44px)] overflow-hidden rounded-[30px] border border-[#d6d6d2] bg-[#ece8e1] p-7 shadow-[0_20px_55px_rgba(15,23,42,0.18)]"
+                        className="h-[calc(100%-44px)] overflow-hidden rounded-[18px] border border-[#d6d6d2] bg-[#ece8e1] p-4 shadow-none"
                     >
-                        <div className="flex h-full gap-5">
-                            <div className="flex-1 min-w-0">
+                        <div className="flex h-full gap-4">
+                            <div className="flex flex-1 min-w-0">
                                 {renderDayTimetable(brochureDays.weekday, 'weekday')}
                             </div>
-                            <div className="flex-1 min-w-0">
+                            <div className="flex flex-1 min-w-0">
                                 {renderDayTimetable(brochureDays.saturday, 'saturday')}
                             </div>
                         </div>
@@ -1414,12 +1634,12 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
                                                     <div className="space-y-2">
                                                         {configDraft.fareRows.map((row, index) => (
                                                             <div key={`${row.label}-${index}`} className="grid grid-cols-2 gap-2">
-                                                                <input value={row.label} onChange={(e) => updateFareRow(index, 'label', e.target.value)} className="px-2 py-1.5 text-xs border border-gray-300 rounded-md col-span-2" placeholder="Fare label" />
-                                                                <input value={row.adult} onChange={(e) => updateFareRow(index, 'adult', e.target.value)} className="px-2 py-1.5 text-xs border border-gray-300 rounded-md" placeholder="Adult" />
-                                                                <input value={row.student} onChange={(e) => updateFareRow(index, 'student', e.target.value)} className="px-2 py-1.5 text-xs border border-gray-300 rounded-md" placeholder="Student" />
-                                                                <input value={row.children} onChange={(e) => updateFareRow(index, 'children', e.target.value)} className="px-2 py-1.5 text-xs border border-gray-300 rounded-md" placeholder="Children" />
-                                                                <input value={row.senior} onChange={(e) => updateFareRow(index, 'senior', e.target.value)} className="px-2 py-1.5 text-xs border border-gray-300 rounded-md" placeholder="Senior" />
-                                                                <input value={row.family} onChange={(e) => updateFareRow(index, 'family', e.target.value)} className="px-2 py-1.5 text-xs border border-gray-300 rounded-md col-span-2" placeholder="Family" />
+                                                                <input value={row.label} onChange={(e) => updateFareRow(index, 'label', e.target.value)} className="px-1.5 py-1 text-xs border border-gray-300 rounded-md col-span-2" placeholder="Fare label" />
+                                                                <input value={row.adult} onChange={(e) => updateFareRow(index, 'adult', e.target.value)} className="px-1.5 py-1 text-xs border border-gray-300 rounded-md" placeholder="Adult" />
+                                                                <input value={row.student} onChange={(e) => updateFareRow(index, 'student', e.target.value)} className="px-1.5 py-1 text-xs border border-gray-300 rounded-md" placeholder="Student" />
+                                                                <input value={row.children} onChange={(e) => updateFareRow(index, 'children', e.target.value)} className="px-1.5 py-1 text-xs border border-gray-300 rounded-md" placeholder="Children" />
+                                                                <input value={row.senior} onChange={(e) => updateFareRow(index, 'senior', e.target.value)} className="px-1.5 py-1 text-xs border border-gray-300 rounded-md" placeholder="Senior" />
+                                                                <input value={row.family} onChange={(e) => updateFareRow(index, 'family', e.target.value)} className="px-1.5 py-1 text-xs border border-gray-300 rounded-md col-span-2" placeholder="Family" />
                                                             </div>
                                                         ))}
                                                     </div>

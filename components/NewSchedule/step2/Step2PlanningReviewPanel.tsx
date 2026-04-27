@@ -79,6 +79,29 @@ const getBucketStartLabel = (timeBucket: string): string => (
     timeBucket.split(' - ')[0] || timeBucket
 );
 
+const buildRuntimeAxisDomain = (
+    chartData: Array<{ runtime: number; ignored?: boolean }>,
+    bands: TimeBand[]
+): [number, number] => {
+    const runtimeValues = chartData
+        .filter(bucket => !bucket.ignored && Number.isFinite(bucket.runtime))
+        .map(bucket => bucket.runtime);
+    const bandValues = bands.flatMap(band => [band.min, band.max, band.avg])
+        .filter(value => Number.isFinite(value));
+    const values = [...runtimeValues, ...bandValues];
+
+    if (values.length === 0) return [0, 60];
+
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const spread = Math.max(1, max - min);
+    const padding = Math.max(3, spread * 0.18);
+    const lower = Math.max(0, Math.floor((min - padding) / 5) * 5);
+    const upper = Math.ceil((max + padding) / 5) * 5;
+
+    return lower >= upper ? [Math.max(0, lower - 5), upper + 5] : [lower, upper];
+};
+
 const toTestIdFragment = (value: string): string => (
     value
         .toLowerCase()
@@ -446,14 +469,15 @@ const StopToStopMatrix: React.FC<{
                     </div>
                 </div>
                 <span className="text-xs text-gray-500">
-                    Missing or low-confidence buckets stay visible and are marked in orange or amber.
+                    Scroll sideways to review all time buckets. Orange or amber marks missing or low-confidence data.
                 </span>
             </div>
-            <div className="overflow-x-auto">
+            <div className="relative overflow-x-auto">
+                <div className="pointer-events-none absolute right-0 top-0 z-30 h-full w-8 bg-gradient-to-l from-white to-transparent" />
                 <table className="w-full text-sm">
                     <thead>
                         <tr className="bg-gray-100 border-b border-gray-200">
-                            <th className="px-4 py-3 text-left font-bold text-gray-700 min-w-[220px] sticky left-0 bg-gray-100 z-10">
+                            <th className="sticky left-0 top-0 z-30 min-w-[220px] bg-gray-100 px-4 py-3 text-left font-bold text-gray-700 shadow-[6px_0_10px_-10px_rgba(15,23,42,0.8)]">
                                 Stop-to-stop segment
                             </th>
                             {bucketRows.map(({ bucket, confidence }) => {
@@ -462,7 +486,7 @@ const StopToStopMatrix: React.FC<{
                                 return (
                                     <th
                                         key={bucket.timeBucket}
-                                        className="px-3 py-3 text-center font-medium text-gray-600 min-w-[96px] align-bottom"
+                                        className="sticky top-0 z-20 min-w-[96px] bg-gray-100 px-3 py-3 text-center font-medium text-gray-600 align-bottom"
                                         title={bucket.timeBucket}
                                     >
                                         <div className="flex flex-col items-center gap-1">
@@ -487,7 +511,7 @@ const StopToStopMatrix: React.FC<{
                             })}
                         </tr>
                         <tr className="border-b border-gray-200 bg-blue-50/60">
-                            <th className="px-4 py-3 text-left font-bold text-blue-900 sticky left-0 bg-blue-50/60 z-10">
+                            <th className="sticky left-0 top-[56px] z-30 bg-blue-50 px-4 py-3 text-left font-bold text-blue-900 shadow-[6px_0_10px_-10px_rgba(15,23,42,0.8)]">
                                 Bucket total
                             </th>
                             {bucketTotals.map(({ bucket, total, confidence }) => {
@@ -495,7 +519,7 @@ const StopToStopMatrix: React.FC<{
                                 return (
                                     <th
                                         key={`${bucket.timeBucket}-total`}
-                                        className="px-3 py-3 text-center align-middle"
+                                        className="sticky top-[56px] z-20 bg-blue-50 px-3 py-3 text-center align-middle"
                                         title={`Total ${bucket.timeBucket}`}
                                     >
                                         <div className={`rounded-lg border px-2 py-2 ${getBucketConfidenceClasses(confidence)}`}>
@@ -535,7 +559,7 @@ const StopToStopMatrix: React.FC<{
                                         </tr>
                                     )}
                                     <tr className={rowTone}>
-                                        <td className={`px-4 py-3 sticky left-0 z-10 ${rowTone}`}>
+                                        <td className={`sticky left-0 z-10 px-4 py-3 shadow-[6px_0_10px_-10px_rgba(15,23,42,0.8)] ${rowTone}`}>
                                             <div className="flex items-center gap-3 min-w-[220px]">
                                                 <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-brand-blue/10 text-xs font-bold text-brand-blue">
                                                     {rowIndex + 1}
@@ -692,9 +716,14 @@ export const Step2PlanningReviewPanel: React.FC<Step2Props> = ({
         warningAcknowledged: warningAcknowledged ?? false,
         onBandSummaryChange,
     });
+    const runtimeAxisDomain = useMemo(
+        () => buildRuntimeAxisDomain(chartData, bands),
+        [chartData, bands]
+    );
+    const runtimeAxisIsZoomed = runtimeAxisDomain[0] > 0;
 
     return (
-        <div className="space-y-6 animate-in fade-in duration-500">
+        <div className="space-y-6 pb-28 animate-in fade-in duration-500">
             <Step2RuntimeReviewHeader
                 hasGroupedSegmentColumns={displaySegmentColumns.some(column => column.groupLabel)}
                 viewMetric={viewMetric}
@@ -716,7 +745,7 @@ export const Step2PlanningReviewPanel: React.FC<Step2Props> = ({
             )}
 
             {/* Main Chart Card */}
-            <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
+            <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
                 <div className="flex items-center gap-2 mb-4">
                     <BarChart2 className="text-gray-400" size={20} />
                     <h3 className="font-bold text-gray-700 uppercase text-sm tracking-wider">
@@ -725,9 +754,14 @@ export const Step2PlanningReviewPanel: React.FC<Step2Props> = ({
                 </div>
                 <p className="mb-4 text-xs text-gray-500">
                     Bars show actual {metricLabel} bucket totals. {bandContextLabel}
+                    {runtimeAxisIsZoomed && (
+                        <span className="mt-1 block font-semibold text-slate-600">
+                            The runtime scale is zoomed from {runtimeAxisDomain[0]} min to make band-to-band variation easier to compare.
+                        </span>
+                    )}
                 </p>
 
-                <div className="h-[400px] w-full">
+                <div className="h-[280px] w-full xl:h-[320px]">
                     <ResponsiveContainer width="100%" height="100%">
                         <BarChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
@@ -738,10 +772,12 @@ export const Step2PlanningReviewPanel: React.FC<Step2Props> = ({
                                 tickLine={false}
                             />
                             <YAxis
+                                domain={runtimeAxisDomain}
                                 tick={{ fill: '#6B7280', fontSize: 12 }}
                                 axisLine={false}
                                 tickLine={false}
-                                label={{ value: 'Runtime (min)', angle: -90, position: 'insideLeft', fill: '#9CA3AF' }}
+                                tickFormatter={(value) => `${value}m`}
+                                label={{ value: runtimeAxisIsZoomed ? 'Runtime (min, zoomed)' : 'Runtime (min)', angle: -90, position: 'insideLeft', fill: '#9CA3AF' }}
                             />
                             <Tooltip
                                 cursor={{ fill: '#F3F4F6' }}
@@ -859,7 +895,7 @@ export const Step2PlanningReviewPanel: React.FC<Step2Props> = ({
                         <div>
                             <h3 className="font-bold text-blue-900">Analysis Logic</h3>
                             <p className="text-sm text-blue-700 mt-1">
-                                The chart shows the actual observed full-cycle total for each 30-minute bucket.
+                                The chart shows the observed cycle total for each 30-minute bucket.
                                 The matrix below summarizes those buckets into broader time bands using weighted segment summaries.
                                 Its <strong>Band Avg</strong> column and the legend show the actual average bucket total for that band.
                                 Buckets with thin data or missing segment coverage are dimmed and outlined.
@@ -871,7 +907,7 @@ export const Step2PlanningReviewPanel: React.FC<Step2Props> = ({
                                 {viewMetric === 'p80'
                                     ? 'P80 mode keeps the same median-based bands, but swaps the displayed runtimes to reliable (P80) values. '
                                     : ''}
-                                Step 3 and Step 4 use the approved runtime model shown above, so the schedule you build and generate stays tied to this reviewed analysis.
+                                Step 3 and Step 4 use the runtime contract preview shown above, so the schedule stays tied to this reviewed analysis.
                             </p>
                         </div>
                     </div>
@@ -910,7 +946,7 @@ export const Step2PlanningReviewPanel: React.FC<Step2Props> = ({
                         segmentColumns={displaySegmentColumns}
                         bucketConfidence={bucketConfidence}
                         title="Planning Segments by 30-Minute Bucket"
-                        badges={['Planning route chain', 'Approved model input']}
+                        badges={['Planning route chain', 'Schedule-build input']}
                     />
                 )}
                 bandSummaryView={(
@@ -929,12 +965,7 @@ export const Step2PlanningReviewPanel: React.FC<Step2Props> = ({
                         segmentColumns={matrixDisplaySegmentColumns}
                         bucketConfidence={matrixBucketConfidence}
                         title="Diagnostic Stop-to-Stop by 30-Minute Bucket"
-                        description={(
-                            <>
-                                Each cell shows the selected {viewMetric === 'p50' ? 'median (P50)' : 'reliable (P80)'} travel time for that stop pair in that 30-minute bucket.
-                                Rows follow the dominant full-route stop chain in bus order, with partial and short-turn patterns removed.
-                            </>
-                        )}
+                        description={`Each cell shows the selected ${viewMetric === 'p50' ? 'median (P50)' : 'reliable (P80)'} travel time for that stop pair in that 30-minute bucket. Rows follow the dominant full-route stop chain in bus order, with partial and short-turn patterns removed.`}
                     />
                 )}
             />

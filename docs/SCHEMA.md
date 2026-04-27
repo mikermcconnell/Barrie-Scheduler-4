@@ -248,7 +248,7 @@ interface FleetPlanDocumentMetadata {
 }
 ```
 
-The full editable workbook content is stored in Cloud Storage as normalized JSON rather than raw Excel bytes. The current implementation uses a single active team-shared plan at `teams/{teamId}/fleetPlan/default`. Team members can read and update the shared Fleet Plan.
+The full editable workbook content is stored in Cloud Storage as normalized JSON rather than raw Excel bytes. The current implementation uses a single active team-shared plan at `teams/{teamId}/fleetPlan/default`. Team members can read and update the shared Fleet Plan. Stored JSON still preserves source sheet keys for compatibility with the imported template, while the user-facing grid and Excel export are combined into one Fleet Plan sheet with a Bus Type column.
 
 ---
 

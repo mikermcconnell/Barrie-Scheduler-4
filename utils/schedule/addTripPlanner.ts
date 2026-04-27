@@ -492,6 +492,34 @@ const getTripOccupiedEndTime = (trip: MasterTrip, table: MasterRouteTable): numb
   trip.endTime + getTripTerminalRecoveryTime(trip, table)
 );
 
+const createGeneratedTripId = (index: number): string => {
+  const randomUuid = globalThis.crypto?.randomUUID?.();
+  const uniquePart = randomUuid || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  return `trip_${uniquePart}_${index}`;
+};
+
+const assertGeneratedTripTimingInvariant = (trip: MasterTrip, table: MasterRouteTable): void => {
+  const activeStops = table.stops.filter(stopName => (
+    trip.stops?.[stopName] !== undefined || trip.arrivalTimes?.[stopName] !== undefined
+  ));
+  const stopsToCheck = activeStops.length > 0 ? activeStops : Object.keys(trip.stops || {});
+
+  let previousDeparture: number | null = null;
+  stopsToCheck.forEach(stopName => {
+    const arrival = TimeUtils.toMinutes(trip.arrivalTimes?.[stopName] ?? trip.stops?.[stopName]);
+    const departure = TimeUtils.toMinutes(trip.stops?.[stopName] ?? trip.arrivalTimes?.[stopName]);
+
+    if (arrival === null || departure === null) return;
+    if (departure < arrival) {
+      throw new Error(`Generated trip ${trip.id} has departure before arrival at ${stopName}.`);
+    }
+    if (previousDeparture !== null && arrival < previousDeparture) {
+      throw new Error(`Generated trip ${trip.id} has non-monotonic timing before ${stopName}.`);
+    }
+    previousDeparture = departure;
+  });
+};
+
 const rangesOverlap = (
   startA: number,
   endA: number,
@@ -986,29 +1014,56 @@ const mapRecoveryTimesForNewTrip = (
   sourceTrip: MasterTrip | null,
   targetTable: MasterRouteTable,
   selectedStops: string[],
-  fallbackRecoveryTime: number
+  fallbackRecoveryTime: number,
+  fallbackSource?: { table: MasterRouteTable; trip: MasterTrip | null }
 ): Record<string, number> | undefined => {
   if (selectedStops.length === 0) return undefined;
 
   const mappedRecoveryTimes: Record<string, number> = {};
   selectedStops.forEach((targetStopName, index) => {
-    const sourceStopName = getEquivalentStopName(targetTable, sourceTable, targetStopName)
-      ?? resolveStopNameAcrossTables(
-        [targetTable, sourceTable],
-        sourceTable,
-        targetStopName,
-        Math.max(0, index)
-      );
-    const recoveryKey = resolveTripStopKey(sourceTrip?.recoveryTimes as Record<string, number> | undefined, sourceStopName);
-    const explicitRecovery = recoveryKey ? (sourceTrip?.recoveryTimes as Record<string, number> | undefined)?.[recoveryKey] : undefined;
-    if (typeof explicitRecovery === 'number' && explicitRecovery >= 0) {
-      mappedRecoveryTimes[targetStopName] = explicitRecovery;
-      return;
-    }
+    if (index === 0 && selectedStops.length > 1) return;
 
-    const recovery = getTripRecoveryMinutes(sourceTrip, sourceStopName);
-    if (recovery > 0) {
-      mappedRecoveryTimes[targetStopName] = recovery;
+    const getMappedRecovery = (
+      candidateTable: MasterRouteTable,
+      candidateTrip: MasterTrip | null
+    ): { value: number; explicit: boolean } | null => {
+      const equivalentStopName = getEquivalentStopName(targetTable, candidateTable, targetStopName);
+      if (!equivalentStopName && candidateTable.routeName !== targetTable.routeName) {
+        return null;
+      }
+
+      const sourceStopName = equivalentStopName
+        ?? resolveStopNameAcrossTables(
+          [targetTable, candidateTable],
+          candidateTable,
+          targetStopName,
+          Math.max(0, index)
+        );
+      const recoveryKey = resolveTripStopKey(candidateTrip?.recoveryTimes as Record<string, number> | undefined, sourceStopName);
+      const explicitRecovery = recoveryKey ? (candidateTrip?.recoveryTimes as Record<string, number> | undefined)?.[recoveryKey] : undefined;
+      if (typeof explicitRecovery === 'number' && explicitRecovery >= 0) {
+        return { value: explicitRecovery, explicit: true };
+      }
+
+      const recovery = getTripRecoveryMinutes(candidateTrip, sourceStopName);
+      if (recovery > 0) {
+        return { value: recovery, explicit: false };
+      }
+
+      return null;
+    };
+
+    const primaryRecovery = getMappedRecovery(sourceTable, sourceTrip);
+    const fallbackRecovery = fallbackSource
+      ? getMappedRecovery(fallbackSource.table, fallbackSource.trip)
+      : null;
+
+    const bestRecovery = fallbackRecovery && fallbackRecovery.value > 0 && (!primaryRecovery || primaryRecovery.value <= 0)
+      ? fallbackRecovery
+      : primaryRecovery;
+
+    if (bestRecovery) {
+      mappedRecoveryTimes[targetStopName] = bestRecovery.value;
     }
   });
 
@@ -1020,6 +1075,29 @@ const mapRecoveryTimesForNewTrip = (
   }
 
   return Object.keys(mappedRecoveryTimes).length > 0 ? mappedRecoveryTimes : undefined;
+};
+
+const applyRecoveryTimesToCopiedTiming = (
+  timing: {
+    stops: Record<string, string>;
+    arrivalTimes: Record<string, string>;
+    stopMinutes: Record<string, number>;
+  },
+  recoveryTimes: Record<string, number> | undefined
+): void => {
+  Object.entries(recoveryTimes ?? {}).forEach(([stopName, recoveryMinutes]) => {
+    if (!recoveryMinutes || recoveryMinutes <= 0) return;
+
+    const arrival = TimeUtils.toMinutes(timing.arrivalTimes[stopName] ?? timing.stops[stopName]);
+    const departure = TimeUtils.toMinutes(timing.stops[stopName]);
+    if (arrival === null) return;
+
+    if (departure === null || departure === arrival) {
+      const adjustedDeparture = arrival + recoveryMinutes;
+      timing.stops[stopName] = TimeUtils.fromMinutes(adjustedDeparture);
+      timing.stopMinutes[stopName] = adjustedDeparture;
+    }
+  });
 };
 
 const calculatePeakVehicles = (schedules: MasterRouteTable[]): number => {
@@ -1094,15 +1172,16 @@ const buildPreview = (
   const recoveryTime = shouldCarryRecovery ? (recoveryTemplate.trip?.recoveryTime || 0) : 0;
   const startStopName = stopNames[0] ?? resolvedRange.startStopName;
   const endStopName = stopNames[stopNames.length - 1] ?? resolvedRange.endStopName;
-  const recoveryTimes = shouldCarryRecovery
-    ? mapRecoveryTimesForNewTrip(
-      recoveryTemplate.table,
-      recoveryTemplate.trip,
-      selectedTargetTable,
-      stopNames,
-      recoveryTime
-    )
-    : undefined;
+    const recoveryTimes = shouldCarryRecovery
+      ? mapRecoveryTimesForNewTrip(
+        recoveryTemplate.table,
+        recoveryTemplate.trip,
+        selectedTargetTable,
+        stopNames,
+        recoveryTime,
+        { table: selectedTargetTable, trip: template }
+      )
+      : undefined;
   const terminalRecoveryTime = getPreviewTerminalRecoveryTime(recoveryTimes, recoveryTime, endStopName);
   const travelTime = Math.max(0, lastStopTime - firstStopTime);
   const cycleTime = travelTime + recoveryTime;
@@ -1782,7 +1861,7 @@ export const applyAddTripResultToSchedules = (
   schedules: MasterRouteTable[],
   context: AddTripModalContext,
   result: AddTripResult
-): { schedules: MasterRouteTable[]; createdTripIds: string[] } => {
+): { schedules: MasterRouteTable[]; createdTripIds: string[]; createdTrips: MasterTrip[] } => {
   const newSchedules = JSON.parse(JSON.stringify(schedules)) as MasterRouteTable[];
   const { northTable, southTable } = getScheduleRouteTables({ ...context, allSchedules: newSchedules });
   const isBidirectional = !!northTable && !!southTable;
@@ -1840,20 +1919,22 @@ export const applyAddTripResultToSchedules = (
         recoveryTemplate.trip,
         targetTable,
         selectedStops.length > 0 ? selectedStops : targetTable.stops,
-        recoveryTime
+        recoveryTime,
+        { table: targetTable, trip: templateTrip }
       )
       : undefined;
+    applyRecoveryTimesToCopiedTiming(timing, recoveryTimes);
     const travelTime = Math.max(0, endTime - currentStart);
     const cycleTime = travelTime + recoveryTime;
 
     const newTrip: MasterTrip = {
       ...JSON.parse(JSON.stringify(templateTrip)),
-      id: `trip_${Date.now()}_${Math.floor(Math.random() * 10000)}_${i}`,
+      id: createGeneratedTripId(i),
       lineageId: createTripLineageId(),
       deltaSourceTripId: undefined,
       deltaSourceLineageId: undefined,
       deltaSourceRouteName: undefined,
-      rowId: Date.now() + i,
+      rowId: (currentStart * 1000) + i,
       blockId,
       direction: targetDirection,
       tripNumber: 0,
@@ -1871,6 +1952,7 @@ export const applyAddTripResultToSchedules = (
       endTimeIncludesRecovery: false
     };
 
+    assertGeneratedTripTimingInvariant(newTrip, targetTable);
     targetTable.trips.push(newTrip);
     targetTable.trips.sort((a, b) => getOperationalSortTime(a.startTime) - getOperationalSortTime(b.startTime));
     createdTripIds.push(newTrip.id);
@@ -1909,7 +1991,7 @@ export const applyAddTripResultToSchedules = (
     validateRouteTable(table);
   });
 
-  return { schedules: newSchedules, createdTripIds };
+  return { schedules: newSchedules, createdTripIds, createdTrips };
 };
 
 export const applyEditTripResultToSchedules = (

@@ -1,5 +1,5 @@
 import { createEmptyFleetPlanRow, createFleetPlanRowId } from './fleetPlanModel';
-import type { FleetPlanRow, FleetPlanSheetConfig, FleetPlanSheetKey } from './types';
+import type { FleetPlanRow, FleetPlanSheetConfig, FleetPlanSheetKey, FleetPlanTimelineColumn } from './types';
 
 export interface FleetPlanGridColumn {
     kind: 'base' | 'timeline';
@@ -17,6 +17,14 @@ export interface FleetPlanNavigationResult {
     shouldAppendRow: boolean;
 }
 
+export type FleetPlanSortDirection = 'asc' | 'desc';
+
+export interface FleetPlanSortState {
+    kind: FleetPlanGridColumn['kind'];
+    key: FleetPlanGridColumn['key'];
+    direction: FleetPlanSortDirection;
+}
+
 export function getFleetPlanGridColumns(config: FleetPlanSheetConfig): FleetPlanGridColumn[] {
     return [
         ...config.baseColumns.map((column) => ({
@@ -30,6 +38,62 @@ export function getFleetPlanGridColumns(config: FleetPlanSheetConfig): FleetPlan
             label: column.label,
         })),
     ];
+}
+
+export function getNextFleetPlanSortState(
+    current: FleetPlanSortState | null,
+    column: Pick<FleetPlanSortState, 'kind' | 'key'>,
+): FleetPlanSortState | null {
+    const isSameColumn = current?.kind === column.kind && current.key === column.key;
+    if (!isSameColumn) {
+        return { ...column, direction: 'asc' };
+    }
+    if (current.direction === 'asc') {
+        return { ...column, direction: 'desc' };
+    }
+    return null;
+}
+
+function normalizeSortValue(value: string): string | number {
+    const trimmed = value.trim();
+    if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
+        return Number(trimmed);
+    }
+    return trimmed.toLocaleLowerCase();
+}
+
+export function compareFleetPlanSortValues(leftValue: string, rightValue: string): number {
+    const left = normalizeSortValue(leftValue);
+    const right = normalizeSortValue(rightValue);
+
+    if (left === '' && right !== '') return 1;
+    if (right === '' && left !== '') return -1;
+    if (left === right) return 0;
+
+    if (typeof left === 'number' && typeof right === 'number') {
+        return left - right;
+    }
+
+    return String(left).localeCompare(String(right), undefined, { numeric: true, sensitivity: 'base' });
+}
+
+export function sortFleetPlanEntries<T>(
+    entries: T[],
+    sortState: FleetPlanSortState | null,
+    getValue: (entry: T, sortState: FleetPlanSortState) => string,
+): T[] {
+    if (!sortState) return entries;
+
+    return entries
+        .map((entry, originalIndex) => ({ entry, originalIndex }))
+        .sort((left, right) => {
+            const comparison = compareFleetPlanSortValues(getValue(left.entry, sortState), getValue(right.entry, sortState));
+            if (comparison !== 0) {
+                return sortState.direction === 'asc' ? comparison : -comparison;
+            }
+            return left.originalIndex - right.originalIndex;
+        })
+        .map(({ entry }) => entry);
 }
 
 export function duplicateFleetPlanRow(row: FleetPlanRow): FleetPlanRow {
@@ -190,4 +254,35 @@ export function getNextFleetPlanCellPosition(options: {
     }
 
     return { nextPosition: { rowIndex: 0, columnIndex: current.columnIndex }, shouldAppendRow: false };
+}
+
+
+export function delayFleetPlanRetirement(options: {
+    row: FleetPlanRow;
+    timelineColumns: FleetPlanTimelineColumn[];
+    fromYear: string;
+    toYear: string;
+}): FleetPlanRow {
+    const fromIndex = options.timelineColumns.findIndex((column) => column.key === options.fromYear);
+    const toIndex = options.timelineColumns.findIndex((column) => column.key === options.toYear);
+
+    if (fromIndex < 0 || toIndex < 0 || toIndex <= fromIndex) {
+        return options.row;
+    }
+
+    const serviceValue = options.row.unitNumber.trim();
+    const timeline = { ...options.row.timeline };
+    timeline[options.fromYear] = serviceValue;
+
+    for (let index = fromIndex + 1; index < toIndex; index += 1) {
+        const key = options.timelineColumns[index]?.key;
+        if (key) timeline[key] = serviceValue;
+    }
+
+    timeline[options.toYear] = 'RETIRE';
+
+    return {
+        ...options.row,
+        timeline,
+    };
 }

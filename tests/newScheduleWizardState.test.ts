@@ -86,11 +86,11 @@ describe('newSchedule wizard state helpers', () => {
         expect(deriveWizardStepFromProject({})).toBe(1);
     });
 
-    it('clamps Step 3 and Step 4 behind the current Step 2 approval gate', () => {
+    it('does not gate Step 3 or Step 4 behind Step 2 approval', () => {
         expect(clampWizardStepToCurrentStep2Approval(1, 'unapproved')).toBe(1);
         expect(clampWizardStepToCurrentStep2Approval(2, 'stale')).toBe(2);
-        expect(clampWizardStepToCurrentStep2Approval(3, 'unapproved')).toBe(2);
-        expect(clampWizardStepToCurrentStep2Approval(4, 'stale')).toBe(2);
+        expect(clampWizardStepToCurrentStep2Approval(3, 'unapproved')).toBe(3);
+        expect(clampWizardStepToCurrentStep2Approval(4, 'stale')).toBe(4);
         expect(clampWizardStepToCurrentStep2Approval(4, 'approved')).toBe(4);
     });
 

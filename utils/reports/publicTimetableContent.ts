@@ -10,13 +10,13 @@ export interface PublicTimetableFareRow {
 export const PUBLIC_TIMETABLE_DISCLAIMER =
     'Times are approximate. Riders should arrive at the bus stop at least 5 minutes before the scheduled time.';
 
-export const PUBLIC_TIMETABLE_FARE_EFFECTIVE_DATE = 'May 1, 2025';
+export const PUBLIC_TIMETABLE_FARE_EFFECTIVE_DATE = 'Current fares';
 
 export const PUBLIC_TIMETABLE_FARE_HEADERS = [
     '',
     'Adult (19-64)',
     'Student (13-18)',
-    'Children (0-12)',
+    'Children (12 & under)',
     'Senior (65+)',
     'Family',
 ] as const;

@@ -1888,6 +1888,32 @@ describe('addTripPlanner', () => {
     expect(newTrip?.recoveryTime).toBe(0);
   });
 
+  it('creates unique durable ids for multiple added trips without reusing template ids', () => {
+    const context = buildContext();
+    const result: AddTripResult = {
+      startTime: 500,
+      tripCount: 3,
+      serviceMode: 'trip',
+      blockMode: 'new',
+      blockId: '2-WD-99',
+      targetDirection: 'North',
+      targetRouteName: '2 (Weekday) (North)',
+      startStopName: 'Park Place',
+      endStopName: 'Downtown'
+    };
+
+    const applied = applyAddTripResultToSchedules(context.allSchedules, context, result);
+    const createdTrips = applied.schedules
+      .flatMap(table => table.trips)
+      .filter(trip => applied.createdTripIds.includes(trip.id));
+
+    expect(createdTrips).toHaveLength(3);
+    expect(new Set(createdTrips.map(trip => trip.id)).size).toBe(3);
+    expect(new Set(createdTrips.map(trip => trip.lineageId)).size).toBe(3);
+    expect(createdTrips.every(trip => trip.id.startsWith('trip_'))).toBe(true);
+    expect(createdTrips.some(trip => trip.id === context.referenceTrip.id)).toBe(false);
+  });
+
   it('applies a full cycle as paired northbound and southbound trips on the same block', () => {
     const context = build400Context();
     const result: AddTripResult = {
@@ -1996,6 +2022,100 @@ describe('addTripPlanner', () => {
     expect(createdTrip?.recoveryTimes?.['Downtown Hub']).toBe(9);
   });
 
+  it('keeps added Route 2 south trips honest when block recovery comes from a poor same-block template', () => {
+    const southTemplate = {
+      id: '2-south-template',
+      blockId: '2-2',
+      direction: 'South' as const,
+      tripNumber: 1,
+      rowId: 1,
+      startTime: 588, // 9:48 AM
+      endTime: 624,
+      recoveryTime: 13,
+      travelTime: 36,
+      cycleTime: 49,
+      stops: {
+        'Downtown Hub': '9:48 AM',
+        'Ferndale Drive': '9:56 AM',
+        'Sproule at Kraus': '10:01 AM',
+        'Ferndale Woods Public School': '10:10 AM',
+        "Veteran's at Essa": '10:14 AM',
+        'Park Place': '10:24 AM'
+      },
+      arrivalTimes: {
+        'Downtown Hub': '9:48 AM',
+        'Ferndale Drive': '9:56 AM',
+        'Sproule at Kraus': '10:01 AM',
+        'Ferndale Woods Public School': '10:08 AM',
+        "Veteran's at Essa": '10:14 AM',
+        'Park Place': '10:24 AM'
+      },
+      recoveryTimes: {
+        'Ferndale Woods Public School': 2,
+        'Park Place': 11
+      }
+    };
+    const context: AddTripModalContext = {
+      referenceTrip: southTemplate,
+      nextTrip: null,
+      targetTable: {
+        routeName: '2 (Sunday) (South)',
+        stops: ['Downtown Hub', 'Ferndale Drive', 'Sproule at Kraus', 'Ferndale Woods Public School', "Veteran's at Essa", 'Park Place'],
+        stopIds: {},
+        trips: [southTemplate]
+      },
+      allSchedules: [
+        {
+          routeName: '2 (Sunday) (North)',
+          stops: ['Park Place', 'Downtown Hub'],
+          stopIds: {},
+          trips: [{
+            id: 'poor-same-block-template',
+            blockId: '2-1',
+            direction: 'North',
+            tripNumber: 1,
+            rowId: 2,
+            startTime: 416,
+            endTime: 429,
+            recoveryTime: 9,
+            travelTime: 13,
+            cycleTime: 22,
+            stops: { 'Park Place': '6:56 AM', 'Downtown Hub': '7:09 AM' },
+            arrivalTimes: { 'Park Place': '6:56 AM', 'Downtown Hub': '7:09 AM' },
+            recoveryTimes: { 'Downtown Hub': 9 }
+          }]
+        },
+        {
+          routeName: '2 (Sunday) (South)',
+          stops: ['Downtown Hub', 'Ferndale Drive', 'Sproule at Kraus', 'Ferndale Woods Public School', "Veteran's at Essa", 'Park Place'],
+          stopIds: {},
+          trips: [southTemplate]
+        }
+      ],
+      routeBaseName: '2 (Sunday)'
+    };
+    const result: AddTripResult = {
+      startTime: 438, // 7:18 AM
+      tripCount: 1,
+      serviceMode: 'trip',
+      blockMode: 'existing',
+      blockId: '2-1',
+      targetDirection: 'South',
+      targetRouteName: '2 (Sunday) (South)',
+      startStopName: 'Downtown Hub',
+      endStopName: 'Park Place'
+    };
+
+    const applied = applyAddTripResultToSchedules(context.allSchedules, context, result);
+    const southTable = applied.schedules.find(table => table.routeName === '2 (Sunday) (South)');
+    const createdTrip = southTable?.trips.find(trip => applied.createdTripIds.includes(trip.id));
+
+    expect(createdTrip?.arrivalTimes?.['Ferndale Woods Public School']).toBe('7:38 AM');
+    expect(createdTrip?.recoveryTimes?.['Ferndale Woods Public School']).toBe(2);
+    expect(createdTrip?.stops?.['Ferndale Woods Public School']).toBe('7:40 AM');
+    expect(createdTrip?.stops?.["Veteran's at Essa"]).toBe('7:44 AM');
+  });
+
   it('applies a custom paired trip with terminal recovery carried between the two directions', () => {
     const context = buildCustomRecoveryContext();
     const result: AddTripResult = {
@@ -2029,6 +2149,32 @@ describe('addTripPlanner', () => {
       recoveryTime: 0
     });
     expect(Object.keys(createdTrips[1]?.stops ?? {})).toEqual(['North Terminal', 'Downtown']);
+  });
+
+  it('keeps generated terminal recovery explicit and timing monotonic', () => {
+    const context = buildCustomRecoveryContext();
+    const result: AddTripResult = {
+      startTime: 504,
+      tripCount: 1,
+      serviceMode: 'custom',
+      blockMode: 'reference',
+      blockId: '9-1',
+      targetDirection: 'North',
+      targetRouteName: '9 (Weekday) (North)',
+      startStopName: 'Downtown',
+      endStopName: 'Downtown'
+    };
+
+    const applied = applyAddTripResultToSchedules(context.allSchedules, context, result);
+    const firstCreatedTrip = applied.schedules
+      .flatMap(table => table.trips)
+      .filter(trip => applied.createdTripIds.includes(trip.id))
+      .sort((a, b) => a.startTime - b.startTime)[0];
+
+    expect(firstCreatedTrip?.arrivalTimes?.['North Terminal']).toBe('8:42 AM');
+    expect(firstCreatedTrip?.stops?.['North Terminal']).toBe('8:48 AM');
+    expect(firstCreatedTrip?.recoveryTimes?.['North Terminal']).toBe(6);
+    expect(firstCreatedTrip?.endTime).toBe(504 + 18);
   });
 
   it('preserves explicit zero terminal recovery entries for custom paired trips', () => {

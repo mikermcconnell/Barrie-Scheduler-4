@@ -178,7 +178,7 @@ describe('step2ReviewBuilder', () => {
             parsedDataFingerprint: 'runtime-data-v1',
             canonicalDirectionStops: null,
             canonicalRouteSource: null,
-            plannerOverrides: { excludedBuckets: [] },
+            plannerOverrides: { excludedBuckets: [] as string[] },
             analysis: [],
             bands: [],
             segmentsMap: {},
@@ -190,7 +190,7 @@ describe('step2ReviewBuilder', () => {
         expect(blockedResult.troubleshooting.canRenderFullPath).toBe(false);
     });
 
-    it('blocks approval when no planning stop chain is available for generation', () => {
+    it('warns but does not block when no planning stop chain is available for generation', () => {
         const result = buildStep2ReviewResult({
             routeIdentity: '7-Weekday',
             routeNumber: '7',
@@ -201,7 +201,7 @@ describe('step2ReviewBuilder', () => {
             parsedDataFingerprint: 'runtime-data-v1',
             canonicalDirectionStops: null,
             canonicalRouteSource: null,
-            plannerOverrides: { excludedBuckets: [] },
+            plannerOverrides: { excludedBuckets: [] as string[] },
             analysis: [{
                 timeBucket: '15:00 - 15:29',
                 totalP50: 30,
@@ -231,9 +231,9 @@ describe('step2ReviewBuilder', () => {
             runtimeDiagnostics: diagnostics,
         });
 
-        expect(result.health.status).toBe('blocked');
-        expect(result.health.blockers).toContain('No approved planning stop chain is available for schedule generation.');
-        expect(result.approvalEligible).toBe(false);
+        expect(result.health.status).toBe('warning');
+        expect(result.health.warnings).toContain('No planning stop chain is available; schedule generation will infer timepoints from the runtime data.');
+        expect(result.approvalEligible).toBe(true);
     });
 
     it('can build a source snapshot from the performance diagnostics metadata', () => {
@@ -259,7 +259,7 @@ describe('step2ReviewBuilder', () => {
             parsedDataFingerprint: 'runtime-data-v1',
             canonicalDirectionStops: null,
             canonicalRouteSource: null,
-            plannerOverrides: { excludedBuckets: [] },
+            plannerOverrides: { excludedBuckets: [] as string[] },
             analysis: [],
             bands: [],
             segmentsMap: {},
@@ -305,7 +305,7 @@ describe('step2ReviewBuilder', () => {
                 routeIdentity: '7-Weekday',
                 versionHint: 'master-schedule',
             },
-            plannerOverrides: { excludedBuckets: [] },
+            plannerOverrides: { excludedBuckets: [] as string[] },
             analysis: [{
                 timeBucket: '15:00 - 15:29',
                 totalP50: 30,
@@ -368,7 +368,7 @@ describe('step2ReviewBuilder', () => {
                 routeIdentity: '7-Weekday',
                 versionHint: 'performance-stop-order',
             },
-            plannerOverrides: { excludedBuckets: [] },
+            plannerOverrides: { excludedBuckets: [] as string[] },
             analysis: [{
                 timeBucket: '15:00 - 15:29',
                 totalP50: 30,
@@ -403,7 +403,7 @@ describe('step2ReviewBuilder', () => {
                 sourceUsed: 'runtime-derived' as const,
                 usedForPlanning: true,
                 summary: 'Runtime order accepted',
-                warnings: [],
+                warnings: [] as string[],
                 directionStats: {},
             },
         };

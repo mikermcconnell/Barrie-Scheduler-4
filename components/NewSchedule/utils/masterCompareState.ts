@@ -35,9 +35,11 @@ export const shouldClearMasterCompare = (
 export const extractMasterCompareBaseline = (
     result: MasterCompareResultLike | null | undefined
 ): MasterRouteTable[] | null => {
-    const northTable = result?.content?.northTable;
-    const southTable = result?.content?.southTable;
+    const tables = [
+        result?.content?.northTable,
+        result?.content?.southTable,
+    ].filter((table): table is MasterRouteTable => !!table);
 
-    if (!northTable || !southTable) return null;
-    return [northTable, southTable];
+    if (tables.length === 0) return null;
+    return tables;
 };

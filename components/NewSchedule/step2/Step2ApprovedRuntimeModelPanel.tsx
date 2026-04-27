@@ -24,9 +24,9 @@ export const Step2ApprovedRuntimeModelPanel: React.FC<Step2ApprovedRuntimeModelP
                 <div className="flex items-center gap-2">
                     <CheckCircle2 className="text-blue-600" size={18} />
                     <div>
-                        <h3 className="font-bold text-gray-900">Approved Runtime Model</h3>
+                        <h3 className="font-bold text-gray-900">Runtime Contract Preview</h3>
                         <p className="text-xs text-gray-500">
-                            {isExpanded ? 'Hide generation-ready runtime details' : 'Show generation-ready runtime details'}
+                            {isExpanded ? 'Hide schedule-build input details' : 'Show runtimes that will be used to build the schedule'}
                         </p>
                     </div>
                 </div>
@@ -39,7 +39,7 @@ export const Step2ApprovedRuntimeModelPanel: React.FC<Step2ApprovedRuntimeModelP
                     <div className="flex items-start justify-between gap-4">
                         <div>
                             <p className="mt-0 text-sm text-gray-700">
-                                Step 3 and later schedule work should use this model: {model.usableBucketCount} active bucket{model.usableBucketCount === 1 ? '' : 's'} across {model.usableBandCount} active band{model.usableBandCount === 1 ? '' : 's'}, built from {model.chartBasis === 'observed-cycle' ? 'full observed cycle totals' : 'uploaded bucket percentiles'} and direction-specific segment summaries.
+                                These are the runtimes Step 3 and later schedule work will use: {model.usableBucketCount} active bucket{model.usableBucketCount === 1 ? '' : 's'} across {model.usableBandCount} active band{model.usableBandCount === 1 ? '' : 's'}, built from {model.chartBasis === 'observed-cycle' ? 'full observed cycle totals' : 'uploaded bucket percentiles'} and direction-specific segment summaries.
                             </p>
                         </div>
                         <div className="text-right text-xs text-gray-600">

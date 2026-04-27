@@ -49,7 +49,7 @@ describe('RoundTripTableView compare-to-master badges', () => {
         container = null;
     });
 
-    it('shows retimed, new, and removed states from the dedicated compare result', () => {
+    it('shows retimed deltas plus small new and removed markers from the dedicated compare result', () => {
         const currentSchedules = [
             {
                 routeName: '10 (North)',
@@ -64,7 +64,7 @@ describe('RoundTripTableView compare-to-master badges', () => {
 
         const masterBaseline = [
             {
-                routeName: '10 (North)',
+                routeName: '10 (Weekday) (North) (To Downtown)',
                 stops: ['Terminal'],
                 stopIds: { Terminal: 'STOP-1' },
                 trips: [
@@ -85,13 +85,17 @@ describe('RoundTripTableView compare-to-master badges', () => {
         });
 
         const text = container?.textContent ?? '';
-        expect(text).toContain('Changes from baseline');
+        expect(text).toContain('3 changed items');
         expect(text).toContain('RETIMED');
         expect(text).toContain('NEW');
         expect(text).toContain('REMOVED');
+        expect(text).toContain('+5');
+        expect(text).toContain('n');
+        expect(text).toContain('r');
+        expect(text).toContain('removed from North');
     });
 
-    it('keeps baseline deltas hidden until the toggle is enabled', () => {
+    it('shows baseline deltas by default in master compare mode', () => {
         const currentSchedules = [
             {
                 routeName: '10 (North)',
@@ -128,13 +132,8 @@ describe('RoundTripTableView compare-to-master badges', () => {
             button => button.textContent?.includes('Baseline Deltas')
         );
         expect(deltaToggle).toBeTruthy();
-        expect(deltaToggle?.className).toContain('bg-white');
-
-        flushSync(() => {
-            deltaToggle?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-        });
-
         expect(deltaToggle?.className).toContain('bg-indigo-50');
+        expect(container?.textContent ?? '').toContain('+5');
     });
 
     it('shows a review-needed state for ambiguous compare matches', () => {

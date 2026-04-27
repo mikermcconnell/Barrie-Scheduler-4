@@ -205,8 +205,20 @@ export const buildMasterComparisonChangeSummary = (
 ): MasterComparisonChangeSummary => {
     const counts = emptyChangeCounts();
     const routeNameFilter = options?.routeNames ? new Set(options.routeNames) : null;
+    const routeDirectionFilter = options?.routeNames
+        ? new Set(options.routeNames.map(routeName => extractDirectionFromName(routeName)).filter(Boolean) as DirectionKey[])
+        : null;
+    const routeFilterAllowsDirectionless = options?.routeNames
+        ? options.routeNames.some(routeName => !extractDirectionFromName(routeName))
+        : false;
     const currentTripLookup = new Map<string, MasterTrip>();
     const currentTripKinds = new Map<string, TripChangeKind>();
+    const routeNameIsInScope = (routeName: string, direction: DirectionKey): boolean => {
+        if (!routeNameFilter) return true;
+        if (routeNameFilter.has(routeName)) return true;
+        if (routeFilterAllowsDirectionless) return true;
+        return routeDirectionFilter?.has(direction) ?? false;
+    };
 
     schedules.forEach(table => {
         const dir = toDirection(table.routeName);
@@ -216,7 +228,7 @@ export const buildMasterComparisonChangeSummary = (
     });
 
     detailed.currentTripComparisons.forEach((entry, key) => {
-        if (routeNameFilter && !routeNameFilter.has(entry.routeName)) {
+        if (!routeNameIsInScope(entry.routeName, entry.direction)) {
             return;
         }
 
@@ -237,7 +249,7 @@ export const buildMasterComparisonChangeSummary = (
     });
 
     const removedMasterTrips = detailed.removedMasterTrips.filter(entry => (
-        !routeNameFilter || routeNameFilter.has(entry.routeName)
+        routeNameIsInScope(entry.routeName, entry.direction)
     ));
     counts.removed = removedMasterTrips.length;
     counts.totalChanges = counts.new + counts.extended + counts.shortened + counts.retimed + counts.review + counts.removed;
@@ -320,6 +332,7 @@ export const buildDetailedMasterComparison = (
         const currentTrips = [...currentByDir[dir]].sort((a, b) => a.startTime - b.startTime);
 
         if (masterTrips.length === 0 || currentTrips.length === 0) continue;
+        const baselineHasDurableLineage = masterTrips.some(masterTrip => !!masterTrip.lineageId);
 
         const exactIdQueues = new Map<string, MasterTrip[]>();
         const exactLineageQueues = new Map<string, MasterTrip[]>();
@@ -344,6 +357,14 @@ export const buildDetailedMasterComparison = (
 
                 if (lineageMatch) {
                     setMatched(dir, currentTrip, lineageMatch, 'lineage');
+                    return;
+                }
+
+                // When the baseline carries durable lineage IDs, a current trip with a
+                // different/new lineage is operationally new. Do not "helpfully" match it
+                // to a same-time baseline trip, or added duplicate service can be shown as
+                // RETIMED instead of NEW.
+                if (baselineHasDurableLineage) {
                     return;
                 }
             }

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
 import { flushSync } from 'react-dom';
@@ -42,6 +42,7 @@ describe('RoundTripTableView row actions', () => {
       onExtendTrip?: (...args: any[]) => void;
       onDeleteTrip?: (...args: any[]) => void;
       onMenuOpen?: (...args: any[]) => void;
+      onRecoveryEdit?: (...args: any[]) => void;
       originalSchedules?: any[];
     }
   ) => {
@@ -55,10 +56,179 @@ describe('RoundTripTableView row actions', () => {
           onExtendTrip={props?.onExtendTrip}
           onDeleteTrip={props?.onDeleteTrip}
           onMenuOpen={props?.onMenuOpen}
+          onRecoveryEdit={props?.onRecoveryEdit}
         />
       );
     });
   };
+
+  const editableRecoverySchedules = () => [
+    {
+      routeName: '10 (Weekday) (North)',
+      stops: ['North Terminal', 'Downtown'],
+      stopIds: { 'North Terminal': '1001', Downtown: '1002' },
+      trips: [
+        {
+          id: 'north-trip',
+          blockId: '10-1',
+          direction: 'North',
+          tripNumber: 1,
+          rowId: 1,
+          startTime: 420,
+          endTime: 450,
+          recoveryTime: 5,
+          travelTime: 30,
+          cycleTime: 35,
+          stops: { 'North Terminal': '7:00 AM', Downtown: '7:30 AM' },
+          arrivalTimes: { 'North Terminal': '7:00 AM', Downtown: '7:30 AM' },
+          departureTimes: { 'North Terminal': '7:00 AM', Downtown: '7:35 AM' },
+          recoveryTimes: { Downtown: 5 },
+          stopMinutes: { 'North Terminal': 420, Downtown: 450 }
+        }
+      ]
+    },
+    {
+      routeName: '10 (Weekday) (South)',
+      stops: ['South Terminal'],
+      stopIds: { 'South Terminal': '2001' },
+      trips: [
+        {
+          id: 'south-trip',
+          blockId: '10-1',
+          direction: 'South',
+          tripNumber: 2,
+          rowId: 2,
+          startTime: 455,
+          endTime: 485,
+          recoveryTime: 0,
+          travelTime: 30,
+          cycleTime: 30,
+          stops: { 'South Terminal': '7:35 AM' },
+          arrivalTimes: { 'South Terminal': '7:35 AM' },
+          stopMinutes: { 'South Terminal': 455 }
+        }
+      ]
+    }
+  ];
+
+  const getNorthDowntownRecoveryButton = () => {
+    const buttons = Array.from(
+      container?.querySelectorAll('button[aria-label*="North Downtown, recovery minutes"]') ?? []
+    ) as HTMLButtonElement[];
+    return buttons.find((button) => button.getAttribute('aria-label')?.includes('Current value 5.')) ?? null;
+  };
+
+  const setInputValue = (input: HTMLInputElement, value: string) => {
+    const valueSetter = Object.getOwnPropertyDescriptor(input, 'value')?.set;
+    const prototypeValueSetter = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      'value'
+    )?.set;
+
+    if (prototypeValueSetter && valueSetter !== prototypeValueSetter) {
+      prototypeValueSetter.call(input, value);
+    } else {
+      valueSetter?.call(input, value);
+    }
+  };
+
+  it('lets planners type an exact recovery minute value', async () => {
+    const onRecoveryEdit = vi.fn();
+    render(editableRecoverySchedules(), { onRecoveryEdit });
+
+    const recoveryButton = getNorthDowntownRecoveryButton();
+    expect(recoveryButton).not.toBeNull();
+
+    await act(async () => {
+      recoveryButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const input = container?.querySelector('input[aria-label*="North Downtown, recovery minutes"]') as HTMLInputElement | null;
+    expect(input).not.toBeNull();
+
+    await act(async () => {
+      setInputValue(input!, '9');
+      input!.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      input!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+
+    expect(onRecoveryEdit).toHaveBeenCalledWith('north-trip', 'Downtown', 4);
+  });
+
+  it('starts editing a recovery cell from the keyboard', async () => {
+    render(editableRecoverySchedules(), { onRecoveryEdit: vi.fn() });
+
+    const recoveryButton = getNorthDowntownRecoveryButton();
+    expect(recoveryButton).not.toBeNull();
+
+    await act(async () => {
+      recoveryButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    const gridRegion = container?.querySelector('[aria-label="Round-trip schedule editor grid"]') as HTMLDivElement | null;
+    expect(gridRegion).not.toBeNull();
+
+    await act(async () => {
+      gridRegion!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+
+    const input = container?.querySelector('input[aria-label*="North Downtown, recovery minutes"]');
+    expect(input).not.toBeNull();
+  });
+
+  it('virtualizes large round-trip tables instead of rendering every row at once', () => {
+    const northTrips = Array.from({ length: 100 }, (_, index) => ({
+      id: `north-trip-${index}`,
+      blockId: `10-${index + 1}`,
+      direction: 'North',
+      tripNumber: index + 1,
+      rowId: index + 1,
+      startTime: 360 + index * 10,
+      endTime: 390 + index * 10,
+      recoveryTime: 0,
+      travelTime: 30,
+      cycleTime: 30,
+      stops: { Downtown: `${6 + Math.floor(index / 6)}:${String((index % 6) * 10).padStart(2, '0')} AM` },
+      arrivalTimes: { Downtown: `${6 + Math.floor(index / 6)}:${String((index % 6) * 10).padStart(2, '0')} AM` },
+      stopMinutes: { Downtown: 360 + index * 10 }
+    }));
+    const southTrips = northTrips.map((trip, index) => ({
+      ...trip,
+      id: `south-trip-${index}`,
+      direction: 'South',
+      tripNumber: index + 101
+    }));
+
+    render([
+      {
+        routeName: '10 (Weekday) (North)',
+        stops: ['Downtown'],
+        stopIds: { Downtown: '1001' },
+        trips: northTrips
+      },
+      {
+        routeName: '10 (Weekday) (South)',
+        stops: ['South Terminal'],
+        stopIds: { 'South Terminal': '2001' },
+        trips: southTrips.map((trip) => ({
+          ...trip,
+          stops: { 'South Terminal': trip.stops.Downtown },
+          arrivalTimes: { 'South Terminal': trip.stops.Downtown },
+          stopMinutes: { 'South Terminal': trip.startTime }
+        }))
+      }
+    ]);
+
+    const renderedRowIndexes = new Set(
+      Array.from(container?.querySelectorAll('[data-grid-row]') ?? [])
+        .map((cell) => cell.getAttribute('data-grid-row'))
+        .filter(Boolean)
+    );
+
+    expect(renderedRowIndexes.size).toBeGreaterThan(0);
+    expect(renderedRowIndexes.size).toBeLessThan(100);
+  });
 
   it('uses the row northbound trip when adding from the combined row', () => {
     const onMenuOpen = vi.fn();

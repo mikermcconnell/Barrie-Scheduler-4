@@ -112,6 +112,31 @@ const getCombinedStopOptions = (...tables: Array<{ stops: string[] } | null | un
   return combined;
 };
 
+const SERVICE_MODE_COPY: Record<AddTripServiceMode, { label: string; description: string; countLabel: string; confirmLabel: string }> = {
+  trip: {
+    label: 'One-way trip',
+    description: 'Add one direction only at the selected insertion point.',
+    countLabel: 'One-way trips to add',
+    confirmLabel: 'One-way Trip',
+  },
+  custom: {
+    label: 'Custom pair / short-turn',
+    description: 'Choose the outbound start and return end for a paired movement.',
+    countLabel: 'Custom pairs to add',
+    confirmLabel: 'Custom Pair',
+  },
+  cycle: {
+    label: 'Full cycle',
+    description: 'Add the northbound trip and linked southbound return together.',
+    countLabel: 'Full cycles to add',
+    confirmLabel: 'Full Cycle',
+  },
+};
+
+const makeGeneratedTripSummary = (trip: { direction?: string; startTime?: number; endTime?: number; blockId?: string; recoveryTime?: number }): string => (
+  `${trip.direction ?? 'Trip'} ${formatTripWindow(trip.startTime, trip.endTime)} · block ${trip.blockId ?? '-'} · rec ${trip.recoveryTime ?? 0}m`
+);
+
 export const AddTripModal: React.FC<Props> = ({ context, onCancel, onConfirm }) => {
   const [activeContext, setActiveContext] = useState<AddTripModalContext>(context);
 
@@ -247,9 +272,9 @@ export const AddTripModal: React.FC<Props> = ({ context, onCancel, onConfirm }) 
   const plannerSummary = isEditMode
     ? `Edit this ${activeContext.referenceTrip.direction.toLowerCase()}bound trip on block ${activeContext.referenceTrip.blockId}, starting at ${formatTimeOrDash(parsedStartTime ?? effectiveStartTime)} from ${suggestions.selectedStartStopName} to ${suggestions.selectedEndStopName}.`
     : serviceMode === 'cycle'
-    ? `Add ${tripCount} round trip${tripCount === 1 ? '' : 's'} on ${blockSummaryLabel}, starting northbound from ${suggestions.selectedStartStopName} at ${formatTimeOrDash(parsedStartTime ?? effectiveStartTime)} and returning southbound.`
+    ? `Add ${tripCount} full cycle${tripCount === 1 ? '' : 's'} on ${blockSummaryLabel}, starting northbound from ${suggestions.selectedStartStopName} at ${formatTimeOrDash(parsedStartTime ?? effectiveStartTime)} and returning southbound.`
     : serviceMode === 'custom'
-      ? `Add ${tripCount} custom trip${tripCount === 1 ? '' : 's'} on ${blockSummaryLabel}, starting ${selectedDirection.toLowerCase()}bound from ${suggestions.selectedStartStopName} at ${formatTimeOrDash(parsedStartTime ?? effectiveStartTime)} and returning to ${suggestions.selectedEndStopName}.`
+      ? `Add ${tripCount} custom pair${tripCount === 1 ? '' : 's'} on ${blockSummaryLabel}, starting ${selectedDirection.toLowerCase()}bound from ${suggestions.selectedStartStopName} at ${formatTimeOrDash(parsedStartTime ?? effectiveStartTime)} and returning to ${suggestions.selectedEndStopName}.`
       : `Add ${tripCount} ${isPartialTrip ? 'short-turn ' : ''}${selectedDirection.toLowerCase()}bound trip${tripCount === 1 ? '' : 's'} on ${blockSummaryLabel}, departing ${suggestions.selectedStartStopName} at ${formatTimeOrDash(parsedStartTime ?? effectiveStartTime)} and ending at ${suggestions.selectedEndStopName}.`;
   const insertionPlacementLabel = activeContext.insertionPlacement === 'before' ? 'Before anchor trip' : 'After anchor trip';
   const anchorTripSummary = `${activeContext.referenceTrip.direction}bound · ${formatTripWindow(activeContext.referenceTrip.startTime, activeContext.referenceTrip.endTime)}`;
@@ -291,12 +316,17 @@ export const AddTripModal: React.FC<Props> = ({ context, onCancel, onConfirm }) 
   }, [availableDirections, selectedDirection, serviceMode]);
 
   useEffect(() => {
-    const nextBlockId = blockMode === 'new'
-      ? suggestions.newBlockId
-      : blockMode === 'reference'
-        ? activeContext.referenceTrip.blockId
-        : (suggestions.blockChoices.find(choice => choice.mode === 'existing')?.blockId ?? suggestions.newBlockId);
-    setSelectedBlockId(nextBlockId);
+    setSelectedBlockId(previousBlockId => {
+      if (blockMode === 'new') return suggestions.newBlockId;
+      if (blockMode === 'reference') return activeContext.referenceTrip.blockId;
+
+      const existingChoices = suggestions.blockChoices.filter(choice => choice.mode === 'existing');
+      if (existingChoices.some(choice => choice.blockId === previousBlockId)) {
+        return previousBlockId;
+      }
+
+      return existingChoices[0]?.blockId ?? suggestions.newBlockId;
+    });
   }, [activeContext.referenceTrip.blockId, blockMode, suggestions.blockChoices, suggestions.newBlockId]);
 
   useEffect(() => {
@@ -304,7 +334,9 @@ export const AddTripModal: React.FC<Props> = ({ context, onCancel, onConfirm }) 
       setSelectedDirection(activeContext.referenceTrip.direction);
       return;
     }
-    const nextDirection = serviceMode === 'cycle' && availableDirections.includes('North')
+
+    const nextMode = initialServiceMode;
+    const nextDirection = nextMode === 'cycle' && availableDirections.includes('North')
       ? 'North'
       : getDefaultDirection(activeContext, availableDirections);
     const nextStartTime = activeContext.initialStartTime
@@ -316,29 +348,31 @@ export const AddTripModal: React.FC<Props> = ({ context, onCancel, onConfirm }) 
       nextDirection,
       nextStartTime,
       1,
-      serviceMode,
+      nextMode,
       false,
       'new',
       '',
-      getSeedStopSelection(activeContext, nextDirection, serviceMode)
+      getSeedStopSelection(activeContext, nextDirection, nextMode)
     );
+    const nextBlockMode = getDefaultBlockMode(nextSeedSuggestions.blockChoices);
 
+    setServiceMode(nextMode);
     setSelectedDirection(nextDirection);
     setStartPreset('midpoint');
     setStartTimeInput(TimeUtils.fromMinutes(nextStartTime));
     setTripCount(1);
-    setBlockMode(getDefaultBlockMode(nextSeedSuggestions.blockChoices));
+    setBlockMode(nextBlockMode);
     setSelectedBlockId(
-      getDefaultBlockMode(nextSeedSuggestions.blockChoices) === 'new'
+      nextBlockMode === 'new'
         ? nextSeedSuggestions.newBlockId
-        : getDefaultBlockMode(nextSeedSuggestions.blockChoices) === 'reference'
+        : nextBlockMode === 'reference'
           ? activeContext.referenceTrip.blockId
           : (nextSeedSuggestions.blockChoices.find(choice => choice.mode === 'existing')?.blockId ?? activeContext.referenceTrip.blockId)
     );
     setStartStopName(nextSeedSuggestions.selectedStartStopName);
     setEndStopName(nextSeedSuggestions.selectedEndStopName);
     setAbsorbShortTrailingGapIntoRecovery(false);
-  }, [activeContext.anchorTripId, activeContext.insertionPlacement, activeContext.initialStartTime, activeContext, availableDirections, initialServiceMode, serviceMode, isEditMode]);
+  }, [activeContext, availableDirections, initialServiceMode, isEditMode]);
 
   useEffect(() => {
     if (startPreset === 'manual') return;
@@ -349,9 +383,15 @@ export const AddTripModal: React.FC<Props> = ({ context, onCancel, onConfirm }) 
   }, [presetOptions, startPreset]);
 
   useEffect(() => {
-    setStartStopName(suggestions.selectedStartStopName);
-    setEndStopName(suggestions.selectedEndStopName);
-  }, [suggestions.selectedStartStopName, suggestions.selectedEndStopName]);
+    if (isEditMode || cycleLocksNorthbound) {
+      setStartStopName(suggestions.selectedStartStopName);
+      setEndStopName(suggestions.selectedEndStopName);
+      return;
+    }
+
+    setStartStopName(current => (startStopOptions.includes(current) ? current : suggestions.selectedStartStopName));
+    setEndStopName(current => (endStopOptions.includes(current) ? current : suggestions.selectedEndStopName));
+  }, [cycleLocksNorthbound, endStopOptions, isEditMode, startStopOptions, suggestions.selectedEndStopName, suggestions.selectedStartStopName]);
 
   useEffect(() => {
     if (!suggestions.impact.canAbsorbShortTrailingGap && absorbShortTrailingGapIntoRecovery) {
@@ -461,6 +501,13 @@ export const AddTripModal: React.FC<Props> = ({ context, onCancel, onConfirm }) 
       ? pendingPreviewResult.createdTripIds[0] ?? null
       : pendingPreviewResult.updatedTripId ?? null)
     : null;
+  const generatedTripSummaries = useMemo(() => {
+    if (!pendingPreviewResult || !('createdTrips' in pendingPreviewResult)) return [];
+    return pendingPreviewResult.createdTrips.slice(0, 4).map(makeGeneratedTripSummary);
+  }, [pendingPreviewResult]);
+  const generatedTripOverflow = pendingPreviewResult && 'createdTrips' in pendingPreviewResult
+    ? Math.max(0, pendingPreviewResult.createdTrips.length - generatedTripSummaries.length)
+    : 0;
 
   return (
     <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 animate-in fade-in duration-200">
@@ -531,6 +578,21 @@ export const AddTripModal: React.FC<Props> = ({ context, onCancel, onConfirm }) 
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                   <div className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Planned change</div>
                   <p className="mt-2 text-sm font-semibold leading-6 text-slate-800">{plannerSummary}</p>
+                  {generatedTripSummaries.length > 0 && (
+                    <div className="mt-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
+                      <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Will add</div>
+                      <ul className="mt-1 space-y-1 text-xs font-semibold text-slate-700">
+                        {generatedTripSummaries.map(summary => (
+                          <li key={summary}>{summary}</li>
+                        ))}
+                      </ul>
+                      {generatedTripOverflow > 0 && (
+                        <div className="mt-1 text-xs text-slate-500">
+                          +{generatedTripOverflow} more
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {!isEditMode && (
@@ -600,7 +662,7 @@ export const AddTripModal: React.FC<Props> = ({ context, onCancel, onConfirm }) 
                             from {formatTimeOrDash(primaryBlockConflict.conflictingStartTime)} to {formatTimeOrDash(primaryBlockConflict.conflictingEndTime)}.
                           </div>
                           <div className="mt-1">
-                            To avoid double-booking one bus, switch this {serviceMode === 'custom' ? 'custom trip' : 'round trip'} to a new block or pick another existing block.
+                            To avoid double-booking one bus, switch this {serviceMode === 'custom' ? 'custom pair' : 'full cycle'} to a new block or pick another existing block.
                           </div>
                         </div>
                       </div>
@@ -625,38 +687,41 @@ export const AddTripModal: React.FC<Props> = ({ context, onCancel, onConfirm }) 
                       <button
                         type="button"
                         onClick={() => setServiceMode('trip')}
+                        aria-pressed={serviceMode === 'trip'}
                         className={`rounded-xl border px-3 py-3 text-left transition-all ${
                           serviceMode === 'trip'
                             ? 'border-blue-300 bg-blue-50 shadow-sm text-blue-700'
                             : 'border-gray-200 bg-white text-gray-800 hover:bg-gray-50'
                         }`}
                       >
-                        <div className="text-sm font-bold">Single trip</div>
-                        <div className="mt-1 text-xs text-gray-500">Add one direction only at the chosen insertion point.</div>
+                        <div className="text-sm font-bold">{SERVICE_MODE_COPY.trip.label}</div>
+                        <div className="mt-1 text-xs text-gray-500">{SERVICE_MODE_COPY.trip.description}</div>
                       </button>
                       <button
                         type="button"
                         onClick={() => setServiceMode('custom')}
+                        aria-pressed={serviceMode === 'custom'}
                         className={`rounded-xl border px-3 py-3 text-left transition-all ${
                           serviceMode === 'custom'
                             ? 'border-blue-300 bg-blue-50 shadow-sm text-blue-700'
                             : 'border-gray-200 bg-white text-gray-800 hover:bg-gray-50'
                         }`}
                       >
-                        <div className="text-sm font-bold">Custom trip</div>
-                        <div className="mt-1 text-xs text-gray-500">Choose where the paired trip starts and where the return ends.</div>
+                        <div className="text-sm font-bold">{SERVICE_MODE_COPY.custom.label}</div>
+                        <div className="mt-1 text-xs text-gray-500">{SERVICE_MODE_COPY.custom.description}</div>
                       </button>
                       <button
                         type="button"
                         onClick={() => setServiceMode('cycle')}
+                        aria-pressed={serviceMode === 'cycle'}
                         className={`rounded-xl border px-3 py-3 text-left transition-all ${
                           serviceMode === 'cycle'
                             ? 'border-blue-300 bg-blue-50 shadow-sm text-blue-700'
                             : 'border-gray-200 bg-white text-gray-800 hover:bg-gray-50'
                         }`}
                       >
-                        <div className="text-sm font-bold">Round trip</div>
-                        <div className="mt-1 text-xs text-gray-500">Add the northbound trip and the linked southbound return together.</div>
+                        <div className="text-sm font-bold">{SERVICE_MODE_COPY.cycle.label}</div>
+                        <div className="mt-1 text-xs text-gray-500">{SERVICE_MODE_COPY.cycle.description}</div>
                       </button>
                     </div>
                   </div>
@@ -731,7 +796,7 @@ export const AddTripModal: React.FC<Props> = ({ context, onCancel, onConfirm }) 
                   {!isEditMode && (
                   <div>
                     <label className="block text-xs font-bold text-gray-500 uppercase mb-2">
-                      {serviceMode === 'cycle' ? 'Cycles to add' : serviceMode === 'custom' ? 'Custom trips to add' : 'Trips to add'}
+                      {SERVICE_MODE_COPY[serviceMode].countLabel}
                     </label>
                     <div className="flex items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 px-3 py-3 min-w-[180px]">
                       <input
@@ -741,7 +806,7 @@ export const AddTripModal: React.FC<Props> = ({ context, onCancel, onConfirm }) 
                         value={tripCount}
                         onChange={(e) => setTripCount(Number(e.target.value))}
                         className="flex-1 accent-blue-600"
-                        aria-label={serviceMode === 'cycle' ? 'Number of cycles to add' : serviceMode === 'custom' ? 'Number of custom trips to add' : 'Number of trips to add'}
+                        aria-label={SERVICE_MODE_COPY[serviceMode].countLabel}
                       />
                       <span className="text-2xl font-bold text-blue-600 w-8 text-center">{tripCount}</span>
                     </div>
@@ -967,7 +1032,7 @@ export const AddTripModal: React.FC<Props> = ({ context, onCancel, onConfirm }) 
 
         <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 flex flex-wrap justify-between gap-3 items-center">
           <div className="text-xs text-gray-500">
-            {suggestions.selectedStartStopName} → {suggestions.selectedEndStopName} · {(isEditMode ? activeContext.referenceTrip.direction : selectedDirection)}bound · {isEditMode ? 'editing current trip' : serviceMode === 'cycle' ? `${tripCount} full cycle${tripCount === 1 ? '' : 's'}` : serviceMode === 'custom' ? `${tripCount} custom trip${tripCount === 1 ? '' : 's'}` : `${tripCount} trip${tripCount === 1 ? '' : 's'}`} · {selectedTargetTable.routeName}
+            {suggestions.selectedStartStopName} → {suggestions.selectedEndStopName} · {(isEditMode ? activeContext.referenceTrip.direction : selectedDirection)}bound · {isEditMode ? 'editing current trip' : serviceMode === 'cycle' ? `${tripCount} full cycle${tripCount === 1 ? '' : 's'}` : serviceMode === 'custom' ? `${tripCount} custom pair${tripCount === 1 ? '' : 's'}` : `${tripCount} trip${tripCount === 1 ? '' : 's'}`} · {selectedTargetTable.routeName}
           </div>
           <div className="flex items-center gap-3">
             <button onClick={onCancel} className="px-4 py-2 text-sm font-bold text-gray-500 hover:bg-gray-100 rounded-lg transition-colors">
@@ -983,7 +1048,7 @@ export const AddTripModal: React.FC<Props> = ({ context, onCancel, onConfirm }) 
                 ? 'Resolve Block Conflict'
                 : isEditMode
                   ? 'Update Trip'
-                  : `Add ${tripCount} ${serviceMode === 'cycle' ? `Cycle${tripCount > 1 ? 's' : ''}` : serviceMode === 'custom' ? `Custom Trip${tripCount > 1 ? 's' : ''}` : `Trip${tripCount > 1 ? 's' : ''}`}`}
+                  : `Add ${tripCount} ${SERVICE_MODE_COPY[serviceMode].confirmLabel}${tripCount > 1 ? 's' : ''}`}
             </button>
           </div>
         </div>

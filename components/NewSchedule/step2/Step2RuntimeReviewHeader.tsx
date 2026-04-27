@@ -11,15 +11,15 @@ export const Step2RuntimeReviewHeader: React.FC<Step2RuntimeReviewHeaderProps> =
     viewMetric,
     onViewMetricChange,
 }) => (
-    <div className="flex justify-between items-start">
+    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
             <h2 className="text-2xl font-bold text-gray-900 tracking-tight">Runtime Analysis</h2>
             <p className="text-gray-500">
-                Review the full observed cycle runtime across the full segment chain.
+                Review the runtimes that will be used to build this schedule.
             </p>
             {hasGroupedSegmentColumns && (
                 <p className="text-xs text-gray-400 mt-1">
-                    Segment columns run left to right as the full out-and-back chain.
+                    Segment columns run left to right in bus travel order.
                 </p>
             )}
         </div>

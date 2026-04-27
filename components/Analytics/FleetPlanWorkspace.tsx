@@ -2,8 +2,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
     ArrowLeft,
     Bus,
-    ChevronDown,
-    Copy,
     Download,
     ExternalLink,
     FileSpreadsheet,
@@ -13,7 +11,6 @@ import {
     Redo2,
     RefreshCw,
     Save,
-    Trash2,
     Undo2,
     Users,
 } from 'lucide-react';
@@ -22,14 +19,14 @@ import { useUndoRedo } from '../../hooks/useUndoRedo';
 import { exportFleetPlanWorkbook } from '../../utils/fleet-plan/fleetPlanExport';
 import { cloneFleetPlanWorkbook, createEmptyFleetPlanRow, replaceFleetPlanSheet, summarizeFleetPlan } from '../../utils/fleet-plan/fleetPlanModel';
 import { saveFleetPlanWorkbook } from '../../utils/fleet-plan/fleetPlanService';
-import { FLEET_PLAN_SHEET_CONFIG_BY_KEY } from '../../utils/fleet-plan/fleetPlanConfig';
+import { FLEET_PLAN_SHEET_CONFIGS, FLEET_PLAN_SHEET_CONFIG_BY_KEY } from '../../utils/fleet-plan/fleetPlanConfig';
 import {
-    applyFleetPlanPaste,
-    getFleetPlanGridColumns,
+    delayFleetPlanRetirement,
+    getNextFleetPlanSortState,
     getNextFleetPlanCellPosition,
-    insertDuplicatedFleetPlanRow,
+    sortFleetPlanEntries,
 } from '../../utils/fleet-plan/fleetPlanEditing';
-import type { FleetPlanGridColumn } from '../../utils/fleet-plan/fleetPlanEditing';
+import type { FleetPlanGridColumn, FleetPlanSortState } from '../../utils/fleet-plan/fleetPlanEditing';
 import type { FleetPlanRow, FleetPlanSheetKey, FleetPlanWorkbook } from '../../utils/fleet-plan/types';
 import { isEditableEventTarget } from '../../utils/domUtils';
 
@@ -55,6 +52,34 @@ const toneStyles: Record<MetricCardProps['tone'], { icon: string; value: string 
     green: { icon: 'bg-emerald-50 text-emerald-600', value: 'text-gray-900' },
     violet: { icon: 'bg-violet-50 text-violet-600', value: 'text-gray-900' },
 };
+
+const BUS_TYPE_LABELS: Record<FleetPlanSheetKey, string> = {
+    'diesel-12m': '12m Diesel',
+    'small-buses': '8m & 6m',
+    'electric-12m': '12m Electric',
+};
+
+type CombinedFleetRow = { sheetKey: FleetPlanSheetKey; row: FleetPlanRow };
+type BaseFleetField = 'busType' | 'unitNumber' | 'busSize' | 'makeModel' | 'year' | 'comment' | 'electricFlag' | 'onOrder';
+
+const ALL_TIMELINE_COLUMNS = Array.from(
+    new Map(FLEET_PLAN_SHEET_CONFIGS.flatMap((config) => config.timelineColumns).map((column) => [column.key, column])).values(),
+).sort((left, right) => Number(left.key) - Number(right.key));
+
+const COMBINED_BASE_COLUMNS: Array<{ key: BaseFleetField; label: string }> = [
+    { key: 'busType', label: 'Bus Type' },
+    { key: 'unitNumber', label: 'Unit Number' },
+    { key: 'makeModel', label: 'Make/Model' },
+    { key: 'year', label: 'Year' },
+    { key: 'comment', label: 'Comment' },
+    { key: 'electricFlag', label: 'Electric' },
+    { key: 'onOrder', label: 'On Order' },
+];
+
+const COMBINED_GRID_COLUMNS: FleetPlanGridColumn[] = [
+    ...COMBINED_BASE_COLUMNS.map((column) => ({ kind: 'base' as const, key: column.key, label: column.label })),
+    ...ALL_TIMELINE_COLUMNS.map((column) => ({ kind: 'timeline' as const, key: column.key, label: column.label })),
+];
 
 const MetricCard: React.FC<MetricCardProps> = ({ icon, label, value, tone, children }) => {
     const styles = toneStyles[tone];
@@ -118,10 +143,11 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
     onSaved,
 }) => {
     const toast = useToast();
-    const [activeSheetKey, setActiveSheetKey] = useState<FleetPlanSheetKey>('diesel-12m');
     const [saving, setSaving] = useState(false);
     const [exporting, setExporting] = useState(false);
     const [pendingFocus, setPendingFocus] = useState<{ rowIndex: number; columnIndex: number } | null>(null);
+    const [retirementEditor, setRetirementEditor] = useState<{ sheetKey: FleetPlanSheetKey; rowId: string; fromYear: string } | null>(null);
+    const [sortState, setSortState] = useState<FleetPlanSortState | null>(null);
     const cellRefs = useRef<Record<string, HTMLInputElement | null>>({});
     const {
         state: draft,
@@ -135,18 +161,18 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
     const draftRef = useRef(draft);
 
     const summary = useMemo(() => summarizeFleetPlan(draft), [draft]);
-    const activeSheet = useMemo(
-        () => draft.sheets.find((sheet) => sheet.key === activeSheetKey) ?? draft.sheets[0],
-        [draft.sheets, activeSheetKey],
-    );
+    const combinedRows = useMemo<CombinedFleetRow[]>(() => draft.sheets.flatMap((sheet) => sheet.rows.map((row) => ({ sheetKey: sheet.key, row }))), [draft.sheets]);
+    const sortedRows = useMemo(() => sortFleetPlanEntries(combinedRows, sortState, (entry, sort) => {
+        if (sort.kind === 'timeline') {
+            return entry.row.timeline[sort.key] || '';
+        }
+        if (sort.key === 'busType') {
+            return BUS_TYPE_LABELS[entry.sheetKey];
+        }
+        return getBaseFieldValue(entry.row, sort.key as Exclude<BaseFleetField, 'busType'>);
+    }), [combinedRows, sortState]);
     const isDirty = JSON.stringify(draft) !== JSON.stringify(data);
-    const activeConfig = activeSheet ? FLEET_PLAN_SHEET_CONFIG_BY_KEY[activeSheet.key] : null;
-    const editableColumns = useMemo(
-        () => (activeConfig ? getFleetPlanGridColumns(activeConfig) : []),
-        [activeConfig],
-    );
-    const visibleSheets = draft.sheets.slice(0, 4);
-    const hiddenSheetCount = Math.max(0, draft.sheets.length - visibleSheets.length);
+    const editableColumns = COMBINED_GRID_COLUMNS;
     const makeModelOptions = useMemo(() => Array.from(new Set(
         draft.sheets
             .flatMap((sheet) => sheet.rows.map((row) => row.makeModel.trim()))
@@ -157,12 +183,17 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
             .flatMap((sheet) => sheet.rows.map((row) => row.year.trim()))
             .filter(Boolean),
     )).sort(), [draft.sheets]);
-    const activeSheetIssueCount = useMemo(() => {
-        if (!activeSheet) return 0;
-        return activeSheet.rows.filter((row) => !row.unitNumber.trim()).length;
-    }, [activeSheet]);
-    const makeModelListId = `fleet-plan-make-model-${activeSheet?.key ?? 'sheet'}`;
-    const yearListId = `fleet-plan-year-${activeSheet?.key ?? 'sheet'}`;
+    const activeSheetIssueCount = useMemo(() => combinedRows.filter(({ row }) => !row.unitNumber.trim()).length, [combinedRows]);
+    const makeModelListId = 'fleet-plan-make-model-combined';
+    const yearListId = 'fleet-plan-year-combined';
+    const activeRetirementRow = useMemo(() => {
+        if (!retirementEditor) return null;
+        return combinedRows.find(({ sheetKey, row }) => sheetKey === retirementEditor.sheetKey && row.id === retirementEditor.rowId) ?? null;
+    }, [combinedRows, retirementEditor]);
+    const getSortIndicator = useCallback((column: Pick<FleetPlanSortState, 'kind' | 'key'>) => {
+        if (sortState?.kind !== column.kind || sortState.key !== column.key) return '↕';
+        return sortState.direction === 'asc' ? '↑' : '↓';
+    }, [sortState]);
 
     useEffect(() => {
         draftRef.current = draft;
@@ -237,45 +268,67 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
     }, []);
 
     const handleAddRow = useCallback((focusColumnIndex = 0) => {
-        if (!activeSheet) return;
-        const nextRowIndex = activeSheet.rows.length;
-        mutateSheet(activeSheet.key, (rows) => [...rows, createEmptyFleetPlanRow(activeSheet.key)]);
+        const defaultSheetKey: FleetPlanSheetKey = 'diesel-12m';
+        const nextRowIndex = combinedRows.length;
+        setSortState(null);
+        mutateSheet(defaultSheetKey, (rows) => [...rows, createEmptyFleetPlanRow(defaultSheetKey)]);
         setPendingFocus({ rowIndex: nextRowIndex, columnIndex: focusColumnIndex });
-    }, [activeSheet, mutateSheet]);
+    }, [combinedRows.length, mutateSheet]);
 
-    const handleRemoveRow = (rowId: string) => {
-        if (!activeSheet) return;
-        mutateSheet(activeSheet.key, (rows) => rows.filter((row) => row.id !== rowId));
-    };
+    const moveRowToSheet = useCallback((fromSheetKey: FleetPlanSheetKey, rowId: string, toSheetKey: FleetPlanSheetKey) => {
+        if (fromSheetKey === toSheetKey) return;
+        updateDraft((current) => {
+            const sourceSheet = current.sheets.find((sheet) => sheet.key === fromSheetKey);
+            const targetSheet = current.sheets.find((sheet) => sheet.key === toSheetKey);
+            const row = sourceSheet?.rows.find((entry) => entry.id === rowId);
+            if (!sourceSheet || !targetSheet || !row) return current;
 
-    const handleDuplicateRow = (rowId: string) => {
-        if (!activeSheet) return;
-        const rowIndex = activeSheet.rows.findIndex((row) => row.id === rowId);
-        mutateSheet(activeSheet.key, (rows) => insertDuplicatedFleetPlanRow(rows, rowId));
-        if (rowIndex >= 0) {
-            setPendingFocus({ rowIndex: rowIndex + 1, columnIndex: 0 });
+            const targetConfig = FLEET_PLAN_SHEET_CONFIG_BY_KEY[toSheetKey];
+            const normalizedRow: FleetPlanRow = {
+                ...row,
+                electricFlag: toSheetKey === 'electric-12m' ? (row.electricFlag || 'E') : row.electricFlag || '',
+                timeline: Object.fromEntries(targetConfig.timelineColumns.map((column) => [column.key, row.timeline[column.key] || ''])),
+            };
+
+            return {
+                ...current,
+                sheets: current.sheets.map((sheet) => {
+                    if (sheet.key === fromSheetKey) return { ...sheet, rows: sheet.rows.filter((entry) => entry.id !== rowId) };
+                    if (sheet.key === toSheetKey) return { ...sheet, rows: [...sheet.rows, normalizedRow] };
+                    return sheet;
+                }),
+            };
+        });
+    }, [updateDraft]);
+
+    const handleFieldChange = (sheetKey: FleetPlanSheetKey, rowId: string, field: BaseFleetField, value: string) => {
+        if (field === 'busType') {
+            moveRowToSheet(sheetKey, rowId, value as FleetPlanSheetKey);
+            return;
         }
-        toast?.success('Row duplicated');
+        mutateSheet(sheetKey, (rows) => updateRow(rows, rowId, (row) => ({ ...row, [field]: value })));
     };
 
-    const handleFieldChange = (
-        rowId: string,
-        field: keyof Pick<FleetPlanRow, 'unitNumber' | 'busSize' | 'makeModel' | 'year' | 'comment' | 'electricFlag' | 'onOrder'>,
-        value: string,
-    ) => {
-        if (!activeSheet) return;
-        mutateSheet(activeSheet.key, (rows) => updateRow(rows, rowId, (row) => ({ ...row, [field]: value })));
-    };
-
-    const handleTimelineChange = (rowId: string, key: string, value: string) => {
-        if (!activeSheet) return;
-        mutateSheet(activeSheet.key, (rows) => updateRow(rows, rowId, (row) => ({
+    const handleTimelineChange = (sheetKey: FleetPlanSheetKey, rowId: string, key: string, value: string) => {
+        mutateSheet(sheetKey, (rows) => updateRow(rows, rowId, (row) => ({
             ...row,
             timeline: {
                 ...row.timeline,
                 [key]: value,
             },
         })));
+    };
+
+    const handleRetirementDelay = (sheetKey: FleetPlanSheetKey, rowId: string, fromYear: string, toYear: string) => {
+        const config = FLEET_PLAN_SHEET_CONFIG_BY_KEY[sheetKey];
+        mutateSheet(sheetKey, (rows) => updateRow(rows, rowId, (row) => delayFleetPlanRetirement({
+            row,
+            timelineColumns: config.timelineColumns,
+            fromYear,
+            toYear,
+        })));
+        setRetirementEditor(null);
+        toast?.success(`Retirement moved to ${toYear}`);
     };
 
     const resolveGridColumnIndex = useCallback((column: FleetPlanGridColumn): number => (
@@ -288,10 +341,10 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
         columnIndex: number,
         mode: 'horizontal' | 'vertical',
     ) => {
-        if (!activeSheet || columnIndex < 0 || editableColumns.length === 0) return;
+        if (columnIndex < 0 || editableColumns.length === 0) return;
 
         const navigation = getNextFleetPlanCellPosition({
-            rowCount: activeSheet.rows.length,
+            rowCount: sortedRows.length,
             columnCount: editableColumns.length,
             current: { rowIndex, columnIndex },
             mode,
@@ -314,7 +367,7 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
         rowIndex: number,
         columnIndex: number,
     ) => {
-        if (!activeSheet || columnIndex < 0 || editableColumns.length === 0) return;
+        if (columnIndex < 0 || editableColumns.length === 0) return;
 
         const clipboardText = event.clipboardData.getData('text/plain');
         if (!clipboardText.includes('\t') && !clipboardText.includes('\n') && !clipboardText.includes('\r')) {
@@ -322,15 +375,33 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
         }
 
         event.preventDefault();
-        mutateSheet(activeSheet.key, (rows) => applyFleetPlanPaste({
-            rows,
-            sheetKey: activeSheet.key,
-            columns: editableColumns,
-            startRowIndex: rowIndex,
-            startColumnIndex: columnIndex,
-            clipboardText,
-        }));
+        const parsedRows = clipboardText.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').filter((line) => line.length > 0).map((line) => line.split('\t'));
+        updateDraft((current) => {
+            let next = current;
+            parsedRows.forEach((values, rowOffset) => {
+                const target = sortedRows[rowIndex + rowOffset];
+                if (!target) return;
+                values.forEach((value, colOffset) => {
+                    const column = editableColumns[columnIndex + colOffset];
+                    if (!column || column.key === 'busType') return;
+                    next = replaceFleetPlanSheet(next, {
+                        ...next.sheets.find((sheet) => sheet.key === target.sheetKey)!,
+                        rows: next.sheets.find((sheet) => sheet.key === target.sheetKey)!.rows.map((row) => {
+                            if (row.id !== target.row.id) return row;
+                            if (column.kind === 'timeline') return { ...row, timeline: { ...row.timeline, [column.key]: value } };
+                            return { ...row, [column.key]: value };
+                        }),
+                    });
+                });
+            });
+            return next;
+        });
         toast?.success('Pasted grid data');
+    };
+
+    const handleSortColumn = (column: Pick<FleetPlanSortState, 'kind' | 'key'>) => {
+        setSortState((current) => getNextFleetPlanSortState(current, column));
+        setRetirementEditor(null);
     };
 
     const handleSave = async () => {
@@ -369,10 +440,6 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
             setExporting(false);
         }
     };
-
-    if (!activeSheet || !activeConfig) {
-        return null;
-    }
 
     return (
         <div className="space-y-5">
@@ -472,90 +539,16 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                 </MetricCard>
             </div>
 
-            <div className="flex flex-col gap-5 xl:flex-row">
-                <aside className="shrink-0 xl:w-72">
-                    <div className="space-y-4">
-                        <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-                            <div className="mb-3 flex items-center justify-between">
-                                <div className="flex items-center gap-2 text-sm font-bold text-gray-900">
-                                    <Grid3X3 size={18} className="text-gray-500" />
-                                    Sheets
-                                </div>
-                                <ChevronDown size={16} className="text-gray-400" />
-                            </div>
-                            <div className="space-y-2">
-                                {visibleSheets.map((sheet) => {
-                                    const isActive = sheet.key === activeSheet.key;
-                                    return (
-                                        <button
-                                            key={sheet.key}
-                                            onClick={() => setActiveSheetKey(sheet.key)}
-                                            className={`flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left text-sm font-semibold transition-all ${
-                                                isActive
-                                                    ? 'border-brand-blue bg-blue-50 text-brand-blue'
-                                                    : 'border-transparent bg-white text-gray-700 hover:bg-gray-50'
-                                            }`}
-                                        >
-                                            <Grid3X3 size={18} />
-                                            <span className="truncate">{sheet.name}</span>
-                                        </button>
-                                    );
-                                })}
-                            </div>
-                            {hiddenSheetCount > 0 ? (
-                                <button className="mt-3 text-sm font-medium text-gray-500 hover:text-gray-700">
-                                    + {hiddenSheetCount} more sheets
-                                </button>
-                            ) : null}
-                        </div>
-
-                        <div className="rounded-2xl border border-cyan-200 bg-cyan-50 p-4">
-                            <div className="flex items-start gap-3">
-                                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-cyan-500 text-white">
-                                    <Grid3X3 size={20} />
-                                </div>
-                                <div>
-                                    <div className="text-sm font-bold text-cyan-800">Spreadsheet mode</div>
-                                    <p className="mt-2 text-sm leading-relaxed text-gray-600">
-                                        Work in a familiar grid. Tab, Enter, paste, and undo/redo all preserve the workbook structure.
-                                    </p>
-                                    <button className="mt-3 inline-flex items-center gap-1 text-sm font-semibold text-brand-blue hover:text-blue-700">
-                                        Learn more <ExternalLink size={13} />
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className="rounded-2xl border border-violet-200 bg-violet-50 p-4">
-                            <div className="flex items-start gap-3">
-                                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-violet-600 text-white">
-                                    <Users size={20} />
-                                </div>
-                                <div>
-                                    <div className="text-sm font-bold text-violet-800">V1 rules</div>
-                                    <p className="mt-2 text-sm leading-relaxed text-gray-600">
-                                        {activeSheetIssueCount > 0
-                                            ? `${activeSheetIssueCount} row${activeSheetIssueCount === 1 ? '' : 's'} need a unit number.`
-                                            : 'Validation rules are active for this sheet. No issue cells found.'}
-                                    </p>
-                                    <button className="mt-3 inline-flex items-center gap-1 text-sm font-semibold text-violet-700 hover:text-violet-900">
-                                        View rules <ExternalLink size={13} />
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </aside>
-
+            <div>
                 <section className="min-w-0 flex-1 space-y-4">
                     <div className="rounded-2xl border border-gray-200 bg-white shadow-sm">
                         <div className="flex flex-col gap-3 border-b border-gray-200 px-6 py-5 md:flex-row md:items-center md:justify-between">
                             <div>
                                 <h3 className="text-xl font-extrabold text-gray-950">
-                                    Editing sheet <span className="ml-2 text-brand-blue">{activeSheet.name}</span>
+                                    Editing sheet <span className="ml-2 text-brand-blue">Fleet Plan</span>
                                 </h3>
                                 <p className="mt-1 text-sm text-gray-500">
-                                    Edit planner-owned rows. Footer totals and Excel formatting are rebuilt on export.
+                                    All bus types are in one grid. Click a RETIRE cell to delay retirement.
                                 </p>
                             </div>
                             <button
@@ -567,6 +560,11 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                             </button>
                         </div>
 
+                        <datalist id="fleet-plan-bus-types">
+                            {Object.values(BUS_TYPE_LABELS).map((option) => (
+                                <option key={option} value={option} />
+                            ))}
+                        </datalist>
                         <datalist id={makeModelListId}>
                             {makeModelOptions.map((option) => (
                                 <option key={option} value={option} />
@@ -582,57 +580,50 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                                     <table className="min-w-full border-separate border-spacing-0">
                                         <thead>
                                             <tr className="bg-gray-50">
-                                                <th className="sticky top-0 z-10 w-36 border-b border-r border-gray-200 bg-gray-50 px-3 py-3 text-left text-xs font-bold text-gray-500">
-                                                    Actions
-                                                </th>
                                                 <th className="sticky top-0 z-10 w-16 border-b border-r border-gray-200 bg-gray-50 px-3 py-3 text-right text-xs font-bold text-gray-500">
                                                     Row
                                                 </th>
-                                                {activeConfig.baseColumns.map((column) => (
+                                                {COMBINED_BASE_COLUMNS.map((column) => (
                                                     <th
                                                         key={column.key}
                                                         className="sticky top-0 z-10 border-b border-r border-gray-200 bg-gray-50 px-3 py-3 text-left text-xs font-bold text-gray-700"
                                                     >
-                                                        {column.label}
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleSortColumn({ kind: 'base', key: column.key })}
+                                                            className="flex w-full items-center justify-between gap-2 text-left font-bold hover:text-brand-blue"
+                                                            title="Click to sort ascending, descending, then original order"
+                                                        >
+                                                            <span>{column.label}</span>
+                                                            <span className="text-gray-400">{getSortIndicator({ kind: 'base', key: column.key })}</span>
+                                                        </button>
                                                     </th>
                                                 ))}
-                                                {activeConfig.timelineColumns.map((column) => (
+                                                {ALL_TIMELINE_COLUMNS.map((column) => (
                                                     <th
                                                         key={column.key}
                                                         className="sticky top-0 z-10 min-w-[86px] border-b border-r border-gray-200 bg-gray-50 px-3 py-3 text-center text-xs font-bold text-gray-700"
                                                     >
-                                                        {column.label}
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleSortColumn({ kind: 'timeline', key: column.key })}
+                                                            className="flex w-full items-center justify-center gap-2 font-bold hover:text-brand-blue"
+                                                            title="Click to sort ascending, descending, then original order"
+                                                        >
+                                                            <span>{column.label}</span>
+                                                            <span className="text-gray-400">{getSortIndicator({ kind: 'timeline', key: column.key })}</span>
+                                                        </button>
                                                     </th>
                                                 ))}
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            {activeSheet.rows.map((row, rowIndex) => (
+                                            {sortedRows.map(({ sheetKey, row }, rowIndex) => (
                                                 <tr key={row.id} className="bg-white hover:bg-blue-50/30">
-                                                    <td className="border-b border-r border-gray-200 px-2 py-2 align-middle">
-                                                        <div className="flex items-center gap-1">
-                                                            <button
-                                                                onClick={() => handleDuplicateRow(row.id)}
-                                                                aria-label={`Duplicate row ${rowIndex + 1}`}
-                                                                className="inline-flex items-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-2 py-1.5 text-[11px] font-semibold text-brand-blue hover:bg-blue-100"
-                                                            >
-                                                                <Copy size={13} />
-                                                                Duplicate
-                                                            </button>
-                                                            <button
-                                                                onClick={() => handleRemoveRow(row.id)}
-                                                                aria-label={`Remove row ${rowIndex + 1}`}
-                                                                className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2 py-1.5 text-[11px] font-semibold text-red-600 hover:bg-red-100"
-                                                            >
-                                                                <Trash2 size={13} />
-                                                                Remove
-                                                            </button>
-                                                        </div>
-                                                    </td>
                                                     <td className="border-b border-r border-gray-200 px-3 py-2 text-right text-sm font-semibold text-gray-700 align-middle">
                                                         {rowIndex + 1}
                                                     </td>
-                                                    {activeConfig.baseColumns.map((column) => {
+                                                    {COMBINED_BASE_COLUMNS.map((column) => {
                                                         const columnIndex = resolveGridColumnIndex({
                                                             kind: 'base',
                                                             key: column.key,
@@ -646,9 +637,14 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                                                                             cellRefs.current[`${rowIndex}:${columnIndex}`] = input;
                                                                         }
                                                                     }}
-                                                                    value={getBaseFieldValue(row, column.key)}
-                                                                    onChange={(event) => handleFieldChange(row.id, column.key, event.target.value)}
-                                                                    list={column.key === 'makeModel' ? makeModelListId : column.key === 'year' ? yearListId : undefined}
+                                                                    value={column.key === 'busType' ? BUS_TYPE_LABELS[sheetKey] : getBaseFieldValue(row, column.key as Exclude<BaseFleetField, 'busType'>)}
+                                                                    onChange={(event) => {
+                                                                        const nextValue = column.key === 'busType'
+                                                                            ? (Object.entries(BUS_TYPE_LABELS).find(([, label]) => label === event.target.value)?.[0] ?? event.target.value)
+                                                                            : event.target.value;
+                                                                        handleFieldChange(sheetKey, row.id, column.key, nextValue);
+                                                                    }}
+                                                                    list={column.key === 'busType' ? 'fleet-plan-bus-types' : column.key === 'makeModel' ? makeModelListId : column.key === 'year' ? yearListId : undefined}
                                                                     onKeyDown={(event) => {
                                                                         if (event.key === 'Tab') {
                                                                             handleKeyboardNavigation(event, rowIndex, columnIndex, 'horizontal');
@@ -657,13 +653,15 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                                                                         }
                                                                     }}
                                                                     onPaste={(event) => handleCellPaste(event, rowIndex, columnIndex)}
-                                                                    className="h-8 w-full min-w-[74px] rounded border border-gray-200 bg-white px-2 text-sm text-gray-800 shadow-inner shadow-gray-100/60 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-blue-100"
+                                                                    className={`h-8 w-full rounded border border-gray-200 bg-white px-2 text-sm text-gray-800 shadow-inner shadow-gray-100/60 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-blue-100 ${
+                                                                        column.key === 'busType' ? 'min-w-[150px]' : 'min-w-[74px]'
+                                                                    }`}
                                                                 />
                                                             </td>
                                                         );
                                                     })}
 
-                                                    {activeConfig.timelineColumns.map((column) => {
+                                                    {ALL_TIMELINE_COLUMNS.map((column) => {
                                                         const columnIndex = resolveGridColumnIndex({
                                                             kind: 'timeline',
                                                             key: column.key,
@@ -678,7 +676,7 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                                                                         }
                                                                     }}
                                                                     value={row.timeline[column.key] || ''}
-                                                                    onChange={(event) => handleTimelineChange(row.id, column.key, event.target.value)}
+                                                                    onChange={(event) => handleTimelineChange(sheetKey, row.id, column.key, event.target.value)}
                                                                     onKeyDown={(event) => {
                                                                         if (event.key === 'Tab') {
                                                                             handleKeyboardNavigation(event, rowIndex, columnIndex, 'horizontal');
@@ -687,6 +685,11 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                                                                         }
                                                                     }}
                                                                     onPaste={(event) => handleCellPaste(event, rowIndex, columnIndex)}
+                                                                    onFocus={() => {
+                                                                        if ((row.timeline[column.key] || '').trim().toUpperCase() === 'RETIRE') {
+                                                                            setRetirementEditor({ sheetKey, rowId: row.id, fromYear: column.key });
+                                                                        }
+                                                                    }}
                                                                     className={`h-8 w-full rounded px-2 text-center text-xs shadow-inner shadow-gray-100/60 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-blue-100 ${getTimelineInputClass(row.timeline[column.key] || '')}`}
                                                                 />
                                                             </td>
@@ -695,10 +698,10 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                                                 </tr>
                                             ))}
 
-                                            {activeSheet.rows.length === 0 ? (
+                                            {sortedRows.length === 0 ? (
                                                 <tr>
                                                     <td
-                                                        colSpan={activeConfig.baseColumns.length + activeConfig.timelineColumns.length + 2}
+                                                        colSpan={COMBINED_BASE_COLUMNS.length + ALL_TIMELINE_COLUMNS.length + 1}
                                                         className="px-4 py-12 text-center text-sm text-gray-500"
                                                     >
                                                         No fleet rows on this sheet yet. Add a row to start building the plan.
@@ -711,6 +714,45 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                             </div>
                         </section>
                     </div>
+            {retirementEditor && activeRetirementRow ? (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/30 p-4">
+                    <div className="w-full max-w-sm rounded-2xl border border-gray-200 bg-white p-5 shadow-xl">
+                        <div className="flex items-start justify-between gap-4">
+                            <div>
+                                <h4 className="text-base font-extrabold text-gray-950">Move retirement</h4>
+                                <p className="mt-1 text-sm text-gray-500">
+                                    Bus {activeRetirementRow.row.unitNumber || 'this bus'} currently retires in {retirementEditor.fromYear}.
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setRetirementEditor(null)}
+                                className="rounded-full px-2 py-1 text-lg font-bold text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+                                aria-label="Close retirement editor"
+                            >
+                                ×
+                            </button>
+                        </div>
+                        <label className="mt-4 block text-sm font-bold text-gray-700">New retirement year</label>
+                        <select
+                            className="mt-2 h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-800 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-blue-100"
+                            defaultValue=""
+                            onChange={(event) => {
+                                if (event.target.value) {
+                                    handleRetirementDelay(retirementEditor.sheetKey, retirementEditor.rowId, retirementEditor.fromYear, event.target.value);
+                                }
+                            }}
+                        >
+                            <option value="" disabled>Choose year</option>
+                            {FLEET_PLAN_SHEET_CONFIG_BY_KEY[retirementEditor.sheetKey].timelineColumns
+                                .filter((option) => Number(option.key) > Number(retirementEditor.fromYear))
+                                .map((option) => (
+                                    <option key={option.key} value={option.key}>{option.label}</option>
+                                ))}
+                        </select>
+                    </div>
                 </div>
+            ) : null}
+        </div>
     );
 };

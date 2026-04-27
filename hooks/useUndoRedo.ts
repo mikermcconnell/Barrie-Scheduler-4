@@ -1,7 +1,13 @@
 import { useState, useCallback } from 'react';
 
-interface UseUndoRedoOptions {
+interface UseUndoRedoOptions<T> {
     maxHistory?: number;
+    /**
+     * Defaults to JSON equality for existing callers. Set to false for large
+     * schedules where callers already pass a new reference only for real edits.
+     */
+    deepCompare?: boolean;
+    equality?: (current: T, next: T) => boolean;
 }
 
 export interface UndoRedoState<T> {
@@ -10,8 +16,8 @@ export interface UndoRedoState<T> {
     future: T[];
 }
 
-export function useUndoRedo<T>(initialState: T, options: UseUndoRedoOptions = {}) {
-    const { maxHistory = 50 } = options;
+export function useUndoRedo<T>(initialState: T, options: UseUndoRedoOptions<T> = {}) {
+    const { maxHistory = 50, deepCompare = true, equality } = options;
 
     const [state, setState] = useState<UndoRedoState<T>>({
         past: [],
@@ -59,11 +65,18 @@ export function useUndoRedo<T>(initialState: T, options: UseUndoRedoOptions = {}
                 return currentState;
             }
 
-            // Deep equality check using JSON stringify (sufficient for serializable state)
-            const currentJson = JSON.stringify(currentState.present);
-            const newJson = JSON.stringify(newPresent);
-            if (currentJson === newJson) {
-                return currentState;
+            if (equality) {
+                if (equality(currentState.present, newPresent)) {
+                    return currentState;
+                }
+            } else if (deepCompare) {
+                // Deep equality check using JSON stringify (sufficient for serializable state).
+                // Large schedule editors can disable this to avoid blocking the UI on every edit.
+                const currentJson = JSON.stringify(currentState.present);
+                const newJson = JSON.stringify(newPresent);
+                if (currentJson === newJson) {
+                    return currentState;
+                }
             }
 
             const newPast = [...currentState.past, currentState.present];
@@ -77,7 +90,7 @@ export function useUndoRedo<T>(initialState: T, options: UseUndoRedoOptions = {}
                 future: [] // Clear future on new change
             };
         });
-    }, [maxHistory]);
+    }, [deepCompare, equality, maxHistory]);
 
     // Reset history (e.g., when loading a new file)
     const reset = useCallback((newInitialState: T) => {

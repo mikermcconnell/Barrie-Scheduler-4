@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
     applyFleetPlanPaste,
+    compareFleetPlanSortValues,
     duplicateFleetPlanRow,
+    delayFleetPlanRetirement,
     getFleetPlanGridColumns,
     getNextFleetPlanCellPosition,
+    getNextFleetPlanSortState,
     insertDuplicatedFleetPlanRow,
+    sortFleetPlanEntries,
 } from '../utils/fleet-plan/fleetPlanEditing';
 import { FLEET_PLAN_SHEET_CONFIG_BY_KEY } from '../utils/fleet-plan/fleetPlanConfig';
 import { createEmptyFleetPlanRow } from '../utils/fleet-plan/fleetPlanModel';
@@ -68,6 +72,71 @@ describe('fleetPlan editing helpers', () => {
         expect(nextRows[1]?.unitNumber).toBe('2102');
         expect(nextRows[1]?.makeModel).toBe('Nova Bus');
         expect(nextRows[1]?.year).toBe('2019');
+    });
+
+
+
+    it('delays a retirement by filling skipped years with the unit number', () => {
+        const config = FLEET_PLAN_SHEET_CONFIG_BY_KEY['diesel-12m'];
+        const row = {
+            ...createEmptyFleetPlanRow('diesel-12m'),
+            unitNumber: '1101',
+            timeline: {
+                '2025': '1101',
+                '2026': 'RETIRE',
+                '2027': '',
+                '2028': '',
+            },
+        };
+
+        const nextRow = delayFleetPlanRetirement({
+            row,
+            timelineColumns: config.timelineColumns,
+            fromYear: '2026',
+            toYear: '2028',
+        });
+
+        expect(nextRow.timeline['2026']).toBe('1101');
+        expect(nextRow.timeline['2027']).toBe('1101');
+        expect(nextRow.timeline['2028']).toBe('RETIRE');
+    });
+
+    it('cycles column sorting from ascending to descending to original order', () => {
+        const column = { kind: 'base' as const, key: 'unitNumber' };
+
+        const ascending = getNextFleetPlanSortState(null, column);
+        expect(ascending).toEqual({ ...column, direction: 'asc' });
+
+        const descending = getNextFleetPlanSortState(ascending, column);
+        expect(descending).toEqual({ ...column, direction: 'desc' });
+
+        const original = getNextFleetPlanSortState(descending, column);
+        expect(original).toBeNull();
+    });
+
+    it('sorts fleet entries numerically and preserves original order when sorting is cleared', () => {
+        const entries = [
+            { label: 'row-a', value: '1102' },
+            { label: 'row-b', value: '900' },
+            { label: 'row-c', value: '1101' },
+        ];
+
+        const ascending = sortFleetPlanEntries(
+            entries,
+            { kind: 'base', key: 'unitNumber', direction: 'asc' },
+            (entry) => entry.value,
+        );
+        expect(ascending.map((entry) => entry.label)).toEqual(['row-b', 'row-c', 'row-a']);
+
+        const descending = sortFleetPlanEntries(
+            entries,
+            { kind: 'base', key: 'unitNumber', direction: 'desc' },
+            (entry) => entry.value,
+        );
+        expect(descending.map((entry) => entry.label)).toEqual(['row-a', 'row-c', 'row-b']);
+
+        expect(sortFleetPlanEntries(entries, null, (entry) => entry.value)).toBe(entries);
+        expect(compareFleetPlanSortValues('', '1101')).toBeGreaterThan(0);
     });
 
     it('wraps tab navigation and appends a row when leaving the last cell', () => {
