@@ -224,6 +224,7 @@ interface PublicTimetableConfigDocument {
   promoTitle: string;
   promoText: string;
   contacts: string[];
+  mapImageScalePercent: number; // front brochure map image scale, 50-150
   updatedAt: Timestamp;
   updatedBy: string;       // userId
   version: number;

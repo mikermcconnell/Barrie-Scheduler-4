@@ -27,6 +27,7 @@ export interface PublicTimetableConfigDocument {
     promoTitle: string;
     promoText: string;
     contacts: string[];
+    mapImageScalePercent: number;
     updatedAt: string;
     updatedBy: string;
     version: number;
@@ -75,6 +76,12 @@ function sanitizeFareRows(rows: unknown): PublicTimetableFareRow[] {
     return cleaned.length > 0 ? cleaned : buildDefaultPublicTimetableConfig().fareRows;
 }
 
+function sanitizeMapImageScalePercent(value: unknown, fallback = 100): number {
+    const numericValue = typeof value === 'number' ? value : Number(value);
+    if (!Number.isFinite(numericValue)) return fallback;
+    return Math.min(150, Math.max(50, Math.round(numericValue)));
+}
+
 export function buildDefaultPublicTimetableConfig(): PublicTimetableConfigDocument {
     return {
         disclaimer: PUBLIC_TIMETABLE_DISCLAIMER,
@@ -85,6 +92,7 @@ export function buildDefaultPublicTimetableConfig(): PublicTimetableConfigDocume
         promoTitle: PUBLIC_TIMETABLE_PROMO_TITLE,
         promoText: PUBLIC_TIMETABLE_PROMO_TEXT,
         contacts: [...PUBLIC_TIMETABLE_CONTACTS],
+        mapImageScalePercent: 100,
         updatedAt: new Date().toISOString(),
         updatedBy: 'system',
         version: 0,
@@ -141,6 +149,7 @@ export async function getPublicTimetableConfig(teamId: string): Promise<PublicTi
             promoTitle: typeof data.promoTitle === 'string' ? data.promoTitle : defaults.promoTitle,
             promoText: typeof data.promoText === 'string' ? data.promoText : defaults.promoText,
             contacts: sanitizeStringArray(data.contacts, defaults.contacts),
+            mapImageScalePercent: sanitizeMapImageScalePercent(data.mapImageScalePercent, defaults.mapImageScalePercent),
             updatedAt: timestampToISO(data.updatedAt),
             updatedBy: data.updatedBy || '',
             version: data.version || 1,
@@ -158,7 +167,7 @@ export async function getEffectivePublicTimetableConfig(teamId: string): Promise
 
 export async function savePublicTimetableConfig(
     teamId: string,
-    config: Pick<PublicTimetableConfigDocument, 'disclaimer' | 'fareEffectiveDate' | 'fareRows' | 'fareNote' | 'legendItems' | 'promoTitle' | 'promoText' | 'contacts'>,
+    config: Pick<PublicTimetableConfigDocument, 'disclaimer' | 'fareEffectiveDate' | 'fareRows' | 'fareNote' | 'legendItems' | 'promoTitle' | 'promoText' | 'contacts' | 'mapImageScalePercent'>,
     userId: string
 ): Promise<void> {
     try {
@@ -173,6 +182,7 @@ export async function savePublicTimetableConfig(
             promoTitle: config.promoTitle,
             promoText: config.promoText,
             contacts: config.contacts,
+            mapImageScalePercent: sanitizeMapImageScalePercent(config.mapImageScalePercent),
             updatedAt: serverTimestamp(),
             updatedBy: userId,
             version: nextVersion,

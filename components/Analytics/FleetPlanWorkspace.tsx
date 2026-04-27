@@ -22,11 +22,13 @@ import { saveFleetPlanWorkbook } from '../../utils/fleet-plan/fleetPlanService';
 import { FLEET_PLAN_SHEET_CONFIGS, FLEET_PLAN_SHEET_CONFIG_BY_KEY } from '../../utils/fleet-plan/fleetPlanConfig';
 import {
     delayFleetPlanRetirement,
+    getFleetPlanLifecycle,
     getNextFleetPlanSortState,
     getNextFleetPlanCellPosition,
+    moveFleetPlanLifecycleBoundary,
     sortFleetPlanEntries,
 } from '../../utils/fleet-plan/fleetPlanEditing';
-import type { FleetPlanGridColumn, FleetPlanSortState } from '../../utils/fleet-plan/fleetPlanEditing';
+import type { FleetPlanGridColumn, FleetPlanLifecycle, FleetPlanSortState } from '../../utils/fleet-plan/fleetPlanEditing';
 import type { FleetPlanRow, FleetPlanSheetKey, FleetPlanWorkbook } from '../../utils/fleet-plan/types';
 import { isEditableEventTarget } from '../../utils/domUtils';
 
@@ -61,6 +63,8 @@ const BUS_TYPE_LABELS: Record<FleetPlanSheetKey, string> = {
 
 type CombinedFleetRow = { sheetKey: FleetPlanSheetKey; row: FleetPlanRow };
 type BaseFleetField = 'busType' | 'unitNumber' | 'busSize' | 'makeModel' | 'year' | 'comment' | 'electricFlag' | 'onOrder';
+type FleetStatusFilter = 'all' | 'in-service' | 'retiring-this-year' | 'purchasing-this-year' | 'on-order' | 'future' | 'overdue' | 'missing-info';
+type FleetBusTypeFilter = 'all' | FleetPlanSheetKey;
 
 const ALL_TIMELINE_COLUMNS = Array.from(
     new Map(FLEET_PLAN_SHEET_CONFIGS.flatMap((config) => config.timelineColumns).map((column) => [column.key, column])).values(),
@@ -79,6 +83,24 @@ const COMBINED_BASE_COLUMNS: Array<{ key: BaseFleetField; label: string }> = [
 const COMBINED_GRID_COLUMNS: FleetPlanGridColumn[] = [
     ...COMBINED_BASE_COLUMNS.map((column) => ({ kind: 'base' as const, key: column.key, label: column.label })),
     ...ALL_TIMELINE_COLUMNS.map((column) => ({ kind: 'timeline' as const, key: column.key, label: column.label })),
+];
+
+const STATUS_FILTERS: Array<{ key: FleetStatusFilter; label: string }> = [
+    { key: 'all', label: 'All' },
+    { key: 'in-service', label: 'In Service' },
+    { key: 'retiring-this-year', label: 'Retiring This Year' },
+    { key: 'purchasing-this-year', label: 'Purchasing This Year' },
+    { key: 'on-order', label: 'On Order' },
+    { key: 'future', label: 'Future' },
+    { key: 'overdue', label: 'Overdue' },
+    { key: 'missing-info', label: 'Missing Info' },
+];
+
+const BUS_TYPE_FILTERS: Array<{ key: FleetBusTypeFilter; label: string }> = [
+    { key: 'all', label: 'All Types' },
+    { key: 'diesel-12m', label: 'Diesel 12m' },
+    { key: 'electric-12m', label: 'Electric 12m' },
+    { key: 'small-buses', label: 'Small Buses' },
 ];
 
 const MetricCard: React.FC<MetricCardProps> = ({ icon, label, value, tone, children }) => {
@@ -134,6 +156,48 @@ function getTimelineInputClass(value: string): string {
     return 'border-gray-200 bg-white text-gray-800';
 }
 
+function getFleetRowDisplayName(row: FleetPlanRow): string {
+    return row.unitNumber.trim() || row.makeModel.trim() || 'Unnamed bus';
+}
+
+function getYearIndex(years: string[], year: string | null): number {
+    if (!year) return -1;
+    return years.findIndex((entry) => entry === year);
+}
+
+function getTimelineStatusValue(row: FleetPlanRow, year: string): string {
+    return (row.timeline[year] || '').trim().toUpperCase();
+}
+
+function matchesFleetStatusFilter(
+    entry: CombinedFleetRow,
+    lifecycle: FleetPlanLifecycle,
+    filter: FleetStatusFilter,
+    currentYear: number,
+): boolean {
+    if (filter === 'all') return true;
+    if (filter === 'in-service') return lifecycle.isInService;
+    if (filter === 'retiring-this-year') return lifecycle.retireYear === String(currentYear);
+    if (filter === 'purchasing-this-year') return lifecycle.purchaseYears.includes(String(currentYear));
+    if (filter === 'on-order') return Boolean(entry.row.onOrder?.trim());
+    if (filter === 'future') return lifecycle.isFuture || lifecycle.purchaseYears.some((year) => Number(year) > currentYear);
+    if (filter === 'overdue') return lifecycle.isOverdueRetirement;
+    return lifecycle.hasMissingInfo;
+}
+
+function countMatchingRows(
+    rows: CombinedFleetRow[],
+    statusFilter: FleetStatusFilter,
+    busTypeFilter: FleetBusTypeFilter,
+    currentYear: number,
+): number {
+    return rows.filter((entry) => {
+        if (busTypeFilter !== 'all' && entry.sheetKey !== busTypeFilter) return false;
+        const lifecycle = getFleetPlanLifecycle(entry.row, FLEET_PLAN_SHEET_CONFIG_BY_KEY[entry.sheetKey].timelineColumns, currentYear);
+        return matchesFleetStatusFilter(entry, lifecycle, statusFilter, currentYear);
+    }).length;
+}
+
 export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
     data,
     teamId,
@@ -148,6 +212,8 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
     const [pendingFocus, setPendingFocus] = useState<{ rowIndex: number; columnIndex: number } | null>(null);
     const [retirementEditor, setRetirementEditor] = useState<{ sheetKey: FleetPlanSheetKey; rowId: string; fromYear: string } | null>(null);
     const [sortState, setSortState] = useState<FleetPlanSortState | null>(null);
+    const [statusFilter, setStatusFilter] = useState<FleetStatusFilter>('all');
+    const [busTypeFilter, setBusTypeFilter] = useState<FleetBusTypeFilter>('all');
     const cellRefs = useRef<Record<string, HTMLInputElement | null>>({});
     const {
         state: draft,
@@ -161,6 +227,8 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
     const draftRef = useRef(draft);
 
     const summary = useMemo(() => summarizeFleetPlan(draft), [draft]);
+    const currentYear = new Date().getFullYear();
+    const currentYearLabel = String(currentYear);
     const combinedRows = useMemo<CombinedFleetRow[]>(() => draft.sheets.flatMap((sheet) => sheet.rows.map((row) => ({ sheetKey: sheet.key, row }))), [draft.sheets]);
     const sortedRows = useMemo(() => sortFleetPlanEntries(combinedRows, sortState, (entry, sort) => {
         if (sort.kind === 'timeline') {
@@ -171,6 +239,19 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
         }
         return getBaseFieldValue(entry.row, sort.key as Exclude<BaseFleetField, 'busType'>);
     }), [combinedRows, sortState]);
+    const filteredRows = useMemo(() => sortedRows.filter((entry) => {
+        if (busTypeFilter !== 'all' && entry.sheetKey !== busTypeFilter) return false;
+        const lifecycle = getFleetPlanLifecycle(entry.row, FLEET_PLAN_SHEET_CONFIG_BY_KEY[entry.sheetKey].timelineColumns, currentYear);
+        return matchesFleetStatusFilter(entry, lifecycle, statusFilter, currentYear);
+    }), [busTypeFilter, currentYear, sortedRows, statusFilter]);
+    const thisYearRetirements = useMemo(() => combinedRows.filter((entry) => {
+        const lifecycle = getFleetPlanLifecycle(entry.row, FLEET_PLAN_SHEET_CONFIG_BY_KEY[entry.sheetKey].timelineColumns, currentYear);
+        return lifecycle.retireYear === currentYearLabel;
+    }), [combinedRows, currentYear, currentYearLabel]);
+    const thisYearPurchases = useMemo(() => combinedRows.filter((entry) => {
+        const lifecycle = getFleetPlanLifecycle(entry.row, FLEET_PLAN_SHEET_CONFIG_BY_KEY[entry.sheetKey].timelineColumns, currentYear);
+        return lifecycle.purchaseYears.includes(currentYearLabel);
+    }), [combinedRows, currentYear, currentYearLabel]);
     const isDirty = JSON.stringify(draft) !== JSON.stringify(data);
     const editableColumns = COMBINED_GRID_COLUMNS;
     const makeModelOptions = useMemo(() => Array.from(new Set(
@@ -331,6 +412,29 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
         toast?.success(`Retirement moved to ${toYear}`);
     };
 
+    const handleLifecycleBoundaryMove = (
+        sheetKey: FleetPlanSheetKey,
+        rowId: string,
+        boundary: 'start' | 'retire',
+        toYear: string,
+    ) => {
+        const config = FLEET_PLAN_SHEET_CONFIG_BY_KEY[sheetKey];
+        let changed = false;
+        mutateSheet(sheetKey, (rows) => updateRow(rows, rowId, (row) => {
+            const nextRow = moveFleetPlanLifecycleBoundary({
+                row,
+                timelineColumns: config.timelineColumns,
+                boundary,
+                toYear,
+            });
+            changed = nextRow !== row;
+            return nextRow;
+        }));
+        if (!changed) {
+            toast?.info('Timeline unchanged', boundary === 'start' ? 'In-service year cannot be after retirement.' : 'Retirement cannot be before in-service year.');
+        }
+    };
+
     const resolveGridColumnIndex = useCallback((column: FleetPlanGridColumn): number => (
         editableColumns.findIndex((gridColumn) => gridColumn.kind === column.kind && gridColumn.key === column.key)
     ), [editableColumns]);
@@ -344,7 +448,7 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
         if (columnIndex < 0 || editableColumns.length === 0) return;
 
         const navigation = getNextFleetPlanCellPosition({
-            rowCount: sortedRows.length,
+            rowCount: filteredRows.length,
             columnCount: editableColumns.length,
             current: { rowIndex, columnIndex },
             mode,
@@ -379,7 +483,7 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
         updateDraft((current) => {
             let next = current;
             parsedRows.forEach((values, rowOffset) => {
-                const target = sortedRows[rowIndex + rowOffset];
+                const target = filteredRows[rowIndex + rowOffset];
                 if (!target) return;
                 values.forEach((value, colOffset) => {
                     const column = editableColumns[columnIndex + colOffset];
@@ -539,16 +643,257 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                 </MetricCard>
             </div>
 
+            <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+                <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                    <div>
+                        <h3 className="text-xl font-extrabold text-gray-950">This year snapshot</h3>
+                        <p className="mt-1 text-sm text-gray-500">
+                            {currentYearLabel} retirements and purchases pulled from the fleet timeline.
+                        </p>
+                    </div>
+                    <div className="text-sm font-bold text-brand-blue">
+                        {thisYearRetirements.length} retiring · {thisYearPurchases.length} purchasing
+                    </div>
+                </div>
+                <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                    <div className="rounded-xl border border-red-100 bg-red-50/60 p-4">
+                        <div className="text-sm font-extrabold text-red-700">Retiring in {currentYearLabel}</div>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                            {thisYearRetirements.length > 0 ? thisYearRetirements.map(({ sheetKey, row }) => (
+                                <span key={`${sheetKey}-${row.id}`} className="rounded-full bg-white px-3 py-1 text-xs font-bold text-red-700 shadow-sm">
+                                    {getFleetRowDisplayName(row)}
+                                </span>
+                            )) : <span className="text-sm text-red-700/70">No retirements marked this year.</span>}
+                        </div>
+                    </div>
+                    <div className="rounded-xl border border-emerald-100 bg-emerald-50/70 p-4">
+                        <div className="text-sm font-extrabold text-emerald-700">Purchasing in {currentYearLabel}</div>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                            {thisYearPurchases.length > 0 ? thisYearPurchases.map(({ sheetKey, row }) => (
+                                <span key={`${sheetKey}-${row.id}`} className="rounded-full bg-white px-3 py-1 text-xs font-bold text-emerald-700 shadow-sm">
+                                    {getFleetRowDisplayName(row)}
+                                </span>
+                            )) : <span className="text-sm text-emerald-700/70">No purchases marked this year.</span>}
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section className="rounded-2xl border border-gray-200 bg-white shadow-sm">
+                <div className="border-b border-gray-200 px-6 py-5">
+                    <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+                        <div>
+                            <h3 className="text-xl font-extrabold text-gray-950">Fleet timeline</h3>
+                            <p className="mt-1 text-sm text-gray-500">
+                                Drag the in-service and retire controls to update the plan immediately. Retirements are exported as red RETIRE cells.
+                            </p>
+                        </div>
+                        <button
+                            onClick={() => handleAddRow()}
+                            className="inline-flex items-center justify-center gap-2 rounded-lg border border-blue-200 bg-white px-4 py-2 text-sm font-bold text-brand-blue shadow-sm hover:bg-blue-50"
+                        >
+                            Add row
+                            <Plus size={16} />
+                        </button>
+                    </div>
+
+                    <div className="mt-4 space-y-3">
+                        <div className="flex flex-wrap gap-2">
+                            {STATUS_FILTERS.map((filter) => {
+                                const label = filter.key === 'retiring-this-year'
+                                    ? `Retiring ${currentYearLabel}`
+                                    : filter.key === 'purchasing-this-year'
+                                        ? `Purchasing ${currentYearLabel}`
+                                        : filter.label;
+                                const count = countMatchingRows(combinedRows, filter.key, busTypeFilter, currentYear);
+                                return (
+                                    <button
+                                        key={filter.key}
+                                        type="button"
+                                        onClick={() => setStatusFilter(filter.key)}
+                                        className={`rounded-full border px-3 py-1.5 text-xs font-extrabold transition ${
+                                            statusFilter === filter.key
+                                                ? 'border-brand-blue bg-blue-50 text-brand-blue'
+                                                : 'border-gray-200 bg-white text-gray-600 hover:border-blue-200 hover:bg-blue-50'
+                                        }`}
+                                    >
+                                        {label} <span className="ml-1 text-gray-400">{count}</span>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                            {BUS_TYPE_FILTERS.map((filter) => (
+                                <button
+                                    key={filter.key}
+                                    type="button"
+                                    onClick={() => setBusTypeFilter(filter.key)}
+                                    className={`rounded-full border px-3 py-1.5 text-xs font-extrabold transition ${
+                                        busTypeFilter === filter.key
+                                            ? 'border-gray-900 bg-gray-900 text-white'
+                                            : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:bg-gray-50'
+                                    }`}
+                                >
+                                    {filter.label}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+
+                <div className="divide-y divide-gray-100">
+                    {filteredRows.map(({ sheetKey, row }) => {
+                        const config = FLEET_PLAN_SHEET_CONFIG_BY_KEY[sheetKey];
+                        const yearKeys = config.timelineColumns.map((column) => column.key);
+                        const lifecycle = getFleetPlanLifecycle(row, config.timelineColumns, currentYear);
+                        const startIndex = Math.max(0, getYearIndex(yearKeys, lifecycle.startYear));
+                        const retireIndex = Math.max(startIndex, getYearIndex(yearKeys, lifecycle.retireYear));
+                        const safeRetireIndex = retireIndex >= 0 ? retireIndex : yearKeys.length - 1;
+                        const maxIndex = Math.max(1, yearKeys.length - 1);
+                        const leftPct = (startIndex / maxIndex) * 100;
+                        const rightPct = (safeRetireIndex / maxIndex) * 100;
+                        const widthPct = Math.max(4, rightPct - leftPct);
+                        const startRangeValue = lifecycle.startYear ? Math.max(0, getYearIndex(yearKeys, lifecycle.startYear)) : 0;
+                        const retireRangeValue = lifecycle.retireYear ? Math.max(0, getYearIndex(yearKeys, lifecycle.retireYear)) : yearKeys.length - 1;
+
+                        return (
+                            <div key={`${sheetKey}-${row.id}`} className="grid gap-4 px-6 py-5 xl:grid-cols-[280px_minmax(520px,1fr)]">
+                                <div className="min-w-0">
+                                    <div className="flex items-center gap-2">
+                                        <input
+                                            value={row.unitNumber}
+                                            onChange={(event) => handleFieldChange(sheetKey, row.id, 'unitNumber', event.target.value)}
+                                            className="min-w-0 flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm font-extrabold text-gray-950 shadow-inner shadow-gray-100/60 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-blue-100"
+                                            aria-label="Unit number"
+                                        />
+                                        <span className="rounded-full bg-gray-100 px-2 py-1 text-[10px] font-extrabold uppercase text-gray-600">
+                                            {BUS_TYPE_LABELS[sheetKey]}
+                                        </span>
+                                    </div>
+                                    <input
+                                        value={row.makeModel}
+                                        onChange={(event) => handleFieldChange(sheetKey, row.id, 'makeModel', event.target.value)}
+                                        className="mt-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 shadow-inner shadow-gray-100/60 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-blue-100"
+                                        placeholder="Make/model"
+                                        aria-label="Make model"
+                                    />
+                                    <div className="mt-2 grid grid-cols-2 gap-2">
+                                        <label className="text-xs font-bold text-gray-500">
+                                            In service
+                                            <input
+                                                value={row.year}
+                                                onChange={(event) => handleFieldChange(sheetKey, row.id, 'year', event.target.value)}
+                                                list={yearListId}
+                                                className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 shadow-inner shadow-gray-100/60 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-blue-100"
+                                            />
+                                        </label>
+                                        <label className="text-xs font-bold text-gray-500">
+                                            On order
+                                            <input
+                                                value={row.onOrder || ''}
+                                                onChange={(event) => handleFieldChange(sheetKey, row.id, 'onOrder', event.target.value)}
+                                                className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 shadow-inner shadow-gray-100/60 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-blue-100"
+                                            />
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <div className="min-w-0">
+                                    <div className="relative h-16 rounded-xl border border-gray-200 bg-gray-50 px-4 py-4">
+                                        <div className="absolute left-4 right-4 top-1/2 h-2 -translate-y-1/2 rounded-full bg-gray-200" />
+                                        <div
+                                            className="absolute top-1/2 h-3 -translate-y-1/2 rounded-full bg-blue-500"
+                                            style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                                        />
+                                        <div
+                                            className="absolute top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-blue-600 shadow"
+                                            style={{ left: `${leftPct}%` }}
+                                            title={`In service: ${lifecycle.startYear || 'missing'}`}
+                                        />
+                                        <div
+                                            className="absolute top-1/2 h-6 w-6 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-red-600 shadow"
+                                            style={{ left: `${rightPct}%` }}
+                                            title={`Retire: ${lifecycle.retireYear || 'missing'}`}
+                                        />
+                                        <div className="absolute inset-x-4 bottom-1 flex justify-between text-[10px] font-bold text-gray-400">
+                                            {yearKeys.map((year) => (
+                                                <span key={year}>{year.slice(2)}</span>
+                                            ))}
+                                        </div>
+                                    </div>
+                                    <div className="mt-3 grid gap-3 md:grid-cols-2">
+                                        <label className="text-xs font-bold text-gray-600">
+                                            Drag in-service year: <span className="text-brand-blue">{lifecycle.startYear || 'missing'}</span>
+                                            <input
+                                                type="range"
+                                                min={0}
+                                                max={yearKeys.length - 1}
+                                                value={startRangeValue}
+                                                onChange={(event) => {
+                                                    const year = yearKeys[Number(event.target.value)];
+                                                    if (year) handleLifecycleBoundaryMove(sheetKey, row.id, 'start', year);
+                                                }}
+                                                className="mt-2 w-full accent-blue-600"
+                                            />
+                                        </label>
+                                        <label className="text-xs font-bold text-gray-600">
+                                            Drag retire year: <span className="text-red-600">{lifecycle.retireYear || 'missing'}</span>
+                                            <input
+                                                type="range"
+                                                min={0}
+                                                max={yearKeys.length - 1}
+                                                value={retireRangeValue}
+                                                onChange={(event) => {
+                                                    const year = yearKeys[Number(event.target.value)];
+                                                    if (year) handleLifecycleBoundaryMove(sheetKey, row.id, 'retire', year);
+                                                }}
+                                                className="mt-2 w-full accent-red-600"
+                                            />
+                                        </label>
+                                    </div>
+                                    <div className="mt-3 flex flex-wrap gap-1.5">
+                                        {yearKeys.map((year) => {
+                                            const status = getTimelineStatusValue(row, year);
+                                            if (!status) return null;
+                                            return (
+                                                <span
+                                                    key={year}
+                                                    className={`rounded-full px-2 py-1 text-[10px] font-extrabold ${
+                                                        status === 'RETIRE'
+                                                            ? 'bg-red-50 text-red-700'
+                                                            : status === 'PURCHASE' || status === 'GROWTH'
+                                                                ? 'bg-emerald-50 text-emerald-700'
+                                                                : 'bg-blue-50 text-blue-700'
+                                                    }`}
+                                                >
+                                                    {year}: {status === row.unitNumber.trim() ? 'SERVICE' : status}
+                                                </span>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    })}
+
+                    {filteredRows.length === 0 ? (
+                        <div className="px-6 py-12 text-center text-sm text-gray-500">
+                            No fleet rows match the selected filters.
+                        </div>
+                    ) : null}
+                </div>
+            </section>
+
             <div>
                 <section className="min-w-0 flex-1 space-y-4">
                     <div className="rounded-2xl border border-gray-200 bg-white shadow-sm">
                         <div className="flex flex-col gap-3 border-b border-gray-200 px-6 py-5 md:flex-row md:items-center md:justify-between">
                             <div>
                                 <h3 className="text-xl font-extrabold text-gray-950">
-                                    Editing sheet <span className="ml-2 text-brand-blue">Fleet Plan</span>
+                                    Detailed Excel grid <span className="ml-2 text-brand-blue">Fleet Plan</span>
                                 </h3>
                                 <p className="mt-1 text-sm text-gray-500">
-                                    All bus types are in one grid. Click a RETIRE cell to delay retirement.
+                                    Filtered rows use the same saved/exported data as the timeline above.
                                 </p>
                             </div>
                             <button
@@ -618,7 +963,7 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            {sortedRows.map(({ sheetKey, row }, rowIndex) => (
+                                            {filteredRows.map(({ sheetKey, row }, rowIndex) => (
                                                 <tr key={row.id} className="bg-white hover:bg-blue-50/30">
                                                     <td className="border-b border-r border-gray-200 px-3 py-2 text-right text-sm font-semibold text-gray-700 align-middle">
                                                         {rowIndex + 1}
@@ -698,13 +1043,13 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                                                 </tr>
                                             ))}
 
-                                            {sortedRows.length === 0 ? (
+                                            {filteredRows.length === 0 ? (
                                                 <tr>
                                                     <td
                                                         colSpan={COMBINED_BASE_COLUMNS.length + ALL_TIMELINE_COLUMNS.length + 1}
                                                         className="px-4 py-12 text-center text-sm text-gray-500"
                                                     >
-                                                        No fleet rows on this sheet yet. Add a row to start building the plan.
+                                                        No fleet rows match the selected filters.
                                                     </td>
                                                 </tr>
                                             ) : null}

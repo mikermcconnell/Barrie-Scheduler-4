@@ -67,6 +67,16 @@ const MAP_LEGEND_ITEMS: MapLegendItem[] = [
     { label: 'Route path', line: true },
 ] as const;
 
+const MAP_IMAGE_SCALE_MIN = 50;
+const MAP_IMAGE_SCALE_MAX = 150;
+const MAP_IMAGE_SCALE_DEFAULT = 100;
+
+const clampMapImageScalePercent = (value: number | string | null | undefined): number => {
+    const numericValue = typeof value === 'number' ? value : Number(value);
+    if (!Number.isFinite(numericValue)) return MAP_IMAGE_SCALE_DEFAULT;
+    return Math.min(MAP_IMAGE_SCALE_MAX, Math.max(MAP_IMAGE_SCALE_MIN, Math.round(numericValue)));
+};
+
 interface VisibleBrochureStop {
     origStop: string;
     label: string;
@@ -542,6 +552,13 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
         }));
     };
 
+    const updateMapImageScale = (value: number | string) => {
+        setConfigDraft(prev => ({
+            ...prev,
+            mapImageScalePercent: clampMapImageScalePercent(value),
+        }));
+    };
+
     const handleResetConfigDefaults = () => {
         const defaults = buildDefaultPublicTimetableConfig();
         setConfigDraft(defaults);
@@ -570,6 +587,7 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
             promoTitle: configDraft.promoTitle.trim(),
             promoText: configDraft.promoText.trim(),
             contacts: configDraft.contacts.map(contact => contact.trim()).filter(Boolean),
+            mapImageScalePercent: clampMapImageScalePercent(configDraft.mapImageScalePercent),
         };
 
         if (!cleanedConfig.disclaimer || cleanedConfig.fareRows.length === 0 || cleanedConfig.legendItems.length === 0 || cleanedConfig.contacts.length === 0) {
@@ -595,7 +613,7 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
                 contacts: [...nextConfig.contacts],
             });
             setConfigWarning(null);
-            toast.success('Brochure Settings Saved', 'Preview and export now use the updated managed content.');
+            toast.success('Brochure Settings Saved', 'Preview and export now use the updated managed content and map size.');
         } catch (error) {
             console.error('Error saving public timetable config:', error);
             toast.error('Save Failed', getPublicTimetableConfigErrorMessage(error, 'save'));
@@ -675,6 +693,8 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
     const isLoopRoute = routeConfig?.segments.length === 1;
     const hasReadyBrochureDay = Object.values(brochureDays).some(day => day.status === 'ready' && day.table);
     const isLandscapeMapRoute = selectedRoute ? LANDSCAPE_MAP_ROUTES.has(selectedRoute) : false;
+    const mapImageScalePercent = clampMapImageScalePercent(configDraft.mapImageScalePercent);
+    const savedMapImageScalePercent = clampMapImageScalePercent(brochureConfig.mapImageScalePercent);
     const brochureEffectiveDate = entries
         .filter(entry => entry.routeNumber === selectedRoute)
         .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
@@ -739,6 +759,45 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
             return { badge, text };
         });
     })();
+
+    const renderBrochureMapImage = (variant: 'landscape' | 'portrait'): React.ReactElement | null => {
+        if (!mapImageUrl) {
+            return null;
+        }
+
+        const isZoomedOut = mapImageScalePercent < 100;
+        const backgroundClassName = variant === 'landscape'
+            ? 'absolute inset-0 h-full w-full object-cover object-center'
+            : 'absolute inset-0 h-full w-full object-cover object-[64%_50%]';
+        const foregroundClassName = isZoomedOut
+            ? 'absolute inset-0 h-full w-full object-contain object-center'
+            : variant === 'landscape'
+                ? 'absolute inset-0 h-full w-full object-contain object-center'
+                : 'absolute inset-0 h-full w-full object-cover object-[64%_50%]';
+        const foregroundStyle: React.CSSProperties = {
+            transform: `scale(${mapImageScalePercent / 100})`,
+            transformOrigin: 'center center',
+        };
+
+        return (
+            <>
+                {isZoomedOut && (
+                    <img
+                        src={mapImageUrl}
+                        alt=""
+                        aria-hidden="true"
+                        className={backgroundClassName}
+                    />
+                )}
+                <img
+                    src={mapImageUrl}
+                    alt={`Route ${selectedRoute} map`}
+                    className={foregroundClassName}
+                    style={foregroundStyle}
+                />
+            </>
+        );
+    };
 
     const buildDayDirectionPanels = (
         day: BrochureDayRecord[keyof BrochureDayRecord],
@@ -1168,11 +1227,7 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
                     {isLandscapeMapRoute ? (
                         <div className="relative mt-3 min-h-0 flex-1 overflow-hidden rounded-[18px] border border-[#d5ddd8] bg-[#f6f4ef]">
                             {mapImageUrl ? (
-                                <img
-                                    src={mapImageUrl}
-                                    alt={`Route ${selectedRoute} map`}
-                                    className="h-full w-full object-contain object-center"
-                                />
+                                renderBrochureMapImage('landscape')
                             ) : (
                                 <div className="flex h-full w-full items-center justify-center bg-[#f8f7f3] text-center text-sm text-slate-400">
                                     Route map not uploaded yet
@@ -1261,11 +1316,7 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
                         <div className="mt-3 grid min-h-0 flex-1 grid-cols-[minmax(0,1.32fr)_minmax(185px,0.68fr)] gap-3">
                             <div className="relative min-h-0 overflow-hidden rounded-[18px] border border-[#d5ddd8] bg-[#f6f4ef]">
                                 {mapImageUrl ? (
-                                    <img
-                                        src={mapImageUrl}
-                                        alt={`Route ${selectedRoute} map`}
-                                    className="absolute inset-0 h-full w-full scale-[1.04] object-cover object-[64%_50%]"
-                                    />
+                                    renderBrochureMapImage('portrait')
                                 ) : (
                                     <div className="flex h-full w-full items-center justify-center bg-[#f8f7f3] px-6 text-center text-sm text-slate-400">
                                         Portrait route map not uploaded yet
@@ -1546,8 +1597,60 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
                                             </button>
                                         )}
                                     </div>
+                                    <div className="rounded-lg border border-gray-200 bg-white p-3">
+                                        <div className="flex items-center justify-between gap-2">
+                                            <label htmlFor="brochure-map-size" className="text-xs font-bold uppercase tracking-wide text-gray-600">
+                                                Front map size
+                                            </label>
+                                            <span className="text-xs font-semibold text-gray-500">{mapImageScalePercent}%</span>
+                                        </div>
+                                        <input
+                                            id="brochure-map-size"
+                                            type="range"
+                                            min={MAP_IMAGE_SCALE_MIN}
+                                            max={MAP_IMAGE_SCALE_MAX}
+                                            step={1}
+                                            value={mapImageScalePercent}
+                                            onChange={(e) => updateMapImageScale(e.target.value)}
+                                            className="mt-2 w-full accent-amber-600"
+                                        />
+                                        <div className="mt-2 flex items-center gap-2">
+                                            <input
+                                                type="number"
+                                                min={MAP_IMAGE_SCALE_MIN}
+                                                max={MAP_IMAGE_SCALE_MAX}
+                                                value={mapImageScalePercent}
+                                                onChange={(e) => updateMapImageScale(e.target.value)}
+                                                className="w-20 rounded-md border border-gray-300 px-2 py-1 text-xs"
+                                                aria-label="Front map size percentage"
+                                            />
+                                            <button
+                                                type="button"
+                                                onClick={() => updateMapImageScale(savedMapImageScalePercent)}
+                                                className="rounded-md border border-gray-300 px-2 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50"
+                                            >
+                                                Saved
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => updateMapImageScale(MAP_IMAGE_SCALE_DEFAULT)}
+                                                className="rounded-md border border-gray-300 px-2 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50"
+                                            >
+                                                100%
+                                            </button>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={handleSaveConfig}
+                                            disabled={savingConfig || !canManageTeam}
+                                            className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-md bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
+                                        >
+                                            <Save size={13} />
+                                            {savingConfig ? 'Saving...' : 'Save default size'}
+                                        </button>
+                                    </div>
                                     {!canManageTeam && (
-                                        <p className="text-xs text-gray-500">Team owners and admins manage brochure map images.</p>
+                                        <p className="text-xs text-gray-500">You can preview size changes. Team owners and admins save brochure map defaults.</p>
                                     )}
                                 </div>
                             ) : (
@@ -1591,7 +1694,7 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
                                     <div>
                                         <p className="text-sm font-bold text-gray-700">Brochure Content</p>
                                         <p className="text-xs text-gray-500">
-                                            Manage disclaimer, fares, legend text, promo copy, and contact details.
+                                            Manage disclaimer, fares, legend text, promo copy, contact details, and map size.
                                         </p>
                                     </div>
                                     {showConfigEditor ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}

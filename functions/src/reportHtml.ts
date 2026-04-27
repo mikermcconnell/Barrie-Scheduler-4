@@ -97,27 +97,21 @@ function otpPill(value: number): string {
 }
 
 type EmailIconName = 'bus' | 'performance' | 'ridership' | 'trips' | 'dwell' | 'alert' | 'stable';
+const EMAIL_ICON_BASE_URL = 'https://transitscheduler.ca/email-icons';
+
+const EMAIL_ICON_ALT: Record<EmailIconName, string> = {
+  bus: 'Bus',
+  performance: 'On-time performance',
+  ridership: 'Ridership',
+  trips: 'Trips operated',
+  dwell: 'Operator dwell',
+  alert: 'Review alert',
+  stable: 'Stable',
+};
 
 function emailIcon(name: EmailIconName, color = '#0f3a76', size = 24): string {
-  const common = `width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"`;
-  const stroke = `stroke="${color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"`;
-  const fillSoft = color;
-
-  switch (name) {
-    case 'performance':
-      return `<svg ${common} aria-hidden="true"><path ${stroke} d="M4.5 15.5a7.5 7.5 0 1 1 15 0"/><path ${stroke} d="M12 15.5l4-5"/><path ${stroke} d="M7.5 15.5h9"/><circle cx="12" cy="15.5" r="1.6" fill="${fillSoft}"/></svg>`;
-    case 'ridership':
-      return `<svg ${common} aria-hidden="true"><circle ${stroke} cx="9" cy="8" r="2.8"/><circle ${stroke} cx="16.5" cy="9" r="2.2"/><path ${stroke} d="M4.5 19c.7-3.1 2.3-4.7 4.7-4.7s4 1.6 4.7 4.7"/><path ${stroke} d="M13.8 18.8c.5-2.3 1.7-3.4 3.4-3.4 1.5 0 2.6.9 3.2 2.8"/></svg>`;
-    case 'trips':
-    case 'bus':
-      return `<svg ${common} aria-hidden="true"><rect ${stroke} x="4" y="5" width="16" height="12" rx="2.2"/><path ${stroke} d="M7 5V3.8h10V5"/><path ${stroke} d="M7 9h10"/><path ${stroke} d="M7.5 13h.1M16.5 13h.1"/><circle cx="8" cy="18.5" r="1.4" fill="${fillSoft}"/><circle cx="16" cy="18.5" r="1.4" fill="${fillSoft}"/></svg>`;
-    case 'dwell':
-      return `<svg ${common} aria-hidden="true"><path ${stroke} d="M9 3.5h6"/><path ${stroke} d="M12 3.5v2.2"/><circle ${stroke} cx="12" cy="13.2" r="7"/><path ${stroke} d="M12 9.5v4.1l2.8 1.7"/><path ${stroke} d="M17.1 6.8l1.4-1.4"/></svg>`;
-    case 'alert':
-      return `<svg ${common} aria-hidden="true"><path ${stroke} d="M12 4.2 21 19H3L12 4.2Z"/><path ${stroke} d="M12 9.2v4.5"/><circle cx="12" cy="16.8" r="1" fill="${fillSoft}"/></svg>`;
-    case 'stable':
-      return `<svg ${common} aria-hidden="true"><circle ${stroke} cx="12" cy="12" r="8"/><path ${stroke} d="m8.5 12.2 2.2 2.2 4.8-5"/></svg>`;
-  }
+  const alt = EMAIL_ICON_ALT[name];
+  return `<img src="${EMAIL_ICON_BASE_URL}/${name}.png" width="${size}" height="${size}" alt="${alt}" style="display:inline-block;width:${size}px;height:${size}px;border:0;outline:none;text-decoration:none;vertical-align:middle;" />`;
 }
 
 function iconBadge(name: EmailIconName, color = '#0f3a76', bg = '#eff6ff', size = 24): string {
@@ -1108,12 +1102,6 @@ export function buildReportHtml(data: ReportData): string {
     </div>
 
     <div style="padding:18px;background:#f8fafc;">
-
-      <div style="background:${status.bg};border:1px solid ${status.border};border-radius:10px;padding:11px 14px;margin:0 0 12px;color:${status.color};font-size:13px;font-weight:700;">
-        <span style="vertical-align:middle;margin-right:8px;">${emailIcon(status.label === 'STABLE' ? 'stable' : 'alert', status.color, 18)}</span>
-        <span style="vertical-align:middle;text-transform:uppercase;letter-spacing:0.2px;">${status.label}</span>
-        <span style="vertical-align:middle;color:#111827;font-weight:600;"> · ${status.message}</span>
-      </div>
 
       <!-- ═══ 1. KPI CARDS ═══ -->
       <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:4px;">

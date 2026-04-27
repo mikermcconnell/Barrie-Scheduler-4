@@ -25,6 +25,16 @@ export interface FleetPlanSortState {
     direction: FleetPlanSortDirection;
 }
 
+export interface FleetPlanLifecycle {
+    startYear: string | null;
+    retireYear: string | null;
+    purchaseYears: string[];
+    hasMissingInfo: boolean;
+    isFuture: boolean;
+    isInService: boolean;
+    isOverdueRetirement: boolean;
+}
+
 export function getFleetPlanGridColumns(config: FleetPlanSheetConfig): FleetPlanGridColumn[] {
     return [
         ...config.baseColumns.map((column) => ({
@@ -283,6 +293,96 @@ export function delayFleetPlanRetirement(options: {
 
     return {
         ...options.row,
+        timeline,
+    };
+}
+
+function isKnownTimelineYear(timelineColumns: FleetPlanTimelineColumn[], year: string): boolean {
+    return timelineColumns.some((column) => column.key === year);
+}
+
+function normalizeYear(value: string | undefined): string | null {
+    const trimmed = (value || '').trim();
+    return /^\d{4}$/.test(trimmed) ? trimmed : null;
+}
+
+function normalizeTimelineStatus(value: string | undefined): string {
+    return (value || '').trim().toUpperCase();
+}
+
+export function getFleetPlanLifecycle(
+    row: FleetPlanRow,
+    timelineColumns: FleetPlanTimelineColumn[],
+    currentYear = new Date().getFullYear(),
+): FleetPlanLifecycle {
+    const unitNumber = row.unitNumber.trim();
+    const yearKeys = timelineColumns.map((column) => column.key);
+    const rowYear = normalizeYear(row.year);
+    const startYear = rowYear && isKnownTimelineYear(timelineColumns, rowYear)
+        ? rowYear
+        : yearKeys.find((year) => {
+            const value = (row.timeline[year] || '').trim();
+            return Boolean(value && (value === unitNumber || normalizeTimelineStatus(value) === 'PURCHASE' || normalizeTimelineStatus(value) === 'GROWTH'));
+        }) ?? null;
+
+    const retireYear = yearKeys.find((year) => normalizeTimelineStatus(row.timeline[year]) === 'RETIRE') ?? null;
+    const purchaseYears = yearKeys.filter((year) => {
+        const status = normalizeTimelineStatus(row.timeline[year]);
+        return status === 'PURCHASE' || status === 'GROWTH';
+    });
+    const currentYearKey = String(currentYear);
+
+    return {
+        startYear,
+        retireYear,
+        purchaseYears,
+        hasMissingInfo: !startYear || !retireYear,
+        isFuture: Boolean(startYear && Number(startYear) > currentYear),
+        isInService: Boolean(startYear && Number(startYear) <= currentYear && (!retireYear || Number(retireYear) >= currentYear)),
+        isOverdueRetirement: Boolean(retireYear && Number(retireYear) < currentYear && normalizeTimelineStatus(row.timeline[currentYearKey]) !== 'RETIRE'),
+    };
+}
+
+export function moveFleetPlanLifecycleBoundary(options: {
+    row: FleetPlanRow;
+    timelineColumns: FleetPlanTimelineColumn[];
+    boundary: 'start' | 'retire';
+    toYear: string;
+}): FleetPlanRow {
+    const targetYear = normalizeYear(options.toYear);
+    if (!targetYear || !isKnownTimelineYear(options.timelineColumns, targetYear)) return options.row;
+
+    const lifecycle = getFleetPlanLifecycle(options.row, options.timelineColumns);
+    const nextStartYear = options.boundary === 'start' ? targetYear : lifecycle.startYear;
+    const nextRetireYear = options.boundary === 'retire' ? targetYear : lifecycle.retireYear;
+
+    if (!nextStartYear || !nextRetireYear) return options.row;
+    if (Number(nextStartYear) > Number(nextRetireYear)) return options.row;
+
+    const unitNumber = options.row.unitNumber.trim();
+    const timeline = { ...options.row.timeline };
+
+    options.timelineColumns.forEach((column) => {
+        const status = normalizeTimelineStatus(timeline[column.key]);
+        if (status === 'PURCHASE' || status === 'GROWTH' || status === 'TRADED' || status === 'TRADE') {
+            return;
+        }
+
+        const year = Number(column.key);
+        if (year >= Number(nextStartYear) && year < Number(nextRetireYear)) {
+            timeline[column.key] = unitNumber;
+            return;
+        }
+        if (column.key === nextRetireYear) {
+            timeline[column.key] = 'RETIRE';
+            return;
+        }
+        timeline[column.key] = '';
+    });
+
+    return {
+        ...options.row,
+        year: nextStartYear,
         timeline,
     };
 }
