@@ -680,35 +680,6 @@ export const FixedRouteWorkspace: React.FC = () => {
                         />
                     )}
 
-                    {isFeatureEnabled('fixedAnalytics') && canAccess('analyticsTransitApp') && (
-                        <DashboardCard
-                            onClick={() => handleOpenPlanning('transit-data')}
-                            icon={<Smartphone size={20} />}
-                            color="cyan"
-                            title="Transit App Data"
-                            description="Review imported Transit App demand, route engagement, origins, destinations, and service gaps."
-                        />
-                    )}
-
-                    {isFeatureEnabled('fixedAnalytics') && canAccess('analyticsFleetPlan') && (
-                        <DashboardCard
-                            onClick={() => handleOpenPlanning('fleet-plan-workspace')}
-                            icon={<Bus size={20} />}
-                            color="purple"
-                            title="Fleet Plan"
-                            description="View and maintain the shared fleet plan, lifecycle years, purchasing needs, and retirements."
-                        />
-                    )}
-
-                    {isFeatureEnabled('fixedAnalytics') && canAccess('analyticsStudentPass') && (
-                        <DashboardCard
-                            onClick={() => handleOpenPlanning('student-pass')}
-                            icon={<GraduationCap size={20} />}
-                            color="amber"
-                            title="Student Transit Pass"
-                            description="Create student-facing transit pass flyers from residential zones to schools."
-                        />
-                    )}
 
                 </div>
 
