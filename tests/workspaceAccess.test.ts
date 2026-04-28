@@ -55,6 +55,20 @@ describe('workspace access', () => {
         expect(allowed).not.toContain('analyticsNetworkConnections');
     });
 
+    it('gives Ontario Northland planners only the scheduled transit shell and Ontario Northland planning data', () => {
+        const allowed = getAllowedWorkspaceFeatures('external-planner');
+
+        expect(allowed).toContain('workspaceFixedRoute');
+        expect(allowed).toContain('analyticsOdMatrix');
+        expect(allowed).not.toContain('workspaceOndemand');
+        expect(allowed).not.toContain('workspaceOperations');
+        expect(allowed).not.toContain('analyticsTransitApp');
+        expect(allowed).not.toContain('analyticsStudentPass');
+        expect(allowed).not.toContain('analyticsFleetPlan');
+        expect(allowed).not.toContain('operationsLoadProfiles');
+        expect(allowed).not.toContain('operationsOperatorDwell');
+    });
+
     it('keeps developer-only workspaces out of admin access', () => {
         const allowed = getAllowedWorkspaceFeatures('admin');
 

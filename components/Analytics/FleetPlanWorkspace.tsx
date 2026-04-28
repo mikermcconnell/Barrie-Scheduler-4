@@ -212,11 +212,12 @@ function matchesFleetStatusFilter(
     lifecycle: FleetPlanLifecycle,
     filter: FleetStatusFilter,
     currentYear: number,
+    focusedYear: string | null = null,
 ): boolean {
     if (filter === 'all') return true;
     if (filter === 'in-service') return lifecycle.isInService;
-    if (filter === 'retiring-this-year') return lifecycle.retireYear === String(currentYear);
-    if (filter === 'purchasing-this-year') return lifecycle.purchaseYears.includes(String(currentYear));
+    if (filter === 'retiring-this-year') return focusedYear ? lifecycle.retireYear === focusedYear : Boolean(lifecycle.retireYear);
+    if (filter === 'purchasing-this-year') return focusedYear ? lifecycle.purchaseYears.includes(focusedYear) : lifecycle.purchaseYears.length > 0;
     if (filter === 'growth') return isFleetPlanGrowthRow(entry.row);
     if (filter === 'on-order') return Boolean(entry.row.onOrder?.trim());
     if (filter === 'future') return lifecycle.isFuture || lifecycle.purchaseYears.some((year) => Number(year) > currentYear);
@@ -224,16 +225,49 @@ function matchesFleetStatusFilter(
     return lifecycle.hasMissingInfo;
 }
 
+function matchesFleetYearFocus(
+    entry: CombinedFleetRow,
+    lifecycle: FleetPlanLifecycle,
+    focusedYear: string | null,
+): boolean {
+    if (!focusedYear) return true;
+    if (isFleetPlanRowCountedInFleetTotal(entry.row, entry.sheetKey, focusedYear)) return true;
+    if (lifecycle.retireYear === focusedYear) return true;
+    if (lifecycle.purchaseYears.includes(focusedYear)) return true;
+    return getTimelineStatusValue(entry.row, focusedYear) === 'GROWTH';
+}
+
+function getStatusFilterLabel(filter: FleetStatusFilter, focusedYear: string | null): string {
+    if (filter === 'retiring-this-year') return focusedYear ? `Retiring ${focusedYear}` : 'Retiring';
+    if (filter === 'purchasing-this-year') return focusedYear ? `Purchasing ${focusedYear}` : 'Purchasing';
+    return STATUS_FILTERS.find((entry) => entry.key === filter)?.label || filter;
+}
+
+function getPurchaseBadgeLabel(row: FleetPlanRow, lifecycle: FleetPlanLifecycle, focusedYear: string | null): string | null {
+    if (focusedYear) {
+        const focusedStatus = getTimelineStatusValue(row, focusedYear);
+        if (focusedStatus === 'GROWTH') return `Growth purchase ${focusedYear}`;
+        if (lifecycle.purchaseYears.includes(focusedYear)) return `Bus purchase ${focusedYear}`;
+        return null;
+    }
+    if (lifecycle.purchaseYears.length > 0) {
+        return `Purchase ${lifecycle.purchaseYears.join(', ')}`;
+    }
+    return null;
+}
+
 function countMatchingRows(
     rows: CombinedFleetRow[],
     statusFilter: FleetStatusFilter,
     busTypeFilter: FleetBusTypeFilter,
     currentYear: number,
+    focusedYear: string | null = null,
 ): number {
     return rows.filter((entry) => {
         if (busTypeFilter !== 'all' && entry.sheetKey !== busTypeFilter) return false;
         const lifecycle = getFleetPlanLifecycle(entry.row, FLEET_PLAN_SHEET_CONFIG_BY_KEY[entry.sheetKey].timelineColumns, currentYear);
-        return matchesFleetStatusFilter(entry, lifecycle, statusFilter, currentYear);
+        return matchesFleetStatusFilter(entry, lifecycle, statusFilter, currentYear, focusedYear)
+            && matchesFleetYearFocus(entry, lifecycle, focusedYear);
     }).length;
 }
 
@@ -344,6 +378,7 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
     const [pausedRowOrder, setPausedRowOrder] = useState<string[] | null>(null);
     const [statusFilter, setStatusFilter] = useState<FleetStatusFilter>('all');
     const [busTypeFilter, setBusTypeFilter] = useState<FleetBusTypeFilter>('all');
+    const [focusedYear, setFocusedYear] = useState<string | null>(null);
     const cellRefs = useRef<Record<string, HTMLInputElement | null>>({});
     const {
         state: draft,
@@ -366,17 +401,24 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
             : sortCombinedFleetRows(combinedRows, sortState, currentYear)
     ), [combinedRows, currentYear, pausedRowOrder, sortState]);
     const isSortPaused = pausedRowOrder !== null;
-    const filteredRows = useMemo(() => sortedRows.filter((entry) => {
+    const baseFilteredRows = useMemo(() => sortedRows.filter((entry) => {
         if (busTypeFilter !== 'all' && entry.sheetKey !== busTypeFilter) return false;
         const lifecycle = getFleetPlanLifecycle(entry.row, FLEET_PLAN_SHEET_CONFIG_BY_KEY[entry.sheetKey].timelineColumns, currentYear);
-        return matchesFleetStatusFilter(entry, lifecycle, statusFilter, currentYear);
-    }), [busTypeFilter, currentYear, sortedRows, statusFilter]);
+        return matchesFleetStatusFilter(entry, lifecycle, statusFilter, currentYear, focusedYear);
+    }), [busTypeFilter, currentYear, focusedYear, sortedRows, statusFilter]);
+    const filteredRows = useMemo(() => baseFilteredRows.filter((entry) => {
+        const lifecycle = getFleetPlanLifecycle(entry.row, FLEET_PLAN_SHEET_CONFIG_BY_KEY[entry.sheetKey].timelineColumns, currentYear);
+        return matchesFleetYearFocus(entry, lifecycle, focusedYear);
+    }), [baseFilteredRows, currentYear, focusedYear]);
+    const handleYearFocusClick = useCallback((year: string) => {
+        setFocusedYear((current) => (current === year ? null : year));
+    }, []);
     const fleetTotalsByYear = useMemo(() => Object.fromEntries(
         DISPLAY_TIMELINE_COLUMNS.map((column) => [
             column.key,
-            filteredRows.filter(({ sheetKey, row }) => isFleetPlanRowCountedInFleetTotal(row, sheetKey, column.key)).length,
+            baseFilteredRows.filter(({ sheetKey, row }) => isFleetPlanRowCountedInFleetTotal(row, sheetKey, column.key)).length,
         ]),
-    ) as Record<string, number>, [filteredRows]);
+    ) as Record<string, number>, [baseFilteredRows]);
     const snapshotYears = useMemo(() => [currentYearLabel, nextYearLabel].map((yearLabel) => {
         const retirements = combinedRows.filter((entry) => {
             const lifecycle = getFleetPlanLifecycle(entry.row, FLEET_PLAN_SHEET_CONFIG_BY_KEY[entry.sheetKey].timelineColumns, currentYear);
@@ -1192,22 +1234,43 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                                 ) : null}
                             </div>
                             <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${DISPLAY_TIMELINE_COLUMNS.length}, minmax(42px, 1fr))` }}>
-                                {DISPLAY_TIMELINE_COLUMNS.map((column) => (
-                                    <div key={column.key} className="rounded-lg bg-gray-50 px-1.5 py-2 text-center">
-                                        <div className="text-[10px] font-extrabold text-gray-500">{column.key}</div>
-                                        <div className="mt-1 text-sm font-black text-gray-950">{fleetTotalsByYear[column.key] ?? 0}</div>
-                                    </div>
-                                ))}
+                                {DISPLAY_TIMELINE_COLUMNS.map((column) => {
+                                    const isFocused = focusedYear === column.key;
+                                    return (
+                                        <button
+                                            key={column.key}
+                                            type="button"
+                                            onClick={() => handleYearFocusClick(column.key)}
+                                            className={`rounded-lg px-1.5 py-2 text-center transition ${
+                                                isFocused
+                                                    ? 'bg-gray-950 text-white shadow-sm ring-2 ring-gray-300'
+                                                    : 'bg-gray-50 text-gray-950 hover:bg-blue-50 hover:ring-1 hover:ring-blue-200'
+                                            }`}
+                                            title={isFocused ? `Clear ${column.key} focus` : `Focus table on ${column.key}`}
+                                        >
+                                            <div className={`text-[10px] font-extrabold ${isFocused ? 'text-white/70' : 'text-gray-500'}`}>{column.key}</div>
+                                            <div className={`mt-1 text-sm font-black ${isFocused ? 'text-white' : 'text-gray-950'}`}>{fleetTotalsByYear[column.key] ?? 0}</div>
+                                        </button>
+                                    );
+                                })}
                             </div>
                         </div>
+                        {focusedYear ? (
+                            <div className="mt-2 flex items-center justify-between rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs font-bold text-blue-800">
+                                <span>Focused on {focusedYear}. Purchasing and retiring filters now use this year.</span>
+                                <button
+                                    type="button"
+                                    onClick={() => setFocusedYear(null)}
+                                    className="rounded-full border border-blue-200 bg-white px-2 py-0.5 text-[11px] font-extrabold text-blue-700 hover:bg-blue-100"
+                                >
+                                    Clear
+                                </button>
+                            </div>
+                        ) : null}
                         <div className="flex flex-nowrap items-center gap-1 overflow-hidden border-t border-gray-100 pt-2">
                             {STATUS_FILTERS.map((filter) => {
-                                const label = filter.key === 'retiring-this-year'
-                                    ? `Retiring ${currentYearLabel}`
-                                    : filter.key === 'purchasing-this-year'
-                                        ? `Purchasing ${currentYearLabel}`
-                                        : filter.label;
-                                const count = countMatchingRows(combinedRows, filter.key, busTypeFilter, currentYear);
+                                const label = getStatusFilterLabel(filter.key, focusedYear);
+                                const count = countMatchingRows(combinedRows, filter.key, busTypeFilter, currentYear, focusedYear);
                                 return (
                                     <button
                                         key={filter.key}
@@ -1267,6 +1330,7 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                         const rightPct = (safeRetireIndex / maxIndex) * 100;
                         const widthPct = Math.max(4, rightPct - leftPct);
                         const isGrowthRow = isFleetPlanGrowthRow(row);
+                        const purchaseBadgeLabel = getPurchaseBadgeLabel(row, lifecycle, focusedYear);
 
                         return (
                             <div key={`${sheetKey}-${row.id}`} className={`grid gap-3 border-l-4 px-6 py-2.5 xl:grid-cols-[380px_minmax(520px,1fr)] ${BUS_TYPE_STYLES[sheetKey].row} ${isGrowthRow ? 'border-l-amber-300' : 'border-l-transparent'}`}>
@@ -1284,6 +1348,11 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                                         {isGrowthRow ? (
                                             <span className="rounded-full bg-amber-100 px-2 py-1 text-[10px] font-extrabold uppercase text-amber-700">
                                                 + Growth
+                                            </span>
+                                        ) : null}
+                                        {purchaseBadgeLabel ? (
+                                            <span className="rounded-full bg-emerald-100 px-2 py-1 text-[10px] font-extrabold uppercase text-emerald-700">
+                                                {purchaseBadgeLabel}
                                             </span>
                                         ) : null}
                                         <span className={`min-w-0 truncate rounded-full px-2 py-1 text-[10px] font-extrabold ${BUS_TYPE_STYLES[sheetKey].detail}`}>

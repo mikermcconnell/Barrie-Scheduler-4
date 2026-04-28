@@ -108,7 +108,7 @@ interface Team {
 
 ```typescript
 type TeamRole = 'owner' | 'admin' | 'member';
-type WorkspaceAccessLevel = 'production' | 'planner' | 'admin' | 'internal';
+type WorkspaceAccessLevel = 'production' | 'planner' | 'external-planner' | 'admin' | 'internal';
 
 interface TeamMember {
   id: string;
@@ -122,7 +122,7 @@ interface TeamMember {
 }
 ```
 
-`role` controls team permissions and writes. `accessLevel` controls which app workspaces are visible. Existing members without `accessLevel` are treated as `internal` for owners/admins and `production` for regular members.
+`role` controls team permissions and writes. `accessLevel` controls which app workspaces are visible. Use `external-planner` for non-Barrie planning users such as Ontario Northland; it exposes the Scheduled Transit shell plus Ontario Northland planning data only. Existing members without `accessLevel` are treated as `internal` for owners/admins and `production` for regular members.
 
 ---
 

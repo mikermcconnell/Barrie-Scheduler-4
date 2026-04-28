@@ -2,7 +2,7 @@ import type { FeatureFlags, FeatureKey } from './features';
 import { FEATURE_DEFINITIONS, featureFlags, isFeatureEnabled } from './features';
 import type { TeamMember, TeamRole } from './masterScheduleTypes';
 
-export type WorkspaceAccessLevel = 'production' | 'planner' | 'admin' | 'internal';
+export type WorkspaceAccessLevel = 'production' | 'planner' | 'external-planner' | 'admin' | 'internal';
 
 export type WorkspaceAccessFeatureKey =
     | 'workspaceOndemand'
@@ -28,6 +28,7 @@ type WorkspaceAccessSubject = Pick<TeamMember, 'role' | 'accessLevel' | 'workspa
 export const WORKSPACE_ACCESS_LEVELS: WorkspaceAccessLevel[] = [
     'production',
     'planner',
+    'external-planner',
     'admin',
     'internal',
 ];
@@ -35,6 +36,7 @@ export const WORKSPACE_ACCESS_LEVELS: WorkspaceAccessLevel[] = [
 export const WORKSPACE_ACCESS_LEVEL_LABELS: Record<WorkspaceAccessLevel, string> = {
     production: 'Production only',
     planner: 'Planner',
+    'external-planner': 'Ontario Northland planner',
     admin: 'Admin access',
     internal: 'Developer/internal',
 };
@@ -42,6 +44,7 @@ export const WORKSPACE_ACCESS_LEVEL_LABELS: Record<WorkspaceAccessLevel, string>
 export const WORKSPACE_ACCESS_LEVEL_DESCRIPTIONS: Record<WorkspaceAccessLevel, string> = {
     production: 'Only production-ready workspaces.',
     planner: 'Production workspaces plus selected planning tools.',
+    'external-planner': 'Non-Barrie planner access for Ontario Northland planning data.',
     admin: 'Planner access plus broader operational tools.',
     internal: 'Everything, including unfinished workspaces.',
 };
@@ -77,6 +80,11 @@ const PLANNER_WORKSPACES: WorkspaceAccessFeatureKey[] = [
     'analyticsFleetPlan',
 ];
 
+const EXTERNAL_PLANNER_WORKSPACES: WorkspaceAccessFeatureKey[] = [
+    'workspaceFixedRoute',
+    'analyticsOdMatrix',
+];
+
 const ADMIN_WORKSPACES: WorkspaceAccessFeatureKey[] = [
     ...PLANNER_WORKSPACES,
     'analyticsOdMatrix',
@@ -89,6 +97,7 @@ const INTERNAL_WORKSPACES: WorkspaceAccessFeatureKey[] = [...WORKSPACE_ACCESS_FE
 const WORKSPACE_ACCESS_BY_LEVEL: Record<WorkspaceAccessLevel, ReadonlySet<WorkspaceAccessFeatureKey>> = {
     production: new Set(PRODUCTION_WORKSPACES),
     planner: new Set(PLANNER_WORKSPACES),
+    'external-planner': new Set(EXTERNAL_PLANNER_WORKSPACES),
     admin: new Set(ADMIN_WORKSPACES),
     internal: new Set(INTERNAL_WORKSPACES),
 };

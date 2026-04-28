@@ -654,7 +654,7 @@ export const FixedRouteWorkspace: React.FC = () => {
                             title="Schedule Editor" description="Edit drafts and publish to Master Schedule. The main workflow for schedule changes." />
                     )}
 
-                    {isFeatureEnabled('fixedNewSchedule') && accessLevel !== 'planner' && (
+                    {isFeatureEnabled('fixedNewSchedule') && accessLevel !== 'planner' && accessLevel !== 'external-planner' && (
                         <DashboardCard onClick={handleOpenNewSchedule} icon={<CalendarPlus size={20} />} color="emerald"
                             title="New Schedules" description="Generate optimized schedules from scratch using Transify data." />
                     )}
