@@ -85,6 +85,7 @@ type CombinedFleetRow = { sheetKey: FleetPlanSheetKey; row: FleetPlanRow };
 type BaseFleetField = 'busType' | 'unitNumber' | 'busSize' | 'makeModel' | 'year' | 'comment' | 'electricFlag' | 'onOrder';
 type FleetStatusFilter = 'all' | 'in-service' | 'retiring-this-year' | 'purchasing-this-year' | 'growth' | 'on-order' | 'future' | 'overdue' | 'missing-info';
 type FleetBusTypeFilter = 'all' | FleetPlanSheetKey;
+type FleetYearActionCounts = { retiring: number; purchasing: number; growth: number; replacement: number };
 type LifecycleDragMode = 'start' | 'retire' | 'window';
 
 interface LifecycleDragState {
@@ -256,6 +257,51 @@ function getPurchaseBadgeLabel(row: FleetPlanRow, lifecycle: FleetPlanLifecycle,
     return null;
 }
 
+function createEmptyYearActionCounts(): FleetYearActionCounts {
+    return { retiring: 0, purchasing: 0, growth: 0, replacement: 0 };
+}
+
+function summarizeFleetYearActions(
+    rows: CombinedFleetRow[],
+    year: string,
+    currentYear: number,
+): { total: FleetYearActionCounts; byType: Record<FleetPlanSheetKey, FleetYearActionCounts> } {
+    const byType = FLEET_PLAN_SHEET_CONFIGS.reduce((summary, config) => ({
+        ...summary,
+        [config.key]: createEmptyYearActionCounts(),
+    }), {} as Record<FleetPlanSheetKey, FleetYearActionCounts>);
+    const total = createEmptyYearActionCounts();
+
+    rows.forEach((entry) => {
+        const lifecycle = getFleetPlanLifecycle(entry.row, FLEET_PLAN_SHEET_CONFIG_BY_KEY[entry.sheetKey].timelineColumns, currentYear);
+        const status = getTimelineStatusValue(entry.row, year);
+        const isGrowth = status === 'GROWTH';
+        const isReplacement = status.startsWith('PURCHASE');
+        const isPurchasing = isGrowth || isReplacement || lifecycle.purchaseYears.includes(year);
+        const isRetiring = lifecycle.retireYear === year;
+        const bucket = byType[entry.sheetKey];
+
+        if (isRetiring) {
+            bucket.retiring += 1;
+            total.retiring += 1;
+        }
+        if (isPurchasing) {
+            bucket.purchasing += 1;
+            total.purchasing += 1;
+        }
+        if (isGrowth) {
+            bucket.growth += 1;
+            total.growth += 1;
+        }
+        if (isReplacement) {
+            bucket.replacement += 1;
+            total.replacement += 1;
+        }
+    });
+
+    return { total, byType };
+}
+
 function countMatchingRows(
     rows: CombinedFleetRow[],
     statusFilter: FleetStatusFilter,
@@ -419,6 +465,9 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
             baseFilteredRows.filter(({ sheetKey, row }) => isFleetPlanRowCountedInFleetTotal(row, sheetKey, column.key)).length,
         ]),
     ) as Record<string, number>, [baseFilteredRows]);
+    const focusedYearSummary = useMemo(() => (
+        focusedYear ? summarizeFleetYearActions(combinedRows, focusedYear, currentYear) : null
+    ), [combinedRows, currentYear, focusedYear]);
     const snapshotYears = useMemo(() => [currentYearLabel, nextYearLabel].map((yearLabel) => {
         const retirements = combinedRows.filter((entry) => {
             const lifecycle = getFleetPlanLifecycle(entry.row, FLEET_PLAN_SHEET_CONFIG_BY_KEY[entry.sheetKey].timelineColumns, currentYear);
@@ -1256,15 +1305,38 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                             </div>
                         </div>
                         {focusedYear ? (
-                            <div className="mt-2 flex items-center justify-between rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs font-bold text-blue-800">
-                                <span>Focused on {focusedYear}. Purchasing and retiring filters now use this year.</span>
-                                <button
-                                    type="button"
-                                    onClick={() => setFocusedYear(null)}
-                                    className="rounded-full border border-blue-200 bg-white px-2 py-0.5 text-[11px] font-extrabold text-blue-700 hover:bg-blue-100"
-                                >
-                                    Clear
-                                </button>
+                            <div className="mt-2 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs font-bold text-blue-800">
+                                <div className="flex items-center justify-between gap-3">
+                                    <span>
+                                        Focused on {focusedYear}: {focusedYearSummary?.total.retiring ?? 0} retiring · {focusedYearSummary?.total.purchasing ?? 0} purchasing
+                                        {' '}({focusedYearSummary?.total.replacement ?? 0} replacement · {focusedYearSummary?.total.growth ?? 0} growth).
+                                    </span>
+                                    <button
+                                        type="button"
+                                        onClick={() => setFocusedYear(null)}
+                                        className="shrink-0 rounded-full border border-blue-200 bg-white px-2 py-0.5 text-[11px] font-extrabold text-blue-700 hover:bg-blue-100"
+                                    >
+                                        Clear
+                                    </button>
+                                </div>
+                                {focusedYearSummary ? (
+                                    <div className="mt-2 grid gap-2 md:grid-cols-3">
+                                        {FLEET_PLAN_SHEET_CONFIGS.map((config) => {
+                                            const counts = focusedYearSummary.byType[config.key];
+                                            return (
+                                                <div key={config.key} className="rounded-md border border-blue-100 bg-white/75 px-2.5 py-2 text-gray-700">
+                                                    <div className="font-extrabold text-gray-950">{BUS_TYPE_LABELS[config.key]}</div>
+                                                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px]">
+                                                        <span><strong>{counts.retiring}</strong> retiring</span>
+                                                        <span><strong>{counts.purchasing}</strong> purchasing</span>
+                                                        <span><strong>{counts.replacement}</strong> replacement</span>
+                                                        <span><strong>{counts.growth}</strong> growth</span>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                ) : null}
                             </div>
                         ) : null}
                         <div className="flex flex-nowrap items-center gap-1 overflow-hidden border-t border-gray-100 pt-2">
