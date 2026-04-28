@@ -228,6 +228,23 @@ export const getAllFiles = async (userId: string): Promise<SavedFile[]> => {
     });
 };
 
+export const getFile = async (
+    userId: string,
+    fileId: string
+): Promise<SavedFile | null> => {
+    const fileRef = doc(db, 'users', userId, 'files', fileId);
+    const snapshot = await getDoc(fileRef);
+
+    if (!snapshot.exists()) return null;
+
+    const data = snapshot.data();
+    return {
+        id: snapshot.id,
+        ...data,
+        uploadedAt: (data.uploadedAt as Timestamp)?.toDate() || new Date()
+    } as SavedFile;
+};
+
 export const deleteFile = async (
     userId: string,
     fileId: string,

@@ -17,7 +17,9 @@ export type WorkspaceAccessFeatureKey =
     | 'analyticsNetworkConnections'
     | 'analyticsRoutePlanner'
     | 'analyticsShuttlePlanner'
-    | 'analyticsRoute8Sandbox';
+    | 'analyticsRoute8Sandbox'
+    | 'operationsLoadProfiles'
+    | 'operationsOperatorDwell';
 
 export type WorkspaceAccessOverrides = Partial<Record<WorkspaceAccessFeatureKey, boolean>>;
 
@@ -58,6 +60,8 @@ export const WORKSPACE_ACCESS_FEATURES: WorkspaceAccessFeatureKey[] = [
     'analyticsRoutePlanner',
     'analyticsShuttlePlanner',
     'analyticsRoute8Sandbox',
+    'operationsLoadProfiles',
+    'operationsOperatorDwell',
 ];
 
 const PRODUCTION_WORKSPACES: WorkspaceAccessFeatureKey[] = [
@@ -76,6 +80,8 @@ const PLANNER_WORKSPACES: WorkspaceAccessFeatureKey[] = [
 const ADMIN_WORKSPACES: WorkspaceAccessFeatureKey[] = [
     ...PLANNER_WORKSPACES,
     'analyticsOdMatrix',
+    'operationsLoadProfiles',
+    'operationsOperatorDwell',
 ];
 
 const INTERNAL_WORKSPACES: WorkspaceAccessFeatureKey[] = [...WORKSPACE_ACCESS_FEATURES];

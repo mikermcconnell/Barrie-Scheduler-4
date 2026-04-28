@@ -36,7 +36,9 @@ interface FileManagerProps {
     onSelectSchedule?: (schedule: SavedSchedule) => void;
     onClose: () => void;
     defaultScheduleId?: string | null;
+    defaultFileId?: string | null;
     onSetDefaultSchedule?: (id: string | null) => void;
+    onSetDefaultFile?: (id: string | null) => void;
     isSelectingFile?: boolean;
 }
 
@@ -82,7 +84,9 @@ export const FileManager: React.FC<FileManagerProps> = ({
     onSelectSchedule,
     onClose,
     defaultScheduleId,
+    defaultFileId,
     onSetDefaultSchedule,
+    onSetDefaultFile,
     isSelectingFile = false,
 }) => {
     const { user } = useAuth();
@@ -153,6 +157,9 @@ export const FileManager: React.FC<FileManagerProps> = ({
         try {
             await deleteFile(user.uid, file.id, file.storagePath);
             setFiles(prev => prev.filter(f => f.id !== file.id));
+            if (defaultFileId === file.id) {
+                onSetDefaultFile?.(null);
+            }
         } catch (err: unknown) {
             setError(getFileManagerErrorMessage(err, 'delete'));
         }
@@ -174,10 +181,16 @@ export const FileManager: React.FC<FileManagerProps> = ({
     };
 
     const isDefaultSchedule = (scheduleId: string) => defaultScheduleId === scheduleId;
+    const isDefaultFile = (fileId: string) => defaultFileId === fileId;
 
     const handleToggleDefaultSchedule = (scheduleId: string) => {
         if (!onSetDefaultSchedule) return;
         onSetDefaultSchedule(defaultScheduleId === scheduleId ? null : scheduleId);
+    };
+
+    const handleToggleDefaultFile = (fileId: string) => {
+        if (!onSetDefaultFile) return;
+        onSetDefaultFile(defaultFileId === fileId ? null : fileId);
     };
 
     const formatFileSize = (bytes: number) => {
@@ -561,6 +574,23 @@ export const FileManager: React.FC<FileManagerProps> = ({
                                                 {getFileIcon(file.type)}
                                             </div>
                                             <div className="relative">
+                                                {onSetDefaultFile && (
+                                                    <button
+                                                        onClick={e => {
+                                                            e.stopPropagation();
+                                                            handleToggleDefaultFile(file.id);
+                                                        }}
+                                                        className={`p-2 rounded-lg transition-colors ${
+                                                            isDefaultFile(file.id)
+                                                                ? 'text-amber-500 hover:bg-amber-50'
+                                                                : 'text-gray-300 hover:text-amber-500 hover:bg-amber-50'
+                                                        }`}
+                                                        title={isDefaultFile(file.id) ? 'Unset default opening file' : 'Set as default opening file'}
+                                                        disabled={isSelectingFile}
+                                                    >
+                                                        <Star size={16} className={isDefaultFile(file.id) ? 'fill-amber-500' : ''} />
+                                                    </button>
+                                                )}
                                                 <button
                                                     onClick={e => { e.stopPropagation(); setMenuOpen(menuOpen === file.id ? null : file.id); }}
                                                     className="p-2 hover:bg-gray-100 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity"
@@ -590,7 +620,14 @@ export const FileManager: React.FC<FileManagerProps> = ({
                                                 )}
                                             </div>
                                         </div>
-                                        <h3 className="font-bold text-gray-800 mb-1 truncate">{file.name}</h3>
+                                        <div className="flex items-center gap-2 mb-1">
+                                            <h3 className="font-bold text-gray-800 truncate">{file.name}</h3>
+                                            {isDefaultFile(file.id) && (
+                                                <span className="text-[10px] uppercase tracking-wide font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">
+                                                    Default
+                                                </span>
+                                            )}
+                                        </div>
                                         <div className="text-xs text-gray-500 mb-2">
                                             {getCategoryLabel(file.type)}
                                         </div>
@@ -617,7 +654,7 @@ export const FileManager: React.FC<FileManagerProps> = ({
                                             <th className="text-left px-5 py-3 text-xs font-bold text-gray-500 uppercase">Type</th>
                                             <th className="text-left px-5 py-3 text-xs font-bold text-gray-500 uppercase">Size</th>
                                             <th className="text-left px-5 py-3 text-xs font-bold text-gray-500 uppercase">Uploaded</th>
-                                            <th className="w-10"></th>
+                                            <th className="w-24"></th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -636,19 +673,43 @@ export const FileManager: React.FC<FileManagerProps> = ({
                                                     <div className="flex items-center gap-3">
                                                         {getFileIcon(file.type)}
                                                         <span className="font-bold text-gray-800">{file.name}</span>
+                                                        {isDefaultFile(file.id) && (
+                                                            <span className="text-[10px] uppercase tracking-wide font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">
+                                                                Default
+                                                            </span>
+                                                        )}
                                                     </div>
                                                 </td>
                                                 <td className="px-5 py-4 text-sm text-gray-500">{getCategoryLabel(file.type)}</td>
                                                 <td className="px-5 py-4 text-sm text-gray-500">{formatFileSize(file.size)}</td>
                                                 <td className="px-5 py-4 text-sm text-gray-500">{formatDate(file.uploadedAt)}</td>
                                                 <td className="px-3">
-                                                    <button
-                                                        onClick={e => { e.stopPropagation(); handleDeleteFile(file); }}
-                                                        disabled={isSelectingFile}
-                                                        className="p-2 hover:bg-red-50 rounded-lg text-gray-400 hover:text-red-500"
-                                                    >
-                                                        <Trash2 size={16} />
-                                                    </button>
+                                                    <div className="flex items-center justify-end gap-1">
+                                                        {onSetDefaultFile && (
+                                                            <button
+                                                                onClick={e => {
+                                                                    e.stopPropagation();
+                                                                    handleToggleDefaultFile(file.id);
+                                                                }}
+                                                                disabled={isSelectingFile}
+                                                                className={`p-2 rounded-lg transition-colors ${
+                                                                    isDefaultFile(file.id)
+                                                                        ? 'text-amber-500 hover:bg-amber-50'
+                                                                        : 'text-gray-300 hover:text-amber-500 hover:bg-amber-50'
+                                                                }`}
+                                                                title={isDefaultFile(file.id) ? 'Unset default opening file' : 'Set as default opening file'}
+                                                            >
+                                                                <Star size={16} className={isDefaultFile(file.id) ? 'fill-amber-500' : ''} />
+                                                            </button>
+                                                        )}
+                                                        <button
+                                                            onClick={e => { e.stopPropagation(); handleDeleteFile(file); }}
+                                                            disabled={isSelectingFile}
+                                                            className="p-2 hover:bg-red-50 rounded-lg text-gray-400 hover:text-red-500"
+                                                        >
+                                                            <Trash2 size={16} />
+                                                        </button>
+                                                    </div>
                                                 </td>
                                             </tr>
                                         ))}

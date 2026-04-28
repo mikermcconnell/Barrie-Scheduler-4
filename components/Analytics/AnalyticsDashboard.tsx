@@ -146,6 +146,7 @@ const AnalyticsCard: React.FC<AnalyticsCardProps> = ({ color, icon, title, descr
 
 interface AnalyticsDashboardProps {
     onClose: () => void;
+    initialView?: AnalyticsView;
 }
 
 type AnalyticsView =
@@ -204,7 +205,7 @@ const AnalyticsPanelLoading: React.FC<{ label?: string }> = ({ label = 'Loading 
     </div>
 );
 
-export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose }) => {
+export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose, initialView = 'dashboard' }) => {
     const { team } = useTeam();
     const { user } = useAuth();
     const toast = useToast();
@@ -220,6 +221,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
     const performanceMetadataQuery = usePerformanceMetadataQuery(team?.id);
     const hasPerformanceData = !!performanceMetadataQuery.data;
     const { canAccess, loading: accessLoading } = useWorkspaceAccess();
+    const initialViewHandledRef = React.useRef(false);
 
     const canAccessAnalyticsView = useCallback((nextView: AnalyticsView): boolean => {
         const feature = ANALYTICS_VIEW_FEATURES[nextView];
@@ -399,6 +401,28 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
             setView('fleet-plan-import');
         }
     };
+
+    useEffect(() => {
+        if (initialViewHandledRef.current || loading || accessLoading) return;
+        initialViewHandledRef.current = true;
+
+        if (!canAccessAnalyticsView(initialView)) {
+            setView('dashboard');
+            return;
+        }
+
+        if (initialView === 'transit-data') {
+            void handleTransitAppClick();
+            return;
+        }
+
+        if (initialView === 'fleet-plan-workspace') {
+            void handleFleetPlanClick();
+            return;
+        }
+
+        setView(initialView);
+    }, [accessLoading, canAccessAnalyticsView, handleFleetPlanClick, handleTransitAppClick, initialView, loading]);
 
     // No team guard: show direct team setup instead of a dead-end message.
     if (!team) {

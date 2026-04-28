@@ -2,6 +2,7 @@ import React, { Suspense, useState, useCallback, useEffect } from 'react';
 import { ArrowRight, ArrowLeft, Clock, FileText, Loader2 } from 'lucide-react';
 import { lazyWithRetry } from '../../utils/lazyWithRetry';
 import { isFeatureEnabled } from '../../utils/features';
+import { useWorkspaceAccess } from '../../hooks/useWorkspaceAccess';
 
 type OperationsViewMode = 'dashboard' | 'performance' | 'perf-reports';
 
@@ -77,6 +78,10 @@ const OperationsSubviewLoading: React.FC<{ label: string }> = ({ label }) => (
 
 export const OperationsWorkspace: React.FC = () => {
     const [viewMode, setViewModeState] = useState<OperationsViewMode>(parseHashViewMode);
+    const { canAccess } = useWorkspaceAccess();
+    const operationsDashboardDescription = canAccess('operationsLoadProfiles')
+        ? 'OTP, ridership, and load profiles from STREETS AVL/APC data.'
+        : 'OTP and ridership from STREETS AVL/APC data.';
 
     const setViewMode = useCallback((mode: OperationsViewMode) => {
         const safeMode = isOperationsViewEnabled(mode) ? mode : 'dashboard';
@@ -121,7 +126,7 @@ export const OperationsWorkspace: React.FC = () => {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 px-4 max-w-3xl">
                     {isFeatureEnabled('operationsPerformanceDashboard') && (
                         <DashboardCard onClick={() => setViewMode('performance')} icon={<Clock size={20} />} color="amber"
-                            title="Operations Dashboard" description="OTP, ridership, and load profiles from STREETS AVL/APC data." />
+                            title="Operations Dashboard" description={operationsDashboardDescription} />
                     )}
 
                     {isFeatureEnabled('operationsPerfReports') && (

@@ -13,7 +13,10 @@ import {
     Clock,
     Trash2,
     RefreshCw,
-    Copy
+    Copy,
+    Smartphone,
+    GraduationCap,
+    Bus
 } from 'lucide-react';
 import type { SiblingDraft } from './ScheduleEditorWorkspace';
 import { SystemDraftList } from '../layout/SystemDraftList';
@@ -38,6 +41,7 @@ import { isFeatureEnabled } from '../../utils/features';
 import { useAuth } from '../contexts/AuthContext';
 import { useTeam } from '../contexts/TeamContext';
 import { useToast } from '../contexts/ToastContext';
+import { useWorkspaceAccess } from '../../hooks/useWorkspaceAccess';
 import { lazyWithRetry } from '../../utils/lazyWithRetry';
 
 const NewScheduleWizard = lazyWithRetry(
@@ -74,6 +78,7 @@ const PerformanceImport = lazyWithRetry(
 );
 
 type FixedRouteViewMode = 'dashboard' | 'editor' | 'new-schedule' | 'master' | 'reports' | 'analytics' | 'drafts' | 'system-editor' | 'performance-import';
+type AnalyticsLaunchView = 'dashboard' | 'transit-data' | 'fleet-plan-workspace' | 'student-pass';
 
 const FIXED_ROUTE_VIEW_FEATURES: Partial<Record<FixedRouteViewMode, Parameters<typeof isFeatureEnabled>[0]>> = {
     editor: 'fixedEditor',
@@ -154,9 +159,11 @@ const WorkspacePanelLoading: React.FC<{ label?: string }> = ({ label = 'Loadingâ
 export const FixedRouteWorkspace: React.FC = () => {
     const { user } = useAuth();
     const { team } = useTeam();
+    const { accessLevel, canAccess } = useWorkspaceAccess();
     const toast = useToast();
     const [viewMode, setViewModeState] = useState<FixedRouteViewMode>(parseHashViewMode);
     const [showGTFSImport, setShowGTFSImport] = useState(false);
+    const [analyticsInitialView, setAnalyticsInitialView] = useState<AnalyticsLaunchView>('dashboard');
 
     // Wrap navigation to sync URL hash
     const setViewMode = useCallback((mode: FixedRouteViewMode) => {
@@ -497,6 +504,11 @@ export const FixedRouteWorkspace: React.FC = () => {
         setViewMode('new-schedule');
     };
 
+    const handleOpenPlanning = (initialView: AnalyticsLaunchView = 'dashboard') => {
+        setAnalyticsInitialView(initialView);
+        setViewMode('analytics');
+    };
+
     const handleOpenMasterSchedule = () => {
         setViewMode('master');
     };
@@ -641,7 +653,7 @@ export const FixedRouteWorkspace: React.FC = () => {
                             title="Schedule Editor" description="Edit drafts and publish to Master Schedule. The main workflow for schedule changes." />
                     )}
 
-                    {isFeatureEnabled('fixedNewSchedule') && (
+                    {isFeatureEnabled('fixedNewSchedule') && accessLevel !== 'planner' && (
                         <DashboardCard onClick={handleOpenNewSchedule} icon={<CalendarPlus size={20} />} color="emerald"
                             title="New Schedules" description="Generate optimized schedules from scratch using Transify data." />
                     )}
@@ -657,11 +669,54 @@ export const FixedRouteWorkspace: React.FC = () => {
                             title="Timetable Publisher" description="Generate public timetables." />
                     )}
 
-                    {isFeatureEnabled('fixedAnalytics') && (
-                        <DashboardCard onClick={() => setViewMode('analytics')} icon={<GitBranch size={20} />} color="cyan"
-                            title="Planning Data" description="Analyze rider demand, route performance, and connections from Transit App data." />
-                    )}
                 </div>
+
+                {isFeatureEnabled('fixedAnalytics') && (
+                    <div className="mt-8 px-4">
+                        <div className="mb-3">
+                            <h3 className="text-sm font-black uppercase tracking-[0.18em] text-gray-500">Planning</h3>
+                            <p className="mt-1 text-sm text-gray-500">
+                                User-facing planning tools and datasets. New schedule generation is intentionally kept out of this planner view.
+                            </p>
+                        </div>
+                        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+                            <DashboardCard
+                                onClick={() => handleOpenPlanning('dashboard')}
+                                icon={<GitBranch size={20} />}
+                                color="cyan"
+                                title="Planning Data"
+                                description="Open the planning hub for rider demand, network analysis, route planning, and fleet tools."
+                            />
+                            {canAccess('analyticsTransitApp') && (
+                                <DashboardCard
+                                    onClick={() => handleOpenPlanning('transit-data')}
+                                    icon={<Smartphone size={20} />}
+                                    color="cyan"
+                                    title="Transit App Data"
+                                    description="Review imported Transit App demand, route engagement, origins, destinations, and service gaps."
+                                />
+                            )}
+                            {canAccess('analyticsFleetPlan') && (
+                                <DashboardCard
+                                    onClick={() => handleOpenPlanning('fleet-plan-workspace')}
+                                    icon={<Bus size={20} />}
+                                    color="purple"
+                                    title="Fleet Plan"
+                                    description="View and maintain the shared fleet plan, lifecycle years, purchasing needs, and retirements."
+                                />
+                            )}
+                            {canAccess('analyticsStudentPass') && (
+                                <DashboardCard
+                                    onClick={() => handleOpenPlanning('student-pass')}
+                                    icon={<GraduationCap size={20} />}
+                                    color="amber"
+                                    title="Student Transit Pass"
+                                    description="Create student-facing transit pass flyers from residential zones to schools."
+                                />
+                            )}
+                        </div>
+                    </div>
+                )}
 
                 {/* GTFS Import Modal */}
                 {user && (
@@ -1015,7 +1070,11 @@ export const FixedRouteWorkspace: React.FC = () => {
 
                     {viewMode === 'analytics' && (
                         <Suspense fallback={<WorkspacePanelLoading label="Loading Planning Data..." />}>
-                            <AnalyticsDashboard onClose={() => setViewMode('dashboard')} />
+                            <AnalyticsDashboard
+                                key={analyticsInitialView}
+                                initialView={analyticsInitialView}
+                                onClose={() => setViewMode('dashboard')}
+                            />
                         </Suspense>
                     )}
 

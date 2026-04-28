@@ -10,6 +10,7 @@ import {
 } from '../../hooks/usePerformanceData';
 import { lazyWithRetry } from '../../utils/lazyWithRetry';
 import { buildPerformanceMetadataHealth } from '../../utils/performanceImportHealth';
+import { useWorkspaceAccess } from '../../hooks/useWorkspaceAccess';
 
 interface PerformanceDashboardProps {
     onClose: () => void;
@@ -89,6 +90,7 @@ const PerformanceWorkspaceLoading: React.FC<{
 export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onClose, autoOpen = false }) => {
     const { team } = useTeam();
     const { user } = useAuth();
+    const { canAccess } = useWorkspaceAccess();
     const [view, setView] = useState<PerformanceView>(() => (autoOpen ? 'loading' : 'landing'));
     const [importReturnTarget, setImportReturnTarget] = useState<ImportReturnTarget>(() => (autoOpen ? 'close' : 'landing'));
 
@@ -102,6 +104,10 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onCl
         () => buildPerformanceMetadataHealth(metadataQuery.data),
         [metadataQuery.data],
     );
+    const canSeeAdvancedOperationsTabs = canAccess('operationsLoadProfiles') || canAccess('operationsOperatorDwell');
+    const dashboardDescription = canSeeAdvancedOperationsTabs
+        ? 'On-time performance, ridership, and load profiles from STREETS AVL/APC data.'
+        : 'On-time performance and ridership from STREETS AVL/APC data.';
 
     useEffect(() => {
         setView(autoOpen ? 'loading' : 'landing');
@@ -238,7 +244,7 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onCl
             <div className="max-w-4xl mx-auto">
                 <div className="mb-8">
                     <h2 className="text-2xl font-bold text-gray-900 tracking-tight mb-2">Performance Dashboard</h2>
-                    <p className="text-gray-500">On-time performance, ridership, and load profiles from STREETS AVL/APC data.</p>
+                    <p className="text-gray-500">{dashboardDescription}</p>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -287,8 +293,12 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onCl
                         <h3 className="text-lg font-bold text-gray-900 mb-1">STREETS AVL Data</h3>
                         <p className="text-sm text-gray-500 leading-relaxed">
                             {hasExistingData
-                                ? 'View OTP, ridership trends, and load profiles. Data updates daily.'
-                                : 'Import AVL/APC data to view OTP, ridership trends, and load profiles by route.'}
+                                ? canSeeAdvancedOperationsTabs
+                                    ? 'View OTP, ridership trends, and load profiles. Data updates daily.'
+                                    : 'View OTP and ridership trends. Data updates daily.'
+                                : canSeeAdvancedOperationsTabs
+                                    ? 'Import AVL/APC data to view OTP, ridership trends, and load profiles by route.'
+                                    : 'Import AVL/APC data to view OTP and ridership trends by route.'}
                         </p>
                         {quickHealth && (
                             <p className={`mt-3 text-xs leading-relaxed ${

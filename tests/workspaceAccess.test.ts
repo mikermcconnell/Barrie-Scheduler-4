@@ -48,6 +48,8 @@ describe('workspace access', () => {
         expect(allowed).toContain('analyticsTransitApp');
         expect(allowed).toContain('analyticsStudentPass');
         expect(allowed).toContain('analyticsFleetPlan');
+        expect(allowed).not.toContain('operationsLoadProfiles');
+        expect(allowed).not.toContain('operationsOperatorDwell');
         expect(allowed).not.toContain('analyticsCorridorSpeed');
         expect(allowed).not.toContain('analyticsCorridorHeadway');
         expect(allowed).not.toContain('analyticsNetworkConnections');
@@ -56,6 +58,8 @@ describe('workspace access', () => {
     it('keeps developer-only workspaces out of admin access', () => {
         const allowed = getAllowedWorkspaceFeatures('admin');
 
+        expect(allowed).toContain('operationsLoadProfiles');
+        expect(allowed).toContain('operationsOperatorDwell');
         expect(allowed).not.toContain('analyticsCorridorSpeed');
         expect(allowed).not.toContain('analyticsCorridorHeadway');
         expect(allowed).not.toContain('analyticsNetworkConnections');

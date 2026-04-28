@@ -22,7 +22,8 @@ import {
     downloadFileArrayBuffer,
     saveSchedule,
     updateSchedule,
-    getSchedule
+    getSchedule,
+    getFile
 } from '../../utils/services/dataService';
 import { generateRideCoCSV, downloadCSV } from '../../utils/services/exportService';
 import { exportTODPaddlesExcel, exportTODPaddlesPDF } from '../../utils/services/paddleExportService';
@@ -74,6 +75,8 @@ import { SHIFT_DURATION_SLOTS, BREAK_THRESHOLD_HOURS } from '../../utils/demandC
 type DayType = OnDemandDayType;
 const VALID_DAY_TYPES: DayType[] = ['Weekday', 'Saturday', 'Sunday'];
 const MAX_FLEET_VEHICLES = 6;
+const DEFAULT_SCHEDULE_STORAGE_KEY = 'od-default-schedule-id';
+const DEFAULT_FILE_STORAGE_KEY = 'od-default-file-id';
 const OPTIMIZATION_SETTINGS_STORAGE_KEY = 'od-optimization-settings';
 const OPTIMIZATION_DURATION_HISTORY_STORAGE_KEY = 'od-optimization-duration-history';
 const SHIFT_COUNT_CAP_LIMITS = { min: 1, max: 40, step: 1 } as const;
@@ -296,12 +299,18 @@ export const OnDemandWorkspace: React.FC = () => {
     const [saveSuccess, setSaveSuccess] = useState(false);
     const [isLoadingFromCloud, setIsLoadingFromCloud] = useState(false);
     const handleScheduleSelectRef = React.useRef<(schedule: SavedSchedule) => void>(() => {});
+    const handleCloudFileSelectRef = React.useRef<(file: SavedFile) => Promise<void>>(async () => {});
 
     // Default Schedule (auto-load on mount)
     const [defaultScheduleId, setDefaultScheduleId] = useState<string | null>(
-        () => localStorage.getItem('od-default-schedule-id')
+        () => localStorage.getItem(DEFAULT_SCHEDULE_STORAGE_KEY)
     );
-    const [hasResolvedInitialDataSource, setHasResolvedInitialDataSource] = useState(() => !localStorage.getItem('od-default-schedule-id'));
+    const [defaultFileId, setDefaultFileId] = useState<string | null>(
+        () => localStorage.getItem(DEFAULT_FILE_STORAGE_KEY)
+    );
+    const [hasResolvedInitialDataSource, setHasResolvedInitialDataSource] = useState(
+        () => !localStorage.getItem(DEFAULT_SCHEDULE_STORAGE_KEY) && !localStorage.getItem(DEFAULT_FILE_STORAGE_KEY)
+    );
     const [dismissedSampleBanner, setDismissedSampleBanner] = useState(false);
 
     // Draft Name State (Supporting "Save As" via Rename)
@@ -1115,9 +1124,9 @@ export const OnDemandWorkspace: React.FC = () => {
         }
     }, [editingShiftId, shiftToEdit]);
 
-    // Auto-load default schedule once auth/default id is available
+    // Auto-load the selected default schedule or file once auth/default id is available.
     React.useEffect(() => {
-        if (!user || !defaultScheduleId) {
+        if (!user || (!defaultScheduleId && !defaultFileId)) {
             setHasResolvedInitialDataSource(true);
             return;
         }
@@ -1126,17 +1135,32 @@ export const OnDemandWorkspace: React.FC = () => {
         setHasResolvedInitialDataSource(false);
         (async () => {
             try {
-                const schedule = await getSchedule(user.uid, defaultScheduleId);
-                if (cancelled) return;
-                if (schedule) {
-                    handleScheduleSelectRef.current(schedule);
-                } else {
-                    // Schedule was deleted — clear preference
-                    localStorage.removeItem('od-default-schedule-id');
-                    setDefaultScheduleId(null);
+                if (defaultScheduleId) {
+                    const schedule = await getSchedule(user.uid, defaultScheduleId);
+                    if (cancelled) return;
+                    if (schedule) {
+                        handleScheduleSelectRef.current(schedule);
+                    } else {
+                        // Schedule was deleted — clear preference
+                        localStorage.removeItem(DEFAULT_SCHEDULE_STORAGE_KEY);
+                        setDefaultScheduleId(null);
+                    }
+                    return;
+                }
+
+                if (defaultFileId) {
+                    const file = await getFile(user.uid, defaultFileId);
+                    if (cancelled) return;
+                    if (file) {
+                        await handleCloudFileSelectRef.current(file);
+                    } else {
+                        // File was deleted — clear preference
+                        localStorage.removeItem(DEFAULT_FILE_STORAGE_KEY);
+                        setDefaultFileId(null);
+                    }
                 }
             } catch (err) {
-                console.warn('Failed to auto-load default schedule:', err);
+                console.warn('Failed to auto-load default On-Demand source:', err);
                 // Don't clear preference on network error — retry next visit
             } finally {
                 if (!cancelled) {
@@ -1145,15 +1169,28 @@ export const OnDemandWorkspace: React.FC = () => {
             }
         })();
         return () => { cancelled = true; };
-    }, [user, defaultScheduleId]);
+    }, [user, defaultScheduleId, defaultFileId]);
 
     const handleSetDefaultSchedule = (id: string | null) => {
         if (id) {
-            localStorage.setItem('od-default-schedule-id', id);
+            localStorage.setItem(DEFAULT_SCHEDULE_STORAGE_KEY, id);
+            localStorage.removeItem(DEFAULT_FILE_STORAGE_KEY);
+            setDefaultFileId(null);
         } else {
-            localStorage.removeItem('od-default-schedule-id');
+            localStorage.removeItem(DEFAULT_SCHEDULE_STORAGE_KEY);
         }
         setDefaultScheduleId(id);
+    };
+
+    const handleSetDefaultFile = (id: string | null) => {
+        if (id) {
+            localStorage.setItem(DEFAULT_FILE_STORAGE_KEY, id);
+            localStorage.removeItem(DEFAULT_SCHEDULE_STORAGE_KEY);
+            setDefaultScheduleId(null);
+        } else {
+            localStorage.removeItem(DEFAULT_FILE_STORAGE_KEY);
+        }
+        setDefaultFileId(id);
     };
 
     // Handle loading a file from cloud storage
@@ -1224,6 +1261,7 @@ export const OnDemandWorkspace: React.FC = () => {
             setIsLoadingFromCloud(false);
         }
     };
+    handleCloudFileSelectRef.current = handleCloudFileSelect;
 
     // Handle loading a saved draft/schedule
     const handleScheduleSelect = (schedule: SavedSchedule) => {
@@ -1384,7 +1422,9 @@ export const OnDemandWorkspace: React.FC = () => {
                     onSelectFile={handleCloudFileSelect}
                     onSelectSchedule={handleScheduleSelect}
                     defaultScheduleId={defaultScheduleId}
+                    defaultFileId={defaultFileId}
                     onSetDefaultSchedule={handleSetDefaultSchedule}
+                    onSetDefaultFile={handleSetDefaultFile}
                     isSelectingFile={isLoadingFromCloud}
                 />
             )}
@@ -1434,6 +1474,13 @@ export const OnDemandWorkspace: React.FC = () => {
                             <span className="flex items-center gap-1 text-xs font-bold text-amber-600 bg-amber-50 px-2 py-1 rounded-lg border border-amber-200">
                                 <Star size={12} className="fill-amber-500 text-amber-500" /> Default
                             </span>
+                        )}
+                        {defaultFileId && (
+                            [loadedCloudFiles.master, loadedCloudFiles.rideco].some(file => file?.id === defaultFileId) && (
+                                <span className="flex items-center gap-1 text-xs font-bold text-amber-600 bg-amber-50 px-2 py-1 rounded-lg border border-amber-200">
+                                    <Star size={12} className="fill-amber-500 text-amber-500" /> Default file
+                                </span>
+                            )
                         )}
                     </div>
 

@@ -10,6 +10,7 @@ import { resolveFilteredScope } from '../../utils/performanceDataScope';
 import { lazyWithRetry } from '../../utils/lazyWithRetry';
 import { PerformanceImportHealthPanel } from './PerformanceImportHealthPanel';
 import { isFeatureEnabled, isFeatureUnderConstruction } from '../../utils/features';
+import { useWorkspaceAccess } from '../../hooks/useWorkspaceAccess';
 
 interface PerformanceWorkspaceProps {
     data: PerformanceDataSummary;
@@ -40,10 +41,6 @@ const PERFORMANCE_TAB_FEATURES: Partial<Record<PerformanceTab, Parameters<typeof
     'operator-dwell': 'operationsOperatorDwell',
 };
 
-const isPerformanceTabVisible = (tabId: PerformanceTab): boolean => {
-    const feature = PERFORMANCE_TAB_FEATURES[tabId];
-    return feature ? isFeatureEnabled(feature) : true;
-};
 const DAY_TYPE_LABELS: Record<DayType, string> = { weekday: 'Weekday', saturday: 'Saturday', sunday: 'Sunday' };
 
 const LOCALHOST_HOSTNAMES = new Set(['localhost', '127.0.0.1', '::1']);
@@ -102,20 +99,21 @@ const PerformancePanelLoading: React.FC<{ label: string }> = ({ label }) => (
 const OVERVIEW_ONLY_TIME_RANGES: TimeRange[] = ['past-week', 'single-day'];
 
 export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data, onReimport, onBack, detailsReady = true }) => {
+    const { canAccess } = useWorkspaceAccess();
     const allowIncompleteTabs = import.meta.env.DEV || isLocalhost();
     const showImportHealthPanel = !import.meta.env.PROD
         && detailsReady
         && isFeatureEnabled('operationsImportHealth');
     const tabs = useMemo(
         () => TAB_CONFIG
-            .filter(tab => isPerformanceTabVisible(tab.id))
+            .filter(tab => !tab.feature || canAccess(tab.feature))
             .map(tab => ({
                 ...tab,
                 enabled: tab.id === 'overview'
                     ? true
                     : detailsReady && (tab.status === 'complete' || allowIncompleteTabs),
             })),
-        [allowIncompleteTabs, detailsReady]
+        [allowIncompleteTabs, canAccess, detailsReady]
     );
     const [activeTab, setActiveTab] = useState<PerformanceTab>('overview');
     const [timeRanges, setTimeRanges] = useState<Partial<Record<PerformanceTab, TimeRange>>>({});
