@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     ArrowLeft,
-    Bus,
+    ChevronDown,
     Download,
     ExternalLink,
     FileSpreadsheet,
@@ -12,20 +12,22 @@ import {
     RefreshCw,
     Save,
     Undo2,
-    Users,
 } from 'lucide-react';
 import { useToast } from '../contexts/ToastContext';
 import { useUndoRedo } from '../../hooks/useUndoRedo';
 import { exportFleetPlanWorkbook } from '../../utils/fleet-plan/fleetPlanExport';
-import { cloneFleetPlanWorkbook, createEmptyFleetPlanRow, replaceFleetPlanSheet, summarizeFleetPlan } from '../../utils/fleet-plan/fleetPlanModel';
+import { cloneFleetPlanWorkbook, createEmptyFleetPlanRow, replaceFleetPlanSheet } from '../../utils/fleet-plan/fleetPlanModel';
 import { saveFleetPlanWorkbook } from '../../utils/fleet-plan/fleetPlanService';
 import { FLEET_PLAN_SHEET_CONFIGS, FLEET_PLAN_SHEET_CONFIG_BY_KEY } from '../../utils/fleet-plan/fleetPlanConfig';
 import {
     delayFleetPlanRetirement,
     getFleetPlanLifecycle,
+    getFleetPlanServiceLifeLabel,
     getNextFleetPlanSortState,
     getNextFleetPlanCellPosition,
+    isFleetPlanRowCountedInFleetTotal,
     moveFleetPlanLifecycleBoundary,
+    moveFleetPlanLifecycleWindow,
     sortFleetPlanEntries,
 } from '../../utils/fleet-plan/fleetPlanEditing';
 import type { FleetPlanGridColumn, FleetPlanLifecycle, FleetPlanSortState } from '../../utils/fleet-plan/fleetPlanEditing';
@@ -41,20 +43,6 @@ interface FleetPlanWorkspaceProps {
     onSaved: (workbook: FleetPlanWorkbook) => void;
 }
 
-interface MetricCardProps {
-    icon: React.ReactNode;
-    label: string;
-    value: string;
-    tone: 'blue' | 'green' | 'violet';
-    children?: React.ReactNode;
-}
-
-const toneStyles: Record<MetricCardProps['tone'], { icon: string; value: string }> = {
-    blue: { icon: 'bg-blue-50 text-brand-blue', value: 'text-gray-900' },
-    green: { icon: 'bg-emerald-50 text-emerald-600', value: 'text-gray-900' },
-    violet: { icon: 'bg-violet-50 text-violet-600', value: 'text-gray-900' },
-};
-
 const BUS_TYPE_LABELS: Record<FleetPlanSheetKey, string> = {
     'diesel-12m': '12m Diesel',
     'small-buses': '8m & 6m',
@@ -65,10 +53,35 @@ type CombinedFleetRow = { sheetKey: FleetPlanSheetKey; row: FleetPlanRow };
 type BaseFleetField = 'busType' | 'unitNumber' | 'busSize' | 'makeModel' | 'year' | 'comment' | 'electricFlag' | 'onOrder';
 type FleetStatusFilter = 'all' | 'in-service' | 'retiring-this-year' | 'purchasing-this-year' | 'on-order' | 'future' | 'overdue' | 'missing-info';
 type FleetBusTypeFilter = 'all' | FleetPlanSheetKey;
+type LifecycleDragMode = 'start' | 'retire' | 'window';
+
+interface LifecycleDragState {
+    sheetKey: FleetPlanSheetKey;
+    rowId: string;
+    mode: LifecycleDragMode;
+    yearKeys: string[];
+    startIndex: number;
+    retireIndex: number;
+    pointerStartIndex: number;
+    trackLeft: number;
+    trackWidth: number;
+}
 
 const ALL_TIMELINE_COLUMNS = Array.from(
     new Map(FLEET_PLAN_SHEET_CONFIGS.flatMap((config) => config.timelineColumns).map((column) => [column.key, column])).values(),
 ).sort((left, right) => Number(left.key) - Number(right.key));
+
+const FLEET_TIMELINE_START_YEAR = 2025;
+const COMMON_TIMELINE_YEAR_KEYS = new Set(
+    FLEET_PLAN_SHEET_CONFIGS
+        .map((config) => new Set(config.timelineColumns.map((column) => column.key)))
+        .reduce<string[]>((commonYears, sheetYears, index) => (
+            index === 0 ? Array.from(sheetYears) : commonYears.filter((year) => sheetYears.has(year))
+        ), []),
+);
+const DISPLAY_TIMELINE_COLUMNS = ALL_TIMELINE_COLUMNS.filter((column) => (
+    Number(column.key) >= FLEET_TIMELINE_START_YEAR && COMMON_TIMELINE_YEAR_KEYS.has(column.key)
+));
 
 const COMBINED_BASE_COLUMNS: Array<{ key: BaseFleetField; label: string }> = [
     { key: 'busType', label: 'Bus Type' },
@@ -82,7 +95,7 @@ const COMBINED_BASE_COLUMNS: Array<{ key: BaseFleetField; label: string }> = [
 
 const COMBINED_GRID_COLUMNS: FleetPlanGridColumn[] = [
     ...COMBINED_BASE_COLUMNS.map((column) => ({ kind: 'base' as const, key: column.key, label: column.label })),
-    ...ALL_TIMELINE_COLUMNS.map((column) => ({ kind: 'timeline' as const, key: column.key, label: column.label })),
+    ...DISPLAY_TIMELINE_COLUMNS.map((column) => ({ kind: 'timeline' as const, key: column.key, label: column.label })),
 ];
 
 const STATUS_FILTERS: Array<{ key: FleetStatusFilter; label: string }> = [
@@ -103,24 +116,9 @@ const BUS_TYPE_FILTERS: Array<{ key: FleetBusTypeFilter; label: string }> = [
     { key: 'small-buses', label: 'Small Buses' },
 ];
 
-const MetricCard: React.FC<MetricCardProps> = ({ icon, label, value, tone, children }) => {
-    const styles = toneStyles[tone];
-
-    return (
-        <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-            <div className="flex items-center gap-4">
-                <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl ${styles.icon}`}>
-                    {icon}
-                </div>
-                <div className="min-w-0">
-                    <div className="text-sm font-medium text-gray-500">{label}</div>
-                    <div className={`mt-1 truncate text-xl font-bold ${styles.value}`}>{value}</div>
-                </div>
-                {children ? <div className="ml-auto shrink-0">{children}</div> : null}
-            </div>
-        </div>
-    );
-};
+function clampNumber(value: number, min: number, max: number): number {
+    return Math.min(max, Math.max(min, value));
+}
 
 function updateRow(rows: FleetPlanRow[], rowId: string, updater: (row: FleetPlanRow) => FleetPlanRow): FleetPlanRow[] {
     return rows.map((row) => (row.id === rowId ? updater(row) : row));
@@ -198,6 +196,19 @@ function countMatchingRows(
     }).length;
 }
 
+function groupFleetRowsByType(rows: CombinedFleetRow[]): Record<FleetPlanSheetKey, CombinedFleetRow[]> {
+    return FLEET_PLAN_SHEET_CONFIGS.reduce((groups, config) => ({
+        ...groups,
+        [config.key]: rows
+            .filter((entry) => entry.sheetKey === config.key)
+            .sort((left, right) => getFleetRowDisplayName(left.row).localeCompare(
+                getFleetRowDisplayName(right.row),
+                undefined,
+                { numeric: true, sensitivity: 'base' },
+            )),
+    }), {} as Record<FleetPlanSheetKey, CombinedFleetRow[]>);
+}
+
 export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
     data,
     teamId,
@@ -211,6 +222,8 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
     const [exporting, setExporting] = useState(false);
     const [pendingFocus, setPendingFocus] = useState<{ rowIndex: number; columnIndex: number } | null>(null);
     const [retirementEditor, setRetirementEditor] = useState<{ sheetKey: FleetPlanSheetKey; rowId: string; fromYear: string } | null>(null);
+    const [lifecycleDrag, setLifecycleDrag] = useState<LifecycleDragState | null>(null);
+    const [isSnapshotExpanded, setIsSnapshotExpanded] = useState(false);
     const [sortState, setSortState] = useState<FleetPlanSortState | null>(null);
     const [statusFilter, setStatusFilter] = useState<FleetStatusFilter>('all');
     const [busTypeFilter, setBusTypeFilter] = useState<FleetBusTypeFilter>('all');
@@ -226,9 +239,9 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
     } = useUndoRedo<FleetPlanWorkbook>(cloneFleetPlanWorkbook(data), { maxHistory: 100 });
     const draftRef = useRef(draft);
 
-    const summary = useMemo(() => summarizeFleetPlan(draft), [draft]);
     const currentYear = new Date().getFullYear();
     const currentYearLabel = String(currentYear);
+    const nextYearLabel = String(currentYear + 1);
     const combinedRows = useMemo<CombinedFleetRow[]>(() => draft.sheets.flatMap((sheet) => sheet.rows.map((row) => ({ sheetKey: sheet.key, row }))), [draft.sheets]);
     const sortedRows = useMemo(() => sortFleetPlanEntries(combinedRows, sortState, (entry, sort) => {
         if (sort.kind === 'timeline') {
@@ -244,14 +257,29 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
         const lifecycle = getFleetPlanLifecycle(entry.row, FLEET_PLAN_SHEET_CONFIG_BY_KEY[entry.sheetKey].timelineColumns, currentYear);
         return matchesFleetStatusFilter(entry, lifecycle, statusFilter, currentYear);
     }), [busTypeFilter, currentYear, sortedRows, statusFilter]);
-    const thisYearRetirements = useMemo(() => combinedRows.filter((entry) => {
-        const lifecycle = getFleetPlanLifecycle(entry.row, FLEET_PLAN_SHEET_CONFIG_BY_KEY[entry.sheetKey].timelineColumns, currentYear);
-        return lifecycle.retireYear === currentYearLabel;
-    }), [combinedRows, currentYear, currentYearLabel]);
-    const thisYearPurchases = useMemo(() => combinedRows.filter((entry) => {
-        const lifecycle = getFleetPlanLifecycle(entry.row, FLEET_PLAN_SHEET_CONFIG_BY_KEY[entry.sheetKey].timelineColumns, currentYear);
-        return lifecycle.purchaseYears.includes(currentYearLabel);
-    }), [combinedRows, currentYear, currentYearLabel]);
+    const fleetTotalsByYear = useMemo(() => Object.fromEntries(
+        DISPLAY_TIMELINE_COLUMNS.map((column) => [
+            column.key,
+            filteredRows.filter(({ sheetKey, row }) => isFleetPlanRowCountedInFleetTotal(row, sheetKey, column.key)).length,
+        ]),
+    ) as Record<string, number>, [filteredRows]);
+    const snapshotYears = useMemo(() => [currentYearLabel, nextYearLabel].map((yearLabel) => {
+        const retirements = combinedRows.filter((entry) => {
+            const lifecycle = getFleetPlanLifecycle(entry.row, FLEET_PLAN_SHEET_CONFIG_BY_KEY[entry.sheetKey].timelineColumns, currentYear);
+            return lifecycle.retireYear === yearLabel;
+        });
+        const purchases = combinedRows.filter((entry) => {
+            const lifecycle = getFleetPlanLifecycle(entry.row, FLEET_PLAN_SHEET_CONFIG_BY_KEY[entry.sheetKey].timelineColumns, currentYear);
+            return lifecycle.purchaseYears.includes(yearLabel);
+        });
+        return {
+            yearLabel,
+            retirements,
+            purchases,
+            retirementsByType: groupFleetRowsByType(retirements),
+            purchasesByType: groupFleetRowsByType(purchases),
+        };
+    }), [combinedRows, currentYear, currentYearLabel, nextYearLabel]);
     const isDirty = JSON.stringify(draft) !== JSON.stringify(data);
     const editableColumns = COMBINED_GRID_COLUMNS;
     const makeModelOptions = useMemo(() => Array.from(new Set(
@@ -435,6 +463,114 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
         }
     };
 
+    const handleLifecycleWindowMove = (
+        sheetKey: FleetPlanSheetKey,
+        rowId: string,
+        toStartYear: string,
+    ) => {
+        const config = FLEET_PLAN_SHEET_CONFIG_BY_KEY[sheetKey];
+        let changed = false;
+        mutateSheet(sheetKey, (rows) => updateRow(rows, rowId, (row) => {
+            const nextRow = moveFleetPlanLifecycleWindow({
+                row,
+                timelineColumns: config.timelineColumns,
+                toStartYear,
+            });
+            changed = nextRow !== row;
+            return nextRow;
+        }));
+        if (!changed) {
+            toast?.info('Timeline unchanged', 'The service window cannot move outside the timeline.');
+        }
+    };
+
+    const getLifecyclePointerIndex = (
+        clientX: number,
+        yearKeys: string[],
+        trackLeft: number,
+        trackWidth: number,
+    ): number => {
+        const x = clampNumber(clientX - trackLeft, 0, trackWidth);
+        const ratio = trackWidth > 0 ? x / trackWidth : 0;
+        return clampNumber(Math.round(ratio * (yearKeys.length - 1)), 0, yearKeys.length - 1);
+    };
+
+    const handleLifecyclePointerDown = (
+        event: React.PointerEvent<HTMLDivElement>,
+        sheetKey: FleetPlanSheetKey,
+        rowId: string,
+        mode: LifecycleDragMode,
+        yearKeys: string[],
+        lifecycle: FleetPlanLifecycle,
+    ) => {
+        if (!lifecycle.startYear) return;
+        if (mode === 'window' && !lifecycle.retireYear) return;
+
+        const startIndex = getYearIndex(yearKeys, lifecycle.startYear);
+        const retireIndex = lifecycle.retireYear ? getYearIndex(yearKeys, lifecycle.retireYear) : yearKeys.length - 1;
+        if (startIndex < 0 || retireIndex < 0) return;
+
+        const track = event.currentTarget.closest<HTMLElement>('[data-lifecycle-track]');
+        const trackRect = track?.getBoundingClientRect();
+        if (!trackRect) return;
+
+        event.preventDefault();
+        event.stopPropagation();
+        event.currentTarget.setPointerCapture(event.pointerId);
+        setLifecycleDrag({
+            sheetKey,
+            rowId,
+            mode,
+            yearKeys,
+            startIndex,
+            retireIndex,
+            pointerStartIndex: getLifecyclePointerIndex(event.clientX, yearKeys, trackRect.left, trackRect.width),
+            trackLeft: trackRect.left,
+            trackWidth: trackRect.width,
+        });
+    };
+
+    const handleLifecyclePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+        if (!lifecycleDrag) return;
+
+        const targetIndex = getLifecyclePointerIndex(
+            event.clientX,
+            lifecycleDrag.yearKeys,
+            lifecycleDrag.trackLeft,
+            lifecycleDrag.trackWidth,
+        );
+        if (lifecycleDrag.mode === 'start') {
+            const nextIndex = clampNumber(targetIndex, 0, lifecycleDrag.retireIndex);
+            const year = lifecycleDrag.yearKeys[nextIndex];
+            if (year) handleLifecycleBoundaryMove(lifecycleDrag.sheetKey, lifecycleDrag.rowId, 'start', year);
+            return;
+        }
+
+        if (lifecycleDrag.mode === 'retire') {
+            const nextIndex = clampNumber(targetIndex, lifecycleDrag.startIndex, lifecycleDrag.yearKeys.length - 1);
+            const year = lifecycleDrag.yearKeys[nextIndex];
+            if (year) handleLifecycleBoundaryMove(lifecycleDrag.sheetKey, lifecycleDrag.rowId, 'retire', year);
+            return;
+        }
+
+        const lifecycleWidth = lifecycleDrag.retireIndex - lifecycleDrag.startIndex;
+        const delta = targetIndex - lifecycleDrag.pointerStartIndex;
+        const nextStartIndex = clampNumber(
+            lifecycleDrag.startIndex + delta,
+            0,
+            Math.max(0, lifecycleDrag.yearKeys.length - 1 - lifecycleWidth),
+        );
+        const year = lifecycleDrag.yearKeys[nextStartIndex];
+        if (year) handleLifecycleWindowMove(lifecycleDrag.sheetKey, lifecycleDrag.rowId, year);
+    };
+
+    const handleLifecyclePointerEnd = (event: React.PointerEvent<HTMLDivElement>) => {
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+            event.currentTarget.releasePointerCapture(event.pointerId);
+        }
+        setLifecycleDrag(null);
+    };
+
     const resolveGridColumnIndex = useCallback((column: FleetPlanGridColumn): number => (
         editableColumns.findIndex((gridColumn) => gridColumn.kind === column.kind && gridColumn.key === column.key)
     ), [editableColumns]);
@@ -557,7 +693,13 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                             <ArrowLeft size={16} />
                             Back to Analytics
                         </button>
-                        <h2 className="text-4xl font-extrabold tracking-tight text-gray-950">Fleet Plan Workspace</h2>
+                        <div className="flex flex-wrap items-center gap-3">
+                            <h2 className="text-4xl font-extrabold tracking-tight text-gray-950">Fleet Plan Workspace</h2>
+                            <span className="inline-flex max-w-full items-center gap-2 rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1.5 text-xs font-extrabold text-emerald-700">
+                                <FileSpreadsheet size={14} />
+                                <span className="truncate">{draft.metadata.sourceFileName}</span>
+                            </span>
+                        </div>
                         <p className="mt-2 text-sm text-gray-500">
                             Digitize the shared fleet workbook, edit structured rows, and export back to Excel.
                         </p>
@@ -611,72 +753,95 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-                <MetricCard
-                    icon={<FileSpreadsheet size={24} />}
-                    label="Workbook"
-                    value={draft.metadata.sourceFileName}
-                    tone="green"
-                />
-                <MetricCard
-                    icon={<Bus size={24} />}
-                    label="Fleet rows"
-                    value={summary.totalRows.toLocaleString()}
-                    tone="blue"
-                />
-                <MetricCard
-                    icon={<Users size={24} />}
-                    label="Workspace"
-                    value="Team Shared"
-                    tone="violet"
-                >
-                    <div className="flex items-center gap-3 border-l border-gray-200 pl-4">
-                        <div className="flex -space-x-2">
-                            <span className="flex h-8 w-8 items-center justify-center rounded-full border-2 border-white bg-gray-100 text-[11px] font-bold text-gray-600">ME</span>
-                            <span className="flex h-8 w-8 items-center justify-center rounded-full border-2 border-white bg-emerald-100 text-[11px] font-bold text-emerald-700">TM</span>
-                            <span className="flex h-8 w-8 items-center justify-center rounded-full border-2 border-white bg-amber-100 text-[11px] font-bold text-amber-700">+2</span>
-                        </div>
-                        <button className="text-xs font-bold text-brand-blue hover:text-blue-700">
-                            Manage
-                        </button>
-                    </div>
-                </MetricCard>
-            </div>
-
             <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-                <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                <button
+                    type="button"
+                    onClick={() => setIsSnapshotExpanded((expanded) => !expanded)}
+                    aria-expanded={isSnapshotExpanded}
+                    className="flex w-full flex-col gap-4 text-left xl:flex-row xl:items-start xl:justify-between"
+                >
                     <div>
-                        <h3 className="text-xl font-extrabold text-gray-950">This year snapshot</h3>
+                        <h3 className="flex items-center gap-2 text-xl font-extrabold text-gray-950">
+                            <ChevronDown
+                                size={20}
+                                className={`text-gray-400 transition-transform ${isSnapshotExpanded ? '' : '-rotate-90'}`}
+                            />
+                            Fleet snapshot
+                        </h3>
                         <p className="mt-1 text-sm text-gray-500">
-                            {currentYearLabel} retirements and purchases pulled from the fleet timeline.
+                            {currentYearLabel} and {nextYearLabel} retirements and purchases pulled from the fleet timeline.
                         </p>
                     </div>
                     <div className="text-sm font-bold text-brand-blue">
-                        {thisYearRetirements.length} retiring · {thisYearPurchases.length} purchasing
+                        {snapshotYears.reduce((total, snapshot) => total + snapshot.retirements.length, 0)} retiring · {snapshotYears.reduce((total, snapshot) => total + snapshot.purchases.length, 0)} purchasing
                     </div>
-                </div>
-                <div className="mt-4 grid gap-4 lg:grid-cols-2">
-                    <div className="rounded-xl border border-red-100 bg-red-50/60 p-4">
-                        <div className="text-sm font-extrabold text-red-700">Retiring in {currentYearLabel}</div>
-                        <div className="mt-3 flex flex-wrap gap-2">
-                            {thisYearRetirements.length > 0 ? thisYearRetirements.map(({ sheetKey, row }) => (
-                                <span key={`${sheetKey}-${row.id}`} className="rounded-full bg-white px-3 py-1 text-xs font-bold text-red-700 shadow-sm">
-                                    {getFleetRowDisplayName(row)}
-                                </span>
-                            )) : <span className="text-sm text-red-700/70">No retirements marked this year.</span>}
-                        </div>
+                </button>
+                {isSnapshotExpanded && (
+                    <div className="mt-4 space-y-4">
+                        {snapshotYears.map((snapshot) => (
+                            <div key={snapshot.yearLabel}>
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <h4 className="text-sm font-extrabold text-gray-800">{snapshot.yearLabel}</h4>
+                                    <div className="text-xs font-extrabold text-gray-500">
+                                        {snapshot.retirements.length} retiring · {snapshot.purchases.length} purchasing
+                                    </div>
+                                </div>
+                                <div className="mt-2 grid gap-4 lg:grid-cols-2">
+                                    <div className="rounded-xl border border-red-100 bg-red-50/60 p-4">
+                                        <div className="text-sm font-extrabold text-red-700">Retiring in {snapshot.yearLabel}</div>
+                                        {snapshot.retirements.length > 0 ? (
+                                            <div className="mt-3 space-y-3">
+                                                {FLEET_PLAN_SHEET_CONFIGS.map((config) => {
+                                                    const entries = snapshot.retirementsByType[config.key];
+                                                    if (!entries?.length) return null;
+                                                    return (
+                                                        <div key={config.key}>
+                                                            <div className="text-[11px] font-extrabold uppercase tracking-wide text-red-700/70">
+                                                                {BUS_TYPE_LABELS[config.key]}
+                                                            </div>
+                                                            <div className="mt-1.5 flex flex-wrap gap-2">
+                                                                {entries.map(({ sheetKey, row }) => (
+                                                                    <span key={`${sheetKey}-${row.id}`} className="rounded-full bg-white px-3 py-1 text-xs font-bold text-red-700 shadow-sm">
+                                                                        {getFleetRowDisplayName(row)}
+                                                                    </span>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        ) : <div className="mt-3 text-sm text-red-700/70">No retirements marked in {snapshot.yearLabel}.</div>}
+                                    </div>
+                                    <div className="rounded-xl border border-emerald-100 bg-emerald-50/70 p-4">
+                                        <div className="text-sm font-extrabold text-emerald-700">Purchasing in {snapshot.yearLabel}</div>
+                                        {snapshot.purchases.length > 0 ? (
+                                            <div className="mt-3 space-y-3">
+                                                {FLEET_PLAN_SHEET_CONFIGS.map((config) => {
+                                                    const entries = snapshot.purchasesByType[config.key];
+                                                    if (!entries?.length) return null;
+                                                    return (
+                                                        <div key={config.key}>
+                                                            <div className="text-[11px] font-extrabold uppercase tracking-wide text-emerald-700/70">
+                                                                {BUS_TYPE_LABELS[config.key]}
+                                                            </div>
+                                                            <div className="mt-1.5 flex flex-wrap gap-2">
+                                                                {entries.map(({ sheetKey, row }) => (
+                                                                    <span key={`${sheetKey}-${row.id}`} className="rounded-full bg-white px-3 py-1 text-xs font-bold text-emerald-700 shadow-sm">
+                                                                        {getFleetRowDisplayName(row)}
+                                                                    </span>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        ) : <div className="mt-3 text-sm text-emerald-700/70">No purchases marked in {snapshot.yearLabel}.</div>}
+                                    </div>
+                                </div>
+                            </div>
+                        ))}
                     </div>
-                    <div className="rounded-xl border border-emerald-100 bg-emerald-50/70 p-4">
-                        <div className="text-sm font-extrabold text-emerald-700">Purchasing in {currentYearLabel}</div>
-                        <div className="mt-3 flex flex-wrap gap-2">
-                            {thisYearPurchases.length > 0 ? thisYearPurchases.map(({ sheetKey, row }) => (
-                                <span key={`${sheetKey}-${row.id}`} className="rounded-full bg-white px-3 py-1 text-xs font-bold text-emerald-700 shadow-sm">
-                                    {getFleetRowDisplayName(row)}
-                                </span>
-                            )) : <span className="text-sm text-emerald-700/70">No purchases marked this year.</span>}
-                        </div>
-                    </div>
-                </div>
+                )}
             </section>
 
             <section className="rounded-2xl border border-gray-200 bg-white shadow-sm">
@@ -741,20 +906,46 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                     </div>
                 </div>
 
+                <div className="sticky top-0 z-50 border-b border-gray-200 bg-white px-6 py-4 shadow-md">
+                    <div className="grid gap-4 xl:grid-cols-[280px_minmax(520px,1fr)]">
+                        <div className="text-xs font-extrabold uppercase tracking-wide text-gray-500">
+                            Fleet total by year
+                        </div>
+                        <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${DISPLAY_TIMELINE_COLUMNS.length}, minmax(42px, 1fr))` }}>
+                            {DISPLAY_TIMELINE_COLUMNS.map((column) => (
+                                <div key={column.key} className="rounded-lg bg-gray-50 px-1.5 py-2 text-center">
+                                    <div className="text-[10px] font-extrabold text-gray-500">{column.key}</div>
+                                    <div className="mt-1 text-sm font-black text-gray-950">{fleetTotalsByYear[column.key] ?? 0}</div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+
                 <div className="divide-y divide-gray-100">
                     {filteredRows.map(({ sheetKey, row }) => {
                         const config = FLEET_PLAN_SHEET_CONFIG_BY_KEY[sheetKey];
-                        const yearKeys = config.timelineColumns.map((column) => column.key);
+                        const yearKeys = DISPLAY_TIMELINE_COLUMNS.map((column) => column.key);
                         const lifecycle = getFleetPlanLifecycle(row, config.timelineColumns, currentYear);
-                        const startIndex = Math.max(0, getYearIndex(yearKeys, lifecycle.startYear));
-                        const retireIndex = Math.max(startIndex, getYearIndex(yearKeys, lifecycle.retireYear));
-                        const safeRetireIndex = retireIndex >= 0 ? retireIndex : yearKeys.length - 1;
+                        const firstVisibleYear = Number(yearKeys[0] || FLEET_TIMELINE_START_YEAR);
+                        const lastVisibleYear = Number(yearKeys[yearKeys.length - 1] || FLEET_TIMELINE_START_YEAR);
+                        const rawStartIndex = getYearIndex(yearKeys, lifecycle.startYear);
+                        const startIndex = rawStartIndex >= 0
+                            ? rawStartIndex
+                            : lifecycle.startYear && Number(lifecycle.startYear) > lastVisibleYear
+                                ? yearKeys.length - 1
+                                : 0;
+                        const rawRetireIndex = getYearIndex(yearKeys, lifecycle.retireYear);
+                        const hasRetirementYear = Boolean(lifecycle.retireYear);
+                        const safeRetireIndex = hasRetirementYear && rawRetireIndex >= 0
+                            ? Math.max(startIndex, rawRetireIndex)
+                            : hasRetirementYear && lifecycle.retireYear && Number(lifecycle.retireYear) < firstVisibleYear
+                                ? startIndex
+                                : yearKeys.length - 1;
                         const maxIndex = Math.max(1, yearKeys.length - 1);
                         const leftPct = (startIndex / maxIndex) * 100;
                         const rightPct = (safeRetireIndex / maxIndex) * 100;
                         const widthPct = Math.max(4, rightPct - leftPct);
-                        const startRangeValue = lifecycle.startYear ? Math.max(0, getYearIndex(yearKeys, lifecycle.startYear)) : 0;
-                        const retireRangeValue = lifecycle.retireYear ? Math.max(0, getYearIndex(yearKeys, lifecycle.retireYear)) : yearKeys.length - 1;
 
                         return (
                             <div key={`${sheetKey}-${row.id}`} className="grid gap-4 px-6 py-5 xl:grid-cols-[280px_minmax(520px,1fr)]">
@@ -796,81 +987,116 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                                             />
                                         </label>
                                     </div>
+                                    <div className="mt-2 rounded-lg bg-gray-50 px-3 py-2 text-xs font-bold text-gray-600">
+                                        Service life: <span className="text-gray-950">{getFleetPlanServiceLifeLabel(row.year, currentYear)}</span>
+                                    </div>
                                 </div>
 
                                 <div className="min-w-0">
-                                    <div className="relative h-16 rounded-xl border border-gray-200 bg-gray-50 px-4 py-4">
-                                        <div className="absolute left-4 right-4 top-1/2 h-2 -translate-y-1/2 rounded-full bg-gray-200" />
-                                        <div
-                                            className="absolute top-1/2 h-3 -translate-y-1/2 rounded-full bg-blue-500"
-                                            style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
-                                        />
-                                        <div
-                                            className="absolute top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-blue-600 shadow"
-                                            style={{ left: `${leftPct}%` }}
-                                            title={`In service: ${lifecycle.startYear || 'missing'}`}
-                                        />
-                                        <div
-                                            className="absolute top-1/2 h-6 w-6 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-red-600 shadow"
-                                            style={{ left: `${rightPct}%` }}
-                                            title={`Retire: ${lifecycle.retireYear || 'missing'}`}
-                                        />
-                                        <div className="absolute inset-x-4 bottom-1 flex justify-between text-[10px] font-bold text-gray-400">
-                                            {yearKeys.map((year) => (
-                                                <span key={year}>{year.slice(2)}</span>
-                                            ))}
+                                    <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
+                                        <div className="mb-2 flex items-center justify-between text-xs font-bold text-gray-600">
+                                            <span>
+                                                In service: <span className="text-brand-blue">{lifecycle.startYear || 'missing'}</span>
+                                            </span>
+                                            <span>
+                                                Retirement: <span className={hasRetirementYear ? 'text-red-600' : 'text-amber-600'}>{lifecycle.retireYear || 'Not set'}</span>
+                                            </span>
                                         </div>
-                                    </div>
-                                    <div className="mt-3 grid gap-3 md:grid-cols-2">
-                                        <label className="text-xs font-bold text-gray-600">
-                                            Drag in-service year: <span className="text-brand-blue">{lifecycle.startYear || 'missing'}</span>
-                                            <input
-                                                type="range"
-                                                min={0}
-                                                max={yearKeys.length - 1}
-                                                value={startRangeValue}
-                                                onChange={(event) => {
-                                                    const year = yearKeys[Number(event.target.value)];
+                                        <div
+                                            data-lifecycle-track
+                                            className="relative h-12 touch-none select-none"
+                                            onPointerMove={handleLifecyclePointerMove}
+                                            onPointerUp={handleLifecyclePointerEnd}
+                                            onPointerCancel={handleLifecyclePointerEnd}
+                                            aria-label={`Fleet lifecycle for bus ${row.unitNumber || 'row'}`}
+                                        >
+                                            <div className="absolute inset-x-0 top-1/2 h-2 -translate-y-1/2 rounded-full bg-gray-200" />
+                                            <div
+                                                data-drag-mode="window"
+                                                role="slider"
+                                                tabIndex={0}
+                                                aria-label={`Move service window for bus ${row.unitNumber || 'row'}`}
+                                                aria-valuetext={`${lifecycle.startYear || 'missing'} to ${lifecycle.retireYear || 'retirement not set'}`}
+                                                title="Drag the bar to move the full service window"
+                                                onPointerDown={(event) => handleLifecyclePointerDown(event, sheetKey, row.id, 'window', yearKeys, lifecycle)}
+                                                onKeyDown={(event) => {
+                                                    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+                                                    event.preventDefault();
+                                                    const nextIndex = clampNumber(startIndex + (event.key === 'ArrowRight' ? 1 : -1), 0, yearKeys.length - 1 - Math.max(0, safeRetireIndex - startIndex));
+                                                    const year = yearKeys[nextIndex];
+                                                    if (year) handleLifecycleWindowMove(sheetKey, row.id, year);
+                                                }}
+                                                className={`absolute top-1/2 z-10 h-5 -translate-y-1/2 cursor-grab rounded-full shadow-sm outline-none ring-blue-200 transition hover:bg-blue-600 focus:ring-4 active:cursor-grabbing ${
+                                                    hasRetirementYear ? 'bg-blue-500' : 'border border-dashed border-blue-500 bg-blue-300/70'
+                                                }`}
+                                                style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                                            />
+                                            <div
+                                                data-drag-mode="start"
+                                                role="slider"
+                                                tabIndex={0}
+                                                aria-label={`Set in-service year for bus ${row.unitNumber || 'row'}`}
+                                                aria-valuemin={0}
+                                                aria-valuemax={safeRetireIndex}
+                                                aria-valuenow={startIndex}
+                                                aria-valuetext={lifecycle.startYear || 'missing'}
+                                                title={`Drag start: ${lifecycle.startYear || 'missing'}`}
+                                                onPointerDown={(event) => handleLifecyclePointerDown(event, sheetKey, row.id, 'start', yearKeys, lifecycle)}
+                                                onKeyDown={(event) => {
+                                                    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+                                                    event.preventDefault();
+                                                    const nextIndex = clampNumber(startIndex + (event.key === 'ArrowRight' ? 1 : -1), 0, safeRetireIndex);
+                                                    const year = yearKeys[nextIndex];
                                                     if (year) handleLifecycleBoundaryMove(sheetKey, row.id, 'start', year);
                                                 }}
-                                                className="mt-2 w-full accent-blue-600"
+                                                className="absolute top-1/2 z-20 h-7 w-7 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-full border-2 border-white bg-blue-600 shadow outline-none ring-blue-200 transition hover:scale-105 focus:ring-4"
+                                                style={{ left: `${leftPct}%` }}
                                             />
-                                        </label>
-                                        <label className="text-xs font-bold text-gray-600">
-                                            Drag retire year: <span className="text-red-600">{lifecycle.retireYear || 'missing'}</span>
-                                            <input
-                                                type="range"
-                                                min={0}
-                                                max={yearKeys.length - 1}
-                                                value={retireRangeValue}
-                                                onChange={(event) => {
-                                                    const year = yearKeys[Number(event.target.value)];
+                                            <div
+                                                data-drag-mode="retire"
+                                                role="slider"
+                                                tabIndex={0}
+                                                aria-label={`Set retirement year for bus ${row.unitNumber || 'row'}`}
+                                                aria-valuemin={startIndex}
+                                                aria-valuemax={yearKeys.length - 1}
+                                                aria-valuenow={safeRetireIndex}
+                                                aria-valuetext={lifecycle.retireYear || 'retirement not set'}
+                                                title={hasRetirementYear ? `Drag retire: ${lifecycle.retireYear}` : 'Retirement not set'}
+                                                onPointerDown={(event) => handleLifecyclePointerDown(event, sheetKey, row.id, 'retire', yearKeys, lifecycle)}
+                                                onKeyDown={(event) => {
+                                                    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+                                                    event.preventDefault();
+                                                    const nextIndex = clampNumber(safeRetireIndex + (event.key === 'ArrowRight' ? 1 : -1), startIndex, yearKeys.length - 1);
+                                                    const year = yearKeys[nextIndex];
                                                     if (year) handleLifecycleBoundaryMove(sheetKey, row.id, 'retire', year);
                                                 }}
-                                                className="mt-2 w-full accent-red-600"
+                                                className={`absolute top-1/2 z-20 h-8 w-8 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-full border-2 border-white shadow outline-none ring-red-200 transition hover:scale-105 focus:ring-4 ${
+                                                    hasRetirementYear ? 'bg-red-600' : 'border-dashed bg-amber-400'
+                                                }`}
+                                                style={{ left: `${rightPct}%` }}
                                             />
-                                        </label>
+                                            <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-between text-[10px] font-bold text-gray-400">
+                                                {yearKeys.map((year) => (
+                                                    <span key={year}>{year.slice(2)}</span>
+                                                ))}
+                                            </div>
+                                        </div>
                                     </div>
-                                    <div className="mt-3 flex flex-wrap gap-1.5">
-                                        {yearKeys.map((year) => {
-                                            const status = getTimelineStatusValue(row, year);
-                                            if (!status) return null;
-                                            return (
-                                                <span
-                                                    key={year}
-                                                    className={`rounded-full px-2 py-1 text-[10px] font-extrabold ${
-                                                        status === 'RETIRE'
-                                                            ? 'bg-red-50 text-red-700'
-                                                            : status === 'PURCHASE' || status === 'GROWTH'
-                                                                ? 'bg-emerald-50 text-emerald-700'
-                                                                : 'bg-blue-50 text-blue-700'
-                                                    }`}
-                                                >
-                                                    {year}: {status === row.unitNumber.trim() ? 'SERVICE' : status}
-                                                </span>
-                                            );
-                                        })}
-                                    </div>
+                                    <p className="mt-2 text-xs font-medium text-gray-500">
+                                        Drag the blue bar to move the bus window, or drag either end to adjust in-service and retirement years.
+                                    </p>
+                                    {!hasRetirementYear ? (
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                const fallbackYear = yearKeys[Math.max(startIndex, yearKeys.length - 1)];
+                                                if (fallbackYear) handleLifecycleBoundaryMove(sheetKey, row.id, 'retire', fallbackYear);
+                                            }}
+                                            className="mt-2 inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-extrabold text-amber-700 transition hover:bg-amber-100"
+                                        >
+                                            Set retirement year
+                                        </button>
+                                    ) : null}
                                 </div>
                             </div>
                         );
@@ -944,7 +1170,7 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                                                         </button>
                                                     </th>
                                                 ))}
-                                                {ALL_TIMELINE_COLUMNS.map((column) => (
+                                                {DISPLAY_TIMELINE_COLUMNS.map((column) => (
                                                     <th
                                                         key={column.key}
                                                         className="sticky top-0 z-10 min-w-[86px] border-b border-r border-gray-200 bg-gray-50 px-3 py-3 text-center text-xs font-bold text-gray-700"
@@ -1006,7 +1232,7 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                                                         );
                                                     })}
 
-                                                    {ALL_TIMELINE_COLUMNS.map((column) => {
+                                                    {DISPLAY_TIMELINE_COLUMNS.map((column) => {
                                                         const columnIndex = resolveGridColumnIndex({
                                                             kind: 'timeline',
                                                             key: column.key,
@@ -1046,7 +1272,7 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                                             {filteredRows.length === 0 ? (
                                                 <tr>
                                                     <td
-                                                        colSpan={COMBINED_BASE_COLUMNS.length + ALL_TIMELINE_COLUMNS.length + 1}
+                                                        colSpan={COMBINED_BASE_COLUMNS.length + DISPLAY_TIMELINE_COLUMNS.length + 1}
                                                         className="px-4 py-12 text-center text-sm text-gray-500"
                                                     >
                                                         No fleet rows match the selected filters.

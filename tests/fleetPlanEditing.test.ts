@@ -6,10 +6,13 @@ import {
     delayFleetPlanRetirement,
     getFleetPlanLifecycle,
     getFleetPlanGridColumns,
+    getFleetPlanServiceLifeLabel,
     getNextFleetPlanCellPosition,
     getNextFleetPlanSortState,
     insertDuplicatedFleetPlanRow,
+    isFleetPlanRowCountedInFleetTotal,
     moveFleetPlanLifecycleBoundary,
+    moveFleetPlanLifecycleWindow,
     sortFleetPlanEntries,
 } from '../utils/fleet-plan/fleetPlanEditing';
 import { FLEET_PLAN_SHEET_CONFIG_BY_KEY } from '../utils/fleet-plan/fleetPlanConfig';
@@ -159,6 +162,33 @@ describe('fleetPlan editing helpers', () => {
         expect(next).toBe(row);
     });
 
+    it('moves the full lifecycle window while preserving lifespan and export values', () => {
+        const config = FLEET_PLAN_SHEET_CONFIG_BY_KEY['diesel-12m'];
+        const row = {
+            ...createEmptyFleetPlanRow('diesel-12m'),
+            unitNumber: '1101',
+            year: '2025',
+            timeline: {
+                '2025': '1101',
+                '2026': '1101',
+                '2027': 'RETIRE',
+                '2028': '',
+            },
+        };
+
+        const next = moveFleetPlanLifecycleWindow({
+            row,
+            timelineColumns: config.timelineColumns,
+            toStartYear: '2026',
+        });
+
+        expect(next.year).toBe('2026');
+        expect(next.timeline['2025']).toBe('');
+        expect(next.timeline['2026']).toBe('1101');
+        expect(next.timeline['2027']).toBe('1101');
+        expect(next.timeline['2028']).toBe('RETIRE');
+    });
+
     it('summarizes fleet lifecycle filters from timeline data', () => {
         const config = FLEET_PLAN_SHEET_CONFIG_BY_KEY['diesel-12m'];
         const row = {
@@ -178,6 +208,40 @@ describe('fleetPlan editing helpers', () => {
         expect(lifecycle.purchaseYears).toEqual(['2025']);
         expect(lifecycle.isInService).toBe(true);
         expect(lifecycle.hasMissingInfo).toBe(false);
+    });
+
+    it('calculates service life from the actual in-service year, not the visible lifecycle bar start', () => {
+        expect(getFleetPlanServiceLifeLabel('2012', 2026)).toBe('14 years');
+        expect(getFleetPlanServiceLifeLabel('2025', 2026)).toBe('1 year');
+        expect(getFleetPlanServiceLifeLabel('', 2026)).toBe('Unknown');
+    });
+
+    it('counts fleet totals from real active units without treating planning markers as added buses', () => {
+        const activeDiesel = {
+            ...createEmptyFleetPlanRow('diesel-12m'),
+            unitNumber: '1101',
+            timeline: { '2026': '1101' },
+        };
+        const replacementPurchase = {
+            ...createEmptyFleetPlanRow('diesel-12m'),
+            unitNumber: '2601',
+            timeline: { '2026': 'PURCHASE' },
+        };
+        const retiringBus = {
+            ...createEmptyFleetPlanRow('diesel-12m'),
+            unitNumber: '1201',
+            timeline: { '2026': 'RETIRE' },
+        };
+        const growthBus = {
+            ...createEmptyFleetPlanRow('diesel-12m'),
+            unitNumber: '2701',
+            timeline: { '2026': 'GROWTH' },
+        };
+
+        expect(isFleetPlanRowCountedInFleetTotal(activeDiesel, 'diesel-12m', '2026')).toBe(true);
+        expect(isFleetPlanRowCountedInFleetTotal(replacementPurchase, 'diesel-12m', '2026')).toBe(false);
+        expect(isFleetPlanRowCountedInFleetTotal(retiringBus, 'diesel-12m', '2026')).toBe(false);
+        expect(isFleetPlanRowCountedInFleetTotal(growthBus, 'diesel-12m', '2026')).toBe(false);
     });
 
     it('cycles column sorting from ascending to descending to original order', () => {

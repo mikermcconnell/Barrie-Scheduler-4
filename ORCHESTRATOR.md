@@ -35,6 +35,8 @@ Top-level app shells in `App.tsx`:
 
 The app uses hash-based navigation rather than a router library. The top-level shell lives in `App.tsx`, with `index.tsx` as the mount point.
 
+Workspace visibility is controlled by `utils/workspaceAccess.ts` and `hooks/useWorkspaceAccess.ts`. Existing global feature flags still control build-wide availability; workspace access profiles (`production`, `planner`, `admin`, `internal`) control what each team member sees.
+
 This is a domain-heavy monolith:
 - UI lives in `components/`
 - domain logic lives in `utils/`

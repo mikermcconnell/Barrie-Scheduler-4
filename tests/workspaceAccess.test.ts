@@ -1,0 +1,84 @@
+import { describe, expect, it } from 'vitest';
+import type { TeamMember } from '../utils/masterScheduleTypes';
+import {
+    canAccessWorkspaceFeature,
+    getAllowedWorkspaceFeatures,
+    listUnknownWorkspaceAccessKeys,
+    resolveWorkspaceAccessLevel,
+} from '../utils/workspaceAccess';
+
+const member = (overrides: Partial<TeamMember>): TeamMember => ({
+    id: 'u1',
+    userId: 'u1',
+    role: 'member',
+    accessLevel: 'production',
+    joinedAt: new Date(),
+    displayName: 'Test User',
+    email: 'test@example.com',
+    ...overrides,
+});
+
+describe('workspace access', () => {
+    it('keeps all workspace access keys aligned with feature definitions', () => {
+        expect(listUnknownWorkspaceAccessKeys()).toEqual([]);
+    });
+
+    it('defaults existing owners and admins to internal access', () => {
+        expect(resolveWorkspaceAccessLevel(member({ role: 'owner', accessLevel: undefined }))).toBe('internal');
+        expect(resolveWorkspaceAccessLevel(member({ role: 'admin', accessLevel: undefined }))).toBe('internal');
+    });
+
+    it('defaults existing regular members to production access', () => {
+        expect(resolveWorkspaceAccessLevel(member({ accessLevel: undefined }))).toBe('production');
+    });
+
+    it('limits production users to production workspaces', () => {
+        const allowed = getAllowedWorkspaceFeatures('production');
+
+        expect(allowed).toContain('workspaceFixedRoute');
+        expect(allowed).toContain('workspaceOperations');
+        expect(allowed).not.toContain('workspaceOndemand');
+        expect(allowed).not.toContain('analyticsRoutePlanner');
+    });
+
+    it('puts planner-approved workspaces in planner access', () => {
+        const allowed = getAllowedWorkspaceFeatures('planner');
+
+        expect(allowed).toContain('workspaceOndemand');
+        expect(allowed).toContain('analyticsTransitApp');
+        expect(allowed).toContain('analyticsStudentPass');
+        expect(allowed).toContain('analyticsFleetPlan');
+        expect(allowed).not.toContain('analyticsCorridorSpeed');
+        expect(allowed).not.toContain('analyticsCorridorHeadway');
+        expect(allowed).not.toContain('analyticsNetworkConnections');
+    });
+
+    it('keeps developer-only workspaces out of admin access', () => {
+        const allowed = getAllowedWorkspaceFeatures('admin');
+
+        expect(allowed).not.toContain('analyticsCorridorSpeed');
+        expect(allowed).not.toContain('analyticsCorridorHeadway');
+        expect(allowed).not.toContain('analyticsNetworkConnections');
+        expect(allowed).not.toContain('analyticsRoutePlanner');
+        expect(allowed).not.toContain('analyticsShuttlePlanner');
+        expect(allowed).not.toContain('analyticsRoute8Sandbox');
+    });
+
+    it('lets internal users access unfinished workspaces when globally enabled', () => {
+        const internal = member({ accessLevel: 'internal' });
+
+        expect(canAccessWorkspaceFeature('workspaceOndemand', internal)).toBe(true);
+        expect(canAccessWorkspaceFeature('analyticsRoutePlanner', internal)).toBe(true);
+        expect(canAccessWorkspaceFeature('analyticsRoute8Sandbox', internal)).toBe(true);
+    });
+
+    it('applies explicit workspace overrides after profile defaults', () => {
+        const productionWithOverride = member({
+            accessLevel: 'production',
+            workspaceOverrides: { workspaceOndemand: true, workspaceFixedRoute: false },
+        });
+
+        expect(canAccessWorkspaceFeature('workspaceOndemand', productionWithOverride)).toBe(true);
+        expect(canAccessWorkspaceFeature('workspaceFixedRoute', productionWithOverride)).toBe(false);
+    });
+});

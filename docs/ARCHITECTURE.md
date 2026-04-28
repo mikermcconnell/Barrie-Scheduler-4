@@ -32,6 +32,7 @@ Common app-wide infrastructure:
 - toast context → `components/contexts/ToastContext.tsx`
 - global header → `components/layout/Header.tsx`
 - feature flags → `utils/features.ts`
+- workspace access profiles → `utils/workspaceAccess.ts`, surfaced through `hooks/useWorkspaceAccess.ts`
 
 ---
 
@@ -75,6 +76,8 @@ STREETS-style operational reporting and dashboards live in:
 ### 4) Planning-data / analytics surfaces
 
 Broader planning and analysis tools mostly live under `components/Analytics/` plus matching domain folders in `utils/`.
+
+Visible workspace access is controlled by `utils/workspaceAccess.ts`. Global feature flags decide whether a feature exists in the build; user/team workspace access decides whether the current user can see and enter it.
 
 Notable areas:
 - Transit App analytics → `components/Analytics/TransitApp*`, `utils/transit-app/`

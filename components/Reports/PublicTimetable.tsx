@@ -56,6 +56,7 @@ const createEmptyBrochureDays = (): BrochureDayRecord => ({
 });
 
 const LANDSCAPE_MAP_ROUTES = new Set(['10', '11', '100', '101']);
+const PORTRAIT_HERO_MAP_ROUTES = new Set(['2']);
 type MapLegendItem =
     | { label: string; markerClassName: string; line?: false }
     | { label: string; line: true };
@@ -70,12 +71,43 @@ const MAP_LEGEND_ITEMS: MapLegendItem[] = [
 const MAP_IMAGE_SCALE_MIN = 50;
 const MAP_IMAGE_SCALE_MAX = 150;
 const MAP_IMAGE_SCALE_DEFAULT = 100;
+const MAP_IMAGE_OFFSET_MIN = -40;
+const MAP_IMAGE_OFFSET_MAX = 40;
+const MAP_IMAGE_OFFSET_DEFAULT = 0;
 
 const clampMapImageScalePercent = (value: number | string | null | undefined): number => {
     const numericValue = typeof value === 'number' ? value : Number(value);
     if (!Number.isFinite(numericValue)) return MAP_IMAGE_SCALE_DEFAULT;
     return Math.min(MAP_IMAGE_SCALE_MAX, Math.max(MAP_IMAGE_SCALE_MIN, Math.round(numericValue)));
 };
+
+const clampMapImageOffsetPercent = (value: number | string | null | undefined): number => {
+    const numericValue = typeof value === 'number' ? value : Number(value);
+    if (!Number.isFinite(numericValue)) return MAP_IMAGE_OFFSET_DEFAULT;
+    return Math.min(MAP_IMAGE_OFFSET_MAX, Math.max(MAP_IMAGE_OFFSET_MIN, Math.round(numericValue)));
+};
+
+interface MapImageDragState {
+    pointerId: number;
+    startClientX: number;
+    startClientY: number;
+    startOffsetX: number;
+    startOffsetY: number;
+    elementWidth: number;
+    elementHeight: number;
+}
+
+type MapImageResizeCorner = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+
+interface MapImageResizeState {
+    pointerId: number;
+    corner: MapImageResizeCorner;
+    startClientX: number;
+    startClientY: number;
+    startScale: number;
+    elementWidth: number;
+    elementHeight: number;
+}
 
 interface VisibleBrochureStop {
     origStop: string;
@@ -247,6 +279,8 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
     const toast = useToast();
     const brochurePage1Ref = useRef<HTMLDivElement | null>(null);
     const brochurePage2Ref = useRef<HTMLDivElement | null>(null);
+    const mapImageDragRef = useRef<MapImageDragState | null>(null);
+    const mapImageResizeRef = useRef<MapImageResizeState | null>(null);
     const [entries, setEntries] = useState<MasterScheduleEntry[]>([]);
     const [loading, setLoading] = useState(true);
     const [generating, setGenerating] = useState(false);
@@ -269,6 +303,8 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
     const [configWarning, setConfigWarning] = useState<string | null>(null);
     const [showConfigEditor, setShowConfigEditor] = useState(false);
     const [isFullscreenPreview, setIsFullscreenPreview] = useState(false);
+    const [isDraggingMapImage, setIsDraggingMapImage] = useState(false);
+    const [isResizingMapImage, setIsResizingMapImage] = useState(false);
 
     useEffect(() => {
         const routeNumber = initialRouteNumber?.trim();
@@ -559,6 +595,117 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
         }));
     };
 
+    const updateMapImageOffset = (axis: 'x' | 'y', value: number | string) => {
+        const field = axis === 'x' ? 'mapImageOffsetXPercent' : 'mapImageOffsetYPercent';
+        setConfigDraft(prev => ({
+            ...prev,
+            [field]: clampMapImageOffsetPercent(value),
+        }));
+    };
+
+    const updateMapImagePlacement = (scalePercent: number, offsetXPercent = 0, offsetYPercent = 0) => {
+        setConfigDraft(prev => ({
+            ...prev,
+            mapImageScalePercent: clampMapImageScalePercent(scalePercent),
+            mapImageOffsetXPercent: clampMapImageOffsetPercent(offsetXPercent),
+            mapImageOffsetYPercent: clampMapImageOffsetPercent(offsetYPercent),
+        }));
+    };
+
+    const handleMapImagePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+        if (!mapImageUrl || isResizingMapImage || event.button !== 0) return;
+
+        const bounds = event.currentTarget.getBoundingClientRect();
+        mapImageDragRef.current = {
+            pointerId: event.pointerId,
+            startClientX: event.clientX,
+            startClientY: event.clientY,
+            startOffsetX: clampMapImageOffsetPercent(configDraft.mapImageOffsetXPercent),
+            startOffsetY: clampMapImageOffsetPercent(configDraft.mapImageOffsetYPercent),
+            elementWidth: Math.max(bounds.width, 1),
+            elementHeight: Math.max(bounds.height, 1),
+        };
+        event.currentTarget.setPointerCapture(event.pointerId);
+        setIsDraggingMapImage(true);
+    };
+
+    const handleMapImagePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+        const dragState = mapImageDragRef.current;
+        if (!dragState || dragState.pointerId !== event.pointerId) return;
+
+        const nextOffsetX = dragState.startOffsetX + ((event.clientX - dragState.startClientX) / dragState.elementWidth) * 100;
+        const nextOffsetY = dragState.startOffsetY + ((event.clientY - dragState.startClientY) / dragState.elementHeight) * 100;
+
+        setConfigDraft(prev => ({
+            ...prev,
+            mapImageOffsetXPercent: clampMapImageOffsetPercent(nextOffsetX),
+            mapImageOffsetYPercent: clampMapImageOffsetPercent(nextOffsetY),
+        }));
+    };
+
+    const handleMapImagePointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+        const dragState = mapImageDragRef.current;
+        if (dragState?.pointerId === event.pointerId) {
+            mapImageDragRef.current = null;
+            setIsDraggingMapImage(false);
+        }
+    };
+
+    const handleMapImageResizePointerDown = (
+        corner: MapImageResizeCorner,
+        event: React.PointerEvent<HTMLButtonElement>
+    ) => {
+        if (!mapImageUrl || event.button !== 0) return;
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        const bounds = event.currentTarget.parentElement?.getBoundingClientRect();
+        if (!bounds) return;
+
+        mapImageResizeRef.current = {
+            pointerId: event.pointerId,
+            corner,
+            startClientX: event.clientX,
+            startClientY: event.clientY,
+            startScale: clampMapImageScalePercent(configDraft.mapImageScalePercent),
+            elementWidth: Math.max(bounds.width, 1),
+            elementHeight: Math.max(bounds.height, 1),
+        };
+        event.currentTarget.setPointerCapture(event.pointerId);
+        setIsResizingMapImage(true);
+    };
+
+    const handleMapImageResizePointerMove = (event: React.PointerEvent<HTMLButtonElement>) => {
+        const resizeState = mapImageResizeRef.current;
+        if (!resizeState || resizeState.pointerId !== event.pointerId) return;
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        const deltaX = event.clientX - resizeState.startClientX;
+        const deltaY = event.clientY - resizeState.startClientY;
+        const horizontalDelta = resizeState.corner.endsWith('right') ? deltaX : -deltaX;
+        const verticalDelta = resizeState.corner.startsWith('bottom') ? deltaY : -deltaY;
+        const normalizedDelta = ((horizontalDelta / resizeState.elementWidth) + (verticalDelta / resizeState.elementHeight)) / 2;
+        const nextScale = resizeState.startScale + (normalizedDelta * 100);
+
+        setConfigDraft(prev => ({
+            ...prev,
+            mapImageScalePercent: clampMapImageScalePercent(nextScale),
+        }));
+    };
+
+    const handleMapImageResizePointerUp = (event: React.PointerEvent<HTMLButtonElement>) => {
+        const resizeState = mapImageResizeRef.current;
+        if (resizeState?.pointerId === event.pointerId) {
+            event.preventDefault();
+            event.stopPropagation();
+            mapImageResizeRef.current = null;
+            setIsResizingMapImage(false);
+        }
+    };
+
     const handleResetConfigDefaults = () => {
         const defaults = buildDefaultPublicTimetableConfig();
         setConfigDraft(defaults);
@@ -588,6 +735,8 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
             promoText: configDraft.promoText.trim(),
             contacts: configDraft.contacts.map(contact => contact.trim()).filter(Boolean),
             mapImageScalePercent: clampMapImageScalePercent(configDraft.mapImageScalePercent),
+            mapImageOffsetXPercent: clampMapImageOffsetPercent(configDraft.mapImageOffsetXPercent),
+            mapImageOffsetYPercent: clampMapImageOffsetPercent(configDraft.mapImageOffsetYPercent),
         };
 
         if (!cleanedConfig.disclaimer || cleanedConfig.fareRows.length === 0 || cleanedConfig.legendItems.length === 0 || cleanedConfig.contacts.length === 0) {
@@ -613,7 +762,7 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
                 contacts: [...nextConfig.contacts],
             });
             setConfigWarning(null);
-            toast.success('Brochure Settings Saved', 'Preview and export now use the updated managed content and map size.');
+            toast.success('Brochure Settings Saved', 'Preview and export now use the updated managed content and map placement.');
         } catch (error) {
             console.error('Error saving public timetable config:', error);
             toast.error('Save Failed', getPublicTimetableConfigErrorMessage(error, 'save'));
@@ -693,8 +842,13 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
     const isLoopRoute = routeConfig?.segments.length === 1;
     const hasReadyBrochureDay = Object.values(brochureDays).some(day => day.status === 'ready' && day.table);
     const isLandscapeMapRoute = selectedRoute ? LANDSCAPE_MAP_ROUTES.has(selectedRoute) : false;
+    const isPortraitHeroMapRoute = selectedRoute ? PORTRAIT_HERO_MAP_ROUTES.has(selectedRoute) : false;
     const mapImageScalePercent = clampMapImageScalePercent(configDraft.mapImageScalePercent);
+    const mapImageOffsetXPercent = clampMapImageOffsetPercent(configDraft.mapImageOffsetXPercent);
+    const mapImageOffsetYPercent = clampMapImageOffsetPercent(configDraft.mapImageOffsetYPercent);
     const savedMapImageScalePercent = clampMapImageScalePercent(brochureConfig.mapImageScalePercent);
+    const savedMapImageOffsetXPercent = clampMapImageOffsetPercent(brochureConfig.mapImageOffsetXPercent);
+    const savedMapImageOffsetYPercent = clampMapImageOffsetPercent(brochureConfig.mapImageOffsetYPercent);
     const brochureEffectiveDate = entries
         .filter(entry => entry.routeNumber === selectedRoute)
         .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
@@ -775,18 +929,52 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
                 ? 'absolute inset-0 h-full w-full object-contain object-center'
                 : 'absolute inset-0 h-full w-full object-cover object-[64%_50%]';
         const foregroundStyle: React.CSSProperties = {
-            transform: `scale(${mapImageScalePercent / 100})`,
+            transform: `translate(${mapImageOffsetXPercent}%, ${mapImageOffsetYPercent}%) scale(${mapImageScalePercent / 100})`,
             transformOrigin: 'center center',
         };
+        const resizeHandles: Array<{
+            corner: MapImageResizeCorner;
+            label: string;
+            className: string;
+        }> = [
+            {
+                corner: 'top-left',
+                label: 'Resize map from top left',
+                className: 'left-0 top-0 -translate-x-1/2 -translate-y-1/2 cursor-nwse-resize',
+            },
+            {
+                corner: 'top-right',
+                label: 'Resize map from top right',
+                className: 'right-0 top-0 translate-x-1/2 -translate-y-1/2 cursor-nesw-resize',
+            },
+            {
+                corner: 'bottom-left',
+                label: 'Resize map from bottom left',
+                className: 'bottom-0 left-0 -translate-x-1/2 translate-y-1/2 cursor-nesw-resize',
+            },
+            {
+                corner: 'bottom-right',
+                label: 'Resize map from bottom right',
+                className: 'bottom-0 right-0 translate-x-1/2 translate-y-1/2 cursor-nwse-resize',
+            },
+        ];
 
         return (
-            <>
+            <div
+                className={`absolute inset-0 touch-none select-none ${isDraggingMapImage ? 'cursor-grabbing' : isResizingMapImage ? 'cursor-crosshair' : 'cursor-grab'}`}
+                onPointerDown={handleMapImagePointerDown}
+                onPointerMove={handleMapImagePointerMove}
+                onPointerUp={handleMapImagePointerUp}
+                onPointerCancel={handleMapImagePointerUp}
+                title="Drag to reposition the brochure map"
+            >
                 {isZoomedOut && (
                     <img
                         src={mapImageUrl}
                         alt=""
                         aria-hidden="true"
                         className={backgroundClassName}
+                        draggable={false}
                     />
                 )}
                 <img
@@ -794,8 +982,32 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
                     alt={`Route ${selectedRoute} map`}
                     className={foregroundClassName}
                     style={foregroundStyle}
+                    draggable={false}
                 />
-            </>
+                <div
+                    data-export-ignore="true"
+                    className="pointer-events-none absolute inset-2 rounded-md border border-dashed border-amber-500/90"
+                    aria-hidden="true"
+                />
+                <div
+                    data-export-ignore="true"
+                    className="pointer-events-none absolute inset-2"
+                >
+                    {resizeHandles.map(handle => (
+                        <button
+                            key={handle.corner}
+                            type="button"
+                            aria-label={handle.label}
+                            title={handle.label}
+                            onPointerDown={(event) => handleMapImageResizePointerDown(handle.corner, event)}
+                            onPointerMove={handleMapImageResizePointerMove}
+                            onPointerUp={handleMapImageResizePointerUp}
+                            onPointerCancel={handleMapImageResizePointerUp}
+                            className={`pointer-events-auto absolute h-4 w-4 rounded-sm border-2 border-white bg-amber-500 shadow-md ring-1 ring-amber-700/40 ${handle.className}`}
+                        />
+                    ))}
+                </div>
+            </div>
         );
     };
 
@@ -1313,6 +1525,63 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
                             </div>
                         </div>
                     ) : (
+                        isPortraitHeroMapRoute ? (
+                        <div className="mt-3 grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto] gap-2">
+                            <div className="relative min-h-0 overflow-hidden rounded-[18px] border border-[#d5ddd8] bg-[#f6f4ef]">
+                                {mapImageUrl ? (
+                                    renderBrochureMapImage('portrait')
+                                ) : (
+                                    <div className="flex h-full w-full items-center justify-center bg-[#f8f7f3] px-6 text-center text-sm text-slate-400">
+                                        Portrait route map not uploaded yet
+                                    </div>
+                                )}
+
+                                <div className="absolute right-3 top-3 w-[150px] rounded-[14px] border border-slate-200 bg-white/95 p-2 shadow-sm">
+                                    <p className="text-[12px] font-extrabold uppercase tracking-[0.03em] text-[#0b5d4f]">Legend</p>
+                                    <div className="mt-1 grid grid-cols-1 gap-1 text-[8px] text-slate-600">
+                                        {MAP_LEGEND_ITEMS.map(item => (
+                                            <div key={item.label} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-1.5 py-0.5 leading-none">
+                                                {'markerClassName' in item ? (
+                                                    <span className={`inline-flex h-3.5 w-3.5 items-center justify-center rounded-full text-[8px] ${item.markerClassName}`}>
+                                                        {item.label === 'Transfer point' ? '+' : ''}
+                                                    </span>
+                                                ) : (
+                                                    <span className="block h-[2px] w-6 rounded-full bg-[#0b5d4f]" />
+                                                )}
+                                                <span className="leading-none">{item.label}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="grid shrink-0 grid-cols-[0.95fr_1.05fr] gap-2">
+                                <div className="rounded-[14px] border border-slate-200 bg-white p-2 shadow-sm">
+                                    <p className="text-[12px] font-extrabold uppercase tracking-[0.03em] text-[#0b5d4f]">Service Summary</p>
+                                    <div className="mt-1 grid grid-cols-3 gap-1">
+                                        {serviceCards.map(card => (
+                                            <div key={card.label} className="rounded-[10px] border border-slate-200 bg-[#eef2ef] px-1.5 py-1 text-center">
+                                                <p className="text-[7px] font-extrabold uppercase leading-none tracking-[0.04em] text-[#0b5d4f]">{card.label}</p>
+                                                <p className="mt-1 text-[7px] font-semibold leading-none text-slate-700">{card.hours}</p>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <div className="rounded-[14px] border border-slate-200 bg-white p-2 shadow-sm">
+                                    <p className="text-[12px] font-extrabold uppercase tracking-[0.03em] text-[#0b5d4f]">{fareTitle}</p>
+                                    <div className="mt-1 grid grid-cols-3 gap-1">
+                                        {primaryFareItems.slice(0, 6).map(item => (
+                                            <div key={item.label} className="rounded-[9px] border border-slate-200 bg-[#f8faf8] px-1.5 py-1">
+                                                <p className="text-[6.5px] font-bold uppercase leading-none tracking-[0.03em] text-slate-500">{item.label}</p>
+                                                <p className="mt-1 text-[10px] font-black leading-none text-[#0b5d4f]">{item.value}</p>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        ) : (
                         <div className="mt-3 grid min-h-0 flex-1 grid-cols-[minmax(0,1.32fr)_minmax(185px,0.68fr)] gap-3">
                             <div className="relative min-h-0 overflow-hidden rounded-[18px] border border-[#d5ddd8] bg-[#f6f4ef]">
                                 {mapImageUrl ? (
@@ -1382,6 +1651,7 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
                                 </div>
                             </div>
                         </div>
+                        )
                     )}
                 </div>
 
@@ -1600,9 +1870,44 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
                                     <div className="rounded-lg border border-gray-200 bg-white p-3">
                                         <div className="flex items-center justify-between gap-2">
                                             <label htmlFor="brochure-map-size" className="text-xs font-bold uppercase tracking-wide text-gray-600">
-                                                Front map size
+                                                Front map placement
                                             </label>
-                                            <span className="text-xs font-semibold text-gray-500">{mapImageScalePercent}%</span>
+                                            <span className="text-xs font-semibold text-gray-500">
+                                                {mapImageScalePercent}% · X {mapImageOffsetXPercent} · Y {mapImageOffsetYPercent}
+                                            </span>
+                                        </div>
+                                        <p className="mt-1 text-[11px] text-gray-500">
+                                            Drag the map to reposition it, or drag a corner handle to resize it.
+                                        </p>
+                                        <div className="mt-2 grid grid-cols-2 gap-1.5">
+                                            <button
+                                                type="button"
+                                                onClick={() => updateMapImagePlacement(85, 0, 0)}
+                                                className="rounded-md border border-gray-300 px-2 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50"
+                                            >
+                                                Fit whole
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => updateMapImagePlacement(100, 0, 0)}
+                                                className="rounded-md border border-gray-300 px-2 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50"
+                                            >
+                                                Fill/reset
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => updateMapImagePlacement(125, 0, 0)}
+                                                className="rounded-md border border-gray-300 px-2 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50"
+                                            >
+                                                Larger route
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => updateMapImagePlacement(savedMapImageScalePercent, savedMapImageOffsetXPercent, savedMapImageOffsetYPercent)}
+                                                className="rounded-md border border-gray-300 px-2 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50"
+                                            >
+                                                Saved
+                                            </button>
                                         </div>
                                         <input
                                             id="brochure-map-size"
@@ -1614,6 +1919,32 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
                                             onChange={(e) => updateMapImageScale(e.target.value)}
                                             className="mt-2 w-full accent-amber-600"
                                         />
+                                        <div className="mt-2 space-y-1.5">
+                                            <label className="block text-[11px] font-semibold text-gray-500">
+                                                Move left/right
+                                                <input
+                                                    type="range"
+                                                    min={MAP_IMAGE_OFFSET_MIN}
+                                                    max={MAP_IMAGE_OFFSET_MAX}
+                                                    step={1}
+                                                    value={mapImageOffsetXPercent}
+                                                    onChange={(e) => updateMapImageOffset('x', e.target.value)}
+                                                    className="mt-1 w-full accent-amber-600"
+                                                />
+                                            </label>
+                                            <label className="block text-[11px] font-semibold text-gray-500">
+                                                Move up/down
+                                                <input
+                                                    type="range"
+                                                    min={MAP_IMAGE_OFFSET_MIN}
+                                                    max={MAP_IMAGE_OFFSET_MAX}
+                                                    step={1}
+                                                    value={mapImageOffsetYPercent}
+                                                    onChange={(e) => updateMapImageOffset('y', e.target.value)}
+                                                    className="mt-1 w-full accent-amber-600"
+                                                />
+                                            </label>
+                                        </div>
                                         <div className="mt-2 flex items-center gap-2">
                                             <input
                                                 type="number"
@@ -1626,17 +1957,10 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
                                             />
                                             <button
                                                 type="button"
-                                                onClick={() => updateMapImageScale(savedMapImageScalePercent)}
+                                                onClick={() => updateMapImagePlacement(MAP_IMAGE_SCALE_DEFAULT, 0, 0)}
                                                 className="rounded-md border border-gray-300 px-2 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50"
                                             >
-                                                Saved
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={() => updateMapImageScale(MAP_IMAGE_SCALE_DEFAULT)}
-                                                className="rounded-md border border-gray-300 px-2 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50"
-                                            >
-                                                100%
+                                                100% center
                                             </button>
                                         </div>
                                         <button
@@ -1646,7 +1970,7 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
                                             className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-md bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
                                         >
                                             <Save size={13} />
-                                            {savingConfig ? 'Saving...' : 'Save default size'}
+                                            {savingConfig ? 'Saving...' : 'Save default placement'}
                                         </button>
                                     </div>
                                     {!canManageTeam && (

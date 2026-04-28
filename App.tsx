@@ -13,6 +13,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { lazyWithRetry } from './utils/lazyWithRetry';
 import { isFeatureEnabled } from './utils/features';
 import { loadFixedRouteResumeState } from './utils/workspaces/fixedRouteResumeState';
+import { useWorkspaceAccess } from './hooks/useWorkspaceAccess';
 
 const queryClient = new QueryClient();
 const OnDemandWorkspace = lazyWithRetry(() => import('./components/workspaces/OnDemandWorkspace').then(module => ({ default: module.OnDemandWorkspace })), 'ondemand-workspace');
@@ -42,23 +43,30 @@ function parseHashView(): View {
 
 const AppContent: React.FC = () => {
   const { user, loading } = useAuth();
+  const { canAccess, loading: accessLoading } = useWorkspaceAccess();
   const [currentView, setCurrentViewState] = useState<View>(parseHashView);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showFileManager, setShowFileManager] = useState(false);
   const [showTeamManagement, setShowTeamManagement] = useState(false);
   const [fixedRouteResume, setFixedRouteResume] = useState(() => loadFixedRouteResumeState());
 
+  const isViewAvailable = useCallback((view: View): boolean => {
+    const feature = APP_VIEW_FEATURES[view];
+    return feature ? canAccess(feature) : true;
+  }, [canAccess]);
+
   // Wrap navigation to sync URL hash
   const setCurrentView = useCallback((view: View) => {
-    const safeView = isAppViewEnabled(view) ? view : 'home';
+    const safeView = isViewAvailable(view) ? view : 'home';
     setCurrentViewState(safeView);
     window.location.hash = safeView === 'home' ? '' : safeView;
-  }, []);
+  }, [isViewAvailable]);
 
   // Handle browser back/forward
   useEffect(() => {
     const handler = () => {
-      const nextView = parseHashView();
+      const parsedView = parseHashView();
+      const nextView = isViewAvailable(parsedView) ? parsedView : 'home';
       setCurrentViewState(nextView);
       setFixedRouteResume(loadFixedRouteResumeState());
       if (nextView === 'home' && window.location.hash) {
@@ -68,10 +76,10 @@ const AppContent: React.FC = () => {
     handler();
     window.addEventListener('hashchange', handler);
     return () => window.removeEventListener('hashchange', handler);
-  }, []);
+  }, [isViewAvailable]);
 
   // Show loading state while checking auth
-  if (loading) {
+  if (loading || accessLoading) {
     return <WorkspaceLoadingState label="Loading..." />;
   }
 
@@ -155,7 +163,7 @@ const AppContent: React.FC = () => {
 
             <div className="grid grid-cols-1 gap-8 md:grid-cols-2 xl:grid-cols-3 max-w-6xl mx-auto pb-12">
               {/* On Demand Card */}
-              {isAppViewEnabled('ondemand') && (
+              {isViewAvailable('ondemand') && (
                 <button
                   onClick={() => setCurrentView('ondemand')}
                   className="group relative bg-white rounded-3xl border-b-8 border-gray-200 p-8 hover:border-brand-blue hover:-translate-y-1 transition-all duration-200 text-left overflow-hidden"
@@ -177,7 +185,7 @@ const AppContent: React.FC = () => {
               )}
 
               {/* Fixed Route Card */}
-              {isAppViewEnabled('fixed') && (
+              {isViewAvailable('fixed') && (
                 <button
                   onClick={() => setCurrentView('fixed')}
                   className="group relative bg-white rounded-3xl border-b-8 border-gray-200 p-8 hover:border-brand-green hover:-translate-y-1 transition-all duration-200 text-left overflow-hidden"
@@ -199,7 +207,7 @@ const AppContent: React.FC = () => {
               )}
 
               {/* Dashboard & Reporting Card */}
-              {isAppViewEnabled('operations') && (
+              {isViewAvailable('operations') && (
                 <button
                   onClick={() => setCurrentView('operations')}
                   className="group relative bg-white rounded-3xl border-b-8 border-gray-200 p-8 hover:border-amber-500 hover:-translate-y-1 transition-all duration-200 text-left overflow-hidden"
@@ -227,17 +235,17 @@ const AppContent: React.FC = () => {
 
         {/* Dynamic Workspace Rendering */}
         <Suspense fallback={<WorkspaceLoadingState label="Loading workspace..." />}>
-          {currentView === 'ondemand' && (
+          {currentView === 'ondemand' && isViewAvailable('ondemand') && (
             <ErrorBoundary fallbackTitle="Workspace Error">
               <OnDemandWorkspace />
             </ErrorBoundary>
           )}
-          {currentView === 'fixed' && (
+          {currentView === 'fixed' && isViewAvailable('fixed') && (
             <ErrorBoundary fallbackTitle="Workspace Error">
               <FixedRouteWorkspace />
             </ErrorBoundary>
           )}
-          {currentView === 'operations' && (
+          {currentView === 'operations' && isViewAvailable('operations') && (
             <ErrorBoundary fallbackTitle="Workspace Error">
               <OperationsWorkspace />
             </ErrorBoundary>

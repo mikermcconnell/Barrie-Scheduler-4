@@ -5,7 +5,7 @@
  * Routes to TransitApp, OD Matrix, and future analysis workspaces.
  */
 
-import React, { Suspense, useState, useEffect } from 'react';
+import React, { Suspense, useState, useEffect, useCallback } from 'react';
 import { Map, ArrowRight, Loader2, Smartphone, Network, GraduationCap, Route, GitBranch, Bus } from 'lucide-react';
 import { useTeam } from '../contexts/TeamContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -15,7 +15,9 @@ import { getODMatrixData, getODMatrixMetadata, loadGeocodeCache, setActiveODMatr
 import { getFleetPlanMetadata, getFleetPlanWorkbook, isFleetPlanPermissionError } from '../../utils/fleet-plan/fleetPlanService';
 import { TeamManagement } from '../TeamManagement';
 import { usePerformanceMetadataQuery } from '../../hooks/usePerformanceData';
-import { isFeatureEnabled, isFeatureUnderConstruction } from '../../utils/features';
+import { useWorkspaceAccess } from '../../hooks/useWorkspaceAccess';
+import type { FeatureKey } from '../../utils/features';
+import { isFeatureUnderConstruction } from '../../utils/features';
 import type { TransitAppDataSummary } from '../../utils/transit-app/transitAppTypes';
 import type { ODMatrixDataSummary, GeocodeCache } from '../../utils/od-matrix/odMatrixTypes';
 import type { FleetPlanWorkbook } from '../../utils/fleet-plan/types';
@@ -163,7 +165,7 @@ type AnalyticsView =
     | 'network-connections'
     | 'shuttle-planner';
 
-const ANALYTICS_VIEW_FEATURES: Partial<Record<AnalyticsView, Parameters<typeof isFeatureEnabled>[0]>> = {
+const ANALYTICS_VIEW_FEATURES: Partial<Record<AnalyticsView, FeatureKey>> = {
     import: 'analyticsTransitApp',
     'transit-data': 'analyticsTransitApp',
     'od-import': 'analyticsOdMatrix',
@@ -180,12 +182,7 @@ const ANALYTICS_VIEW_FEATURES: Partial<Record<AnalyticsView, Parameters<typeof i
     'shuttle-planner': 'analyticsShuttlePlanner',
 };
 
-const isAnalyticsViewEnabled = (view: AnalyticsView): boolean => {
-    const feature = ANALYTICS_VIEW_FEATURES[view];
-    return feature ? isFeatureEnabled(feature) : true;
-};
-
-const AnalyticsFeatureNotice: React.FC<{ feature: Parameters<typeof isFeatureEnabled>[0] }> = ({ feature }) => {
+const AnalyticsFeatureNotice: React.FC<{ feature: Parameters<typeof isFeatureUnderConstruction>[0] }> = ({ feature }) => {
     if (!isFeatureUnderConstruction(feature)) return null;
 
     return (
@@ -222,12 +219,18 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
     const [hasFleetPlanData, setHasFleetPlanData] = useState(false);
     const performanceMetadataQuery = usePerformanceMetadataQuery(team?.id);
     const hasPerformanceData = !!performanceMetadataQuery.data;
+    const { canAccess, loading: accessLoading } = useWorkspaceAccess();
+
+    const canAccessAnalyticsView = useCallback((nextView: AnalyticsView): boolean => {
+        const feature = ANALYTICS_VIEW_FEATURES[nextView];
+        return feature ? canAccess(feature) : true;
+    }, [canAccess]);
 
     useEffect(() => {
-        if (view !== 'dashboard' && !isAnalyticsViewEnabled(view)) {
+        if (view !== 'dashboard' && !canAccessAnalyticsView(view)) {
             setView('dashboard');
         }
-    }, [view]);
+    }, [view, canAccessAnalyticsView]);
 
     // Check for existing data on mount
     useEffect(() => {
@@ -237,10 +240,13 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
         }
         (async () => {
             try {
+                const canReadTransitApp = canAccess('analyticsTransitApp');
+                const canReadODMatrix = canAccess('analyticsOdMatrix');
+                const canReadFleetPlan = canAccess('analyticsFleetPlan');
                 const [transitMeta, odMeta, fleetPlanMeta] = await Promise.all([
-                    getTransitAppMetadata(team.id),
-                    getODMatrixMetadata(team.id),
-                    getFleetPlanMetadata(team.id),
+                    canReadTransitApp ? getTransitAppMetadata(team.id) : Promise.resolve(null),
+                    canReadODMatrix ? getODMatrixMetadata(team.id) : Promise.resolve(null),
+                    canReadFleetPlan ? getFleetPlanMetadata(team.id) : Promise.resolve(null),
                 ]);
                 setHasExistingData(!!transitMeta);
                 setHasODData(!!odMeta);
@@ -251,7 +257,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
                 setLoading(false);
             }
         })();
-    }, [team?.id]);
+    }, [team?.id, canAccess]);
 
     // Handle clicking the Transit App Data card
     const handleTransitAppClick = async () => {
@@ -410,7 +416,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
     }
 
     // Loading state
-    if (loading) {
+    if (loading || accessLoading) {
         return (
             <div className="h-full flex items-center justify-center">
                 <Loader2 className="text-cyan-500 animate-spin" size={32} />
@@ -680,7 +686,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {isFeatureEnabled('analyticsTransitApp') && (
+                    {canAccess('analyticsTransitApp') && (
                         <AnalyticsCard
                             color="cyan"
                             icon={<Smartphone size={20} />}
@@ -691,7 +697,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
                             onClick={handleTransitAppClick}
                         />
                     )}
-                    {isFeatureEnabled('analyticsOdMatrix') && (
+                    {canAccess('analyticsOdMatrix') && (
                         <AnalyticsCard
                             color="violet"
                             icon={<Network size={20} />}
@@ -702,7 +708,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
                             onClick={handleODMatrixClick}
                         />
                     )}
-                    {isFeatureEnabled('analyticsCorridorSpeed') && (
+                    {canAccess('analyticsCorridorSpeed') && (
                         <AnalyticsCard
                             color="teal"
                             icon={<Map size={20} />}
@@ -713,7 +719,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
                             onClick={() => setView('corridor-speed')}
                         />
                     )}
-                    {isFeatureEnabled('analyticsCorridorHeadway') && (
+                    {canAccess('analyticsCorridorHeadway') && (
                         <AnalyticsCard
                             color="teal"
                             icon={<Map size={20} />}
@@ -724,7 +730,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
                             onClick={() => setView('headway-map')}
                         />
                     )}
-                    {isFeatureEnabled('analyticsStudentPass') && (
+                    {canAccess('analyticsStudentPass') && (
                         <AnalyticsCard
                             color="amber"
                             icon={<GraduationCap size={20} />}
@@ -735,7 +741,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
                             onClick={() => setView('student-pass')}
                         />
                     )}
-                    {isFeatureEnabled('analyticsFleetPlan') && (
+                    {canAccess('analyticsFleetPlan') && (
                         <AnalyticsCard
                             color="violet"
                             icon={<Bus size={20} />}
@@ -746,7 +752,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
                             onClick={handleFleetPlanClick}
                         />
                     )}
-                    {isFeatureEnabled('analyticsNetworkConnections') && (
+                    {canAccess('analyticsNetworkConnections') && (
                         <AnalyticsCard
                             color="violet"
                             icon={<GitBranch size={20} />}
@@ -757,7 +763,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
                             onClick={() => setView('network-connections')}
                         />
                     )}
-                    {isFeatureEnabled('analyticsRoutePlanner') && (
+                    {canAccess('analyticsRoutePlanner') && (
                         <AnalyticsCard
                             color="cyan"
                             icon={<Route size={20} />}
@@ -768,7 +774,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
                             onClick={() => setView('route-planner')}
                         />
                     )}
-                    {isFeatureEnabled('analyticsRoute8Sandbox') && (
+                    {canAccess('analyticsRoute8Sandbox') && (
                         <AnalyticsCard
                             color="violet"
                             icon={<GitBranch size={20} />}
@@ -784,3 +790,4 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
         </div>
     );
 };
+

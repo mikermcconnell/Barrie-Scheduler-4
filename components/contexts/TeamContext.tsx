@@ -7,12 +7,15 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode, useCallback } from 'react';
 import { useAuth } from './AuthContext';
 import { getUserTeam, joinTeamByInviteCode, getTeamMember } from '../../utils/services/teamService';
-import type { Team, TeamRole } from '../../utils/masterScheduleTypes';
+import type { Team, TeamMember, TeamRole, WorkspaceAccessLevel } from '../../utils/masterScheduleTypes';
+import { resolveWorkspaceAccessLevel } from '../../utils/workspaceAccess';
 import { getDevAuthConfig } from '../../utils/dev/devAuth';
 
 interface TeamContextType {
     team: Team | null;
+    teamMember: TeamMember | null;
     teamRole: TeamRole | null;
+    accessLevel: WorkspaceAccessLevel;
     canManageTeam: boolean;
     loading: boolean;
     refreshTeam: () => Promise<void>;
@@ -21,7 +24,9 @@ interface TeamContextType {
 
 const fallbackTeamContext: TeamContextType = {
     team: null,
+    teamMember: null,
     teamRole: null,
+    accessLevel: 'production',
     canManageTeam: false,
     loading: false,
     refreshTeam: async () => { },
@@ -41,6 +46,7 @@ interface TeamProviderProps {
 export const TeamProvider: React.FC<TeamProviderProps> = ({ children }) => {
     const { user } = useAuth();
     const [team, setTeam] = useState<Team | null>(null);
+    const [teamMember, setTeamMember] = useState<TeamMember | null>(null);
     const [teamRole, setTeamRole] = useState<TeamRole | null>(null);
     const [loading, setLoading] = useState(true);
     const devAuth = getDevAuthConfig();
@@ -48,6 +54,7 @@ export const TeamProvider: React.FC<TeamProviderProps> = ({ children }) => {
     const loadTeam = useCallback(async () => {
         if (!user) {
             setTeam(null);
+            setTeamMember(null);
             setTeamRole(null);
             setLoading(false);
             return;
@@ -70,13 +77,16 @@ export const TeamProvider: React.FC<TeamProviderProps> = ({ children }) => {
             setTeam(userTeam);
             if (userTeam) {
                 const member = await getTeamMember(userTeam.id, user.uid);
+                setTeamMember(member);
                 setTeamRole(member?.role ?? null);
             } else {
+                setTeamMember(null);
                 setTeamRole(null);
             }
         } catch (error) {
             console.error('Error loading team:', error);
             setTeam(null);
+            setTeamMember(null);
             setTeamRole(null);
         } finally {
             setLoading(false);
@@ -94,7 +104,9 @@ export const TeamProvider: React.FC<TeamProviderProps> = ({ children }) => {
 
     const value: TeamContextType = {
         team,
+        teamMember,
         teamRole,
+        accessLevel: resolveWorkspaceAccessLevel(teamMember),
         canManageTeam: teamRole === 'owner' || teamRole === 'admin',
         loading,
         refreshTeam,

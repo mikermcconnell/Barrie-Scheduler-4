@@ -17,7 +17,8 @@ import {
     writeBatch
 } from 'firebase/firestore';
 import { db } from '../firebase';
-import type { Team, TeamMember, TeamWithMembers, TeamRole } from '../masterScheduleTypes';
+import type { Team, TeamMember, TeamWithMembers, TeamRole, WorkspaceAccessLevel, WorkspaceAccessOverrides } from '../masterScheduleTypes';
+import { getDefaultWorkspaceAccessLevelForRole, isWorkspaceAccessLevel } from '../workspaceAccess';
 
 interface TeamInviteLookup {
     id: string;
@@ -63,6 +64,22 @@ function timestampToDate(timestamp: Timestamp | Date): Date {
     return timestamp.toDate();
 }
 
+function readMemberData(docId: string, data: Record<string, any>): TeamMember {
+    const role = data.role as TeamRole;
+    return {
+        id: docId,
+        userId: data.userId,
+        role,
+        accessLevel: isWorkspaceAccessLevel(data.accessLevel)
+            ? data.accessLevel
+            : getDefaultWorkspaceAccessLevelForRole(role),
+        workspaceOverrides: data.workspaceOverrides as WorkspaceAccessOverrides | undefined,
+        joinedAt: timestampToDate(data.joinedAt),
+        displayName: data.displayName,
+        email: data.email
+    };
+}
+
 // ============ TEAM CRUD ============
 
 /**
@@ -93,6 +110,7 @@ export async function createTeam(
     await setDoc(memberRef, {
         userId,
         role: 'owner' as TeamRole,
+        accessLevel: 'internal' as WorkspaceAccessLevel,
         joinedAt: serverTimestamp(),
         displayName: userDisplayName,
         email: userEmail
@@ -137,17 +155,7 @@ export async function getTeamWithMembers(teamId: string): Promise<TeamWithMember
     const membersRef = collection(db, 'teams', teamId, 'members');
     const membersSnap = await getDocs(membersRef);
 
-    const members: TeamMember[] = membersSnap.docs.map(doc => {
-        const data = doc.data();
-        return {
-            id: doc.id,
-            userId: data.userId,
-            role: data.role,
-            joinedAt: timestampToDate(data.joinedAt),
-            displayName: data.displayName,
-            email: data.email
-        };
-    });
+    const members: TeamMember[] = membersSnap.docs.map(doc => readMemberData(doc.id, doc.data()));
 
     return {
         ...team,
@@ -205,15 +213,7 @@ export async function getTeamMember(teamId: string, userId: string): Promise<Tea
         return null;
     }
 
-    const data = memberSnap.data();
-    return {
-        id: memberSnap.id,
-        userId: data.userId,
-        role: data.role,
-        joinedAt: timestampToDate(data.joinedAt),
-        displayName: data.displayName,
-        email: data.email
-    };
+    return readMemberData(memberSnap.id, memberSnap.data());
 }
 
 /**
@@ -325,6 +325,7 @@ export async function joinTeamByInviteCode(
     await setDoc(memberRef, {
         userId,
         role: 'member' as TeamRole,
+        accessLevel: 'production' as WorkspaceAccessLevel,
         joinedAt: serverTimestamp(),
         displayName,
         email,
@@ -378,6 +379,18 @@ export async function updateMemberRole(
 ): Promise<void> {
     const memberRef = doc(db, 'teams', teamId, 'members', memberId);
     await updateDoc(memberRef, { role: newRole });
+}
+
+/**
+ * Update member workspace visibility profile (owner/admin only - enforcement via security rules)
+ */
+export async function updateMemberAccessLevel(
+    teamId: string,
+    memberId: string,
+    accessLevel: WorkspaceAccessLevel
+): Promise<void> {
+    const memberRef = doc(db, 'teams', teamId, 'members', memberId);
+    await updateDoc(memberRef, { accessLevel });
 }
 
 /**

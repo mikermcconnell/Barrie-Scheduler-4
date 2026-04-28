@@ -107,16 +107,21 @@ interface Team {
 
 ```typescript
 type TeamRole = 'owner' | 'admin' | 'member';
+type WorkspaceAccessLevel = 'production' | 'planner' | 'admin' | 'internal';
 
 interface TeamMember {
   id: string;
   userId: string;
   role: TeamRole;
+  accessLevel?: WorkspaceAccessLevel; // Controls visible workspaces; missing values fall back by role.
+  workspaceOverrides?: Partial<Record<string, boolean>>; // Optional per-workspace allow/block overrides.
   joinedAt: Timestamp;
   displayName: string;
   email: string;
 }
 ```
+
+`role` controls team permissions and writes. `accessLevel` controls which app workspaces are visible. Existing members without `accessLevel` are treated as `internal` for owners/admins and `production` for regular members.
 
 ---
 
@@ -225,6 +230,8 @@ interface PublicTimetableConfigDocument {
   promoText: string;
   contacts: string[];
   mapImageScalePercent: number; // front brochure map image scale, 50-150
+  mapImageOffsetXPercent: number; // front brochure map horizontal offset, -40 to 40
+  mapImageOffsetYPercent: number; // front brochure map vertical offset, -40 to 40
   updatedAt: Timestamp;
   updatedBy: string;       // userId
   version: number;

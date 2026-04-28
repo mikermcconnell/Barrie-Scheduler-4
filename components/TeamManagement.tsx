@@ -15,11 +15,17 @@ import {
     getTeamWithMembers,
     leaveTeam,
     removeMember,
-    updateMemberRole,
+    updateMemberAccessLevel,
     regenerateInviteCode,
     setInviteCode as setTeamInviteCode
 } from '../utils/services/teamService';
-import type { TeamWithMembers, TeamMember, TeamRole } from '../utils/masterScheduleTypes';
+import type { TeamWithMembers, TeamMember, WorkspaceAccessLevel } from '../utils/masterScheduleTypes';
+import {
+    resolveWorkspaceAccessLevel,
+    WORKSPACE_ACCESS_LEVEL_DESCRIPTIONS,
+    WORKSPACE_ACCESS_LEVEL_LABELS,
+    WORKSPACE_ACCESS_LEVELS,
+} from '../utils/workspaceAccess';
 
 interface TeamManagementProps {
     onClose?: () => void;
@@ -186,15 +192,20 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
         }
     };
 
-    const handleChangeRole = async (memberId: string, newRole: TeamRole) => {
+    const handleChangeAccessLevel = async (member: TeamMember, accessLevel: WorkspaceAccessLevel) => {
         if (!team) return;
 
+        if (member.userId === user?.uid && !confirm('Change your own workspace access level?')) {
+            return;
+        }
+
         try {
-            await updateMemberRole(team.id, memberId, newRole);
+            await updateMemberAccessLevel(team.id, member.id, accessLevel);
             await loadTeamDetails();
-            toast?.success('Role updated');
+            await refreshTeam();
+            toast?.success('Workspace access updated');
         } catch (error) {
-            toast?.error('Failed to update role');
+            toast?.error('Failed to update workspace access');
         }
     };
 
@@ -323,7 +334,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
 
     // Has Team - Show Team Info
     return (
-        <div className="bg-white rounded-xl border border-gray-200 p-8 max-w-2xl mx-auto">
+        <div className="bg-white rounded-xl border border-gray-200 p-8 max-w-3xl mx-auto">
             {onClose && (
                 <button
                     onClick={onClose}
@@ -413,52 +424,82 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
             {/* Members List */}
             <div className="mb-6">
                 <h3 className="font-semibold text-gray-900 mb-3">Members</h3>
+                {isOwnerOrAdmin() && (
+                    <p className="mb-3 text-xs text-gray-500">
+                        Role controls permissions. Access level controls which workspaces are visible.
+                    </p>
+                )}
                 <div className="space-y-2">
-                    {teamDetails?.members.map(member => (
-                        <div
-                            key={member.id}
-                            className="flex items-center justify-between p-3 border border-gray-200 rounded-lg hover:bg-gray-50"
-                        >
-                            <div className="flex items-center gap-3">
-                                <div className="p-2 bg-gray-100 rounded-full">
-                                    {member.role === 'owner' ? (
-                                        <Shield size={16} className="text-brand-green" />
+                    {teamDetails?.members.map(member => {
+                        const accessLevel = resolveWorkspaceAccessLevel(member);
+                        return (
+                            <div
+                                key={member.id}
+                                className="flex items-center justify-between gap-4 p-3 border border-gray-200 rounded-lg hover:bg-gray-50"
+                            >
+                                <div className="flex min-w-0 items-center gap-3">
+                                    <div className="p-2 bg-gray-100 rounded-full">
+                                        {member.role === 'owner' ? (
+                                            <Shield size={16} className="text-brand-green" />
+                                        ) : (
+                                            <User size={16} className="text-gray-600" />
+                                        )}
+                                    </div>
+                                    <div className="min-w-0">
+                                        <p className="font-medium text-gray-900 truncate">
+                                            {member.displayName}
+                                            {member.userId === user?.uid && (
+                                                <span className="text-gray-500 text-sm ml-2">(You)</span>
+                                            )}
+                                        </p>
+                                        <p className="text-sm text-gray-500 truncate">{member.email}</p>
+                                    </div>
+                                </div>
+
+                                <div className="flex flex-wrap items-center justify-end gap-2">
+                                    <span className={`px-2 py-1 text-xs font-semibold rounded-full ${
+                                        member.role === 'owner' ? 'bg-brand-green/20 text-brand-green' :
+                                        member.role === 'admin' ? 'bg-blue-100 text-blue-700' :
+                                        'bg-gray-100 text-gray-700'
+                                    }`}>
+                                        {member.role}
+                                    </span>
+
+                                    {isOwnerOrAdmin() ? (
+                                        <select
+                                            value={accessLevel}
+                                            onChange={(event) => handleChangeAccessLevel(member, event.target.value as WorkspaceAccessLevel)}
+                                            className="rounded-lg border border-gray-300 bg-white px-2 py-1 text-xs font-semibold text-gray-700"
+                                            title={WORKSPACE_ACCESS_LEVEL_DESCRIPTIONS[accessLevel]}
+                                        >
+                                            {WORKSPACE_ACCESS_LEVELS.map(level => (
+                                                <option key={level} value={level}>
+                                                    {WORKSPACE_ACCESS_LEVEL_LABELS[level]}
+                                                </option>
+                                            ))}
+                                        </select>
                                     ) : (
-                                        <User size={16} className="text-gray-600" />
+                                        <span
+                                            className="px-2 py-1 text-xs font-semibold rounded-full bg-purple-100 text-purple-700"
+                                            title={WORKSPACE_ACCESS_LEVEL_DESCRIPTIONS[accessLevel]}
+                                        >
+                                            {WORKSPACE_ACCESS_LEVEL_LABELS[accessLevel]}
+                                        </span>
+                                    )}
+
+                                    {isOwnerOrAdmin() && member.userId !== user?.uid && member.role !== 'owner' && (
+                                        <button
+                                            onClick={() => handleRemoveMember(member.id, member.displayName)}
+                                            className="p-1 text-gray-400 hover:text-red-600"
+                                            title="Remove member"
+                                        >
+                                            <Trash2 size={16} />
+                                        </button>
                                     )}
                                 </div>
-                                <div>
-                                    <p className="font-medium text-gray-900">
-                                        {member.displayName}
-                                        {member.userId === user?.uid && (
-                                            <span className="text-gray-500 text-sm ml-2">(You)</span>
-                                        )}
-                                    </p>
-                                    <p className="text-sm text-gray-500">{member.email}</p>
-                                </div>
                             </div>
-
-                            <div className="flex items-center gap-2">
-                                <span className={`px-2 py-1 text-xs font-semibold rounded-full ${
-                                    member.role === 'owner' ? 'bg-brand-green/20 text-brand-green' :
-                                    member.role === 'admin' ? 'bg-blue-100 text-blue-700' :
-                                    'bg-gray-100 text-gray-700'
-                                }`}>
-                                    {member.role}
-                                </span>
-
-                                {isOwnerOrAdmin() && member.userId !== user?.uid && member.role !== 'owner' && (
-                                    <button
-                                        onClick={() => handleRemoveMember(member.id, member.displayName)}
-                                        className="p-1 text-gray-400 hover:text-red-600"
-                                        title="Remove member"
-                                    >
-                                        <Trash2 size={16} />
-                                    </button>
-                                )}
-                            </div>
-                        </div>
-                    ))}
+                        );
+                    })}
                 </div>
             </div>
 

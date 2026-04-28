@@ -7,6 +7,7 @@
  */
 
 import type { MasterRouteTable } from './parsers/masterScheduleParser';
+import type { WorkspaceAccessFeatureKey, WorkspaceAccessLevel, WorkspaceAccessOverrides } from './workspaceAccess';
 
 // ============ ENUMS AND TYPES ============
 
@@ -29,10 +30,14 @@ export interface TeamMember {
     id: string;              // Document ID (same as memberId)
     userId: string;
     role: TeamRole;
+    accessLevel?: WorkspaceAccessLevel;
+    workspaceOverrides?: WorkspaceAccessOverrides;
     joinedAt: Date;
     displayName: string;
     email: string;
 }
+
+export type { WorkspaceAccessFeatureKey, WorkspaceAccessLevel, WorkspaceAccessOverrides };
 
 export interface TeamWithMembers extends Team {
     members: TeamMember[];

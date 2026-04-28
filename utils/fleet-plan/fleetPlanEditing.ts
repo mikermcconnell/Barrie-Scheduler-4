@@ -306,6 +306,22 @@ function normalizeYear(value: string | undefined): string | null {
     return /^\d{4}$/.test(trimmed) ? trimmed : null;
 }
 
+export function getFleetPlanServiceStartYear(rowYear: string | undefined): number | null {
+    const normalizedYear = normalizeYear(rowYear);
+    return normalizedYear ? Number(normalizedYear) : null;
+}
+
+export function getFleetPlanServiceLifeLabel(
+    rowYear: string | undefined,
+    currentYear = new Date().getFullYear(),
+): string {
+    const startYear = getFleetPlanServiceStartYear(rowYear);
+    if (!startYear) return 'Unknown';
+
+    const years = Math.max(0, currentYear - startYear);
+    return `${years} year${years === 1 ? '' : 's'}`;
+}
+
 function normalizeTimelineStatus(value: string | undefined): string {
     return (value || '').trim().toUpperCase();
 }
@@ -341,6 +357,34 @@ export function getFleetPlanLifecycle(
         isInService: Boolean(startYear && Number(startYear) <= currentYear && (!retireYear || Number(retireYear) >= currentYear)),
         isOverdueRetirement: Boolean(retireYear && Number(retireYear) < currentYear && normalizeTimelineStatus(row.timeline[currentYearKey]) !== 'RETIRE'),
     };
+}
+
+export function isFleetPlanRowCountedInFleetTotal(
+    row: FleetPlanRow,
+    sheetKey: FleetPlanSheetKey,
+    year: string,
+): boolean {
+    const rawValue = (row.timeline[year] || '').trim();
+    if (!rawValue) return false;
+
+    const status = normalizeTimelineStatus(rawValue);
+    if (
+        status === 'RETIRE'
+        || status === 'PURCHASE'
+        || status.startsWith('PURCHASE')
+        || status === 'GROWTH'
+        || status === 'TRADED'
+        || status === 'TRADE'
+        || status === 'TRAINING'
+        || status.includes('RETIRED')
+        || status.includes('GOVDEALS')
+    ) {
+        return false;
+    }
+
+    if (sheetKey === 'electric-12m') return /-E$/i.test(rawValue) || rawValue === row.unitNumber.trim();
+
+    return /^\d+(\.\d+)?$/.test(rawValue);
 }
 
 export function moveFleetPlanLifecycleBoundary(options: {
@@ -385,4 +429,36 @@ export function moveFleetPlanLifecycleBoundary(options: {
         year: nextStartYear,
         timeline,
     };
+}
+
+export function moveFleetPlanLifecycleWindow(options: {
+    row: FleetPlanRow;
+    timelineColumns: FleetPlanTimelineColumn[];
+    toStartYear: string;
+}): FleetPlanRow {
+    const targetStartYear = normalizeYear(options.toStartYear);
+    if (!targetStartYear || !isKnownTimelineYear(options.timelineColumns, targetStartYear)) return options.row;
+
+    const lifecycle = getFleetPlanLifecycle(options.row, options.timelineColumns);
+    if (!lifecycle.startYear || !lifecycle.retireYear) return options.row;
+
+    const currentStartIndex = options.timelineColumns.findIndex((column) => column.key === lifecycle.startYear);
+    const currentRetireIndex = options.timelineColumns.findIndex((column) => column.key === lifecycle.retireYear);
+    const targetStartIndex = options.timelineColumns.findIndex((column) => column.key === targetStartYear);
+    if (currentStartIndex < 0 || currentRetireIndex < 0 || targetStartIndex < 0) return options.row;
+
+    const lifecycleWidth = currentRetireIndex - currentStartIndex;
+    const targetRetireIndex = targetStartIndex + lifecycleWidth;
+    const targetRetireYear = options.timelineColumns[targetRetireIndex]?.key;
+    if (!targetRetireYear) return options.row;
+
+    return moveFleetPlanLifecycleBoundary({
+        row: {
+            ...options.row,
+            year: targetStartYear,
+        },
+        timelineColumns: options.timelineColumns,
+        boundary: 'retire',
+        toYear: targetRetireYear,
+    });
 }
