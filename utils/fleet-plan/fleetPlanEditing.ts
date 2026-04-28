@@ -394,14 +394,15 @@ export function moveFleetPlanLifecycleBoundary(options: {
     toYear: string;
 }): FleetPlanRow {
     const targetYear = normalizeYear(options.toYear);
-    if (!targetYear || !isKnownTimelineYear(options.timelineColumns, targetYear)) return options.row;
+    if (!targetYear) return options.row;
+    if (options.boundary === 'retire' && !isKnownTimelineYear(options.timelineColumns, targetYear)) return options.row;
 
     const lifecycle = getFleetPlanLifecycle(options.row, options.timelineColumns);
     const nextStartYear = options.boundary === 'start' ? targetYear : lifecycle.startYear;
     const nextRetireYear = options.boundary === 'retire' ? targetYear : lifecycle.retireYear;
 
-    if (!nextStartYear || !nextRetireYear) return options.row;
-    if (Number(nextStartYear) > Number(nextRetireYear)) return options.row;
+    if (!nextStartYear) return options.row;
+    if (nextRetireYear && Number(nextStartYear) > Number(nextRetireYear)) return options.row;
 
     const unitNumber = options.row.unitNumber.trim();
     const timeline = { ...options.row.timeline };
@@ -413,11 +414,11 @@ export function moveFleetPlanLifecycleBoundary(options: {
         }
 
         const year = Number(column.key);
-        if (year >= Number(nextStartYear) && year < Number(nextRetireYear)) {
+        if (year >= Number(nextStartYear) && (!nextRetireYear || year < Number(nextRetireYear))) {
             timeline[column.key] = unitNumber;
             return;
         }
-        if (column.key === nextRetireYear) {
+        if (nextRetireYear && column.key === nextRetireYear) {
             timeline[column.key] = 'RETIRE';
             return;
         }

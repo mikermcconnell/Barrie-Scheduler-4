@@ -582,6 +582,19 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
         }
     };
 
+    const handleInServiceYearInput = (
+        sheetKey: FleetPlanSheetKey,
+        rowId: string,
+        toYear: string,
+    ) => {
+        const year = toYear.trim();
+        if (!/^\d{4}$/.test(year)) {
+            toast?.error('Enter a valid 4-digit in-service year');
+            return;
+        }
+        handleLifecycleBoundaryMove(sheetKey, rowId, 'start', year);
+    };
+
     const handleLifecycleWindowMove = (
         sheetKey: FleetPlanSheetKey,
         rowId: string,
@@ -1304,9 +1317,29 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                                 <div className="min-w-0">
                                     <div className={`rounded-xl border px-3 py-2 ${BUS_TYPE_STYLES[sheetKey].timeline}`}>
                                         <div className="mb-1 flex items-center justify-between text-xs font-bold text-gray-600">
-                                            <span>
-                                                In service: <span className="text-brand-blue">{lifecycle.startYear || 'missing'}</span>
-                                            </span>
+                                            <label className="flex items-center gap-1">
+                                                <span>In service:</span>
+                                                <input
+                                                    key={`${row.id}-${lifecycle.startYear || 'missing'}-in-service`}
+                                                    defaultValue={lifecycle.startYear || ''}
+                                                    inputMode="numeric"
+                                                    pattern="\d{4}"
+                                                    maxLength={4}
+                                                    placeholder="Year"
+                                                    aria-label={`In-service year for bus ${row.unitNumber || 'row'}`}
+                                                    onBlur={(event) => {
+                                                        if (event.currentTarget.value.trim() !== (lifecycle.startYear || '')) {
+                                                            handleInServiceYearInput(sheetKey, row.id, event.currentTarget.value);
+                                                        }
+                                                    }}
+                                                    onKeyDown={(event) => {
+                                                        if (event.key !== 'Enter') return;
+                                                        event.preventDefault();
+                                                        event.currentTarget.blur();
+                                                    }}
+                                                    className="h-7 w-16 rounded-md border border-blue-200 bg-white px-2 text-xs font-extrabold text-brand-blue shadow-inner shadow-blue-50 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-blue-100"
+                                                />
+                                            </label>
                                             <span>
                                                 Retirement: <span className={hasRetirementYear ? 'text-red-600' : 'text-amber-600'}>{lifecycle.retireYear || 'Not set'}</span>
                                             </span>

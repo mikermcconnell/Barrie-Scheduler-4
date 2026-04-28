@@ -141,6 +141,56 @@ describe('fleetPlan editing helpers', () => {
         expect(laterStart.timeline['2028']).toBe('RETIRE');
     });
 
+    it('allows editing the in-service year before the visible timeline', () => {
+        const config = FLEET_PLAN_SHEET_CONFIG_BY_KEY['diesel-12m'];
+        const row = {
+            ...createEmptyFleetPlanRow('diesel-12m'),
+            unitNumber: '1101',
+            year: '2025',
+            timeline: {
+                '2025': '1101',
+                '2026': 'RETIRE',
+            },
+        };
+
+        const next = moveFleetPlanLifecycleBoundary({
+            row,
+            timelineColumns: config.timelineColumns,
+            boundary: 'start',
+            toYear: '2012',
+        });
+
+        expect(next.year).toBe('2012');
+        expect(next.timeline['2025']).toBe('1101');
+        expect(next.timeline['2026']).toBe('RETIRE');
+    });
+
+    it('allows editing the in-service year when retirement is not set', () => {
+        const config = FLEET_PLAN_SHEET_CONFIG_BY_KEY['diesel-12m'];
+        const row = {
+            ...createEmptyFleetPlanRow('diesel-12m'),
+            unitNumber: '1101',
+            year: '2025',
+            timeline: {
+                '2025': '1101',
+                '2026': '1101',
+                '2027': '',
+            },
+        };
+
+        const next = moveFleetPlanLifecycleBoundary({
+            row,
+            timelineColumns: config.timelineColumns,
+            boundary: 'start',
+            toYear: '2026',
+        });
+
+        expect(next.year).toBe('2026');
+        expect(next.timeline['2025']).toBe('');
+        expect(next.timeline['2026']).toBe('1101');
+        expect(next.timeline['2027']).toBe('1101');
+    });
+
     it('blocks lifecycle drags that would put start after retirement', () => {
         const config = FLEET_PLAN_SHEET_CONFIG_BY_KEY['diesel-12m'];
         const row = {
