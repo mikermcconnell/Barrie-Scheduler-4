@@ -8,6 +8,7 @@ import type { FleetPlanWorkbook } from '../../utils/fleet-plan/types';
 interface FleetPlanImportProps {
     teamId: string;
     userId: string;
+    currentVersion?: number;
     onImportComplete: (workbook: FleetPlanWorkbook) => void;
     onCancel: () => void;
 }
@@ -20,6 +21,7 @@ function describeWorkbook(workbook: FleetPlanWorkbook): string {
 export const FleetPlanImport: React.FC<FleetPlanImportProps> = ({
     teamId,
     userId,
+    currentVersion,
     onImportComplete,
     onCancel,
 }) => {
@@ -43,14 +45,20 @@ export const FleetPlanImport: React.FC<FleetPlanImportProps> = ({
                 userId,
             });
 
-            setParsedWorkbook(workbook);
+            setParsedWorkbook({
+                ...workbook,
+                metadata: {
+                    ...workbook.metadata,
+                    ...(typeof currentVersion === 'number' ? { currentVersion } : {}),
+                },
+            });
             if (warnings.length > 0) {
                 setErrorMessage(warnings.join(' '));
             }
         } catch (error) {
             setErrorMessage(error instanceof Error ? error.message : 'Failed to parse Fleet Plan workbook.');
         }
-    }, [userId]);
+    }, [currentVersion, userId]);
 
     const handleDrop = useCallback((acceptedFiles: File[]) => {
         const file = acceptedFiles[0];
@@ -73,8 +81,8 @@ export const FleetPlanImport: React.FC<FleetPlanImportProps> = ({
         if (!parsedWorkbook) return;
         setSaving(true);
         try {
-            await saveFleetPlanWorkbook(teamId, parsedWorkbook);
-            onImportComplete(parsedWorkbook);
+            const savedWorkbook = await saveFleetPlanWorkbook(teamId, parsedWorkbook);
+            onImportComplete(savedWorkbook);
         } catch (error) {
             setErrorMessage(error instanceof Error ? error.message : 'Failed to save Fleet Plan.');
         } finally {

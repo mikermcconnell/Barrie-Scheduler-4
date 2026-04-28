@@ -538,6 +538,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose 
                     <FleetPlanImport
                         teamId={team.id}
                         userId={user.uid}
+                        currentVersion={fleetPlanData?.metadata.currentVersion}
                         onImportComplete={(workbook) => {
                             setFleetPlanData(workbook);
                             setHasFleetPlanData(true);

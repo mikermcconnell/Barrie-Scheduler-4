@@ -71,6 +71,8 @@ The repo also contains planning-data tools, mostly under `components/Analytics/`
 - Route 8 sandbox
 - student-pass planning
 
+Fleet Plan is a team-shared analytics surface backed by `teams/{teamId}/fleetPlan/default` plus version metadata under `versions/{versionNumber}` and immutable JSON payloads in Storage. Reads are team-member scoped; writes are owner/admin scoped and use loaded-version conflict detection. Saves are validation-gated for duplicate/missing unit numbers, invalid years, and broken lifecycle timelines. Blocking issues can be fixed in a planner-approved resolver modal; Gemma 4 suggestions come from `api/fleet-plan-ai-resolver.ts` and are constrained to allowed deterministic fix IDs. Missing retirement years are warnings only for buses already in service, not future purchasing rows; the resolver defaults those warnings to a retirement year 13 years after first in service.
+
 ### Domain folders worth knowing first
 - `utils/schedule/`
 - `utils/blocks/`

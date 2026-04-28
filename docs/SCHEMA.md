@@ -29,6 +29,7 @@ firebase/
 │   ├── odMatrixData/{docId}              # Origin-destination datasets
 │   │   └── imports/{importId}            # OD import history
 │   └── fleetPlan/default                 # Shared fleet-planning workbook metadata + active storage pointer
+│       └── versions/{versionId}          # Fleet Plan version history
 │
 ├── teamInvites/{inviteCode}              # Invite lookup -> teamId + teamName
 │
@@ -37,7 +38,7 @@ firebase/
 
 `teams/{teamId}/connectionLibrary/default` and `teams/{teamId}/routeConnectionConfigs/{routeIdentity}` are used by the application and documented here because code reads and writes those paths directly.
 `teams/{teamId}/publicTimetable/default` stores the team-managed brochure copy used by the Public Timetable generator preview/export.
-`teams/{teamId}/fleetPlan/default` stores the active shared Fleet Plan metadata and the Storage path for the normalized workbook JSON payload.
+`teams/{teamId}/fleetPlan/default` stores the active shared Fleet Plan metadata and the Storage path for the current normalized workbook JSON payload. Its `versions/{versionId}` subcollection stores immutable version metadata for rollback/audit workflows.
 
 ### Cloud Storage Paths
 
@@ -58,7 +59,7 @@ storage/
     ├── performanceData/{timestamp}-report.json
     ├── performanceImports/raw/{timestamp}.csv
     ├── odMatrixData/{allPaths}
-    └── fleetPlan/{timestamp}.json
+    └── fleetPlan/v{versionNumber}_{timestamp}.json
 ```
 
 `teams/{teamId}/performanceData/metadata` may store multiple storage pointers for the same import:
@@ -244,6 +245,7 @@ Public timetable settings are readable by team members and should only be writte
 
 ```typescript
 interface FleetPlanDocumentMetadata {
+  currentVersion: number;
   totalRows: number;
   sheetCount: number;
   templateVersion: string;
@@ -256,7 +258,9 @@ interface FleetPlanDocumentMetadata {
 }
 ```
 
-The full editable workbook content is stored in Cloud Storage as normalized JSON rather than raw Excel bytes. The current implementation uses a single active team-shared plan at `teams/{teamId}/fleetPlan/default`. Team members can read and update the shared Fleet Plan. Stored JSON still preserves source sheet keys for compatibility with the imported template, while the user-facing grid and Excel export are combined into one Fleet Plan sheet with a Bus Type column.
+The full editable workbook content is stored in Cloud Storage as normalized JSON rather than raw Excel bytes. The active pointer lives at `teams/{teamId}/fleetPlan/default`; each save increments `currentVersion`, writes `fleetPlan/default/versions/{versionNumber}`, and preserves that version's JSON object in Storage. Team members can read the shared Fleet Plan; writes are restricted to team owners/admins. Saves use the loaded `currentVersion` for conflict detection so users do not silently overwrite newer edits. Stored JSON still preserves source sheet keys for compatibility with the imported template, while the user-facing grid and Excel export are combined into one Fleet Plan sheet with a Bus Type column.
+
+Fleet Plan saves are validation-gated. Blocking issues include missing/duplicate unit numbers, invalid model years, missing lifecycle start markers, multiple retirement markers, and timeline activity or purchase/growth markers after retirement. Missing retirement markers are warnings only for buses already in service; future purchase/growth rows are allowed to plan future purchasing without a retirement year. The Fleet Plan resolver suggests setting missing retirement warnings to 13 years after the first in-service year. Non-standard timeline notes and unusual year ranges are also warnings.
 
 ---
 

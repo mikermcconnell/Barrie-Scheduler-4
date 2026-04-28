@@ -64,6 +64,8 @@ export interface FleetPlanMetadata {
     importedBy: string;
     updatedAt: string;
     updatedBy: string;
+    currentVersion?: number;
+    storagePath?: string;
 }
 
 export interface FleetPlanWorkbook {
@@ -78,6 +80,7 @@ export interface FleetPlanSummary {
 }
 
 export interface FleetPlanDocumentMetadata extends FleetPlanSummary {
+    currentVersion: number;
     templateVersion: string;
     sourceFileName: string;
     importedAt: string;
@@ -85,6 +88,12 @@ export interface FleetPlanDocumentMetadata extends FleetPlanSummary {
     updatedAt: string;
     updatedBy: string;
     storagePath: string;
+}
+
+export interface FleetPlanVersionMetadata extends FleetPlanDocumentMetadata {
+    versionNumber: number;
+    createdAt: unknown;
+    createdBy: string;
 }
 
 export interface FleetPlanParseResult {

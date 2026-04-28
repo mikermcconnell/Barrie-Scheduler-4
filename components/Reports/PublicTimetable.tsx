@@ -57,16 +57,37 @@ const createEmptyBrochureDays = (): BrochureDayRecord => ({
 
 const LANDSCAPE_MAP_ROUTES = new Set(['10', '11', '100', '101']);
 const PORTRAIT_HERO_MAP_ROUTES = new Set(['2']);
-type MapLegendItem =
-    | { label: string; markerClassName: string; line?: false }
-    | { label: string; line: true };
+const RENDER_BROCHURE_ROUTE_MAP_IMAGE = false;
+const BROCHURE_COMPACT_ROWS_PER_CHUNK = 28;
+const BROCHURE_AFTERNOON_TABLE_SPLIT_MINUTES = 14 * 60;
+const BROCHURE_WIDE_TIMEPOINT_THRESHOLD = 8;
 
-const MAP_LEGEND_ITEMS: MapLegendItem[] = [
-    { label: 'Timepoint stop', markerClassName: 'border-2 border-[#0b5d4f] bg-white' },
-    { label: 'Regular stop', markerClassName: 'border border-slate-500 bg-white' },
-    { label: 'Transfer point', markerClassName: 'bg-[#0b5d4f] text-white' },
-    { label: 'Route path', line: true },
-] as const;
+const BROCHURE_TABLE_CLASS = 'h-full w-full table-fixed border-collapse text-[7.5px] leading-[0.9]';
+const BROCHURE_HEADER_CELL_CLASS = 'border-l border-slate-200 px-0.5 py-0.5 text-center align-middle text-[6.5px] font-bold leading-[0.9] text-slate-700 first:border-l-0';
+const BROCHURE_STOP_ID_CLASS = 'mt-[1px] block text-[5.5px] font-medium leading-none text-slate-400';
+const BROCHURE_TIME_CELL_CLASS = 'border-l border-t border-slate-200 px-0.5 py-[1px] text-center align-middle text-[8px] font-semibold leading-none text-slate-700 first:border-l-0';
+
+const BROCHURE_WIDE_TABLE_CLASS = 'h-full w-full table-fixed border-collapse text-[6.5px] leading-[0.8]';
+const BROCHURE_WIDE_HEADER_CELL_CLASS = 'border-l border-slate-200 px-[1px] py-[1px] text-center align-middle text-[5.5px] font-bold leading-[0.82] text-slate-700 first:border-l-0';
+const BROCHURE_WIDE_STOP_ID_CLASS = 'hidden';
+const BROCHURE_WIDE_TIME_CELL_CLASS = 'border-l border-t border-slate-200 px-[1px] py-[1px] text-center align-middle text-[7px] font-semibold leading-none text-slate-700 first:border-l-0';
+
+const BROCHURE_STOP_ABBREVIATIONS: Array<[RegExp, string]> = [
+    [/barrie allandale transit terminal platforms?/gi, 'Allandale'],
+    [/barrie allandale transit terminal/gi, 'Allandale'],
+    [/georgian college/gi, 'Georgian'],
+    [/park place/gi, 'Park Pl'],
+    [/downtown hub/gi, 'Downtown'],
+    [/rvh main entrance/gi, 'RVH'],
+    [/rvh\/yonge/gi, 'RVH/Yonge'],
+    [/crosstown\/essa/gi, 'Cross/Essa'],
+    [/veteran'?s/gi, 'Vets'],
+    [/ferndale woods/gi, 'Ferndale'],
+    [/mapleview/gi, 'Mapleview'],
+    [/community centre/gi, 'Comm Ctr'],
+    [/terminal/gi, 'Term'],
+    [/station/gi, 'Stn'],
+];
 
 const MAP_IMAGE_SCALE_MIN = 50;
 const MAP_IMAGE_SCALE_MAX = 150;
@@ -215,12 +236,47 @@ const getTripDisplayTime = (trip: MasterTrip, stopKey: string): string => {
     return formatBrochureCellTime(trip.stops[stopKey]);
 };
 
+const getBrochureTableClasses = (columnCount: number) => {
+    const isWide = columnCount >= BROCHURE_WIDE_TIMEPOINT_THRESHOLD;
+    return {
+        isWide,
+        table: isWide ? BROCHURE_WIDE_TABLE_CLASS : BROCHURE_TABLE_CLASS,
+        headerCell: isWide ? BROCHURE_WIDE_HEADER_CELL_CLASS : BROCHURE_HEADER_CELL_CLASS,
+        stopId: isWide ? BROCHURE_WIDE_STOP_ID_CLASS : BROCHURE_STOP_ID_CLASS,
+        timeCell: isWide ? BROCHURE_WIDE_TIME_CELL_CLASS : BROCHURE_TIME_CELL_CLASS,
+    };
+};
+
+const abbreviateBrochureStopName = (name: string): string => {
+    let out = name;
+    for (const [pattern, replacement] of BROCHURE_STOP_ABBREVIATIONS) {
+        out = out.replace(pattern, replacement);
+    }
+    return out.replace(/\s+/g, ' ').trim();
+};
+
 const chunkItems = <T,>(items: T[], chunkSize: number): T[][] => {
     const chunks: T[][] = [];
     for (let index = 0; index < items.length; index += chunkSize) {
         chunks.push(items.slice(index, index + chunkSize));
     }
     return chunks;
+};
+
+const chunkBrochureTableItems = <T,>(
+    items: T[],
+    getStartTime: (item: T) => number | null | undefined,
+): T[][] => {
+    const afternoonSplitIndex = items.findIndex(item => {
+        const startTime = getStartTime(item);
+        return Number.isFinite(startTime) && Number(startTime) >= BROCHURE_AFTERNOON_TABLE_SPLIT_MINUTES;
+    });
+
+    const sections = afternoonSplitIndex > 0 && afternoonSplitIndex < items.length
+        ? [items.slice(0, afternoonSplitIndex), items.slice(afternoonSplitIndex)]
+        : [items];
+
+    return sections.flatMap(section => chunkItems(section, BROCHURE_COMPACT_ROWS_PER_CHUNK));
 };
 
 const buildDirectionTitleFromStops = (stops: VisibleBrochureStop[]): string => {
@@ -915,7 +971,7 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
     })();
 
     const renderBrochureMapImage = (variant: 'landscape' | 'portrait'): React.ReactElement | null => {
-        if (!mapImageUrl) {
+        if (!RENDER_BROCHURE_ROUTE_MAP_IMAGE || !mapImageUrl) {
             return null;
         }
 
@@ -1010,6 +1066,13 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
             </div>
         );
     };
+
+    const renderBlankBrochureMapArea = (): React.ReactElement => (
+        <div
+            className="h-full w-full bg-white"
+            aria-label="Blank route map area for manual map placement after export"
+        />
+    );
 
     const buildDayDirectionPanels = (
         day: BrochureDayRecord[keyof BrochureDayRecord],
@@ -1167,7 +1230,6 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
         keyPrefix: string,
     ): React.ReactElement => {
         const panels = buildDayDirectionPanels(day);
-        const rowsPerChunk = panels.length > 1 ? 20 : 12;
         const route2RoundTrip = buildRoute2RoundTripRows(day);
 
         if (day.status !== 'ready' || !day.table) {
@@ -1213,6 +1275,10 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
 
                     {route2RoundTrip ? (
                         <div className="flex min-h-0 flex-1 flex-col gap-1.5">
+                            {(() => {
+                                const tableClasses = getBrochureTableClasses(route2RoundTrip.columns.length);
+                                return (
+                                    <>
                             <div className="flex items-center gap-2">
                                 <span className="inline-flex min-w-[30px] items-center justify-center rounded-md bg-[#1f6a45] px-1.5 py-0.5 text-[11px] font-extrabold text-white">
                                     2A
@@ -1226,19 +1292,22 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
                             </div>
 
                             <div className="flex flex-1 flex-col gap-1.5">
-                                {chunkItems(route2RoundTrip.rows, 20).map((rowChunk, chunkIndex) => (
+                                {chunkBrochureTableItems(
+                                    route2RoundTrip.rows,
+                                    row => row.northTrip?.startTime ?? row.southTrip?.startTime,
+                                ).map((rowChunk, chunkIndex) => (
                                     <div key={`${keyPrefix}-route2-round-${chunkIndex}`} className="flex-1 overflow-hidden rounded-[14px] border border-slate-200">
-                                        <table className="h-full w-full table-fixed border-collapse text-[9px] leading-none">
+                                        <table className={tableClasses.table}>
                                             <thead>
                                                 <tr className="bg-[#f3f5f4]">
                                                     {route2RoundTrip.columns.map((column, columnIndex) => (
                                                         <th
                                                             key={`${keyPrefix}-route2-head-${chunkIndex}-${column.key}`}
-                                                            className={`border-l border-slate-200 px-1.5 py-1.5 text-center align-middle text-[8px] font-bold leading-[1.05] text-slate-700 first:border-l-0 ${columnIndex === 3 ? 'border-l-2 border-l-[#0b5d4f]' : ''}`}
+                                                            className={`${tableClasses.headerCell} ${columnIndex === 3 ? 'border-l-2 border-l-[#0b5d4f]' : ''}`}
                                                         >
-                                                            <span className="block">{column.label}</span>
+                                                            <span className="block">{tableClasses.isWide ? abbreviateBrochureStopName(column.label) : column.label}</span>
                                                             {column.stopId ? (
-                                                                <span className="mt-0.5 block text-[6.5px] font-medium leading-none text-slate-400">{column.stopId}</span>
+                                                                <span className={tableClasses.stopId}>{column.stopId}</span>
                                                             ) : null}
                                                         </th>
                                                     ))}
@@ -1256,7 +1325,7 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
                                                                 return (
                                                                     <td
                                                                         key={`${keyPrefix}-route2-cell-${chunkIndex}-${row.key}-${column.key}`}
-                                                                        className={`border-l border-t border-slate-200 px-1.5 py-1.5 text-center align-middle text-[9.5px] font-semibold leading-none text-slate-700 first:border-l-0 ${columnIndex === 3 ? 'border-l-2 border-l-[#0b5d4f]' : ''}`}
+                                                                        className={`${tableClasses.timeCell} ${columnIndex === 3 ? 'border-l-2 border-l-[#0b5d4f]' : ''}`}
                                                                     >
                                                                         {trip ? getTripDisplayTime(trip, column.stopKey) : '—'}
                                                                     </td>
@@ -1270,6 +1339,9 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
                                     </div>
                                 ))}
                             </div>
+                                    </>
+                                );
+                            })()}
                         </div>
                     ) : (
                         <div className="grid flex-1 grid-cols-1 gap-1.5">
@@ -1285,6 +1357,10 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
 
                             return (
                                 <div key={`${keyPrefix}-${panel.key}`} className="flex min-h-0 flex-col gap-1.5">
+                                    {(() => {
+                                        const tableClasses = getBrochureTableClasses(panel.stops.length);
+                                        return (
+                                            <>
                                     <div className="flex items-center gap-2">
                                         <span
                                             className={`inline-flex min-w-[30px] items-center justify-center rounded-md px-1.5 py-0.5 text-[11px] font-extrabold ${badgeClassName}`}
@@ -1296,19 +1372,19 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
                                     </div>
 
                                     <div className="flex flex-1 flex-col gap-1.5">
-                                        {chunkItems(panel.trips, rowsPerChunk).map((tripChunk, chunkIndex) => (
+                                        {chunkBrochureTableItems(panel.trips, trip => trip.startTime).map((tripChunk, chunkIndex) => (
                                             <div key={`${keyPrefix}-${panel.key}-${chunkIndex}`} className="flex-1 overflow-hidden rounded-[14px] border border-slate-200">
-                                                <table className="h-full w-full table-fixed border-collapse text-[9px] leading-none">
+                                                <table className={tableClasses.table}>
                                                     <thead>
                                                         <tr className="bg-[#f3f5f4]">
                                                             {panel.stops.map((stop) => (
                                                                 <th
                                                                     key={`${keyPrefix}-${panel.key}-head-${chunkIndex}-${stop.origStop}`}
-                                                                    className="border-l border-slate-200 px-1.5 py-1.5 text-center align-middle text-[8px] font-bold leading-[1.05] text-slate-700 first:border-l-0"
+                                                                    className={tableClasses.headerCell}
                                                                 >
-                                                                    <span className="block">{stop.label}</span>
+                                                                    <span className="block">{tableClasses.isWide ? abbreviateBrochureStopName(stop.label) : stop.label}</span>
                                                                     {stop.stopId ? (
-                                                                        <span className="mt-0.5 block text-[6.5px] font-medium leading-none text-slate-400">{stop.stopId}</span>
+                                                                        <span className={tableClasses.stopId}>{stop.stopId}</span>
                                                                     ) : null}
                                                                 </th>
                                                             ))}
@@ -1324,7 +1400,7 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
                                                                 {panel.stops.map((stop) => (
                                                                     <td
                                                                         key={`${keyPrefix}-${panel.key}-cell-${chunkIndex}-${tripIndex}-${stop.origStop}`}
-                                                                        className="border-l border-t border-slate-200 px-1.5 py-1.5 text-center align-middle text-[9.5px] font-semibold leading-none text-slate-700 first:border-l-0"
+                                                                        className={tableClasses.timeCell}
                                                                     >
                                                                         {getTripDisplayTime(trip, stop.origStop)}
                                                                     </td>
@@ -1337,6 +1413,9 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
                                             </div>
                                         ))}
                                     </div>
+                                            </>
+                                        );
+                                    })()}
                                 </div>
                             );
                             })}
@@ -1438,31 +1517,7 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
 
                     {isLandscapeMapRoute ? (
                         <div className="relative mt-3 min-h-0 flex-1 overflow-hidden rounded-[18px] border border-[#d5ddd8] bg-[#f6f4ef]">
-                            {mapImageUrl ? (
-                                renderBrochureMapImage('landscape')
-                            ) : (
-                                <div className="flex h-full w-full items-center justify-center bg-[#f8f7f3] text-center text-sm text-slate-400">
-                                    Route map not uploaded yet
-                                </div>
-                            )}
-
-                            <div className="absolute right-3 top-3 w-[205px] rounded-[16px] border border-slate-200 bg-white/95 p-2.5 shadow-sm">
-                                <p className="text-[15px] font-extrabold uppercase tracking-[0.03em] text-[#0b5d4f]">Legend</p>
-                                <div className="mt-1.5 grid grid-cols-1 gap-1.5 text-[9px] text-slate-600">
-                                    {MAP_LEGEND_ITEMS.map(item => (
-                                        <div key={item.label} className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-2 py-1 leading-none">
-                                            {'markerClassName' in item ? (
-                                                <span className={`inline-flex h-4 w-4 items-center justify-center rounded-full text-[10px] ${item.markerClassName}`}>
-                                                    {item.label === 'Transfer point' ? '+' : ''}
-                                                </span>
-                                            ) : (
-                                                <span className="block h-[2px] w-8 rounded-full bg-[#0b5d4f]" />
-                                            )}
-                                            <span className="leading-none">{item.label}</span>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
+                            {renderBrochureMapImage('landscape') ?? renderBlankBrochureMapArea()}
 
                             <div className="absolute bottom-3 left-3 right-3 grid grid-cols-[0.95fr_1.05fr] gap-2">
                                 <div className="rounded-[16px] border border-slate-200 bg-white/95 p-2.5 shadow-sm">
@@ -1528,31 +1583,7 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
                         isPortraitHeroMapRoute ? (
                         <div className="mt-3 grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto] gap-2">
                             <div className="relative min-h-0 overflow-hidden rounded-[18px] border border-[#d5ddd8] bg-[#f6f4ef]">
-                                {mapImageUrl ? (
-                                    renderBrochureMapImage('portrait')
-                                ) : (
-                                    <div className="flex h-full w-full items-center justify-center bg-[#f8f7f3] px-6 text-center text-sm text-slate-400">
-                                        Portrait route map not uploaded yet
-                                    </div>
-                                )}
-
-                                <div className="absolute right-3 top-3 w-[150px] rounded-[14px] border border-slate-200 bg-white/95 p-2 shadow-sm">
-                                    <p className="text-[12px] font-extrabold uppercase tracking-[0.03em] text-[#0b5d4f]">Legend</p>
-                                    <div className="mt-1 grid grid-cols-1 gap-1 text-[8px] text-slate-600">
-                                        {MAP_LEGEND_ITEMS.map(item => (
-                                            <div key={item.label} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-1.5 py-0.5 leading-none">
-                                                {'markerClassName' in item ? (
-                                                    <span className={`inline-flex h-3.5 w-3.5 items-center justify-center rounded-full text-[8px] ${item.markerClassName}`}>
-                                                        {item.label === 'Transfer point' ? '+' : ''}
-                                                    </span>
-                                                ) : (
-                                                    <span className="block h-[2px] w-6 rounded-full bg-[#0b5d4f]" />
-                                                )}
-                                                <span className="leading-none">{item.label}</span>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
+                                {renderBrochureMapImage('portrait') ?? renderBlankBrochureMapArea()}
                             </div>
 
                             <div className="grid shrink-0 grid-cols-[0.95fr_1.05fr] gap-2">
@@ -1584,34 +1615,10 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
                         ) : (
                         <div className="mt-3 grid min-h-0 flex-1 grid-cols-[minmax(0,1.32fr)_minmax(185px,0.68fr)] gap-3">
                             <div className="relative min-h-0 overflow-hidden rounded-[18px] border border-[#d5ddd8] bg-[#f6f4ef]">
-                                {mapImageUrl ? (
-                                    renderBrochureMapImage('portrait')
-                                ) : (
-                                    <div className="flex h-full w-full items-center justify-center bg-[#f8f7f3] px-6 text-center text-sm text-slate-400">
-                                        Portrait route map not uploaded yet
-                                    </div>
-                                )}
+                                {renderBrochureMapImage('portrait') ?? renderBlankBrochureMapArea()}
                             </div>
 
                             <div className="flex min-h-0 flex-col gap-2 overflow-hidden">
-                                <div className="shrink-0 rounded-[16px] border border-slate-200 bg-white p-2.5 shadow-sm">
-                                    <p className="text-[15px] font-extrabold uppercase tracking-[0.03em] text-[#0b5d4f]">Legend</p>
-                                    <div className="mt-1.5 grid grid-cols-1 gap-1.5 text-[9px] text-slate-600">
-                                        {MAP_LEGEND_ITEMS.map(item => (
-                                            <div key={item.label} className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-2 py-1 leading-none">
-                                                {'markerClassName' in item ? (
-                                                    <span className={`inline-flex h-4 w-4 items-center justify-center rounded-full text-[10px] ${item.markerClassName}`}>
-                                                        {item.label === 'Transfer point' ? '+' : ''}
-                                                    </span>
-                                                ) : (
-                                                    <span className="block h-[2px] w-7 rounded-full bg-[#0b5d4f]" />
-                                                )}
-                                                <span className="leading-none">{item.label}</span>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-
                                 <div className="shrink-0 rounded-[16px] border border-slate-200 bg-white p-2.5 shadow-sm">
                                     <p className="text-[14px] font-extrabold uppercase tracking-[0.03em] text-[#0b5d4f]">Service Summary</p>
                                     <div className="mt-1.5 grid grid-cols-1 gap-1.5">

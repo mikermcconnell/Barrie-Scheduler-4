@@ -216,6 +216,24 @@ describe('fleetPlan editing helpers', () => {
         expect(getFleetPlanServiceLifeLabel('', 2026)).toBe('Unknown');
     });
 
+    it('uses the actual bus year as lifecycle start even when it is before the visible timeline', () => {
+        const config = FLEET_PLAN_SHEET_CONFIG_BY_KEY['diesel-12m'];
+        const row = {
+            ...createEmptyFleetPlanRow('diesel-12m'),
+            unitNumber: '1201',
+            year: '2012',
+            timeline: {
+                '2025': '1201',
+                '2026': 'RETIRE',
+            },
+        };
+
+        const lifecycle = getFleetPlanLifecycle(row, config.timelineColumns, 2026);
+        expect(lifecycle.startYear).toBe('2012');
+        expect(lifecycle.retireYear).toBe('2026');
+        expect(lifecycle.hasMissingInfo).toBe(false);
+    });
+
     it('counts fleet totals from real active units without treating planning markers as added buses', () => {
         const activeDiesel = {
             ...createEmptyFleetPlanRow('diesel-12m'),

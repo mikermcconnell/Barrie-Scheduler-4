@@ -98,7 +98,14 @@ service cloud.firestore {
 
       // Fleet Plan data
       match /fleetPlan/{docId} {
-        allow read, write: if isTeamMember(teamId);
+        allow read: if isTeamMember(teamId);
+        allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
+
+        // Fleet Plan version history
+        match /versions/{versionId} {
+          allow read: if isTeamMember(teamId);
+          allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
+        }
       }
     }
 

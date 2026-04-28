@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+    AlertTriangle,
     ArrowLeft,
     ChevronDown,
+    CheckCircle2,
     Download,
     ExternalLink,
     FileSpreadsheet,
@@ -12,15 +14,20 @@ import {
     RefreshCw,
     Save,
     Undo2,
+    Wand2,
 } from 'lucide-react';
 import { useToast } from '../contexts/ToastContext';
 import { useUndoRedo } from '../../hooks/useUndoRedo';
+import { useUnsavedChangesWarning } from '../../hooks/useUnsavedChangesWarning';
 import { exportFleetPlanWorkbook } from '../../utils/fleet-plan/fleetPlanExport';
 import { cloneFleetPlanWorkbook, createEmptyFleetPlanRow, replaceFleetPlanSheet } from '../../utils/fleet-plan/fleetPlanModel';
 import { saveFleetPlanWorkbook } from '../../utils/fleet-plan/fleetPlanService';
+import { validateFleetPlanWorkbook } from '../../utils/fleet-plan/fleetPlanValidation';
+import { FleetPlanIssueResolverModal } from './FleetPlanIssueResolverModal';
 import { FLEET_PLAN_SHEET_CONFIGS, FLEET_PLAN_SHEET_CONFIG_BY_KEY } from '../../utils/fleet-plan/fleetPlanConfig';
 import {
     delayFleetPlanRetirement,
+    compareFleetPlanSortValues,
     getFleetPlanLifecycle,
     getFleetPlanServiceLifeLabel,
     getNextFleetPlanSortState,
@@ -28,7 +35,6 @@ import {
     isFleetPlanRowCountedInFleetTotal,
     moveFleetPlanLifecycleBoundary,
     moveFleetPlanLifecycleWindow,
-    sortFleetPlanEntries,
 } from '../../utils/fleet-plan/fleetPlanEditing';
 import type { FleetPlanGridColumn, FleetPlanLifecycle, FleetPlanSortState } from '../../utils/fleet-plan/fleetPlanEditing';
 import type { FleetPlanRow, FleetPlanSheetKey, FleetPlanWorkbook } from '../../utils/fleet-plan/types';
@@ -49,9 +55,35 @@ const BUS_TYPE_LABELS: Record<FleetPlanSheetKey, string> = {
     'electric-12m': '12m Electric',
 };
 
+const BUS_TYPE_STYLES: Record<FleetPlanSheetKey, {
+    row: string;
+    badge: string;
+    detail: string;
+    timeline: string;
+}> = {
+    'diesel-12m': {
+        row: 'bg-red-50/30',
+        badge: 'bg-red-100 text-red-700',
+        detail: 'bg-red-50 text-red-700',
+        timeline: 'border-red-100 bg-red-50/30',
+    },
+    'small-buses': {
+        row: 'bg-blue-50/30',
+        badge: 'bg-blue-100 text-blue-700',
+        detail: 'bg-blue-50 text-blue-700',
+        timeline: 'border-blue-100 bg-blue-50/30',
+    },
+    'electric-12m': {
+        row: 'bg-emerald-50/35',
+        badge: 'bg-emerald-100 text-emerald-700',
+        detail: 'bg-emerald-50 text-emerald-700',
+        timeline: 'border-emerald-100 bg-emerald-50/30',
+    },
+};
+
 type CombinedFleetRow = { sheetKey: FleetPlanSheetKey; row: FleetPlanRow };
 type BaseFleetField = 'busType' | 'unitNumber' | 'busSize' | 'makeModel' | 'year' | 'comment' | 'electricFlag' | 'onOrder';
-type FleetStatusFilter = 'all' | 'in-service' | 'retiring-this-year' | 'purchasing-this-year' | 'on-order' | 'future' | 'overdue' | 'missing-info';
+type FleetStatusFilter = 'all' | 'in-service' | 'retiring-this-year' | 'purchasing-this-year' | 'growth' | 'on-order' | 'future' | 'overdue' | 'missing-info';
 type FleetBusTypeFilter = 'all' | FleetPlanSheetKey;
 type LifecycleDragMode = 'start' | 'retire' | 'window';
 
@@ -103,6 +135,7 @@ const STATUS_FILTERS: Array<{ key: FleetStatusFilter; label: string }> = [
     { key: 'in-service', label: 'In Service' },
     { key: 'retiring-this-year', label: 'Retiring This Year' },
     { key: 'purchasing-this-year', label: 'Purchasing This Year' },
+    { key: 'growth', label: 'Growth' },
     { key: 'on-order', label: 'On Order' },
     { key: 'future', label: 'Future' },
     { key: 'overdue', label: 'Overdue' },
@@ -115,6 +148,9 @@ const BUS_TYPE_FILTERS: Array<{ key: FleetBusTypeFilter; label: string }> = [
     { key: 'electric-12m', label: 'Electric 12m' },
     { key: 'small-buses', label: 'Small Buses' },
 ];
+
+const DEFAULT_FLEET_PLAN_SORT_STATE: FleetPlanSortState = { kind: 'base', key: 'year', direction: 'asc' };
+const FLEET_TYPE_SORT_ORDER: FleetPlanSheetKey[] = ['diesel-12m', 'electric-12m', 'small-buses'];
 
 function clampNumber(value: number, min: number, max: number): number {
     return Math.min(max, Math.max(min, value));
@@ -167,6 +203,10 @@ function getTimelineStatusValue(row: FleetPlanRow, year: string): string {
     return (row.timeline[year] || '').trim().toUpperCase();
 }
 
+function isFleetPlanGrowthRow(row: FleetPlanRow): boolean {
+    return Object.values(row.timeline).some((value) => value.trim().toUpperCase() === 'GROWTH');
+}
+
 function matchesFleetStatusFilter(
     entry: CombinedFleetRow,
     lifecycle: FleetPlanLifecycle,
@@ -177,6 +217,7 @@ function matchesFleetStatusFilter(
     if (filter === 'in-service') return lifecycle.isInService;
     if (filter === 'retiring-this-year') return lifecycle.retireYear === String(currentYear);
     if (filter === 'purchasing-this-year') return lifecycle.purchaseYears.includes(String(currentYear));
+    if (filter === 'growth') return isFleetPlanGrowthRow(entry.row);
     if (filter === 'on-order') return Boolean(entry.row.onOrder?.trim());
     if (filter === 'future') return lifecycle.isFuture || lifecycle.purchaseYears.some((year) => Number(year) > currentYear);
     if (filter === 'overdue') return lifecycle.isOverdueRetirement;
@@ -209,6 +250,60 @@ function groupFleetRowsByType(rows: CombinedFleetRow[]): Record<FleetPlanSheetKe
     }), {} as Record<FleetPlanSheetKey, CombinedFleetRow[]>);
 }
 
+function getFleetPlanEntrySortValue(entry: CombinedFleetRow, sort: FleetPlanSortState): string {
+    if (sort.kind === 'timeline') {
+        return entry.row.timeline[sort.key] || '';
+    }
+    if (sort.key === 'busType') {
+        return BUS_TYPE_LABELS[entry.sheetKey];
+    }
+    return getBaseFieldValue(entry.row, sort.key as Exclude<BaseFleetField, 'busType'>);
+}
+
+function sortCombinedFleetRows(entries: CombinedFleetRow[], sortState: FleetPlanSortState | null, currentYear: number): CombinedFleetRow[] {
+    if (!sortState) return entries;
+
+    return entries
+        .map((entry, originalIndex) => ({ entry, originalIndex }))
+        .sort((left, right) => {
+            const primaryComparison = compareFleetPlanSortValues(
+                getFleetPlanEntrySortValue(left.entry, sortState),
+                getFleetPlanEntrySortValue(right.entry, sortState),
+            );
+            if (primaryComparison !== 0) {
+                return sortState.direction === 'asc' ? primaryComparison : -primaryComparison;
+            }
+
+            if (sortState.kind === 'base' && sortState.key === 'year') {
+                const typeComparison = FLEET_TYPE_SORT_ORDER.indexOf(left.entry.sheetKey) - FLEET_TYPE_SORT_ORDER.indexOf(right.entry.sheetKey);
+                if (typeComparison !== 0) return typeComparison;
+
+                const leftRetirementYear = getFleetPlanLifecycle(
+                    left.entry.row,
+                    FLEET_PLAN_SHEET_CONFIG_BY_KEY[left.entry.sheetKey].timelineColumns,
+                    currentYear,
+                ).retireYear || '';
+                const rightRetirementYear = getFleetPlanLifecycle(
+                    right.entry.row,
+                    FLEET_PLAN_SHEET_CONFIG_BY_KEY[right.entry.sheetKey].timelineColumns,
+                    currentYear,
+                ).retireYear || '';
+                const retirementYearComparison = compareFleetPlanSortValues(leftRetirementYear, rightRetirementYear);
+                if (retirementYearComparison !== 0) return retirementYearComparison;
+            }
+
+            const nameComparison = getFleetRowDisplayName(left.entry.row).localeCompare(
+                getFleetRowDisplayName(right.entry.row),
+                undefined,
+                { numeric: true, sensitivity: 'base' },
+            );
+            if (nameComparison !== 0) return nameComparison;
+
+            return left.originalIndex - right.originalIndex;
+        })
+        .map(({ entry }) => entry);
+}
+
 export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
     data,
     teamId,
@@ -224,7 +319,8 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
     const [retirementEditor, setRetirementEditor] = useState<{ sheetKey: FleetPlanSheetKey; rowId: string; fromYear: string } | null>(null);
     const [lifecycleDrag, setLifecycleDrag] = useState<LifecycleDragState | null>(null);
     const [isSnapshotExpanded, setIsSnapshotExpanded] = useState(false);
-    const [sortState, setSortState] = useState<FleetPlanSortState | null>(null);
+    const [showIssueResolver, setShowIssueResolver] = useState(false);
+    const [sortState, setSortState] = useState<FleetPlanSortState | null>(DEFAULT_FLEET_PLAN_SORT_STATE);
     const [statusFilter, setStatusFilter] = useState<FleetStatusFilter>('all');
     const [busTypeFilter, setBusTypeFilter] = useState<FleetBusTypeFilter>('all');
     const cellRefs = useRef<Record<string, HTMLInputElement | null>>({});
@@ -243,15 +339,7 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
     const currentYearLabel = String(currentYear);
     const nextYearLabel = String(currentYear + 1);
     const combinedRows = useMemo<CombinedFleetRow[]>(() => draft.sheets.flatMap((sheet) => sheet.rows.map((row) => ({ sheetKey: sheet.key, row }))), [draft.sheets]);
-    const sortedRows = useMemo(() => sortFleetPlanEntries(combinedRows, sortState, (entry, sort) => {
-        if (sort.kind === 'timeline') {
-            return entry.row.timeline[sort.key] || '';
-        }
-        if (sort.key === 'busType') {
-            return BUS_TYPE_LABELS[entry.sheetKey];
-        }
-        return getBaseFieldValue(entry.row, sort.key as Exclude<BaseFleetField, 'busType'>);
-    }), [combinedRows, sortState]);
+    const sortedRows = useMemo(() => sortCombinedFleetRows(combinedRows, sortState, currentYear), [combinedRows, currentYear, sortState]);
     const filteredRows = useMemo(() => sortedRows.filter((entry) => {
         if (busTypeFilter !== 'all' && entry.sheetKey !== busTypeFilter) return false;
         const lifecycle = getFleetPlanLifecycle(entry.row, FLEET_PLAN_SHEET_CONFIG_BY_KEY[entry.sheetKey].timelineColumns, currentYear);
@@ -272,29 +360,25 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
             const lifecycle = getFleetPlanLifecycle(entry.row, FLEET_PLAN_SHEET_CONFIG_BY_KEY[entry.sheetKey].timelineColumns, currentYear);
             return lifecycle.purchaseYears.includes(yearLabel);
         });
+        const growth = combinedRows.filter((entry) => getTimelineStatusValue(entry.row, yearLabel) === 'GROWTH');
         return {
             yearLabel,
             retirements,
             purchases,
+            growth,
             retirementsByType: groupFleetRowsByType(retirements),
             purchasesByType: groupFleetRowsByType(purchases),
         };
     }), [combinedRows, currentYear, currentYearLabel, nextYearLabel]);
+    const growthRows = useMemo(() => combinedRows.filter((entry) => isFleetPlanGrowthRow(entry.row)), [combinedRows]);
     const isDirty = JSON.stringify(draft) !== JSON.stringify(data);
+    useUnsavedChangesWarning(isDirty, 'You have unsaved Fleet Plan changes. Leave anyway?');
     const editableColumns = COMBINED_GRID_COLUMNS;
-    const makeModelOptions = useMemo(() => Array.from(new Set(
-        draft.sheets
-            .flatMap((sheet) => sheet.rows.map((row) => row.makeModel.trim()))
-            .filter(Boolean),
-    )).sort(), [draft.sheets]);
-    const yearOptions = useMemo(() => Array.from(new Set(
-        draft.sheets
-            .flatMap((sheet) => sheet.rows.map((row) => row.year.trim()))
-            .filter(Boolean),
-    )).sort(), [draft.sheets]);
-    const activeSheetIssueCount = useMemo(() => combinedRows.filter(({ row }) => !row.unitNumber.trim()).length, [combinedRows]);
-    const makeModelListId = 'fleet-plan-make-model-combined';
-    const yearListId = 'fleet-plan-year-combined';
+    const fleetValidation = useMemo(() => validateFleetPlanWorkbook(draft, currentYear), [currentYear, draft]);
+    const validationPreviewIssues = useMemo(() => [
+        ...fleetValidation.errors.slice(0, 5),
+        ...fleetValidation.warnings.slice(0, Math.max(0, 5 - fleetValidation.errors.slice(0, 5).length)),
+    ], [fleetValidation.errors, fleetValidation.warnings]);
     const activeRetirementRow = useMemo(() => {
         if (!retirementEditor) return null;
         return combinedRows.find(({ sheetKey, row }) => sheetKey === retirementEditor.sheetKey && row.id === retirementEditor.rowId) ?? null;
@@ -379,7 +463,7 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
     const handleAddRow = useCallback((focusColumnIndex = 0) => {
         const defaultSheetKey: FleetPlanSheetKey = 'diesel-12m';
         const nextRowIndex = combinedRows.length;
-        setSortState(null);
+        setSortState(DEFAULT_FLEET_PLAN_SORT_STATE);
         mutateSheet(defaultSheetKey, (rows) => [...rows, createEmptyFleetPlanRow(defaultSheetKey)]);
         setPendingFocus({ rowIndex: nextRowIndex, columnIndex: focusColumnIndex });
     }, [combinedRows.length, mutateSheet]);
@@ -506,8 +590,20 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
         if (!lifecycle.startYear) return;
         if (mode === 'window' && !lifecycle.retireYear) return;
 
-        const startIndex = getYearIndex(yearKeys, lifecycle.startYear);
-        const retireIndex = lifecycle.retireYear ? getYearIndex(yearKeys, lifecycle.retireYear) : yearKeys.length - 1;
+        const firstVisibleYear = Number(yearKeys[0] || FLEET_TIMELINE_START_YEAR);
+        const lastVisibleYear = Number(yearKeys[yearKeys.length - 1] || FLEET_TIMELINE_START_YEAR);
+        const rawStartIndex = getYearIndex(yearKeys, lifecycle.startYear);
+        const startIndex = rawStartIndex >= 0
+            ? rawStartIndex
+            : lifecycle.startYear && Number(lifecycle.startYear) > lastVisibleYear
+                ? yearKeys.length - 1
+                : 0;
+        const rawRetireIndex = getYearIndex(yearKeys, lifecycle.retireYear);
+        const retireIndex = lifecycle.retireYear && rawRetireIndex >= 0
+            ? Math.max(startIndex, rawRetireIndex)
+            : lifecycle.retireYear && Number(lifecycle.retireYear) < firstVisibleYear
+                ? startIndex
+                : yearKeys.length - 1;
         if (startIndex < 0 || retireIndex < 0) return;
 
         const track = event.currentTarget.closest<HTMLElement>('[data-lifecycle-track]');
@@ -516,7 +612,9 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
 
         event.preventDefault();
         event.stopPropagation();
-        event.currentTarget.setPointerCapture(event.pointerId);
+        if (!event.currentTarget.hasPointerCapture(event.pointerId)) {
+            event.currentTarget.setPointerCapture(event.pointerId);
+        }
         setLifecycleDrag({
             sheetKey,
             rowId,
@@ -530,38 +628,42 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
         });
     };
 
+    const applyLifecycleDrag = (clientX: number, dragState: LifecycleDragState) => {
+        const targetIndex = getLifecyclePointerIndex(
+            clientX,
+            dragState.yearKeys,
+            dragState.trackLeft,
+            dragState.trackWidth,
+        );
+        if (dragState.mode === 'start') {
+            const nextIndex = clampNumber(targetIndex, 0, dragState.retireIndex);
+            const year = dragState.yearKeys[nextIndex];
+            if (year) handleLifecycleBoundaryMove(dragState.sheetKey, dragState.rowId, 'start', year);
+            return;
+        }
+
+        if (dragState.mode === 'retire') {
+            const nextIndex = clampNumber(targetIndex, dragState.startIndex, dragState.yearKeys.length - 1);
+            const year = dragState.yearKeys[nextIndex];
+            if (year) handleLifecycleBoundaryMove(dragState.sheetKey, dragState.rowId, 'retire', year);
+            return;
+        }
+
+        const lifecycleWidth = dragState.retireIndex - dragState.startIndex;
+        const delta = targetIndex - dragState.pointerStartIndex;
+        const nextStartIndex = clampNumber(
+            dragState.startIndex + delta,
+            0,
+            Math.max(0, dragState.yearKeys.length - 1 - lifecycleWidth),
+        );
+        const year = dragState.yearKeys[nextStartIndex];
+        if (year) handleLifecycleWindowMove(dragState.sheetKey, dragState.rowId, year);
+    };
+
     const handleLifecyclePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
         if (!lifecycleDrag) return;
-
-        const targetIndex = getLifecyclePointerIndex(
-            event.clientX,
-            lifecycleDrag.yearKeys,
-            lifecycleDrag.trackLeft,
-            lifecycleDrag.trackWidth,
-        );
-        if (lifecycleDrag.mode === 'start') {
-            const nextIndex = clampNumber(targetIndex, 0, lifecycleDrag.retireIndex);
-            const year = lifecycleDrag.yearKeys[nextIndex];
-            if (year) handleLifecycleBoundaryMove(lifecycleDrag.sheetKey, lifecycleDrag.rowId, 'start', year);
-            return;
-        }
-
-        if (lifecycleDrag.mode === 'retire') {
-            const nextIndex = clampNumber(targetIndex, lifecycleDrag.startIndex, lifecycleDrag.yearKeys.length - 1);
-            const year = lifecycleDrag.yearKeys[nextIndex];
-            if (year) handleLifecycleBoundaryMove(lifecycleDrag.sheetKey, lifecycleDrag.rowId, 'retire', year);
-            return;
-        }
-
-        const lifecycleWidth = lifecycleDrag.retireIndex - lifecycleDrag.startIndex;
-        const delta = targetIndex - lifecycleDrag.pointerStartIndex;
-        const nextStartIndex = clampNumber(
-            lifecycleDrag.startIndex + delta,
-            0,
-            Math.max(0, lifecycleDrag.yearKeys.length - 1 - lifecycleWidth),
-        );
-        const year = lifecycleDrag.yearKeys[nextStartIndex];
-        if (year) handleLifecycleWindowMove(lifecycleDrag.sheetKey, lifecycleDrag.rowId, year);
+        event.preventDefault();
+        applyLifecycleDrag(event.clientX, lifecycleDrag);
     };
 
     const handleLifecyclePointerEnd = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -570,6 +672,28 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
         }
         setLifecycleDrag(null);
     };
+
+    useEffect(() => {
+        if (!lifecycleDrag) return undefined;
+
+        const handleWindowPointerMove = (event: PointerEvent) => {
+            event.preventDefault();
+            applyLifecycleDrag(event.clientX, lifecycleDrag);
+        };
+        const handleWindowPointerEnd = () => {
+            setLifecycleDrag(null);
+        };
+
+        window.addEventListener('pointermove', handleWindowPointerMove, { passive: false });
+        window.addEventListener('pointerup', handleWindowPointerEnd);
+        window.addEventListener('pointercancel', handleWindowPointerEnd);
+
+        return () => {
+            window.removeEventListener('pointermove', handleWindowPointerMove);
+            window.removeEventListener('pointerup', handleWindowPointerEnd);
+            window.removeEventListener('pointercancel', handleWindowPointerEnd);
+        };
+    }, [lifecycleDrag]);
 
     const resolveGridColumnIndex = useCallback((column: FleetPlanGridColumn): number => (
         editableColumns.findIndex((gridColumn) => gridColumn.kind === column.kind && gridColumn.key === column.key)
@@ -644,7 +768,22 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
         setRetirementEditor(null);
     };
 
+    const handleApplyIssueResolution = (nextWorkbook: FleetPlanWorkbook) => {
+        draftRef.current = nextWorkbook;
+        setDraft(nextWorkbook);
+        toast?.success('Fleet Plan issue updated');
+    };
+
     const handleSave = async () => {
+        const validation = validateFleetPlanWorkbook(draftRef.current, currentYear);
+        if (!validation.canSave) {
+            toast?.error(
+                'Fix Fleet Plan validation errors before saving',
+                `${validation.errors.length} blocking issue${validation.errors.length === 1 ? '' : 's'} found.`,
+            );
+            return;
+        }
+
         setSaving(true);
         try {
             const nextWorkbook: FleetPlanWorkbook = {
@@ -655,10 +794,10 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                     updatedBy: userId,
                 },
             };
-            await saveFleetPlanWorkbook(teamId, nextWorkbook);
-            draftRef.current = nextWorkbook;
-            setDraft(nextWorkbook);
-            onSaved(nextWorkbook);
+            const savedWorkbook = await saveFleetPlanWorkbook(teamId, nextWorkbook);
+            draftRef.current = savedWorkbook;
+            setDraft(savedWorkbook);
+            onSaved(savedWorkbook);
             toast?.success('Fleet Plan saved');
         } catch (error) {
             console.error('Failed to save Fleet Plan:', error);
@@ -742,7 +881,8 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                             </button>
                             <button
                                 onClick={() => void handleSave()}
-                                disabled={saving || !isDirty}
+                                disabled={saving || !isDirty || !fleetValidation.canSave}
+                                title={!fleetValidation.canSave ? 'Fix validation errors before saving' : undefined}
                                 className="inline-flex items-center gap-2 rounded-lg bg-brand-blue px-5 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-blue-600 disabled:opacity-50"
                             >
                                 {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
@@ -752,6 +892,86 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                     </div>
                 </div>
             </div>
+
+            <section className={`rounded-2xl border p-4 shadow-sm ${
+                fleetValidation.errors.length > 0
+                    ? 'border-red-200 bg-red-50'
+                    : fleetValidation.warnings.length > 0
+                        ? 'border-amber-200 bg-amber-50'
+                        : 'border-emerald-200 bg-emerald-50'
+            }`}>
+                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                    <div className="flex items-start gap-3">
+                        <div className={`mt-0.5 rounded-full p-2 ${
+                            fleetValidation.errors.length > 0
+                                ? 'bg-red-100 text-red-700'
+                                : fleetValidation.warnings.length > 0
+                                    ? 'bg-amber-100 text-amber-700'
+                                    : 'bg-emerald-100 text-emerald-700'
+                        }`}>
+                            {fleetValidation.errors.length > 0 || fleetValidation.warnings.length > 0
+                                ? <AlertTriangle size={18} />
+                                : <CheckCircle2 size={18} />}
+                        </div>
+                        <div>
+                            <h3 className={`text-sm font-extrabold ${
+                                fleetValidation.errors.length > 0
+                                    ? 'text-red-900'
+                                    : fleetValidation.warnings.length > 0
+                                        ? 'text-amber-900'
+                                        : 'text-emerald-900'
+                            }`}>
+                                {fleetValidation.errors.length > 0
+                                    ? 'Fleet Plan validation needs attention'
+                                    : fleetValidation.warnings.length > 0
+                                        ? 'Fleet Plan validation has warnings'
+                                        : 'Fleet Plan validation passed'}
+                            </h3>
+                            <p className={`mt-1 text-sm ${
+                                fleetValidation.errors.length > 0
+                                    ? 'text-red-800'
+                                    : fleetValidation.warnings.length > 0
+                                        ? 'text-amber-800'
+                                        : 'text-emerald-800'
+                            }`}>
+                                {fleetValidation.errors.length} blocking issue{fleetValidation.errors.length === 1 ? '' : 's'} · {fleetValidation.warnings.length} warning{fleetValidation.warnings.length === 1 ? '' : 's'}.
+                                {fleetValidation.errors.length > 0 ? ' Saving is disabled until blocking issues are fixed.' : ''}
+                            </p>
+                            {validationPreviewIssues.length > 0 ? (
+                                <ul className="mt-3 space-y-1 text-sm">
+                                    {validationPreviewIssues.map((issue, index) => (
+                                        <li
+                                            key={`${issue.code}-${issue.rowId || issue.unitNumber || index}`}
+                                            className={issue.severity === 'error' ? 'text-red-800' : 'text-amber-800'}
+                                        >
+                                            <span className="font-bold">{issue.severity === 'error' ? 'Error' : 'Warning'}:</span> {issue.message}
+                                        </li>
+                                    ))}
+                                    {fleetValidation.issues.length > validationPreviewIssues.length ? (
+                                        <li className="text-sm font-semibold text-gray-600">
+                                            +{fleetValidation.issues.length - validationPreviewIssues.length} more issue{fleetValidation.issues.length - validationPreviewIssues.length === 1 ? '' : 's'}
+                                        </li>
+                                    ) : null}
+                                </ul>
+                            ) : null}
+                        </div>
+                    </div>
+                    {fleetValidation.errors.length > 0 || fleetValidation.warnings.length > 0 ? (
+                        <button
+                            type="button"
+                            onClick={() => setShowIssueResolver(true)}
+                            className={`inline-flex shrink-0 items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-extrabold text-white shadow-sm ${
+                                fleetValidation.errors.length > 0
+                                    ? 'bg-red-600 hover:bg-red-700'
+                                    : 'bg-amber-600 hover:bg-amber-700'
+                            }`}
+                        >
+                            <Wand2 size={16} />
+                            Resolve issues and warnings
+                        </button>
+                    ) : null}
+                </div>
+            </section>
 
             <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
                 <button
@@ -772,8 +992,17 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                             {currentYearLabel} and {nextYearLabel} retirements and purchases pulled from the fleet timeline.
                         </p>
                     </div>
-                    <div className="text-sm font-bold text-brand-blue">
-                        {snapshotYears.reduce((total, snapshot) => total + snapshot.retirements.length, 0)} retiring · {snapshotYears.reduce((total, snapshot) => total + snapshot.purchases.length, 0)} purchasing
+                    <div className="text-right">
+                        <div className="text-sm font-bold text-brand-blue">
+                            {snapshotYears.reduce((total, snapshot) => total + snapshot.retirements.length, 0)} retiring · {snapshotYears.reduce((total, snapshot) => total + snapshot.purchases.length, 0)} purchasing · {growthRows.length} growth
+                        </div>
+                        <div className="mt-1 flex flex-wrap justify-end gap-x-3 gap-y-1 text-xs font-extrabold text-gray-500">
+                            {snapshotYears.map((snapshot) => (
+                                <span key={snapshot.yearLabel}>
+                                    {snapshot.yearLabel}: {snapshot.retirements.length} retiring · {snapshot.purchases.length} purchasing · {snapshot.growth.length} growth
+                                </span>
+                            ))}
+                        </div>
                     </div>
                 </button>
                 {isSnapshotExpanded && (
@@ -783,7 +1012,7 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                                 <div className="flex flex-wrap items-center justify-between gap-2">
                                     <h4 className="text-sm font-extrabold text-gray-800">{snapshot.yearLabel}</h4>
                                     <div className="text-xs font-extrabold text-gray-500">
-                                        {snapshot.retirements.length} retiring · {snapshot.purchases.length} purchasing
+                                        {snapshot.retirements.length} retiring · {snapshot.purchases.length} purchasing · {snapshot.growth.length} growth
                                     </div>
                                 </div>
                                 <div className="mt-2 grid gap-4 lg:grid-cols-2">
@@ -845,11 +1074,11 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
             </section>
 
             <section className="rounded-2xl border border-gray-200 bg-white shadow-sm">
-                <div className="border-b border-gray-200 px-6 py-5">
-                    <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+                <div className="border-b border-gray-200 px-6 py-3">
+                    <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
                         <div>
                             <h3 className="text-xl font-extrabold text-gray-950">Fleet timeline</h3>
-                            <p className="mt-1 text-sm text-gray-500">
+                            <p className="mt-0.5 text-sm text-gray-500">
                                 Drag the in-service and retire controls to update the plan immediately. Retirements are exported as red RETIRE cells.
                             </p>
                         </div>
@@ -861,9 +1090,49 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                             <Plus size={16} />
                         </button>
                     </div>
+                </div>
 
-                    <div className="mt-4 space-y-3">
-                        <div className="flex flex-wrap gap-2">
+                <div className="sticky -top-px z-50 border-b border-gray-200 bg-white px-6 py-3 shadow-md">
+                    <div className="pointer-events-none absolute inset-x-0 -top-24 h-24 bg-white" />
+                    <div className="relative space-y-2">
+                        <div className="grid gap-3 xl:grid-cols-[380px_minmax(520px,1fr)]">
+                            <div>
+                                <div className="text-xs font-extrabold uppercase tracking-wide text-gray-500">
+                                Fleet total by year
+                                </div>
+                                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                                    <button
+                                        type="button"
+                                        onClick={undo}
+                                        disabled={!canUndo}
+                                        title="Undo last fleet edit"
+                                        className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-extrabold text-gray-700 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+                                    >
+                                        <Undo2 size={14} />
+                                        Undo
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={redo}
+                                        disabled={!canRedo}
+                                        title="Redo last fleet edit"
+                                        className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-extrabold text-gray-700 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+                                    >
+                                        <Redo2 size={14} />
+                                        Redo
+                                    </button>
+                                </div>
+                            </div>
+                            <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${DISPLAY_TIMELINE_COLUMNS.length}, minmax(42px, 1fr))` }}>
+                                {DISPLAY_TIMELINE_COLUMNS.map((column) => (
+                                    <div key={column.key} className="rounded-lg bg-gray-50 px-1.5 py-2 text-center">
+                                        <div className="text-[10px] font-extrabold text-gray-500">{column.key}</div>
+                                        <div className="mt-1 text-sm font-black text-gray-950">{fleetTotalsByYear[column.key] ?? 0}</div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                        <div className="flex flex-nowrap items-center gap-1 overflow-hidden border-t border-gray-100 pt-2">
                             {STATUS_FILTERS.map((filter) => {
                                 const label = filter.key === 'retiring-this-year'
                                     ? `Retiring ${currentYearLabel}`
@@ -876,24 +1145,23 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                                         key={filter.key}
                                         type="button"
                                         onClick={() => setStatusFilter(filter.key)}
-                                        className={`rounded-full border px-3 py-1.5 text-xs font-extrabold transition ${
+                                        className={`shrink-0 whitespace-nowrap rounded-full border px-1.5 py-0.5 text-[10px] font-extrabold leading-4 transition ${
                                             statusFilter === filter.key
                                                 ? 'border-brand-blue bg-blue-50 text-brand-blue'
                                                 : 'border-gray-200 bg-white text-gray-600 hover:border-blue-200 hover:bg-blue-50'
                                         }`}
                                     >
-                                        {label} <span className="ml-1 text-gray-400">{count}</span>
+                                        {label} <span className="ml-0.5 text-gray-400">{count}</span>
                                     </button>
                                 );
                             })}
-                        </div>
-                        <div className="flex flex-wrap gap-2">
+                            <span className="mx-0.5 h-5 w-px shrink-0 bg-gray-200" />
                             {BUS_TYPE_FILTERS.map((filter) => (
                                 <button
                                     key={filter.key}
                                     type="button"
                                     onClick={() => setBusTypeFilter(filter.key)}
-                                    className={`rounded-full border px-3 py-1.5 text-xs font-extrabold transition ${
+                                    className={`shrink-0 whitespace-nowrap rounded-full border px-1.5 py-0.5 text-[10px] font-extrabold leading-4 transition ${
                                         busTypeFilter === filter.key
                                             ? 'border-gray-900 bg-gray-900 text-white'
                                             : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:bg-gray-50'
@@ -901,22 +1169,6 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                                 >
                                     {filter.label}
                                 </button>
-                            ))}
-                        </div>
-                    </div>
-                </div>
-
-                <div className="sticky top-0 z-50 border-b border-gray-200 bg-white px-6 py-4 shadow-md">
-                    <div className="grid gap-4 xl:grid-cols-[280px_minmax(520px,1fr)]">
-                        <div className="text-xs font-extrabold uppercase tracking-wide text-gray-500">
-                            Fleet total by year
-                        </div>
-                        <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${DISPLAY_TIMELINE_COLUMNS.length}, minmax(42px, 1fr))` }}>
-                            {DISPLAY_TIMELINE_COLUMNS.map((column) => (
-                                <div key={column.key} className="rounded-lg bg-gray-50 px-1.5 py-2 text-center">
-                                    <div className="text-[10px] font-extrabold text-gray-500">{column.key}</div>
-                                    <div className="mt-1 text-sm font-black text-gray-950">{fleetTotalsByYear[column.key] ?? 0}</div>
-                                </div>
                             ))}
                         </div>
                     </div>
@@ -946,55 +1198,57 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                         const leftPct = (startIndex / maxIndex) * 100;
                         const rightPct = (safeRetireIndex / maxIndex) * 100;
                         const widthPct = Math.max(4, rightPct - leftPct);
+                        const isGrowthRow = isFleetPlanGrowthRow(row);
 
                         return (
-                            <div key={`${sheetKey}-${row.id}`} className="grid gap-4 px-6 py-5 xl:grid-cols-[280px_minmax(520px,1fr)]">
+                            <div key={`${sheetKey}-${row.id}`} className={`grid gap-3 border-l-4 px-6 py-2.5 xl:grid-cols-[380px_minmax(520px,1fr)] ${BUS_TYPE_STYLES[sheetKey].row} ${isGrowthRow ? 'border-l-amber-300' : 'border-l-transparent'}`}>
                                 <div className="min-w-0">
                                     <div className="flex items-center gap-2">
                                         <input
                                             value={row.unitNumber}
                                             onChange={(event) => handleFieldChange(sheetKey, row.id, 'unitNumber', event.target.value)}
-                                            className="min-w-0 flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm font-extrabold text-gray-950 shadow-inner shadow-gray-100/60 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-blue-100"
+                                            className="w-24 shrink-0 rounded-lg border border-gray-200 px-3 py-1.5 text-sm font-extrabold text-gray-950 shadow-inner shadow-gray-100/60 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-blue-100"
                                             aria-label="Unit number"
                                         />
-                                        <span className="rounded-full bg-gray-100 px-2 py-1 text-[10px] font-extrabold uppercase text-gray-600">
+                                        <span className={`rounded-full px-2 py-1 text-[10px] font-extrabold uppercase ${BUS_TYPE_STYLES[sheetKey].badge}`}>
                                             {BUS_TYPE_LABELS[sheetKey]}
                                         </span>
+                                        {isGrowthRow ? (
+                                            <span className="rounded-full bg-amber-100 px-2 py-1 text-[10px] font-extrabold uppercase text-amber-700">
+                                                + Growth
+                                            </span>
+                                        ) : null}
+                                        <span className={`min-w-0 truncate rounded-full px-2 py-1 text-[10px] font-extrabold ${BUS_TYPE_STYLES[sheetKey].detail}`}>
+                                            Life: <span className="text-gray-950">{getFleetPlanServiceLifeLabel(row.year, currentYear)}</span>
+                                        </span>
                                     </div>
-                                    <input
-                                        value={row.makeModel}
-                                        onChange={(event) => handleFieldChange(sheetKey, row.id, 'makeModel', event.target.value)}
-                                        className="mt-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 shadow-inner shadow-gray-100/60 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-blue-100"
-                                        placeholder="Make/model"
-                                        aria-label="Make model"
-                                    />
-                                    <div className="mt-2 grid grid-cols-2 gap-2">
-                                        <label className="text-xs font-bold text-gray-500">
-                                            In service
-                                            <input
-                                                value={row.year}
-                                                onChange={(event) => handleFieldChange(sheetKey, row.id, 'year', event.target.value)}
-                                                list={yearListId}
-                                                className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 shadow-inner shadow-gray-100/60 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-blue-100"
-                                            />
-                                        </label>
-                                        <label className="text-xs font-bold text-gray-500">
-                                            On order
-                                            <input
-                                                value={row.onOrder || ''}
+                                    <div className="mt-1.5 flex items-center gap-2">
+                                        <input
+                                            value={row.makeModel}
+                                            onChange={(event) => handleFieldChange(sheetKey, row.id, 'makeModel', event.target.value)}
+                                            className="min-w-0 flex-1 rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-700 shadow-inner shadow-gray-100/60 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-blue-100"
+                                            placeholder="Make/model"
+                                            aria-label="Make model"
+                                        />
+                                        <label className="flex shrink-0 items-center gap-1 text-[10px] font-bold uppercase leading-none text-gray-500">
+                                            <span className="text-right">
+                                                On<br />order
+                                            </span>
+                                            <select
+                                                value={(row.onOrder || '').trim() ? 'Yes' : ''}
                                                 onChange={(event) => handleFieldChange(sheetKey, row.id, 'onOrder', event.target.value)}
-                                                className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 shadow-inner shadow-gray-100/60 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-blue-100"
-                                            />
+                                                className="w-16 rounded-lg border border-gray-200 px-2 py-1.5 text-sm text-gray-700 shadow-inner shadow-gray-100/60 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-blue-100"
+                                            >
+                                                <option value=""></option>
+                                                <option value="Yes">Yes</option>
+                                            </select>
                                         </label>
-                                    </div>
-                                    <div className="mt-2 rounded-lg bg-gray-50 px-3 py-2 text-xs font-bold text-gray-600">
-                                        Service life: <span className="text-gray-950">{getFleetPlanServiceLifeLabel(row.year, currentYear)}</span>
                                     </div>
                                 </div>
 
                                 <div className="min-w-0">
-                                    <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
-                                        <div className="mb-2 flex items-center justify-between text-xs font-bold text-gray-600">
+                                    <div className={`rounded-xl border px-3 py-2 ${BUS_TYPE_STYLES[sheetKey].timeline}`}>
+                                        <div className="mb-1 flex items-center justify-between text-xs font-bold text-gray-600">
                                             <span>
                                                 In service: <span className="text-brand-blue">{lifecycle.startYear || 'missing'}</span>
                                             </span>
@@ -1004,13 +1258,13 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                                         </div>
                                         <div
                                             data-lifecycle-track
-                                            className="relative h-12 touch-none select-none"
+                                            className="relative h-14 touch-none select-none"
                                             onPointerMove={handleLifecyclePointerMove}
                                             onPointerUp={handleLifecyclePointerEnd}
                                             onPointerCancel={handleLifecyclePointerEnd}
                                             aria-label={`Fleet lifecycle for bus ${row.unitNumber || 'row'}`}
                                         >
-                                            <div className="absolute inset-x-0 top-1/2 h-2 -translate-y-1/2 rounded-full bg-gray-200" />
+                                            <div className="absolute inset-x-0 top-5 h-1.5 -translate-y-1/2 rounded-full bg-gray-200" />
                                             <div
                                                 data-drag-mode="window"
                                                 role="slider"
@@ -1026,7 +1280,7 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                                                     const year = yearKeys[nextIndex];
                                                     if (year) handleLifecycleWindowMove(sheetKey, row.id, year);
                                                 }}
-                                                className={`absolute top-1/2 z-10 h-5 -translate-y-1/2 cursor-grab rounded-full shadow-sm outline-none ring-blue-200 transition hover:bg-blue-600 focus:ring-4 active:cursor-grabbing ${
+                                                className={`absolute top-5 z-10 h-3 -translate-y-1/2 cursor-grab rounded-full shadow-sm outline-none ring-blue-200 transition hover:bg-blue-600 focus:ring-4 active:cursor-grabbing ${
                                                     hasRetirementYear ? 'bg-blue-500' : 'border border-dashed border-blue-500 bg-blue-300/70'
                                                 }`}
                                                 style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
@@ -1049,7 +1303,7 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                                                     const year = yearKeys[nextIndex];
                                                     if (year) handleLifecycleBoundaryMove(sheetKey, row.id, 'start', year);
                                                 }}
-                                                className="absolute top-1/2 z-20 h-7 w-7 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-full border-2 border-white bg-blue-600 shadow outline-none ring-blue-200 transition hover:scale-105 focus:ring-4"
+                                                className="absolute top-5 z-20 h-7 w-7 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-full border-2 border-white bg-blue-600 shadow outline-none ring-blue-200 transition hover:scale-105 focus:ring-4"
                                                 style={{ left: `${leftPct}%` }}
                                             />
                                             <div
@@ -1070,7 +1324,7 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                                                     const year = yearKeys[nextIndex];
                                                     if (year) handleLifecycleBoundaryMove(sheetKey, row.id, 'retire', year);
                                                 }}
-                                                className={`absolute top-1/2 z-20 h-8 w-8 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-full border-2 border-white shadow outline-none ring-red-200 transition hover:scale-105 focus:ring-4 ${
+                                                className={`absolute top-5 z-20 h-7 w-7 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-full border-2 border-white shadow outline-none ring-red-200 transition hover:scale-105 focus:ring-4 ${
                                                     hasRetirementYear ? 'bg-red-600' : 'border-dashed bg-amber-400'
                                                 }`}
                                                 style={{ left: `${rightPct}%` }}
@@ -1082,9 +1336,6 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                                             </div>
                                         </div>
                                     </div>
-                                    <p className="mt-2 text-xs font-medium text-gray-500">
-                                        Drag the blue bar to move the bus window, or drag either end to adjust in-service and retirement years.
-                                    </p>
                                     {!hasRetirementYear ? (
                                         <button
                                             type="button"
@@ -1110,181 +1361,6 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                 </div>
             </section>
 
-            <div>
-                <section className="min-w-0 flex-1 space-y-4">
-                    <div className="rounded-2xl border border-gray-200 bg-white shadow-sm">
-                        <div className="flex flex-col gap-3 border-b border-gray-200 px-6 py-5 md:flex-row md:items-center md:justify-between">
-                            <div>
-                                <h3 className="text-xl font-extrabold text-gray-950">
-                                    Detailed Excel grid <span className="ml-2 text-brand-blue">Fleet Plan</span>
-                                </h3>
-                                <p className="mt-1 text-sm text-gray-500">
-                                    Filtered rows use the same saved/exported data as the timeline above.
-                                </p>
-                            </div>
-                            <button
-                                onClick={() => handleAddRow()}
-                                className="inline-flex items-center justify-center gap-2 rounded-lg border border-blue-200 bg-white px-4 py-2 text-sm font-bold text-brand-blue shadow-sm hover:bg-blue-50"
-                            >
-                                Add row
-                                <Plus size={16} />
-                            </button>
-                        </div>
-
-                        <datalist id="fleet-plan-bus-types">
-                            {Object.values(BUS_TYPE_LABELS).map((option) => (
-                                <option key={option} value={option} />
-                            ))}
-                        </datalist>
-                        <datalist id={makeModelListId}>
-                            {makeModelOptions.map((option) => (
-                                <option key={option} value={option} />
-                            ))}
-                        </datalist>
-                        <datalist id={yearListId}>
-                            {yearOptions.map((option) => (
-                                <option key={option} value={option} />
-                            ))}
-                        </datalist>
-
-                        <div className="overflow-auto">
-                                    <table className="min-w-full border-separate border-spacing-0">
-                                        <thead>
-                                            <tr className="bg-gray-50">
-                                                <th className="sticky top-0 z-10 w-16 border-b border-r border-gray-200 bg-gray-50 px-3 py-3 text-right text-xs font-bold text-gray-500">
-                                                    Row
-                                                </th>
-                                                {COMBINED_BASE_COLUMNS.map((column) => (
-                                                    <th
-                                                        key={column.key}
-                                                        className="sticky top-0 z-10 border-b border-r border-gray-200 bg-gray-50 px-3 py-3 text-left text-xs font-bold text-gray-700"
-                                                    >
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => handleSortColumn({ kind: 'base', key: column.key })}
-                                                            className="flex w-full items-center justify-between gap-2 text-left font-bold hover:text-brand-blue"
-                                                            title="Click to sort ascending, descending, then original order"
-                                                        >
-                                                            <span>{column.label}</span>
-                                                            <span className="text-gray-400">{getSortIndicator({ kind: 'base', key: column.key })}</span>
-                                                        </button>
-                                                    </th>
-                                                ))}
-                                                {DISPLAY_TIMELINE_COLUMNS.map((column) => (
-                                                    <th
-                                                        key={column.key}
-                                                        className="sticky top-0 z-10 min-w-[86px] border-b border-r border-gray-200 bg-gray-50 px-3 py-3 text-center text-xs font-bold text-gray-700"
-                                                    >
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => handleSortColumn({ kind: 'timeline', key: column.key })}
-                                                            className="flex w-full items-center justify-center gap-2 font-bold hover:text-brand-blue"
-                                                            title="Click to sort ascending, descending, then original order"
-                                                        >
-                                                            <span>{column.label}</span>
-                                                            <span className="text-gray-400">{getSortIndicator({ kind: 'timeline', key: column.key })}</span>
-                                                        </button>
-                                                    </th>
-                                                ))}
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {filteredRows.map(({ sheetKey, row }, rowIndex) => (
-                                                <tr key={row.id} className="bg-white hover:bg-blue-50/30">
-                                                    <td className="border-b border-r border-gray-200 px-3 py-2 text-right text-sm font-semibold text-gray-700 align-middle">
-                                                        {rowIndex + 1}
-                                                    </td>
-                                                    {COMBINED_BASE_COLUMNS.map((column) => {
-                                                        const columnIndex = resolveGridColumnIndex({
-                                                            kind: 'base',
-                                                            key: column.key,
-                                                            label: column.label,
-                                                        });
-                                                        return (
-                                                            <td key={`${row.id}-${column.key}`} className="border-b border-r border-gray-200 px-2 py-2 align-top">
-                                                                <input
-                                                                    ref={(input) => {
-                                                                        if (columnIndex >= 0) {
-                                                                            cellRefs.current[`${rowIndex}:${columnIndex}`] = input;
-                                                                        }
-                                                                    }}
-                                                                    value={column.key === 'busType' ? BUS_TYPE_LABELS[sheetKey] : getBaseFieldValue(row, column.key as Exclude<BaseFleetField, 'busType'>)}
-                                                                    onChange={(event) => {
-                                                                        const nextValue = column.key === 'busType'
-                                                                            ? (Object.entries(BUS_TYPE_LABELS).find(([, label]) => label === event.target.value)?.[0] ?? event.target.value)
-                                                                            : event.target.value;
-                                                                        handleFieldChange(sheetKey, row.id, column.key, nextValue);
-                                                                    }}
-                                                                    list={column.key === 'busType' ? 'fleet-plan-bus-types' : column.key === 'makeModel' ? makeModelListId : column.key === 'year' ? yearListId : undefined}
-                                                                    onKeyDown={(event) => {
-                                                                        if (event.key === 'Tab') {
-                                                                            handleKeyboardNavigation(event, rowIndex, columnIndex, 'horizontal');
-                                                                        } else if (event.key === 'Enter') {
-                                                                            handleKeyboardNavigation(event, rowIndex, columnIndex, 'vertical');
-                                                                        }
-                                                                    }}
-                                                                    onPaste={(event) => handleCellPaste(event, rowIndex, columnIndex)}
-                                                                    className={`h-8 w-full rounded border border-gray-200 bg-white px-2 text-sm text-gray-800 shadow-inner shadow-gray-100/60 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-blue-100 ${
-                                                                        column.key === 'busType' ? 'min-w-[150px]' : 'min-w-[74px]'
-                                                                    }`}
-                                                                />
-                                                            </td>
-                                                        );
-                                                    })}
-
-                                                    {DISPLAY_TIMELINE_COLUMNS.map((column) => {
-                                                        const columnIndex = resolveGridColumnIndex({
-                                                            kind: 'timeline',
-                                                            key: column.key,
-                                                            label: column.label,
-                                                        });
-                                                        return (
-                                                            <td key={`${row.id}-${column.key}`} className="border-b border-r border-gray-200 px-2 py-2 align-top">
-                                                                <input
-                                                                    ref={(input) => {
-                                                                        if (columnIndex >= 0) {
-                                                                            cellRefs.current[`${rowIndex}:${columnIndex}`] = input;
-                                                                        }
-                                                                    }}
-                                                                    value={row.timeline[column.key] || ''}
-                                                                    onChange={(event) => handleTimelineChange(sheetKey, row.id, column.key, event.target.value)}
-                                                                    onKeyDown={(event) => {
-                                                                        if (event.key === 'Tab') {
-                                                                            handleKeyboardNavigation(event, rowIndex, columnIndex, 'horizontal');
-                                                                        } else if (event.key === 'Enter') {
-                                                                            handleKeyboardNavigation(event, rowIndex, columnIndex, 'vertical');
-                                                                        }
-                                                                    }}
-                                                                    onPaste={(event) => handleCellPaste(event, rowIndex, columnIndex)}
-                                                                    onFocus={() => {
-                                                                        if ((row.timeline[column.key] || '').trim().toUpperCase() === 'RETIRE') {
-                                                                            setRetirementEditor({ sheetKey, rowId: row.id, fromYear: column.key });
-                                                                        }
-                                                                    }}
-                                                                    className={`h-8 w-full rounded px-2 text-center text-xs shadow-inner shadow-gray-100/60 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-blue-100 ${getTimelineInputClass(row.timeline[column.key] || '')}`}
-                                                                />
-                                                            </td>
-                                                        );
-                                                    })}
-                                                </tr>
-                                            ))}
-
-                                            {filteredRows.length === 0 ? (
-                                                <tr>
-                                                    <td
-                                                        colSpan={COMBINED_BASE_COLUMNS.length + DISPLAY_TIMELINE_COLUMNS.length + 1}
-                                                        className="px-4 py-12 text-center text-sm text-gray-500"
-                                                    >
-                                                        No fleet rows match the selected filters.
-                                                    </td>
-                                                </tr>
-                                            ) : null}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
-                        </section>
-                    </div>
             {retirementEditor && activeRetirementRow ? (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/30 p-4">
                     <div className="w-full max-w-sm rounded-2xl border border-gray-200 bg-white p-5 shadow-xl">
@@ -1324,6 +1400,14 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                     </div>
                 </div>
             ) : null}
+            <FleetPlanIssueResolverModal
+                isOpen={showIssueResolver}
+                workbook={draft}
+                validation={fleetValidation}
+                currentYear={currentYear}
+                onApply={handleApplyIssueResolution}
+                onClose={() => setShowIssueResolver(false)}
+            />
         </div>
     );
 };

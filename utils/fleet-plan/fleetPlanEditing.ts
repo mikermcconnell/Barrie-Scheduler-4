@@ -334,12 +334,12 @@ export function getFleetPlanLifecycle(
     const unitNumber = row.unitNumber.trim();
     const yearKeys = timelineColumns.map((column) => column.key);
     const rowYear = normalizeYear(row.year);
-    const startYear = rowYear && isKnownTimelineYear(timelineColumns, rowYear)
-        ? rowYear
-        : yearKeys.find((year) => {
+    const startYear = rowYear
+        ?? yearKeys.find((year) => {
             const value = (row.timeline[year] || '').trim();
             return Boolean(value && (value === unitNumber || normalizeTimelineStatus(value) === 'PURCHASE' || normalizeTimelineStatus(value) === 'GROWTH'));
-        }) ?? null;
+        })
+        ?? null;
 
     const retireYear = yearKeys.find((year) => normalizeTimelineStatus(row.timeline[year]) === 'RETIRE') ?? null;
     const purchaseYears = yearKeys.filter((year) => {
