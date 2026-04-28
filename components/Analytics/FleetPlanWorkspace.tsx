@@ -149,7 +149,7 @@ const BUS_TYPE_FILTERS: Array<{ key: FleetBusTypeFilter; label: string }> = [
     { key: 'small-buses', label: 'Small Buses' },
 ];
 
-const DEFAULT_FLEET_PLAN_SORT_STATE: FleetPlanSortState = { kind: 'base', key: 'year', direction: 'asc' };
+const DEFAULT_FLEET_PLAN_SORT_STATE: FleetPlanSortState = { kind: 'base', key: 'busType', direction: 'asc' };
 const FLEET_TYPE_SORT_ORDER: FleetPlanSheetKey[] = ['diesel-12m', 'electric-12m', 'small-buses'];
 
 function clampNumber(value: number, min: number, max: number): number {
@@ -255,9 +255,29 @@ function getFleetPlanEntrySortValue(entry: CombinedFleetRow, sort: FleetPlanSort
         return entry.row.timeline[sort.key] || '';
     }
     if (sort.key === 'busType') {
-        return BUS_TYPE_LABELS[entry.sheetKey];
+        const typeIndex = FLEET_TYPE_SORT_ORDER.indexOf(entry.sheetKey);
+        return typeIndex >= 0 ? String(typeIndex) : BUS_TYPE_LABELS[entry.sheetKey];
     }
     return getBaseFieldValue(entry.row, sort.key as Exclude<BaseFleetField, 'busType'>);
+}
+
+function getFleetRowOrderKey(entry: CombinedFleetRow): string {
+    return entry.row.id;
+}
+
+function orderCombinedFleetRows(entries: CombinedFleetRow[], rowOrder: string[]): CombinedFleetRow[] {
+    const orderIndex = new Map(rowOrder.map((key, index) => [key, index]));
+    return entries
+        .map((entry, originalIndex) => ({ entry, originalIndex }))
+        .sort((left, right) => {
+            const leftOrder = orderIndex.get(getFleetRowOrderKey(left.entry));
+            const rightOrder = orderIndex.get(getFleetRowOrderKey(right.entry));
+            if (leftOrder !== undefined && rightOrder !== undefined) return leftOrder - rightOrder;
+            if (leftOrder !== undefined) return -1;
+            if (rightOrder !== undefined) return 1;
+            return left.originalIndex - right.originalIndex;
+        })
+        .map(({ entry }) => entry);
 }
 
 function sortCombinedFleetRows(entries: CombinedFleetRow[], sortState: FleetPlanSortState | null, currentYear: number): CombinedFleetRow[] {
@@ -321,6 +341,7 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
     const [isSnapshotExpanded, setIsSnapshotExpanded] = useState(false);
     const [showIssueResolver, setShowIssueResolver] = useState(false);
     const [sortState, setSortState] = useState<FleetPlanSortState | null>(DEFAULT_FLEET_PLAN_SORT_STATE);
+    const [pausedRowOrder, setPausedRowOrder] = useState<string[] | null>(null);
     const [statusFilter, setStatusFilter] = useState<FleetStatusFilter>('all');
     const [busTypeFilter, setBusTypeFilter] = useState<FleetBusTypeFilter>('all');
     const cellRefs = useRef<Record<string, HTMLInputElement | null>>({});
@@ -339,7 +360,12 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
     const currentYearLabel = String(currentYear);
     const nextYearLabel = String(currentYear + 1);
     const combinedRows = useMemo<CombinedFleetRow[]>(() => draft.sheets.flatMap((sheet) => sheet.rows.map((row) => ({ sheetKey: sheet.key, row }))), [draft.sheets]);
-    const sortedRows = useMemo(() => sortCombinedFleetRows(combinedRows, sortState, currentYear), [combinedRows, currentYear, sortState]);
+    const sortedRows = useMemo(() => (
+        pausedRowOrder
+            ? orderCombinedFleetRows(combinedRows, pausedRowOrder)
+            : sortCombinedFleetRows(combinedRows, sortState, currentYear)
+    ), [combinedRows, currentYear, pausedRowOrder, sortState]);
+    const isSortPaused = pausedRowOrder !== null;
     const filteredRows = useMemo(() => sortedRows.filter((entry) => {
         if (busTypeFilter !== 'all' && entry.sheetKey !== busTypeFilter) return false;
         const lifecycle = getFleetPlanLifecycle(entry.row, FLEET_PLAN_SHEET_CONFIG_BY_KEY[entry.sheetKey].timelineColumns, currentYear);
@@ -400,6 +426,7 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
         draftRef.current = nextDraft;
         resetDraftHistory(nextDraft);
         setPendingFocus(null);
+        setPausedRowOrder(null);
     }, [data, resetDraftHistory]);
 
     useEffect(() => {
@@ -450,6 +477,10 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
         });
     }, [updateDraft]);
 
+    const pauseSortForEdit = useCallback(() => {
+        setPausedRowOrder((current) => current ?? sortedRows.map(getFleetRowOrderKey));
+    }, [sortedRows]);
+
     const focusCell = useCallback((rowIndex: number, columnIndex: number) => {
         const input = cellRefs.current[`${rowIndex}:${columnIndex}`];
         if (input) {
@@ -463,10 +494,10 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
     const handleAddRow = useCallback((focusColumnIndex = 0) => {
         const defaultSheetKey: FleetPlanSheetKey = 'diesel-12m';
         const nextRowIndex = combinedRows.length;
-        setSortState(DEFAULT_FLEET_PLAN_SORT_STATE);
+        pauseSortForEdit();
         mutateSheet(defaultSheetKey, (rows) => [...rows, createEmptyFleetPlanRow(defaultSheetKey)]);
         setPendingFocus({ rowIndex: nextRowIndex, columnIndex: focusColumnIndex });
-    }, [combinedRows.length, mutateSheet]);
+    }, [combinedRows.length, mutateSheet, pauseSortForEdit]);
 
     const moveRowToSheet = useCallback((fromSheetKey: FleetPlanSheetKey, rowId: string, toSheetKey: FleetPlanSheetKey) => {
         if (fromSheetKey === toSheetKey) return;
@@ -495,6 +526,7 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
     }, [updateDraft]);
 
     const handleFieldChange = (sheetKey: FleetPlanSheetKey, rowId: string, field: BaseFleetField, value: string) => {
+        pauseSortForEdit();
         if (field === 'busType') {
             moveRowToSheet(sheetKey, rowId, value as FleetPlanSheetKey);
             return;
@@ -503,6 +535,7 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
     };
 
     const handleTimelineChange = (sheetKey: FleetPlanSheetKey, rowId: string, key: string, value: string) => {
+        pauseSortForEdit();
         mutateSheet(sheetKey, (rows) => updateRow(rows, rowId, (row) => ({
             ...row,
             timeline: {
@@ -514,6 +547,7 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
 
     const handleRetirementDelay = (sheetKey: FleetPlanSheetKey, rowId: string, fromYear: string, toYear: string) => {
         const config = FLEET_PLAN_SHEET_CONFIG_BY_KEY[sheetKey];
+        pauseSortForEdit();
         mutateSheet(sheetKey, (rows) => updateRow(rows, rowId, (row) => delayFleetPlanRetirement({
             row,
             timelineColumns: config.timelineColumns,
@@ -532,6 +566,7 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
     ) => {
         const config = FLEET_PLAN_SHEET_CONFIG_BY_KEY[sheetKey];
         let changed = false;
+        pauseSortForEdit();
         mutateSheet(sheetKey, (rows) => updateRow(rows, rowId, (row) => {
             const nextRow = moveFleetPlanLifecycleBoundary({
                 row,
@@ -554,6 +589,7 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
     ) => {
         const config = FLEET_PLAN_SHEET_CONFIG_BY_KEY[sheetKey];
         let changed = false;
+        pauseSortForEdit();
         mutateSheet(sheetKey, (rows) => updateRow(rows, rowId, (row) => {
             const nextRow = moveFleetPlanLifecycleWindow({
                 row,
@@ -739,6 +775,7 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
         }
 
         event.preventDefault();
+        pauseSortForEdit();
         const parsedRows = clipboardText.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').filter((line) => line.length > 0).map((line) => line.split('\t'));
         updateDraft((current) => {
             let next = current;
@@ -764,11 +801,13 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
     };
 
     const handleSortColumn = (column: Pick<FleetPlanSortState, 'kind' | 'key'>) => {
+        setPausedRowOrder(null);
         setSortState((current) => getNextFleetPlanSortState(current, column));
         setRetirementEditor(null);
     };
 
     const handleApplyIssueResolution = (nextWorkbook: FleetPlanWorkbook) => {
+        pauseSortForEdit();
         draftRef.current = nextWorkbook;
         setDraft(nextWorkbook);
         toast?.success('Fleet Plan issue updated');
@@ -797,6 +836,7 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
             const savedWorkbook = await saveFleetPlanWorkbook(teamId, nextWorkbook);
             draftRef.current = savedWorkbook;
             setDraft(savedWorkbook);
+            setPausedRowOrder(null);
             onSaved(savedWorkbook);
             toast?.success('Fleet Plan saved');
         } catch (error) {
@@ -1121,7 +1161,22 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                                         <Redo2 size={14} />
                                         Redo
                                     </button>
+                                    {isSortPaused ? (
+                                        <button
+                                            type="button"
+                                            onClick={() => setPausedRowOrder(null)}
+                                            title="Re-apply the current row sort"
+                                            className="inline-flex items-center gap-1 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs font-extrabold text-amber-800 shadow-sm hover:bg-amber-100"
+                                        >
+                                            Apply sort order
+                                        </button>
+                                    ) : null}
                                 </div>
+                                {isSortPaused ? (
+                                    <p className="mt-1 text-xs font-semibold text-amber-700">
+                                        Row order is paused while editing so buses do not jump.
+                                    </p>
+                                ) : null}
                             </div>
                             <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${DISPLAY_TIMELINE_COLUMNS.length}, minmax(42px, 1fr))` }}>
                                 {DISPLAY_TIMELINE_COLUMNS.map((column) => (
