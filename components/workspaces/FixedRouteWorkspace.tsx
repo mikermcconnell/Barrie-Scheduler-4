@@ -618,7 +618,8 @@ export const FixedRouteWorkspace: React.FC = () => {
     // 1. Dashboard View
     if (viewMode === 'dashboard') {
         return (
-            <div className="animate-in fade-in slide-in-from-bottom-2 duration-500 max-w-6xl mx-auto pt-8">
+            <div className="h-full overflow-y-auto custom-scrollbar pb-12">
+                <div className="animate-in fade-in slide-in-from-bottom-2 duration-500 max-w-6xl mx-auto pt-8">
                 <div className="mb-8 px-4 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
                     <div>
                         <button
@@ -669,54 +670,47 @@ export const FixedRouteWorkspace: React.FC = () => {
                             title="Timetable Publisher" description="Generate public timetables." />
                     )}
 
-                </div>
+                    {isFeatureEnabled('fixedAnalytics') && (
+                        <DashboardCard
+                            onClick={() => handleOpenPlanning('dashboard')}
+                            icon={<GitBranch size={20} />}
+                            color="cyan"
+                            title="Planning Data"
+                            description="Open the planning hub for rider demand, network analysis, route planning, and fleet tools."
+                        />
+                    )}
 
-                {isFeatureEnabled('fixedAnalytics') && (
-                    <div className="mt-8 px-4">
-                        <div className="mb-3">
-                            <h3 className="text-sm font-black uppercase tracking-[0.18em] text-gray-500">Planning</h3>
-                            <p className="mt-1 text-sm text-gray-500">
-                                User-facing planning tools and datasets. New schedule generation is intentionally kept out of this planner view.
-                            </p>
-                        </div>
-                        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
-                            <DashboardCard
-                                onClick={() => handleOpenPlanning('dashboard')}
-                                icon={<GitBranch size={20} />}
-                                color="cyan"
-                                title="Planning Data"
-                                description="Open the planning hub for rider demand, network analysis, route planning, and fleet tools."
-                            />
-                            {canAccess('analyticsTransitApp') && (
-                                <DashboardCard
-                                    onClick={() => handleOpenPlanning('transit-data')}
-                                    icon={<Smartphone size={20} />}
-                                    color="cyan"
-                                    title="Transit App Data"
-                                    description="Review imported Transit App demand, route engagement, origins, destinations, and service gaps."
-                                />
-                            )}
-                            {canAccess('analyticsFleetPlan') && (
-                                <DashboardCard
-                                    onClick={() => handleOpenPlanning('fleet-plan-workspace')}
-                                    icon={<Bus size={20} />}
-                                    color="purple"
-                                    title="Fleet Plan"
-                                    description="View and maintain the shared fleet plan, lifecycle years, purchasing needs, and retirements."
-                                />
-                            )}
-                            {canAccess('analyticsStudentPass') && (
-                                <DashboardCard
-                                    onClick={() => handleOpenPlanning('student-pass')}
-                                    icon={<GraduationCap size={20} />}
-                                    color="amber"
-                                    title="Student Transit Pass"
-                                    description="Create student-facing transit pass flyers from residential zones to schools."
-                                />
-                            )}
-                        </div>
-                    </div>
-                )}
+                    {isFeatureEnabled('fixedAnalytics') && canAccess('analyticsTransitApp') && (
+                        <DashboardCard
+                            onClick={() => handleOpenPlanning('transit-data')}
+                            icon={<Smartphone size={20} />}
+                            color="cyan"
+                            title="Transit App Data"
+                            description="Review imported Transit App demand, route engagement, origins, destinations, and service gaps."
+                        />
+                    )}
+
+                    {isFeatureEnabled('fixedAnalytics') && canAccess('analyticsFleetPlan') && (
+                        <DashboardCard
+                            onClick={() => handleOpenPlanning('fleet-plan-workspace')}
+                            icon={<Bus size={20} />}
+                            color="purple"
+                            title="Fleet Plan"
+                            description="View and maintain the shared fleet plan, lifecycle years, purchasing needs, and retirements."
+                        />
+                    )}
+
+                    {isFeatureEnabled('fixedAnalytics') && canAccess('analyticsStudentPass') && (
+                        <DashboardCard
+                            onClick={() => handleOpenPlanning('student-pass')}
+                            icon={<GraduationCap size={20} />}
+                            color="amber"
+                            title="Student Transit Pass"
+                            description="Create student-facing transit pass flyers from residential zones to schools."
+                        />
+                    )}
+
+                </div>
 
                 {/* GTFS Import Modal */}
                 {user && (
@@ -773,6 +767,7 @@ export const FixedRouteWorkspace: React.FC = () => {
                         />
                     </Suspense>
                 )}
+                </div>
             </div>
         );
     }
