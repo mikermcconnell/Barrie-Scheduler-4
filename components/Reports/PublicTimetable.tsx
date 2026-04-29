@@ -158,6 +158,16 @@ interface CombinedRoute2Row {
     southTrip: MasterTrip | null;
 }
 
+interface CombinedRoundTripTimetable {
+    columns: CombinedRoute2Column[];
+    rows: CombinedRoute2Row[];
+    firstBadge: string;
+    firstTitle: string;
+    secondBadge: string;
+    secondTitle: string;
+    boundaryIndex: number;
+}
+
 const formatMinutesForBrochure = (minutes: number | null | undefined): string => {
     if (minutes === null || minutes === undefined || Number.isNaN(minutes)) {
         return '';
@@ -1134,7 +1144,7 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
 
     const buildRoute2RoundTripRows = (
         day: BrochureDayRecord[keyof BrochureDayRecord],
-    ): { columns: CombinedRoute2Column[]; rows: CombinedRoute2Row[] } | null => {
+    ): CombinedRoundTripTimetable | null => {
         if (day.status !== 'ready' || !day.table || selectedRoute !== '2' || selectedDirection !== 'Both') {
             return null;
         }
@@ -1190,7 +1200,105 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
             southTrip: southTrips[index] ?? null,
         }));
 
-        return { columns, rows };
+        return {
+            columns,
+            rows,
+            firstBadge: '2A',
+            firstTitle: 'Park Place → Downtown Hub',
+            secondBadge: '2B',
+            secondTitle: 'Downtown Hub → Park Place',
+            boundaryIndex: 3,
+        };
+    };
+
+    const buildRoute8ARoundTripRows = (
+        day: BrochureDayRecord[keyof BrochureDayRecord],
+    ): CombinedRoundTripTimetable | null => {
+        if (day.status !== 'ready' || !day.table || selectedRoute !== '8A' || selectedDirection !== 'Both') {
+            return null;
+        }
+
+        const sortTrips = (trips: MasterTrip[]) => [...trips].sort((a, b) => {
+            if (a.startTime !== b.startTime) return a.startTime - b.startTime;
+            if (a.blockId !== b.blockId) return a.blockId.localeCompare(b.blockId, undefined, { numeric: true });
+            return a.tripNumber - b.tripNumber;
+        });
+
+        const northTrips = sortTrips(day.table.rows.flatMap(row => row.trips.filter(trip => trip.direction === 'North')));
+        const southTrips = sortTrips(day.table.rows.flatMap(row => row.trips.filter(trip => trip.direction === 'South')));
+        const northStops = getVisibleStopsForDirection(day.table.northStops, day.table.northStopIds, selectedStops);
+        const southStops = getVisibleStopsForDirection(day.table.southStops, day.table.southStopIds, selectedStops);
+
+        const findStop = (stops: VisibleBrochureStop[], matcher: (label: string) => boolean): VisibleBrochureStop | null =>
+            stops.find(stop => matcher(stop.label.toLowerCase())) ?? null;
+
+        const northBarrieSouth = findStop(northStops, label => label.includes('barrie south'));
+        const northParkPlace = findStop(northStops, label => label.includes('park place'));
+        const northCommunityCentre = findStop(northStops, label => label.includes('maple hill') || label.includes('peggy hill') || label.includes('community centre'));
+        const northAllandale = findStop(northStops, label => label.includes('allandale'));
+        const northDowntown = findStop(northStops, label => label.includes('downtown'));
+        const northGeorgian = findStop(northStops, label => label.includes('georgian college'));
+        const southGeorgian = findStop(southStops, label => label.includes('georgian college'));
+        const southGeorgianMall = findStop(southStops, label => label.includes('georgian mall') || label.includes('livingstone'));
+        const southAllandale = findStop(southStops, label => label.includes('allandale'));
+        const southBarrieSouth = findStop(southStops, label => label.includes('barrie south'));
+        const southParkPlace = findStop(southStops, label => label.includes('park place'));
+
+        const columnStops = [
+            northBarrieSouth ? { ...northBarrieSouth, key: 'north-barrie-south', direction: 'North' as const } : null,
+            northParkPlace ? { ...northParkPlace, key: 'north-park-place', direction: 'North' as const } : null,
+            northCommunityCentre ? { ...northCommunityCentre, key: 'north-community-centre', direction: 'North' as const } : null,
+            northAllandale ? { ...northAllandale, key: 'north-allandale', direction: 'North' as const } : null,
+            northDowntown ? { ...northDowntown, key: 'north-downtown', direction: 'North' as const } : null,
+            northGeorgian ? { ...northGeorgian, key: 'north-georgian', direction: 'North' as const } : null,
+            southGeorgian ? { ...southGeorgian, key: 'south-georgian', direction: 'South' as const } : null,
+            southGeorgianMall ? { ...southGeorgianMall, key: 'south-georgian-mall', direction: 'South' as const } : null,
+            southAllandale ? { ...southAllandale, key: 'south-allandale', direction: 'South' as const } : null,
+            southBarrieSouth ? { ...southBarrieSouth, key: 'south-barrie-south', direction: 'South' as const } : null,
+            southParkPlace ? { ...southParkPlace, key: 'south-park-place', direction: 'South' as const } : null,
+        ].filter((stop): stop is VisibleBrochureStop & { key: string; direction: 'North' | 'South' } => stop !== null);
+
+        const columns = columnStops.map(stop => ({
+            key: stop.key,
+            label: stop.label,
+            stopId: stop.stopId,
+            direction: stop.direction,
+            stopKey: stop.origStop,
+        }));
+        const boundaryIndex = columns.findIndex(column => column.direction === 'South');
+
+        if (columns.length < 2 || boundaryIndex <= 0 || northTrips.length === 0) {
+            return null;
+        }
+
+        const usedSouthTripIds = new Set<string>();
+        const rows = northTrips.map((northTrip, index) => {
+            const matchedSouthTrip = southTrips.find(southTrip => (
+                !usedSouthTripIds.has(southTrip.id)
+                && southTrip.blockId === northTrip.blockId
+                && southTrip.startTime >= northTrip.endTime - 15
+            )) ?? southTrips[index] ?? null;
+
+            if (matchedSouthTrip) {
+                usedSouthTripIds.add(matchedSouthTrip.id);
+            }
+
+            return {
+                key: `${northTrip.id}-${matchedSouthTrip?.id ?? index}`,
+                northTrip,
+                southTrip: matchedSouthTrip,
+            };
+        });
+
+        return {
+            columns,
+            rows,
+            firstBadge: '8A-NB',
+            firstTitle: 'RVH to Georgian College',
+            secondBadge: '8A-SB',
+            secondTitle: 'Yonge to Park Place',
+            boundaryIndex,
+        };
     };
 
     const summarizeDayService = (day: BrochureDayRecord[keyof BrochureDayRecord]) => {
@@ -1230,7 +1338,7 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
         keyPrefix: string,
     ): React.ReactElement => {
         const panels = buildDayDirectionPanels(day);
-        const route2RoundTrip = buildRoute2RoundTripRows(day);
+        const combinedRoundTrip = buildRoute8ARoundTripRows(day) ?? buildRoute2RoundTripRows(day);
 
         if (day.status !== 'ready' || !day.table) {
             return (
@@ -1273,37 +1381,37 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
                 <div className="flex flex-1 flex-col rounded-b-[18px] border border-t-0 border-slate-200 bg-white px-3 pb-2 pt-2">
                     <p className="mb-1.5 rounded-md bg-emerald-50 px-2.5 py-1.5 text-[11px] font-bold leading-none text-[#0b5d4f]">Scheduled departure times are shown for each listed timepoint and trip.</p>
 
-                    {route2RoundTrip ? (
+                    {combinedRoundTrip ? (
                         <div className="flex min-h-0 flex-1 flex-col gap-1.5">
                             {(() => {
-                                const tableClasses = getBrochureTableClasses(route2RoundTrip.columns.length);
+                                const tableClasses = getBrochureTableClasses(combinedRoundTrip.columns.length);
                                 return (
                                     <>
                             <div className="flex items-center gap-2">
                                 <span className="inline-flex min-w-[30px] items-center justify-center rounded-md bg-[#1f6a45] px-1.5 py-0.5 text-[11px] font-extrabold text-white">
-                                    2A
+                                    {combinedRoundTrip.firstBadge}
                                 </span>
-                                <span className="text-[12px] font-semibold text-slate-800">Park Place → Downtown Hub</span>
+                                <span className="text-[12px] font-semibold text-slate-800">{combinedRoundTrip.firstTitle}</span>
                                 <span className="text-[11px] font-bold text-slate-400">then</span>
                                 <span className="inline-flex min-w-[30px] items-center justify-center rounded-md bg-[#1f6a45] px-1.5 py-0.5 text-[11px] font-extrabold text-white">
-                                    2B
+                                    {combinedRoundTrip.secondBadge}
                                 </span>
-                                <span className="text-[12px] font-semibold text-slate-800">Downtown Hub → Park Place</span>
+                                <span className="text-[12px] font-semibold text-slate-800">{combinedRoundTrip.secondTitle}</span>
                             </div>
 
                             <div className="flex flex-1 flex-col gap-1.5">
                                 {chunkBrochureTableItems(
-                                    route2RoundTrip.rows,
+                                    combinedRoundTrip.rows,
                                     row => row.northTrip?.startTime ?? row.southTrip?.startTime,
                                 ).map((rowChunk, chunkIndex) => (
-                                    <div key={`${keyPrefix}-route2-round-${chunkIndex}`} className="flex-1 overflow-hidden rounded-[14px] border border-slate-200">
+                                    <div key={`${keyPrefix}-round-trip-${chunkIndex}`} className="flex-1 overflow-hidden rounded-[14px] border border-slate-200">
                                         <table className={tableClasses.table}>
                                             <thead>
                                                 <tr className="bg-[#f3f5f4]">
-                                                    {route2RoundTrip.columns.map((column, columnIndex) => (
+                                                    {combinedRoundTrip.columns.map((column, columnIndex) => (
                                                         <th
-                                                            key={`${keyPrefix}-route2-head-${chunkIndex}-${column.key}`}
-                                                            className={`${tableClasses.headerCell} ${columnIndex === 3 ? 'border-l-2 border-l-[#0b5d4f]' : ''}`}
+                                                            key={`${keyPrefix}-round-trip-head-${chunkIndex}-${column.key}`}
+                                                            className={`${tableClasses.headerCell} ${columnIndex === combinedRoundTrip.boundaryIndex ? 'border-l-2 border-l-[#0b5d4f]' : ''}`}
                                                         >
                                                             <span className="block">{tableClasses.isWide ? abbreviateBrochureStopName(column.label) : column.label}</span>
                                                             {column.stopId ? (
@@ -1317,15 +1425,15 @@ export const PublicTimetable: React.FC<PublicTimetableProps> = ({ onBack, initia
                                                 {rowChunk.map((row, rowIndex) => {
                                                     return (
                                                         <tr
-                                                            key={`${keyPrefix}-route2-row-${chunkIndex}-${row.key}`}
+                                                            key={`${keyPrefix}-round-trip-row-${chunkIndex}-${row.key}`}
                                                             className={rowIndex % 2 === 0 ? 'bg-white' : 'bg-[#faf9f7]'}
                                                         >
-                                                            {route2RoundTrip.columns.map((column, columnIndex) => {
+                                                            {combinedRoundTrip.columns.map((column, columnIndex) => {
                                                                 const trip = column.direction === 'North' ? row.northTrip : row.southTrip;
                                                                 return (
                                                                     <td
-                                                                        key={`${keyPrefix}-route2-cell-${chunkIndex}-${row.key}-${column.key}`}
-                                                                        className={`${tableClasses.timeCell} ${columnIndex === 3 ? 'border-l-2 border-l-[#0b5d4f]' : ''}`}
+                                                                        key={`${keyPrefix}-round-trip-cell-${chunkIndex}-${row.key}-${column.key}`}
+                                                                        className={`${tableClasses.timeCell} ${columnIndex === combinedRoundTrip.boundaryIndex ? 'border-l-2 border-l-[#0b5d4f]' : ''}`}
                                                                     >
                                                                         {trip ? getTripDisplayTime(trip, column.stopKey) : '—'}
                                                                     </td>

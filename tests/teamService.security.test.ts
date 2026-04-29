@@ -45,7 +45,7 @@ vi.mock('../utils/firebase', () => ({
   db: { name: 'db' },
 }));
 
-import { createTeam, deleteTeam, getUserTeam, removeMember } from '../utils/services/teamService';
+import { createTeam, deleteTeam, getUserTeam, joinTeamByInviteCode, removeMember } from '../utils/services/teamService';
 
 describe('teamService security-sensitive flows', () => {
   beforeEach(() => {
@@ -153,6 +153,27 @@ describe('teamService security-sensitive flows', () => {
 
     expect(batchDeleteMock).toHaveBeenCalledWith(
       expect.objectContaining({ path: 'teamInvites/ABC123' })
+    );
+  });
+
+  it('defaults newly joined members to planner workspace access', async () => {
+    getDocMock
+      .mockResolvedValueOnce({
+        exists: () => true,
+        data: () => ({ teamId: 'team-1', teamName: 'Ops Team' }),
+      })
+      .mockResolvedValueOnce({
+        exists: () => false,
+      });
+
+    await joinTeamByInviteCode('user-2', 'ABC123', 'New User', 'new@example.com');
+
+    expect(setDocMock).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'teams/team-1/members/user-2' }),
+      expect.objectContaining({
+        role: 'member',
+        accessLevel: 'planner',
+      })
     );
   });
 

@@ -13,6 +13,7 @@ import {
     createTeam,
     joinTeamByInviteCode,
     getTeamWithMembers,
+    getTeamWithMembersByInviteCode,
     leaveTeam,
     removeMember,
     updateMemberAccessLevel,
@@ -33,7 +34,7 @@ interface TeamManagementProps {
 
 export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
     const { user } = useAuth();
-    const { team, refreshTeam } = useTeam();
+    const { team, refreshTeam, accessLevel } = useTeam();
     const toast = useToast();
 
     const [isCreating, setIsCreating] = useState(false);
@@ -46,10 +47,24 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
     const [isEditingInviteCode, setIsEditingInviteCode] = useState(false);
     const [customInviteCode, setCustomInviteCode] = useState('');
     const [savingInviteCode, setSavingInviteCode] = useState(false);
+    const [teamLookupCode, setTeamLookupCode] = useState('');
+    const [teamLookupLoading, setTeamLookupLoading] = useState(false);
+    const [managedTeamDetails, setManagedTeamDetails] = useState<TeamWithMembers | null>(null);
+
+    const currentTeamMember = teamDetails?.members.find(m => m.userId === user?.uid);
+    const isCurrentTeamOwnerOrAdmin = currentTeamMember?.role === 'owner' || currentTeamMember?.role === 'admin';
+    const canLookupTeams = accessLevel === 'internal' || accessLevel === 'admin';
+    const activeTeamDetails = managedTeamDetails ?? teamDetails;
+    const activeTeamId = activeTeamDetails?.id ?? team?.id;
+    const isViewingCurrentTeam = !managedTeamDetails || managedTeamDetails.id === team?.id;
+    const canManageInviteCode = isViewingCurrentTeam && isCurrentTeamOwnerOrAdmin;
+    const canManageActiveAccess = isCurrentTeamOwnerOrAdmin || canLookupTeams;
+    const canRemoveActiveMembers = isViewingCurrentTeam && isCurrentTeamOwnerOrAdmin;
 
     // Load full team details with members
     useEffect(() => {
         if (team) {
+            setManagedTeamDetails(null);
             loadTeamDetails();
         }
     }, [team]);
@@ -115,10 +130,11 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
     };
 
     const handleCopyInviteCode = async () => {
-        if (!team) return;
+        const code = activeTeamDetails?.inviteCode ?? team?.inviteCode;
+        if (!code) return;
 
         try {
-            await navigator.clipboard.writeText(team.inviteCode);
+            await navigator.clipboard.writeText(code);
             setCopiedCode(true);
             toast?.success('Invite code copied!');
             setTimeout(() => setCopiedCode(false), 2000);
@@ -128,7 +144,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
     };
 
     const handleRegenerateCode = async () => {
-        if (!team) return;
+        if (!team || !canManageInviteCode) return;
 
         try {
             await regenerateInviteCode(team.id);
@@ -140,8 +156,52 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
         }
     };
 
+    const reloadActiveTeamDetails = async () => {
+        if (!activeTeamId) return;
+
+        const details = await getTeamWithMembers(activeTeamId);
+        if (managedTeamDetails) {
+            setManagedTeamDetails(details);
+        } else {
+            setTeamDetails(details);
+        }
+    };
+
+    const handleLookupTeam = async () => {
+        const normalized = teamLookupCode.trim().toUpperCase();
+        if (!/^[A-Z0-9]{6}$/.test(normalized)) {
+            toast?.error('Enter a 6-character team code');
+            return;
+        }
+
+        setTeamLookupLoading(true);
+        try {
+            const details = await getTeamWithMembersByInviteCode(normalized);
+            if (!details) {
+                toast?.error('No team found for that code');
+                return;
+            }
+
+            setManagedTeamDetails(details);
+            setTeamLookupCode(normalized);
+            setIsEditingInviteCode(false);
+            toast?.success(`Viewing ${details.name}`);
+        } catch (error) {
+            console.error('Error looking up team:', error);
+            toast?.error('Failed to load team');
+        } finally {
+            setTeamLookupLoading(false);
+        }
+    };
+
+    const handleResetTeamLookup = () => {
+        setManagedTeamDetails(null);
+        setTeamLookupCode('');
+        setIsEditingInviteCode(false);
+    };
+
     const handleSetCustomInviteCode = async () => {
-        if (!team) return;
+        if (!team || !canManageInviteCode) return;
         const normalized = customInviteCode.trim().toUpperCase();
         if (!/^[A-Z0-9]{6}$/.test(normalized)) {
             toast?.error('Invite code must be exactly 6 letters/numbers');
@@ -179,13 +239,13 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
     };
 
     const handleRemoveMember = async (memberId: string, memberName: string) => {
-        if (!team) return;
+        if (!activeTeamId || !canRemoveActiveMembers) return;
 
         if (!confirm(`Remove ${memberName} from the team?`)) return;
 
         try {
-            await removeMember(team.id, memberId);
-            await loadTeamDetails();
+            await removeMember(activeTeamId, memberId);
+            await reloadActiveTeamDetails();
             toast?.success(`${memberName} removed from team`);
         } catch (error) {
             toast?.error('Failed to remove member');
@@ -193,29 +253,22 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
     };
 
     const handleChangeAccessLevel = async (member: TeamMember, accessLevel: WorkspaceAccessLevel) => {
-        if (!team) return;
+        if (!activeTeamId || !canManageActiveAccess) return;
 
         if (member.userId === user?.uid && !confirm('Change your own workspace access level?')) {
             return;
         }
 
         try {
-            await updateMemberAccessLevel(team.id, member.id, accessLevel);
-            await loadTeamDetails();
-            await refreshTeam();
+            await updateMemberAccessLevel(activeTeamId, member.id, accessLevel);
+            await reloadActiveTeamDetails();
+            if (isViewingCurrentTeam) {
+                await refreshTeam();
+            }
             toast?.success('Workspace access updated');
         } catch (error) {
             toast?.error('Failed to update workspace access');
         }
-    };
-
-    const getCurrentUserMember = (): TeamMember | undefined => {
-        return teamDetails?.members.find(m => m.userId === user?.uid);
-    };
-
-    const isOwnerOrAdmin = (): boolean => {
-        const currentMember = getCurrentUserMember();
-        return currentMember?.role === 'owner' || currentMember?.role === 'admin';
     };
 
     // No Team State - Create or Join
@@ -351,11 +404,50 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                         <Users className="text-brand-green" size={24} />
                     </div>
                     <div>
-                        <h2 className="text-2xl font-bold text-gray-900">{team.name}</h2>
-                        <p className="text-sm text-gray-500">{teamDetails?.memberCount || 0} members</p>
+                        <h2 className="text-2xl font-bold text-gray-900">{activeTeamDetails?.name ?? team.name}</h2>
+                        <p className="text-sm text-gray-500">
+                            {activeTeamDetails?.memberCount || 0} members
+                            {!isViewingCurrentTeam && <span className="ml-2 text-blue-600">Viewing by team code</span>}
+                        </p>
                     </div>
                 </div>
             </div>
+
+            {canLookupTeams && (
+                <div className="bg-blue-50 border border-blue-100 rounded-lg p-4 mb-6">
+                    <p className="text-sm font-semibold text-blue-900 mb-2">Admin team lookup</p>
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                        <input
+                            type="text"
+                            value={teamLookupCode}
+                            onChange={(e) => setTeamLookupCode(
+                                e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6)
+                            )}
+                            maxLength={6}
+                            placeholder="Team code"
+                            className="flex-1 px-3 py-2 border border-blue-200 rounded-lg focus:ring-2 focus:ring-brand-green focus:border-brand-green uppercase text-center tracking-wider font-mono"
+                        />
+                        <button
+                            onClick={handleLookupTeam}
+                            disabled={teamLookupLoading || teamLookupCode.trim().length !== 6}
+                            className="px-4 py-2 bg-brand-green text-white font-bold rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {teamLookupLoading ? 'Loading...' : 'Load Team'}
+                        </button>
+                        {!isViewingCurrentTeam && (
+                            <button
+                                onClick={handleResetTeamLookup}
+                                className="px-4 py-2 border border-blue-200 text-blue-700 rounded-lg hover:bg-blue-100"
+                            >
+                                My Team
+                            </button>
+                        )}
+                    </div>
+                    <p className="mt-2 text-xs text-blue-700">
+                        Use a team code to view members and update workspace permissions.
+                    </p>
+                </div>
+            )}
 
             {/* Invite Code */}
             <div className="bg-gray-50 rounded-lg p-4 mb-6">
@@ -363,7 +455,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                     <div>
                         <p className="text-sm text-gray-600 mb-1">Invite Code</p>
                         <p className="text-2xl font-mono font-bold text-gray-900 tracking-wider">
-                            {team.inviteCode}
+                            {activeTeamDetails?.inviteCode ?? team.inviteCode}
                         </p>
                     </div>
                     <div className="flex gap-2">
@@ -374,7 +466,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                         >
                             {copiedCode ? <Check size={20} /> : <Copy size={20} />}
                         </button>
-                        {isOwnerOrAdmin() && (
+                        {canManageInviteCode && (
                             <>
                                 <button
                                     onClick={() => {
@@ -395,7 +487,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                         )}
                     </div>
                 </div>
-                {isOwnerOrAdmin() && isEditingInviteCode && (
+                {canManageInviteCode && isEditingInviteCode && (
                     <div className="mt-3">
                         <div className="flex gap-2">
                             <input
@@ -424,13 +516,13 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
             {/* Members List */}
             <div className="mb-6">
                 <h3 className="font-semibold text-gray-900 mb-3">Members</h3>
-                {isOwnerOrAdmin() && (
+                {canManageActiveAccess && (
                     <p className="mb-3 text-xs text-gray-500">
-                        Role controls permissions. Access level controls which workspaces are visible.
+                        Access level controls which workspaces are visible.
                     </p>
                 )}
                 <div className="space-y-2">
-                    {teamDetails?.members.map(member => {
+                    {activeTeamDetails?.members.map(member => {
                         const accessLevel = resolveWorkspaceAccessLevel(member);
                         return (
                             <div
@@ -465,7 +557,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                                         {member.role}
                                     </span>
 
-                                    {isOwnerOrAdmin() ? (
+                                    {canManageActiveAccess ? (
                                         <select
                                             value={accessLevel}
                                             onChange={(event) => handleChangeAccessLevel(member, event.target.value as WorkspaceAccessLevel)}
@@ -487,7 +579,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                                         </span>
                                     )}
 
-                                    {isOwnerOrAdmin() && member.userId !== user?.uid && member.role !== 'owner' && (
+                                    {canRemoveActiveMembers && member.userId !== user?.uid && member.role !== 'owner' && (
                                         <button
                                             onClick={() => handleRemoveMember(member.id, member.displayName)}
                                             className="p-1 text-gray-400 hover:text-red-600"
@@ -504,16 +596,18 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
             </div>
 
             {/* Leave Team Button */}
-            <div className="pt-4 border-t border-gray-200">
-                <button
-                    onClick={handleLeaveTeam}
-                    disabled={loading}
-                    className="flex items-center gap-2 px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg font-medium"
-                >
-                    <LogOut size={16} />
-                    Leave Team
-                </button>
-            </div>
+            {isViewingCurrentTeam && (
+                <div className="pt-4 border-t border-gray-200">
+                    <button
+                        onClick={handleLeaveTeam}
+                        disabled={loading}
+                        className="flex items-center gap-2 px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg font-medium"
+                    >
+                        <LogOut size={16} />
+                        Leave Team
+                    </button>
+                </div>
+            )}
         </div>
     );
 };

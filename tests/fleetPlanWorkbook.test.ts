@@ -329,6 +329,28 @@ describe('fleetPlan parser and exporter', () => {
         expect(sheet?.getCell('A7').value).toBe('12m Electric');
     });
 
+    it('imports the combined Fleet Plan workbook that the app exports', async () => {
+        const buffer = await buildFleetPlanWorkbookBuffer(buildTestFleetPlanWorkbook());
+        const { workbook } = parseFleetPlanWorkbook(buffer, {
+            fileName: 'Fleet_Plan_export.xlsx',
+            userId: 'user-1',
+            now: new Date('2026-04-29T10:00:00.000Z'),
+        });
+
+        expect(workbook.sheets).toHaveLength(3);
+        expect(workbook.sheets[0]?.rows).toHaveLength(2);
+        expect(workbook.sheets[1]?.rows).toHaveLength(1);
+        expect(workbook.sheets[2]?.rows).toHaveLength(1);
+        expect(workbook.sheets[0]?.rows[0]?.unitNumber).toBe('1101');
+        expect(workbook.sheets[0]?.rows[0]?.year).toBe('2012');
+        expect(workbook.sheets[0]?.rows[0]?.timeline['2027']).toBe('RETIRE');
+        expect(workbook.sheets[1]?.rows[0]?.busSize).toBe('8m');
+        expect(workbook.sheets[1]?.rows[0]?.onOrder).toBe('2 units');
+        expect(workbook.sheets[1]?.rows[0]?.timeline['2026']).toBe('PURCHASE');
+        expect(workbook.sheets[2]?.rows[0]?.electricFlag).toBe('E');
+        expect(workbook.sheets[2]?.rows[0]?.timeline['2035']).toBe('RETIRE');
+    });
+
     it('exports a planner-friendly combined workbook with filters, frozen headers, and status styling', async () => {
         const buffer = await buildFleetPlanWorkbookBuffer(buildTestFleetPlanWorkbook());
         const workbook = new ExcelJS.Workbook();

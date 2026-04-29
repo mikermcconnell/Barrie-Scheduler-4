@@ -293,6 +293,18 @@ export async function findTeamByInviteCode(code: string): Promise<TeamInviteLook
 }
 
 /**
+ * Get a team and its members by invite code.
+ */
+export async function getTeamWithMembersByInviteCode(code: string): Promise<TeamWithMembers | null> {
+    const team = await findTeamByInviteCode(code);
+    if (!team) {
+        return null;
+    }
+
+    return getTeamWithMembers(team.id);
+}
+
+/**
  * Join team using invite code
  */
 export async function joinTeamByInviteCode(
@@ -325,7 +337,7 @@ export async function joinTeamByInviteCode(
     await setDoc(memberRef, {
         userId,
         role: 'member' as TeamRole,
-        accessLevel: 'production' as WorkspaceAccessLevel,
+        accessLevel: getDefaultWorkspaceAccessLevelForRole('member'),
         joinedAt: serverTimestamp(),
         displayName,
         email,

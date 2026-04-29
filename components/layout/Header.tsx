@@ -11,6 +11,8 @@ import {
     ChevronDown,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { useTeam } from '../contexts/TeamContext';
+import { WORKSPACE_ACCESS_LEVEL_LABELS } from '../../utils/workspaceAccess';
 
 export type View = 'home' | 'ondemand' | 'fixed' | 'operations';
 
@@ -30,7 +32,10 @@ export const Header: React.FC<HeaderProps> = ({
     onShowAuthModal,
 }) => {
     const { user, signOut } = useAuth();
+    const { accessLevel } = useTeam();
     const [showUserMenu, setShowUserMenu] = useState(false);
+    const username = user?.displayName || user?.email?.split('@')[0] || 'Signed in';
+    const accessLabel = WORKSPACE_ACCESS_LEVEL_LABELS[accessLevel];
 
     const handleSignOut = async () => {
         await signOut();
@@ -91,8 +96,8 @@ export const Header: React.FC<HeaderProps> = ({
                                     className="flex items-center gap-3 hover:bg-gray-50 rounded-full p-1 pl-2 pr-3 transition-colors border border-transparent hover:border-gray-100 active:bg-gray-100"
                                 >
                                     <div className="text-right hidden md:block">
-                                        <p className="text-sm font-bold text-gray-800 leading-tight">{user.displayName || 'User'}</p>
-                                        <p className="text-[10px] text-gray-500 font-medium">Administrator</p>
+                                        <p className="text-sm font-bold text-gray-800 leading-tight">{username}</p>
+                                        <p className="text-[10px] text-gray-500 font-medium">{accessLabel}</p>
                                     </div>
                                     <div className="w-9 h-9 rounded-full bg-gradient-to-br from-brand-green to-emerald-500 p-[2px] shadow-sm">
                                         <div className="w-full h-full rounded-full bg-white flex items-center justify-center overflow-hidden">
@@ -112,8 +117,9 @@ export const Header: React.FC<HeaderProps> = ({
                                         <div className="fixed inset-0 z-40" onClick={() => setShowUserMenu(false)} />
                                         <div className="absolute right-0 top-full mt-2 w-64 bg-white border border-gray-100 rounded-xl shadow-xl py-2 z-50 transform origin-top-right animate-in fade-in zoom-in-95 duration-200">
                                             <div className="px-5 py-4 border-b border-gray-50 bg-gray-50/50">
-                                                <p className="font-bold text-gray-900 truncate">{user.displayName || 'User'}</p>
+                                                <p className="font-bold text-gray-900 truncate">{username}</p>
                                                 <p className="text-xs text-gray-500 truncate mt-0.5">{user.email}</p>
+                                                <p className="text-xs text-gray-500 truncate mt-0.5">{accessLabel}</p>
                                             </div>
 
                                             <div className="p-2">

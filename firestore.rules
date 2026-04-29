@@ -17,10 +17,12 @@ service cloud.firestore {
 
     // ========== TEAMS ==========
 
-    // Team documents are only readable by team members.
+    // Team documents are readable by team members.
+    // Internal/developer and admin workspace users can also look up teams
+    // by code for user permission management.
     // Team creation remains authenticated; updates/deletes stay owner-only.
     match /teams/{teamId} {
-      allow read: if isTeamMember(teamId);
+      allow read: if isTeamMember(teamId) || isWorkspacePermissionManager();
       allow create: if request.auth != null;
       allow update, delete: if request.auth != null && isTeamOwner(teamId);
 
@@ -29,12 +31,15 @@ service cloud.firestore {
         // Allow users to read their own membership doc (needed for invite join flow)
         // and full member list only when already in the team.
         allow read: if request.auth != null &&
-                       (request.auth.uid == memberId || isTeamMember(teamId));
+                       (request.auth.uid == memberId || isTeamMember(teamId) || isWorkspacePermissionManager());
         // Allow creating your own member document when joining/creating team
         // OR being an owner/admin to manage others
         allow create: if request.auth != null &&
                          (request.auth.uid == memberId || isTeamOwnerOrAdmin(teamId));
-        allow update, delete: if isTeamOwnerOrAdmin(teamId);
+        allow update: if isTeamOwnerOrAdmin(teamId) ||
+                         (isWorkspacePermissionManager() &&
+                          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['accessLevel']));
+        allow delete: if isTeamOwnerOrAdmin(teamId);
       }
 
       // Master Schedules
@@ -136,6 +141,28 @@ service cloud.firestore {
       let member = get(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid));
       return request.auth != null &&
              (member.data.role == 'owner' || member.data.role == 'admin');
+    }
+
+    function currentUserTeamId() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.teamId;
+    }
+
+    function currentUserAccessLevel() {
+      let teamId = currentUserTeamId();
+      return get(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid)).data.accessLevel;
+    }
+
+    function currentUserHasMemberDoc() {
+      let teamId = currentUserTeamId();
+      return exists(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid));
+    }
+
+    function isWorkspacePermissionManager() {
+      return request.auth != null &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             currentUserTeamId() is string &&
+             currentUserHasMemberDoc() &&
+             (currentUserAccessLevel() == 'admin' || currentUserAccessLevel() == 'internal');
     }
   }
 }

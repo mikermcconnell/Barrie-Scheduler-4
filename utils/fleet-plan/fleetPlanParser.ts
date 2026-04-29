@@ -2,6 +2,7 @@ import * as XLSX from 'xlsx';
 import {
     FLEET_PLAN_REQUIRED_SHEETS,
     FLEET_PLAN_SHEET_CONFIGS,
+    FLEET_PLAN_SHEET_CONFIG_BY_KEY,
     FLEET_PLAN_SUPPORTED_HEADERS,
     FLEET_PLAN_TEMPLATE_VERSION,
 } from './fleetPlanConfig';
@@ -102,6 +103,104 @@ function parseSheet(sheet: XLSX.WorkSheet, config: FleetPlanSheetConfig): FleetP
     };
 }
 
+const COMBINED_SHEET_NAME = 'Fleet Plan';
+const COMBINED_HEADER_ROW = 3;
+const COMBINED_DATA_START_ROW = 4;
+const COMBINED_BUS_TYPE_LABELS: Record<string, FleetPlanSheetKey> = {
+    '12m diesel': 'diesel-12m',
+    'diesel 12m': 'diesel-12m',
+    '12m buses': 'diesel-12m',
+    '8m & 6m': 'small-buses',
+    '8m and 6m': 'small-buses',
+    'small buses': 'small-buses',
+    '12m electric': 'electric-12m',
+    'electric 12m': 'electric-12m',
+    '12m electric buses': 'electric-12m',
+};
+
+function normalizeCombinedHeader(value: unknown): string {
+    return normalizeFleetPlanCellValue(value).toLowerCase().replace(/\s+/g, ' ');
+}
+
+function resolveCombinedSheetKey(value: unknown): FleetPlanSheetKey | null {
+    return COMBINED_BUS_TYPE_LABELS[normalizeCombinedHeader(value)] ?? null;
+}
+
+function validateCombinedSheetHeader(sheet: XLSX.WorkSheet): void {
+    const expectedHeaders = ['Bus Type', 'Unit Number', 'Size', 'Make/Model', 'Year', 'Comment', 'Electric', 'On Order'];
+
+    expectedHeaders.forEach((expectedHeader, index) => {
+        const actualHeader = normalizeFleetPlanCellValue(readCell(sheet, COMBINED_HEADER_ROW, XLSX.utils.encode_col(index)));
+        if (actualHeader !== expectedHeader) {
+            throw new Error(`Unsupported combined Fleet Plan export: expected header "${expectedHeader}" but found "${actualHeader || 'blank'}".`);
+        }
+    });
+
+    const yearHeaders = FLEET_PLAN_SHEET_CONFIGS
+        .flatMap((config) => config.timelineColumns)
+        .map((column) => column.label)
+        .filter((year, index, years) => years.indexOf(year) === index)
+        .sort((left, right) => Number(left) - Number(right));
+
+    yearHeaders.forEach((year, index) => {
+        const actualHeader = normalizeFleetPlanCellValue(readCell(sheet, COMBINED_HEADER_ROW, XLSX.utils.encode_col(expectedHeaders.length + index)));
+        if (actualHeader !== year) {
+            throw new Error(`Unsupported combined Fleet Plan export: expected timeline header "${year}" but found "${actualHeader || 'blank'}".`);
+        }
+    });
+}
+
+function parseCombinedRow(sheet: XLSX.WorkSheet, rowNumber: number, sheetKey: FleetPlanSheetKey): FleetPlanRow {
+    const config = FLEET_PLAN_SHEET_CONFIG_BY_KEY[sheetKey];
+    const timeline = Object.fromEntries(config.timelineColumns.map((column) => {
+        const yearIndex = COMBINED_BASE_COLUMN_COUNT + COMBINED_EXPORT_YEARS.indexOf(column.key);
+        const columnLetter = XLSX.utils.encode_col(yearIndex);
+        return [column.key, normalizeFleetPlanCellValue(readCell(sheet, rowNumber, columnLetter))];
+    }));
+
+    return {
+        id: createFleetPlanRowId(),
+        unitNumber: normalizeFleetPlanCellValue(readCell(sheet, rowNumber, 'B')),
+        busSize: normalizeFleetPlanCellValue(readCell(sheet, rowNumber, 'C')),
+        makeModel: normalizeFleetPlanCellValue(readCell(sheet, rowNumber, 'D')),
+        year: normalizeFleetPlanCellValue(readCell(sheet, rowNumber, 'E')),
+        comment: normalizeFleetPlanCellValue(readCell(sheet, rowNumber, 'F')),
+        electricFlag: normalizeFleetPlanCellValue(readCell(sheet, rowNumber, 'G')),
+        onOrder: normalizeFleetPlanCellValue(readCell(sheet, rowNumber, 'H')),
+        timeline,
+    };
+}
+
+const COMBINED_BASE_COLUMN_COUNT = 8;
+const COMBINED_EXPORT_YEARS = FLEET_PLAN_SHEET_CONFIGS
+    .flatMap((config) => config.timelineColumns.map((column) => column.key))
+    .filter((year, index, years) => years.indexOf(year) === index)
+    .sort((left, right) => Number(left) - Number(right));
+
+function parseCombinedFleetPlanSheet(sheet: XLSX.WorkSheet): FleetPlanSheet[] {
+    validateCombinedSheetHeader(sheet);
+    const range = XLSX.utils.decode_range(sheet['!ref'] || 'A1:A1');
+    const rowsBySheet = new Map<FleetPlanSheetKey, FleetPlanRow[]>(
+        FLEET_PLAN_SHEET_CONFIGS.map((config): [FleetPlanSheetKey, FleetPlanRow[]] => [config.key, []]),
+    );
+
+    for (let rowNumber = COMBINED_DATA_START_ROW; rowNumber <= range.e.r + 1; rowNumber += 1) {
+        const sheetKey = resolveCombinedSheetKey(readCell(sheet, rowNumber, 'A'));
+        if (!sheetKey) continue;
+
+        const row = parseCombinedRow(sheet, rowNumber, sheetKey);
+        if (!fleetRowHasContent(row)) continue;
+        rowsBySheet.get(sheetKey)?.push(row);
+    }
+
+    return FLEET_PLAN_SHEET_CONFIGS.map((config) => ({
+        key: config.key,
+        name: config.name,
+        title: config.title,
+        rows: rowsBySheet.get(config.key) ?? [],
+    }));
+}
+
 export function parseFleetPlanWorkbook(
     buffer: ArrayBuffer,
     options: {
@@ -116,20 +215,25 @@ export function parseFleetPlanWorkbook(
         cellStyles: false,
     });
 
-    const missingSheets = FLEET_PLAN_REQUIRED_SHEETS.filter((sheetName) => !workbook.SheetNames.includes(sheetName));
-    if (missingSheets.length > 0) {
-        throw new Error(`Unsupported fleet plan template. Missing required sheet(s): ${missingSheets.join(', ')}.`);
-    }
-
     const warnings: string[] = [];
     const nowIso = (options.now ?? new Date()).toISOString();
-    const parsedSheets = FLEET_PLAN_SHEET_CONFIGS.map((config) => {
-        const sheet = workbook.Sheets[config.name];
-        if (!sheet) {
-            throw new Error(`Unsupported fleet plan template. Missing sheet "${config.name}".`);
-        }
-        return parseSheet(sheet, config);
-    });
+    const combinedSheet = workbook.Sheets[COMBINED_SHEET_NAME];
+    const parsedSheets = combinedSheet
+        ? parseCombinedFleetPlanSheet(combinedSheet)
+        : (() => {
+            const missingSheets = FLEET_PLAN_REQUIRED_SHEETS.filter((sheetName) => !workbook.SheetNames.includes(sheetName));
+            if (missingSheets.length > 0) {
+                throw new Error(`Unsupported fleet plan template. Missing required sheet(s): ${missingSheets.join(', ')}.`);
+            }
+
+            return FLEET_PLAN_SHEET_CONFIGS.map((config) => {
+                const sheet = workbook.Sheets[config.name];
+                if (!sheet) {
+                    throw new Error(`Unsupported fleet plan template. Missing sheet "${config.name}".`);
+                }
+                return parseSheet(sheet, config);
+            });
+        })();
 
     const parsedWorkbook: FleetPlanWorkbook = {
         schemaVersion: 1,

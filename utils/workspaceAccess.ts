@@ -120,11 +120,11 @@ export function resolveWorkspaceAccessLevel(subject: WorkspaceAccessSubject): Wo
         return 'internal';
     }
 
-    return 'production';
+    return 'planner';
 }
 
 export function getDefaultWorkspaceAccessLevelForRole(role: TeamRole): WorkspaceAccessLevel {
-    return role === 'owner' || role === 'admin' ? 'internal' : 'production';
+    return role === 'owner' || role === 'admin' ? 'internal' : 'planner';
 }
 
 export function getAllowedWorkspaceFeatures(

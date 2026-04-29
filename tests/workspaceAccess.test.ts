@@ -28,8 +28,8 @@ describe('workspace access', () => {
         expect(resolveWorkspaceAccessLevel(member({ role: 'admin', accessLevel: undefined }))).toBe('internal');
     });
 
-    it('defaults existing regular members to production access', () => {
-        expect(resolveWorkspaceAccessLevel(member({ accessLevel: undefined }))).toBe('production');
+    it('defaults existing regular members to planner access', () => {
+        expect(resolveWorkspaceAccessLevel(member({ accessLevel: undefined }))).toBe('planner');
     });
 
     it('limits production users to production workspaces', () => {
