@@ -35,8 +35,10 @@ function updateScenario(
     let changed = false;
     const scenarios = project.scenarios.map((scenario) => {
         if (scenario.id !== scenarioId) return scenario;
+        const updated = updater(scenario);
+        if (updated === scenario) return scenario;
         changed = true;
-        return { ...updater(scenario), updatedAt: now };
+        return { ...updated, updatedAt: now };
     });
 
     return changed ? markChanged({ ...project, scenarios }, now) : project;
