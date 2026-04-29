@@ -351,6 +351,22 @@ describe('fleetPlan parser and exporter', () => {
         expect(workbook.sheets[2]?.rows[0]?.timeline['2035']).toBe('RETIRE');
     });
 
+    it('warns when a combined Fleet Plan export has an unrecognized bus type row', async () => {
+        const buffer = await buildFleetPlanWorkbookBuffer(buildTestFleetPlanWorkbook());
+        const excelWorkbook = new ExcelJS.Workbook();
+        await excelWorkbook.xlsx.load(buffer);
+        excelWorkbook.getWorksheet('Fleet Plan')!.getCell('A4').value = 'Mystery Bus';
+        const modifiedBuffer = await excelWorkbook.xlsx.writeBuffer();
+
+        const { workbook, warnings } = parseFleetPlanWorkbook(modifiedBuffer, {
+            fileName: 'Fleet_Plan_export.xlsx',
+            userId: 'user-1',
+        });
+
+        expect(warnings.join(' ')).toContain('Bus Type "Mystery Bus" is not recognized');
+        expect(workbook.sheets[0]?.rows).toHaveLength(1);
+    });
+
     it('exports a planner-friendly combined workbook with filters, frozen headers, and status styling', async () => {
         const buffer = await buildFleetPlanWorkbookBuffer(buildTestFleetPlanWorkbook());
         const workbook = new ExcelJS.Workbook();

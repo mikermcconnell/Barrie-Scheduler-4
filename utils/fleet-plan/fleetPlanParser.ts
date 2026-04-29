@@ -177,28 +177,48 @@ const COMBINED_EXPORT_YEARS = FLEET_PLAN_SHEET_CONFIGS
     .filter((year, index, years) => years.indexOf(year) === index)
     .sort((left, right) => Number(left) - Number(right));
 
-function parseCombinedFleetPlanSheet(sheet: XLSX.WorkSheet): FleetPlanSheet[] {
+function combinedRowHasAnyContent(sheet: XLSX.WorkSheet, rowNumber: number): boolean {
+    const lastColumnIndex = COMBINED_BASE_COLUMN_COUNT + COMBINED_EXPORT_YEARS.length - 1;
+    for (let columnIndex = 0; columnIndex <= lastColumnIndex; columnIndex += 1) {
+        if (normalizeFleetPlanCellValue(readCell(sheet, rowNumber, XLSX.utils.encode_col(columnIndex)))) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function parseCombinedFleetPlanSheet(sheet: XLSX.WorkSheet): { sheets: FleetPlanSheet[]; warnings: string[] } {
     validateCombinedSheetHeader(sheet);
     const range = XLSX.utils.decode_range(sheet['!ref'] || 'A1:A1');
     const rowsBySheet = new Map<FleetPlanSheetKey, FleetPlanRow[]>(
         FLEET_PLAN_SHEET_CONFIGS.map((config): [FleetPlanSheetKey, FleetPlanRow[]] => [config.key, []]),
     );
+    const warnings: string[] = [];
 
     for (let rowNumber = COMBINED_DATA_START_ROW; rowNumber <= range.e.r + 1; rowNumber += 1) {
-        const sheetKey = resolveCombinedSheetKey(readCell(sheet, rowNumber, 'A'));
-        if (!sheetKey) continue;
+        const busTypeValue = normalizeFleetPlanCellValue(readCell(sheet, rowNumber, 'A'));
+        const sheetKey = resolveCombinedSheetKey(busTypeValue);
+        if (!sheetKey) {
+            if (combinedRowHasAnyContent(sheet, rowNumber)) {
+                warnings.push(`Skipped row ${rowNumber} because Bus Type "${busTypeValue || 'blank'}" is not recognized.`);
+            }
+            continue;
+        }
 
         const row = parseCombinedRow(sheet, rowNumber, sheetKey);
         if (!fleetRowHasContent(row)) continue;
         rowsBySheet.get(sheetKey)?.push(row);
     }
 
-    return FLEET_PLAN_SHEET_CONFIGS.map((config) => ({
-        key: config.key,
-        name: config.name,
-        title: config.title,
-        rows: rowsBySheet.get(config.key) ?? [],
-    }));
+    return {
+        sheets: FLEET_PLAN_SHEET_CONFIGS.map((config) => ({
+            key: config.key,
+            name: config.name,
+            title: config.title,
+            rows: rowsBySheet.get(config.key) ?? [],
+        })),
+        warnings,
+    };
 }
 
 export function parseFleetPlanWorkbook(
@@ -219,7 +239,11 @@ export function parseFleetPlanWorkbook(
     const nowIso = (options.now ?? new Date()).toISOString();
     const combinedSheet = workbook.Sheets[COMBINED_SHEET_NAME];
     const parsedSheets = combinedSheet
-        ? parseCombinedFleetPlanSheet(combinedSheet)
+        ? (() => {
+            const combinedResult = parseCombinedFleetPlanSheet(combinedSheet);
+            warnings.push(...combinedResult.warnings);
+            return combinedResult.sheets;
+        })()
         : (() => {
             const missingSheets = FLEET_PLAN_REQUIRED_SHEETS.filter((sheetName) => !workbook.SheetNames.includes(sheetName));
             if (missingSheets.length > 0) {

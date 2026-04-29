@@ -105,7 +105,7 @@ export const FleetPlanImport: React.FC<FleetPlanImportProps> = ({
             <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
                 <h2 className="text-2xl font-bold text-gray-900 tracking-tight mb-2">Fleet Plan Import</h2>
                 <p className="text-sm text-gray-500 mb-6">
-                    Upload the supported Fleet Plan workbook to create the shared team dataset. The app will digitize all 3 sheets and preserve the workbook format on export.
+                    Upload a legacy 3-sheet Fleet Plan workbook or a combined Fleet Plan export from this app. The app will digitize the workbook and create the shared team dataset.
                 </p>
 
                 <div
@@ -125,7 +125,7 @@ export const FleetPlanImport: React.FC<FleetPlanImportProps> = ({
                             {isDragActive ? 'Drop the workbook here' : 'Upload Fleet Plan workbook'}
                         </div>
                         <div className="text-sm text-gray-500">
-                            Supports the current Fleet Plan Excel template (.xlsx / .xls)
+                            Supports legacy Fleet Plan templates and app exports (.xlsx / .xls)
                         </div>
                     </div>
                 </div>
