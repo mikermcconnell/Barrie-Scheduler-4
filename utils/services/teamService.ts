@@ -80,6 +80,16 @@ function readMemberData(docId: string, data: Record<string, any>): TeamMember {
     };
 }
 
+function readTeamData(docId: string, data: Record<string, any>): Team {
+    return {
+        id: docId,
+        name: data.name,
+        createdAt: data.createdAt ? timestampToDate(data.createdAt) : new Date(0),
+        createdBy: data.createdBy,
+        inviteCode: data.inviteCode
+    };
+}
+
 // ============ TEAM CRUD ============
 
 /**
@@ -142,14 +152,7 @@ export async function getTeamWithMembers(teamId: string): Promise<TeamWithMember
         return null;
     }
 
-    const teamData = teamSnap.data();
-    const team: Team = {
-        id: teamSnap.id,
-        name: teamData.name,
-        createdAt: timestampToDate(teamData.createdAt),
-        createdBy: teamData.createdBy,
-        inviteCode: teamData.inviteCode
-    };
+    const team = readTeamData(teamSnap.id, teamSnap.data());
 
     // Get all members
     const membersRef = collection(db, 'teams', teamId, 'members');
@@ -162,6 +165,19 @@ export async function getTeamWithMembers(teamId: string): Promise<TeamWithMember
         members,
         memberCount: members.length
     };
+}
+
+/**
+ * Get all teams for internal/admin permission management.
+ * Security rules restrict this to workspace permission managers.
+ */
+export async function getTeamsForPermissionManagement(): Promise<Team[]> {
+    const teamsRef = collection(db, 'teams');
+    const teamsSnap = await getDocs(teamsRef);
+
+    return teamsSnap.docs
+        .map(teamDoc => readTeamData(teamDoc.id, teamDoc.data()))
+        .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /**
@@ -192,14 +208,7 @@ export async function getUserTeam(userId: string): Promise<Team | null> {
         return null;
     }
 
-    const teamData = teamSnap.data();
-    return {
-        id: teamSnap.id,
-        name: teamData.name,
-        createdAt: timestampToDate(teamData.createdAt),
-        createdBy: teamData.createdBy,
-        inviteCode: teamData.inviteCode
-    };
+    return readTeamData(teamSnap.id, teamSnap.data());
 }
 
 /**

@@ -17,7 +17,7 @@ Primary app shells today:
 - **Transit On-Demand** - demand-responsive planning and shift optimization
 - **Dashboard & Reporting** - STREETS-backed performance dashboards and operational reporting
 
-Adjacent planning-data workspaces include Route Planner, Shuttle Planner, Network Connections, Transit App analytics, OD analysis, Route 8 sandbox, student-pass planning, and related exploratory tools.
+Adjacent planning-data workspaces include Route Planner 2, legacy Route Planner, Shuttle Planner, Network Connections, Transit App analytics, OD analysis, Route 8 sandbox, student-pass planning, and related exploratory tools.
 
 Use this document for the overall product frame and the fixed-route core workflow. Use feature-specific product briefs and UI specs for narrower planning-data modules when those tasks are directly relevant.
 
@@ -35,9 +35,8 @@ The fixed-route workflow replaces manual Excel-based scheduling with a structure
 
 Load these only when the task is directly related:
 
-- `docs/ROUTE_PLANNER_PRODUCT_BRIEF.md`
-- `docs/ROUTE_PLANNER_UI_SPEC.md`
-- `docs/ROUTE_PLANNER_PRD.md`
+- `docs/route-planner-2/README.md` and numbered docs for current Route Planner 2 work
+- `docs/route-planner-legacy/README.md` only for historical old Route Planner background
 - `docs/SHUTTLE_PLANNER_PRD.md`
 - `docs/SHUTTLE_PLANNER_UI_SPEC.md`
 - `docs/NETWORK_CONNECTIONS_PRODUCT_BRIEF.md`

@@ -83,7 +83,8 @@ Notable areas:
 - Transit App analytics → `components/Analytics/TransitApp*`, `utils/transit-app/`
 - OD analysis → `components/Analytics/OD*`, `utils/od-matrix/`
 - Fleet Plan → `components/Analytics/FleetPlan*.tsx`, `utils/fleet-plan/`; imports the legacy three-tab Excel template, but the app/editor and export present one combined Fleet Plan sheet with a Bus Type column. The active plan is team-shared, versioned under `fleetPlan/default/versions`, and writable only by team owners/admins.
-- Route Planner → `components/Analytics/RoutePlannerWorkspace.tsx`, `utils/route-planner/`
+- Legacy Route Planner → `components/Analytics/RoutePlannerWorkspace.tsx`, `utils/route-planner/`; docs live in `docs/route-planner-legacy/` and are background only
+- Route Planner 2 → `components/Analytics/RoutePlanner2Workspace.tsx`; fresh restart shell intentionally isolated from old Route Planner controllers/utilities; current docs live in `docs/route-planner-2/`
 - Shuttle Planner → `components/Analytics/ShuttlePlannerWorkspace.tsx`, `utils/shuttle/`
 - Network Connections → `components/Analytics/NetworkConnectionsWorkspace.tsx`, `utils/network-connections/`
 - Route 8 sandbox → `components/Analytics/Route8SandboxWorkspace.tsx`, `utils/route8-sandbox/`

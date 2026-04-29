@@ -1,0 +1,87 @@
+export type RoutePlanner2ProjectStatus = 'local-draft' | 'local-saved' | 'archived';
+export type RoutePlanner2ScenarioStatus = 'draft' | 'review';
+export type RoutePlanner2StopRole = 'regular' | 'timed' | 'start-terminal' | 'end-terminal';
+export type RoutePlanner2RuntimeSource = 'observed-proxy' | 'manual' | 'fallback' | 'missing';
+export type RoutePlanner2Confidence = 'high' | 'medium' | 'low' | 'not-ready';
+export type RoutePlanner2SegmentConfidence = 'high' | 'medium' | 'low' | 'missing';
+export type RoutePlanner2WarningSeverity = 'info' | 'warning' | 'blocking';
+
+export interface RoutePlanner2Project {
+    id: string;
+    name: string;
+    status: RoutePlanner2ProjectStatus;
+    selectedScenarioId: string;
+    preferredScenarioId?: string;
+    scenarios: RoutePlanner2Scenario[];
+    createdAt: string;
+    updatedAt: string;
+}
+
+export interface RoutePlanner2Scenario {
+    id: string;
+    name: string;
+    status: RoutePlanner2ScenarioStatus;
+    alignment: RoutePlanner2RoutePoint[];
+    stops: RoutePlanner2Stop[];
+    service: RoutePlanner2ServiceAssumptions;
+    notes: string;
+    feasibility?: RoutePlanner2FeasibilitySummary;
+    createdAt: string;
+    updatedAt: string;
+}
+
+export interface RoutePlanner2RoutePoint {
+    id: string;
+    lat: number;
+    lng: number;
+    sequence: number;
+}
+
+export interface RoutePlanner2Stop {
+    id: string;
+    name: string;
+    lat: number;
+    lng: number;
+    sequence: number;
+    role: RoutePlanner2StopRole;
+    source: 'custom' | 'barrie-stop';
+    stopCode?: string;
+    notes?: string;
+}
+
+export interface RoutePlanner2ServiceAssumptions {
+    firstTripTime: string;
+    lastTripTime: string;
+    frequencyMinutes: number;
+    startTerminalLayoverMinutes: number;
+    endTerminalLayoverMinutes: number;
+    dayType?: 'weekday' | 'saturday' | 'sunday';
+    planningPeriod?: 'all-day' | 'am-peak' | 'midday' | 'pm-peak' | 'evening';
+}
+
+export interface RoutePlanner2FeasibilitySummary {
+    oneWayRuntimeMinutes: number | null;
+    cycleTimeMinutes: number | null;
+    busesRequired: number | null;
+    confidence: RoutePlanner2Confidence;
+    segmentSummaries: RoutePlanner2SegmentRuntime[];
+    warnings: RoutePlanner2Warning[];
+}
+
+export interface RoutePlanner2SegmentRuntime {
+    id: string;
+    fromStopId: string;
+    toStopId: string;
+    runtimeMinutes: number | null;
+    source: RoutePlanner2RuntimeSource;
+    sampleSize?: number;
+    confidence: RoutePlanner2SegmentConfidence;
+    fallbackReason?: string;
+}
+
+export interface RoutePlanner2Warning {
+    id: string;
+    severity: RoutePlanner2WarningSeverity;
+    message: string;
+    action?: string;
+}

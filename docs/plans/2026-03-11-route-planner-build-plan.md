@@ -289,7 +289,7 @@ After that, the next architecture step should be:
 
 These planning docs should be updated alongside implementation work.
 
-- Update `docs/ROUTE_PLANNER_PRD.md` when scope, success criteria, or feature boundaries change.
-- Update `docs/ROUTE_PLANNER_UI_SPEC.md` when layout, modules, or interaction patterns change.
+- Update `docs/route-planner-legacy/ROUTE_PLANNER_PRD.md` when scope, success criteria, or feature boundaries change.
+- Update `docs/route-planner-legacy/ROUTE_PLANNER_UI_SPEC.md` when layout, modules, or interaction patterns change.
 - Update this build plan when implementation order, architecture, or file strategy changes.
 - Update `docs/plans/2026-03-11-shuttle-planner-status.md` when the current-state summary no longer matches the code.

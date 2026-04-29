@@ -39,6 +39,7 @@ describe('workspace access', () => {
         expect(allowed).toContain('workspaceOperations');
         expect(allowed).not.toContain('workspaceOndemand');
         expect(allowed).not.toContain('analyticsRoutePlanner');
+        expect(allowed).not.toContain('analyticsRoutePlanner2');
     });
 
     it('puts planner-approved workspaces in planner access', () => {
@@ -78,6 +79,7 @@ describe('workspace access', () => {
         expect(allowed).not.toContain('analyticsCorridorHeadway');
         expect(allowed).not.toContain('analyticsNetworkConnections');
         expect(allowed).not.toContain('analyticsRoutePlanner');
+        expect(allowed).not.toContain('analyticsRoutePlanner2');
         expect(allowed).not.toContain('analyticsShuttlePlanner');
         expect(allowed).not.toContain('analyticsRoute8Sandbox');
     });
@@ -87,6 +89,7 @@ describe('workspace access', () => {
 
         expect(canAccessWorkspaceFeature('workspaceOndemand', internal)).toBe(true);
         expect(canAccessWorkspaceFeature('analyticsRoutePlanner', internal)).toBe(true);
+        expect(canAccessWorkspaceFeature('analyticsRoutePlanner2', internal)).toBe(true);
         expect(canAccessWorkspaceFeature('analyticsRoute8Sandbox', internal)).toBe(true);
     });
 

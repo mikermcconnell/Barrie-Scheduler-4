@@ -65,7 +65,8 @@ Owns STREETS-style performance dashboards, imports, summaries, and reporting.
 The repo also contains planning-data tools, mostly under `components/Analytics/` and related `utils/` folders, including:
 - Transit App analytics
 - OD analysis
-- Route Planner
+- Legacy Route Planner, retained as historical background only under `docs/route-planner-legacy/`
+- Route Planner 2, a fresh restart shell in `components/Analytics/RoutePlanner2Workspace.tsx` with current source-of-truth docs in `docs/route-planner-2/`; v1 is local-first, blank-concept operational feasibility and intentionally excludes Firebase persistence, coverage analysis, and downstream schedule handoff
 - Shuttle Planner
 - Network Connections
 - Route 8 sandbox
@@ -179,6 +180,7 @@ Primary durable sources:
 - `docs/ARCHITECTURE.md`
 - `docs/SCHEMA.md`
 
+For Route Planner 2 work, load `docs/route-planner-2/README.md` and its numbered docs. Treat `docs/route-planner-legacy/` as historical background only.
 Use feature briefs/specs only when relevant.
 Use plan/archive content only as historical context unless a durable doc confirms the behavior.
 

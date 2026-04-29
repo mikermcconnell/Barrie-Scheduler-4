@@ -1,3 +1,5 @@
+> Legacy Route Planner documentation. Use as historical background only. Do not treat this file as binding for Route Planner 2.
+
 # Route Planner PRD
 
 > Date: March 11, 2026

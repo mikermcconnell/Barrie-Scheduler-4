@@ -71,6 +71,10 @@ const RoutePlannerWorkspace = lazyWithRetry(
     () => import('./RoutePlannerWorkspace').then(module => ({ default: module.RoutePlannerWorkspace })),
     'analytics-route-planner-workspace'
 );
+const RoutePlanner2Workspace = lazyWithRetry(
+    () => import('./RoutePlanner2Workspace').then(module => ({ default: module.RoutePlanner2Workspace })),
+    'analytics-route-planner-2-workspace'
+);
 const Route8SandboxWorkspace = lazyWithRetry(
     () => import('./Route8SandboxWorkspace').then(module => ({ default: module.Route8SandboxWorkspace })),
     'analytics-route8-sandbox-workspace'
@@ -162,6 +166,7 @@ type AnalyticsView =
     | 'fleet-plan-import'
     | 'fleet-plan-workspace'
     | 'route-planner'
+    | 'route-planner-2'
     | 'route8-sandbox'
     | 'network-connections'
     | 'shuttle-planner';
@@ -178,6 +183,7 @@ const ANALYTICS_VIEW_FEATURES: Partial<Record<AnalyticsView, FeatureKey>> = {
     'fleet-plan-import': 'analyticsFleetPlan',
     'fleet-plan-workspace': 'analyticsFleetPlan',
     'route-planner': 'analyticsRoutePlanner',
+    'route-planner-2': 'analyticsRoutePlanner2',
     'route8-sandbox': 'analyticsRoute8Sandbox',
     'network-connections': 'analyticsNetworkConnections',
     'shuttle-planner': 'analyticsShuttlePlanner',
@@ -643,6 +649,25 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
         );
     }
 
+    if (view === 'route-planner-2') {
+        return (
+            <div className="flex h-full flex-col overflow-hidden">
+                <div className="px-6 pt-6 shrink-0">
+                    <AnalyticsFeatureNotice feature="analyticsRoutePlanner2" />
+                </div>
+                <div className="min-h-0 flex-1 overflow-hidden">
+                    <Suspense fallback={<AnalyticsPanelLoading label="Loading Route Planner 2..." />}>
+                        <RoutePlanner2Workspace
+                            onBack={() => setView('dashboard')}
+                            userId={user?.uid ?? null}
+                            teamId={team.id}
+                        />
+                    </Suspense>
+                </div>
+            </div>
+        );
+    }
+
     if (view === 'route8-sandbox') {
         return (
             <div className="flex h-full flex-col overflow-hidden">
@@ -797,6 +822,17 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onClose,
                             hasData={false}
                             underConstruction={isFeatureUnderConstruction('analyticsRoutePlanner')}
                             onClick={() => setView('route-planner')}
+                        />
+                    )}
+                    {canAccess('analyticsRoutePlanner2') && (
+                        <AnalyticsCard
+                            color="teal"
+                            icon={<Route size={20} />}
+                            title="Route Planner 2"
+                            description="A clean restart for route concept planning, isolated from the old Route Planner module."
+                            hasData={false}
+                            underConstruction={isFeatureUnderConstruction('analyticsRoutePlanner2')}
+                            onClick={() => setView('route-planner-2')}
                         />
                     )}
                     {canAccess('analyticsRoute8Sandbox') && (

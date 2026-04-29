@@ -34,16 +34,19 @@ Load feature docs only when the task is directly related, including:
 - `docs/NEW_SCHEDULE_STEP2_REBUILD_SPEC.md`
 - `docs/NEW_SCHEDULE_STEP2_CONTRACT_DESIGN.md`
 - `docs/NEW_SCHEDULE_STOP_ORDER_RESOLUTION.md`
-- `docs/ROUTE_PLANNER_PRODUCT_BRIEF.md`
-- `docs/ROUTE_PLANNER_UI_SPEC.md`
-- `docs/ROUTE_PLANNER_PRD.md`
+- `docs/route-planner-2/README.md` and its numbered docs for current Route Planner 2 work
+- `docs/route-planner-legacy/README.md` only when historical old Route Planner background is explicitly needed
 - `docs/SHUTTLE_PLANNER_PRD.md`
 - `docs/SHUTTLE_PLANNER_UI_SPEC.md`
 - `docs/NETWORK_CONNECTIONS_PRODUCT_BRIEF.md`
 - `docs/NETWORK_CONNECTIONS_UI_SPEC.md`
 - `docs/route-colors.md`
 
-Do not load `docs/plans/`, `docs/archive/`, or `docs/artifacts/` by default.
+Do not load `docs/plans/`, `docs/archive/`, `docs/artifacts/`, or `docs/route-planner-legacy/` by default.
+
+### Route Planner 2 note
+
+For current Route Planner 2 work, use `docs/route-planner-2/README.md` first, then its numbered docs. The old Route Planner docs have been moved under `docs/route-planner-legacy/` and are background only, not binding guidance.
 
 ---
 
@@ -72,9 +75,7 @@ These should stay concise, current, and safe to use as default context.
 - `docs/AUTO_INGEST_SETUP.md`
 - `docs/OD_WORKSPACE_GUIDE.md`
 - `docs/DWELL_CASCADE_FEATURE.md`
-- `docs/ROUTE_PLANNER_PRODUCT_BRIEF.md`
-- `docs/ROUTE_PLANNER_UI_SPEC.md`
-- `docs/ROUTE_PLANNER_PRD.md`
+- `docs/route-planner-2/README.md` and its numbered docs for current Route Planner 2 work
 - `docs/SHUTTLE_PLANNER_PRD.md`
 - `docs/SHUTTLE_PLANNER_UI_SPEC.md`
 - `docs/NETWORK_CONNECTIONS_PRODUCT_BRIEF.md`
@@ -88,6 +89,7 @@ These are useful, but narrower in scope and more likely to drift.
 - `docs/plans/`
 - `docs/archive/`
 - `docs/artifacts/`
+- `docs/route-planner-legacy/`
 
 These files are implementation history, working plans, design notes, or supporting artifacts. They may include:
 

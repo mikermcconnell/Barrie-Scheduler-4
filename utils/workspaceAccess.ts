@@ -16,6 +16,7 @@ export type WorkspaceAccessFeatureKey =
     | 'analyticsFleetPlan'
     | 'analyticsNetworkConnections'
     | 'analyticsRoutePlanner'
+    | 'analyticsRoutePlanner2'
     | 'analyticsShuttlePlanner'
     | 'analyticsRoute8Sandbox'
     | 'operationsLoadProfiles'
@@ -61,6 +62,7 @@ export const WORKSPACE_ACCESS_FEATURES: WorkspaceAccessFeatureKey[] = [
     'analyticsFleetPlan',
     'analyticsNetworkConnections',
     'analyticsRoutePlanner',
+    'analyticsRoutePlanner2',
     'analyticsShuttlePlanner',
     'analyticsRoute8Sandbox',
     'operationsLoadProfiles',

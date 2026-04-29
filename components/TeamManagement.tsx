@@ -14,13 +14,14 @@ import {
     joinTeamByInviteCode,
     getTeamWithMembers,
     getTeamWithMembersByInviteCode,
+    getTeamsForPermissionManagement,
     leaveTeam,
     removeMember,
     updateMemberAccessLevel,
     regenerateInviteCode,
     setInviteCode as setTeamInviteCode
 } from '../utils/services/teamService';
-import type { TeamWithMembers, TeamMember, WorkspaceAccessLevel } from '../utils/masterScheduleTypes';
+import type { Team, TeamWithMembers, TeamMember, WorkspaceAccessLevel } from '../utils/masterScheduleTypes';
 import {
     resolveWorkspaceAccessLevel,
     WORKSPACE_ACCESS_LEVEL_DESCRIPTIONS,
@@ -50,6 +51,8 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
     const [teamLookupCode, setTeamLookupCode] = useState('');
     const [teamLookupLoading, setTeamLookupLoading] = useState(false);
     const [managedTeamDetails, setManagedTeamDetails] = useState<TeamWithMembers | null>(null);
+    const [availableTeams, setAvailableTeams] = useState<Team[]>([]);
+    const [availableTeamsLoading, setAvailableTeamsLoading] = useState(false);
 
     const currentTeamMember = teamDetails?.members.find(m => m.userId === user?.uid);
     const isCurrentTeamOwnerOrAdmin = currentTeamMember?.role === 'owner' || currentTeamMember?.role === 'admin';
@@ -60,6 +63,12 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
     const canManageInviteCode = isViewingCurrentTeam && isCurrentTeamOwnerOrAdmin;
     const canManageActiveAccess = isCurrentTeamOwnerOrAdmin || canLookupTeams;
     const canRemoveActiveMembers = isViewingCurrentTeam && isCurrentTeamOwnerOrAdmin;
+    const filteredAvailableTeams = availableTeams.filter(availableTeam => {
+        const filter = teamLookupCode.trim().toLowerCase();
+        if (!filter) return true;
+        return availableTeam.name.toLowerCase().includes(filter) ||
+            availableTeam.inviteCode.toLowerCase().includes(filter);
+    });
 
     // Load full team details with members
     useEffect(() => {
@@ -68,6 +77,12 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
             loadTeamDetails();
         }
     }, [team]);
+
+    useEffect(() => {
+        if (canLookupTeams) {
+            loadAvailableTeams();
+        }
+    }, [canLookupTeams]);
 
     const loadTeamDetails = async () => {
         if (!team) return;
@@ -156,6 +171,19 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
         }
     };
 
+    const loadAvailableTeams = async () => {
+        setAvailableTeamsLoading(true);
+        try {
+            const teams = await getTeamsForPermissionManagement();
+            setAvailableTeams(teams);
+        } catch (error) {
+            console.error('Error loading available teams:', error);
+            toast?.error('Failed to load teams');
+        } finally {
+            setAvailableTeamsLoading(false);
+        }
+    };
+
     const reloadActiveTeamDetails = async () => {
         if (!activeTeamId) return;
 
@@ -188,6 +216,27 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
             toast?.success(`Viewing ${details.name}`);
         } catch (error) {
             console.error('Error looking up team:', error);
+            toast?.error('Failed to load team');
+        } finally {
+            setTeamLookupLoading(false);
+        }
+    };
+
+    const handleSelectTeam = async (selectedTeam: Team) => {
+        setTeamLookupLoading(true);
+        try {
+            const details = await getTeamWithMembers(selectedTeam.id);
+            if (!details) {
+                toast?.error('Team not found');
+                return;
+            }
+
+            setManagedTeamDetails(details);
+            setTeamLookupCode(selectedTeam.inviteCode);
+            setIsEditingInviteCode(false);
+            toast?.success(`Viewing ${details.name}`);
+        } catch (error) {
+            console.error('Error loading selected team:', error);
             toast?.error('Failed to load team');
         } finally {
             setTeamLookupLoading(false);
@@ -420,16 +469,13 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                         <input
                             type="text"
                             value={teamLookupCode}
-                            onChange={(e) => setTeamLookupCode(
-                                e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6)
-                            )}
-                            maxLength={6}
-                            placeholder="Team code"
-                            className="flex-1 px-3 py-2 border border-blue-200 rounded-lg focus:ring-2 focus:ring-brand-green focus:border-brand-green uppercase text-center tracking-wider font-mono"
+                            onChange={(e) => setTeamLookupCode(e.target.value.toUpperCase())}
+                            placeholder="Filter by team name or code"
+                            className="flex-1 px-3 py-2 border border-blue-200 rounded-lg focus:ring-2 focus:ring-brand-green focus:border-brand-green"
                         />
                         <button
                             onClick={handleLookupTeam}
-                            disabled={teamLookupLoading || teamLookupCode.trim().length !== 6}
+                            disabled={teamLookupLoading || !/^[A-Z0-9]{6}$/.test(teamLookupCode.trim().toUpperCase())}
                             className="px-4 py-2 bg-brand-green text-white font-bold rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             {teamLookupLoading ? 'Loading...' : 'Load Team'}
@@ -444,8 +490,32 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                         )}
                     </div>
                     <p className="mt-2 text-xs text-blue-700">
-                        Use a team code to view members and update workspace permissions.
+                        Select any team below, or enter a 6-character code and load it directly.
                     </p>
+                    <div className="mt-3 max-h-48 overflow-y-auto rounded-lg border border-blue-100 bg-white">
+                        {availableTeamsLoading ? (
+                            <p className="px-3 py-2 text-sm text-gray-500">Loading teams...</p>
+                        ) : filteredAvailableTeams.length === 0 ? (
+                            <p className="px-3 py-2 text-sm text-gray-500">No teams found.</p>
+                        ) : (
+                            filteredAvailableTeams.map(availableTeam => {
+                                const isActiveTeam = availableTeam.id === activeTeamDetails?.id;
+                                return (
+                                    <button
+                                        key={availableTeam.id}
+                                        onClick={() => handleSelectTeam(availableTeam)}
+                                        disabled={teamLookupLoading}
+                                        className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-blue-50 disabled:opacity-50 ${
+                                            isActiveTeam ? 'bg-blue-100 text-blue-900' : 'text-gray-700'
+                                        }`}
+                                    >
+                                        <span className="font-semibold truncate">{availableTeam.name}</span>
+                                        <span className="font-mono text-xs text-gray-500">{availableTeam.inviteCode}</span>
+                                    </button>
+                                );
+                            })
+                        )}
+                    </div>
                 </div>
             )}
 
