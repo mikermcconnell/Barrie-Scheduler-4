@@ -20,11 +20,13 @@ service cloud.firestore {
     // Team documents are readable by team members.
     // Internal/developer and admin workspace users can also look up teams
     // by code for user permission management.
-    // Team creation remains authenticated; updates/deletes stay owner-only.
+    // Team creation remains authenticated; updates/deletes are available to
+    // team owners and workspace permission managers.
     match /teams/{teamId} {
       allow read: if isTeamMember(teamId) || isWorkspacePermissionManager();
       allow create: if request.auth != null;
-      allow update, delete: if request.auth != null && isTeamOwner(teamId);
+      allow update, delete: if request.auth != null &&
+                              (isTeamOwner(teamId) || isWorkspacePermissionManager());
 
       // Team Members
       match /members/{memberId} {
@@ -35,29 +37,29 @@ service cloud.firestore {
         // Allow creating your own member document when joining/creating team
         // OR being an owner/admin to manage others
         allow create: if request.auth != null &&
-                         (request.auth.uid == memberId || isTeamOwnerOrAdmin(teamId));
+                         (request.auth.uid == memberId || isTeamOwnerOrAdmin(teamId) || isWorkspacePermissionManager());
         allow update: if isTeamOwnerOrAdmin(teamId) ||
                          (isWorkspacePermissionManager() &&
                           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['accessLevel']));
-        allow delete: if isTeamOwnerOrAdmin(teamId);
+        allow delete: if isTeamOwnerOrAdmin(teamId) || isWorkspacePermissionManager();
       }
 
       // Master Schedules
       match /masterSchedules/{scheduleId} {
         allow read: if isTeamMember(teamId);
-        allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
+        allow create, update, delete: if isTeamOwnerOrAdmin(teamId) || isWorkspacePermissionManager();
 
         // Version History
         match /versions/{versionId} {
           allow read: if isTeamMember(teamId);
-          allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
+          allow create, update, delete: if isTeamOwnerOrAdmin(teamId) || isWorkspacePermissionManager();
         }
       }
 
       // Platform configuration
       match /platformConfig/{configId} {
         allow read: if isTeamMember(teamId);
-        allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
+        allow create, update, delete: if isTeamOwnerOrAdmin(teamId) || isWorkspacePermissionManager();
       }
 
       // Shared connection library
@@ -68,7 +70,7 @@ service cloud.firestore {
       // Public timetable brochure settings
       match /publicTimetable/{docId} {
         allow read: if isTeamMember(teamId);
-        allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
+        allow create, update, delete: if isTeamOwnerOrAdmin(teamId) || isWorkspacePermissionManager();
       }
 
       // Per-route connection configuration
@@ -104,12 +106,12 @@ service cloud.firestore {
       // Fleet Plan data
       match /fleetPlan/{docId} {
         allow read: if isTeamMember(teamId);
-        allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
+        allow create, update, delete: if isTeamOwnerOrAdmin(teamId) || isWorkspacePermissionManager();
 
         // Fleet Plan version history
         match /versions/{versionId} {
           allow read: if isTeamMember(teamId);
-          allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
+          allow create, update, delete: if isTeamOwnerOrAdmin(teamId) || isWorkspacePermissionManager();
         }
       }
     }
@@ -119,10 +121,10 @@ service cloud.firestore {
       allow read: if request.auth != null;
       allow create, update: if request.auth != null &&
                               request.resource.data.teamId is string &&
-                              isTeamOwnerOrAdmin(request.resource.data.teamId);
+                              (isTeamOwnerOrAdmin(request.resource.data.teamId) || isWorkspacePermissionManager());
       allow delete: if request.auth != null &&
                        resource.data.teamId is string &&
-                       isTeamOwnerOrAdmin(resource.data.teamId);
+                       (isTeamOwnerOrAdmin(resource.data.teamId) || isWorkspacePermissionManager());
     }
 
     // ========== HELPER FUNCTIONS ==========

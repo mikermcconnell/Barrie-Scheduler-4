@@ -230,7 +230,19 @@ export async function getTeamMember(teamId: string, userId: string): Promise<Tea
  */
 export async function renameTeam(teamId: string, newName: string): Promise<void> {
     const teamRef = doc(db, 'teams', teamId);
+    const teamSnap = await getDoc(teamRef);
     await updateDoc(teamRef, { name: newName });
+    if (teamSnap.exists()) {
+        const inviteCode = teamSnap.data().inviteCode as string | undefined;
+        if (inviteCode) {
+            await setDoc(doc(db, 'teamInvites', inviteCode), {
+                teamId,
+                teamName: newName,
+                createdBy: teamSnap.data().createdBy,
+                updatedAt: serverTimestamp()
+            }, { merge: true });
+        }
+    }
 }
 
 /**

@@ -17,6 +17,8 @@ import {
     getTeamsForPermissionManagement,
     leaveTeam,
     removeMember,
+    renameTeam,
+    deleteTeam,
     updateMemberAccessLevel,
     regenerateInviteCode,
     setInviteCode as setTeamInviteCode
@@ -53,6 +55,10 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
     const [managedTeamDetails, setManagedTeamDetails] = useState<TeamWithMembers | null>(null);
     const [availableTeams, setAvailableTeams] = useState<Team[]>([]);
     const [availableTeamsLoading, setAvailableTeamsLoading] = useState(false);
+    const [isEditingTeamName, setIsEditingTeamName] = useState(false);
+    const [editedTeamName, setEditedTeamName] = useState('');
+    const [savingTeamName, setSavingTeamName] = useState(false);
+    const [deletingTeam, setDeletingTeam] = useState(false);
 
     const currentTeamMember = teamDetails?.members.find(m => m.userId === user?.uid);
     const isCurrentTeamOwnerOrAdmin = currentTeamMember?.role === 'owner' || currentTeamMember?.role === 'admin';
@@ -60,9 +66,9 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
     const activeTeamDetails = managedTeamDetails ?? teamDetails;
     const activeTeamId = activeTeamDetails?.id ?? team?.id;
     const isViewingCurrentTeam = !managedTeamDetails || managedTeamDetails.id === team?.id;
-    const canManageInviteCode = isViewingCurrentTeam && isCurrentTeamOwnerOrAdmin;
+    const canEditActiveTeam = isCurrentTeamOwnerOrAdmin || canLookupTeams;
     const canManageActiveAccess = isCurrentTeamOwnerOrAdmin || canLookupTeams;
-    const canRemoveActiveMembers = isViewingCurrentTeam && isCurrentTeamOwnerOrAdmin;
+    const canRemoveActiveMembers = isCurrentTeamOwnerOrAdmin || canLookupTeams;
     const filteredAvailableTeams = availableTeams.filter(availableTeam => {
         const filter = teamLookupCode.trim().toLowerCase();
         if (!filter) return true;
@@ -159,13 +165,17 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
     };
 
     const handleRegenerateCode = async () => {
-        if (!team || !canManageInviteCode) return;
+        if (!activeTeamId || !canEditActiveTeam) return;
 
         try {
-            await regenerateInviteCode(team.id);
+            await regenerateInviteCode(activeTeamId);
             toast?.success('New invite code generated');
             setIsEditingInviteCode(false);
-            await refreshTeam();
+            await reloadActiveTeamDetails();
+            await loadAvailableTeams();
+            if (isViewingCurrentTeam) {
+                await refreshTeam();
+            }
         } catch (error) {
             toast?.error('Failed to regenerate code');
         }
@@ -213,6 +223,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
             setManagedTeamDetails(details);
             setTeamLookupCode(normalized);
             setIsEditingInviteCode(false);
+            setIsEditingTeamName(false);
             toast?.success(`Viewing ${details.name}`);
         } catch (error) {
             console.error('Error looking up team:', error);
@@ -234,6 +245,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
             setManagedTeamDetails(details);
             setTeamLookupCode(selectedTeam.inviteCode);
             setIsEditingInviteCode(false);
+            setIsEditingTeamName(false);
             toast?.success(`Viewing ${details.name}`);
         } catch (error) {
             console.error('Error loading selected team:', error);
@@ -247,10 +259,66 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
         setManagedTeamDetails(null);
         setTeamLookupCode('');
         setIsEditingInviteCode(false);
+        setIsEditingTeamName(false);
+    };
+
+    const handleRenameTeam = async () => {
+        if (!activeTeamId || !canEditActiveTeam) return;
+
+        const normalizedName = editedTeamName.trim();
+        if (!normalizedName) {
+            toast?.error('Team name cannot be blank');
+            return;
+        }
+
+        setSavingTeamName(true);
+        try {
+            await renameTeam(activeTeamId, normalizedName);
+            await reloadActiveTeamDetails();
+            await loadAvailableTeams();
+            if (isViewingCurrentTeam) {
+                await refreshTeam();
+            }
+            setIsEditingTeamName(false);
+            toast?.success('Team name updated');
+        } catch (error) {
+            console.error('Error renaming team:', error);
+            toast?.error('Failed to rename team');
+        } finally {
+            setSavingTeamName(false);
+        }
+    };
+
+    const handleDeleteTeam = async () => {
+        if (!activeTeamId || !activeTeamDetails || !canEditActiveTeam) return;
+
+        const confirmed = confirm(
+            `Delete team "${activeTeamDetails.name}"? This removes the team, invite code, members, and saved schedules. This cannot be undone.`
+        );
+        if (!confirmed) return;
+
+        setDeletingTeam(true);
+        try {
+            await deleteTeam(activeTeamId);
+            toast?.success(`Deleted ${activeTeamDetails.name}`);
+            setManagedTeamDetails(null);
+            setTeamLookupCode('');
+            setIsEditingTeamName(false);
+            setIsEditingInviteCode(false);
+            await loadAvailableTeams();
+            if (isViewingCurrentTeam) {
+                await refreshTeam();
+            }
+        } catch (error) {
+            console.error('Error deleting team:', error);
+            toast?.error('Failed to delete team');
+        } finally {
+            setDeletingTeam(false);
+        }
     };
 
     const handleSetCustomInviteCode = async () => {
-        if (!team || !canManageInviteCode) return;
+        if (!activeTeamId || !canEditActiveTeam) return;
         const normalized = customInviteCode.trim().toUpperCase();
         if (!/^[A-Z0-9]{6}$/.test(normalized)) {
             toast?.error('Invite code must be exactly 6 letters/numbers');
@@ -259,8 +327,12 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
 
         setSavingInviteCode(true);
         try {
-            await setTeamInviteCode(team.id, normalized);
-            await refreshTeam();
+            await setTeamInviteCode(activeTeamId, normalized);
+            await reloadActiveTeamDetails();
+            await loadAvailableTeams();
+            if (isViewingCurrentTeam) {
+                await refreshTeam();
+            }
             setIsEditingInviteCode(false);
             toast?.success(`Invite code set to ${normalized}`);
         } catch (error: any) {
@@ -453,7 +525,56 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                         <Users className="text-brand-green" size={24} />
                     </div>
                     <div>
-                        <h2 className="text-2xl font-bold text-gray-900">{activeTeamDetails?.name ?? team.name}</h2>
+                        {isEditingTeamName ? (
+                            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                                <input
+                                    type="text"
+                                    value={editedTeamName}
+                                    onChange={(event) => setEditedTeamName(event.target.value)}
+                                    className="rounded-lg border border-gray-300 px-3 py-2 text-xl font-bold text-gray-900 focus:border-brand-green focus:ring-2 focus:ring-brand-green"
+                                    autoFocus
+                                />
+                                <div className="flex gap-2">
+                                    <button
+                                        onClick={handleRenameTeam}
+                                        disabled={savingTeamName || !editedTeamName.trim()}
+                                        className="px-3 py-2 bg-brand-green text-white font-bold rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                                    >
+                                        {savingTeamName ? 'Saving...' : 'Save'}
+                                    </button>
+                                    <button
+                                        onClick={() => setIsEditingTeamName(false)}
+                                        className="px-3 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm"
+                                    >
+                                        Cancel
+                                    </button>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="flex flex-wrap items-center gap-2">
+                                <h2 className="text-2xl font-bold text-gray-900">{activeTeamDetails?.name ?? team.name}</h2>
+                                {canEditActiveTeam && (
+                                    <>
+                                        <button
+                                            onClick={() => {
+                                                setEditedTeamName(activeTeamDetails?.name ?? team.name);
+                                                setIsEditingTeamName(true);
+                                            }}
+                                            className="px-2 py-1 border border-gray-300 rounded-lg text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                                        >
+                                            Rename
+                                        </button>
+                                        <button
+                                            onClick={handleDeleteTeam}
+                                            disabled={deletingTeam}
+                                            className="px-2 py-1 border border-red-200 rounded-lg text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                        >
+                                            {deletingTeam ? 'Deleting...' : 'Delete'}
+                                        </button>
+                                    </>
+                                )}
+                            </div>
+                        )}
                         <p className="text-sm text-gray-500">
                             {activeTeamDetails?.memberCount || 0} members
                             {!isViewingCurrentTeam && <span className="ml-2 text-blue-600">Viewing by team code</span>}
@@ -536,11 +657,11 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                         >
                             {copiedCode ? <Check size={20} /> : <Copy size={20} />}
                         </button>
-                        {canManageInviteCode && (
+                        {canEditActiveTeam && (
                             <>
                                 <button
                                     onClick={() => {
-                                        if (!isEditingInviteCode) setCustomInviteCode(team.inviteCode);
+                                        if (!isEditingInviteCode) setCustomInviteCode(activeTeamDetails?.inviteCode ?? team.inviteCode);
                                         setIsEditingInviteCode(v => !v);
                                     }}
                                     className="px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-100 text-gray-700 text-sm"
@@ -557,7 +678,7 @@ export const TeamManagement: React.FC<TeamManagementProps> = ({ onClose }) => {
                         )}
                     </div>
                 </div>
-                {canManageInviteCode && isEditingInviteCode && (
+                {canEditActiveTeam && isEditingInviteCode && (
                     <div className="mt-3">
                         <div className="flex gap-2">
                             <input
