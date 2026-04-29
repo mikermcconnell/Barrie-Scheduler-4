@@ -1,6 +1,8 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
+    ArrowDown,
     ArrowLeft,
+    ArrowUp,
     CircleDot,
     Copy,
     Download,
@@ -24,7 +26,20 @@ import {
     renameRoutePlanner2Scenario,
     selectRoutePlanner2Scenario,
 } from '../../utils/route-planner-2/routePlanner2ProjectController';
-import type { RoutePlanner2Project, RoutePlanner2Scenario } from '../../utils/route-planner-2/routePlanner2Types';
+import {
+    addRoutePlanner2RoutePoint,
+    addRoutePlanner2Stop,
+    deleteRoutePlanner2Stop,
+    moveRoutePlanner2Stop,
+    renameRoutePlanner2Stop,
+    updateRoutePlanner2StopRole,
+    validateRoutePlanner2Terminals,
+} from '../../utils/route-planner-2/routePlanner2Authoring';
+import type {
+    RoutePlanner2Project,
+    RoutePlanner2Scenario,
+    RoutePlanner2StopRole,
+} from '../../utils/route-planner-2/routePlanner2Types';
 
 interface RoutePlanner2WorkspaceProps {
     onBack: () => void;
@@ -46,7 +61,14 @@ function formatBuses(value: number | null | undefined): string {
 }
 
 function getScenarioWarningCount(scenario: RoutePlanner2Scenario): number {
-    return scenario.feasibility?.warnings.length ?? 0;
+    return (scenario.feasibility?.warnings.length ?? 0) + validateRoutePlanner2Terminals(scenario).length;
+}
+
+function formatStopRole(role: RoutePlanner2StopRole): string {
+    if (role === 'start-terminal') return 'Start terminal';
+    if (role === 'end-terminal') return 'End terminal';
+    if (role === 'timed') return 'Timed stop';
+    return 'Regular stop';
 }
 
 function updateScenarioNotes(
@@ -74,11 +96,30 @@ function updateScenarioNotes(
 
 export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ onBack, teamId }) => {
     const [project, setProject] = useState<RoutePlanner2Project>(() => createRoutePlanner2Project());
+    const [selectedStopId, setSelectedStopId] = useState<string | null>(null);
 
     const selectedScenario = useMemo(
         () => project.scenarios.find((scenario) => scenario.id === project.selectedScenarioId) ?? project.scenarios[0],
         [project.scenarios, project.selectedScenarioId],
     );
+    const selectedStop = useMemo(
+        () => selectedScenario?.stops.find((stop) => stop.id === selectedStopId) ?? null,
+        [selectedScenario?.stops, selectedStopId],
+    );
+    const terminalWarnings = useMemo(
+        () => selectedScenario ? validateRoutePlanner2Terminals(selectedScenario) : [],
+        [selectedScenario],
+    );
+
+    useEffect(() => {
+        if (!selectedScenario) {
+            setSelectedStopId(null);
+            return;
+        }
+
+        if (selectedStopId && selectedScenario.stops.some((stop) => stop.id === selectedStopId)) return;
+        setSelectedStopId(selectedScenario.stops[0]?.id ?? null);
+    }, [selectedScenario, selectedStopId]);
 
     function addScenario() {
         setProject((current) => addRoutePlanner2Scenario(current));
@@ -97,6 +138,64 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
     function markSelectedPreferred() {
         if (!selectedScenario) return;
         setProject((current) => markRoutePlanner2PreferredScenario(current, selectedScenario.id));
+    }
+
+    function getNextAuthoringCoordinate() {
+        const pointCount = selectedScenario?.alignment.length ?? 0;
+        const stopCount = selectedScenario?.stops.length ?? 0;
+        const index = Math.max(pointCount, stopCount) + 1;
+
+        return {
+            lat: Number((44.379 + (index * 0.006)).toFixed(6)),
+            lng: Number((-79.701 + (index * 0.007)).toFixed(6)),
+        };
+    }
+
+    function addAlignmentPoint() {
+        if (!selectedScenario) return;
+        const coordinate = getNextAuthoringCoordinate();
+        const pointNumber = selectedScenario.alignment.length + 1;
+        setProject((current) => addRoutePlanner2RoutePoint(current, selectedScenario.id, {
+            id: `point-${Date.now()}-${pointNumber}`,
+            ...coordinate,
+        }));
+    }
+
+    function addStop() {
+        if (!selectedScenario) return;
+        const coordinate = getNextAuthoringCoordinate();
+        const stopNumber = selectedScenario.stops.length + 1;
+        const stopId = `stop-${Date.now()}-${stopNumber}`;
+
+        setProject((current) => addRoutePlanner2Stop(current, selectedScenario.id, {
+            id: stopId,
+            name: `Stop ${stopNumber}`,
+            ...coordinate,
+        }));
+        setSelectedStopId(stopId);
+    }
+
+    function updateSelectedStopRole(role: RoutePlanner2StopRole) {
+        if (!selectedScenario || !selectedStop) return;
+        setProject((current) => updateRoutePlanner2StopRole(current, selectedScenario.id, selectedStop.id, role));
+    }
+
+    function renameSelectedStop(name: string) {
+        if (!selectedScenario || !selectedStop) return;
+        setProject((current) => renameRoutePlanner2Stop(current, selectedScenario.id, selectedStop.id, name));
+    }
+
+    function moveSelectedStop(direction: 'up' | 'down') {
+        if (!selectedScenario || !selectedStop) return;
+        setProject((current) => moveRoutePlanner2Stop(current, selectedScenario.id, selectedStop.id, direction));
+    }
+
+    function deleteSelectedStop() {
+        if (!selectedScenario || !selectedStop) return;
+        const deletedStopId = selectedStop.id;
+        setProject((current) => deleteRoutePlanner2Stop(current, selectedScenario.id, deletedStopId));
+        const remainingStops = selectedScenario.stops.filter((stop) => stop.id !== deletedStopId);
+        setSelectedStopId(remainingStops[0]?.id ?? null);
     }
 
     return (
@@ -251,7 +350,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                         <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
                             <div>
                                 <h2 className="text-sm font-black text-slate-900">Map canvas</h2>
-                                <p className="text-xs text-slate-500">Map authoring starts in Milestone 2.</p>
+                                <p className="text-xs text-slate-500">Stop-aware authoring is local-only for this MVP.</p>
                             </div>
                             <div className="flex gap-2">
                                 <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-1 text-xs font-bold text-slate-600">
@@ -281,14 +380,78 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                     strokeDasharray="12 12"
                                 />
                             </svg>
+                            <div className="absolute left-6 top-6 max-w-md rounded-3xl border border-slate-200 bg-white/95 p-4 shadow-lg">
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={addAlignmentPoint}
+                                        className="inline-flex items-center gap-2 rounded-xl bg-cyan-600 px-3 py-2 text-sm font-bold text-white hover:bg-cyan-700"
+                                    >
+                                        <Plus size={15} />
+                                        Add route point
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={addStop}
+                                        className="inline-flex items-center gap-2 rounded-xl border border-cyan-200 bg-cyan-50 px-3 py-2 text-sm font-bold text-cyan-700 hover:bg-cyan-100"
+                                    >
+                                        <MapPinned size={15} />
+                                        Add stop
+                                    </button>
+                                </div>
+                                <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                                    <div className="rounded-2xl bg-slate-50 p-3">
+                                        <div className="font-bold uppercase text-slate-500">Route points</div>
+                                        <div className="mt-1 text-lg font-black text-slate-900">
+                                            {selectedScenario?.alignment.length ?? 0}
+                                        </div>
+                                    </div>
+                                    <div className="rounded-2xl bg-slate-50 p-3">
+                                        <div className="font-bold uppercase text-slate-500">Stops</div>
+                                        <div className="mt-1 text-lg font-black text-slate-900">
+                                            {selectedScenario?.stops.length ?? 0}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {selectedScenario && selectedScenario.stops.length > 0 && (
+                                <div className="absolute right-6 top-6 max-h-[360px] w-72 overflow-auto rounded-3xl border border-slate-200 bg-white/95 p-4 shadow-lg">
+                                    <h3 className="text-sm font-black text-slate-900">Stop order</h3>
+                                    <div className="mt-3 space-y-2">
+                                        {selectedScenario.stops.map((stop) => (
+                                            <button
+                                                key={stop.id}
+                                                type="button"
+                                                onClick={() => setSelectedStopId(stop.id)}
+                                                className={`w-full rounded-2xl border p-3 text-left text-sm transition ${
+                                                    selectedStop?.id === stop.id
+                                                        ? 'border-cyan-300 bg-cyan-50'
+                                                        : 'border-slate-200 bg-white hover:border-slate-300'
+                                                }`}
+                                            >
+                                                <div className="flex items-center justify-between gap-2">
+                                                    <span className="font-bold text-slate-900">
+                                                        {stop.sequence}. {stop.name}
+                                                    </span>
+                                                </div>
+                                                <div className="mt-1 text-xs font-semibold text-slate-500">
+                                                    {formatStopRole(stop.role)}
+                                                </div>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
                             <div className="absolute bottom-6 left-6 max-w-sm rounded-3xl border border-cyan-200 bg-white/95 p-4 shadow-lg">
                                 <div className="flex items-center gap-2 text-sm font-black text-slate-900">
                                     <CircleDot size={16} className="text-cyan-600" />
-                                    Map interactions are intentionally not wired yet
+                                    Alignment and stop editing are now local state
                                 </div>
                                 <p className="mt-2 text-sm leading-6 text-slate-600">
-                                    Route Planner 2 now has a clean local project model. The next MVP slice adds real alignment,
-                                    stop editing, and terminal validation on this canvas.
+                                    Use the authoring buttons to create an ordered concept, then mark start and end terminals in
+                                    the stop editor. A full map click/drag surface can replace these controls later.
                                 </p>
                             </div>
                         </div>
@@ -349,6 +512,109 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                             className="mt-1 w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none focus:border-cyan-300 focus:ring-2 focus:ring-cyan-100"
                                         />
                                     </div>
+
+                                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                                        <div className="mb-3 flex items-center justify-between">
+                                            <h3 className="text-sm font-black text-slate-900">Selected stop</h3>
+                                            <span className="rounded-full bg-white px-2 py-1 text-xs font-bold text-slate-500">
+                                                {selectedScenario.stops.length} stops
+                                            </span>
+                                        </div>
+                                        {selectedStop ? (
+                                            <div className="space-y-3">
+                                                <div>
+                                                    <label className="text-xs font-bold uppercase tracking-wide text-slate-500" htmlFor="rp2-stop-name">
+                                                        Stop name
+                                                    </label>
+                                                    <input
+                                                        id="rp2-stop-name"
+                                                        value={selectedStop.name}
+                                                        onChange={(event) => renameSelectedStop(event.target.value)}
+                                                        className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-900 outline-none focus:border-cyan-300 focus:ring-2 focus:ring-cyan-100"
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="text-xs font-bold uppercase tracking-wide text-slate-500" htmlFor="rp2-stop-role">
+                                                        Stop role
+                                                    </label>
+                                                    <select
+                                                        id="rp2-stop-role"
+                                                        value={selectedStop.role}
+                                                        onChange={(event) => updateSelectedStopRole(event.target.value as RoutePlanner2StopRole)}
+                                                        className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-900 outline-none focus:border-cyan-300 focus:ring-2 focus:ring-cyan-100"
+                                                    >
+                                                        <option value="regular">Regular stop</option>
+                                                        <option value="timed">Timed stop</option>
+                                                        <option value="start-terminal">Start terminal</option>
+                                                        <option value="end-terminal">End terminal</option>
+                                                    </select>
+                                                </div>
+                                                <div className="grid grid-cols-3 gap-2">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => moveSelectedStop('up')}
+                                                        className="inline-flex items-center justify-center gap-1 rounded-xl border border-slate-200 bg-white px-2 py-2 text-xs font-bold text-slate-700 hover:border-cyan-300"
+                                                    >
+                                                        <ArrowUp size={14} />
+                                                        Up
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => moveSelectedStop('down')}
+                                                        className="inline-flex items-center justify-center gap-1 rounded-xl border border-slate-200 bg-white px-2 py-2 text-xs font-bold text-slate-700 hover:border-cyan-300"
+                                                    >
+                                                        <ArrowDown size={14} />
+                                                        Down
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={deleteSelectedStop}
+                                                        className="inline-flex items-center justify-center gap-1 rounded-xl border border-red-200 bg-white px-2 py-2 text-xs font-bold text-red-700 hover:bg-red-50"
+                                                    >
+                                                        Remove
+                                                    </button>
+                                                </div>
+                                                <div className="text-xs leading-5 text-slate-500">
+                                                    Lat {selectedStop.lat.toFixed(4)}, Lng {selectedStop.lng.toFixed(4)}
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <p className="text-sm leading-6 text-slate-500">
+                                                Add a stop from the map canvas, then mark terminal roles here.
+                                            </p>
+                                        )}
+                                    </div>
+
+                                    <div className={`rounded-2xl border p-3 ${
+                                        terminalWarnings.length > 0
+                                            ? 'border-amber-200 bg-amber-50'
+                                            : 'border-emerald-200 bg-emerald-50'
+                                    }`}>
+                                        <h3 className={`text-sm font-black ${
+                                            terminalWarnings.length > 0 ? 'text-amber-900' : 'text-emerald-900'
+                                        }`}>
+                                            Terminal validation
+                                        </h3>
+                                        {terminalWarnings.length > 0 ? (
+                                            <ul className="mt-2 space-y-2">
+                                                {terminalWarnings.map((warning) => (
+                                                    <li key={warning.id} className="text-sm leading-5 text-amber-800">
+                                                        {warning.message}
+                                                        {warning.action && (
+                                                            <span className="block text-xs font-semibold text-amber-700">
+                                                                {warning.action}
+                                                            </span>
+                                                        )}
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                        ) : (
+                                            <p className="mt-2 text-sm text-emerald-800">
+                                                Start and end terminals are valid.
+                                            </p>
+                                        )}
+                                    </div>
+
                                     <div className="grid grid-cols-2 gap-2">
                                         <button
                                             type="button"

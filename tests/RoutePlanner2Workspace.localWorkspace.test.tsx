@@ -5,9 +5,11 @@ import { flushSync } from 'react-dom';
 
 import { RoutePlanner2Workspace } from '../components/Analytics/RoutePlanner2Workspace';
 
-function setInputValue(input: HTMLInputElement | HTMLTextAreaElement, value: string) {
+function setInputValue(input: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, value: string) {
   const prototype = input instanceof HTMLTextAreaElement
     ? HTMLTextAreaElement.prototype
+    : input instanceof HTMLSelectElement
+      ? HTMLSelectElement.prototype
     : HTMLInputElement.prototype;
   const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
 
@@ -135,5 +137,51 @@ describe('RoutePlanner2Workspace local workspace', () => {
     expect(view.textContent).toContain('Runtime');
     expect(view.textContent).toContain('Buses');
     expect(view.textContent).toContain('Warnings');
+  });
+
+  it('adds route points and stops from the authoring canvas', () => {
+    const view = renderWorkspace();
+
+    flushSync(() => {
+      click(findButton(view, 'Add route point'));
+      click(findButton(view, 'Add stop'));
+    });
+
+    const stopNameInput = view.querySelector('#rp2-stop-name') as HTMLInputElement | null;
+
+    expect(view.textContent).toContain('Route points');
+    expect(view.textContent).toContain('Stop order');
+    expect(stopNameInput?.value).toBe('Stop 1');
+  });
+
+  it('marks start and end terminals through stop role editing', () => {
+    const view = renderWorkspace();
+
+    expect(view.textContent).toContain('Add stops before checking route feasibility.');
+
+    flushSync(() => {
+      click(findButton(view, 'Add stop'));
+    });
+    expect(view.textContent).toContain('Add a start terminal before estimating cycle time.');
+
+    const roleSelect = view.querySelector('#rp2-stop-role') as HTMLSelectElement | null;
+    expect(roleSelect).not.toBeNull();
+
+    flushSync(() => {
+      setInputValue(roleSelect!, 'start-terminal');
+    });
+    flushSync(() => {
+      click(findButton(view, 'Add stop'));
+    });
+    flushSync(() => {
+      click(findButton(view, 'Stop 2'));
+    });
+
+    const updatedRoleSelect = view.querySelector('#rp2-stop-role') as HTMLSelectElement | null;
+    flushSync(() => {
+      setInputValue(updatedRoleSelect!, 'end-terminal');
+    });
+
+    expect(view.textContent).toContain('Start and end terminals are valid.');
   });
 });
