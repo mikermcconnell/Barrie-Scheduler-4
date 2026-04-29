@@ -7,6 +7,8 @@ const filesToScan = [
   'utils/route-planner-2/routePlanner2ProjectFactory.ts',
   'utils/route-planner-2/routePlanner2ProjectController.ts',
   'utils/route-planner-2/routePlanner2Authoring.ts',
+  'utils/route-planner-2/routePlanner2Feasibility.ts',
+  'utils/route-planner-2/routePlanner2Summary.ts',
   'utils/route-planner-2/routePlanner2Types.ts',
 ];
 

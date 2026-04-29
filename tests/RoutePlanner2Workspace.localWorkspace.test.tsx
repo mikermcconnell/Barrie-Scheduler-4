@@ -104,13 +104,14 @@ describe('RoutePlanner2Workspace local workspace', () => {
   it('marks the selected scenario as preferred', () => {
     const view = renderWorkspace();
 
-    expect(view.textContent).not.toContain('Preferred');
+    expect(view.textContent).toContain('No preferred scenario yet');
 
     flushSync(() => {
       click(findButton(view, 'Mark preferred'));
     });
 
-    expect(view.textContent).toContain('Preferred');
+    expect(view.textContent).not.toContain('No preferred scenario yet');
+    expect(view.textContent).toContain('(preferred)');
   });
 
   it('deletes the selected scenario when more than one exists', () => {
@@ -182,6 +183,40 @@ describe('RoutePlanner2Workspace local workspace', () => {
       setInputValue(updatedRoleSelect!, 'end-terminal');
     });
 
-    expect(view.textContent).toContain('Start and end terminals are valid.');
+    expect(view.textContent).toContain('Runtime uses fallback assumptions');
+    expect(view.textContent).toContain('Segment runtime source');
+    expect(view.textContent).toContain('fallback');
+  });
+
+  it('updates feasibility outputs when service assumptions change', () => {
+    const view = renderWorkspace();
+
+    flushSync(() => {
+      click(findButton(view, 'Add stop'));
+    });
+    const roleSelect = view.querySelector('#rp2-stop-role') as HTMLSelectElement | null;
+    flushSync(() => {
+      setInputValue(roleSelect!, 'start-terminal');
+    });
+    flushSync(() => {
+      click(findButton(view, 'Add stop'));
+    });
+    flushSync(() => {
+      click(findButton(view, 'Stop 2'));
+    });
+    const updatedRoleSelect = view.querySelector('#rp2-stop-role') as HTMLSelectElement | null;
+    flushSync(() => {
+      setInputValue(updatedRoleSelect!, 'end-terminal');
+    });
+
+    const numberInputs = Array.from(view.querySelectorAll('input[type="number"]')) as HTMLInputElement[];
+    const frequencyInput = numberInputs.find((input) => input.value === '30');
+    expect(frequencyInput).toBeTruthy();
+
+    flushSync(() => {
+      setInputValue(frequencyInput!, '0');
+    });
+
+    expect(view.textContent).toContain('Target frequency must be greater than zero.');
   });
 });
