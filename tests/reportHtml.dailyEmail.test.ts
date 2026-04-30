@@ -74,6 +74,8 @@ function makeIncident(params: {
   observedDepartureTime?: string;
   stopName?: string;
   stopId?: string;
+  tripName?: string;
+  block?: string;
   trackedDwellSeconds: number;
   severity: DwellSeverity;
 }): DwellIncident {
@@ -84,8 +86,8 @@ function makeIncident(params: {
     routeName: params.routeName ?? 'Route 2',
     stopName: params.stopName ?? 'Downtown',
     stopId: params.stopId ?? '1',
-    tripName: 'Trip 1',
-    block: 'block-1',
+    tripName: params.tripName ?? 'Trip 1',
+    block: params.block ?? 'block-1',
     observedArrivalTime: '07:00:00',
     observedDepartureTime: params.observedDepartureTime ?? '07:15:00',
     rawDwellSeconds: params.trackedDwellSeconds,
@@ -281,6 +283,28 @@ describe('buildReportHtml dwell reporting', () => {
     expect(stopSection).not.toContain('Allandale Platform 2');
   });
 
+  it('falls back to route name, trip name, or block when dwell incident route IDs are blank', () => {
+    const latestDay = makeSummary({
+      date: '2026-04-20',
+      incidents: [
+        makeIncident({ date: '2026-04-20', routeId: '', routeName: 'Route 5', stopName: 'Georgian College', stopId: '327', trackedDwellSeconds: 1800, severity: 'moderate' }),
+        makeIncident({ date: '2026-04-20', routeId: '', routeName: 'Unknown', tripName: '10 - 10FD - 12:40', stopName: 'Georgian College', stopId: '327', trackedDwellSeconds: 1800, severity: 'moderate' }),
+        makeIncident({ date: '2026-04-20', routeId: '', routeName: 'Unknown', tripName: 'Missing route', block: '12A-3', stopName: 'Georgian College', stopId: '327', trackedDwellSeconds: 1800, severity: 'moderate' }),
+      ],
+    });
+
+    const html = buildReportHtml({
+      latestDay,
+      trendDays: [latestDay],
+      teamName: 'Barrie Transit',
+    });
+
+    const stopSection = between(html, 'Operator Dwell by Stop', 'Stop Highlights');
+    const georgianRow = rowForText(stopSection, 'Georgian College');
+
+    expect(georgianRow).toContain('5, 10, 12A');
+  });
+
   it('uses trimmed report snapshot totals for historical weekday dwell averages', () => {
     const latestDay = makeSummary({
       date: '2026-04-20',
@@ -381,6 +405,8 @@ describe('buildReportHtml dwell reporting', () => {
     expect(firstVisibleRow).toContain(`>${formatDate('2026-04-14')}<`);
     expect(firstVisibleRow).toContain('>2.0<');
     expect(firstVisibleRow).toContain('>1.5<');
+    expect(trendSection).toContain('7-day avg dwell (hrs)');
+    expect(trendSection).toContain('7-day avg dwell is the rolling average');
 
     expect(latestRow).toContain(`>${formatDate('2026-04-20')}<`);
     expect(latestRow).toContain('>8.0<');
@@ -464,5 +490,22 @@ describe('buildReportHtml dwell reporting', () => {
 
     expect(beforeKpis).not.toContain('REVIEW');
     expect(beforeKpis).not.toContain('Mostly stable');
+  });
+
+  it('uses inline icon symbols and removes the feedback reply notice', () => {
+    const latestDay = makeSummary({
+      date: '2026-04-20',
+    });
+
+    const html = buildReportHtml({
+      latestDay,
+      trendDays: [latestDay],
+      teamName: 'Barrie Transit',
+    });
+
+    expect(html).not.toContain('<img src=');
+    expect(html).not.toContain('email-icons');
+    expect(html).not.toContain('Questions or feedback?');
+    expect(html).toContain('&#128652;');
   });
 });
