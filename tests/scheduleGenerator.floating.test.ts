@@ -65,6 +65,77 @@ describe('scheduleGenerator floating mode defaults', () => {
         expect(tables[0].trips[0].recoveryTime).toBe(3); // 15% of 20 minutes
     });
 
+    it('places generated recovery at the trip terminus instead of padding intermediate stops', () => {
+        const config: ScheduleConfig = {
+            routeNumber: '99',
+            cycleMode: 'Floating',
+            recoveryRatio: 50,
+            cycleTime: 0,
+            blocks: [
+                {
+                    id: '99-1',
+                    startTime: '06:00',
+                    endTime: '06:40'
+                }
+            ]
+        };
+
+        const buckets: TripBucketAnalysis[] = [
+            {
+                timeBucket: '06:00 - 06:29',
+                totalP50: 20,
+                totalP80: 25,
+                assignedBand: 'A',
+                isOutlier: false,
+                ignored: false,
+                details: [
+                    { segmentName: 'Start to Mid', p50: 10, p80: 12, n: 10 },
+                    { segmentName: 'Mid to End', p50: 10, p80: 12, n: 10 }
+                ]
+            }
+        ];
+
+        const bands: TimeBand[] = [
+            { id: 'A', label: 'Band A', min: 20, max: 20, avg: 20, color: '#ef4444', count: 1 }
+        ];
+
+        const bandSummary: DirectionBandSummary = {
+            North: [
+                {
+                    bandId: 'A',
+                    color: '#ef4444',
+                    avgTotal: 20,
+                    segments: [
+                        { segmentName: 'Start to Mid', avgTime: 10, totalN: 100 },
+                        { segmentName: 'Mid to End', avgTime: 10, totalN: 100 }
+                    ],
+                    timeSlots: ['06:00']
+                }
+            ]
+        };
+
+        const segmentsMap: Record<string, SegmentRawData[]> = {
+            North: [
+                {
+                    segmentName: 'Start to Mid',
+                    timeBuckets: { '06:00 - 06:29': { p50: 10, p80: 12, n: 10 } }
+                },
+                {
+                    segmentName: 'Mid to End',
+                    timeBuckets: { '06:00 - 06:29': { p50: 10, p80: 12, n: 10 } }
+                }
+            ]
+        };
+
+        const tables = generateSchedule(config, buckets, bands, bandSummary, segmentsMap, 'Weekday');
+        const trip = tables[0].trips[0];
+
+        expect(trip.recoveryTime).toBe(10);
+        expect(trip.recoveryTimes).toEqual({ End: 10 });
+        expect(trip.stopMinutes?.Mid).toBe(370);
+        expect(trip.stopMinutes?.End).toBe(390);
+    });
+
     it('generates trips for blocks that end after midnight', () => {
         const config: ScheduleConfig = {
             routeNumber: '99',

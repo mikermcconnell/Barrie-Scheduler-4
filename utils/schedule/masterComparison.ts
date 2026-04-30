@@ -1,5 +1,5 @@
 import type { MasterRouteTable, MasterTrip } from '../parsers/masterScheduleParser';
-import { extractDirectionFromName } from '../config/routeDirectionConfig';
+import { extractDirectionFromName, parseRouteInfo } from '../config/routeDirectionConfig';
 
 type DirectionKey = 'North' | 'South';
 export type MasterComparisonMatchMethod = 'lineage' | 'trip-id' | 'time-shift';
@@ -7,6 +7,14 @@ export type MasterComparisonConfidence = 'high' | 'medium' | 'low';
 
 export interface AmbiguousMasterComparisonCandidate {
     masterTrip: MasterTrip;
+    diffMinutes: number;
+}
+
+export interface PossibleMasterReplacementCandidate {
+    currentTripId: string;
+    routeName: string;
+    startTime: number;
+    endTime: number;
     diffMinutes: number;
 }
 
@@ -49,6 +57,7 @@ export interface RemovedMasterComparisonEntry {
     masterTrip: MasterTrip;
     confidence: 'low';
     reason: string;
+    possibleReplacements: PossibleMasterReplacementCandidate[];
 }
 
 export type CurrentTripComparisonEntry =
@@ -97,12 +106,30 @@ export interface MasterComparisonChangeSummary {
 const DIRECTIONS: DirectionKey[] = ['North', 'South'];
 
 export const buildTripKey = (direction: DirectionKey, tripId: string): string => `${direction}::${tripId}`;
-const buildMatchedMasterKey = (direction: DirectionKey, trip: MasterTrip): string => (
-    `${direction}::${trip.lineageId || trip.id}::${trip.startTime}::${trip.rowId}`
+const buildMatchedMasterKey = (bucketKey: string, trip: MasterTrip): string => (
+    `${bucketKey}::${trip.lineageId || trip.id}::${trip.startTime}::${trip.rowId}`
 );
 
 const toDirection = (routeName: string): DirectionKey =>
     (extractDirectionFromName(routeName) || 'North') as DirectionKey;
+
+const getRouteKey = (routeName: string): string => (
+    parseRouteInfo(routeName).baseRoute.trim().toUpperCase()
+);
+
+const buildRouteDirectionBucketKey = (routeName: string, direction: DirectionKey): string => (
+    `${getRouteKey(routeName)}::${direction}`
+);
+
+const getRouteBucketInfo = (routeName: string): { routeKey: string; direction: DirectionKey; bucketKey: string } => {
+    const direction = toDirection(routeName);
+    const routeKey = getRouteKey(routeName);
+    return {
+        routeKey,
+        direction,
+        bucketKey: `${routeKey}::${direction}`,
+    };
+};
 
 const emptyChangeCounts = (): MasterComparisonChangeCounts => ({
     new: 0,
@@ -146,6 +173,51 @@ const recordsDiffer = (
     }
 
     return false;
+};
+
+const getTimedStopNames = (trip: MasterTrip): Set<string> => {
+    const names = new Set<string>();
+    Object.entries(trip.stops || {}).forEach(([key, value]) => {
+        if (value) names.add(key.toLowerCase().trim());
+    });
+    Object.entries(trip.arrivalTimes || {}).forEach(([key, value]) => {
+        if (value) names.add(key.toLowerCase().trim());
+    });
+    return names;
+};
+
+const getStopPatternPenalty = (currentTrip: MasterTrip, masterTrip: MasterTrip): number => {
+    const currentStops = getTimedStopNames(currentTrip);
+    const masterStops = getTimedStopNames(masterTrip);
+    if (currentStops.size === 0 || masterStops.size === 0) return 0;
+
+    let overlap = 0;
+    currentStops.forEach(stop => {
+        if (masterStops.has(stop)) overlap += 1;
+    });
+
+    const maxSize = Math.max(currentStops.size, masterStops.size);
+    const overlapRatio = overlap / maxSize;
+    return Math.round((1 - overlapRatio) * 20);
+};
+
+const scorePotentialMatch = (
+    currentTrip: MasterTrip,
+    masterTrip: MasterTrip,
+    shiftMinutes: number,
+): { score: number; startDiff: number } => {
+    const adjustedStart = currentTrip.startTime - shiftMinutes;
+    const adjustedEnd = currentTrip.endTime - shiftMinutes;
+    const startDiff = Math.abs(adjustedStart - masterTrip.startTime);
+    const endDiff = Math.abs(adjustedEnd - masterTrip.endTime);
+    const travelDiff = Math.abs((currentTrip.travelTime || 0) - (masterTrip.travelTime || 0));
+    const blockPenalty = currentTrip.blockId && masterTrip.blockId && currentTrip.blockId !== masterTrip.blockId ? 3 : 0;
+    const stopPatternPenalty = getStopPatternPenalty(currentTrip, masterTrip);
+
+    return {
+        startDiff,
+        score: (startDiff * 3) + endDiff + travelDiff + blockPenalty + stopPatternPenalty,
+    };
 };
 
 export const classifyMatchedTripChange = (currentTrip: MasterTrip, masterTrip: MasterTrip): TripChangeKind => {
@@ -216,8 +288,16 @@ export const buildMasterComparisonChangeSummary = (
     const routeNameIsInScope = (routeName: string, direction: DirectionKey): boolean => {
         if (!routeNameFilter) return true;
         if (routeNameFilter.has(routeName)) return true;
-        if (routeFilterAllowsDirectionless) return true;
-        return routeDirectionFilter?.has(direction) ?? false;
+        const routeBucket = buildRouteDirectionBucketKey(routeName, direction);
+        const routeKey = getRouteKey(routeName);
+        const scopedBuckets = new Set(options?.routeNames?.map(name => {
+            const dir = extractDirectionFromName(name);
+            return dir ? buildRouteDirectionBucketKey(name, dir as DirectionKey) : null;
+        }).filter((bucket): bucket is string => !!bucket) ?? []);
+        const scopedRouteKeys = new Set(options?.routeNames?.map(getRouteKey) ?? []);
+        if (scopedBuckets.has(routeBucket)) return true;
+        if (routeFilterAllowsDirectionless && scopedRouteKeys.has(routeKey)) return true;
+        return (routeDirectionFilter?.has(direction) ?? false) && scopedRouteKeys.has(routeKey);
     };
 
     schedules.forEach(table => {
@@ -273,33 +353,47 @@ export const buildDetailedMasterComparison = (
         };
     }
 
-    const THRESHOLD = 5;
+    const TIME_MATCH_THRESHOLD = 10;
     const SHIFT_SEARCH_RANGE = 15;
+    const MIN_GLOBAL_SHIFT_MATCHES = 2;
 
     const currentTripComparisons = new Map<string, CurrentTripComparisonEntry>();
     const matchedMasterKeys = new Set<string>();
     const ambiguityProtectedMasterKeys = new Set<string>();
     const shiftByDir: Partial<Record<DirectionKey, number>> = {};
 
-    const masterByDir: Record<DirectionKey, MasterTrip[]> = { North: [], South: [] };
+    const masterByBucket = new Map<string, { routeKey: string; direction: DirectionKey; trips: MasterTrip[] }>();
     const currentRouteNamesByTripKey = new Map<string, string>();
     masterBaseline.forEach(table => {
-        const dir = toDirection(table.routeName);
+        const bucket = getRouteBucketInfo(table.routeName);
+        const existingBucket = masterByBucket.get(bucket.bucketKey) || {
+            routeKey: bucket.routeKey,
+            direction: bucket.direction,
+            trips: [],
+        };
         table.trips.forEach(trip => {
-            masterByDir[dir].push(trip);
+            existingBucket.trips.push(trip);
         });
+        masterByBucket.set(bucket.bucketKey, existingBucket);
     });
 
-    const currentByDir: Record<DirectionKey, MasterTrip[]> = { North: [], South: [] };
+    const currentByBucket = new Map<string, { routeKey: string; direction: DirectionKey; trips: MasterTrip[] }>();
     schedules.forEach(table => {
-        const dir = toDirection(table.routeName);
+        const bucket = getRouteBucketInfo(table.routeName);
+        const existingBucket = currentByBucket.get(bucket.bucketKey) || {
+            routeKey: bucket.routeKey,
+            direction: bucket.direction,
+            trips: [],
+        };
         table.trips.forEach(trip => {
-            currentByDir[dir].push(trip);
-            currentRouteNamesByTripKey.set(buildTripKey(dir, trip.id), table.routeName);
+            existingBucket.trips.push(trip);
+            currentRouteNamesByTripKey.set(buildTripKey(bucket.direction, trip.id), table.routeName);
         });
+        currentByBucket.set(bucket.bucketKey, existingBucket);
     });
 
     const setMatched = (
+        bucketKey: string,
         direction: DirectionKey,
         currentTrip: MasterTrip,
         masterTrip: MasterTrip,
@@ -324,16 +418,15 @@ export const buildDetailedMasterComparison = (
             reason,
             ...(matchMethod === 'time-shift' ? { shiftMinutes } : {})
         });
-        matchedMasterKeys.add(buildMatchedMasterKey(direction, masterTrip));
+        matchedMasterKeys.add(buildMatchedMasterKey(bucketKey, masterTrip));
     };
 
-    for (const dir of DIRECTIONS) {
-        const masterTrips = [...masterByDir[dir]].sort((a, b) => a.startTime - b.startTime);
-        const currentTrips = [...currentByDir[dir]].sort((a, b) => a.startTime - b.startTime);
+    currentByBucket.forEach((currentBucket, bucketKey) => {
+        const dir = currentBucket.direction;
+        const masterTrips = [...(masterByBucket.get(bucketKey)?.trips || [])].sort((a, b) => a.startTime - b.startTime);
+        const currentTrips = [...currentBucket.trips].sort((a, b) => a.startTime - b.startTime);
 
-        if (masterTrips.length === 0 || currentTrips.length === 0) continue;
-        const baselineHasDurableLineage = masterTrips.some(masterTrip => !!masterTrip.lineageId);
-
+        if (masterTrips.length === 0 || currentTrips.length === 0) return;
         const exactIdQueues = new Map<string, MasterTrip[]>();
         const exactLineageQueues = new Map<string, MasterTrip[]>();
         masterTrips.forEach(masterTrip => {
@@ -353,35 +446,33 @@ export const buildDetailedMasterComparison = (
         currentTrips.forEach(currentTrip => {
             if (currentTrip.lineageId) {
                 const lineageQueue = exactLineageQueues.get(currentTrip.lineageId) || [];
-                const lineageMatch = lineageQueue.find(masterTrip => !matchedMasterKeys.has(buildMatchedMasterKey(dir, masterTrip)));
+                const lineageMatch = lineageQueue.find(masterTrip => !matchedMasterKeys.has(buildMatchedMasterKey(bucketKey, masterTrip)));
 
                 if (lineageMatch) {
-                    setMatched(dir, currentTrip, lineageMatch, 'lineage');
+                    setMatched(bucketKey, dir, currentTrip, lineageMatch, 'lineage');
                     return;
                 }
 
-                // When the baseline carries durable lineage IDs, a current trip with a
-                // different/new lineage is operationally new. Do not "helpfully" match it
-                // to a same-time baseline trip, or added duplicate service can be shown as
-                // RETIMED instead of NEW.
-                if (baselineHasDurableLineage) {
-                    return;
-                }
+                // Lineage is a high-confidence signal, but not a hard requirement.
+                // Generated/imported drafts can legitimately recreate the same public
+                // service trip with a new lineage. In that case, fall through to exact
+                // ID and time-proximity matching so a 7:01 replacement for a 7:00
+                // master trip is shown as +1m, not NEW plus REMOVED.
             }
 
             const queue = exactIdQueues.get(currentTrip.id) || [];
-            const exactMatch = queue.find(masterTrip => !matchedMasterKeys.has(buildMatchedMasterKey(dir, masterTrip)));
+            const exactMatch = queue.find(masterTrip => !matchedMasterKeys.has(buildMatchedMasterKey(bucketKey, masterTrip)));
 
             if (exactMatch) {
-                setMatched(dir, currentTrip, exactMatch, 'trip-id');
+                setMatched(bucketKey, dir, currentTrip, exactMatch, 'trip-id');
                 return;
             }
 
             remainingCurrentTrips.push(currentTrip);
         });
 
-        const remainingMasterTrips = masterTrips.filter(masterTrip => !matchedMasterKeys.has(buildMatchedMasterKey(dir, masterTrip)));
-        if (remainingCurrentTrips.length === 0 || remainingMasterTrips.length === 0) continue;
+        const remainingMasterTrips = masterTrips.filter(masterTrip => !matchedMasterKeys.has(buildMatchedMasterKey(bucketKey, masterTrip)));
+        if (remainingCurrentTrips.length === 0 || remainingMasterTrips.length === 0) return;
 
         const runGreedyMatch = (shiftMinutes: number) => {
             const localUsed = new Set<string>();
@@ -393,20 +484,19 @@ export const buildDetailedMasterComparison = (
                 let bestDiff = Infinity;
 
                 for (const masterTrip of remainingMasterTrips) {
-                    const masterKey = buildMatchedMasterKey(dir, masterTrip);
+                    const masterKey = buildMatchedMasterKey(bucketKey, masterTrip);
                     if (localUsed.has(masterKey)) continue;
                     if (matchedMasterKeys.has(masterKey)) continue;
 
-                    const adjustedStart = currentTrip.startTime - shiftMinutes;
-                    const diff = Math.abs(adjustedStart - masterTrip.startTime);
-                    if (diff <= THRESHOLD && diff < bestDiff) {
-                        bestDiff = diff;
+                    const matchScore = scorePotentialMatch(currentTrip, masterTrip, shiftMinutes);
+                    if (matchScore.startDiff <= TIME_MATCH_THRESHOLD && matchScore.score < bestDiff) {
+                        bestDiff = matchScore.score;
                         bestMatch = masterTrip;
                     }
                 }
 
                 if (bestMatch) {
-                    localUsed.add(buildMatchedMasterKey(dir, bestMatch));
+                    localUsed.add(buildMatchedMasterKey(bucketKey, bestMatch));
                     pairs.push({ current: currentTrip, master: bestMatch });
                     totalDiff += bestDiff;
                 }
@@ -432,29 +522,47 @@ export const buildDetailedMasterComparison = (
             }
         }
 
-        const finalMatch = runGreedyMatch(bestShift);
+        const unshiftedMatch = bestShift === 0 ? { count: bestCount } : runGreedyMatch(0);
+        const effectiveShift = (
+            bestShift !== 0
+            && (
+                bestCount >= MIN_GLOBAL_SHIFT_MATCHES
+                || bestCount > unshiftedMatch.count
+            )
+        )
+            ? bestShift
+            : 0;
+
+        const finalMatch = runGreedyMatch(effectiveShift);
         if (finalMatch.count > 0) {
-            shiftByDir[dir] = bestShift;
+            if (effectiveShift !== 0) {
+                shiftByDir[dir] = effectiveShift;
+            }
         }
 
         const locallyUsedMasterKeys = new Set<string>();
         for (const currentTrip of remainingCurrentTrips) {
             const candidates = remainingMasterTrips
                 .map(masterTrip => {
-                    const masterKey = buildMatchedMasterKey(dir, masterTrip);
+                    const masterKey = buildMatchedMasterKey(bucketKey, masterTrip);
                     if (matchedMasterKeys.has(masterKey) || locallyUsedMasterKeys.has(masterKey)) {
                         return null;
                     }
 
-                    const adjustedStart = currentTrip.startTime - bestShift;
-                    const diffMinutes = Math.abs(adjustedStart - masterTrip.startTime);
-                    if (diffMinutes > THRESHOLD) return null;
+                    const matchScore = scorePotentialMatch(currentTrip, masterTrip, effectiveShift);
+                    if (matchScore.startDiff > TIME_MATCH_THRESHOLD) return null;
 
-                    return { masterTrip, diffMinutes, masterKey };
+                    return {
+                        masterTrip,
+                        diffMinutes: matchScore.startDiff,
+                        score: matchScore.score,
+                        masterKey,
+                    };
                 })
-                .filter((entry): entry is { masterTrip: MasterTrip; diffMinutes: number; masterKey: string } => !!entry)
+                .filter((entry): entry is { masterTrip: MasterTrip; diffMinutes: number; score: number; masterKey: string } => !!entry)
                 .sort((a, b) => (
-                    a.diffMinutes - b.diffMinutes
+                    a.score - b.score
+                    || a.diffMinutes - b.diffMinutes
                     || a.masterTrip.startTime - b.masterTrip.startTime
                 ));
 
@@ -464,9 +572,7 @@ export const buildDetailedMasterComparison = (
 
             if (candidates.length > 1) {
                 const [bestCandidate, secondCandidate] = candidates;
-                const bestDiff = bestCandidate.diffMinutes;
-                const secondDiff = secondCandidate.diffMinutes;
-                const isAmbiguous = secondDiff <= bestDiff + 1;
+                const isAmbiguous = secondCandidate.score <= bestCandidate.score + 4;
 
                 if (isAmbiguous) {
                     const key = buildTripKey(dir, currentTrip.id);
@@ -475,7 +581,7 @@ export const buildDetailedMasterComparison = (
                         diffMinutes: candidate.diffMinutes,
                     }));
                     shortlist.forEach(candidate => {
-                        ambiguityProtectedMasterKeys.add(buildMatchedMasterKey(dir, candidate.masterTrip));
+                        ambiguityProtectedMasterKeys.add(buildMatchedMasterKey(bucketKey, candidate.masterTrip));
                     });
 
                     currentTripComparisons.set(key, {
@@ -484,9 +590,11 @@ export const buildDetailedMasterComparison = (
                         routeName: currentRouteNamesByTripKey.get(key) || dir,
                         currentTripId: currentTrip.id,
                         confidence: 'low',
-                        shiftMinutes: bestShift,
+                        ...(effectiveShift !== 0 ? { shiftMinutes: effectiveShift } : {}),
                         candidates: shortlist,
-                        reason: `Multiple baseline trips are plausible after ${bestShift > 0 ? '+' : ''}${bestShift}m alignment. Review before trusting this delta.`,
+                        reason: effectiveShift !== 0
+                            ? `Multiple baseline trips are plausible after ${effectiveShift > 0 ? '+' : ''}${effectiveShift}m alignment. Review before trusting this delta.`
+                            : 'Multiple baseline trips are plausible. Review before trusting this delta.',
                     });
                     continue;
                 }
@@ -494,15 +602,42 @@ export const buildDetailedMasterComparison = (
 
             const bestCandidate = candidates[0];
             locallyUsedMasterKeys.add(bestCandidate.masterKey);
-            setMatched(dir, currentTrip, bestCandidate.masterTrip, 'time-shift', bestShift);
+            setMatched(bucketKey, dir, currentTrip, bestCandidate.masterTrip, 'time-shift', effectiveShift);
         }
-    }
+    });
+
+    const POSSIBLE_REPLACEMENT_WINDOW = 35;
+    const getPossibleReplacements = (
+        bucketKey: string,
+        direction: DirectionKey,
+        masterTrip: MasterTrip,
+    ): PossibleMasterReplacementCandidate[] => {
+        const bucket = currentByBucket.get(bucketKey);
+        if (!bucket) return [];
+
+        return bucket.trips
+            .filter(currentTrip => !currentTripComparisons.has(buildTripKey(direction, currentTrip.id)))
+            .map(currentTrip => ({
+                currentTripId: currentTrip.id,
+                routeName: currentRouteNamesByTripKey.get(buildTripKey(direction, currentTrip.id)) || direction,
+                startTime: currentTrip.startTime,
+                endTime: currentTrip.endTime,
+                diffMinutes: currentTrip.startTime - masterTrip.startTime,
+            }))
+            .filter(candidate => Math.abs(candidate.diffMinutes) <= POSSIBLE_REPLACEMENT_WINDOW)
+            .sort((a, b) => (
+                Math.abs(a.diffMinutes) - Math.abs(b.diffMinutes)
+                || a.startTime - b.startTime
+            ))
+            .slice(0, 2);
+    };
 
     const removedMasterTrips: RemovedMasterComparisonEntry[] = [];
     masterBaseline.forEach(table => {
-        const dir = toDirection(table.routeName);
+        const bucket = getRouteBucketInfo(table.routeName);
+        const dir = bucket.direction;
         table.trips.forEach(trip => {
-            const masterKey = buildMatchedMasterKey(dir, trip);
+            const masterKey = buildMatchedMasterKey(bucket.bucketKey, trip);
             if (!matchedMasterKeys.has(masterKey) && !ambiguityProtectedMasterKeys.has(masterKey)) {
                 removedMasterTrips.push({
                     status: 'removed',
@@ -511,14 +646,16 @@ export const buildDetailedMasterComparison = (
                     masterTrip: { ...trip, direction: dir },
                     confidence: 'low',
                     reason: 'No current trip matched this baseline trip.',
+                    possibleReplacements: getPossibleReplacements(bucket.bucketKey, dir, trip),
                 });
             }
         });
     });
     removedMasterTrips.sort((a, b) => a.masterTrip.startTime - b.masterTrip.startTime);
 
-    for (const dir of DIRECTIONS) {
-        currentByDir[dir].forEach(currentTrip => {
+    currentByBucket.forEach(currentBucket => {
+        const dir = currentBucket.direction;
+        currentBucket.trips.forEach(currentTrip => {
             const key = buildTripKey(dir, currentTrip.id);
             if (currentTripComparisons.has(key)) return;
 
@@ -531,7 +668,7 @@ export const buildDetailedMasterComparison = (
                 reason: 'No baseline trip matched this current trip.',
             });
         });
-    }
+    });
 
     return {
         currentTripComparisons,

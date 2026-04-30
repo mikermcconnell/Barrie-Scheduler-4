@@ -125,6 +125,10 @@ export function insertDuplicatedFleetPlanRow(rows: FleetPlanRow[], rowId: string
     ];
 }
 
+export function removeFleetPlanRow(rows: FleetPlanRow[], rowId: string): FleetPlanRow[] {
+    return rows.filter((row) => row.id !== rowId);
+}
+
 function setFleetPlanCellValue(row: FleetPlanRow, column: FleetPlanGridColumn, value: string): FleetPlanRow {
     if (column.kind === 'timeline') {
         return {

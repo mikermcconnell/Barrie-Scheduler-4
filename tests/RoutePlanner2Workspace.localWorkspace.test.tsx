@@ -73,22 +73,24 @@ describe('RoutePlanner2Workspace local workspace', () => {
 
     expect(view.textContent).toContain('Route Planner 2');
     expect(view.textContent).toContain('Local draft');
+    expect(view.textContent).toContain('Mapbox planning map');
+    expect(view.textContent).toContain('Start by clicking the map');
     expect(view.textContent).toContain('Clean Concept A');
     expect(notes?.value).toContain('Blank route concept');
     expect(view.textContent).not.toContain('Shuttle Template');
   });
 
-  it('adds Option 2 as a local scenario', () => {
+  it('adds Option 2 as a local route', () => {
     const view = renderWorkspace();
 
     flushSync(() => {
-      click(findButton(view, 'Add scenario'));
+      click(findButton(view, 'Add route'));
     });
 
     expect(view.textContent).toContain('Option 2');
   });
 
-  it('edits the selected scenario name', () => {
+  it('edits the selected route name', () => {
     const view = renderWorkspace();
     const nameInput = view.querySelector('#rp2-scenario-name') as HTMLInputElement | null;
 
@@ -101,24 +103,24 @@ describe('RoutePlanner2Workspace local workspace', () => {
     expect(view.textContent).toContain('Downtown Loop Option');
   });
 
-  it('marks the selected scenario as preferred', () => {
+  it('marks the selected route as preferred', () => {
     const view = renderWorkspace();
 
-    expect(view.textContent).toContain('No preferred scenario yet');
+    expect(view.textContent).toContain('No preferred route yet');
 
     flushSync(() => {
       click(findButton(view, 'Mark preferred'));
     });
 
-    expect(view.textContent).not.toContain('No preferred scenario yet');
+    expect(view.textContent).not.toContain('No preferred route yet');
     expect(view.textContent).toContain('(preferred)');
   });
 
-  it('deletes the selected scenario when more than one exists', () => {
+  it('deletes the selected route when more than one exists', () => {
     const view = renderWorkspace();
 
     flushSync(() => {
-      click(findButton(view, 'Add scenario'));
+      click(findButton(view, 'Add route'));
     });
     expect(view.textContent).toContain('Option 2');
 
@@ -130,29 +132,60 @@ describe('RoutePlanner2Workspace local workspace', () => {
     expect(view.textContent).toContain('Clean Concept A');
   });
 
-  it('renders the scenario comparison table', () => {
+  it('renders the route comparison table', () => {
     const view = renderWorkspace();
 
-    expect(view.textContent).toContain('Scenario comparison');
+    expect(view.textContent).toContain('Route comparison');
     expect(view.textContent).toContain('Stops');
     expect(view.textContent).toContain('Runtime');
+    expect(view.textContent).toContain('Dwell');
     expect(view.textContent).toContain('Buses');
     expect(view.textContent).toContain('Warnings');
   });
 
-  it('adds route points and stops from the authoring canvas', () => {
+  it('renders map authoring modes for Mapbox-backed planning', () => {
+    const view = renderWorkspace();
+
+    expect(view.textContent).toContain('Draw route');
+    expect(view.textContent).not.toContain('Inspect');
+    expect(view.textContent).not.toContain('Shape alignment');
+    expect(view.textContent).not.toContain('Add shape point');
+    expect(view.textContent).toContain('Route snap:');
+    expect(view.textContent).toContain('click the route line to create a waypoint');
+    expect(view.textContent).toContain('drag the + handle');
+  });
+
+  it('adds stops from the authoring canvas', () => {
     const view = renderWorkspace();
 
     flushSync(() => {
-      click(findButton(view, 'Add route point'));
-      click(findButton(view, 'Add stop'));
+      click(findButton(view, 'Add next stop'));
     });
 
     const stopNameInput = view.querySelector('#rp2-stop-name') as HTMLInputElement | null;
 
-    expect(view.textContent).toContain('Route points');
     expect(view.textContent).toContain('Stop order');
     expect(stopNameInput?.value).toBe('Stop 1');
+  });
+
+  it('deletes a stop from the map stop order list', () => {
+    const view = renderWorkspace();
+
+    flushSync(() => {
+      click(findButton(view, 'Add next stop'));
+    });
+    expect(view.textContent).toContain('Stop order');
+    expect(view.textContent).toContain('Stop 1');
+
+    const deleteStopButton = view.querySelector('button[aria-label="Delete Stop 1"]');
+    expect(deleteStopButton).not.toBeNull();
+
+    flushSync(() => {
+      click(deleteStopButton);
+    });
+
+    expect(view.textContent).not.toContain('Stop order');
+    expect(view.textContent).toContain('Start by clicking the map');
   });
 
   it('marks start and end terminals through stop role editing', () => {
@@ -161,7 +194,7 @@ describe('RoutePlanner2Workspace local workspace', () => {
     expect(view.textContent).toContain('Add stops before checking route feasibility.');
 
     flushSync(() => {
-      click(findButton(view, 'Add stop'));
+      click(findButton(view, 'Add next stop'));
     });
     expect(view.textContent).toContain('Add a start terminal before estimating cycle time.');
 
@@ -172,7 +205,7 @@ describe('RoutePlanner2Workspace local workspace', () => {
       setInputValue(roleSelect!, 'start-terminal');
     });
     flushSync(() => {
-      click(findButton(view, 'Add stop'));
+      click(findButton(view, 'Add next stop'));
     });
     flushSync(() => {
       click(findButton(view, 'Stop 2'));
@@ -184,7 +217,10 @@ describe('RoutePlanner2Workspace local workspace', () => {
     });
 
     expect(view.textContent).toContain('Runtime uses fallback assumptions');
-    expect(view.textContent).toContain('Segment runtime source');
+    expect(view.textContent).toContain('Segment runtimes');
+    expect(view.textContent).toContain('Dwell / stop sec');
+    expect(view.textContent).toContain('Terminal layover stays separate');
+    expect(view.textContent).toContain('Override min');
     expect(view.textContent).toContain('fallback');
   });
 
@@ -192,14 +228,14 @@ describe('RoutePlanner2Workspace local workspace', () => {
     const view = renderWorkspace();
 
     flushSync(() => {
-      click(findButton(view, 'Add stop'));
+      click(findButton(view, 'Add next stop'));
     });
     const roleSelect = view.querySelector('#rp2-stop-role') as HTMLSelectElement | null;
     flushSync(() => {
       setInputValue(roleSelect!, 'start-terminal');
     });
     flushSync(() => {
-      click(findButton(view, 'Add stop'));
+      click(findButton(view, 'Add next stop'));
     });
     flushSync(() => {
       click(findButton(view, 'Stop 2'));

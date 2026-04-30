@@ -1,0 +1,89 @@
+import { describe, expect, it, vi } from 'vitest';
+
+import { addRoutePlanner2LineWaypoint, addRoutePlanner2Stop } from '../utils/route-planner-2/routePlanner2Authoring';
+import { createRoutePlanner2Project } from '../utils/route-planner-2/routePlanner2ProjectFactory';
+import { snapRoutePlanner2ScenarioToRoad, snapRoutePlanner2WaypointsToRoad } from '../utils/route-planner-2/routePlanner2RoadSnap';
+
+describe('Route Planner 2 road snap', () => {
+  it('falls back to straight coordinates when no Mapbox token is available', async () => {
+    const waypoints: [number, number][] = [[-79.7, 44.38], [-79.68, 44.39]];
+
+    const result = await snapRoutePlanner2WaypointsToRoad(waypoints, { token: null });
+
+    expect(result).toMatchObject({ coordinates: waypoints, source: 'fallback' });
+    expect(result.distanceMeters).toBeGreaterThan(0);
+  });
+
+  it('uses the Mapbox Directions response when a token is available', async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        code: 'Ok',
+        routes: [{
+          duration: 180,
+          distance: 1200,
+          geometry: {
+            type: 'LineString',
+            coordinates: [[-79.7, 44.38], [-79.69, 44.385], [-79.68, 44.39]],
+          },
+        }],
+      }),
+    } as Response));
+
+    const result = await snapRoutePlanner2WaypointsToRoad([[-79.7, 44.38], [-79.68, 44.39]], {
+      token: 'test-token',
+      fetchImpl,
+    });
+
+    expect(result.source).toBe('mapbox');
+    expect(result.coordinates).toEqual([[-79.7, 44.38], [-79.69, 44.385], [-79.68, 44.39]]);
+    expect(result.durationSeconds).toBe(180);
+    expect(result.distanceMeters).toBe(1200);
+    expect(fetchImpl).toHaveBeenCalledWith(expect.stringContaining('api.mapbox.com/directions/v5/mapbox/driving'));
+    expect(fetchImpl).toHaveBeenCalledWith(expect.stringContaining('access_token=test-token'));
+  });
+
+  it('returns segment runtime estimates for stop-to-stop paths with line waypoints', async () => {
+    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now: '2026-04-29T12:00:00.000Z' });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-1', name: 'Start', lat: 44.38, lng: -79.7 });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-2', name: 'End', lat: 44.39, lng: -79.68 });
+    project = addRoutePlanner2LineWaypoint(project, 'scenario-1', {
+      id: 'waypoint-1',
+      afterStopId: 'stop-1',
+      beforeStopId: 'stop-2',
+      lat: 44.385,
+      lng: -79.69,
+    });
+
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        code: 'Ok',
+        routes: [{
+          duration: 90,
+          distance: 600,
+          geometry: {
+            type: 'LineString',
+            coordinates: [[-79.7, 44.38], [-79.69, 44.385]],
+          },
+        }],
+      }),
+    } as Response));
+
+    const result = await snapRoutePlanner2ScenarioToRoad(project.scenarios[0]!, {
+      token: 'test-token',
+      fetchImpl,
+    });
+
+    expect(result.segmentEstimates).toHaveLength(1);
+    expect(result.segmentEstimates[0]).toMatchObject({
+      fromStopId: 'stop-1',
+      toStopId: 'stop-2',
+      runtimeMinutes: 3,
+      source: 'mapbox',
+      confidence: 'medium',
+      distanceKm: 1.2,
+    });
+    expect(result.segmentEstimates[0]?.pathFingerprint).toContain('-79.7,44.38|-79.69,44.385|-79.68,44.39');
+  });
+});

@@ -175,7 +175,45 @@ interface AggregatedSegmentBucket {
   segmentName: string;
   fromRouteStopIndex?: number;
   toRouteStopIndex?: number;
-  bucketMap: Map<string, { values: number[]; dates: Set<string>; dayTotals: Map<string, number> }>;
+  bucketMap: Map<string, AggregatedBucketData>;
+}
+
+interface AggregatedBucketData {
+  values: number[];
+  dates: Set<string>;
+  dayTotals: Map<string, number[]>;
+}
+
+function createAggregatedBucketData(): AggregatedBucketData {
+  return {
+    values: [],
+    dates: new Set(),
+    dayTotals: new Map(),
+  };
+}
+
+function addAggregatedBucketRuntime(
+  bucket: AggregatedBucketData,
+  dayDate: string,
+  runtimeMinutes: number,
+): void {
+  bucket.values.push(runtimeMinutes);
+  bucket.dates.add(dayDate);
+  const dayValues = bucket.dayTotals.get(dayDate) || [];
+  dayValues.push(runtimeMinutes);
+  bucket.dayTotals.set(dayDate, dayValues);
+}
+
+function buildBucketContributions(bucketData: AggregatedBucketData): BucketContribution[] {
+  return Array.from(bucketData.dayTotals.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([date, runtimes]) => {
+      const sorted = [...runtimes].sort((a, b) => a - b);
+      return {
+        date,
+        runtime: Math.round(percentileInc(sorted, 0.5) * 100) / 100,
+      };
+    });
 }
 
 interface PreferredTripPattern {
@@ -780,9 +818,7 @@ function buildRuntimeDataFromDirectionBuckets(
       for (const [bucket, bucketData] of segment.bucketMap) {
         allTimeBuckets.add(bucket);
         const sorted = [...bucketData.values].sort((a, b) => a - b);
-        const contributions: BucketContribution[] = Array.from(bucketData.dayTotals.entries())
-          .sort((a, b) => a[0].localeCompare(b[0]))
-          .map(([date, runtime]) => ({ date, runtime }));
+        const contributions: BucketContribution[] = buildBucketContributions(bucketData);
         timeBuckets[bucket] = {
           p50: Math.round(percentileInc(sorted, 0.5) * 100) / 100,
           p80: Math.round(percentileInc(sorted, 0.8) * 100) / 100,
@@ -992,12 +1028,10 @@ function buildTripBucketedRuntimesFromTrips(
     candidate.details.forEach(({ segment, runtimeMinutes }) => {
       const target = ensureBucket(direction, segment);
       if (!target.bucketMap.has(cycleBucket)) {
-        target.bucketMap.set(cycleBucket, { values: [], dates: new Set(), dayTotals: new Map() });
+        target.bucketMap.set(cycleBucket, createAggregatedBucketData());
       }
       const bucket = target.bucketMap.get(cycleBucket)!;
-      bucket.values.push(runtimeMinutes);
-      bucket.dates.add(dayDate);
-      bucket.dayTotals.set(dayDate, (bucket.dayTotals.get(dayDate) || 0) + runtimeMinutes);
+      addAggregatedBucketRuntime(bucket, dayDate, runtimeMinutes);
     });
   };
 
@@ -1226,12 +1260,10 @@ function buildTripBucketedRuntimesFromTrips(
           details.forEach(({ segment, runtimeMinutes }) => {
             const target = ensureBucket(direction, segment);
             if (!target.bucketMap.has(bucket)) {
-              target.bucketMap.set(bucket, { values: [], dates: new Set(), dayTotals: new Map() });
+              target.bucketMap.set(bucket, createAggregatedBucketData());
             }
             const bucketData = target.bucketMap.get(bucket)!;
-            bucketData.values.push(runtimeMinutes);
-            bucketData.dates.add(dayDate);
-            bucketData.dayTotals.set(dayDate, (bucketData.dayTotals.get(dayDate) || 0) + runtimeMinutes);
+            addAggregatedBucketRuntime(bucketData, dayDate, runtimeMinutes);
           });
         });
         return;
@@ -1251,12 +1283,10 @@ function buildTripBucketedRuntimesFromTrips(
         for (const obs of entry.observations) {
           const target = ensureBucket(direction, segment);
           if (!target.bucketMap.has(obs.timeBucket)) {
-            target.bucketMap.set(obs.timeBucket, { values: [], dates: new Set(), dayTotals: new Map() });
+            target.bucketMap.set(obs.timeBucket, createAggregatedBucketData());
           }
           const bucketData = target.bucketMap.get(obs.timeBucket)!;
-          bucketData.values.push(obs.runtimeMinutes);
-          bucketData.dates.add(dayDate);
-          bucketData.dayTotals.set(dayDate, (bucketData.dayTotals.get(dayDate) || 0) + obs.runtimeMinutes);
+          addAggregatedBucketRuntime(bucketData, dayDate, obs.runtimeMinutes);
         }
       });
     });
@@ -1569,7 +1599,7 @@ export function computeRuntimesFromPerformance(
     segmentName: string;
     fromRouteStopIndex?: number;
     toRouteStopIndex?: number;
-    bucketMap: Map<string, { values: number[]; dates: Set<string>; dayTotals: Map<string, number> }>;
+    bucketMap: Map<string, AggregatedBucketData>;
   }>>();
 
   const ensureSegmentBucket = (
@@ -1620,12 +1650,10 @@ export function computeRuntimesFromPerformance(
 
       for (const obs of entry.observations) {
         if (!segment.bucketMap.has(obs.timeBucket)) {
-          segment.bucketMap.set(obs.timeBucket, { values: [], dates: new Set(), dayTotals: new Map() });
+          segment.bucketMap.set(obs.timeBucket, createAggregatedBucketData());
         }
         const bucket = segment.bucketMap.get(obs.timeBucket)!;
-        bucket.values.push(obs.runtimeMinutes);
-        bucket.dates.add(dayDate);
-        bucket.dayTotals.set(dayDate, (bucket.dayTotals.get(dayDate) || 0) + obs.runtimeMinutes);
+        addAggregatedBucketRuntime(bucket, dayDate, obs.runtimeMinutes);
       }
     }
   }
@@ -1646,12 +1674,10 @@ export function computeRuntimesFromPerformance(
 
       for (const obs of entry.observations) {
         if (!segment.bucketMap.has(obs.timeBucket)) {
-          segment.bucketMap.set(obs.timeBucket, { values: [], dates: new Set(), dayTotals: new Map() });
+          segment.bucketMap.set(obs.timeBucket, createAggregatedBucketData());
         }
         const bucket = segment.bucketMap.get(obs.timeBucket)!;
-        bucket.values.push(obs.runtimeMinutes);
-        bucket.dates.add(dayDate);
-        bucket.dayTotals.set(dayDate, (bucket.dayTotals.get(dayDate) || 0) + obs.runtimeMinutes);
+        addAggregatedBucketRuntime(bucket, dayDate, obs.runtimeMinutes);
       }
     }
   }
@@ -1681,9 +1707,7 @@ export function computeRuntimesFromPerformance(
       for (const [bucket, bucketData] of segment.bucketMap) {
         allTimeBuckets.add(bucket);
         const sorted = [...bucketData.values].sort((a, b) => a - b);
-        const contributions: BucketContribution[] = Array.from(bucketData.dayTotals.entries())
-          .sort((a, b) => a[0].localeCompare(b[0]))
-          .map(([date, runtime]) => ({ date, runtime }));
+        const contributions: BucketContribution[] = buildBucketContributions(bucketData);
         timeBuckets[bucket] = {
           p50: Math.round(percentileInc(sorted, 0.5) * 100) / 100,
           p80: Math.round(percentileInc(sorted, 0.8) * 100) / 100,
@@ -1841,3 +1865,4 @@ export function getAvailableRuntimeRoutes(
 
   return results.sort((a, b) => a.routeId.localeCompare(b.routeId, undefined, { numeric: true }));
 }
+

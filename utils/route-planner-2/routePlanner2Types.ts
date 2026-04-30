@@ -1,7 +1,7 @@
 export type RoutePlanner2ProjectStatus = 'local-draft' | 'local-saved' | 'archived';
 export type RoutePlanner2ScenarioStatus = 'draft' | 'review';
 export type RoutePlanner2StopRole = 'regular' | 'timed' | 'start-terminal' | 'end-terminal';
-export type RoutePlanner2RuntimeSource = 'observed-proxy' | 'manual' | 'fallback' | 'missing';
+export type RoutePlanner2RuntimeSource = 'observed-proxy' | 'manual' | 'mapbox' | 'fallback' | 'missing';
 export type RoutePlanner2Confidence = 'high' | 'medium' | 'low' | 'not-ready';
 export type RoutePlanner2SegmentConfidence = 'high' | 'medium' | 'low' | 'missing';
 export type RoutePlanner2WarningSeverity = 'info' | 'warning' | 'blocking';
@@ -24,6 +24,8 @@ export interface RoutePlanner2Scenario {
     alignment: RoutePlanner2RoutePoint[];
     stops: RoutePlanner2Stop[];
     service: RoutePlanner2ServiceAssumptions;
+    runtimeEstimates?: RoutePlanner2SegmentRuntime[];
+    runtimeOverrides?: Record<string, RoutePlanner2SegmentRuntimeOverride>;
     notes: string;
     feasibility?: RoutePlanner2FeasibilitySummary;
     createdAt: string;
@@ -35,6 +37,9 @@ export interface RoutePlanner2RoutePoint {
     lat: number;
     lng: number;
     sequence: number;
+    afterStopId?: string;
+    beforeStopId?: string;
+    segmentSequence?: number;
 }
 
 export interface RoutePlanner2Stop {
@@ -55,12 +60,16 @@ export interface RoutePlanner2ServiceAssumptions {
     frequencyMinutes: number;
     startTerminalLayoverMinutes: number;
     endTerminalLayoverMinutes: number;
+    intermediateStopDwellSeconds: number;
     dayType?: 'weekday' | 'saturday' | 'sunday';
     planningPeriod?: 'all-day' | 'am-peak' | 'midday' | 'pm-peak' | 'evening';
 }
 
 export interface RoutePlanner2FeasibilitySummary {
     oneWayRuntimeMinutes: number | null;
+    segmentRuntimeMinutes: number | null;
+    dwellTimeMinutes: number;
+    intermediateStopCount: number;
     cycleTimeMinutes: number | null;
     busesRequired: number | null;
     confidence: RoutePlanner2Confidence;
@@ -76,7 +85,17 @@ export interface RoutePlanner2SegmentRuntime {
     source: RoutePlanner2RuntimeSource;
     sampleSize?: number;
     confidence: RoutePlanner2SegmentConfidence;
+    distanceKm?: number;
+    durationSeconds?: number;
+    pathFingerprint?: string;
+    updatedAt?: string;
     fallbackReason?: string;
+}
+
+export interface RoutePlanner2SegmentRuntimeOverride {
+    runtimeMinutes: number;
+    notes?: string;
+    updatedAt: string;
 }
 
 export interface RoutePlanner2Warning {

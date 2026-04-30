@@ -11,6 +11,10 @@ import {
 import { lazyWithRetry } from '../../utils/lazyWithRetry';
 import { buildPerformanceMetadataHealth } from '../../utils/performanceImportHealth';
 import { useWorkspaceAccess } from '../../hooks/useWorkspaceAccess';
+import {
+    filterPerformanceSummaryByRoute,
+    getAvailablePerformanceRoutes,
+} from '../../utils/performanceRouteFilter';
 
 interface PerformanceDashboardProps {
     onClose: () => void;
@@ -93,13 +97,22 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onCl
     const { canAccess } = useWorkspaceAccess();
     const [view, setView] = useState<PerformanceView>(() => (autoOpen ? 'loading' : 'landing'));
     const [importReturnTarget, setImportReturnTarget] = useState<ImportReturnTarget>(() => (autoOpen ? 'close' : 'landing'));
+    const [selectedRouteId, setSelectedRouteId] = useState<string>('all');
 
     const metadataQuery = usePerformanceMetadataQuery(team?.id);
     const hasExistingData = metadataQuery.data != null;
-    const shouldLoadOverviewData = hasExistingData && (view === 'workspace' || (autoOpen && view === 'loading'));
+    const shouldLoadOverviewData = hasExistingData && (view === 'landing' || view === 'workspace' || (autoOpen && view === 'loading'));
     const shouldLoadFullData = hasExistingData && view === 'workspace' && !!metadataQuery.data?.overviewStoragePath;
     const overviewQuery = usePerformanceOverviewQuery(team?.id, shouldLoadOverviewData, metadataQuery.data);
-    const dataQuery = usePerformanceDataQuery(team?.id, shouldLoadFullData, metadataQuery.data);
+    const dataQuery = usePerformanceDataQuery(team?.id, shouldLoadFullData, metadataQuery.data, selectedRouteId);
+    const routeOptions = useMemo(
+        () => getAvailablePerformanceRoutes(overviewQuery.data),
+        [overviewQuery.data],
+    );
+    const scopedOverviewData = useMemo(
+        () => filterPerformanceSummaryByRoute(overviewQuery.data, selectedRouteId),
+        [overviewQuery.data, selectedRouteId],
+    );
     const quickHealth = useMemo(
         () => buildPerformanceMetadataHealth(metadataQuery.data),
         [metadataQuery.data],
@@ -112,7 +125,14 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onCl
     useEffect(() => {
         setView(autoOpen ? 'loading' : 'landing');
         setImportReturnTarget(autoOpen ? 'close' : 'landing');
+        setSelectedRouteId('all');
     }, [team?.id, autoOpen]);
+
+    useEffect(() => {
+        if (selectedRouteId === 'all') return;
+        if (routeOptions.some(route => route.routeId === selectedRouteId)) return;
+        setSelectedRouteId('all');
+    }, [routeOptions, selectedRouteId]);
 
     useEffect(() => {
         if (!autoOpen || view !== 'loading' || !team?.id || metadataQuery.isLoading) {
@@ -209,7 +229,7 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onCl
             return <DashboardLoadingState label="Loading performance data..." />;
         }
 
-        const workspaceData = dataQuery.data ?? overviewQuery.data;
+        const workspaceData = dataQuery.data ?? scopedOverviewData;
         const detailsReady = !!dataQuery.data || !metadataQuery.data.overviewStoragePath;
 
         return (
@@ -220,6 +240,9 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onCl
                             <PerformanceWorkspace
                                 data={workspaceData}
                                 detailsReady={detailsReady}
+                                selectedRouteId={selectedRouteId}
+                                routeOptions={routeOptions}
+                                onRouteChange={setSelectedRouteId}
                                 onReimport={() => {
                                     setImportReturnTarget('workspace');
                                     setView('import');
@@ -246,6 +269,32 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({ onCl
                     <h2 className="text-2xl font-bold text-gray-900 tracking-tight mb-2">Performance Dashboard</h2>
                     <p className="text-gray-500">{dashboardDescription}</p>
                 </div>
+
+                {hasExistingData && (
+                    <div className="mb-5 rounded-xl border border-cyan-100 bg-white p-4 shadow-sm">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                                <div className="text-sm font-bold text-gray-900">Load scope</div>
+                                <p className="text-xs text-gray-500">
+                                    Default loads all routes. Pick one route first to open a lighter route-focused dashboard.
+                                </p>
+                            </div>
+                            <select
+                                value={selectedRouteId}
+                                onChange={(event) => setSelectedRouteId(event.target.value)}
+                                className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700 shadow-sm focus:border-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-100"
+                                disabled={overviewQuery.isLoading || routeOptions.length === 0}
+                            >
+                                <option value="all">All routes</option>
+                                {routeOptions.map(route => (
+                                    <option key={route.routeId} value={route.routeId}>
+                                        Route {route.routeId}{route.routeName ? ` — ${route.routeName}` : ''}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                    </div>
+                )}
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     <button

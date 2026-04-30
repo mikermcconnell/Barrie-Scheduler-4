@@ -6,6 +6,7 @@ const DEFAULT_SERVICE: RoutePlanner2ServiceAssumptions = {
     frequencyMinutes: 30,
     startTerminalLayoverMinutes: 5,
     endTerminalLayoverMinutes: 5,
+    intermediateStopDwellSeconds: 0,
 };
 
 function createId(prefix: string): string {
@@ -29,7 +30,7 @@ export function createRoutePlanner2Scenario(options: {
         alignment: [],
         stops: [],
         service: { ...DEFAULT_SERVICE },
-        notes: 'Blank route concept. Add an alignment and stops before running feasibility checks.',
+        notes: 'Blank route concept. Add stops in travel order before running feasibility checks.',
         createdAt: now,
         updatedAt: now,
     };

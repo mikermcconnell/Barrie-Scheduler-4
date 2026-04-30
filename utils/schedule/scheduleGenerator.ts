@@ -423,6 +423,10 @@ export const generateSchedule = (
                     .slice(activeStartIdx)
                     .reduce((sum, segmentTime) => sum + Math.round(segmentTime), 0)
             );
+            const fullDirectionTravelTime = Math.max(
+                1,
+                rawSegmentTimes.reduce((sum, segmentTime) => sum + Math.round(segmentTime), 0)
+            );
 
             // Second pass: round each segment, then adjust last active segment to hit target exactly
             // LOCKED LOGIC: Round BEFORE summing
@@ -475,38 +479,42 @@ export const generateSchedule = (
             // Partial pullout trips: use proportional recovery instead of cycle-gap.
             // Without this, Strict mode assigns (halfCycle - tinyTravel) = inflated
             // recovery (e.g., 59 min at Rose St for a 1-min Georgian Coll → Rose pullout).
+            // When multiple blocks launch a route, give the first partial trip enough
+            // budget to land on the full-direction launch grid without using the full
+            // half-cycle. This keeps Route 2-style pullouts aligned after their first
+            // mid-route trip while still avoiding inflated one-block partial recovery.
             if (isPartialTrip) {
                 const bandId = currentBand?.bandId;
                 const bandDefault = bandId ? config.bandRecoveryDefaults?.find(bd => bd.bandId === bandId) : undefined;
                 const ratio = (bandDefault?.avgRecoveryRatio ?? config.recoveryRatio ?? 15) / 100;
-                totalRecovery = Math.round(pureTravelTime * ratio);
-                tripCycleAllocated = pureTravelTime + totalRecovery;
+                const proportionalRecovery = Math.round(pureTravelTime * ratio);
+                const proportionalCycle = pureTravelTime + proportionalRecovery;
+                const partialCycleCap = config.cycleMode === 'Strict'
+                    ? Math.max(1, Math.round(isRoundTrip ? config.cycleTime / 2 : config.cycleTime))
+                    : Infinity;
+                const shouldUseFullDirectionBudget = (
+                    config.cycleMode === 'Strict'
+                    && isRoundTrip
+                    && (config.blocks?.length || 0) > 1
+                );
+                const targetPartialCycle = shouldUseFullDirectionBudget
+                    ? Math.max(proportionalCycle, fullDirectionTravelTime)
+                    : proportionalCycle;
+
+                tripCycleAllocated = Math.min(partialCycleCap, targetPartialCycle);
+                totalRecovery = Math.max(0, tripCycleAllocated - pureTravelTime);
                 nextTripStart = currentTime + tripCycleAllocated;
             }
 
-            // 4. Distribute Recovery PROPORTIONALLY across all stops (except first)
+            // 4. Put generated recovery at the active trip terminus.
+            // Padding intermediate timepoints creates misleading dwell/recovery in the
+            // public table and can make compare-to-master differences look much larger
+            // than the actual trip-level shift.
             const recoveryTimes: Record<string, number> = {};
-            const stopPaddings: number[] = new Array(dirTimepoints.length).fill(0);
 
             if (totalRecovery > 0) {
-                let distributedSoFar = 0;
-                finalSegmentRuntimes.forEach((st, idx) => {
-                    if (idx < finalSegmentRuntimes.length - 1) {
-                        const share = Math.floor((st / pureTravelTime) * totalRecovery);
-                        stopPaddings[idx + 1] = share;
-                        recoveryTimes[dirTimepoints[idx + 1]] = share;
-                        distributedSoFar += share;
-                    }
-                });
-                // Last stop: gets remainder (always >= 0 since we used Math.floor above)
                 const lastIdx = dirTimepoints.length - 1;
-                const remainder = totalRecovery - distributedSoFar;
-                stopPaddings[lastIdx] = remainder;
-                recoveryTimes[dirTimepoints[lastIdx]] = remainder;
-            } else {
-                dirTimepoints.forEach((stop, idx) => {
-                    if (idx > 0) recoveryTimes[stop] = 0;
-                });
+                recoveryTimes[dirTimepoints[lastIdx]] = totalRecovery;
             }
 
             // 5. Construct Trip Object with Arrival Times, Recovery Times, and Departure Times

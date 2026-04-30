@@ -79,16 +79,12 @@ const getBucketStartLabel = (timeBucket: string): string => (
     timeBucket.split(' - ')[0] || timeBucket
 );
 
-const buildRuntimeAxisDomain = (
-    chartData: Array<{ runtime: number; ignored?: boolean }>,
-    bands: TimeBand[]
+export const buildRuntimeAxisDomain = (
+    chartData: Array<{ runtime: number; ignored?: boolean }>
 ): [number, number] => {
-    const runtimeValues = chartData
+    const values = chartData
         .filter(bucket => !bucket.ignored && Number.isFinite(bucket.runtime))
         .map(bucket => bucket.runtime);
-    const bandValues = bands.flatMap(band => [band.min, band.max, band.avg])
-        .filter(value => Number.isFinite(value));
-    const values = [...runtimeValues, ...bandValues];
 
     if (values.length === 0) return [0, 60];
 
@@ -717,8 +713,8 @@ export const Step2PlanningReviewPanel: React.FC<Step2Props> = ({
         onBandSummaryChange,
     });
     const runtimeAxisDomain = useMemo(
-        () => buildRuntimeAxisDomain(chartData, bands),
-        [chartData, bands]
+        () => buildRuntimeAxisDomain(chartData),
+        [chartData]
     );
     const runtimeAxisIsZoomed = runtimeAxisDomain[0] > 0;
 
@@ -778,6 +774,7 @@ export const Step2PlanningReviewPanel: React.FC<Step2Props> = ({
                                 tickLine={false}
                                 tickFormatter={(value) => `${value}m`}
                                 label={{ value: runtimeAxisIsZoomed ? 'Runtime (min, zoomed)' : 'Runtime (min)', angle: -90, position: 'insideLeft', fill: '#9CA3AF' }}
+                                allowDataOverflow
                             />
                             <Tooltip
                                 cursor={{ fill: '#F3F4F6' }}

@@ -238,6 +238,10 @@ function mergeEdgesIntoSegments(
                         routes: Array.from(routeSet).sort(),
                     });
                 }
+
+                // Skip over the run we just merged. Without this, the same
+                // corridor is emitted again from each interior edge.
+                i = Math.max(i, j - 1);
             }
         }
     }

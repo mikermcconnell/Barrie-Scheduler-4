@@ -13,6 +13,7 @@ import {
     isFleetPlanRowCountedInFleetTotal,
     moveFleetPlanLifecycleBoundary,
     moveFleetPlanLifecycleWindow,
+    removeFleetPlanRow,
     sortFleetPlanEntries,
 } from '../utils/fleet-plan/fleetPlanEditing';
 import { FLEET_PLAN_SHEET_CONFIG_BY_KEY } from '../utils/fleet-plan/fleetPlanConfig';
@@ -48,6 +49,15 @@ describe('fleetPlan editing helpers', () => {
         expect(rows[1]?.unitNumber).toBe('1101');
         expect(rows[1]?.id).not.toBe('first');
         expect(rows[2]?.id).toBe('second');
+    });
+
+    it('removes a row by id without changing the remaining rows', () => {
+        const first = { ...createEmptyFleetPlanRow('diesel-12m'), id: 'first', unitNumber: '1101' };
+        const second = { ...createEmptyFleetPlanRow('diesel-12m'), id: 'second', unitNumber: '1102' };
+
+        const rows = removeFleetPlanRow([first, second], 'first');
+
+        expect(rows).toEqual([second]);
     });
 
     it('applies a pasted grid and appends rows when the clipboard is taller than the current sheet', () => {

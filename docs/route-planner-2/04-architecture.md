@@ -8,6 +8,8 @@ Do not import from old Route Planner controllers, draft storage, project service
 
 Current shell:
 - `components/Analytics/RoutePlanner2Workspace.tsx`
+- `components/Analytics/route-planner-2/RoutePlanner2MapCanvas.tsx`
+- `utils/route-planner-2/routePlanner2RoadSnap.ts`
 
 Expected future folders:
 - `components/Analytics/route-planner-2/`
@@ -25,7 +27,7 @@ Expected future folders:
 
 ### Workspace Shell
 
-Owns high-level layout and selected project/scenario state.
+Owns high-level layout and selected project/route state.
 
 Possible files:
 - `RoutePlanner2Workspace.tsx`
@@ -36,15 +38,15 @@ Possible files:
 
 ### Project Controller
 
-Owns project and scenario operations.
+Owns project and route operations.
 
 Responsibilities:
-- create scenario
-- duplicate scenario
-- delete scenario
-- rename project/scenario
-- select active scenario
-- mark preferred scenario
+- create route
+- duplicate route
+- delete route
+- rename project/route
+- select active route
+- mark preferred route
 - coordinate local persistence when added
 
 ### Map Authoring State
@@ -57,6 +59,8 @@ Responsibilities:
 - stop ordering
 - selected map object
 - terminal and timed-stop roles
+- Mapbox display and click-to-author interactions
+- road-snapped display geometry using Mapbox Directions when a token is available, with straight-line fallback
 
 ### Feasibility Engine
 
@@ -88,7 +92,7 @@ Responsibilities:
 
 ```text
 Project state
-  └─ selected scenario
+  └─ selected route
       ├─ map authoring state
       ├─ service assumptions
       └─ runtime evidence request

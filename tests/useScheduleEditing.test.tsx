@@ -333,3 +333,118 @@ describe('useScheduleEditing cascade modes', () => {
     expect(duplicatedTrip.deltaSourceRouteName).toBeUndefined();
   });
 });
+
+const buildRoute2VariantSchedules = (): MasterRouteTable[] => ([
+  {
+    routeName: '2A Dunlop (Weekday) (North)',
+    stops: ['Park Place', 'Downtown'],
+    stopIds: {},
+    trips: [
+      {
+        id: 'route-2a-trip',
+        blockId: '2-1',
+        direction: 'North',
+        tripNumber: 1,
+        rowId: 1,
+        startTime: 420,
+        endTime: 450,
+        recoveryTime: 0,
+        recoveryTimes: {},
+        travelTime: 30,
+        cycleTime: 30,
+        stops: {
+          'Park Place': '7:00 AM',
+          Downtown: '7:30 AM',
+        },
+        arrivalTimes: {
+          'Park Place': '7:00 AM',
+          Downtown: '7:30 AM',
+        },
+      },
+    ],
+  },
+  {
+    routeName: '2B Dunlop (Weekday) (South)',
+    stops: ['Downtown', 'Park Place'],
+    stopIds: {},
+    trips: [
+      {
+        id: 'route-2b-trip',
+        blockId: '2-1',
+        direction: 'South',
+        tripNumber: 2,
+        rowId: 2,
+        startTime: 455,
+        endTime: 485,
+        recoveryTime: 0,
+        recoveryTimes: {},
+        travelTime: 30,
+        cycleTime: 30,
+        stops: {
+          Downtown: '7:35 AM',
+          'Park Place': '8:05 AM',
+        },
+        arrivalTimes: {
+          Downtown: '7:35 AM',
+          'Park Place': '8:05 AM',
+        },
+      },
+    ],
+  },
+]) as any;
+
+const Route2VariantHarness: React.FC = () => {
+  const [schedules, setSchedules] = useState<MasterRouteTable[]>(buildRoute2VariantSchedules());
+  const { handleCellEdit } = useScheduleEditing(schedules, setSchedules, { cascadeMode: 'always' });
+
+  return (
+    <div>
+      <button data-testid="edit-route-2a-start" onClick={() => handleCellEdit('route-2a-trip', 'Park Place', '7:01 AM')}>
+        edit route 2A start
+      </button>
+      <pre data-testid="state">{JSON.stringify(schedules)}</pre>
+    </div>
+  );
+};
+
+describe('useScheduleEditing Route 2A/2B variant labels', () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  beforeEach(() => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    flushSync(() => {
+      root?.render(<Route2VariantHarness />);
+    });
+  });
+
+  afterEach(() => {
+    if (root) {
+      flushSync(() => root?.unmount());
+    }
+    container?.remove();
+    root = null;
+    container = null;
+  });
+
+  const getState = () => JSON.parse(container?.querySelector('[data-testid="state"]')?.textContent ?? '[]');
+
+  it('keeps labeled Route 2A and 2B trips on the same edited block chain', () => {
+    const editButton = container?.querySelector('[data-testid="edit-route-2a-start"]') as HTMLButtonElement | null;
+
+    flushSync(() => {
+      editButton?.click();
+    });
+
+    const schedules = getState();
+    const northTrip = schedules[0].trips[0];
+    const southTrip = schedules[1].trips[0];
+
+    expect(northTrip.stops['Park Place']).toBe('7:01 AM');
+    expect(northTrip.stops.Downtown).toBe('7:31 AM');
+    expect(southTrip.stops.Downtown).toBe('7:36 AM');
+    expect(southTrip.blockId).toBe(northTrip.blockId);
+  });
+});

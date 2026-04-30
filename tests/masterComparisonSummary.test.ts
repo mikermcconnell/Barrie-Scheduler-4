@@ -68,13 +68,53 @@ describe('master comparison summary', () => {
         expect(summary.counts.totalChanges).toBe(3);
     });
 
-    it('treats an added trip with new lineage as new even when its times match baseline service', () => {
+    it('matches a recreated trip with new lineage to nearby baseline service', () => {
         const schedules = [
             makeTable('10 (North)', [
-                makeTrip('draft-added', 'North', 430, 460, {
+                makeTrip('draft-recreated', 'North', 431, 461, {
                     lineageId: 'trip-new',
+                    stops: { Terminal: '7:11 AM' },
+                    arrivalTimes: { Terminal: '7:11 AM' },
+                }),
+            ]),
+        ];
+
+        const masterBaseline = [
+            makeTable('10 (North)', [
+                makeTrip('master-existing', 'North', 430, 460, {
+                    lineageId: 'trip-existing',
                     stops: { Terminal: '7:10 AM' },
                     arrivalTimes: { Terminal: '7:10 AM' },
+                }),
+            ]),
+        ];
+
+        const detailed = buildDetailedMasterComparison(schedules, masterBaseline);
+        const summary = buildMasterComparisonChangeSummary(schedules, detailed);
+        const entry = detailed.currentTripComparisons.get('North::draft-recreated');
+
+        expect(entry?.status).toBe('matched');
+        if (entry?.status !== 'matched') throw new Error('Expected a matched recreated trip');
+        expect(entry.matchMethod).toBe('time-shift');
+        expect(entry.masterTrip.id).toBe('master-existing');
+        expect(summary.counts.new).toBe(0);
+        expect(summary.counts.removed).toBe(0);
+        expect(summary.counts.retimed).toBe(1);
+        expect(summary.currentTripKinds.get('North::draft-recreated')).toBe('retimed');
+    });
+
+    it('keeps duplicate added service new after the original baseline trip is already matched', () => {
+        const schedules = [
+            makeTable('10 (North)', [
+                makeTrip('draft-existing', 'North', 430, 460, {
+                    lineageId: 'trip-existing',
+                    stops: { Terminal: '7:10 AM' },
+                    arrivalTimes: { Terminal: '7:10 AM' },
+                }),
+                makeTrip('draft-added', 'North', 431, 461, {
+                    lineageId: 'trip-new',
+                    stops: { Terminal: '7:11 AM' },
+                    arrivalTimes: { Terminal: '7:11 AM' },
                 }),
             ]),
         ];
@@ -92,9 +132,9 @@ describe('master comparison summary', () => {
         const detailed = buildDetailedMasterComparison(schedules, masterBaseline);
         const summary = buildMasterComparisonChangeSummary(schedules, detailed);
 
+        expect(detailed.currentTripComparisons.get('North::draft-existing')?.status).toBe('matched');
         expect(detailed.currentTripComparisons.get('North::draft-added')?.status).toBe('new');
         expect(summary.counts.new).toBe(1);
-        expect(summary.counts.retimed).toBe(0);
-        expect(summary.currentTripKinds.get('North::draft-added')).toBe('new');
+        expect(summary.counts.removed).toBe(0);
     });
 });

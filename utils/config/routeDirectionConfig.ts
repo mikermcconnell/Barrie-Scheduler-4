@@ -303,22 +303,23 @@ export function parseRouteInfo(routeIdentifier: string): ParsedRouteInfo {
         .replace(/^route\s*/i, '')  // Remove "Route " prefix
         .replace(/\s*\(.*\)$/i, '') // Remove "(North)", "(South)", "(Weekday)" suffixes
         .trim();
+    const routeToken = cleaned.match(/^(\d+[A-Z]?)(?=\s|$)/i)?.[1] ?? cleaned;
 
     // Check if this is an exact match (8A, 8B, 400, 10, etc.)
-    if (ROUTE_DIRECTIONS[cleaned]) {
-        const config = ROUTE_DIRECTIONS[cleaned];
+    if (ROUTE_DIRECTIONS[routeToken]) {
+        const config = ROUTE_DIRECTIONS[routeToken];
         const routeIsLoop = config.segments.length === 1;
         return {
-            baseRoute: cleaned,
+            baseRoute: routeToken,
             direction: null, // Direction not embedded in the identifier itself
-            variant: cleaned,
+            variant: routeToken,
             isLoop: routeIsLoop,
             suffixIsDirection: !!config.suffixIsDirection,
         };
     }
 
     // Check if this has an A/B suffix that indicates direction
-    const suffixMatch = cleaned.match(/^(\d+)([AB])$/i);
+    const suffixMatch = routeToken.match(/^(\d+)([AB])$/i);
     if (suffixMatch) {
         const numericPart = suffixMatch[1];
         const suffix = suffixMatch[2].toUpperCase();
@@ -332,7 +333,7 @@ export function parseRouteInfo(routeIdentifier: string): ParsedRouteInfo {
                 return {
                     baseRoute: numericPart,
                     direction: suffix === 'A' ? 'North' : 'South',
-                    variant: cleaned,
+                    variant: routeToken,
                     isLoop: false,
                     suffixIsDirection: true,
                 };
@@ -344,14 +345,14 @@ export function parseRouteInfo(routeIdentifier: string): ParsedRouteInfo {
     }
 
     // Try stripping A/B to find base route
-    const withoutSuffix = cleaned.replace(/[AB]$/i, '');
+    const withoutSuffix = routeToken.replace(/[AB]$/i, '');
     if (ROUTE_DIRECTIONS[withoutSuffix]) {
         const config = ROUTE_DIRECTIONS[withoutSuffix];
         const routeIsLoop = config.segments.length === 1;
         return {
             baseRoute: withoutSuffix,
             direction: null,
-            variant: cleaned,
+            variant: routeToken,
             isLoop: routeIsLoop,
             suffixIsDirection: false,
         };

@@ -21,8 +21,8 @@ Recommended v1 layout:
 │ Header: Back | Project Name | Status | Save soon | Actions   │
 ├──────────────┬───────────────────────────────┬───────────────┤
 │ Left Rail    │ Map Canvas                    │ Right Rail    │
-│ Project      │ Alignment + stops             │ Scenario      │
-│ Scenarios    │ Map mode controls             │ Service       │
+│ Project      │ Alignment + stops             │ Route      │
+│ Routes    │ One draw-route workflow        │ Service       │
 │ Compare      │ Selection state               │ Feasibility   │
 └──────────────┴───────────────────────────────┴───────────────┘
 ```
@@ -42,22 +42,23 @@ Avoid implying Firebase persistence exists in v1.
 
 Left rail owns planning object navigation:
 - project summary
-- scenario list
+- route list
 - add/duplicate/delete actions
-- preferred scenario indicator
+- preferred route indicator
 - simple comparison table or link to comparison drawer
 
 ## Map Canvas
 
-Map canvas should support stop-aware authoring.
+Map canvas should support stop-aware authoring without separate GIS-style modes.
 
-V1 modes:
-- Inspect
-- Edit alignment
-- Edit stops
+V1 interactions:
+- click the map to add stops in travel order
+- drag numbered stop markers to move stops
+- delete stops from the stop order list
+- click the route line to create one or more route-line waypoints
+- drag route-line `+` waypoint handles to bend the travel path, Google Maps-style
 
 Required visible states:
-- selected route point
 - selected stop
 - start terminal
 - end terminal
@@ -66,10 +67,10 @@ Required visible states:
 
 ## Right Rail
 
-Right rail turns the selected scenario into planning meaning.
+Right rail turns the selected route into planning meaning.
 
 Recommended sections:
-1. Scenario details
+1. Route details
 2. Service assumptions
 3. Feasibility outputs
 4. Warnings

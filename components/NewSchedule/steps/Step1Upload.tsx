@@ -27,6 +27,10 @@ interface Step1Props {
     performanceConfig?: PerformanceConfig;
     onPerformanceConfigChange?: (config: PerformanceConfig) => void;
     performanceDataLoading?: boolean;
+    performanceMetadataLoading?: boolean;
+    performanceLoadRouteId?: string;
+    performanceLoadRouteIds?: string[];
+    onPerformanceLoadRouteChange?: (routeId: string) => void;
     performanceDateRange?: { start: string; end: string };
     performanceDiagnostics?: PerformanceRuntimeDiagnostics | null;
 }
@@ -82,6 +86,10 @@ export const Step1Upload: React.FC<Step1Props> = ({
     performanceConfig,
     onPerformanceConfigChange,
     performanceDataLoading,
+    performanceMetadataLoading,
+    performanceLoadRouteId = 'all',
+    performanceLoadRouteIds,
+    onPerformanceLoadRouteChange,
     performanceDateRange,
     performanceDiagnostics,
 }) => {
@@ -252,6 +260,39 @@ export const Step1Upload: React.FC<Step1Props> = ({
             {/* Performance Data Mode */}
             {importMode === 'performance' && (
                 <div className="max-w-4xl mx-auto space-y-6">
+                    {performanceMetadataLoading ? (
+                        <div className="rounded-xl border border-gray-200 bg-white p-4 text-sm font-medium text-gray-500">
+                            Loading route list...
+                        </div>
+                    ) : (
+                        <div className="rounded-xl border border-teal-100 bg-teal-50/60 p-4">
+                            <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+                                <div>
+                                    <label htmlFor="performance-load-route" className="block text-sm font-bold text-teal-900">
+                                        Performance data to load
+                                    </label>
+                                    <p className="mt-1 text-xs text-teal-700">
+                                        {performanceLoadRouteIds && performanceLoadRouteIds.length > 0
+                                            ? 'Choose one route to load faster, or keep all routes available.'
+                                            : 'All routes will load because route-scoped performance files are not available yet.'}
+                                    </p>
+                                </div>
+                                <select
+                                    id="performance-load-route"
+                                    value={performanceLoadRouteId}
+                                    onChange={(e) => onPerformanceLoadRouteChange?.(e.target.value)}
+                                    disabled={!performanceLoadRouteIds || performanceLoadRouteIds.length === 0}
+                                    className="w-full rounded-xl border-2 border-teal-200 bg-white px-4 py-2.5 text-sm font-semibold text-gray-800 focus:border-teal-500 focus:outline-none focus:ring-0 md:w-56"
+                                >
+                                    <option value="all">All routes</option>
+                                    {performanceLoadRouteIds.map(routeId => (
+                                        <option key={routeId} value={routeId}>Route {routeId}</option>
+                                    ))}
+                                </select>
+                            </div>
+                        </div>
+                    )}
+
                     {/* Day Type Selector */}
                     <div className="grid grid-cols-3 gap-4">
                         {(['Weekday', 'Saturday', 'Sunday'] as const).map((type) => (

@@ -11,12 +11,16 @@ import { lazyWithRetry } from '../../utils/lazyWithRetry';
 import { PerformanceImportHealthPanel } from './PerformanceImportHealthPanel';
 import { isFeatureEnabled, isFeatureUnderConstruction } from '../../utils/features';
 import { useWorkspaceAccess } from '../../hooks/useWorkspaceAccess';
+import type { PerformanceRouteOption } from '../../utils/performanceRouteFilter';
 
 interface PerformanceWorkspaceProps {
     data: PerformanceDataSummary;
     onReimport: () => void;
     onBack: () => void;
     detailsReady?: boolean;
+    selectedRouteId?: string;
+    routeOptions?: PerformanceRouteOption[];
+    onRouteChange?: (routeId: string) => void;
 }
 
 interface TabConfig {
@@ -98,7 +102,15 @@ const PerformancePanelLoading: React.FC<{ label: string }> = ({ label }) => (
 
 const OVERVIEW_ONLY_TIME_RANGES: TimeRange[] = ['past-week', 'single-day'];
 
-export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data, onReimport, onBack, detailsReady = true }) => {
+export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({
+    data,
+    onReimport,
+    onBack,
+    detailsReady = true,
+    selectedRouteId = 'all',
+    routeOptions = [],
+    onRouteChange,
+}) => {
     const { canAccess } = useWorkspaceAccess();
     const allowIncompleteTabs = import.meta.env.DEV || isLocalhost();
     const showImportHealthPanel = !import.meta.env.PROD
@@ -183,6 +195,10 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data
     };
 
     const showFilterBar = true;
+    const selectedRoute = routeOptions.find(route => route.routeId === selectedRouteId);
+    const routeScopeLabel = selectedRouteId === 'all'
+        ? 'All routes'
+        : `Route ${selectedRoute?.routeId ?? selectedRouteId}`;
     const filteredScope = useMemo(() => resolveFilteredScope(timeRange), [timeRange]);
 
     const filteredScopeLabel = useMemo(() => {
@@ -260,15 +276,32 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data
                     <span className="text-xs text-gray-400">
                         {data.metadata.dateRange.start} — {data.metadata.dateRange.end}
                         {' · '}{data.metadata.dayCount} day{data.metadata.dayCount !== 1 ? 's' : ''}
+                        {' · '}{routeScopeLabel}
                     </span>
                 </div>
-                <button
-                    onClick={onReimport}
-                    className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
-                >
-                    <RefreshCw size={14} />
-                    Re-import
-                </button>
+                <div className="flex items-center gap-2">
+                    {onRouteChange && (
+                        <select
+                            value={selectedRouteId}
+                            onChange={(event) => onRouteChange(event.target.value)}
+                            className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-semibold text-gray-700 shadow-sm focus:border-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-100"
+                        >
+                            <option value="all">All routes</option>
+                            {routeOptions.map(route => (
+                                <option key={route.routeId} value={route.routeId}>
+                                    Route {route.routeId}{route.routeName ? ` — ${route.routeName}` : ''}
+                                </option>
+                            ))}
+                        </select>
+                    )}
+                    <button
+                        onClick={onReimport}
+                        className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+                    >
+                        <RefreshCw size={14} />
+                        Re-import
+                    </button>
+                </div>
             </div>
 
             {showImportHealthPanel && (
@@ -287,7 +320,7 @@ export const PerformanceWorkspace: React.FC<PerformanceWorkspaceProps> = ({ data
 
             {!detailsReady && (
                 <div className="mb-3 rounded-xl border border-cyan-200 bg-cyan-50/70 px-4 py-3 text-sm text-cyan-800">
-                    Showing the most recent 7 days on Overview first. Detailed tabs are still loading in the background.
+                    Showing the most recent 7 days on Overview first. {routeScopeLabel} details are still loading in the background.
                 </div>
             )}
 

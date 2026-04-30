@@ -557,6 +557,7 @@ export interface PerformanceMetadata {
     storagePath?: string;
     overviewStoragePath?: string;
     reportStoragePath?: string;
+    routeStoragePaths?: Record<string, string>;
   }
 
 // ─── Import State (ephemeral, not stored) ───────────────────────────

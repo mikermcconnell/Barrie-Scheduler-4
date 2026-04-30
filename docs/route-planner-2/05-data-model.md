@@ -2,8 +2,9 @@
 
 ## Model Principles
 
-- Project contains scenarios.
-- Scenario contains route concept inputs and derived feasibility outputs.
+- Project contains routes.
+- The current internal type name is `RoutePlanner2Scenario`, but the user-facing product language is “route.”
+- A route contains route concept inputs and derived feasibility outputs.
 - Derived outputs should be recalculable from inputs.
 - Use stable IDs even in local-only v1.
 - Keep shapes compatible with future team-scoped Firebase storage.
@@ -13,7 +14,7 @@
 ```typescript
 type RoutePlanner2ScenarioStatus = 'draft' | 'review';
 type RoutePlanner2StopRole = 'regular' | 'timed' | 'start-terminal' | 'end-terminal';
-type RoutePlanner2RuntimeSource = 'observed-proxy' | 'manual' | 'fallback' | 'missing';
+type RoutePlanner2RuntimeSource = 'observed-proxy' | 'manual' | 'mapbox' | 'fallback' | 'missing';
 ```
 
 ## Project
@@ -31,9 +32,9 @@ interface RoutePlanner2Project {
 }
 ```
 
-`preferredScenarioId` is the single source of truth for the preferred scenario. A scenario should not also carry a separate `preferred` status.
+`preferredScenarioId` is the single source of truth for the preferred route. A route should not also carry a separate `preferred` status.
 
-## Scenario
+## Route / Scenario Internal Type
 
 ```typescript
 interface RoutePlanner2Scenario {
@@ -43,6 +44,8 @@ interface RoutePlanner2Scenario {
   alignment: RoutePlanner2RoutePoint[];
   stops: RoutePlanner2Stop[];
   service: RoutePlanner2ServiceAssumptions;
+  runtimeEstimates?: RoutePlanner2SegmentRuntime[];
+  runtimeOverrides?: Record<string, RoutePlanner2SegmentRuntimeOverride>;
   notes: string;
   feasibility?: RoutePlanner2FeasibilitySummary;
   createdAt: string;
@@ -58,8 +61,13 @@ interface RoutePlanner2RoutePoint {
   lat: number;
   lng: number;
   sequence: number;
+  afterStopId?: string;
+  beforeStopId?: string;
+  segmentSequence?: number;
 }
 ```
+
+When `afterStopId` and `beforeStopId` are present, the route point is a route-line waypoint between two adjacent stops. `segmentSequence` orders multiple waypoints within that stop-to-stop segment. V1 creates waypoints by clicking the route line, then dragging the `+` handle to bend the path.
 
 ## Stop
 
@@ -86,18 +94,23 @@ interface RoutePlanner2ServiceAssumptions {
   frequencyMinutes: number;
   startTerminalLayoverMinutes: number;
   endTerminalLayoverMinutes: number;
+  intermediateStopDwellSeconds: number;
   dayType?: 'weekday' | 'saturday' | 'sunday';
   planningPeriod?: 'all-day' | 'am-peak' | 'midday' | 'pm-peak' | 'evening';
 }
 ```
 
 Terminal layover fields are planning assumptions for v1 concept feasibility. They are not fixed-route schedule recovery rules.
+Intermediate stop dwell is an optional planning allowance added for non-terminal stops only. It stays separate from terminal layover/recovery.
 
 ## Feasibility Summary
 
 ```typescript
 interface RoutePlanner2FeasibilitySummary {
   oneWayRuntimeMinutes: number | null;
+  segmentRuntimeMinutes: number | null;
+  dwellTimeMinutes: number;
+  intermediateStopCount: number;
   cycleTimeMinutes: number | null;
   busesRequired: number | null;
   confidence: 'high' | 'medium' | 'low' | 'not-ready';
@@ -117,7 +130,23 @@ interface RoutePlanner2SegmentRuntime {
   source: RoutePlanner2RuntimeSource;
   sampleSize?: number;
   confidence: 'high' | 'medium' | 'low' | 'missing';
+  distanceKm?: number;
+  durationSeconds?: number;
+  pathFingerprint?: string;
+  updatedAt?: string;
   fallbackReason?: string;
+}
+```
+
+Mapbox-derived estimates are cached against a `pathFingerprint` built from the current stop and waypoint coordinates. If the planner moves a stop or line waypoint, stale segment estimates are ignored until the segment is recalculated.
+
+Manual segment overrides are stored separately from Mapbox estimates so automatic recalculation does not erase planner-entered runtime assumptions.
+
+```typescript
+interface RoutePlanner2SegmentRuntimeOverride {
+  runtimeMinutes: number;
+  notes?: string;
+  updatedAt: string;
 }
 ```
 
@@ -145,4 +174,4 @@ Large geometry or derived analysis artifacts may move to Firebase Storage later 
 
 ## Derived Data Rule
 
-Do not store derived feasibility outputs as the only source of truth. They may be cached, but the scenario inputs must be enough to recompute them.
+Do not store derived feasibility outputs as the only source of truth. They may be cached, but the route inputs must be enough to recompute them.

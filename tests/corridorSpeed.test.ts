@@ -85,6 +85,8 @@ describe('corridorSpeed helpers', () => {
         expect(resolveObservedDirectionLabel('8A', 'S')).toBe('South');
         expect(resolveObservedDirectionLabel('100', 'CW')).toBe('Clockwise');
         expect(resolveObservedDirectionLabel('12A', '')).toBe('North');
+        expect(resolveObservedDirectionLabel('2A', '')).toBe('North');
+        expect(resolveObservedDirectionLabel('2B', '')).toBe('South');
     });
 });
 
@@ -219,6 +221,89 @@ describe('buildCorridorSpeedIndexFromTraversalData', () => {
                 observedSpeedKmh: 3.8,
             },
         ]);
+    });
+
+    it('uses route-specific corridor length when calculating route breakdown speeds', () => {
+        const segment: CorridorSpeedSegment = {
+            ...corridorSegment,
+            routes: ['8A', '8B'],
+            lengthMeters: 1000,
+            routeLengthMeters: {
+                '8A': 1000,
+                '8B': 2000,
+            },
+        };
+        const index = buildCorridorSpeedIndexFromTraversalData(
+            [segment],
+            [
+                {
+                    segmentId: segment.id,
+                    route: '8B',
+                    dayType: 'weekday',
+                    directionId: 'South',
+                    departureMinutes: 420,
+                    runtimeMinutes: 10,
+                },
+            ],
+            [
+                {
+                    segmentId: segment.id,
+                    route: '8B',
+                    dayType: 'weekday',
+                    directionId: 'South',
+                    departureMinutes: 420,
+                    runtimeMinutes: 10,
+                },
+            ],
+        );
+
+        const scoped = scopeStatsToRoute(
+            getStatsForPeriod(index, 'weekday', 'am-peak').get(segment.id) ?? null,
+            '8B',
+        );
+
+        expect(scoped?.scheduledSpeedKmh).toBe(12);
+        expect(scoped?.observedSpeedKmh).toBe(12);
+    });
+
+    it('compares scheduled runtime from the same route and half-hour bucket as observed traversals', () => {
+        const index = buildCorridorSpeedIndexFromTraversalData(
+            [corridorSegment],
+            [
+                {
+                    segmentId: corridorSegment.id,
+                    route: '8A',
+                    dayType: 'weekday',
+                    directionId: 'South',
+                    departureMinutes: 420,
+                    runtimeMinutes: 10,
+                },
+                {
+                    segmentId: corridorSegment.id,
+                    route: '8A',
+                    dayType: 'weekday',
+                    directionId: 'South',
+                    departureMinutes: 600,
+                    runtimeMinutes: 30,
+                },
+            ],
+            [
+                {
+                    segmentId: corridorSegment.id,
+                    route: '8A',
+                    dayType: 'weekday',
+                    directionId: 'South',
+                    departureMinutes: 420,
+                    runtimeMinutes: 8,
+                },
+            ],
+        );
+
+        const stats = getStatsForPeriod(index, 'weekday', 'full-day').get(corridorSegment.id);
+
+        expect(stats?.scheduledRuntimeMin).toBe(10);
+        expect(stats?.observedRuntimeMin).toBe(8);
+        expect(stats?.runtimeDeltaMin).toBe(-2);
     });
 
     it('scopes shared-corridor stats down to a selected route', () => {
@@ -654,5 +739,14 @@ describe('buildCorridorSpeedMapIndex', () => {
         expect(segment?.routes).toEqual(['10', '100']);
         expect(segment?.lengthMeters ?? 0).toBeGreaterThan(500);
         expect(segment?.lengthMeters ?? 0).toBeLessThan(1_500);
+    });
+
+    it('does not emit duplicate speed-map segments for the same direction, stop chain, and route set', () => {
+        const index = buildCorridorSpeedMapIndex([]);
+        const signatures = index.segments.map(segment => (
+            `${segment.directionId}|${segment.stopIds?.join('>') ?? `${segment.fromStopId}>${segment.toStopId}`}|${segment.routes.join(',')}`
+        ));
+
+        expect(new Set(signatures).size).toBe(signatures.length);
     });
 });

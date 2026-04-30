@@ -322,6 +322,46 @@ describe('scheduleGenerator start direction selection', () => {
         expect(secondTrip.stops['Rose Street']).toBeDefined();
     });
 
+    it('keeps multi-block partial pullouts on the full-direction launch grid', () => {
+        const config: ScheduleConfig = {
+            routeNumber: '7',
+            cycleMode: 'Strict',
+            cycleTime: 60,
+            blocks: [
+                {
+                    id: '7-1',
+                    startTime: '06:00',
+                    endTime: '08:01',
+                    startStop: 'Georgian College',
+                    startDirection: 'South'
+                },
+                {
+                    id: '7-2',
+                    startTime: '06:30',
+                    endTime: '08:31',
+                    startStop: 'Georgian College',
+                    startDirection: 'South'
+                }
+            ]
+        };
+
+        const tables = generateSchedule(
+            config, route7Buckets, route7Bands, route7BandSummary, route7SegmentsMap, 'Weekday'
+        );
+        const southTable = tables.find(t => t.routeName.includes('(South)'));
+        const northTable = tables.find(t => t.routeName.includes('(North)'));
+
+        expect(southTable).toBeDefined();
+        expect(northTable).toBeDefined();
+
+        const firstPartialTrip = southTable!.trips[0];
+        expect(firstPartialTrip.startStopIndex).toBe(1);
+        expect(firstPartialTrip.travelTime).toBe(10);
+        expect(firstPartialTrip.recoveryTime).toBe(10);
+        expect(firstPartialTrip.recoveryTimes).toEqual({ 'Park Place': 10 });
+        expect(northTable!.trips[0].startTime).toBe(380);
+    });
+
     it('defaults to North when startStop is ambiguous and no startDirection is provided', () => {
         const config: ScheduleConfig = {
             routeNumber: '7',

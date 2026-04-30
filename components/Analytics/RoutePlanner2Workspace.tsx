@@ -1,12 +1,17 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Copy, Download, MapPinned, Plus, Route, Save, Star, Trash2 } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { ArrowLeft, Copy, Download, Plus, Route, Save, Star, Trash2 } from 'lucide-react';
 
 import {
-    addRoutePlanner2RoutePoint,
+    addRoutePlanner2LineWaypoint,
     addRoutePlanner2Stop,
+    clearRoutePlanner2SegmentRuntimeOverride,
     deleteRoutePlanner2Stop,
     moveRoutePlanner2Stop,
     renameRoutePlanner2Stop,
+    setRoutePlanner2SegmentRuntimeOverride,
+    updateRoutePlanner2LineWaypointCoordinate,
+    updateRoutePlanner2SegmentRuntimeEstimates,
+    updateRoutePlanner2StopCoordinate,
     updateRoutePlanner2StopRole,
 } from '../../utils/route-planner-2/routePlanner2Authoring';
 import { updateRoutePlanner2Service } from '../../utils/route-planner-2/routePlanner2Feasibility';
@@ -21,8 +26,10 @@ import {
 } from '../../utils/route-planner-2/routePlanner2ProjectController';
 import { createRoutePlanner2Project } from '../../utils/route-planner-2/routePlanner2ProjectFactory';
 import { summarizeRoutePlanner2Project } from '../../utils/route-planner-2/routePlanner2Summary';
+import { RoutePlanner2MapCanvas } from './route-planner-2/RoutePlanner2MapCanvas';
 import type {
     RoutePlanner2Project,
+    RoutePlanner2SegmentRuntime,
     RoutePlanner2ServiceAssumptions,
     RoutePlanner2StopRole,
 } from '../../utils/route-planner-2/routePlanner2Types';
@@ -39,13 +46,6 @@ function formatRuntime(minutes: number | null | undefined): string {
 
 function formatBuses(value: number | null | undefined): string {
     return value != null ? String(value) : '-';
-}
-
-function formatStopRole(role: RoutePlanner2StopRole): string {
-    if (role === 'start-terminal') return 'Start terminal';
-    if (role === 'end-terminal') return 'End terminal';
-    if (role === 'timed') return 'Timed stop';
-    return 'Regular stop';
 }
 
 function confidenceClass(confidence: string): string {
@@ -116,18 +116,8 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         };
     }
 
-    function addAlignmentPoint() {
+    function addStop(coordinate = getNextAuthoringCoordinate()) {
         if (!selectedScenario) return;
-        const coordinate = getNextAuthoringCoordinate();
-        setProject((current) => addRoutePlanner2RoutePoint(current, selectedScenario.id, {
-            id: `point-${Date.now()}-${selectedScenario.alignment.length + 1}`,
-            ...coordinate,
-        }));
-    }
-
-    function addStop() {
-        if (!selectedScenario) return;
-        const coordinate = getNextAuthoringCoordinate();
         const stopNumber = selectedScenario.stops.length + 1;
         const stopId = `stop-${Date.now()}-${stopNumber}`;
         setProject((current) => addRoutePlanner2Stop(current, selectedScenario.id, {
@@ -144,7 +134,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
     }
 
     function updateNumericServiceField(
-        key: 'frequencyMinutes' | 'startTerminalLayoverMinutes' | 'endTerminalLayoverMinutes',
+        key: 'frequencyMinutes' | 'startTerminalLayoverMinutes' | 'endTerminalLayoverMinutes' | 'intermediateStopDwellSeconds',
         value: string,
     ) {
         updateService({ [key]: Number(value) } as Partial<RoutePlanner2ServiceAssumptions>);
@@ -160,10 +150,71 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         setProject((current) => renameRoutePlanner2Stop(current, selectedScenario.id, selectedStop.id, name));
     }
 
-    function deleteSelectedStop() {
-        if (!selectedScenario || !selectedStop) return;
-        setProject((current) => deleteRoutePlanner2Stop(current, selectedScenario.id, selectedStop.id));
+    function deleteStop(stopId: string) {
+        if (!selectedScenario) return;
+        const remainingStops = selectedScenario.stops.filter((stop) => stop.id !== stopId);
+
+        setProject((current) => deleteRoutePlanner2Stop(current, selectedScenario.id, stopId));
+
+        if (selectedStopId === stopId) {
+            setSelectedStopId(remainingStops[0]?.id ?? null);
+        }
     }
+
+    function deleteSelectedStop() {
+        if (!selectedStop) return;
+        deleteStop(selectedStop.id);
+    }
+
+    function moveStop(stopId: string, coordinate: { lat: number; lng: number }) {
+        if (!selectedScenario) return;
+        setProject((current) => updateRoutePlanner2StopCoordinate(current, selectedScenario.id, stopId, coordinate));
+        setSelectedStopId(stopId);
+    }
+
+    function addLineWaypoint(placement: {
+        fromStopId: string;
+        toStopId: string;
+        insertAfterWaypointId?: string;
+        insertBeforeWaypointId?: string;
+        coordinate: { lat: number; lng: number };
+    }) {
+        if (!selectedScenario) return;
+        setProject((current) => addRoutePlanner2LineWaypoint(current, selectedScenario.id, {
+            afterStopId: placement.fromStopId,
+            beforeStopId: placement.toStopId,
+            insertAfterWaypointId: placement.insertAfterWaypointId,
+            insertBeforeWaypointId: placement.insertBeforeWaypointId,
+            ...placement.coordinate,
+        }));
+    }
+
+    function moveLineWaypoint(waypointId: string, coordinate: { lat: number; lng: number }) {
+        if (!selectedScenario) return;
+        setProject((current) => updateRoutePlanner2LineWaypointCoordinate(current, selectedScenario.id, waypointId, coordinate));
+    }
+
+    function updateSegmentRuntimeOverride(segmentId: string, value: string) {
+        if (!selectedScenario) return;
+        const trimmedValue = value.trim();
+        if (!trimmedValue) {
+            setProject((current) => clearRoutePlanner2SegmentRuntimeOverride(current, selectedScenario.id, segmentId));
+            return;
+        }
+        const runtimeMinutes = Number(trimmedValue);
+        setProject((current) => setRoutePlanner2SegmentRuntimeOverride(current, selectedScenario.id, segmentId, runtimeMinutes));
+    }
+
+    function clearSegmentRuntimeOverride(segmentId: string) {
+        if (!selectedScenario) return;
+        setProject((current) => clearRoutePlanner2SegmentRuntimeOverride(current, selectedScenario.id, segmentId));
+    }
+
+    const selectedScenarioId = selectedScenario?.id;
+    const updateSegmentRuntimeEstimates = useCallback((estimates: RoutePlanner2SegmentRuntime[]) => {
+        if (!selectedScenarioId || estimates.length === 0) return;
+        setProject((current) => updateRoutePlanner2SegmentRuntimeEstimates(current, selectedScenarioId, estimates));
+    }, [selectedScenarioId]);
 
     return (
         <div className="h-full overflow-hidden bg-slate-100">
@@ -211,7 +262,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                             </p>
                             <div className="mt-4 grid grid-cols-2 gap-3">
                                 <div className="rounded-2xl bg-slate-50 p-3">
-                                    <div className="text-xs font-bold uppercase text-slate-500">Scenarios</div>
+                                    <div className="text-xs font-bold uppercase text-slate-500">Routes</div>
                                     <div className="mt-1 text-lg font-black">{projectSummary.totalScenarios}</div>
                                 </div>
                                 <div className="rounded-2xl bg-slate-50 p-3">
@@ -223,9 +274,9 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
 
                         <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
                             <div className="mb-3 flex items-center justify-between">
-                                <h2 className="text-sm font-black text-slate-900">Scenarios</h2>
+                                <h2 className="text-sm font-black text-slate-900">Routes</h2>
                                 <button type="button" onClick={() => setProject((current) => addRoutePlanner2Scenario(current))} className="inline-flex items-center gap-1 rounded-full bg-cyan-50 px-2 py-1 text-xs font-bold text-cyan-700">
-                                    <Plus size={12} /> Add scenario
+                                    <Plus size={12} /> Add route
                                 </button>
                             </div>
                             <div className="space-y-2">
@@ -258,56 +309,30 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                         </section>
                     </aside>
 
-                    <section className="min-h-[520px] overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-                        <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
-                            <div>
-                                <h2 className="text-sm font-black text-slate-900">Map canvas</h2>
-                                <p className="text-xs text-slate-500">Stop-aware authoring is local-only for this MVP.</p>
-                            </div>
-                            <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-1 text-xs font-bold text-slate-600"><MapPinned size={12} />Stops</span>
-                        </div>
-                        <div className="relative h-[calc(100%-57px)] min-h-[460px] bg-[radial-gradient(circle_at_20%_20%,rgba(14,165,233,0.18),transparent_30%),linear-gradient(135deg,#f8fafc_0%,#e2e8f0_100%)]">
-                            <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-                                <path d="M 18 22 C 28 24, 26 39, 34 40 S 51 43, 58 48 S 67 62, 72 67" fill="none" stroke="#0891b2" strokeWidth="5" strokeLinecap="round" strokeDasharray="12 12" />
-                            </svg>
-                            <div className="absolute left-6 top-6 max-w-md rounded-3xl border border-slate-200 bg-white/95 p-4 shadow-lg">
-                                <div className="flex flex-wrap items-center gap-2">
-                                    <button type="button" onClick={addAlignmentPoint} className="inline-flex items-center gap-2 rounded-xl bg-cyan-600 px-3 py-2 text-sm font-bold text-white"><Plus size={15} />Add route point</button>
-                                    <button type="button" onClick={addStop} className="inline-flex items-center gap-2 rounded-xl border border-cyan-200 bg-cyan-50 px-3 py-2 text-sm font-bold text-cyan-700"><MapPinned size={15} />Add stop</button>
-                                </div>
-                                <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                                    <div className="rounded-2xl bg-slate-50 p-3"><div className="font-bold uppercase text-slate-500">Route points</div><div className="mt-1 text-lg font-black">{selectedScenario?.alignment.length ?? 0}</div></div>
-                                    <div className="rounded-2xl bg-slate-50 p-3"><div className="font-bold uppercase text-slate-500">Stops</div><div className="mt-1 text-lg font-black">{selectedScenario?.stops.length ?? 0}</div></div>
-                                </div>
-                            </div>
-
-                            {selectedScenario && selectedScenario.stops.length > 0 && (
-                                <div className="absolute right-6 top-6 max-h-[360px] w-72 overflow-auto rounded-3xl border border-slate-200 bg-white/95 p-4 shadow-lg">
-                                    <h3 className="text-sm font-black text-slate-900">Stop order</h3>
-                                    <div className="mt-3 space-y-2">
-                                        {selectedScenario.stops.map((stop) => (
-                                            <button key={stop.id} type="button" onClick={() => setSelectedStopId(stop.id)} className={`w-full rounded-2xl border p-3 text-left text-sm ${selectedStop?.id === stop.id ? 'border-cyan-300 bg-cyan-50' : 'border-slate-200 bg-white'}`}>
-                                                <div className="font-bold text-slate-900">{stop.sequence}. {stop.name}</div>
-                                                <div className="mt-1 text-xs font-semibold text-slate-500">{formatStopRole(stop.role)}</div>
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                    </section>
+                    <RoutePlanner2MapCanvas
+                        scenario={selectedScenario}
+                        selectedStopId={selectedStopId}
+                        onSelectStop={setSelectedStopId}
+                        onAddStop={addStop}
+                        onDeleteStop={deleteStop}
+                        onMoveStop={moveStop}
+                        onAddLineWaypoint={addLineWaypoint}
+                        onMoveLineWaypoint={moveLineWaypoint}
+                        onSegmentRuntimeEstimates={updateSegmentRuntimeEstimates}
+                        onAddNextStop={() => addStop()}
+                    />
 
                     <aside className="space-y-4">
                         <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
                             <div className="flex items-center justify-between gap-3">
-                                <h2 className="text-sm font-black text-slate-900">Selected scenario</h2>
+                                <h2 className="text-sm font-black text-slate-900">Selected route</h2>
                                 {selectedScenarioSummary?.isPreferred && <span className="rounded-full bg-emerald-100 px-2 py-1 text-xs font-bold text-emerald-700">Preferred</span>}
                             </div>
 
                             {selectedScenario && selectedScenarioSummary ? (
                                 <div className="mt-4 space-y-4">
                                     <label className="block text-xs font-bold uppercase tracking-wide text-slate-500" htmlFor="rp2-scenario-name">
-                                        Scenario name
+                                        Route name
                                         <input id="rp2-scenario-name" value={selectedScenario.name} onChange={(event) => setProject((current) => renameRoutePlanner2Scenario(current, selectedScenario.id, event.target.value))} className="mt-1 w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm font-bold text-slate-900" />
                                     </label>
 
@@ -315,6 +340,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                         <div className="rounded-2xl bg-slate-50 p-3"><div className="text-xs font-bold uppercase text-slate-500">Runtime</div><div className="mt-1 text-lg font-black">{formatRuntime(selectedFeasibility?.oneWayRuntimeMinutes)}</div></div>
                                         <div className="rounded-2xl bg-slate-50 p-3"><div className="text-xs font-bold uppercase text-slate-500">Cycle</div><div className="mt-1 text-lg font-black">{formatRuntime(selectedFeasibility?.cycleTimeMinutes)}</div></div>
                                         <div className="rounded-2xl bg-slate-50 p-3"><div className="text-xs font-bold uppercase text-slate-500">Buses</div><div className="mt-1 text-lg font-black">{formatBuses(selectedFeasibility?.busesRequired)}</div></div>
+                                        <div className="rounded-2xl bg-slate-50 p-3"><div className="text-xs font-bold uppercase text-slate-500">Dwell</div><div className="mt-1 text-lg font-black">{formatRuntime(selectedFeasibility?.dwellTimeMinutes ?? 0)}</div></div>
                                         <div className="rounded-2xl bg-slate-50 p-3"><div className="text-xs font-bold uppercase text-slate-500">Confidence</div><div className={`mt-1 inline-flex rounded-full px-2 py-1 text-xs font-black uppercase ${confidenceClass(selectedFeasibility?.confidence ?? 'not-ready')}`}>{selectedFeasibility?.confidence ?? 'not-ready'}</div></div>
                                     </div>
 
@@ -335,7 +361,11 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                             <label className="text-xs font-bold uppercase tracking-wide text-slate-500">Frequency<input type="number" min="0" value={selectedScenario.service.frequencyMinutes} onChange={(event) => updateNumericServiceField('frequencyMinutes', event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" /></label>
                                             <label className="text-xs font-bold uppercase tracking-wide text-slate-500">Start layover<input type="number" value={selectedScenario.service.startTerminalLayoverMinutes} onChange={(event) => updateNumericServiceField('startTerminalLayoverMinutes', event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" /></label>
                                             <label className="text-xs font-bold uppercase tracking-wide text-slate-500">End layover<input type="number" value={selectedScenario.service.endTerminalLayoverMinutes} onChange={(event) => updateNumericServiceField('endTerminalLayoverMinutes', event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" /></label>
+                                            <label className="text-xs font-bold uppercase tracking-wide text-slate-500">Dwell / stop sec<input type="number" min="0" value={selectedScenario.service.intermediateStopDwellSeconds ?? 0} onChange={(event) => updateNumericServiceField('intermediateStopDwellSeconds', event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" /></label>
                                         </div>
+                                        <p className="mt-2 text-xs leading-5 text-slate-500">
+                                            Dwell is added for intermediate stops only. Terminal layover stays separate.
+                                        </p>
                                     </div>
 
                                     <label className="block text-xs font-bold uppercase tracking-wide text-slate-500" htmlFor="rp2-notes">
@@ -369,12 +399,12 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                                     </li>
                                                 ))}
                                             </ul>
-                                        ) : <p className="mt-2 text-sm text-emerald-800">Scenario has enough inputs for a fallback feasibility estimate.</p>}
+                                        ) : <p className="mt-2 text-sm text-emerald-800">Route has enough inputs for a segment travel-time estimate.</p>}
                                     </div>
 
                                     {selectedFeasibility && selectedFeasibility.segmentSummaries.length > 0 && (
                                         <div className="rounded-2xl border border-slate-200 bg-white p-3">
-                                            <h3 className="text-sm font-black text-slate-900">Segment runtime source</h3>
+                                            <h3 className="text-sm font-black text-slate-900">Segment runtimes</h3>
                                             <div className="mt-2 space-y-2">
                                                 {selectedFeasibility.segmentSummaries.map((segment) => {
                                                     const fromStop = selectedScenario.stops.find((stop) => stop.id === segment.fromStopId);
@@ -382,7 +412,42 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                                     return (
                                                         <div key={segment.id} className="rounded-xl bg-slate-50 p-2 text-xs text-slate-600">
                                                             <div className="font-bold text-slate-800">{fromStop?.name ?? 'Unknown'} to {toStop?.name ?? 'Unknown'}: {formatRuntime(segment.runtimeMinutes)}</div>
-                                                            <div className="mt-1">{segment.source} / {segment.confidence}</div>
+                                                            <div className="mt-1 flex flex-wrap items-center gap-2">
+                                                                <span>{segment.source} / {segment.confidence}</span>
+                                                                {segment.distanceKm != null && <span>{segment.distanceKm.toFixed(2)} km</span>}
+                                                            </div>
+                                                            <div className="mt-2 flex items-end gap-2">
+                                                                <label className="min-w-0 flex-1 font-bold uppercase tracking-wide text-slate-500">
+                                                                    Override min
+                                                                    <input
+                                                                        type="number"
+                                                                        min="1"
+                                                                        step="1"
+                                                                        value={segment.source === 'manual' ? segment.runtimeMinutes ?? '' : ''}
+                                                                        placeholder={segment.runtimeMinutes != null ? String(segment.runtimeMinutes) : 'Min'}
+                                                                        onChange={(event) => updateSegmentRuntimeOverride(segment.id, event.target.value)}
+                                                                        className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-sm font-bold text-slate-900"
+                                                                        aria-label={`Override runtime for ${fromStop?.name ?? 'segment'} to ${toStop?.name ?? 'segment'}`}
+                                                                    />
+                                                                </label>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => clearSegmentRuntimeOverride(segment.id)}
+                                                                    disabled={segment.source !== 'manual'}
+                                                                    className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-bold text-slate-600 disabled:opacity-40"
+                                                                >
+                                                                    Clear
+                                                                </button>
+                                                            </div>
+                                                            {segment.source === 'mapbox' && (
+                                                                <div className="mt-1 text-[11px] font-semibold text-cyan-700">Mapbox planning estimate</div>
+                                                            )}
+                                                            {segment.source === 'manual' && (
+                                                                <div className="mt-1 text-[11px] font-semibold text-emerald-700">Planner override</div>
+                                                            )}
+                                                            {segment.fallbackReason && (
+                                                                <div className="mt-1 text-[11px] font-semibold text-amber-700">{segment.fallbackReason}</div>
+                                                            )}
                                                         </div>
                                                     );
                                                 })}
@@ -395,14 +460,14 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                         <button type="button" onClick={() => setProject((current) => deleteRoutePlanner2Scenario(current, selectedScenario.id))} disabled={project.scenarios.length <= 1} className="inline-flex items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-bold text-red-700 disabled:opacity-50"><Trash2 size={16} />Delete</button>
                                     </div>
                                 </div>
-                            ) : <p className="mt-3 text-sm text-slate-500">Select a scenario to edit details.</p>}
+                            ) : <p className="mt-3 text-sm text-slate-500">Select a route to edit details.</p>}
                         </section>
 
                         <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
-                            <h2 className="text-sm font-black text-slate-900">Scenario comparison</h2>
+                            <h2 className="text-sm font-black text-slate-900">Route comparison</h2>
                             <div className={`mt-3 rounded-2xl border p-3 ${readinessClass(projectSummary.preferredScenarioSummary?.readiness ?? 'not-ready')}`}>
                                 <div className="flex items-center justify-between gap-2">
-                                    <h3 className="text-sm font-black">Preferred scenario summary</h3>
+                                    <h3 className="text-sm font-black">Preferred route summary</h3>
                                     {projectSummary.preferredScenarioSummary && <span className="rounded-full bg-white/80 px-2 py-1 text-xs font-black uppercase">{projectSummary.preferredScenarioSummary.readinessLabel}</span>}
                                 </div>
                                 {projectSummary.preferredScenarioSummary ? (
@@ -410,12 +475,12 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                         <p className="mt-2 text-sm leading-6">{projectSummary.preferredScenarioSummary.summaryText}</p>
                                         <p className="mt-2 text-xs font-bold">Next: {projectSummary.preferredScenarioSummary.nextAction}</p>
                                     </div>
-                                ) : <p className="mt-2 text-sm leading-6">No preferred scenario yet. Build a scenario with terminals and feasibility outputs, then mark it preferred.</p>}
+                                ) : <p className="mt-2 text-sm leading-6">No preferred route yet. Build a route with terminals and feasibility outputs, then mark it preferred.</p>}
                             </div>
                             <div className="mt-3 overflow-x-auto rounded-2xl border border-slate-200">
                                 <table className="w-full min-w-[520px] text-left text-xs">
                                     <thead className="bg-slate-50 text-slate-500">
-                                        <tr><th className="px-3 py-2 font-bold">Scenario</th><th className="px-3 py-2 font-bold">Stops</th><th className="px-3 py-2 font-bold">Runtime</th><th className="px-3 py-2 font-bold">Cycle</th><th className="px-3 py-2 font-bold">Buses</th><th className="px-3 py-2 font-bold">State</th><th className="px-3 py-2 font-bold">Warnings</th></tr>
+                                        <tr><th className="px-3 py-2 font-bold">Route</th><th className="px-3 py-2 font-bold">Stops</th><th className="px-3 py-2 font-bold">Runtime</th><th className="px-3 py-2 font-bold">Cycle</th><th className="px-3 py-2 font-bold">Buses</th><th className="px-3 py-2 font-bold">State</th><th className="px-3 py-2 font-bold">Warnings</th></tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-100 bg-white">
                                         {projectSummary.scenarioSummaries.map((summary) => (

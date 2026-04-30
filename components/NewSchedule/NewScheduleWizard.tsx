@@ -17,6 +17,7 @@ import {
 import type { DayType as PerfDayType } from '../../utils/performanceDataTypes';
 import { calculateTotalTripTimes, detectOutliers, calculateBands, hardenRuntimeAnalysisBuckets, TripBucketAnalysis, TimeBand, DirectionBandSummary } from '../../utils/ai/runtimeAnalysis';
 import { generateSchedule } from '../../utils/schedule/scheduleGenerator';
+import { copyNearestMasterRecoveryToGenerated } from '../../utils/schedule/masterRecoveryTransfer';
 import { computeSuggestedStrictCycle } from '../../utils/schedule/strictCycleSuggestion';
 import { MasterRouteTable } from '../../utils/parsers/masterScheduleParser';
 import { useWizardProgress } from '../../hooks/useWizardProgress';
@@ -215,6 +216,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
     const [files, setFiles] = useState<File[]>([]);
     const [importMode, setImportMode] = useState<ImportMode>(DEFAULT_IMPORT_MODE);
     const [performanceConfig, setPerformanceConfig] = useState<PerformanceConfig>({ routeId: '', dateRange: null });
+    const [performanceLoadRouteId, setPerformanceLoadRouteId] = useState<string>('all');
     const [autofillFromMaster, setAutofillFromMaster] = useState(true);
     const [projectName, setProjectName] = useState(DEFAULT_PROJECT_NAME);
     const [isAutoProjectName, setIsAutoProjectName] = useState(true);
@@ -224,7 +226,17 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
 
     // Performance data (lazy-loaded only when performance mode is selected)
     const performanceMetadataQuery = usePerformanceMetadataQuery(team?.id);
-    const perfQuery = usePerformanceDataQuery(team?.id, importMode === 'performance', performanceMetadataQuery.data);
+    const performanceLoadRouteIds = useMemo(() => {
+        const paths = performanceMetadataQuery.data?.routeStoragePaths;
+        if (!paths) return [];
+        return Object.keys(paths).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+    }, [performanceMetadataQuery.data?.routeStoragePaths]);
+    const perfQuery = usePerformanceDataQuery(
+        team?.id,
+        importMode === 'performance' && !performanceMetadataQuery.isLoading,
+        performanceMetadataQuery.data,
+        performanceLoadRouteId
+    );
     const perfData = perfQuery.data;
     const cleanStep2PerfData = useMemo(
         () => getStep2CleanPerformanceSummary(perfData),
@@ -255,6 +267,16 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
             metadata: perfData.metadata,
         });
     }, [dayType, perfData?.dailySummaries, perfData?.metadata, performanceConfig.dateRange, performanceConfig.routeId]);
+
+    const handlePerformanceLoadRouteChange = useCallback((routeId: string) => {
+        setPerformanceLoadRouteId(routeId);
+        if (routeId !== 'all') {
+            setPerformanceConfig(prev => ({
+                ...prev,
+                routeId,
+            }));
+        }
+    }, []);
 
     // State for Step 2 Analysis
     const [parsedData, setParsedData] = useState<RuntimeData[]>([]);
@@ -1532,6 +1554,29 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                 return;
             }
 
+            if (autofillFromMaster && team?.id && currentConfiguredRouteIdentity) {
+                try {
+                    setStep4LoadingMessage('Copying recovery times from the master schedule...');
+                    const masterResult = await getMasterSchedule(team.id, currentConfiguredRouteIdentity);
+                    if (masterResult) {
+                        const recoveryResult = copyNearestMasterRecoveryToGenerated(
+                            generatedTables,
+                            [masterResult.content.northTable, masterResult.content.southTable].filter(Boolean)
+                        );
+                        generatedTables = recoveryResult.tables;
+                        if (recoveryResult.appliedCount > 0) {
+                            toast.info(
+                                'Recovery Times Copied',
+                                `Matched nearest master trips for ${recoveryResult.appliedCount} generated trip${recoveryResult.appliedCount === 1 ? '' : 's'}.`
+                            );
+                        }
+                    }
+                } catch (error) {
+                    console.warn('Could not copy recovery times from master schedule', error);
+                    toast.warning('Recovery Copy Skipped', 'The schedule was generated, but master recovery times could not be copied.');
+                }
+            }
+
             setGeneratedSchedules(generatedTables);
             setOriginalGeneratedSchedules(generatedTables);
             startNewStep4EditorSession();
@@ -1628,6 +1673,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         setProjectId(undefined);
         projectIdRef.current = undefined;
         setImportMode(DEFAULT_IMPORT_MODE);
+        setPerformanceLoadRouteId('all');
         setPerformanceConfig(createDefaultPerformanceConfig());
         setAutofillFromMaster(true);
         clearMasterCompare();
@@ -1870,6 +1916,10 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                                 performanceConfig={performanceConfig}
                                 onPerformanceConfigChange={setPerformanceConfig}
                                 performanceDataLoading={perfQuery.isLoading}
+                                performanceMetadataLoading={performanceMetadataQuery.isLoading}
+                                performanceLoadRouteId={performanceLoadRouteId}
+                                performanceLoadRouteIds={performanceLoadRouteIds}
+                                onPerformanceLoadRouteChange={handlePerformanceLoadRouteChange}
                                 performanceDateRange={performanceDateRange}
                                 performanceDiagnostics={performanceDiagnostics}
                             />

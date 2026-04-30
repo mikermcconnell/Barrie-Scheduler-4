@@ -19,7 +19,7 @@ describe('Route Planner 2 project factory', () => {
       status: 'draft',
       alignment: [],
       stops: [],
-      notes: 'Blank route concept. Add an alignment and stops before running feasibility checks.',
+      notes: 'Blank route concept. Add stops in travel order before running feasibility checks.',
       createdAt: now,
       updatedAt: now,
     });
@@ -29,6 +29,7 @@ describe('Route Planner 2 project factory', () => {
       frequencyMinutes: 30,
       startTerminalLayoverMinutes: 5,
       endTerminalLayoverMinutes: 5,
+      intermediateStopDwellSeconds: 0,
     });
   });
 

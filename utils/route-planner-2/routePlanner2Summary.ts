@@ -117,7 +117,7 @@ export function summarizeRoutePlanner2Scenario(
         readiness: 'ready-for-review',
         readinessLabel: 'Ready for review',
         summaryText: `${scenario.name} is ready for planning review: ${oneWayRuntimeLabel} one-way, ${cycleTimeLabel} cycle, ${busesRequiredLabel} at ${frequencyLabel} service.`,
-        nextAction: 'Compare against other scenarios or mark it preferred.',
+            nextAction: 'Compare against other routes or mark it preferred.',
         oneWayRuntimeLabel,
         cycleTimeLabel,
         busesRequiredLabel,

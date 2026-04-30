@@ -8,7 +8,8 @@ import {
 const makeTrip = (
     id: string,
     direction: 'North' | 'South',
-    startTime: number
+    startTime: number,
+    overrides: Partial<MasterTrip> = {},
 ): MasterTrip => ({
     id,
     blockId: direction === 'North' ? 'B1' : 'B2',
@@ -22,7 +23,8 @@ const makeTrip = (
     recoveryTime: 0,
     stops: { Terminal: '6:00 AM' },
     arrivalTimes: { Terminal: '6:00 AM' },
-    recoveryTimes: {}
+    recoveryTimes: {},
+    ...overrides,
 });
 
 const makeTable = (
@@ -77,6 +79,81 @@ describe('buildMasterComparison', () => {
         expect(result.unmatchedMasterTrips).toHaveLength(0);
     });
 
+    it('does not treat a single small timing difference as a global shift', () => {
+        const current = [
+            makeTable('10 (North)', [makeTrip('draft-a', 'North', 365)])
+        ];
+        const master = [
+            makeTable('10 (North)', [makeTrip('master-a', 'North', 360)])
+        ];
+
+        const result = buildDetailedMasterComparison(current, master);
+        const entry = result.currentTripComparisons.get('North::draft-a');
+
+        expect(entry?.status).toBe('matched');
+        if (entry?.status !== 'matched') throw new Error('Expected matched trip');
+        expect(entry.shiftMinutes).toBe(0);
+        expect(result.masterShiftByDir.North).toBeUndefined();
+        expect(result.removedMasterTrips).toHaveLength(0);
+    });
+
+    it('does not time-match trips across different routes', () => {
+        const current = [
+            makeTable('7 (North)', [makeTrip('draft-route-7', 'North', 361)])
+        ];
+        const master = [
+            makeTable('10 (North)', [makeTrip('master-route-10', 'North', 360)])
+        ];
+
+        const result = buildDetailedMasterComparison(current, master);
+
+        expect(result.currentTripComparisons.get('North::draft-route-7')?.status).toBe('new');
+        expect(result.removedMasterTrips.map(entry => entry.masterTrip.id)).toEqual(['master-route-10']);
+    });
+
+    it('adds possible replacement hints to unmatched master trips near new service', () => {
+        const current = [
+            makeTable('10 (North)', [makeTrip('draft-later', 'North', 390)])
+        ];
+        const master = [
+            makeTable('10 (North)', [makeTrip('master-original', 'North', 360)])
+        ];
+
+        const result = buildDetailedMasterComparison(current, master);
+
+        expect(result.currentTripComparisons.get('North::draft-later')?.status).toBe('new');
+        expect(result.removedMasterTrips).toHaveLength(1);
+        expect(result.removedMasterTrips[0].possibleReplacements).toEqual([
+            expect.objectContaining({
+                currentTripId: 'draft-later',
+                diffMinutes: 30,
+            }),
+        ]);
+    });
+
+    it('uses end time and travel time to choose the better same-start candidate', () => {
+        const current = [
+            makeTable('10 (North)', [makeTrip('draft-a', 'North', 365)])
+        ];
+        const master = [
+            makeTable('10 (North)', [
+                makeTrip('master-wrong-duration', 'North', 360, {
+                    endTime: 430,
+                    travelTime: 70,
+                    cycleTime: 70,
+                }),
+                makeTrip('master-right-duration', 'North', 360),
+            ])
+        ];
+
+        const result = buildDetailedMasterComparison(current, master);
+        const entry = result.currentTripComparisons.get('North::draft-a');
+
+        expect(entry?.status).toBe('matched');
+        if (entry?.status !== 'matched') throw new Error('Expected a matched comparison entry');
+        expect(entry.masterTrip.id).toBe('master-right-duration');
+    });
+
     it('keeps north and south trip IDs isolated during exact matching', () => {
         const current = [
             makeTable('10 (North)', [makeTrip('shared-trip', 'North', 360)]),
@@ -116,10 +193,16 @@ describe('buildMasterComparison', () => {
 
     it('returns detailed match metadata for time-shift matches', () => {
         const current = [
-            makeTable('10 (North)', [makeTrip('draft-a', 'North', 365)])
+            makeTable('10 (North)', [
+                makeTrip('draft-a', 'North', 365),
+                makeTrip('draft-b', 'North', 425)
+            ])
         ];
         const master = [
-            makeTable('10 (North)', [makeTrip('master-a', 'North', 360)])
+            makeTable('10 (North)', [
+                makeTrip('master-a', 'North', 360),
+                makeTrip('master-b', 'North', 420)
+            ])
         ];
 
         const result = buildDetailedMasterComparison(current, master);

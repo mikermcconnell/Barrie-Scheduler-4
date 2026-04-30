@@ -30,12 +30,13 @@ export function usePerformanceDataQuery(
     teamId: string | undefined,
     enabled = true,
     metadata?: PerformanceMetadata | null,
+    routeId?: string | null,
 ) {
     return useQuery({
-        queryKey: ['performanceData', teamId, metadata?.storagePath ?? null],
+        queryKey: ['performanceData', teamId, metadata?.storagePath ?? null, routeId ?? 'all'],
         queryFn: async () => {
             if (!teamId) return null;
-            return await getPerformanceData(teamId, metadata);
+            return await getPerformanceData(teamId, metadata, routeId);
         },
         enabled: !!teamId && enabled,
         staleTime: PERFORMANCE_QUERY_STALE_MS,

@@ -10,15 +10,15 @@ Outcome:
 ## Milestone 1: Clean Local Workspace
 
 Outcome:
-- project and scenario model
+- project and route model
 - local state controller
-- create/rename/duplicate/delete scenarios
-- preferred scenario marker
+- create/rename/duplicate/delete routes
+- preferred route marker
 - starter comparison table
 
 Acceptance:
-- project and scenario state use the data model in `05-data-model.md`
-- preferred scenario is stored once at project level
+- project and route state use the data model in `05-data-model.md`
+- preferred route is stored once at project level
 - UI does not imply Firebase persistence exists
 - no imports from legacy Route Planner controllers, services, or utilities
 
@@ -41,11 +41,11 @@ Outcome:
 - confidence and warning model
 - segment-level source disclosure
 
-## Milestone 4: Scenario Comparison and Summary
+## Milestone 4: Route Comparison and Summary
 
 Outcome:
-- metrics table across scenarios
-- preferred scenario summary
+- metrics table across routes
+- preferred route summary
 - on-screen planning summary
 - clear not-ready and warning states
 
@@ -55,7 +55,7 @@ Not v1.
 
 Future outcome:
 - team-scoped project save/load
-- scenario persistence
+- route persistence
 - version or updated-at conflict handling if needed
 
 ## Future Milestone: Observed Runtime Integration
@@ -73,7 +73,7 @@ Not v1.
 
 Future outcome:
 - structured handoff package for schedule development
-- assumptions, stops, runtime evidence, warnings, and preferred scenario data
+- assumptions, stops, runtime evidence, warnings, and preferred route data
 
 ## Future Milestone: Coverage Analysis
 
@@ -81,5 +81,5 @@ Not v1.
 
 Future outcome:
 - population and employment coverage
-- scenario-to-scenario coverage deltas
+- route-to-route coverage deltas
 - strategic destinations and land-use layers

@@ -56,7 +56,10 @@ describe('RoundTripTableView compare-to-master badges', () => {
                 stops: ['Terminal'],
                 stopIds: { Terminal: 'STOP-1' },
                 trips: [
-                    makeTrip('draft-a', 'North', 365),
+                    makeTrip('draft-a', 'North', 365, {
+                        stops: { Terminal: '6:05 AM' },
+                        arrivalTimes: { Terminal: '6:05 AM' },
+                    }),
                     makeTrip('draft-new', 'North', 430, { blockId: '10-2' }),
                 ],
             },
@@ -95,14 +98,17 @@ describe('RoundTripTableView compare-to-master badges', () => {
         expect(text).toContain('removed from North');
     });
 
-    it('shows baseline deltas by default in master compare mode', () => {
+    it('shows published master deltas by default in master compare mode', () => {
         const currentSchedules = [
             {
                 routeName: '10 (North)',
                 stops: ['Terminal'],
                 stopIds: { Terminal: 'STOP-1' },
                 trips: [
-                    makeTrip('draft-a', 'North', 365),
+                    makeTrip('draft-a', 'North', 365, {
+                        stops: { Terminal: '6:05 AM' },
+                        arrivalTimes: { Terminal: '6:05 AM' },
+                    }),
                 ],
             },
         ] as any;
@@ -128,12 +134,63 @@ describe('RoundTripTableView compare-to-master badges', () => {
             );
         });
 
-        const deltaToggle = Array.from(container?.querySelectorAll('button') ?? []).find(
-            button => button.textContent?.includes('Baseline Deltas')
-        );
-        expect(deltaToggle).toBeTruthy();
-        expect(deltaToggle?.className).toContain('bg-indigo-50');
+        const compareSelect = container?.querySelector('select[aria-label="Compare against"]') as HTMLSelectElement | null;
+        expect(compareSelect?.value).toBe('master');
+        expect(compareSelect?.textContent ?? '').toContain('Published master');
         expect(container?.textContent ?? '').toContain('+5');
+    });
+
+    it('shows residual deltas after a detected baseline alignment shift', () => {
+        const currentSchedules = [
+            {
+                routeName: '10 (North)',
+                stops: ['Terminal'],
+                stopIds: { Terminal: 'STOP-1' },
+                trips: [
+                    makeTrip('draft-a', 'North', 365, {
+                        stops: { Terminal: '6:07 AM' },
+                        arrivalTimes: { Terminal: '6:07 AM' },
+                    }),
+                    makeTrip('draft-b', 'North', 425, {
+                        stops: { Terminal: '7:05 AM' },
+                        arrivalTimes: { Terminal: '7:05 AM' },
+                    }),
+                ],
+            },
+        ] as any;
+
+        const masterBaseline = [
+            {
+                routeName: '10 (North)',
+                stops: ['Terminal'],
+                stopIds: { Terminal: 'STOP-1' },
+                trips: [
+                    makeTrip('master-a', 'North', 360, {
+                        stops: { Terminal: '6:00 AM' },
+                        arrivalTimes: { Terminal: '6:00 AM' },
+                    }),
+                    makeTrip('master-b', 'North', 420, {
+                        stops: { Terminal: '7:00 AM' },
+                        arrivalTimes: { Terminal: '7:00 AM' },
+                    }),
+                ],
+            },
+        ] as any;
+
+        flushSync(() => {
+            root?.render(
+                <RoundTripTableView
+                    schedules={currentSchedules}
+                    masterBaseline={masterBaseline}
+                    onCellEdit={() => {}}
+                />
+            );
+        });
+
+        const text = container?.textContent ?? '';
+        expect(text).toContain('Published master auto-align N +5m');
+        expect(text).toContain('+2');
+        expect(container?.querySelector('[aria-label="+2 minutes after +5m master alignment (+7 raw)"]')).toBeTruthy();
     });
 
     it('shows a review-needed state for ambiguous compare matches', () => {
@@ -185,5 +242,45 @@ describe('RoundTripTableView compare-to-master badges', () => {
         });
 
         expect(container?.textContent ?? '').toContain('Focused in table');
+    });
+
+    it('shows possible replacement hints on unmatched master rows', () => {
+        const currentSchedules = [
+            {
+                routeName: '10 (North)',
+                stops: ['Terminal'],
+                stopIds: { Terminal: 'STOP-1' },
+                trips: [
+                    makeTrip('draft-later', 'North', 390),
+                ],
+            },
+        ] as any;
+
+        const masterBaseline = [
+            {
+                routeName: '10 (North)',
+                stops: ['Terminal'],
+                stopIds: { Terminal: 'STOP-1' },
+                trips: [
+                    makeTrip('master-original', 'North', 360),
+                ],
+            },
+        ] as any;
+
+        flushSync(() => {
+            root?.render(
+                <RoundTripTableView
+                    schedules={currentSchedules}
+                    masterBaseline={masterBaseline}
+                    onCellEdit={() => {}}
+                />
+            );
+        });
+
+        const text = container?.textContent ?? '';
+        expect(text).toContain('REMOVED');
+        expect(text).toContain('NEW');
+        expect(text).toContain('Possible replacement');
+        expect(text).toContain('+30m');
     });
 });

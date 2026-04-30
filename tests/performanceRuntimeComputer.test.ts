@@ -349,6 +349,55 @@ describe('performanceRuntimeComputer.computeRuntimesFromPerformance', () => {
         expect(analysis[0].expectedSegmentCount).toBe(2);
     });
 
+    it('uses a representative trip runtime instead of summing duplicate trips in the same Route 7 bucket', () => {
+        const summaries: DailySummary[] = [
+            makeSummary({
+                date: '2026-01-06',
+                dayType: 'weekday',
+                routeNames: { '7A': 'Route Seven A', '7B': 'Route Seven B' },
+                tripEntries: [
+                    {
+                        tripId: 'north-0632',
+                        tripName: '7A 06:32',
+                        routeId: '7A',
+                        direction: 'N',
+                        terminalDepartureTime: '06:32',
+                        segments: [
+                            { fromStopId: 'park', toStopId: 'rose', fromRouteStopIndex: 0, toRouteStopIndex: 1, runtimeMinutes: 50, timeBucket: '06:30' },
+                        ],
+                    },
+                    {
+                        tripId: 'north-0657',
+                        tripName: '7A 06:57',
+                        routeId: '7A',
+                        direction: 'N',
+                        terminalDepartureTime: '06:57',
+                        segments: [
+                            { fromStopId: 'park', toStopId: 'rose', fromRouteStopIndex: 0, toRouteStopIndex: 1, runtimeMinutes: 60, timeBucket: '06:30' },
+                        ],
+                    },
+                ],
+            }),
+        ];
+
+        const result = computeRuntimesFromPerformance(summaries, {
+            routeId: '7A',
+            dayType: 'weekday',
+            canonicalDirectionStops: {
+                North: ['Park Place', 'Rose Street'],
+            },
+        });
+        const analysis = calculateTotalTripTimes(result);
+
+        expect(analysis).toHaveLength(1);
+        expect(analysis[0].timeBucket).toBe('06:30');
+        expect(analysis[0].totalP50).toBe(55);
+        expect(analysis[0].observedCycleP50).toBe(55);
+        expect(analysis[0].contributingDays).toEqual([
+            { date: '2026-01-06', runtime: 55 },
+        ]);
+    });
+
     it('keeps only the longest full trip pattern when full-pattern-only mode is enabled', () => {
         const summaries: DailySummary[] = [
             makeSummary({

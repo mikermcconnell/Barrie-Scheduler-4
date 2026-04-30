@@ -24,12 +24,12 @@ These docs are the default contract for Route Planner 2 coding. If implementatio
 Route Planner 2 v1 is a local-first operational feasibility workspace for blank route concepts.
 
 In scope:
-- project with scenarios
+- project with routes
 - blank route concept workflow
 - stop-aware map authoring
 - service assumptions
 - runtime, cycle time, bus requirement, and warning outputs
-- simple scenario metrics comparison
+- simple route metrics comparison
 - on-screen planning summary
 
 Out of scope for v1:

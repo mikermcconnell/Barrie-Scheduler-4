@@ -13,6 +13,7 @@ import {
     Redo2,
     RefreshCw,
     Save,
+    Trash2,
     Undo2,
     Wand2,
 } from 'lucide-react';
@@ -20,7 +21,7 @@ import { useToast } from '../contexts/ToastContext';
 import { useUndoRedo } from '../../hooks/useUndoRedo';
 import { useUnsavedChangesWarning } from '../../hooks/useUnsavedChangesWarning';
 import { exportFleetPlanWorkbook } from '../../utils/fleet-plan/fleetPlanExport';
-import { cloneFleetPlanWorkbook, createEmptyFleetPlanRow, replaceFleetPlanSheet } from '../../utils/fleet-plan/fleetPlanModel';
+import { cloneFleetPlanWorkbook, createEmptyFleetPlanRow, fleetRowHasContent, replaceFleetPlanSheet } from '../../utils/fleet-plan/fleetPlanModel';
 import { saveFleetPlanWorkbook } from '../../utils/fleet-plan/fleetPlanService';
 import { validateFleetPlanWorkbook } from '../../utils/fleet-plan/fleetPlanValidation';
 import { FleetPlanIssueResolverModal } from './FleetPlanIssueResolverModal';
@@ -35,6 +36,7 @@ import {
     isFleetPlanRowCountedInFleetTotal,
     moveFleetPlanLifecycleBoundary,
     moveFleetPlanLifecycleWindow,
+    removeFleetPlanRow,
 } from '../../utils/fleet-plan/fleetPlanEditing';
 import type { FleetPlanGridColumn, FleetPlanLifecycle, FleetPlanSortState } from '../../utils/fleet-plan/fleetPlanEditing';
 import type { FleetPlanRow, FleetPlanSheetKey, FleetPlanWorkbook } from '../../utils/fleet-plan/types';
@@ -424,6 +426,7 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
     const [pausedRowOrder, setPausedRowOrder] = useState<string[] | null>(null);
     const [statusFilter, setStatusFilter] = useState<FleetStatusFilter>('all');
     const [busTypeFilter, setBusTypeFilter] = useState<FleetBusTypeFilter>('all');
+    const [newRowSheetKey, setNewRowSheetKey] = useState<FleetPlanSheetKey>('diesel-12m');
     const [focusedYear, setFocusedYear] = useState<string | null>(null);
     const cellRefs = useRef<Record<string, HTMLInputElement | null>>({});
     const {
@@ -583,12 +586,27 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
     }, []);
 
     const handleAddRow = useCallback((focusColumnIndex = 0) => {
-        const defaultSheetKey: FleetPlanSheetKey = 'diesel-12m';
         const nextRowIndex = combinedRows.length;
         pauseSortForEdit();
-        mutateSheet(defaultSheetKey, (rows) => [...rows, createEmptyFleetPlanRow(defaultSheetKey)]);
+        setStatusFilter('all');
+        setFocusedYear(null);
+        setBusTypeFilter(newRowSheetKey);
+        mutateSheet(newRowSheetKey, (rows) => [...rows, createEmptyFleetPlanRow(newRowSheetKey)]);
         setPendingFocus({ rowIndex: nextRowIndex, columnIndex: focusColumnIndex });
-    }, [combinedRows.length, mutateSheet, pauseSortForEdit]);
+    }, [combinedRows.length, mutateSheet, newRowSheetKey, pauseSortForEdit]);
+
+    const handleDeleteRow = useCallback((sheetKey: FleetPlanSheetKey, row: FleetPlanRow) => {
+        const rowLabel = getFleetRowDisplayName(row);
+        if (fleetRowHasContent(row) && !confirm(`Delete ${rowLabel} from the Fleet Plan? This can be undone before saving.`)) {
+            return;
+        }
+
+        pauseSortForEdit();
+        setRetirementEditor(null);
+        mutateSheet(sheetKey, (rows) => removeFleetPlanRow(rows, row.id));
+        setPausedRowOrder((current) => current?.filter((rowId) => rowId !== row.id) ?? current);
+        toast?.success('Fleet row deleted');
+    }, [mutateSheet, pauseSortForEdit, toast]);
 
     const moveRowToSheet = useCallback((fromSheetKey: FleetPlanSheetKey, rowId: string, toSheetKey: FleetPlanSheetKey) => {
         if (fromSheetKey === toSheetKey) return;
@@ -1226,13 +1244,29 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                                 Drag the in-service and retire controls to update the plan immediately. Retirements are exported as red RETIRE cells.
                             </p>
                         </div>
-                        <button
-                            onClick={() => handleAddRow()}
-                            className="inline-flex items-center justify-center gap-2 rounded-lg border border-blue-200 bg-white px-4 py-2 text-sm font-bold text-brand-blue shadow-sm hover:bg-blue-50"
-                        >
-                            Add row
-                            <Plus size={16} />
-                        </button>
+                        <div className="flex flex-wrap items-center gap-2">
+                            <label className="text-xs font-extrabold uppercase tracking-wide text-gray-500">
+                                New row type
+                                <select
+                                    value={newRowSheetKey}
+                                    onChange={(event) => setNewRowSheetKey(event.target.value as FleetPlanSheetKey)}
+                                    className="ml-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-bold normal-case tracking-normal text-gray-700 shadow-sm focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-blue-100"
+                                >
+                                    {FLEET_PLAN_SHEET_CONFIGS.map((config) => (
+                                        <option key={config.key} value={config.key}>
+                                            {BUS_TYPE_LABELS[config.key]}
+                                        </option>
+                                    ))}
+                                </select>
+                            </label>
+                            <button
+                                onClick={() => handleAddRow()}
+                                className="inline-flex items-center justify-center gap-2 rounded-lg border border-blue-200 bg-white px-4 py-2 text-sm font-bold text-brand-blue shadow-sm hover:bg-blue-50"
+                            >
+                                Add row
+                                <Plus size={16} />
+                            </button>
+                        </div>
                     </div>
                 </div>
 
@@ -1430,6 +1464,16 @@ export const FleetPlanWorkspace: React.FC<FleetPlanWorkspaceProps> = ({
                                         <span className={`min-w-0 truncate rounded-full px-2 py-1 text-[10px] font-extrabold ${BUS_TYPE_STYLES[sheetKey].detail}`}>
                                             Life: <span className="text-gray-950">{getFleetPlanServiceLifeLabel(row.year, currentYear)}</span>
                                         </span>
+                                        <button
+                                            type="button"
+                                            onClick={() => handleDeleteRow(sheetKey, row)}
+                                            className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-lg border border-red-100 bg-white px-2.5 py-1.5 text-xs font-extrabold text-red-600 shadow-sm transition hover:bg-red-50"
+                                            title={`Delete ${getFleetRowDisplayName(row)}`}
+                                            aria-label={`Delete ${getFleetRowDisplayName(row)}`}
+                                        >
+                                            <Trash2 size={14} />
+                                            Delete
+                                        </button>
                                     </div>
                                     <div className="mt-1.5 flex items-center gap-2">
                                         <input

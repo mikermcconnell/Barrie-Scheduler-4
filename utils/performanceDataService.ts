@@ -24,6 +24,7 @@ import type { PerformanceDataSummary, PerformanceMetadata } from './performanceD
 import { aggregateMonthlySnapshots } from './performanceDataAggregator';
 import { buildPerformanceOverviewSummary, buildPerformanceReportSummary } from './performanceOverviewSummary';
 import { saveMonthlySnapshots } from './performanceSnapshotService';
+import { filterPerformanceSummaryByRoute, getAvailablePerformanceRoutes } from './performanceRouteFilter';
 
 // ============ HELPERS ============
 
@@ -41,6 +42,10 @@ function getOverviewStoragePath(teamId: string, timestamp: string) {
 
 function getReportStoragePath(teamId: string, timestamp: string) {
     return `teams/${teamId}/performanceData/${timestamp}-report.json`;
+}
+
+function getRouteStoragePath(teamId: string, timestamp: string, routeId: string) {
+    return `teams/${teamId}/performanceData/${timestamp}-route-${encodeURIComponent(routeId)}.json`;
 }
 
 export function buildStorageJsonUploadData(value: unknown): Blob | Uint8Array {
@@ -83,6 +88,7 @@ export function mergePerformanceSummaryMetadata(
             storagePath: metadata.storagePath || summary.metadata.storagePath,
             overviewStoragePath: metadata.overviewStoragePath || summary.metadata.overviewStoragePath,
             reportStoragePath: metadata.reportStoragePath || summary.metadata.reportStoragePath,
+            routeStoragePaths: metadata.routeStoragePaths || summary.metadata.routeStoragePaths,
         },
     };
 }
@@ -102,6 +108,7 @@ export function mergePerformanceOverviewMetadata(
             storagePath: metadata.storagePath || summary.metadata.storagePath,
             overviewStoragePath: metadata.overviewStoragePath || summary.metadata.overviewStoragePath,
             reportStoragePath: metadata.reportStoragePath || summary.metadata.reportStoragePath,
+            routeStoragePaths: metadata.routeStoragePaths || summary.metadata.routeStoragePaths,
         },
     };
 }
@@ -125,6 +132,11 @@ export async function savePerformanceData(
     const oldPath: string | null = existing.exists() ? existing.data().storagePath || null : null;
     const oldOverviewPath: string | null = existing.exists() ? existing.data().overviewStoragePath || null : null;
     const oldReportPath: string | null = existing.exists() ? existing.data().reportStoragePath || null : null;
+    const oldRouteStoragePaths: Record<string, string> = existing.exists()
+        && existing.data().routeStoragePaths
+        && typeof existing.data().routeStoragePaths === 'object'
+        ? existing.data().routeStoragePaths
+        : {};
     if (oldPath) {
         try {
             const oldRef = ref(storage, oldPath);
@@ -175,6 +187,7 @@ export async function savePerformanceData(
 
     const overviewSummary = buildPerformanceOverviewSummary(merged);
     const reportSummary = buildPerformanceReportSummary(merged);
+    const routeStoragePaths: Record<string, string> = {};
 
     // Upload merged summary JSON to Storage
     const storageRef = ref(storage, storagePath);
@@ -187,6 +200,15 @@ export async function savePerformanceData(
     await uploadBytes(ref(storage, reportStoragePath), buildStorageJsonUploadData(reportSummary), {
         contentType: 'application/json',
     });
+    await Promise.all(getAvailablePerformanceRoutes(merged).map(async route => {
+        const routePath = getRouteStoragePath(teamId, timestamp, route.routeId);
+        const routeSummary = filterPerformanceSummaryByRoute(merged, route.routeId);
+        if (!routeSummary) return;
+        await uploadBytes(ref(storage, routePath), buildStorageJsonUploadData(routeSummary), {
+            contentType: 'application/json',
+        });
+        routeStoragePaths[route.routeId] = routePath;
+    }));
 
     // Save metadata to Firestore
     await setDoc(metadataRef, {
@@ -195,6 +217,7 @@ export async function savePerformanceData(
         storagePath,
         overviewStoragePath,
         reportStoragePath,
+        routeStoragePaths,
         dateRange: merged.metadata.dateRange,
         dayCount: merged.metadata.dayCount,
         totalRecords: merged.metadata.totalRecords,
@@ -224,6 +247,14 @@ export async function savePerformanceData(
             // Old report file may already be gone — ignore
         }
     }
+    await Promise.all(Object.values(oldRouteStoragePaths).map(async oldRoutePath => {
+        if (!oldRoutePath || Object.values(routeStoragePaths).includes(oldRoutePath)) return;
+        try {
+            await deleteObject(ref(storage, oldRoutePath));
+        } catch {
+            // Old route file may already be gone — ignore
+        }
+    }));
 }
 
 // ============ READ ============
@@ -245,6 +276,9 @@ export async function getPerformanceMetadata(teamId: string): Promise<Performanc
             storagePath: data.storagePath || '',
             overviewStoragePath: data.overviewStoragePath || '',
             reportStoragePath: data.reportStoragePath || '',
+            routeStoragePaths: data.routeStoragePaths && typeof data.routeStoragePaths === 'object'
+                ? data.routeStoragePaths
+                : undefined,
         };
     } catch (error) {
         console.error('Error getting performance metadata:', error);
@@ -255,18 +289,37 @@ export async function getPerformanceMetadata(teamId: string): Promise<Performanc
 export async function getPerformanceData(
     teamId: string,
     metadataOverride?: PerformanceMetadata | null,
+    routeId?: string | null,
 ): Promise<PerformanceDataSummary | null> {
     try {
         const metadata = metadataOverride ?? await getPerformanceMetadata(teamId);
         if (!metadata?.storagePath) return null;
 
-        const storageRef = ref(storage, metadata.storagePath);
-        const url = await getDownloadURL(storageRef);
-        const response = await fetch(url);
-        if (!response.ok) return null;
+        const selectedRoutePath = routeId && routeId !== 'all'
+            ? metadata.routeStoragePaths?.[routeId]
+            : undefined;
+        const storagePathToLoad = selectedRoutePath || metadata.storagePath;
+
+        let response: Response | null = null;
+        try {
+            const url = await getDownloadURL(ref(storage, storagePathToLoad));
+            response = await fetch(url);
+        } catch (routeError) {
+            if (!selectedRoutePath) throw routeError;
+            console.warn('Route-scoped performance data unavailable; falling back to full data:', routeError);
+        }
+
+        if (!response?.ok && selectedRoutePath) {
+            const url = await getDownloadURL(ref(storage, metadata.storagePath));
+            response = await fetch(url);
+        }
+        if (!response?.ok) return null;
 
         const summary: PerformanceDataSummary = await response.json();
-        return mergePerformanceSummaryMetadata(summary, metadata);
+        return filterPerformanceSummaryByRoute(
+            mergePerformanceSummaryMetadata(summary, metadata),
+            routeId,
+        );
     } catch (error) {
         console.error('Error getting performance data:', error);
         return null;
@@ -309,6 +362,10 @@ export async function deletePerformanceData(teamId: string): Promise<void> {
         const storagePath = docSnap.data().storagePath;
         const overviewStoragePath = docSnap.data().overviewStoragePath;
         const reportStoragePath = docSnap.data().reportStoragePath;
+        const routeStoragePaths: Record<string, string> = docSnap.data().routeStoragePaths
+            && typeof docSnap.data().routeStoragePaths === 'object'
+            ? docSnap.data().routeStoragePaths
+            : {};
         if (storagePath) {
             try {
                 await deleteObject(ref(storage, storagePath));
@@ -330,6 +387,14 @@ export async function deletePerformanceData(teamId: string): Promise<void> {
                 // File may already be gone
             }
         }
+        await Promise.all(Object.values(routeStoragePaths).map(async routeStoragePath => {
+            if (!routeStoragePath) return;
+            try {
+                await deleteObject(ref(storage, routeStoragePath));
+            } catch {
+                // File may already be gone
+            }
+        }));
         await deleteDoc(metadataRef);
     }
 }

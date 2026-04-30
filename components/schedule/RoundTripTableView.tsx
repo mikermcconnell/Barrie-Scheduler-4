@@ -91,6 +91,12 @@ interface ColumnInfo {
 }
 
 type DensityMode = 'ultra' | 'compact' | 'comfortable';
+type CompareMode = 'none' | 'generated' | 'master';
+
+const VIRTUAL_ROW_THRESHOLD = 80;
+const VIRTUAL_ROW_HEIGHT = 34;
+const VIRTUAL_OVERSCAN_ROWS = 8;
+const VIRTUAL_FALLBACK_VIEWPORT_ROWS = 28;
 
 type VisibleTripChangeKind = Exclude<TripChangeKind, 'removed' | 'unchanged'>;
 type RowMarkerChangeKind = Extract<VisibleTripChangeKind, 'review'>;
@@ -269,13 +275,23 @@ const getCompareDeltaMarker = (
         };
     }
 
-    const diff = getDeltaMinutes(currentTime, originalTime);
+    const rawDiff = getDeltaMinutes(currentTime, originalTime);
+    if (rawDiff === null) return null;
+
+    const alignmentShift = comparison?.status === 'matched'
+        ? (comparison.shiftMinutes || 0)
+        : 0;
+    const diff = rawDiff - alignmentShift;
     if (!diff) return null;
+
+    const title = alignmentShift
+        ? `${diff > 0 ? '+' : ''}${diff} minutes after ${alignmentShift > 0 ? '+' : ''}${alignmentShift}m master alignment (${rawDiff > 0 ? '+' : ''}${rawDiff} raw)`
+        : `${diff > 0 ? '+' : ''}${diff} minutes from master`;
 
     return {
         label: `${diff > 0 ? '+' : ''}${diff}`,
         className: diff > 0 ? 'text-green-600 bg-green-50 ring-green-100' : 'text-red-600 bg-red-50 ring-red-100',
-        title: `${diff > 0 ? '+' : ''}${diff} minutes from master`,
+        title,
     };
 };
 
@@ -604,8 +620,16 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
     const [showMetaCols] = useState(true);
     const [showActionsCol, setShowActionsCol] = useState(true);
     const [showRowNumberCol, setShowRowNumberCol] = useState(false);
-    const [showDeltas, setShowDeltas] = useState(() => initialShowDeltas ?? true);
+    const [compareMode, setCompareMode] = useState<CompareMode>(() => (
+        masterBaseline && masterBaseline.length > 0
+            ? 'master'
+            : initialShowDeltas
+                ? 'generated'
+                : 'none'
+    ));
     const [compareReviewFocusTripId, setCompareReviewFocusTripId] = useState<string | null>(null);
+    const tableScrollRef = useRef<HTMLDivElement>(null);
+    const [tableScrollTop, setTableScrollTop] = useState(0);
 
     useEffect(() => {
         if (!highlightedTripId) return;
@@ -619,13 +643,24 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
         setTimepointOnly(initialTimepointOnly);
     }, [initialTimepointOnly, schedules]);
 
-    const isMasterMode = !!masterBaseline && masterBaseline.length > 0;
-    const baselineLabel = compareBaselineLabel || 'Baseline';
+    const hasGeneratedBaseline = !!originalSchedules && originalSchedules.length > 0;
+    const hasMasterBaseline = !!masterBaseline && masterBaseline.length > 0;
+    const isMasterMode = compareMode === 'master' && hasMasterBaseline;
+    const isGeneratedCompareMode = compareMode === 'generated' && hasGeneratedBaseline;
+    const showDeltas = isMasterMode || isGeneratedCompareMode;
+    const baselineLabel = compareBaselineLabel || 'Published master';
 
-    // In master/baseline mode, the delta badges are the primary compare signal.
     useEffect(() => {
-        if (isMasterMode) setShowDeltas(true);
-    }, [isMasterMode]);
+        if (hasMasterBaseline) setCompareMode('master');
+    }, [hasMasterBaseline]);
+
+    useEffect(() => {
+        setCompareMode(current => {
+            if (current === 'master' && !hasMasterBaseline) return 'none';
+            if (current === 'generated' && !hasGeneratedBaseline) return 'none';
+            return current;
+        });
+    }, [hasGeneratedBaseline, hasMasterBaseline]);
 
     const originalTripLookup = useMemo(() => {
         const lookup = new Map<string, MasterTrip>();
@@ -1336,17 +1371,34 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                 >
                                     Legend
                                 </button>
-                                {(isMasterMode || (originalSchedules && originalSchedules.length > 0)) && (
+                                {(hasMasterBaseline || hasGeneratedBaseline) && (
                                     <>
-                                        <button
-                                            onClick={() => setShowDeltas(v => !v)}
-                                            className={`px-2 py-1 rounded text-xs font-semibold border ${showDeltas
-                                                ? (isMasterMode ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-green-50 text-green-700 border-green-200')
-                                                : 'bg-white text-gray-700 border-gray-300'}`}
-                                            title={isMasterMode ? `Show differences from ${baselineLabel}` : 'Show time differences from original'}
+                                        <label
+                                            className="flex items-center gap-1 text-xs font-semibold text-gray-600"
+                                            title="Choose which schedule the visible deltas compare against"
                                         >
-                                            {isMasterMode ? `${baselineLabel} Deltas` : '+/- Deltas'}
-                                        </button>
+                                            Compare against
+                                            <select
+                                                aria-label="Compare against"
+                                                value={compareMode}
+                                                onChange={(e) => setCompareMode(e.target.value as CompareMode)}
+                                                className={`rounded border px-2 py-1 text-xs font-semibold ${
+                                                    isMasterMode
+                                                        ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
+                                                        : isGeneratedCompareMode
+                                                            ? 'border-green-200 bg-green-50 text-green-700'
+                                                            : 'border-gray-300 bg-white text-gray-700'
+                                                }`}
+                                            >
+                                                <option value="none">None</option>
+                                                {hasGeneratedBaseline && (
+                                                    <option value="generated">Generated baseline</option>
+                                                )}
+                                                {hasMasterBaseline && (
+                                                    <option value="master">Published master</option>
+                                                )}
+                                            </select>
+                                        </label>
                                         {isMasterMode && masterShiftLabel && (
                                             <span
                                                 className="px-2 py-1 rounded text-xs font-semibold border bg-indigo-50 text-indigo-700 border-indigo-200"
@@ -1355,13 +1407,13 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                 {masterShiftLabel}
                                             </span>
                                         )}
-                                        {showDeltas && !isMasterMode && onResetOriginals && (
+                                        {isGeneratedCompareMode && onResetOriginals && (
                                             <button
                                                 onClick={onResetOriginals}
                                                 className="px-2 py-1 rounded text-xs font-semibold border bg-white text-gray-700 border-gray-300 hover:bg-red-50 hover:text-red-700 hover:border-red-200"
-                                                title="Revert schedule to original times"
+                                                title="Revert schedule to the generated baseline"
                                             >
-                                                Reset Deltas
+                                                Reset to Generated
                                             </button>
                                         )}
                                     </>
@@ -1431,7 +1483,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                 <div className="rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-3">
                                     <div className="flex flex-wrap items-start justify-between gap-3">
                                         <div>
-                                            <div className="text-sm font-bold text-slate-900">Changes from baseline</div>
+                                            <div className="text-sm font-bold text-slate-900">Changes from {baselineLabel}</div>
                                             <div className="mt-1 text-xs text-slate-600">
                                                 Planner-facing compare summary for this route group.
                                             </div>
@@ -1539,7 +1591,11 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                             );
                         })()}
                         {/* Main Table Area */}
-                        <div className="overflow-auto custom-scrollbar relative w-full flex-1 min-h-0">
+                        <div
+                            ref={tableScrollRef}
+                            onScroll={(event) => setTableScrollTop(event.currentTarget.scrollTop)}
+                            className="overflow-auto custom-scrollbar relative w-full flex-1 min-h-0"
+                        >
 
                             <table
                                 className={`w-full text-left border-collapse ${densityClass.cell}`}
@@ -1719,10 +1775,34 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                             return 0;
                                         });
 
-                                        return displayRows.map((item, displayRowIdx) => {
+                                        const shouldVirtualize = displayRows.length > VIRTUAL_ROW_THRESHOLD;
+                                        const viewportRows = tableScrollRef.current?.clientHeight
+                                            ? Math.ceil(tableScrollRef.current.clientHeight / VIRTUAL_ROW_HEIGHT)
+                                            : VIRTUAL_FALLBACK_VIEWPORT_ROWS;
+                                        const startIndex = shouldVirtualize
+                                            ? Math.max(0, Math.floor(tableScrollTop / VIRTUAL_ROW_HEIGHT) - VIRTUAL_OVERSCAN_ROWS)
+                                            : 0;
+                                        const endIndex = shouldVirtualize
+                                            ? Math.min(displayRows.length, startIndex + viewportRows + VIRTUAL_OVERSCAN_ROWS * 2)
+                                            : displayRows.length;
+                                        const visibleRows = displayRows.slice(startIndex, endIndex);
+                                        const spacerColSpan = Math.max(1, columnMapping.length);
+                                        const topSpacerHeight = shouldVirtualize ? startIndex * VIRTUAL_ROW_HEIGHT : 0;
+                                        const bottomSpacerHeight = shouldVirtualize ? (displayRows.length - endIndex) * VIRTUAL_ROW_HEIGHT : 0;
+
+                                        return (
+                                            <>
+                                                {topSpacerHeight > 0 && (
+                                                    <tr aria-hidden="true">
+                                                        <td colSpan={spacerColSpan} style={{ height: topSpacerHeight, padding: 0, border: 0 }} />
+                                                    </tr>
+                                                )}
+                                                {visibleRows.map((item, visibleRowIdx) => {
+                                                    const displayRowIdx = startIndex + visibleRowIdx;
                                                     if (item.type === 'removed') {
                                                         const { masterTrip, reason } = item.entry;
                                                         const displayRowNum = displayRowIdx + 1;
+                                                        const possibleReplacement = item.entry.possibleReplacements[0];
                                                         return (
                                                             <tr
                                                                 key={`removed-${item.entry.direction}-${masterTrip.id}-${masterTrip.startTime}`}
@@ -1752,6 +1832,12 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                                                         {TimeUtils.fromMinutes(masterTrip.startTime)} → {TimeUtils.fromMinutes(masterTrip.endTime)}
                                                                     </span>
                                                                     <span className="ml-2">removed from {item.entry.direction}</span>
+                                                                    {possibleReplacement && (
+                                                                        <span className="ml-2 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold not-italic text-amber-800">
+                                                                            Possible replacement {TimeUtils.fromMinutes(possibleReplacement.startTime)}
+                                                                            {' '}({possibleReplacement.diffMinutes > 0 ? '+' : ''}{possibleReplacement.diffMinutes}m)
+                                                                        </span>
+                                                                    )}
                                                                 </td>
                                                             </tr>
                                                         );
@@ -1791,10 +1877,10 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                         const northComparison = northTrip ? getTripComparison('North', northTrip.id) : undefined;
                                         const southComparison = southTrip ? getTripComparison('South', southTrip.id) : undefined;
                                         const originalNorthTrip = northTrip
-                                            ? (isMasterMode ? getMasterMatchedTrip('North', northTrip.id) : getOriginalTrip(north.routeName, northTrip))
+                                            ? (isMasterMode ? getMasterMatchedTrip('North', northTrip.id) : isGeneratedCompareMode ? getOriginalTrip(north.routeName, northTrip) : undefined)
                                             : undefined;
                                         const originalSouthTrip = southTrip
-                                            ? (isMasterMode ? getMasterMatchedTrip('South', southTrip.id) : getOriginalTrip(south.routeName, southTrip))
+                                            ? (isMasterMode ? getMasterMatchedTrip('South', southTrip.id) : isGeneratedCompareMode ? getOriginalTrip(south.routeName, southTrip) : undefined)
                                             : undefined;
                                         const compareReason = isMasterMode
                                             ? [northComparison?.reason, southComparison?.reason].filter(Boolean).join(' ')
@@ -2621,7 +2707,14 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
 
                                             </tr>
                                         );
-                                    });
+                                                })}
+                                                {bottomSpacerHeight > 0 && (
+                                                    <tr aria-hidden="true">
+                                                        <td colSpan={spacerColSpan} style={{ height: bottomSpacerHeight, padding: 0, border: 0 }} />
+                                                    </tr>
+                                                )}
+                                            </>
+                                        );
                                     })()}
                                 </tbody>
                             </table>

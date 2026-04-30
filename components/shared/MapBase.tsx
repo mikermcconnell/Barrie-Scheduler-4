@@ -8,6 +8,30 @@ const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN as string;
 /** Barrie, ON city center */
 const BARRIE_CENTER = { longitude: -79.69, latitude: 44.38 };
 
+function getMapboxErrorMessage(event: unknown): string {
+    if (!event || typeof event !== 'object') return '';
+    const error = 'error' in event ? (event as { error?: unknown }).error : undefined;
+    if (error instanceof Error) return error.message;
+    if (error && typeof error === 'object' && 'message' in error) {
+        return String((error as { message?: unknown }).message ?? '');
+    }
+    return '';
+}
+
+function isFatalMapboxError(event: unknown): boolean {
+    const message = getMapboxErrorMessage(event).toLowerCase();
+
+    if (message.includes('unauthorized') || message.includes('access token') || message.includes('token')) {
+        return true;
+    }
+
+    if (event && typeof event === 'object' && 'sourceId' in event) {
+        return false;
+    }
+
+    return message.includes('style') || message.includes('webgl') || message.includes('initialize');
+}
+
 export interface MapBaseProps {
     longitude?: number;
     latitude?: number;
@@ -64,6 +88,11 @@ export const MapBase: React.FC<MapBaseProps> = ({
     }, [latitude, longitude, mapStyle, zoom]);
 
     const handleMapError = useCallback((event: unknown) => {
+        if (!isFatalMapboxError(event)) {
+            console.debug('Recoverable Mapbox map event', event);
+            return;
+        }
+
         console.error('Mapbox map error', event);
 
         // react-map-gl can surface map/layer errors while a child Layer is still

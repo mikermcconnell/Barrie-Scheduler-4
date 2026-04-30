@@ -24,13 +24,13 @@ Build an operational feasibility tool for a blank route concept.
 
 A planner should be able to:
 1. create a project
-2. create one or more scenarios
+2. create one or more routes
 3. draw a route concept
 4. add and order stops
 5. mark terminals
 6. enter service assumptions
 7. review runtime, cycle time, bus requirement, and warnings
-8. compare scenarios in a simple metrics table
+8. compare routes in a simple metrics table
 9. view an on-screen planning summary
 
 ## Product Principles
@@ -58,8 +58,8 @@ Route Planner 2 v1 will not include:
 V1 is successful when a planner can create a blank concept, add stops and service assumptions, and see whether the concept appears feasible enough to keep exploring.
 
 Minimum success signals:
-- project and scenario state are understandable
+- project and route state are understandable
 - stops and terminals drive the feasibility output
 - runtime source and confidence are visible
 - warnings are specific and actionable
-- comparison helps choose which scenario deserves more work
+- comparison helps choose which route deserves more work
