@@ -31,11 +31,12 @@ In scope:
 - runtime, cycle time, bus requirement, and warning outputs
 - simple route metrics comparison
 - on-screen planning summary
+- importing one or more full GTFS bus routes as editable local route concept templates
 
 Out of scope for v1:
 - Firebase persistence
 - coverage analysis
 - downstream schedule handoff
-- GTFS editing
+- editing, publishing, or exporting GTFS feeds; imported GTFS routes are editable planning copies only
 - production publishing
 - importing old Route Planner controllers or services

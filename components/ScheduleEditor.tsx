@@ -71,6 +71,14 @@ export const tableMatchesActiveCompareScope = (
         return true;
     }
 
+    const baselineRouteKey = parseRouteInfo(baselineTable.routeName).baseRoute.trim().toUpperCase();
+    const activeRouteKeys = new Set(routeTables.map(routeTable => (
+        parseRouteInfo(routeTable.routeName).baseRoute.trim().toUpperCase()
+    )));
+    if (!activeRouteKeys.has(baselineRouteKey)) {
+        return false;
+    }
+
     const baselineDirection = extractDirectionFromName(baselineTable.routeName);
     const activeDirections = routeTables.map(routeTable => extractDirectionFromName(routeTable.routeName));
 

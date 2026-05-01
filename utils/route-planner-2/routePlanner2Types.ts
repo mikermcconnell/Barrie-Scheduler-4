@@ -1,10 +1,33 @@
 export type RoutePlanner2ProjectStatus = 'local-draft' | 'local-saved' | 'archived';
 export type RoutePlanner2ScenarioStatus = 'draft' | 'review';
+export type RoutePlanner2RouteShape = 'one-way' | 'closed-loop' | 'out-and-back';
 export type RoutePlanner2StopRole = 'regular' | 'timed' | 'start-terminal' | 'end-terminal';
-export type RoutePlanner2RuntimeSource = 'observed-proxy' | 'manual' | 'mapbox' | 'fallback' | 'missing';
+export type RoutePlanner2RuntimeSource =
+    | 'observed-proxy'
+    | 'observed-scheduled-blend'
+    | 'scheduled-proxy'
+    | 'manual'
+    | 'mapbox'
+    | 'fallback'
+    | 'missing';
 export type RoutePlanner2Confidence = 'high' | 'medium' | 'low' | 'not-ready';
 export type RoutePlanner2SegmentConfidence = 'high' | 'medium' | 'low' | 'missing';
 export type RoutePlanner2WarningSeverity = 'info' | 'warning' | 'blocking';
+
+export type RoutePlanner2ScenarioSource =
+    | { type: 'blank' }
+    | {
+        type: 'gtfs';
+        routeId?: string;
+        routeShortName?: string;
+        routeLongName?: string;
+        serviceId?: string;
+        directionId?: number;
+        tripHeadsign?: string;
+        shapeId?: string;
+        feedVersion?: string;
+        importedAt?: string;
+    };
 
 export interface RoutePlanner2Project {
     id: string;
@@ -21,8 +44,11 @@ export interface RoutePlanner2Scenario {
     id: string;
     name: string;
     status: RoutePlanner2ScenarioStatus;
+    routeShape: RoutePlanner2RouteShape;
+    source?: RoutePlanner2ScenarioSource;
     alignment: RoutePlanner2RoutePoint[];
     stops: RoutePlanner2Stop[];
+    turnaroundStopId?: string;
     service: RoutePlanner2ServiceAssumptions;
     runtimeEstimates?: RoutePlanner2SegmentRuntime[];
     runtimeOverrides?: Record<string, RoutePlanner2SegmentRuntimeOverride>;
@@ -72,6 +98,8 @@ export interface RoutePlanner2FeasibilitySummary {
     intermediateStopCount: number;
     cycleTimeMinutes: number | null;
     busesRequired: number | null;
+    recoveryTimeMinutes: number | null;
+    recoveryPercent: number | null;
     confidence: RoutePlanner2Confidence;
     segmentSummaries: RoutePlanner2SegmentRuntime[];
     warnings: RoutePlanner2Warning[];
@@ -84,6 +112,12 @@ export interface RoutePlanner2SegmentRuntime {
     runtimeMinutes: number | null;
     source: RoutePlanner2RuntimeSource;
     sampleSize?: number;
+    scheduledRuntimeMinutes?: number;
+    observedRuntimeMinutes?: number;
+    matchQuality?: 'exact-code' | 'name' | 'nearby' | 'unmatched';
+    matchedFromStopId?: string;
+    matchedToStopId?: string;
+    matchedRoutes?: string[];
     confidence: RoutePlanner2SegmentConfidence;
     distanceKm?: number;
     durationSeconds?: number;

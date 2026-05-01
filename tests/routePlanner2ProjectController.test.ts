@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { createRoutePlanner2Project } from '../utils/route-planner-2/routePlanner2ProjectFactory';
+import { createRoutePlanner2Project, createRoutePlanner2Scenario } from '../utils/route-planner-2/routePlanner2ProjectFactory';
 import {
   addRoutePlanner2Scenario,
   deleteRoutePlanner2Scenario,
   duplicateRoutePlanner2Scenario,
+  importRoutePlanner2Scenario,
   markRoutePlanner2PreferredScenario,
   renameRoutePlanner2Project,
   renameRoutePlanner2Scenario,
@@ -48,6 +49,17 @@ describe('Route Planner 2 project controller', () => {
       status: 'draft',
     });
     expect(project.preferredScenarioId).toBe('scenario-1');
+  });
+
+  it('imports a GTFS scenario and selects it', () => {
+    const project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now: '2026-05-01T12:00:00.000Z' });
+    const imported = createRoutePlanner2Scenario({ id: 'scenario-gtfs', name: 'Route 8A', now: '2026-05-01T12:01:00.000Z' });
+    const result = importRoutePlanner2Scenario(project, { ...imported, source: { type: 'gtfs', routeId: '8A' } }, '2026-05-01T12:02:00.000Z');
+
+    expect(result.scenarios).toHaveLength(2);
+    expect(result.selectedScenarioId).toBe('scenario-gtfs');
+    expect(result.status).toBe('local-draft');
+    expect(result.scenarios[1]?.source?.type).toBe('gtfs');
   });
 
   it('returns the original project for unknown scenario IDs', () => {

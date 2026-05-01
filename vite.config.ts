@@ -195,6 +195,7 @@ export default defineConfig(({ mode }) => {
           try {
             const urlParams = new URL(req.url, 'http://localhost').searchParams;
             const feedUrl = urlParams.get('url') || 'https://www.myridebarrie.ca/gtfs/google_transit.zip';
+            const includeShapes = urlParams.get('includeShapes') === 'true';
             const urlValidation = validateGtfsUrl(feedUrl);
 
             if (!urlValidation.ok) {
@@ -272,6 +273,7 @@ export default defineConfig(({ mode }) => {
                 trip_headsign: t.trip_headsign,
                 direction_id: t.direction_id ? parseInt(t.direction_id) : undefined,
                 block_id: t.block_id,
+                shape_id: t.shape_id,
               })),
               stopTimes: parseGtfsCsv(normalizedFiles.get('stop_times.txt')!).map(st => ({
                 trip_id: st.trip_id,
@@ -302,6 +304,15 @@ export default defineConfig(({ mode }) => {
                     exception_type: parseInt(cd.exception_type) || 1,
                   }))
                 : [],
+              shapes: includeShapes && normalizedFiles.has('shapes.txt')
+                ? parseGtfsCsv(normalizedFiles.get('shapes.txt')!).map(shape => ({
+                    shape_id: shape.shape_id,
+                    shape_pt_lat: parseFloat(shape.shape_pt_lat) || 0,
+                    shape_pt_lon: parseFloat(shape.shape_pt_lon) || 0,
+                    shape_pt_sequence: parseInt(shape.shape_pt_sequence) || 0,
+                    shape_dist_traveled: shape.shape_dist_traveled ? parseFloat(shape.shape_dist_traveled) : undefined,
+                  }))
+                : includeShapes ? [] : undefined,
             };
 
             console.log('✅ Parsed GTFS feed:', {
@@ -309,6 +320,7 @@ export default defineConfig(({ mode }) => {
               stops: feed.stops.length,
               trips: feed.trips.length,
               stopTimes: feed.stopTimes.length,
+              shapes: feed.shapes?.length ?? 0,
             });
 
             res.statusCode = 200;

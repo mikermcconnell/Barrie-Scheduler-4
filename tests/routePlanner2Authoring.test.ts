@@ -7,17 +7,40 @@ import {
   clearRoutePlanner2SegmentRuntimeOverride,
   deleteRoutePlanner2Stop,
   moveRoutePlanner2Stop,
+  reassignRoutePlanner2StopRange,
   renameRoutePlanner2Stop,
   setRoutePlanner2SegmentRuntimeOverride,
+  updateRoutePlanner2SegmentRuntimeEstimates,
   updateRoutePlanner2LineWaypointCoordinate,
   updateRoutePlanner2StopCoordinate,
   updateRoutePlanner2StopRole,
   validateRoutePlanner2Terminals,
 } from '../utils/route-planner-2/routePlanner2Authoring';
 import { createRoutePlanner2Project } from '../utils/route-planner-2/routePlanner2ProjectFactory';
+import type { RoutePlanner2SegmentRuntime } from '../utils/route-planner-2/routePlanner2Types';
 
 describe('Route Planner 2 authoring', () => {
   const now = '2026-04-29T12:00:00.000Z';
+  const segmentId = 'segment-stop-1-stop-2';
+
+  function runtimeEstimate(patch: Partial<RoutePlanner2SegmentRuntime>): RoutePlanner2SegmentRuntime {
+    return {
+      id: segmentId,
+      fromStopId: 'stop-1',
+      toStopId: 'stop-2',
+      runtimeMinutes: 8,
+      source: 'mapbox',
+      confidence: 'medium',
+      pathFingerprint: 'path-a',
+      updatedAt: now,
+      ...patch,
+    };
+  }
+
+  function projectWithRuntimeEstimate(estimate: RoutePlanner2SegmentRuntime) {
+    const project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now });
+    return updateRoutePlanner2SegmentRuntimeEstimates(project, 'scenario-1', [estimate], now);
+  }
 
   it('adds ordered route points and stops to a scenario', () => {
     let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now });
@@ -63,6 +86,103 @@ describe('Route Planner 2 authoring', () => {
     expect(project.scenarios[0]?.stops.map((stop) => `${stop.sequence}:${stop.name}`)).toEqual([
       '1:First',
       '2:Middle',
+    ]);
+  });
+
+  it('copies a contiguous stop range into another route at the requested position', () => {
+    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'route-a', now });
+    project = addRoutePlanner2Stop(project, 'route-a', { id: 'a-1', name: 'A1', lat: 44.38, lng: -79.69, role: 'start-terminal', now });
+    project = addRoutePlanner2Stop(project, 'route-a', { id: 'a-2', name: 'A2', lat: 44.39, lng: -79.68, now });
+    project = addRoutePlanner2Stop(project, 'route-a', { id: 'a-3', name: 'A3', lat: 44.4, lng: -79.67, role: 'end-terminal', now });
+    project = {
+      ...project,
+      scenarios: [
+        project.scenarios[0]!,
+        {
+          ...project.scenarios[0]!,
+          id: 'route-b',
+          name: 'Route B',
+          stops: [
+            { id: 'b-1', name: 'B1', lat: 44.41, lng: -79.66, sequence: 1, role: 'start-terminal', source: 'custom' },
+            { id: 'b-2', name: 'B2', lat: 44.42, lng: -79.65, sequence: 2, role: 'end-terminal', source: 'custom' },
+          ],
+          alignment: [],
+          runtimeEstimates: undefined,
+          runtimeOverrides: undefined,
+        },
+      ],
+    };
+
+    project = reassignRoutePlanner2StopRange(project, {
+      sourceScenarioId: 'route-a',
+      targetScenarioId: 'route-b',
+      fromSequence: 2,
+      toSequence: 3,
+      insertAfterStopId: 'b-1',
+      mode: 'copy',
+      now,
+    });
+
+    const source = project.scenarios.find((scenario) => scenario.id === 'route-a')!;
+    const target = project.scenarios.find((scenario) => scenario.id === 'route-b')!;
+
+    expect(source.stops.map((stop) => stop.name)).toEqual(['A1', 'A2', 'A3']);
+    expect(target.stops.map((stop) => `${stop.sequence}:${stop.name}:${stop.role}`)).toEqual([
+      '1:B1:start-terminal',
+      '2:A2:regular',
+      '3:A3:regular',
+      '4:B2:end-terminal',
+    ]);
+    expect(new Set(target.stops.map((stop) => stop.id)).size).toBe(4);
+  });
+
+  it('moves a contiguous stop range to another route and clears stale runtime evidence', () => {
+    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'route-a', now });
+    project = addRoutePlanner2Stop(project, 'route-a', { id: 'a-1', name: 'A1', lat: 44.38, lng: -79.69, role: 'start-terminal', now });
+    project = addRoutePlanner2Stop(project, 'route-a', { id: 'a-2', name: 'A2', lat: 44.39, lng: -79.68, now });
+    project = addRoutePlanner2Stop(project, 'route-a', { id: 'a-3', name: 'A3', lat: 44.4, lng: -79.67, now });
+    project = addRoutePlanner2Stop(project, 'route-a', { id: 'a-4', name: 'A4', lat: 44.41, lng: -79.66, role: 'end-terminal', now });
+    project = updateRoutePlanner2SegmentRuntimeEstimates(project, 'route-a', [{
+      id: 'segment-a-2-a-3',
+      fromStopId: 'a-2',
+      toStopId: 'a-3',
+      runtimeMinutes: 5,
+      source: 'scheduled-proxy',
+      confidence: 'high',
+    }], now);
+    project = {
+      ...project,
+      scenarios: [
+        project.scenarios[0]!,
+        {
+          ...project.scenarios[0]!,
+          id: 'route-b',
+          name: 'Route B',
+          stops: [],
+          alignment: [],
+          runtimeEstimates: undefined,
+          runtimeOverrides: undefined,
+        },
+      ],
+    };
+
+    project = reassignRoutePlanner2StopRange(project, {
+      sourceScenarioId: 'route-a',
+      targetScenarioId: 'route-b',
+      fromSequence: 2,
+      toSequence: 3,
+      mode: 'move',
+      now,
+    });
+
+    const source = project.scenarios.find((scenario) => scenario.id === 'route-a')!;
+    const target = project.scenarios.find((scenario) => scenario.id === 'route-b')!;
+
+    expect(source.stops.map((stop) => `${stop.sequence}:${stop.name}`)).toEqual(['1:A1', '2:A4']);
+    expect(source.runtimeEstimates).toBeUndefined();
+    expect(target.stops.map((stop) => `${stop.sequence}:${stop.name}:${stop.role}`)).toEqual([
+      '1:A2:start-terminal',
+      '2:A3:end-terminal',
     ]);
   });
 
@@ -152,6 +272,142 @@ describe('Route Planner 2 authoring', () => {
 
     project = clearRoutePlanner2SegmentRuntimeOverride(project, 'scenario-1', 'segment-stop-1-stop-2', now);
     expect(project.scenarios[0]?.runtimeOverrides).toBeUndefined();
+  });
+
+  it('lets runtime evidence replace Mapbox estimates', () => {
+    let project = projectWithRuntimeEstimate(runtimeEstimate({
+      runtimeMinutes: 8,
+      source: 'mapbox',
+      confidence: 'medium',
+    }));
+
+    project = updateRoutePlanner2SegmentRuntimeEstimates(project, 'scenario-1', [runtimeEstimate({
+      runtimeMinutes: 6,
+      source: 'scheduled-proxy',
+      confidence: 'medium',
+    })], now);
+
+    expect(project.scenarios[0]?.runtimeEstimates).toHaveLength(1);
+    expect(project.scenarios[0]?.runtimeEstimates?.[0]).toMatchObject({
+      runtimeMinutes: 6,
+      source: 'scheduled-proxy',
+    });
+  });
+
+  it('does not let Mapbox replace evidence for the same path fingerprint', () => {
+    let project = projectWithRuntimeEstimate(runtimeEstimate({
+      runtimeMinutes: 6,
+      source: 'scheduled-proxy',
+      confidence: 'medium',
+      pathFingerprint: 'path-a',
+    }));
+
+    project = updateRoutePlanner2SegmentRuntimeEstimates(project, 'scenario-1', [runtimeEstimate({
+      runtimeMinutes: 8,
+      source: 'mapbox',
+      confidence: 'medium',
+      pathFingerprint: 'path-a',
+    })], now);
+
+    expect(project.scenarios[0]?.runtimeEstimates?.[0]).toMatchObject({
+      runtimeMinutes: 6,
+      source: 'scheduled-proxy',
+      pathFingerprint: 'path-a',
+    });
+  });
+
+  it('does not let fallback replace Mapbox or evidence estimates', () => {
+    let mapboxProject = projectWithRuntimeEstimate(runtimeEstimate({
+      runtimeMinutes: 8,
+      source: 'mapbox',
+      confidence: 'medium',
+    }));
+    let evidenceProject = projectWithRuntimeEstimate(runtimeEstimate({
+      runtimeMinutes: 6,
+      source: 'observed-proxy',
+      confidence: 'high',
+    }));
+
+    const fallbackEstimate = runtimeEstimate({
+      runtimeMinutes: 12,
+      source: 'fallback',
+      confidence: 'low',
+      fallbackReason: 'distance-estimate',
+    });
+    mapboxProject = updateRoutePlanner2SegmentRuntimeEstimates(mapboxProject, 'scenario-1', [fallbackEstimate], now);
+    evidenceProject = updateRoutePlanner2SegmentRuntimeEstimates(evidenceProject, 'scenario-1', [fallbackEstimate], now);
+
+    expect(mapboxProject.scenarios[0]?.runtimeEstimates?.[0]).toMatchObject({
+      runtimeMinutes: 8,
+      source: 'mapbox',
+    });
+    expect(evidenceProject.scenarios[0]?.runtimeEstimates?.[0]).toMatchObject({
+      runtimeMinutes: 6,
+      source: 'observed-proxy',
+    });
+  });
+
+  it('lets new path fingerprints replace old evidence with recalculated evidence', () => {
+    let project = projectWithRuntimeEstimate(runtimeEstimate({
+      runtimeMinutes: 9,
+      source: 'observed-proxy',
+      confidence: 'high',
+      pathFingerprint: 'old-path',
+    }));
+
+    project = updateRoutePlanner2SegmentRuntimeEstimates(project, 'scenario-1', [runtimeEstimate({
+      runtimeMinutes: 7,
+      source: 'scheduled-proxy',
+      confidence: 'medium',
+      pathFingerprint: 'new-path',
+    })], now);
+
+    expect(project.scenarios[0]?.runtimeEstimates?.[0]).toMatchObject({
+      runtimeMinutes: 7,
+      source: 'scheduled-proxy',
+      pathFingerprint: 'new-path',
+    });
+  });
+
+  it('refreshes runtime evidence when only evidence metadata changes', () => {
+    let project = projectWithRuntimeEstimate(runtimeEstimate({
+      runtimeMinutes: 7,
+      source: 'observed-scheduled-blend',
+      confidence: 'medium',
+      sampleSize: 4,
+      scheduledRuntimeMinutes: 8,
+      observedRuntimeMinutes: 6,
+      matchQuality: 'name',
+      matchedFromStopId: 'gtfs-old-from',
+      matchedToStopId: 'gtfs-old-to',
+      matchedRoutes: ['1A'],
+    }));
+
+    project = updateRoutePlanner2SegmentRuntimeEstimates(project, 'scenario-1', [runtimeEstimate({
+      runtimeMinutes: 7,
+      source: 'observed-scheduled-blend',
+      confidence: 'medium',
+      sampleSize: 5,
+      scheduledRuntimeMinutes: 8,
+      observedRuntimeMinutes: 6,
+      matchQuality: 'exact-code',
+      matchedFromStopId: 'gtfs-new-from',
+      matchedToStopId: 'gtfs-new-to',
+      matchedRoutes: ['1A', '1B'],
+    })], now);
+
+    expect(project.scenarios[0]?.runtimeEstimates?.[0]).toMatchObject({
+      runtimeMinutes: 7,
+      source: 'observed-scheduled-blend',
+      confidence: 'medium',
+      sampleSize: 5,
+      scheduledRuntimeMinutes: 8,
+      observedRuntimeMinutes: 6,
+      matchQuality: 'exact-code',
+      matchedFromStopId: 'gtfs-new-from',
+      matchedToStopId: 'gtfs-new-to',
+      matchedRoutes: ['1A', '1B'],
+    });
   });
 
   it('returns the original project for unknown scenario IDs', () => {

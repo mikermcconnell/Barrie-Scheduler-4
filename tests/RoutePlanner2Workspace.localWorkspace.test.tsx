@@ -1,7 +1,64 @@
 import React from 'react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
 import { flushSync } from 'react-dom';
+
+vi.mock('../utils/route-planner-2/routePlanner2GtfsClient', () => ({
+  loadRoutePlanner2GtfsImportPatterns: vi.fn(async () => [
+    {
+      id: 'pattern-400',
+      routeId: '400',
+      routeShortName: '400',
+      routeLongName: 'Yonge Corridor',
+      routeColor: '0EA5E9',
+      serviceId: 'weekday',
+      dayTypeLabel: 'Weekday',
+      directionId: 0,
+      tripHeadsign: 'To Barrie South GO',
+      shapeId: 'shape-400',
+      tripCount: 10,
+      stopCount: 2,
+      shapePointCount: 3,
+      stops: [
+        { stopId: 'gtfs-stop-1', gtfsStopId: 'stop-1', stopCode: '1001', name: 'Downtown Terminal', lat: 44.389, lng: -79.69, sequence: 1, arrivalMinutes: 360, departureMinutes: 360 },
+        { stopId: 'gtfs-stop-2', gtfsStopId: 'stop-2', stopCode: '1002', name: 'Barrie South GO', lat: 44.34, lng: -79.63, sequence: 2, arrivalMinutes: 384, departureMinutes: 384 },
+      ],
+      shapePoints: [
+        { lat: 44.389, lng: -79.69, sequence: 1 },
+        { lat: 44.36, lng: -79.66, sequence: 2 },
+        { lat: 44.34, lng: -79.63, sequence: 3 },
+      ],
+    },
+    {
+      id: 'pattern-401',
+      routeId: '401',
+      routeShortName: '401',
+      routeLongName: 'Mapleview Corridor',
+      routeColor: '10B981',
+      serviceId: 'weekday',
+      dayTypeLabel: 'Weekday',
+      directionId: 0,
+      tripHeadsign: 'To Park Place',
+      shapeId: 'shape-401',
+      tripCount: 8,
+      stopCount: 2,
+      shapePointCount: 2,
+      stops: [
+        { stopId: 'gtfs-401-stop-1', gtfsStopId: '401-stop-1', stopCode: '2001', name: 'Downtown Terminal', lat: 44.389, lng: -79.69, sequence: 1, arrivalMinutes: 390, departureMinutes: 390 },
+        { stopId: 'gtfs-401-stop-2', gtfsStopId: '401-stop-2', stopCode: '2002', name: 'Park Place', lat: 44.34, lng: -79.70, sequence: 2, arrivalMinutes: 412, departureMinutes: 412 },
+      ],
+      shapePoints: [
+        { lat: 44.389, lng: -79.69, sequence: 1 },
+        { lat: 44.34, lng: -79.70, sequence: 2 },
+      ],
+    },
+  ]),
+}));
+
+vi.mock('../hooks/usePerformanceData', () => ({
+  usePerformanceMetadataQuery: vi.fn(() => ({ data: null })),
+  usePerformanceDataQuery: vi.fn(() => ({ data: null })),
+}));
 
 import { RoutePlanner2Workspace } from '../components/Analytics/RoutePlanner2Workspace';
 
@@ -31,6 +88,10 @@ function findButton(container: HTMLElement, text: string): HTMLButtonElement | n
   return Array.from(container.querySelectorAll('button')).find((button) =>
     button.textContent?.includes(text),
   ) ?? null;
+}
+
+function addMapStop(view: HTMLElement) {
+  click(findButton(view, 'Add Stop 1') ?? findButton(view, 'Add next stop') ?? findButton(view, 'Add Stop'));
 }
 
 describe('RoutePlanner2Workspace local workspace', () => {
@@ -73,11 +134,75 @@ describe('RoutePlanner2Workspace local workspace', () => {
 
     expect(view.textContent).toContain('Route Planner 2');
     expect(view.textContent).toContain('Local draft');
-    expect(view.textContent).toContain('Mapbox planning map');
-    expect(view.textContent).toContain('Start by clicking the map');
+    expect(view.textContent).toContain('Operator PDF');
+    expect(view.textContent).toContain('Click the map to place Stop 1');
+    expect(view.textContent).toContain('Route concepts');
     expect(view.textContent).toContain('Clean Concept A');
     expect(notes?.value).toContain('Blank route concept');
     expect(view.textContent).not.toContain('Shuttle Template');
+    expect(view.textContent).not.toContain('Project foundation');
+    expect(view.textContent).not.toContain('Firebase persistence');
+  });
+
+
+  it('imports a GTFS route as a selected local route concept', async () => {
+    const view = renderWorkspace();
+
+    expect(view.textContent).toContain('Import GTFS');
+
+    flushSync(() => {
+      click(findButton(view, 'Import GTFS'));
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(view.textContent).toContain('Import GTFS route');
+    expect(view.textContent).toContain('Route 400');
+    expect(view.textContent).toContain('This creates an editable planning copy. It does not modify GTFS.');
+
+    flushSync(() => {
+      click(findButton(view, 'Route 400'));
+    });
+    flushSync(() => {
+      click(findButton(view, 'Import as editable route'));
+    });
+
+    expect(view.textContent).toContain('Route 400 - To Barrie South GO');
+    expect(view.textContent).toContain('Barrie South GO');
+    expect(view.textContent).toContain('Imported from GTFS as an editable planning copy');
+    expect(view.textContent).toContain('Scheduled runtime / high');
+    expect(view.textContent).toContain('Confidencehigh');
+  });
+
+  it('renders runtime day and period controls in service assumptions', () => {
+    const view = renderWorkspace();
+    const labels = Array.from(view.querySelectorAll('label'));
+
+    expect(labels.some((label) => label.textContent?.includes('Runtime day'))).toBe(true);
+    expect(labels.some((label) => label.textContent?.includes('Runtime period'))).toBe(true);
+  });
+
+  it('imports multiple GTFS routes into the same local workspace', async () => {
+    const view = renderWorkspace();
+
+    flushSync(() => {
+      click(findButton(view, 'Import GTFS'));
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    flushSync(() => {
+      click(findButton(view, 'Route 400'));
+      click(findButton(view, 'Route 401'));
+    });
+    expect(view.textContent).toContain('2 routes selected');
+
+    flushSync(() => {
+      click(findButton(view, 'Import 2 editable routes'));
+    });
+
+    expect(view.textContent).toContain('Route 400 - To Barrie South GO');
+    expect(view.textContent).toContain('Route 401 - To Park Place');
+    expect(view.textContent).toContain('Route concepts');
   });
 
   it('adds Option 2 as a local route', () => {
@@ -143,38 +268,147 @@ describe('RoutePlanner2Workspace local workspace', () => {
     expect(view.textContent).toContain('Warnings');
   });
 
-  it('renders map authoring modes for Mapbox-backed planning', () => {
+  it('renders a simplified guided map workflow', () => {
     const view = renderWorkspace();
 
     expect(view.textContent).toContain('Draw route');
     expect(view.textContent).not.toContain('Inspect');
     expect(view.textContent).not.toContain('Shape alignment');
     expect(view.textContent).not.toContain('Add shape point');
-    expect(view.textContent).toContain('Route snap:');
-    expect(view.textContent).toContain('click the route line to create a waypoint');
-    expect(view.textContent).toContain('drag the + handle');
+    expect(view.textContent).not.toContain('Route snap:');
+    expect(view.textContent).not.toContain('click the route line to create a waypoint');
+    expect(view.textContent).not.toContain('drag the + handle');
+  });
+
+  it('renders Route Planner 2 as a map-first workspace with route concepts in the header', () => {
+    const view = renderWorkspace();
+    const workspaceShell = view.querySelector('[data-testid="rp2-map-first-shell"]');
+    const rightRail = view.querySelector('[data-testid="rp2-right-rail"]');
+    const mapCanvas = view.querySelector('[data-testid="rp2-map-canvas"]') as HTMLElement | null;
+
+    expect(workspaceShell?.getAttribute('data-layout')).toBe('map-first');
+    expect(view.textContent).toContain('Route concepts');
+    expect(view.querySelector('[data-testid="rp2-left-rail"]')).toBeNull();
+    expect(rightRail?.getAttribute('data-state')).toBe('closed');
+    expect(mapCanvas?.style.getPropertyValue('--rp2-overlay-left')).toBe('2rem');
+    expect(mapCanvas?.style.getPropertyValue('--rp2-overlay-right')).toBe('8rem');
+
+    flushSync(() => {
+      click(findButton(view, 'Show details'));
+    });
+
+    expect(rightRail?.getAttribute('data-state')).toBe('open');
+    expect(mapCanvas?.style.getPropertyValue('--rp2-overlay-left')).toBe('2rem');
+    expect(mapCanvas?.style.getPropertyValue('--rp2-overlay-right')).toBe('26.5rem');
+    expect(view.textContent).toContain('Hide details');
+  });
+
+  it('enters focused draw mode by hiding details and keeping metrics on the map', () => {
+    const view = renderWorkspace();
+
+    flushSync(() => {
+      click(findButton(view, 'Draw route'));
+    });
+
+    expect(view.querySelector('[data-testid="rp2-map-first-shell"]')?.getAttribute('data-focus-mode')).toBe('draw');
+    expect(view.querySelector('[data-testid="rp2-left-rail"]')).toBeNull();
+    expect(view.querySelector('[data-testid="rp2-right-rail"]')?.getAttribute('data-state')).toBe('closed');
+    expect(view.querySelector('[data-testid="rp2-map-metrics"]')?.textContent).toContain('Runtime');
+    expect(view.querySelector('[data-testid="rp2-map-metrics"]')?.textContent).toContain('Recovery');
+    expect(view.querySelector('[data-testid="rp2-map-metrics"]')?.textContent).toContain('Confidence');
+    expect(view.textContent).toContain('Not ready: required route inputs are missing before the estimate can be trusted.');
+    expect(view.textContent).toContain('Exit focus');
   });
 
   it('adds stops from the authoring canvas', () => {
     const view = renderWorkspace();
 
     flushSync(() => {
-      click(findButton(view, 'Add next stop'));
+      addMapStop(view);
     });
 
     const stopNameInput = view.querySelector('#rp2-stop-name') as HTMLInputElement | null;
 
-    expect(view.textContent).toContain('Stop order');
+    expect(view.textContent).toContain('1 stop');
     expect(stopNameInput?.value).toBe('Stop 1');
+  });
+
+  it('collapses the map stop tray after more than 10 stops', () => {
+    const view = renderWorkspace();
+
+    for (let index = 0; index < 11; index += 1) {
+      flushSync(() => {
+        addMapStop(view);
+      });
+    }
+
+    const tray = view.querySelector('[data-testid="rp2-map-stop-tray"]');
+    expect(tray?.getAttribute('data-collapsed')).toBe('true');
+    expect(tray?.textContent).toContain('11 stops');
+    expect(tray?.textContent).toContain('Show all stops');
+    expect(tray?.textContent).not.toContain('10. Stop 10');
+
+    flushSync(() => {
+      click(findButton(view, 'Show all stops'));
+    });
+
+    expect(tray?.getAttribute('data-collapsed')).toBe('false');
+    expect(tray?.textContent).toContain('10. Stop 10');
+  });
+
+  it('moves a stop range into another route concept from the details panel', async () => {
+    const view = renderWorkspace();
+
+    flushSync(() => {
+      addMapStop(view);
+    });
+    flushSync(() => {
+      addMapStop(view);
+    });
+    flushSync(() => {
+      addMapStop(view);
+    });
+
+    flushSync(() => {
+      click(findButton(view, 'Add route'));
+    });
+    flushSync(() => {
+      click(Array.from(view.querySelectorAll('button')).find((button) => button.textContent?.includes('Clean Concept A')));
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    flushSync(() => {
+      click(findButton(view, 'Stop 2'));
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const fromSelect = view.querySelector('#rp2-transfer-from') as HTMLSelectElement | null;
+    const toSelect = view.querySelector('#rp2-transfer-to') as HTMLSelectElement | null;
+    const targetSelect = view.querySelector('#rp2-transfer-target') as HTMLSelectElement | null;
+    expect(fromSelect).not.toBeNull();
+    expect(toSelect).not.toBeNull();
+    expect(targetSelect?.selectedOptions[0]?.textContent).toContain('Option 2');
+
+    flushSync(() => {
+      setInputValue(toSelect!, '3');
+    });
+    flushSync(() => {
+      click(findButton(view, 'Move stops'));
+    });
+
+    const routeCards = Array.from(view.querySelectorAll('button')).filter((button) =>
+      button.textContent?.includes('Clean Concept A') || button.textContent?.includes('Option 2'),
+    );
+    expect(routeCards.some((button) => button.textContent?.includes('Clean Concept A') && button.textContent?.includes('1 stops'))).toBe(true);
+    expect(routeCards.some((button) => button.textContent?.includes('Option 2') && button.textContent?.includes('2 stops'))).toBe(true);
   });
 
   it('deletes a stop from the map stop order list', () => {
     const view = renderWorkspace();
 
     flushSync(() => {
-      click(findButton(view, 'Add next stop'));
+      addMapStop(view);
     });
-    expect(view.textContent).toContain('Stop order');
+    expect(view.textContent).toContain('1 stop');
     expect(view.textContent).toContain('Stop 1');
 
     const deleteStopButton = view.querySelector('button[aria-label="Delete Stop 1"]');
@@ -184,8 +418,8 @@ describe('RoutePlanner2Workspace local workspace', () => {
       click(deleteStopButton);
     });
 
-    expect(view.textContent).not.toContain('Stop order');
-    expect(view.textContent).toContain('Start by clicking the map');
+    expect(view.textContent).not.toContain('1 stop');
+    expect(view.textContent).toContain('Click the map to place Stop 1');
   });
 
   it('marks start and end terminals through stop role editing', () => {
@@ -194,7 +428,7 @@ describe('RoutePlanner2Workspace local workspace', () => {
     expect(view.textContent).toContain('Add stops before checking route feasibility.');
 
     flushSync(() => {
-      click(findButton(view, 'Add next stop'));
+      addMapStop(view);
     });
     expect(view.textContent).toContain('Add a start terminal before estimating cycle time.');
 
@@ -205,11 +439,14 @@ describe('RoutePlanner2Workspace local workspace', () => {
       setInputValue(roleSelect!, 'start-terminal');
     });
     flushSync(() => {
-      click(findButton(view, 'Add next stop'));
+      addMapStop(view);
     });
     flushSync(() => {
       click(findButton(view, 'Stop 2'));
     });
+
+    expect(view.textContent).toContain('Click the line between stops');
+    expect(view.textContent).toContain('drag the + handle');
 
     const updatedRoleSelect = view.querySelector('#rp2-stop-role') as HTMLSelectElement | null;
     flushSync(() => {
@@ -224,18 +461,51 @@ describe('RoutePlanner2Workspace local workspace', () => {
     expect(view.textContent).toContain('fallback');
   });
 
+  it('lets planners choose closed-loop and out-and-back route shapes from the map guide', () => {
+    const view = renderWorkspace();
+
+    flushSync(() => {
+      addMapStop(view);
+    });
+    flushSync(() => {
+      addMapStop(view);
+    });
+    expect(view.textContent).toContain('One-way');
+    expect(view.textContent).toContain('Out and back');
+    expect(view.textContent).not.toContain('Closed loop');
+
+    flushSync(() => {
+      addMapStop(view);
+    });
+    expect(view.textContent).toContain('Closed loop');
+
+    flushSync(() => {
+      click(findButton(view, 'Closed loop'));
+    });
+
+    expect(view.textContent).toContain('Closed loop route');
+    expect(view.textContent).toContain('Closed loop: 1 → 2 → 3 → 1');
+
+    flushSync(() => {
+      click(findButton(view, 'Out and back'));
+    });
+
+    expect(view.textContent).toContain('Out and back to Stop 3');
+    expect(view.textContent).toContain('Out and back: 1 → 2 → 3 → 2 → 1');
+  });
+
   it('updates feasibility outputs when service assumptions change', () => {
     const view = renderWorkspace();
 
     flushSync(() => {
-      click(findButton(view, 'Add next stop'));
+      addMapStop(view);
     });
     const roleSelect = view.querySelector('#rp2-stop-role') as HTMLSelectElement | null;
     flushSync(() => {
       setInputValue(roleSelect!, 'start-terminal');
     });
     flushSync(() => {
-      click(findButton(view, 'Add next stop'));
+      addMapStop(view);
     });
     flushSync(() => {
       click(findButton(view, 'Stop 2'));

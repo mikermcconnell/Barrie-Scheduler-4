@@ -361,6 +361,27 @@ const buildRoute2VariantSchedules = (): MasterRouteTable[] => ([
           Downtown: '7:30 AM',
         },
       },
+      {
+        id: 'route-2a-trip-2',
+        blockId: '2-1',
+        direction: 'North',
+        tripNumber: 3,
+        rowId: 3,
+        startTime: 490,
+        endTime: 520,
+        recoveryTime: 0,
+        recoveryTimes: {},
+        travelTime: 30,
+        cycleTime: 30,
+        stops: {
+          'Park Place': '8:10 AM',
+          Downtown: '8:40 AM',
+        },
+        arrivalTimes: {
+          'Park Place': '8:10 AM',
+          Downtown: '8:40 AM',
+        },
+      },
     ],
   },
   {
@@ -395,10 +416,12 @@ const buildRoute2VariantSchedules = (): MasterRouteTable[] => ([
 
 const Route2VariantHarness: React.FC = () => {
   const [schedules, setSchedules] = useState<MasterRouteTable[]>(buildRoute2VariantSchedules());
-  const { handleCellEdit } = useScheduleEditing(schedules, setSchedules, { cascadeMode: 'always' });
+  const [cascadeMode, setCascadeMode] = useState<CascadeMode>('always');
+  const { handleCellEdit } = useScheduleEditing(schedules, setSchedules, { cascadeMode });
 
   return (
     <div>
+      <button data-testid="mode-within-trip" onClick={() => setCascadeMode('within-trip')}>within-trip</button>
       <button data-testid="edit-route-2a-start" onClick={() => handleCellEdit('route-2a-trip', 'Park Place', '7:01 AM')}>
         edit route 2A start
       </button>
@@ -441,10 +464,32 @@ describe('useScheduleEditing Route 2A/2B variant labels', () => {
     const schedules = getState();
     const northTrip = schedules[0].trips[0];
     const southTrip = schedules[1].trips[0];
+    const laterNorthTrip = schedules[0].trips[1];
 
     expect(northTrip.stops['Park Place']).toBe('7:01 AM');
     expect(northTrip.stops.Downtown).toBe('7:31 AM');
     expect(southTrip.stops.Downtown).toBe('7:36 AM');
+    expect(laterNorthTrip.stops['Park Place']).toBe('8:11 AM');
     expect(southTrip.blockId).toBe(northTrip.blockId);
+  });
+
+  it('forces whole-block cascade for merged A/B routes even in trip-only mode', () => {
+    const modeWithinTripButton = container?.querySelector('[data-testid="mode-within-trip"]') as HTMLButtonElement | null;
+    const editButton = container?.querySelector('[data-testid="edit-route-2a-start"]') as HTMLButtonElement | null;
+
+    flushSync(() => {
+      modeWithinTripButton?.click();
+    });
+
+    flushSync(() => {
+      editButton?.click();
+    });
+
+    const schedules = getState();
+    const southTrip = schedules[1].trips[0];
+    const laterNorthTrip = schedules[0].trips[1];
+
+    expect(southTrip.stops.Downtown).toBe('7:36 AM');
+    expect(laterNorthTrip.stops['Park Place']).toBe('8:11 AM');
   });
 });

@@ -23,6 +23,7 @@ import {
     getRoundTripRowKey,
 } from '../schedule/roundTripSortUtils';
 import { TimeUtils } from '../timeUtils';
+import { extractDirectionFromName, parseRouteInfo } from '../config/routeDirectionConfig';
 import type {
     DeterministicFinding,
     ScheduleReviewCategory,
@@ -43,6 +44,32 @@ interface BuildScheduleReviewSnapshotInput {
 }
 
 type RowRef = Pick<ScheduleReviewRow, 'rowKey' | 'blockId'>;
+
+const getCompareRouteKey = (routeName: string): string => (
+    parseRouteInfo(routeName).baseRoute.trim().toUpperCase()
+);
+
+const tableMatchesReviewCompareScope = (
+    baselineTable: MasterRouteTable,
+    routeTables: MasterRouteTable[],
+): boolean => {
+    if (routeTables.some(routeTable => routeTable.routeName === baselineTable.routeName)) {
+        return true;
+    }
+
+    const baselineRouteKey = getCompareRouteKey(baselineTable.routeName);
+    const sameRouteTables = routeTables.filter(routeTable => getCompareRouteKey(routeTable.routeName) === baselineRouteKey);
+    if (sameRouteTables.length === 0) return false;
+
+    const baselineDirection = extractDirectionFromName(baselineTable.routeName);
+    const activeDirections = sameRouteTables.map(routeTable => extractDirectionFromName(routeTable.routeName));
+
+    if (!baselineDirection || activeDirections.some(direction => !direction)) {
+        return true;
+    }
+
+    return activeDirections.includes(baselineDirection);
+};
 
 const roundRatio = (value: number): number => Math.round(value * 10) / 10;
 
@@ -167,13 +194,17 @@ export const buildScheduleReviewSnapshot = ({
     const headwayAnalysis = analyzeHeadways(allTrips);
 
     const relevantBaseline = masterBaseline?.filter(table => (
-        filteredRouteTables.some(routeTable => routeTable.routeName === table.routeName)
+        tableMatchesReviewCompareScope(table, filteredRouteTables)
     )) ?? null;
 
     const comparison = buildDetailedMasterComparison(filteredRouteTables, relevantBaseline);
     const compareEntriesByTripId = new Map<string, CurrentTripComparisonEntry>();
+    const routeNameByTrip = new Map<MasterTrip, string>();
+    filteredRouteTables.forEach(table => {
+        table.trips.forEach(trip => routeNameByTrip.set(trip, table.routeName));
+    });
     comparison.currentTripComparisons.forEach((entry) => {
-        compareEntriesByTripId.set(entry.currentTripId, entry);
+        compareEntriesByTripId.set(buildTripKey(entry.direction, entry.currentTripId, entry.routeName), entry);
     });
 
     const tripIdToRowRef = new Map<string, RowRef>();
@@ -192,7 +223,11 @@ export const buildScheduleReviewSnapshot = ({
             const southTrip = row.trips.find(trip => trip.direction === 'South');
             const compareEntries = [northTrip, southTrip]
                 .filter((trip): trip is MasterTrip => !!trip)
-                .map(trip => comparison.currentTripComparisons.get(buildTripKey(trip.direction, trip.id)))
+                .map(trip => comparison.currentTripComparisons.get(buildTripKey(
+                    trip.direction,
+                    trip.id,
+                    routeNameByTrip.get(trip)
+                )))
                 .filter((entry): entry is CurrentTripComparisonEntry => !!entry);
             const compareStatus = getCompareStatusFromEntries(compareEntries);
             const headwayMinutes = displayedHeadways[rowKey] ?? null;
@@ -278,7 +313,11 @@ export const buildScheduleReviewSnapshot = ({
         const headways = calculateOrderedHeadways(sortedTrips, trip => trip.startTime);
 
         rows = sortedTrips.map((trip, index) => {
-            const compareEntry = compareEntriesByTripId.get(trip.id);
+            const compareEntry = compareEntriesByTripId.get(buildTripKey(
+                trip.direction,
+                trip.id,
+                routeNameByTrip.get(trip)
+            ));
             const row = buildSingleTripRow(trip, index, headways[trip.id] ?? null, compareEntry);
             tripIdToRowRef.set(trip.id, {
                 rowKey: row.rowKey,

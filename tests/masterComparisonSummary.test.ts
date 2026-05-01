@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
     buildDetailedMasterComparison,
     buildMasterComparisonChangeSummary,
+    buildTripKey,
     classifyMatchedTripChange,
 } from '../utils/schedule/masterComparison';
 import type { MasterRouteTable, MasterTrip } from '../utils/parsers/masterScheduleParser';
@@ -91,7 +92,7 @@ describe('master comparison summary', () => {
 
         const detailed = buildDetailedMasterComparison(schedules, masterBaseline);
         const summary = buildMasterComparisonChangeSummary(schedules, detailed);
-        const entry = detailed.currentTripComparisons.get('North::draft-recreated');
+        const entry = detailed.currentTripComparisons.get(buildTripKey('North', 'draft-recreated', '10 (North)'));
 
         expect(entry?.status).toBe('matched');
         if (entry?.status !== 'matched') throw new Error('Expected a matched recreated trip');
@@ -100,7 +101,7 @@ describe('master comparison summary', () => {
         expect(summary.counts.new).toBe(0);
         expect(summary.counts.removed).toBe(0);
         expect(summary.counts.retimed).toBe(1);
-        expect(summary.currentTripKinds.get('North::draft-recreated')).toBe('retimed');
+        expect(summary.currentTripKinds.get(buildTripKey('North', 'draft-recreated', '10 (North)'))).toBe('retimed');
     });
 
     it('keeps duplicate added service new after the original baseline trip is already matched', () => {
@@ -132,8 +133,8 @@ describe('master comparison summary', () => {
         const detailed = buildDetailedMasterComparison(schedules, masterBaseline);
         const summary = buildMasterComparisonChangeSummary(schedules, detailed);
 
-        expect(detailed.currentTripComparisons.get('North::draft-existing')?.status).toBe('matched');
-        expect(detailed.currentTripComparisons.get('North::draft-added')?.status).toBe('new');
+        expect(detailed.currentTripComparisons.get(buildTripKey('North', 'draft-existing', '10 (North)'))?.status).toBe('matched');
+        expect(detailed.currentTripComparisons.get(buildTripKey('North', 'draft-added', '10 (North)'))?.status).toBe('new');
         expect(summary.counts.new).toBe(1);
         expect(summary.counts.removed).toBe(0);
     });

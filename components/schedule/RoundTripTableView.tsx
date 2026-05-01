@@ -277,6 +277,7 @@ const getCompareDeltaMarker = (
 
     const rawDiff = getDeltaMinutes(currentTime, originalTime);
     if (rawDiff === null) return null;
+    if (rawDiff === 0) return null;
 
     const alignmentShift = comparison?.status === 'matched'
         ? (comparison.shiftMinutes || 0)
@@ -718,7 +719,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
         schedules.forEach(table => {
             const direction = (extractDirectionFromName(table.routeName) || 'North') as 'North' | 'South';
             table.trips.forEach(trip => {
-                lookup.set(buildTripKey(direction, trip.id), {
+                lookup.set(buildTripKey(direction, trip.id, table.routeName), {
                     trip,
                     routeName: table.routeName,
                 });
@@ -739,7 +740,7 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
         return Array.from(currentTripComparisons.values())
             .filter((entry): entry is Extract<CurrentTripComparisonEntry, { status: 'ambiguous' }> => entry.status === 'ambiguous')
             .map(entry => {
-                const tripContext = currentTripLookup.get(buildTripKey(entry.direction, entry.currentTripId));
+                const tripContext = currentTripLookup.get(buildTripKey(entry.direction, entry.currentTripId, entry.routeName));
                 const currentTrip = tripContext?.trip;
 
                 return {
@@ -803,12 +804,12 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
         return `${baselineLabel} auto-align ${parts.join(' | ')}`;
     }, [baselineLabel, isMasterMode, masterShiftByDir]);
 
-    const getTripComparison = useCallback((direction: 'North' | 'South', tripId: string): CurrentTripComparisonEntry | undefined => (
-        currentTripComparisons.get(buildTripKey(direction, tripId))
+    const getTripComparison = useCallback((direction: 'North' | 'South', tripId: string, routeName: string): CurrentTripComparisonEntry | undefined => (
+        currentTripComparisons.get(buildTripKey(direction, tripId, routeName))
     ), [currentTripComparisons]);
 
-    const getMasterMatchedTrip = useCallback((direction: 'North' | 'South', tripId: string): MasterTrip | undefined => {
-        const comparison = getTripComparison(direction, tripId);
+    const getMasterMatchedTrip = useCallback((direction: 'North' | 'South', tripId: string, routeName: string): MasterTrip | undefined => {
+        const comparison = getTripComparison(direction, tripId, routeName);
         return comparison?.status === 'matched' ? comparison.masterTrip : undefined;
     }, [getTripComparison]);
 
@@ -1874,13 +1875,13 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                         const southIndex = southTrip ? southTripOrder.get(southTrip.id) : undefined;
                                         const routeTripNumber = northIndex ?? southIndex ?? rowIdx + 1;
                                         const rowBg = rowIdx % 2 === 0 ? 'bg-white' : 'bg-gray-50/50';
-                                        const northComparison = northTrip ? getTripComparison('North', northTrip.id) : undefined;
-                                        const southComparison = southTrip ? getTripComparison('South', southTrip.id) : undefined;
+                                        const northComparison = northTrip ? getTripComparison('North', northTrip.id, north.routeName) : undefined;
+                                        const southComparison = southTrip ? getTripComparison('South', southTrip.id, south.routeName) : undefined;
                                         const originalNorthTrip = northTrip
-                                            ? (isMasterMode ? getMasterMatchedTrip('North', northTrip.id) : isGeneratedCompareMode ? getOriginalTrip(north.routeName, northTrip) : undefined)
+                                            ? (isMasterMode ? getMasterMatchedTrip('North', northTrip.id, north.routeName) : isGeneratedCompareMode ? getOriginalTrip(north.routeName, northTrip) : undefined)
                                             : undefined;
                                         const originalSouthTrip = southTrip
-                                            ? (isMasterMode ? getMasterMatchedTrip('South', southTrip.id) : isGeneratedCompareMode ? getOriginalTrip(south.routeName, southTrip) : undefined)
+                                            ? (isMasterMode ? getMasterMatchedTrip('South', southTrip.id, south.routeName) : isGeneratedCompareMode ? getOriginalTrip(south.routeName, southTrip) : undefined)
                                             : undefined;
                                         const compareReason = isMasterMode
                                             ? [northComparison?.reason, southComparison?.reason].filter(Boolean).join(' ')
@@ -1888,7 +1889,11 @@ export const RoundTripTableView: React.FC<RoundTripTableViewProps> = ({
                                         const rowChangeKinds = isMasterMode
                                             ? Array.from(new Set(
                                                 row.trips
-                                                    .map(trip => routeComparisonSummary.currentTripKinds.get(buildTripKey(trip.direction, trip.id)))
+                                                    .map(trip => routeComparisonSummary.currentTripKinds.get(buildTripKey(
+                                                        trip.direction,
+                                                        trip.id,
+                                                        trip.direction === 'North' ? north.routeName : south.routeName
+                                                    )))
                                                     .filter((kind): kind is VisibleTripChangeKind => !!kind && kind !== 'unchanged')
                                             )).sort((a, b) => CHANGE_KIND_META[a].order - CHANGE_KIND_META[b].order)
                                             : [];

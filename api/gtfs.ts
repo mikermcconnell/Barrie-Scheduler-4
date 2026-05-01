@@ -82,6 +82,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const rawUrl = req.query.url;
+    const rawIncludeShapes = req.query.includeShapes;
+    const includeShapes = (Array.isArray(rawIncludeShapes) ? rawIncludeShapes[0] : rawIncludeShapes) === 'true';
     const requestedUrl = (Array.isArray(rawUrl) ? rawUrl[0] : rawUrl) || 'https://www.myridebarrie.ca/gtfs/google_transit.zip';
     const urlValidation = validateGtfsUrl(requestedUrl);
     if (!urlValidation.ok) {
@@ -213,6 +215,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     exception_type: parseInt(cd.exception_type) || 1,
                 }))
                 : [],
+            shapes: includeShapes && files.has('shapes.txt')
+                ? parseCSV(files.get('shapes.txt')!).map(shape => ({
+                    shape_id: shape.shape_id,
+                    shape_pt_lat: parseFloat(shape.shape_pt_lat) || 0,
+                    shape_pt_lon: parseFloat(shape.shape_pt_lon) || 0,
+                    shape_pt_sequence: parseInt(shape.shape_pt_sequence) || 0,
+                    shape_dist_traveled: shape.shape_dist_traveled ? parseFloat(shape.shape_dist_traveled) : undefined,
+                }))
+                : includeShapes ? [] : undefined,
             feedInfo: files.has('feed_info.txt')
                 ? (() => {
                     const info = parseCSV(files.get('feed_info.txt')!)[0];
@@ -234,6 +245,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             trips: feed.trips.length,
             stopTimes: feed.stopTimes.length,
             calendar: feed.calendar.length,
+            shapes: feed.shapes?.length ?? 0,
         });
 
         return res.status(200).json(feed);

@@ -138,3 +138,17 @@ export function markRoutePlanner2PreferredScenario(
 
     return markChanged({ ...project, preferredScenarioId: scenarioId }, now);
 }
+
+export function importRoutePlanner2Scenario(
+    project: RoutePlanner2Project,
+    scenario: RoutePlanner2Scenario,
+    now = new Date().toISOString(),
+): RoutePlanner2Project {
+    if (project.scenarios.some((existing) => existing.id === scenario.id)) return project;
+
+    return markChanged({
+        ...project,
+        selectedScenarioId: scenario.id,
+        scenarios: [...project.scenarios, { ...scenario, updatedAt: now }],
+    }, now);
+}

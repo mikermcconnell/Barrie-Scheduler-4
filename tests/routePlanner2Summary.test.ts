@@ -28,6 +28,20 @@ describe('Route Planner 2 summary', () => {
     expect(summary.oneWayRuntimeLabel).toBe('Not ready');
   });
 
+  it('shows partial one-way runtime before cycle time is ready', () => {
+    let project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-1', name: 'Stop 1', lat: 44.38, lng: -79.7, now });
+    project = addRoutePlanner2Stop(project, 'scenario-1', { id: 'stop-2', name: 'Stop 2', lat: 44.4, lng: -79.65, now });
+
+    const summary = summarizeRoutePlanner2Scenario(project.scenarios[0]!);
+
+    expect(summary.readiness).toBe('not-ready');
+    expect(summary.oneWayRuntimeLabel).toMatch(/min$/);
+    expect(summary.cycleTimeLabel).toBe('Not ready');
+    expect(summary.busesRequiredLabel).toBe('Not ready');
+    expect(summary.nextAction).toContain('Mark Stop 1 as start and Stop 2 as end');
+  });
+
   it('summarizes valid fallback estimates for comparison', () => {
     const project = validTwoStopProject();
     const summary = summarizeRoutePlanner2Scenario(project.scenarios[0]!);

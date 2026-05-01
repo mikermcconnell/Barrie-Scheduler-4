@@ -53,6 +53,20 @@ function countWarnings(feasibility: RoutePlanner2FeasibilitySummary, severity: R
     return feasibility.warnings.filter((warning) => warning.severity === severity).length;
 }
 
+function getNotReadyNextAction(feasibility: RoutePlanner2FeasibilitySummary): string {
+    const warningIds = new Set(feasibility.warnings.map((warning) => warning.id));
+    if (
+        feasibility.oneWayRuntimeMinutes != null
+        && warningIds.has('missing-start-terminal')
+        && warningIds.has('missing-end-terminal')
+    ) {
+        return 'Mark Stop 1 as start and Stop 2 as end to estimate cycle time.';
+    }
+
+    const firstBlockingWarning = feasibility.warnings.find((warning) => warning.severity === 'blocking');
+    return firstBlockingWarning?.action ?? firstBlockingWarning?.message ?? 'Fix blocking warnings before review.';
+}
+
 export function summarizeRoutePlanner2Scenario(
     scenario: RoutePlanner2Scenario,
     options: { isPreferred?: boolean } = {},
@@ -67,8 +81,6 @@ export function summarizeRoutePlanner2Scenario(
     const frequencyLabel = `${scenario.service.frequencyMinutes} min`;
 
     if (blockingWarningCount > 0) {
-        const firstBlockingWarning = feasibility.warnings.find((warning) => warning.severity === 'blocking');
-
         return {
             scenarioId: scenario.id,
             scenarioName: scenario.name,
@@ -76,7 +88,7 @@ export function summarizeRoutePlanner2Scenario(
             readiness: 'not-ready',
             readinessLabel: 'Not ready',
             summaryText: `${scenario.name} needs ${pluralize(blockingWarningCount, 'blocking issue')} fixed before it can be compared as a feasible route concept.`,
-            nextAction: firstBlockingWarning?.action ?? firstBlockingWarning?.message ?? 'Fix blocking warnings before review.',
+            nextAction: getNotReadyNextAction(feasibility),
             oneWayRuntimeLabel,
             cycleTimeLabel,
             busesRequiredLabel,

@@ -12,6 +12,12 @@ export interface RoutePlanner2RoadSnapResult {
 
 export interface RoutePlanner2ScenarioRoadSnapResult extends RoutePlanner2RoadSnapResult {
     segmentEstimates: RoutePlanner2SegmentRuntime[];
+    segmentGeometries: Array<{
+        id: string;
+        fromStopId: string;
+        toStopId: string;
+        coordinates: [number, number][];
+    }>;
 }
 
 interface MapboxDirectionsRoute {
@@ -197,7 +203,7 @@ export async function snapRoutePlanner2ScenarioToRoad(
         const coordinates = [...scenario.alignment]
             .sort((a, b) => a.sequence - b.sequence)
             .map((point): [number, number] => [point.lng, point.lat]);
-        return { coordinates, source: 'fallback', segmentEstimates: [] };
+        return { coordinates, source: 'fallback', segmentEstimates: [], segmentGeometries: [] };
     }
 
     const results = await Promise.all(segments.map((segment) => snapRoutePlanner2WaypointsToRoad(segment.coordinates, options)));
@@ -235,5 +241,11 @@ export async function snapRoutePlanner2ScenarioToRoad(
             : undefined,
         distanceMeters: distanceMetersForPath(stitchSegmentCoordinates(results.map((result) => result.coordinates))),
         segmentEstimates,
+        segmentGeometries: segments.map((segment, index) => ({
+            id: segment.id,
+            fromStopId: segment.fromStopId,
+            toStopId: segment.toStopId,
+            coordinates: results[index]?.coordinates ?? segment.coordinates,
+        })),
     };
 }

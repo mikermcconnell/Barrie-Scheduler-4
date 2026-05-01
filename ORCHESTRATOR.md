@@ -148,6 +148,9 @@ These are worth remembering, but should still be verified before relying on them
 - Performance/import flows and New Schedule Step 2 are active areas of recent hardening; verify behavior directly when changing them.
 - Dwell cascade logic exists in both `utils/schedule/dwellCascadeComputer.ts` and `functions/src/dwellCascadeComputer.ts`; keep them behaviorally synced and run the cascade/function sync tests when changing it.
 - Public timetable content is now team-managed config, not only static copy in the component.
+- Route Planner 2 can import one or more full GTFS route patterns as local editable planning-copy scenarios through `utils/route-planner-2/routePlanner2GtfsImport.ts`; imports filter out partial patterns, keep scheduled segment runtimes as high-confidence evidence when available, and do not create fixed-route schedule drafts or edit GTFS feeds.
+- Route Planner 2 supports local stop-range reassignment between route concepts through `reassignRoutePlanner2StopRange`; copied/moved stops get new local IDs, insertion position is planner-controlled, and stale runtime evidence/line anchors are cleaned when stop order changes.
+- Route Planner 2 runtime estimates use priority-protected segment evidence: planner manual overrides outrank observed evidence, blended observed+scheduled evidence, scheduled proxies, Mapbox estimates, and distance fallback. Evidence derivation lives in `utils/route-planner-2/routePlanner2RuntimeEvidence.ts` and depends on local scenario stops plus performance/schedule indexes, not legacy Route Planner modules.
 
 ## 8) Guidance for future subagents
 

@@ -105,11 +105,6 @@ export interface MasterComparisonChangeSummary {
 
 const DIRECTIONS: DirectionKey[] = ['North', 'South'];
 
-export const buildTripKey = (direction: DirectionKey, tripId: string): string => `${direction}::${tripId}`;
-const buildMatchedMasterKey = (bucketKey: string, trip: MasterTrip): string => (
-    `${bucketKey}::${trip.lineageId || trip.id}::${trip.startTime}::${trip.rowId}`
-);
-
 const toDirection = (routeName: string): DirectionKey =>
     (extractDirectionFromName(routeName) || 'North') as DirectionKey;
 
@@ -119,6 +114,18 @@ const getRouteKey = (routeName: string): string => (
 
 const buildRouteDirectionBucketKey = (routeName: string, direction: DirectionKey): string => (
     `${getRouteKey(routeName)}::${direction}`
+);
+
+export const buildTripKey = (direction: DirectionKey, tripId: string, routeName?: string): string => (
+    routeName
+        ? `${buildRouteDirectionBucketKey(routeName, direction)}::${tripId}`
+        : `${direction}::${tripId}`
+);
+
+const buildTripKeyForBucket = (bucketKey: string, tripId: string): string => `${bucketKey}::${tripId}`;
+
+const buildMatchedMasterKey = (bucketKey: string, trip: MasterTrip): string => (
+    `${bucketKey}::${trip.lineageId || trip.id}::${trip.startTime}::${trip.rowId}`
 );
 
 const getRouteBucketInfo = (routeName: string): { routeKey: string; direction: DirectionKey; bucketKey: string } => {
@@ -303,7 +310,7 @@ export const buildMasterComparisonChangeSummary = (
     schedules.forEach(table => {
         const dir = toDirection(table.routeName);
         table.trips.forEach(trip => {
-            currentTripLookup.set(buildTripKey(dir, trip.id), trip);
+            currentTripLookup.set(buildTripKey(dir, trip.id, table.routeName), trip);
         });
     });
 
@@ -387,7 +394,7 @@ export const buildDetailedMasterComparison = (
         };
         table.trips.forEach(trip => {
             existingBucket.trips.push(trip);
-            currentRouteNamesByTripKey.set(buildTripKey(bucket.direction, trip.id), table.routeName);
+            currentRouteNamesByTripKey.set(buildTripKeyForBucket(bucket.bucketKey, trip.id), table.routeName);
         });
         currentByBucket.set(bucket.bucketKey, existingBucket);
     });
@@ -400,7 +407,7 @@ export const buildDetailedMasterComparison = (
         matchMethod: MasterComparisonMatchMethod,
         shiftMinutes?: number
     ) => {
-        const currentTripKey = buildTripKey(direction, currentTrip.id);
+        const currentTripKey = buildTripKeyForBucket(bucketKey, currentTrip.id);
         const reason = matchMethod === 'lineage'
             ? 'Matched by stable trip lineage.'
             : matchMethod === 'trip-id'
@@ -474,16 +481,49 @@ export const buildDetailedMasterComparison = (
         const remainingMasterTrips = masterTrips.filter(masterTrip => !matchedMasterKeys.has(buildMatchedMasterKey(bucketKey, masterTrip)));
         if (remainingCurrentTrips.length === 0 || remainingMasterTrips.length === 0) return;
 
+        const currentByExactStart = new Map<number, MasterTrip[]>();
+        const masterByExactStart = new Map<number, MasterTrip[]>();
+        remainingCurrentTrips.forEach(currentTrip => {
+            const currentQueue = currentByExactStart.get(currentTrip.startTime) || [];
+            currentQueue.push(currentTrip);
+            currentByExactStart.set(currentTrip.startTime, currentQueue);
+        });
+        remainingMasterTrips.forEach(masterTrip => {
+            const masterQueue = masterByExactStart.get(masterTrip.startTime) || [];
+            masterQueue.push(masterTrip);
+            masterByExactStart.set(masterTrip.startTime, masterQueue);
+        });
+
+        currentByExactStart.forEach((currentQueue, startTime) => {
+            const masterQueue = masterByExactStart.get(startTime) || [];
+            if (currentQueue.length !== 1 || masterQueue.length !== 1) return;
+
+            const [currentTrip] = currentQueue;
+            const [masterTrip] = masterQueue;
+            const masterKey = buildMatchedMasterKey(bucketKey, masterTrip);
+            if (matchedMasterKeys.has(masterKey)) return;
+
+            setMatched(bucketKey, dir, currentTrip, masterTrip, 'time-shift', 0);
+        });
+
+        const shiftCandidateCurrentTrips = remainingCurrentTrips.filter(currentTrip => (
+            !currentTripComparisons.has(buildTripKeyForBucket(bucketKey, currentTrip.id))
+        ));
+        const shiftCandidateMasterTrips = remainingMasterTrips.filter(masterTrip => (
+            !matchedMasterKeys.has(buildMatchedMasterKey(bucketKey, masterTrip))
+        ));
+        if (shiftCandidateCurrentTrips.length === 0 || shiftCandidateMasterTrips.length === 0) return;
+
         const runGreedyMatch = (shiftMinutes: number) => {
             const localUsed = new Set<string>();
             const pairs: Array<{ current: MasterTrip; master: MasterTrip }> = [];
             let totalDiff = 0;
 
-            for (const currentTrip of remainingCurrentTrips) {
+            for (const currentTrip of shiftCandidateCurrentTrips) {
                 let bestMatch: MasterTrip | null = null;
                 let bestDiff = Infinity;
 
-                for (const masterTrip of remainingMasterTrips) {
+                for (const masterTrip of shiftCandidateMasterTrips) {
                     const masterKey = buildMatchedMasterKey(bucketKey, masterTrip);
                     if (localUsed.has(masterKey)) continue;
                     if (matchedMasterKeys.has(masterKey)) continue;
@@ -541,28 +581,43 @@ export const buildDetailedMasterComparison = (
         }
 
         const locallyUsedMasterKeys = new Set<string>();
-        for (const currentTrip of remainingCurrentTrips) {
-            const candidates = remainingMasterTrips
+        const fallbackShifts = Array.from(new Set([effectiveShift, 0]));
+        for (const currentTrip of shiftCandidateCurrentTrips) {
+            const candidates = shiftCandidateMasterTrips
                 .map(masterTrip => {
                     const masterKey = buildMatchedMasterKey(bucketKey, masterTrip);
                     if (matchedMasterKeys.has(masterKey) || locallyUsedMasterKeys.has(masterKey)) {
                         return null;
                     }
 
-                    const matchScore = scorePotentialMatch(currentTrip, masterTrip, effectiveShift);
-                    if (matchScore.startDiff > TIME_MATCH_THRESHOLD) return null;
+                    const shiftedScores = fallbackShifts
+                        .map(shiftMinutes => ({
+                            shiftMinutes,
+                            ...scorePotentialMatch(currentTrip, masterTrip, shiftMinutes),
+                        }))
+                        .filter(matchScore => matchScore.startDiff <= TIME_MATCH_THRESHOLD)
+                        .sort((a, b) => (
+                            a.score - b.score
+                            || a.startDiff - b.startDiff
+                            || Math.abs(a.shiftMinutes) - Math.abs(b.shiftMinutes)
+                        ));
+
+                    const matchScore = shiftedScores[0];
+                    if (!matchScore) return null;
 
                     return {
                         masterTrip,
                         diffMinutes: matchScore.startDiff,
                         score: matchScore.score,
+                        shiftMinutes: matchScore.shiftMinutes,
                         masterKey,
                     };
                 })
-                .filter((entry): entry is { masterTrip: MasterTrip; diffMinutes: number; score: number; masterKey: string } => !!entry)
+                .filter((entry): entry is { masterTrip: MasterTrip; diffMinutes: number; score: number; shiftMinutes: number; masterKey: string } => !!entry)
                 .sort((a, b) => (
                     a.score - b.score
                     || a.diffMinutes - b.diffMinutes
+                    || Math.abs(a.shiftMinutes) - Math.abs(b.shiftMinutes)
                     || a.masterTrip.startTime - b.masterTrip.startTime
                 ));
 
@@ -575,7 +630,7 @@ export const buildDetailedMasterComparison = (
                 const isAmbiguous = secondCandidate.score <= bestCandidate.score + 4;
 
                 if (isAmbiguous) {
-                    const key = buildTripKey(dir, currentTrip.id);
+                    const key = buildTripKeyForBucket(bucketKey, currentTrip.id);
                     const shortlist = candidates.slice(0, 3).map(candidate => ({
                         masterTrip: candidate.masterTrip,
                         diffMinutes: candidate.diffMinutes,
@@ -590,10 +645,10 @@ export const buildDetailedMasterComparison = (
                         routeName: currentRouteNamesByTripKey.get(key) || dir,
                         currentTripId: currentTrip.id,
                         confidence: 'low',
-                        ...(effectiveShift !== 0 ? { shiftMinutes: effectiveShift } : {}),
+                        ...(bestCandidate.shiftMinutes !== 0 ? { shiftMinutes: bestCandidate.shiftMinutes } : {}),
                         candidates: shortlist,
-                        reason: effectiveShift !== 0
-                            ? `Multiple baseline trips are plausible after ${effectiveShift > 0 ? '+' : ''}${effectiveShift}m alignment. Review before trusting this delta.`
+                        reason: bestCandidate.shiftMinutes !== 0
+                            ? `Multiple baseline trips are plausible after ${bestCandidate.shiftMinutes > 0 ? '+' : ''}${bestCandidate.shiftMinutes}m alignment. Review before trusting this delta.`
                             : 'Multiple baseline trips are plausible. Review before trusting this delta.',
                     });
                     continue;
@@ -602,7 +657,7 @@ export const buildDetailedMasterComparison = (
 
             const bestCandidate = candidates[0];
             locallyUsedMasterKeys.add(bestCandidate.masterKey);
-            setMatched(bucketKey, dir, currentTrip, bestCandidate.masterTrip, 'time-shift', effectiveShift);
+            setMatched(bucketKey, dir, currentTrip, bestCandidate.masterTrip, 'time-shift', bestCandidate.shiftMinutes);
         }
     });
 
@@ -616,10 +671,10 @@ export const buildDetailedMasterComparison = (
         if (!bucket) return [];
 
         return bucket.trips
-            .filter(currentTrip => !currentTripComparisons.has(buildTripKey(direction, currentTrip.id)))
+            .filter(currentTrip => !currentTripComparisons.has(buildTripKeyForBucket(bucketKey, currentTrip.id)))
             .map(currentTrip => ({
                 currentTripId: currentTrip.id,
-                routeName: currentRouteNamesByTripKey.get(buildTripKey(direction, currentTrip.id)) || direction,
+                routeName: currentRouteNamesByTripKey.get(buildTripKeyForBucket(bucketKey, currentTrip.id)) || direction,
                 startTime: currentTrip.startTime,
                 endTime: currentTrip.endTime,
                 diffMinutes: currentTrip.startTime - masterTrip.startTime,
@@ -653,10 +708,10 @@ export const buildDetailedMasterComparison = (
     });
     removedMasterTrips.sort((a, b) => a.masterTrip.startTime - b.masterTrip.startTime);
 
-    currentByBucket.forEach(currentBucket => {
+    currentByBucket.forEach((currentBucket, bucketKey) => {
         const dir = currentBucket.direction;
         currentBucket.trips.forEach(currentTrip => {
-            const key = buildTripKey(dir, currentTrip.id);
+            const key = buildTripKeyForBucket(bucketKey, currentTrip.id);
             if (currentTripComparisons.has(key)) return;
 
             currentTripComparisons.set(key, {
@@ -687,6 +742,10 @@ export const buildMasterComparison = (
     detailed.currentTripComparisons.forEach((entry, key) => {
         if (entry.status === 'matched') {
             masterMatchMap.set(key, entry.masterTrip);
+            // Preserve the legacy direction/id lookup for older callers that compare
+            // only one route at a time. Route-scoped keys above avoid multi-route
+            // collisions in full-export summaries.
+            masterMatchMap.set(buildTripKey(entry.direction, entry.currentTripId), entry.masterTrip);
         }
     });
 

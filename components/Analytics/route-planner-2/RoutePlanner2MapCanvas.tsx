@@ -1,14 +1,23 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { Trash2 } from 'lucide-react';
 import { Layer, Marker, Source } from 'react-map-gl/mapbox';
 import type { LayerProps, MapMouseEvent, MarkerDragEvent } from 'react-map-gl/mapbox';
 
 import { MapBase } from '../../shared';
-import { snapRoutePlanner2ScenarioToRoad, type RoutePlanner2RoadSnapSource } from '../../../utils/route-planner-2/routePlanner2RoadSnap';
-import type { RoutePlanner2RoutePoint, RoutePlanner2Scenario, RoutePlanner2SegmentRuntime, RoutePlanner2Stop } from '../../../utils/route-planner-2/routePlanner2Types';
+import { snapRoutePlanner2ScenarioToRoad } from '../../../utils/route-planner-2/routePlanner2RoadSnap';
+import {
+    buildRoutePlanner2StopSegmentPairs,
+    buildRoutePlanner2StopSegmentPaths,
+    buildRoutePlanner2StopVisitSequence,
+} from '../../../utils/route-planner-2/routePlanner2Segments';
+import type { RoutePlanner2RoutePoint, RoutePlanner2RouteShape, RoutePlanner2Scenario, RoutePlanner2SegmentRuntime, RoutePlanner2Stop } from '../../../utils/route-planner-2/routePlanner2Types';
 
 const ROUTE_LINE_LAYER_ID = 'route-planner-2-line';
 const ROUTE_LINE_HIT_LAYER_ID = 'route-planner-2-line-hit';
+const ROUTE_DIRECTION_ARROW_SOURCE_ID = 'route-planner-2-direction-arrows';
+const ROUTE_DIRECTION_ARROW_CENTER_LAYER_ID = 'route-planner-2-direction-arrows-center';
+const ROUTE_DIRECTION_ARROW_OUTBOUND_LAYER_ID = 'route-planner-2-direction-arrows-outbound';
+const ROUTE_DIRECTION_ARROW_RETURN_LAYER_ID = 'route-planner-2-direction-arrows-return';
 
 interface RoutePlanner2MapCanvasProps {
     scenario: RoutePlanner2Scenario | null | undefined;
@@ -24,9 +33,41 @@ interface RoutePlanner2MapCanvasProps {
         insertBeforeWaypointId?: string;
         coordinate: { lat: number; lng: number };
     }) => void;
+    onInsertStopOnLine: (placement: {
+        fromStopId: string;
+        toStopId: string;
+        insertAfterWaypointId?: string;
+        insertBeforeWaypointId?: string;
+        coordinate: { lat: number; lng: number };
+    }) => void;
     onMoveLineWaypoint: (waypointId: string, coordinate: { lat: number; lng: number }) => void;
+    onDeleteLineWaypoint: (waypointId: string) => void;
     onSegmentRuntimeEstimates: (estimates: RoutePlanner2SegmentRuntime[]) => void;
+    onRouteShapeChange: (routeShape: RoutePlanner2RouteShape, turnaroundStopId?: string) => void;
+    onSetTurnaroundStop: (stopId: string) => void;
     onAddNextStop?: () => void;
+    onEnterDrawFocus?: () => void;
+    focusMode?: boolean;
+    metricItems?: Array<{ label: string; value: string; description?: string }>;
+    overlayInsets?: {
+        left: string;
+        right: string;
+    };
+}
+
+interface RoutePlanner2SegmentGeometry {
+    id: string;
+    fromStopId: string;
+    toStopId: string;
+    coordinates: [number, number][];
+}
+
+interface PendingLineAction {
+    fromStopId: string;
+    toStopId: string;
+    insertAfterWaypointId?: string;
+    insertBeforeWaypointId?: string;
+    coordinate: { lat: number; lng: number };
 }
 
 const routeLineLayer: LayerProps = {
@@ -57,6 +98,57 @@ const routeLineHitLayer: LayerProps = {
     },
 };
 
+const routeDirectionArrowCenterLayer: LayerProps = {
+    id: ROUTE_DIRECTION_ARROW_CENTER_LAYER_ID,
+    type: 'symbol',
+    filter: ['==', ['get', 'lane'], 'center'],
+    layout: {
+        'symbol-placement': 'line',
+        'symbol-spacing': 72,
+        'text-field': '▶',
+        'text-size': 17,
+        'text-allow-overlap': true,
+        'text-ignore-placement': true,
+        'text-rotation-alignment': 'map',
+        'text-keep-upright': false,
+    },
+    paint: {
+        'text-color': '#0e7490',
+        'text-halo-color': '#ffffff',
+        'text-halo-width': 2,
+    },
+};
+
+const routeDirectionArrowOutboundLayer: LayerProps = {
+    ...routeDirectionArrowCenterLayer,
+    id: ROUTE_DIRECTION_ARROW_OUTBOUND_LAYER_ID,
+    filter: ['==', ['get', 'lane'], 'outbound'],
+    layout: {
+        ...routeDirectionArrowCenterLayer.layout,
+        'text-offset': [0, -0.9],
+    },
+    paint: {
+        'text-color': '#0891b2',
+        'text-halo-color': '#ffffff',
+        'text-halo-width': 2,
+    },
+};
+
+const routeDirectionArrowReturnLayer: LayerProps = {
+    ...routeDirectionArrowCenterLayer,
+    id: ROUTE_DIRECTION_ARROW_RETURN_LAYER_ID,
+    filter: ['==', ['get', 'lane'], 'return'],
+    layout: {
+        ...routeDirectionArrowCenterLayer.layout,
+        'text-offset': [0, 0.9],
+    },
+    paint: {
+        'text-color': '#4f46e5',
+        'text-halo-color': '#ffffff',
+        'text-halo-width': 2,
+    },
+};
+
 function getStopMarkerClass(stop: RoutePlanner2Stop, isSelected: boolean): string {
     const roleClass = stop.role === 'start-terminal'
         ? 'bg-emerald-600'
@@ -66,13 +158,6 @@ function getStopMarkerClass(stop: RoutePlanner2Stop, isSelected: boolean): strin
                 ? 'bg-indigo-600'
                 : 'bg-cyan-600';
     return `flex h-8 min-w-8 items-center justify-center rounded-full border-2 px-2 text-[10px] font-black text-white shadow-lg ${roleClass} ${isSelected ? 'scale-110 border-slate-950' : 'border-white'}`;
-}
-
-function formatStopRole(role: RoutePlanner2Stop['role']): string {
-    if (role === 'start-terminal') return 'Start terminal';
-    if (role === 'end-terminal') return 'End terminal';
-    if (role === 'timed') return 'Timed stop';
-    return 'Regular stop';
 }
 
 interface RouteLineAnchorHandle {
@@ -98,6 +183,57 @@ function buildLineGeoJson(coordinates: [number, number][]) {
                 },
             }]
             : [],
+    };
+}
+
+function getDirectionPairKey(fromStopId: string, toStopId: string): string {
+    return [fromStopId, toStopId].sort().join('::');
+}
+
+export function buildRoutePlanner2DirectionArrowGeoJson(
+    scenario: RoutePlanner2Scenario | null | undefined,
+    segmentGeometries: RoutePlanner2SegmentGeometry[],
+) {
+    const fallbackGeometries = scenario
+        ? buildRoutePlanner2StopSegmentPaths(scenario).map((segment) => ({
+            id: segment.id,
+            fromStopId: segment.fromStopId,
+            toStopId: segment.toStopId,
+            coordinates: segment.coordinates,
+        }))
+        : [];
+    const geometries = segmentGeometries.length > 0 ? segmentGeometries : fallbackGeometries;
+    const pairCounts = geometries.reduce<Record<string, number>>((counts, segment) => {
+        const key = getDirectionPairKey(segment.fromStopId, segment.toStopId);
+        return { ...counts, [key]: (counts[key] ?? 0) + 1 };
+    }, {});
+
+    return {
+        type: 'FeatureCollection' as const,
+        features: geometries
+            .filter((segment) => segment.coordinates.length >= 2)
+            .map((segment) => {
+                const fromStop = scenario?.stops.find((stop) => stop.id === segment.fromStopId);
+                const toStop = scenario?.stops.find((stop) => stop.id === segment.toStopId);
+                const isTwoWay = (pairCounts[getDirectionPairKey(segment.fromStopId, segment.toStopId)] ?? 0) > 1;
+                const lane = !isTwoWay
+                    ? 'center'
+                    : (fromStop?.sequence ?? 0) <= (toStop?.sequence ?? 0)
+                        ? 'outbound'
+                        : 'return';
+
+                return {
+                    type: 'Feature' as const,
+                    properties: {
+                        id: segment.id,
+                        lane,
+                    },
+                    geometry: {
+                        type: 'LineString' as const,
+                        coordinates: segment.coordinates,
+                    },
+                };
+            }),
     };
 }
 
@@ -130,7 +266,10 @@ function getRoutePathPointsForStopSegment(
     fromStop: RoutePlanner2Stop,
     toStop: RoutePlanner2Stop,
 ): RoutePathPoint[] {
-    const lineAnchors = getLineAnchorForSegment(scenario.alignment, fromStop.id, toStop.id);
+    const directAnchors = getLineAnchorForSegment(scenario.alignment, fromStop.id, toStop.id);
+    const lineAnchors = directAnchors.length > 0
+        ? directAnchors
+        : getLineAnchorForSegment(scenario.alignment, toStop.id, fromStop.id).reverse();
 
     return [
         { type: 'stop', id: fromStop.id, lat: fromStop.lat, lng: fromStop.lng },
@@ -145,19 +284,21 @@ function getRoutePathPointsForStopSegment(
 }
 
 function getScenarioWaypoints(scenario: RoutePlanner2Scenario): [number, number][] {
-    const stops = sortStops(scenario.stops);
+    const segmentPairs = buildRoutePlanner2StopSegmentPairs(scenario);
 
-    if (stops.length >= 2) {
+    if (segmentPairs.length > 0) {
         const waypoints: [number, number][] = [];
 
-        stops.forEach((stop, index) => {
-            waypoints.push([stop.lng, stop.lat]);
-            const nextStop = stops[index + 1];
-            if (!nextStop) return;
-            const anchors = getLineAnchorForSegment(scenario.alignment, stop.id, nextStop.id);
+        segmentPairs.forEach(({ fromStop, toStop }, index) => {
+            if (index === 0) waypoints.push([fromStop.lng, fromStop.lat]);
+            const directAnchors = getLineAnchorForSegment(scenario.alignment, fromStop.id, toStop.id);
+            const anchors = directAnchors.length > 0
+                ? directAnchors
+                : getLineAnchorForSegment(scenario.alignment, toStop.id, fromStop.id).reverse();
             anchors.forEach((anchor) => {
                 waypoints.push([anchor.lng, anchor.lat]);
             });
+            waypoints.push([toStop.lng, toStop.lat]);
         });
 
         return waypoints;
@@ -170,11 +311,57 @@ function getScenarioWaypoints(scenario: RoutePlanner2Scenario): [number, number]
     return routePointWaypoints;
 }
 
-function getDrawingHint(scenario: RoutePlanner2Scenario | null | undefined): string {
+function getDrawingGuide(scenario: RoutePlanner2Scenario | null | undefined): { title: string; body?: string; actionLabel: string } {
     const stopCount = scenario?.stops.length ?? 0;
-    if (stopCount === 0) return 'Start here: click the map where the route begins to place Stop 1.';
-    if (stopCount === 1) return 'Now click the map where the route should go next to place Stop 2 and draw the first segment.';
-    return `Keep clicking in travel order to add Stop ${stopCount + 1}, or select a stop to edit its role.`;
+    const hasStartTerminal = scenario?.stops.some((stop) => stop.role === 'start-terminal') ?? false;
+    const hasEndTerminal = scenario?.stops.some((stop) => stop.role === 'end-terminal') ?? false;
+
+    if (stopCount === 0) {
+        return {
+            title: 'Click the map to place Stop 1',
+            actionLabel: 'Add Stop 1',
+        };
+    }
+
+    if (stopCount === 1) {
+        return {
+            title: 'Add the next stop',
+            body: 'Mark terminals after adding at least two stops.',
+            actionLabel: 'Add next stop',
+        };
+    }
+
+    if (scenario?.routeShape === 'closed-loop') {
+        return {
+            title: 'Closed loop route',
+            body: `The route returns from Stop ${stopCount} to Stop 1. Click the line, then drag the + handle to shape it.`,
+            actionLabel: `Add Stop ${stopCount + 1}`,
+        };
+    }
+
+    if (scenario?.routeShape === 'out-and-back') {
+        const turnaroundStop = scenario.stops.find((stop) => stop.id === scenario.turnaroundStopId)
+            ?? sortStops(scenario.stops)[stopCount - 1];
+        return {
+            title: `Out and back to ${turnaroundStop?.name ?? `Stop ${stopCount}`}`,
+            body: 'The return trip is added automatically in reverse order. Select a stop and set it as the turnaround if needed.',
+            actionLabel: `Add Stop ${stopCount + 1}`,
+        };
+    }
+
+    if (!hasStartTerminal || !hasEndTerminal) {
+        return {
+            title: 'Mark start and end terminals',
+            body: 'Click the line between stops, then drag the + handle to shape the route.',
+            actionLabel: `Add Stop ${stopCount + 1}`,
+        };
+    }
+
+    return {
+        title: 'Review feasibility',
+        body: 'Click the line between stops, then drag the + handle to shape the route.',
+        actionLabel: `Add Stop ${stopCount + 1}`,
+    };
 }
 
 function getDragCoordinate(event: MarkerDragEvent): { lat: number; lng: number } {
@@ -224,7 +411,6 @@ function getClosestRouteSegment(
     insertAfterWaypointId?: string;
     insertBeforeWaypointId?: string;
 } | null {
-    const stops = sortStops(scenario.stops);
     let closestSegment: {
         fromStopId: string;
         toStopId: string;
@@ -233,11 +419,7 @@ function getClosestRouteSegment(
     } | null = null;
     let closestDistance = Number.POSITIVE_INFINITY;
 
-    for (let index = 0; index < stops.length - 1; index += 1) {
-        const fromStop = stops[index];
-        const toStop = stops[index + 1];
-        if (!fromStop || !toStop) continue;
-
+    for (const { fromStop, toStop } of buildRoutePlanner2StopSegmentPairs(scenario)) {
         const points = getRoutePathPointsForStopSegment(scenario, fromStop, toStop);
 
         for (let pointIndex = 0; pointIndex < points.length - 1; pointIndex += 1) {
@@ -273,26 +455,57 @@ export function RoutePlanner2MapCanvas({
     onDeleteStop,
     onMoveStop,
     onAddLineWaypoint,
+    onInsertStopOnLine,
     onMoveLineWaypoint,
+    onDeleteLineWaypoint,
     onSegmentRuntimeEstimates,
+    onRouteShapeChange,
+    onSetTurnaroundStop,
     onAddNextStop,
+    onEnterDrawFocus,
+    focusMode = false,
+    metricItems = [],
+    overlayInsets = { left: '8rem', right: '8rem' },
 }: RoutePlanner2MapCanvasProps) {
     const [mapLoaded, setMapLoaded] = useState(false);
     const [snappedCoordinates, setSnappedCoordinates] = useState<[number, number][]>([]);
-    const [snapSource, setSnapSource] = useState<RoutePlanner2RoadSnapSource>('fallback');
+    const [snappedSegmentGeometries, setSnappedSegmentGeometries] = useState<RoutePlanner2SegmentGeometry[]>([]);
+    const [pendingLineAction, setPendingLineAction] = useState<PendingLineAction | null>(null);
+    const [showLargeStopTray, setShowLargeStopTray] = useState(false);
 
     const waypoints = useMemo(() => scenario ? getScenarioWaypoints(scenario) : [], [scenario]);
     const lineAnchorHandles = useMemo(() => scenario ? getRouteLineAnchorHandles(scenario) : [], [scenario]);
     const lineGeoJson = useMemo(() => buildLineGeoJson(snappedCoordinates.length ? snappedCoordinates : waypoints), [snappedCoordinates, waypoints]);
+    const directionArrowGeoJson = useMemo(
+        () => buildRoutePlanner2DirectionArrowGeoJson(scenario, snappedSegmentGeometries),
+        [scenario, snappedSegmentGeometries],
+    );
     const hasRouteLine = lineGeoJson.features.length > 0;
-    const drawingHint = getDrawingHint(scenario);
+    const hasDirectionArrows = directionArrowGeoJson.features.length > 0;
+    const drawingGuide = getDrawingGuide(scenario);
+    const sortedStops = useMemo(() => scenario ? sortStops(scenario.stops) : [], [scenario]);
+    const stopVisitSequence = useMemo(() => scenario ? buildRoutePlanner2StopVisitSequence(scenario) : [], [scenario]);
+    const isLargeStopList = sortedStops.length > 10;
+    const visibleStopTrayStops = isLargeStopList && !showLargeStopTray ? [] : sortedStops;
+    const selectedStop = sortedStops.find((stop) => stop.id === selectedStopId) ?? null;
+    const firstStop = sortedStops[0] ?? null;
+    const lastStop = sortedStops[sortedStops.length - 1] ?? null;
+    const routeShapeLabel = scenario?.routeShape === 'closed-loop'
+        ? 'Closed loop'
+        : scenario?.routeShape === 'out-and-back'
+        ? 'Out and back'
+        : 'One-way';
+
+    useEffect(() => {
+        setShowLargeStopTray(false);
+    }, [scenario?.id]);
 
     useEffect(() => {
         let cancelled = false;
 
         if (!scenario) {
             setSnappedCoordinates([]);
-            setSnapSource('fallback');
+            setSnappedSegmentGeometries([]);
             return () => {
                 cancelled = true;
             };
@@ -301,7 +514,7 @@ export function RoutePlanner2MapCanvas({
         snapRoutePlanner2ScenarioToRoad(scenario).then((result) => {
             if (cancelled) return;
             setSnappedCoordinates(result.coordinates);
-            setSnapSource(result.source);
+            setSnappedSegmentGeometries(result.segmentGeometries);
             onSegmentRuntimeEstimates(result.segmentEstimates);
         });
 
@@ -317,7 +530,7 @@ export function RoutePlanner2MapCanvas({
         if (clickedRouteLine(event) && scenario.stops.length >= 2) {
             const segment = getClosestRouteSegment(scenario, coordinate);
             if (segment) {
-                onAddLineWaypoint({
+                setPendingLineAction({
                     fromStopId: segment.fromStopId,
                     toStopId: segment.toStopId,
                     insertAfterWaypointId: segment.insertAfterWaypointId,
@@ -328,22 +541,34 @@ export function RoutePlanner2MapCanvas({
             }
         }
 
+        setPendingLineAction(null);
         onAddStop(coordinate);
     }
 
-    return (
-        <section className="min-h-[520px] overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
-                <div>
-                    <h2 className="text-sm font-black text-slate-900">Mapbox planning map</h2>
-                    <p className="text-xs text-slate-500">Build the route by clicking stops in travel order. The line appears after Stop 2.</p>
-                </div>
-                <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-bold text-slate-600">
-                    Route snap: {snapSource === 'mapbox' ? 'Mapbox' : 'fallback'}
-                </span>
-            </div>
+    function addAnchorFromPendingAction() {
+        if (!pendingLineAction) return;
+        onAddLineWaypoint(pendingLineAction);
+        setPendingLineAction(null);
+    }
 
-            <div className="relative h-[calc(100%-57px)] min-h-[460px]">
+    function insertStopFromPendingAction() {
+        if (!pendingLineAction) return;
+        onInsertStopOnLine(pendingLineAction);
+        setPendingLineAction(null);
+    }
+
+    const overlayStyle = {
+        '--rp2-overlay-left': overlayInsets.left,
+        '--rp2-overlay-right': overlayInsets.right,
+    } as CSSProperties;
+
+    return (
+        <section
+            data-testid="rp2-map-canvas"
+            style={overlayStyle}
+            className="h-full min-h-[520px] overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm"
+        >
+            <div className="relative h-full min-h-[520px]">
                 <MapBase
                     longitude={-79.69}
                     latitude={44.38}
@@ -362,6 +587,13 @@ export function RoutePlanner2MapCanvas({
                             <Layer {...routeLineHitLayer} />
                         </Source>
                     )}
+                    {mapLoaded && hasDirectionArrows && (
+                        <Source id={ROUTE_DIRECTION_ARROW_SOURCE_ID} type="geojson" data={directionArrowGeoJson}>
+                            <Layer {...routeDirectionArrowCenterLayer} />
+                            <Layer {...routeDirectionArrowOutboundLayer} />
+                            <Layer {...routeDirectionArrowReturnLayer} />
+                        </Source>
+                    )}
                     {mapLoaded && lineAnchorHandles.map((handle) => (
                         <Marker
                             key={handle.id}
@@ -371,17 +603,68 @@ export function RoutePlanner2MapCanvas({
                             draggable
                             onDragEnd={(event) => onMoveLineWaypoint(handle.id, getDragCoordinate(event))}
                         >
-                            <button
-                                type="button"
-                                onClick={(event) => event.stopPropagation()}
-                                className="flex h-7 w-7 items-center justify-center rounded-full border-2 border-cyan-700 bg-white text-xs font-black text-cyan-700 shadow-lg"
-                                aria-label="Drag route line anchor"
-                                title="Drag to bend this route segment"
-                            >
-                                +
-                            </button>
+                            <div className="relative">
+                                <button
+                                    type="button"
+                                    onClick={(event) => event.stopPropagation()}
+                                    className="flex h-7 w-7 items-center justify-center rounded-full border-2 border-cyan-700 bg-white text-xs font-black text-cyan-700 shadow-lg"
+                                    aria-label="Drag route line anchor"
+                                    title="Drag to bend this route segment"
+                                >
+                                    +
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={(event) => {
+                                        event.stopPropagation();
+                                        onDeleteLineWaypoint(handle.id);
+                                    }}
+                                    className="absolute -right-2 -top-2 flex h-5 w-5 items-center justify-center rounded-full border border-red-200 bg-white text-red-600 shadow-md hover:bg-red-50"
+                                    aria-label="Delete route line anchor"
+                                    title="Delete route line anchor"
+                                >
+                                    <Trash2 size={11} />
+                                </button>
+                            </div>
                         </Marker>
                     ))}
+                    {mapLoaded && pendingLineAction && (
+                        <Marker
+                            longitude={pendingLineAction.coordinate.lng}
+                            latitude={pendingLineAction.coordinate.lat}
+                            anchor="bottom"
+                        >
+                            <div
+                                className="w-52 rounded-2xl border border-slate-200 bg-white p-2 shadow-xl"
+                                onClick={(event) => event.stopPropagation()}
+                            >
+                                <div className="px-1 text-[10px] font-black uppercase tracking-wide text-slate-500">Route line</div>
+                                <div className="mt-2 grid gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={insertStopFromPendingAction}
+                                        className="rounded-xl bg-cyan-600 px-3 py-2 text-xs font-black text-white hover:bg-cyan-700"
+                                    >
+                                        Add stop here
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={addAnchorFromPendingAction}
+                                        className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50"
+                                    >
+                                        Add bend anchor
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setPendingLineAction(null)}
+                                        className="rounded-xl px-3 py-1 text-xs font-bold text-slate-500 hover:bg-slate-50"
+                                    >
+                                        Cancel
+                                    </button>
+                                </div>
+                            </div>
+                        </Marker>
+                    )}
                     {mapLoaded && scenario?.stops.map((stop) => (
                         <Marker
                             key={stop.id}
@@ -407,65 +690,146 @@ export function RoutePlanner2MapCanvas({
                     ))}
                 </MapBase>
 
-                <div className="absolute left-4 top-4 max-w-md rounded-3xl border border-slate-200 bg-white/95 p-4 shadow-lg">
-                    <div className="flex flex-wrap items-center gap-2">
-                        <span className="rounded-xl bg-cyan-600 px-3 py-2 text-sm font-bold text-white">
+                <div
+                    className="absolute top-6 max-w-sm rounded-3xl border border-slate-200 bg-white/95 p-4 shadow-lg"
+                    style={{ left: 'var(--rp2-overlay-left)' }}
+                >
+                    <div className="flex items-center justify-between gap-3">
+                        <div>
+                            <div className="text-xs font-black uppercase tracking-wide text-cyan-700">Draw route</div>
+                            <div className="mt-1 text-base font-black leading-5 text-slate-900">{drawingGuide.title}</div>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={onEnterDrawFocus}
+                            className="shrink-0 rounded-xl border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs font-black text-cyan-700 hover:bg-cyan-100"
+                        >
                             Draw route
-                        </span>
-                    </div>
-                    <div className="mt-3 rounded-2xl bg-cyan-50 p-3 text-sm font-bold leading-5 text-cyan-900">
-                        {drawingHint}
-                    </div>
-                    <p className="mt-2 text-xs font-semibold text-slate-500">
-                        Tip: click the route line to create a waypoint, then drag the + handle to bend the route.
-                    </p>
-                    <div className="mt-3 flex flex-wrap items-center gap-2">
-                        <button type="button" onClick={onAddNextStop} className="rounded-xl bg-cyan-600 px-3 py-2 text-sm font-bold text-white">
-                            Add next stop
                         </button>
                     </div>
-                    <div className="mt-3 grid grid-cols-1 gap-2 text-xs">
-                        <div className="rounded-2xl bg-slate-50 p-3">
-                            <div className="font-bold uppercase text-slate-500">Stops</div>
-                            <div className="mt-1 text-lg font-black">{scenario?.stops.length ?? 0}</div>
+                    {drawingGuide.body && (
+                        <p className="mt-2 text-sm leading-5 text-slate-600">{drawingGuide.body}</p>
+                    )}
+                    {scenario && scenario.stops.length >= 2 && (
+                        <div className="mt-3 rounded-2xl bg-slate-50 p-2">
+                            <div className="mb-2 text-[10px] font-black uppercase tracking-wide text-slate-500">Route type</div>
+                            <div className="flex flex-wrap gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => onRouteShapeChange('one-way')}
+                                    className={`rounded-full border px-3 py-1.5 text-xs font-black ${scenario.routeShape === 'one-way' ? 'border-cyan-300 bg-cyan-50 text-cyan-800' : 'border-slate-200 bg-white text-slate-600'}`}
+                                >
+                                    One-way
+                                </button>
+                                {scenario.stops.length >= 3 && (
+                                    <button
+                                        type="button"
+                                        onClick={() => onRouteShapeChange('closed-loop')}
+                                        className={`rounded-full border px-3 py-1.5 text-xs font-black ${scenario.routeShape === 'closed-loop' ? 'border-cyan-300 bg-cyan-50 text-cyan-800' : 'border-slate-200 bg-white text-slate-600'}`}
+                                    >
+                                        Closed loop
+                                    </button>
+                                )}
+                                <button
+                                    type="button"
+                                    onClick={() => onRouteShapeChange('out-and-back')}
+                                    className={`rounded-full border px-3 py-1.5 text-xs font-black ${scenario.routeShape === 'out-and-back' ? 'border-cyan-300 bg-cyan-50 text-cyan-800' : 'border-slate-200 bg-white text-slate-600'}`}
+                                >
+                                    Out and back
+                                </button>
+                            </div>
+                            <div className="mt-2 text-xs font-semibold text-slate-600">
+                                {routeShapeLabel}: {stopVisitSequence.map((stop) => stop.sequence).join(' → ')}
+                            </div>
+                            {scenario.routeShape === 'out-and-back' && selectedStopId && selectedStopId !== sortedStops[0]?.id && (
+                                <button
+                                    type="button"
+                                    onClick={() => onSetTurnaroundStop(selectedStopId)}
+                                    className="mt-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-black text-slate-700 hover:bg-slate-50"
+                                >
+                                    Use selected stop as turnaround
+                                </button>
+                            )}
                         </div>
+                    )}
+                    <div className="mt-3">
+                        <button type="button" onClick={onAddNextStop} className="rounded-xl bg-cyan-600 px-3 py-2 text-sm font-bold text-white hover:bg-cyan-700">
+                            {drawingGuide.actionLabel}
+                        </button>
                     </div>
+                    {focusMode && <div className="mt-2 text-xs font-bold text-cyan-700">Focus mode</div>}
                 </div>
 
-                {scenario && scenario.stops.length === 0 && (
-                    <div className="pointer-events-none absolute bottom-6 left-1/2 max-w-md -translate-x-1/2 rounded-3xl border border-cyan-200 bg-white/95 p-4 text-center shadow-xl">
-                        <div className="text-sm font-black text-slate-900">Start by clicking the map</div>
-                        <p className="mt-1 text-sm leading-6 text-slate-600">
-                            Draw route mode is already on. Your first click places Stop 1.
-                        </p>
+                {metricItems.length > 0 && (
+                    <div
+                        data-testid="rp2-map-metrics"
+                        className="absolute bottom-4 right-4 grid max-w-3xl grid-cols-2 gap-2 rounded-3xl border border-slate-200 bg-white/95 p-3 shadow-xl sm:grid-cols-5"
+                        style={{ right: 'var(--rp2-overlay-right)' }}
+                    >
+                        {metricItems.map((item) => (
+                            <div key={item.label} className="group relative min-w-24 rounded-2xl bg-slate-50 px-3 py-2">
+                                <div className="text-[10px] font-black uppercase tracking-wide text-slate-500">{item.label}</div>
+                                <div className="mt-1 text-sm font-black text-slate-900">{item.value}</div>
+                                {item.description && (
+                                    <div
+                                        role="tooltip"
+                                        className="pointer-events-none absolute bottom-full right-0 z-40 mb-2 w-64 rounded-2xl border border-slate-200 bg-white p-3 text-xs font-semibold leading-5 text-slate-700 opacity-0 shadow-xl transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+                                    >
+                                        {item.description}
+                                    </div>
+                                )}
+                            </div>
+                        ))}
                     </div>
                 )}
 
-                {scenario && scenario.stops.length > 0 && (
-                    <div className="absolute right-4 top-4 max-h-[360px] w-72 overflow-auto rounded-3xl border border-slate-200 bg-white/95 p-4 shadow-lg">
-                        <h3 className="text-sm font-black text-slate-900">Stop order</h3>
-                        <div className="mt-3 space-y-2">
-                            {scenario.stops.map((stop) => (
-                                <div key={stop.id} className="flex items-stretch gap-2">
+                {scenario && sortedStops.length > 0 && (
+                    <div
+                        data-testid="rp2-map-stop-tray"
+                        data-collapsed={isLargeStopList && !showLargeStopTray ? 'true' : 'false'}
+                        className={`absolute bottom-14 max-w-[min(44rem,calc(100%-2rem))] rounded-3xl border border-slate-200 bg-white/95 p-2 shadow-lg ${isLargeStopList && showLargeStopTray ? 'max-h-72 overflow-y-auto' : ''}`}
+                        style={{ left: 'var(--rp2-overlay-left)' }}
+                    >
+                        <div className="flex flex-wrap items-center gap-2">
+                            <span className="px-2 text-xs font-black uppercase tracking-wide text-slate-500">
+                                {sortedStops.length} {sortedStops.length === 1 ? 'stop' : 'stops'}
+                            </span>
+                            {isLargeStopList && !showLargeStopTray && (
+                                <>
+                                    {firstStop && <span className="rounded-full bg-slate-100 px-3 py-2 text-xs font-bold text-slate-700">Start: {firstStop.name}</span>}
+                                    {lastStop && <span className="rounded-full bg-slate-100 px-3 py-2 text-xs font-bold text-slate-700">End: {lastStop.name}</span>}
+                                    {selectedStop && <span className="rounded-full border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs font-bold text-cyan-800">Selected: {selectedStop.sequence}. {selectedStop.name}</span>}
+                                </>
+                            )}
+                            {visibleStopTrayStops.map((stop) => (
+                                <div key={stop.id} className="flex items-center gap-1">
                                     <button
                                         type="button"
                                         onClick={() => onSelectStop(stop.id)}
-                                        className={`min-w-0 flex-1 rounded-2xl border p-3 text-left text-sm ${selectedStopId === stop.id ? 'border-cyan-300 bg-cyan-50' : 'border-slate-200 bg-white'}`}
+                                        className={`rounded-full border px-3 py-2 text-xs font-bold ${selectedStopId === stop.id ? 'border-cyan-300 bg-cyan-50 text-cyan-900' : 'border-slate-200 bg-white text-slate-700'}`}
                                     >
-                                        <div className="truncate font-bold text-slate-900">{stop.sequence}. {stop.name}</div>
-                                        <div className="mt-1 text-xs font-semibold text-slate-500">{formatStopRole(stop.role)}</div>
+                                        {stop.sequence}. {stop.name}
                                     </button>
                                     <button
                                         type="button"
                                         onClick={() => onDeleteStop(stop.id)}
-                                        className="flex w-11 shrink-0 items-center justify-center rounded-2xl border border-red-200 bg-white text-red-600 hover:bg-red-50"
+                                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-red-200 bg-white text-red-600 hover:bg-red-50"
                                         aria-label={`Delete ${stop.name}`}
                                         title={`Delete ${stop.name}`}
                                     >
-                                        <Trash2 size={16} />
+                                        <Trash2 size={14} />
                                     </button>
                                 </div>
                             ))}
+                            {isLargeStopList && (
+                                <button
+                                    type="button"
+                                    onClick={() => setShowLargeStopTray((current) => !current)}
+                                    className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50"
+                                >
+                                    {showLargeStopTray ? 'Hide stops' : 'Show all stops'}
+                                </button>
+                            )}
                         </div>
                     </div>
                 )}

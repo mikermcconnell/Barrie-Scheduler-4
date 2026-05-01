@@ -27,6 +27,17 @@ Recommended v1 layout:
 └──────────────┴───────────────────────────────┴───────────────┘
 ```
 
+The implemented direction is map-first: the map owns the full workspace and
+the left route rail and right route-detail rail sit as collapsible overlays.
+Entering draw focus mode collapses both rails and keeps only compact route
+metrics visible on the map.
+
+Default map authoring should show one active instruction at a time. Keep debug
+details such as snap source, future persistence notes, and comparison outputs
+out of the primary map view unless the planner opens Details or Comparison.
+Route concepts should live in the header bar as compact selectable cards, not
+as a persistent map overlay rail. This keeps the map as the primary surface.
+
 ## Header
 
 Header should show:
@@ -34,6 +45,7 @@ Header should show:
 - editable project name
 - module label: Route Planner 2
 - local/draft status
+- operator turn-by-turn PDF export
 - disabled or future-labelled save/export if not implemented
 
 Avoid implying Firebase persistence exists in v1.
@@ -55,8 +67,19 @@ V1 interactions:
 - click the map to add stops in travel order
 - drag numbered stop markers to move stops
 - delete stops from the stop order list
+- choose route type: one-way, closed loop, or out-and-back
 - click the route line to create one or more route-line waypoints
+- click the route line and choose **Add stop here** to insert an intermediate stop between existing stops
 - drag route-line `+` waypoint handles to bend the travel path, Google Maps-style
+- delete route-line waypoint handles directly from the map
+- show direction arrows on route lines; out-and-back shared segments should show arrows in both directions
+
+When a route has more than 10 stops, the map stop tray should collapse to a compact summary with stop count, start/end, selected stop, and a **Show all stops** action. The full list may expand into a scrollable tray or live in the details panel; it should not cover the map by default.
+
+Route type controls:
+- Show **Closed loop** once there are at least 3 stops. It adds the final segment from the last stop back to Stop 1.
+- Show **Out and back** once there are at least 2 stops. It returns from the turnaround stop to Stop 1 in reverse stop order.
+- For out-and-back routes, allow the selected stop to become the turnaround point.
 
 Required visible states:
 - selected stop
@@ -64,6 +87,8 @@ Required visible states:
 - end terminal
 - missing terminal warning
 - unsaved/local-only state if applicable
+
+For network redesign work, the right rail should include a compact **Reassign stops** control that can copy or move a contiguous stop range into another route concept. It should require the planner to choose the target route and insertion position instead of guessing where transferred stops belong.
 
 ## Right Rail
 
@@ -85,6 +110,20 @@ Show the main planning outputs as cards:
 - confidence
 
 KPI cards should show “not ready” states when required inputs are missing.
+The map metric strip should also include recovery as `minutes (percent)` once cycle time and frequency are ready.
+The confidence metric should expose a small hover pop-out explaining what the
+confidence value means.
+
+## Operator PDF Export
+
+The header should include an **Operator PDF** export once a route has at least
+two stops. The PDF should look professional and field-ready:
+- strong title/header treatment
+- compact KPI cards
+- clear stop sequence
+- segment-by-segment turn-by-turn instructions
+- clear source label: Mapbox turn-by-turn or planning-alignment fallback
+- operator note that the directions must be verified before issuing
 
 ## Warnings
 

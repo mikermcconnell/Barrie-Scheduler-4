@@ -1,5 +1,5 @@
 import { validateRoutePlanner2Terminals } from './routePlanner2Authoring';
-import { buildRoutePlanner2StopSegmentPaths } from './routePlanner2Segments';
+import { buildRoutePlanner2StopSegmentPairs, buildRoutePlanner2StopSegmentPaths, buildRoutePlanner2StopVisitSequence } from './routePlanner2Segments';
 import type {
     RoutePlanner2FeasibilitySummary,
     RoutePlanner2Project,
@@ -45,6 +45,8 @@ function buildNotReadySummary(warnings: RoutePlanner2Warning[]): RoutePlanner2Fe
         intermediateStopCount: 0,
         cycleTimeMinutes: null,
         busesRequired: null,
+        recoveryTimeMinutes: null,
+        recoveryPercent: null,
         confidence: 'not-ready',
         segmentSummaries: [],
         warnings,
@@ -56,9 +58,49 @@ function deriveFallbackSegmentRuntime(from: RoutePlanner2Stop, to: RoutePlanner2
     return Math.max(2, Math.ceil(driveMinutes + 1));
 }
 
+function deriveSegmentSummaries(scenario: RoutePlanner2Scenario): RoutePlanner2SegmentRuntime[] {
+    const segmentPaths = buildRoutePlanner2StopSegmentPaths(scenario);
+    const segmentPairs = buildRoutePlanner2StopSegmentPairs(scenario);
+
+    return segmentPairs.map(({ fromStop, toStop }): RoutePlanner2SegmentRuntime => {
+        const segmentPath = segmentPaths.find((path) => path.fromStopId === fromStop.id && path.toStopId === toStop.id);
+        const manualOverride = segmentPath
+            ? getManualSegmentOverride(scenario, segmentPath.id, fromStop.id, toStop.id)
+            : null;
+        if (manualOverride) return manualOverride;
+
+        const currentEstimate = segmentPath
+            ? getCurrentSegmentEstimate(scenario, fromStop.id, toStop.id, segmentPath.pathFingerprint)
+            : null;
+
+        if (currentEstimate) {
+            return {
+                ...currentEstimate,
+                id: `segment-${fromStop.id}-${toStop.id}`,
+                runtimeMinutes: Math.round(currentEstimate.runtimeMinutes ?? 0),
+            };
+        }
+
+        return {
+            id: `segment-${fromStop.id}-${toStop.id}`,
+            fromStopId: fromStop.id,
+            toStopId: toStop.id,
+            runtimeMinutes: deriveFallbackSegmentRuntime(fromStop, toStop),
+            source: 'fallback',
+            confidence: 'low',
+            fallbackReason: 'Observed runtime evidence is not wired yet; using distance and default speed.',
+        };
+    });
+}
+
 function estimateMatchesCurrentPath(estimate: RoutePlanner2SegmentRuntime | undefined, pathFingerprint: string): boolean {
     if (!estimate) return false;
-    if (!estimate.pathFingerprint) return estimate.source === 'manual' || estimate.source === 'observed-proxy';
+    if (!estimate.pathFingerprint) {
+        return estimate.source === 'manual'
+            || estimate.source === 'observed-proxy'
+            || estimate.source === 'observed-scheduled-blend'
+            || estimate.source === 'scheduled-proxy';
+    }
     return estimate.pathFingerprint === pathFingerprint;
 }
 
@@ -147,64 +189,40 @@ export function deriveRoutePlanner2Feasibility(scenario: RoutePlanner2Scenario):
         });
     }
 
-    if (warnings.some((warning) => warning.severity === 'blocking')) {
+    const canEstimateOneWayRuntime = scenario.stops.length >= 2 && intermediateStopDwellSeconds >= 0 && Number.isFinite(intermediateStopDwellSeconds);
+
+    if (!canEstimateOneWayRuntime) {
         return buildNotReadySummary(warnings);
     }
 
-    const segmentPaths = buildRoutePlanner2StopSegmentPaths(scenario);
-    const sortedStops = [...scenario.stops].sort((a, b) => a.sequence - b.sequence);
-    const segmentSummaries: RoutePlanner2SegmentRuntime[] = sortedStops.slice(0, -1).map((fromStop, index): RoutePlanner2SegmentRuntime => {
-        const toStop = sortedStops[index + 1];
-        if (!toStop) {
-            return {
-                id: `segment-${fromStop.id}-missing`,
-                fromStopId: fromStop.id,
-                toStopId: 'missing',
-                runtimeMinutes: null,
-                source: 'missing',
-                confidence: 'missing',
-                fallbackReason: 'Downstream stop is missing.',
-            };
-        }
-        const segmentPath = segmentPaths.find((path) => path.fromStopId === fromStop.id && path.toStopId === toStop.id);
-        const manualOverride = segmentPath
-            ? getManualSegmentOverride(scenario, segmentPath.id, fromStop.id, toStop.id)
-            : null;
-        if (manualOverride) return manualOverride;
-
-        const currentEstimate = segmentPath
-            ? getCurrentSegmentEstimate(scenario, fromStop.id, toStop.id, segmentPath.pathFingerprint)
-            : null;
-
-        if (currentEstimate) {
-            return {
-                ...currentEstimate,
-                id: `segment-${fromStop.id}-${toStop.id}`,
-                runtimeMinutes: Math.round(currentEstimate.runtimeMinutes ?? 0),
-            };
-        }
-
-        return {
-            id: `segment-${fromStop.id}-${toStop.id}`,
-            fromStopId: fromStop.id,
-            toStopId: toStop.id,
-            runtimeMinutes: deriveFallbackSegmentRuntime(fromStop, toStop),
-            source: 'fallback',
-            confidence: 'low',
-            fallbackReason: 'Observed runtime evidence is not wired yet; using distance and default speed.',
-        };
-    });
+    const segmentSummaries = deriveSegmentSummaries(scenario);
 
     const segmentRuntimeMinutes = segmentSummaries.reduce((sum, segment) => sum + (segment.runtimeMinutes ?? 0), 0);
-    const intermediateStopCount = sortedStops.filter((stop) => stop.role !== 'start-terminal' && stop.role !== 'end-terminal').length;
+    const stopVisits = buildRoutePlanner2StopVisitSequence(scenario);
+    const intermediateStopCount = stopVisits.filter((stop) => stop.role !== 'start-terminal' && stop.role !== 'end-terminal').length;
     const dwellTimeMinutes = Math.round((intermediateStopCount * intermediateStopDwellSeconds) / 60);
     const oneWayRuntimeMinutes = segmentRuntimeMinutes + dwellTimeMinutes;
-    const cycleTimeMinutes = oneWayRuntimeMinutes * 2
-        + service.startTerminalLayoverMinutes
-        + service.endTerminalLayoverMinutes;
-    const busesRequired = Math.ceil(cycleTimeMinutes / service.frequencyMinutes);
-
     const fallbackSegments = segmentSummaries.filter((segment) => segment.source === 'fallback');
+    const evidenceSegments = segmentSummaries.filter((segment) =>
+        segment.source === 'observed-proxy'
+        || segment.source === 'observed-scheduled-blend'
+        || segment.source === 'scheduled-proxy',
+    );
+    const evidenceSegmentRatio = segmentSummaries.length > 0
+        ? evidenceSegments.length / segmentSummaries.length
+        : 0;
+    const fallbackSegmentRatio = segmentSummaries.length > 0
+        ? fallbackSegments.length / segmentSummaries.length
+        : 0;
+    const allHighEvidence = segmentSummaries.length > 0
+        && segmentSummaries.every((segment) =>
+            segment.confidence === 'high'
+            && (
+                segment.source === 'observed-proxy'
+                || segment.source === 'observed-scheduled-blend'
+                || segment.source === 'scheduled-proxy'
+            ),
+        );
     if (fallbackSegments.length > 0) {
         warnings.push({
             id: 'fallback-runtime',
@@ -214,14 +232,47 @@ export function deriveRoutePlanner2Feasibility(scenario: RoutePlanner2Scenario):
         });
     }
 
-    const nextBusThreshold = busesRequired * service.frequencyMinutes;
-    if (nextBusThreshold - cycleTimeMinutes <= 3) {
-        warnings.push({
-            id: 'near-bus-threshold',
-            severity: 'warning',
-            message: 'Cycle time is close to requiring another bus.',
-            action: 'Review frequency or layover before treating this option as feasible.',
-        });
+    const hasBlockingWarnings = warnings.some((warning) => warning.severity === 'blocking');
+    let cycleTimeMinutes: number | null = null;
+    let busesRequired: number | null = null;
+    let recoveryTimeMinutes: number | null = null;
+    let recoveryPercent: number | null = null;
+    let busThresholdBasisMinutes: number | null = null;
+
+    if (!hasBlockingWarnings) {
+        if (scenario.routeShape === 'closed-loop' || scenario.routeShape === 'out-and-back') {
+            const fullRouteRuntimeMinutes = oneWayRuntimeMinutes;
+            busesRequired = Math.max(1, Math.ceil(fullRouteRuntimeMinutes / service.frequencyMinutes));
+            cycleTimeMinutes = busesRequired * service.frequencyMinutes;
+            busThresholdBasisMinutes = fullRouteRuntimeMinutes;
+            recoveryTimeMinutes = Math.max(0, cycleTimeMinutes - fullRouteRuntimeMinutes);
+            recoveryPercent = fullRouteRuntimeMinutes > 0
+                ? Math.round((recoveryTimeMinutes / fullRouteRuntimeMinutes) * 100)
+                : null;
+        } else {
+            cycleTimeMinutes = oneWayRuntimeMinutes * 2
+                + service.startTerminalLayoverMinutes
+                + service.endTerminalLayoverMinutes;
+            busesRequired = Math.ceil(cycleTimeMinutes / service.frequencyMinutes);
+            busThresholdBasisMinutes = cycleTimeMinutes;
+            const scheduledCycleWindowMinutes = busesRequired * service.frequencyMinutes;
+            recoveryTimeMinutes = Math.max(0, scheduledCycleWindowMinutes - cycleTimeMinutes);
+            recoveryPercent = cycleTimeMinutes > 0
+                ? Math.round((recoveryTimeMinutes / cycleTimeMinutes) * 100)
+                : null;
+        }
+    }
+
+    if (busThresholdBasisMinutes != null && busesRequired != null) {
+        const nextBusThreshold = busesRequired * service.frequencyMinutes;
+        if (nextBusThreshold - busThresholdBasisMinutes <= 3) {
+            warnings.push({
+                id: 'near-bus-threshold',
+                severity: 'warning',
+                message: 'Cycle time is close to requiring another bus.',
+                action: 'Review frequency or layover before treating this option as feasible.',
+            });
+        }
     }
 
     return {
@@ -231,11 +282,19 @@ export function deriveRoutePlanner2Feasibility(scenario: RoutePlanner2Scenario):
         intermediateStopCount,
         cycleTimeMinutes,
         busesRequired,
-        confidence: fallbackSegments.length > 0
-            ? 'low'
-            : segmentSummaries.some((segment) => segment.source === 'mapbox' || segment.source === 'manual')
-                ? 'medium'
-                : 'low',
+        recoveryTimeMinutes,
+        recoveryPercent,
+        confidence: hasBlockingWarnings
+            ? 'not-ready'
+            : allHighEvidence
+                ? 'high'
+                : evidenceSegmentRatio >= 0.5
+                    ? 'medium'
+                    : fallbackSegmentRatio > 0.5
+                        ? 'low'
+                        : segmentSummaries.some((segment) => segment.source === 'mapbox' || segment.source === 'manual')
+                            ? 'medium'
+                            : 'low',
         segmentSummaries,
         warnings,
     };

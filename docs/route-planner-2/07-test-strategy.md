@@ -9,6 +9,11 @@ Focus on:
 - map authoring state transitions
 - feasibility calculations
 - warning generation
+- GTFS route pattern grouping
+- GTFS pattern to editable route scenario conversion, including multi-route import into one workspace
+- imported stop ordering and terminal role assignment
+- imported shape simplification and waypoint ownership
+- stop range copy/move between route concepts
 - old Route Planner isolation
 
 ## Unit Tests
@@ -24,6 +29,10 @@ Recommended coverage:
 - bus requirement calculation
 - confidence calculation
 - warning generation
+- GTFS route pattern grouping
+- GTFS pattern to editable route scenario conversion, including scheduled runtime evidence
+- imported stop ordering and terminal role assignment
+- imported shape simplification and waypoint ownership
 
 ## Component Tests
 
@@ -67,3 +76,9 @@ Before calling v1 work complete:
 - warnings are actionable
 - comparison table is understandable
 - UI does not imply Firebase save/export works before it does
+- importing one or more GTFS routes creates new route concepts with line, all stops, and scheduled segment runtime evidence
+- imported stops can still be moved, renamed, reordered, and deleted
+- imported route line can still be edited with bend anchors
+- UI clearly says the import is a local planning copy, not GTFS editing
+- map stop trays for routes above 10 stops stay collapsed by default
+- stop ranges can be copied or moved into another route concept at a chosen insertion position

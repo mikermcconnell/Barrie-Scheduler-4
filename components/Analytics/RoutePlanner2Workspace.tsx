@@ -5,10 +5,14 @@ import {
     addRoutePlanner2LineWaypoint,
     addRoutePlanner2Stop,
     clearRoutePlanner2SegmentRuntimeOverride,
+    deleteRoutePlanner2LineWaypoint,
     deleteRoutePlanner2Stop,
+    insertRoutePlanner2StopBetween,
     moveRoutePlanner2Stop,
+    reassignRoutePlanner2StopRange,
     renameRoutePlanner2Stop,
     setRoutePlanner2SegmentRuntimeOverride,
+    updateRoutePlanner2RouteShape,
     updateRoutePlanner2LineWaypointCoordinate,
     updateRoutePlanner2SegmentRuntimeEstimates,
     updateRoutePlanner2StopCoordinate,
@@ -19,16 +23,29 @@ import {
     addRoutePlanner2Scenario,
     deleteRoutePlanner2Scenario,
     duplicateRoutePlanner2Scenario,
+    importRoutePlanner2Scenario,
     markRoutePlanner2PreferredScenario,
     renameRoutePlanner2Project,
     renameRoutePlanner2Scenario,
     selectRoutePlanner2Scenario,
 } from '../../utils/route-planner-2/routePlanner2ProjectController';
 import { createRoutePlanner2Project } from '../../utils/route-planner-2/routePlanner2ProjectFactory';
+import { exportRoutePlanner2OperatorDirectionsPdf } from '../../utils/route-planner-2/routePlanner2OperatorExport';
+import { loadRoutePlanner2GtfsImportPatterns } from '../../utils/route-planner-2/routePlanner2GtfsClient';
+import {
+    createRoutePlanner2ScenarioFromGtfsPattern,
+    type RoutePlanner2GtfsImportPattern,
+} from '../../utils/route-planner-2/routePlanner2GtfsImport';
 import { summarizeRoutePlanner2Project } from '../../utils/route-planner-2/routePlanner2Summary';
+import { usePerformanceDataQuery, usePerformanceMetadataQuery } from '../../hooks/usePerformanceData';
+import { buildCorridorSpeedMapIndex } from '../../utils/gtfs/corridorSpeed';
+import { DAY_TYPES, TIME_PERIODS, type DayType, type TimePeriod } from '../../utils/gtfs/corridorHeadway';
+import { deriveRoutePlanner2EvidenceRuntimeEstimates } from '../../utils/route-planner-2/routePlanner2RuntimeEvidence';
 import { RoutePlanner2MapCanvas } from './route-planner-2/RoutePlanner2MapCanvas';
+import { RoutePlanner2GtfsImportModal } from './route-planner-2/RoutePlanner2GtfsImportModal';
 import type {
     RoutePlanner2Project,
+    RoutePlanner2RouteShape,
     RoutePlanner2SegmentRuntime,
     RoutePlanner2ServiceAssumptions,
     RoutePlanner2StopRole,
@@ -48,10 +65,32 @@ function formatBuses(value: number | null | undefined): string {
     return value != null ? String(value) : '-';
 }
 
+function formatRecovery(minutes: number | null | undefined, percent: number | null | undefined): string {
+    if (minutes == null) return 'Not ready';
+    return percent != null ? `${minutes} min (${percent}%)` : `${minutes} min`;
+}
+
 function confidenceClass(confidence: string): string {
     if (confidence === 'low') return 'bg-amber-100 text-amber-700';
     if (confidence === 'not-ready') return 'bg-slate-100 text-slate-600';
     return 'bg-emerald-100 text-emerald-700';
+}
+
+function confidenceDescription(confidence: string | null | undefined): string {
+    if (confidence === 'high') return 'High confidence: scheduled GTFS runtimes or strong observed evidence support most route segments.';
+    if (confidence === 'medium') return 'Medium confidence: Mapbox estimates or planner-entered runtimes support the estimate.';
+    if (confidence === 'low') return 'Low confidence: the route is mostly using fallback planning assumptions.';
+    return 'Not ready: required route inputs are missing before the estimate can be trusted.';
+}
+
+function runtimeSourceLabel(source: RoutePlanner2SegmentRuntime['source']): string {
+    if (source === 'observed-proxy') return 'Observed runtime';
+    if (source === 'observed-scheduled-blend') return 'Observed + schedule blend';
+    if (source === 'scheduled-proxy') return 'Scheduled runtime';
+    if (source === 'mapbox') return 'Mapbox planning estimate';
+    if (source === 'manual') return 'Planner override';
+    if (source === 'fallback') return 'Distance fallback';
+    return 'Missing runtime';
 }
 
 function readinessClass(readiness: string): string {
@@ -84,6 +123,19 @@ function updateScenarioNotes(
 export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ onBack, teamId }) => {
     const [project, setProject] = useState<RoutePlanner2Project>(() => createRoutePlanner2Project());
     const [selectedStopId, setSelectedStopId] = useState<string | null>(null);
+    const [isRightRailOpen, setIsRightRailOpen] = useState(false);
+    const [isDrawFocusMode, setIsDrawFocusMode] = useState(false);
+    const [isExportingOperatorPdf, setIsExportingOperatorPdf] = useState(false);
+    const [isGtfsImportOpen, setIsGtfsImportOpen] = useState(false);
+    const [gtfsPatterns, setGtfsPatterns] = useState<RoutePlanner2GtfsImportPattern[]>([]);
+    const [gtfsLoading, setGtfsLoading] = useState(false);
+    const [gtfsError, setGtfsError] = useState<string | null>(null);
+    const [transferFromSequence, setTransferFromSequence] = useState(1);
+    const [transferToSequence, setTransferToSequence] = useState(1);
+    const [transferTargetScenarioId, setTransferTargetScenarioId] = useState('');
+    const [transferInsertAfterStopId, setTransferInsertAfterStopId] = useState('__end');
+    const [runtimeDayType, setRuntimeDayType] = useState<DayType>('weekday');
+    const [runtimePeriod, setRuntimePeriod] = useState<TimePeriod>('full-day');
 
     const projectSummary = useMemo(() => summarizeRoutePlanner2Project(project), [project]);
     const selectedScenario = useMemo(
@@ -96,6 +148,29 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         () => selectedScenario?.stops.find((stop) => stop.id === selectedStopId) ?? null,
         [selectedScenario?.stops, selectedStopId],
     );
+    const selectedScenarioStops = useMemo(
+        () => selectedScenario ? [...selectedScenario.stops].sort((a, b) => a.sequence - b.sequence) : [],
+        [selectedScenario],
+    );
+    const transferTargetScenario = useMemo(
+        () => project.scenarios.find((scenario) => scenario.id === transferTargetScenarioId) ?? null,
+        [project.scenarios, transferTargetScenarioId],
+    );
+    const transferTargetStops = useMemo(
+        () => transferTargetScenario ? [...transferTargetScenario.stops].sort((a, b) => a.sequence - b.sequence) : [],
+        [transferTargetScenario],
+    );
+    const transferTargetOptions = useMemo(
+        () => project.scenarios.filter((scenario) => scenario.id !== selectedScenario?.id),
+        [project.scenarios, selectedScenario?.id],
+    );
+    const metadataQuery = usePerformanceMetadataQuery(teamId ?? undefined);
+    const hasPerformanceData = Boolean(metadataQuery.data);
+    const dataQuery = usePerformanceDataQuery(teamId ?? undefined, hasPerformanceData, metadataQuery.data);
+    const speedIndex = useMemo(
+        () => buildCorridorSpeedMapIndex(dataQuery.data?.dailySummaries ?? []),
+        [dataQuery.data],
+    );
 
     useEffect(() => {
         if (!selectedScenario) {
@@ -105,6 +180,42 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         if (selectedStopId && selectedScenario.stops.some((stop) => stop.id === selectedStopId)) return;
         setSelectedStopId(selectedScenario.stops[0]?.id ?? null);
     }, [selectedScenario, selectedStopId]);
+
+    useEffect(() => {
+        const selectedSequence = selectedStop?.sequence ?? selectedScenarioStops[0]?.sequence ?? 1;
+        setTransferFromSequence(selectedSequence);
+        setTransferToSequence(selectedSequence);
+    }, [selectedScenario?.id, selectedStop?.id, selectedStop?.sequence, selectedScenarioStops]);
+
+    useEffect(() => {
+        const validTarget = transferTargetOptions.some((scenario) => scenario.id === transferTargetScenarioId);
+        if (!validTarget) {
+            setTransferTargetScenarioId(transferTargetOptions[0]?.id ?? '');
+            setTransferInsertAfterStopId('__end');
+        }
+    }, [transferTargetOptions, transferTargetScenarioId]);
+
+    useEffect(() => {
+        if (!selectedScenario) return;
+        const estimates = deriveRoutePlanner2EvidenceRuntimeEstimates(
+            selectedScenario,
+            speedIndex,
+            runtimeDayType,
+            runtimePeriod,
+        );
+        if (estimates.length === 0) return;
+        setProject((current) => updateRoutePlanner2SegmentRuntimeEstimates(current, selectedScenario.id, estimates));
+    }, [
+        runtimeDayType,
+        runtimePeriod,
+        selectedScenario?.id,
+        selectedScenario?.stops,
+        selectedScenario?.alignment,
+        selectedScenario?.routeShape,
+        selectedScenario?.turnaroundStopId,
+        selectedScenario?.service.planningPeriod,
+        speedIndex,
+    ]);
 
     function getNextAuthoringCoordinate() {
         const pointCount = selectedScenario?.alignment.length ?? 0;
@@ -133,6 +244,16 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         setProject((current) => updateRoutePlanner2Service(current, selectedScenario.id, patch));
     }
 
+    function updateRuntimeDayType(next: DayType) {
+        setRuntimeDayType(next);
+        updateService({ dayType: next });
+    }
+
+    function updateRuntimePeriod(next: TimePeriod) {
+        setRuntimePeriod(next);
+        updateService({ planningPeriod: next === 'full-day' ? 'all-day' : next });
+    }
+
     function updateNumericServiceField(
         key: 'frequencyMinutes' | 'startTerminalLayoverMinutes' | 'endTerminalLayoverMinutes' | 'intermediateStopDwellSeconds',
         value: string,
@@ -148,6 +269,16 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
     function renameSelectedStop(name: string) {
         if (!selectedScenario || !selectedStop) return;
         setProject((current) => renameRoutePlanner2Stop(current, selectedScenario.id, selectedStop.id, name));
+    }
+
+    function updateRouteShape(routeShape: RoutePlanner2RouteShape, turnaroundStopId?: string) {
+        if (!selectedScenario) return;
+        setProject((current) => updateRoutePlanner2RouteShape(current, selectedScenario.id, routeShape, { turnaroundStopId }));
+    }
+
+    function setTurnaroundStop(stopId: string) {
+        updateRouteShape('out-and-back', stopId);
+        setSelectedStopId(stopId);
     }
 
     function deleteStop(stopId: string) {
@@ -189,9 +320,60 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         }));
     }
 
+    function insertStopOnLine(placement: {
+        fromStopId: string;
+        toStopId: string;
+        insertAfterWaypointId?: string;
+        insertBeforeWaypointId?: string;
+        coordinate: { lat: number; lng: number };
+    }) {
+        if (!selectedScenario) return;
+        const stopNumber = selectedScenario.stops.length + 1;
+        const stopId = `stop-${Date.now()}-${stopNumber}`;
+        setProject((current) => insertRoutePlanner2StopBetween(current, selectedScenario.id, {
+            id: stopId,
+            name: `Stop ${stopNumber}`,
+            afterStopId: placement.fromStopId,
+            beforeStopId: placement.toStopId,
+            insertAfterWaypointId: placement.insertAfterWaypointId,
+            insertBeforeWaypointId: placement.insertBeforeWaypointId,
+            ...placement.coordinate,
+        }));
+        setSelectedStopId(stopId);
+    }
+
     function moveLineWaypoint(waypointId: string, coordinate: { lat: number; lng: number }) {
         if (!selectedScenario) return;
         setProject((current) => updateRoutePlanner2LineWaypointCoordinate(current, selectedScenario.id, waypointId, coordinate));
+    }
+
+    function applyStopTransfer(mode: 'copy' | 'move') {
+        if (!selectedScenario || !transferTargetScenarioId) return;
+        const targetStops = transferTargetStops;
+        const insertAfterStopId = transferInsertAfterStopId === '__start'
+            ? null
+            : transferInsertAfterStopId === '__end'
+                ? targetStops[targetStops.length - 1]?.id ?? null
+                : transferInsertAfterStopId;
+
+        setProject((current) => {
+            const updated = reassignRoutePlanner2StopRange(current, {
+                sourceScenarioId: selectedScenario.id,
+                targetScenarioId: transferTargetScenarioId,
+                fromSequence: transferFromSequence,
+                toSequence: transferToSequence,
+                insertAfterStopId,
+                mode,
+            });
+            return selectRoutePlanner2Scenario(updated, transferTargetScenarioId);
+        });
+        setSelectedStopId(null);
+        setIsRightRailOpen(true);
+    }
+
+    function deleteLineWaypoint(waypointId: string) {
+        if (!selectedScenario) return;
+        setProject((current) => deleteRoutePlanner2LineWaypoint(current, selectedScenario.id, waypointId));
     }
 
     function updateSegmentRuntimeOverride(segmentId: string, value: string) {
@@ -215,6 +397,88 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         if (!selectedScenarioId || estimates.length === 0) return;
         setProject((current) => updateRoutePlanner2SegmentRuntimeEstimates(current, selectedScenarioId, estimates));
     }, [selectedScenarioId]);
+
+
+    async function loadGtfsPatterns() {
+        setGtfsLoading(true);
+        setGtfsError(null);
+        try {
+            const patterns = await loadRoutePlanner2GtfsImportPatterns();
+            setGtfsPatterns(patterns);
+        } catch (error) {
+            setGtfsError(error instanceof Error ? error.message : 'GTFS routes could not be loaded.');
+        } finally {
+            setGtfsLoading(false);
+        }
+    }
+
+    function openGtfsImport() {
+        setIsGtfsImportOpen(true);
+        if (gtfsPatterns.length === 0 && !gtfsLoading) void loadGtfsPatterns();
+    }
+
+    function importGtfsPatterns(patterns: RoutePlanner2GtfsImportPattern[]) {
+        if (patterns.length === 0) return;
+        const scenarios = patterns.map((pattern) => createRoutePlanner2ScenarioFromGtfsPattern(pattern));
+        const selectedImport = scenarios[0];
+        setProject((current) => {
+            const nextProject = scenarios.reduce(
+                (projectWithImports, scenario) => importRoutePlanner2Scenario(projectWithImports, scenario),
+                current,
+            );
+            return selectedImport ? selectRoutePlanner2Scenario(nextProject, selectedImport.id) : nextProject;
+        });
+        setSelectedStopId(selectedImport?.stops[0]?.id ?? null);
+        setIsRightRailOpen(true);
+        setIsDrawFocusMode(false);
+        setIsGtfsImportOpen(false);
+    }
+
+    function enterDrawFocusMode() {
+        setIsDrawFocusMode(true);
+        setIsRightRailOpen(false);
+    }
+
+    function exitDrawFocusMode() {
+        setIsDrawFocusMode(false);
+        setIsRightRailOpen(true);
+    }
+
+    function toggleRightRail() {
+        setIsDrawFocusMode(false);
+        setIsRightRailOpen((current) => !current);
+    }
+
+    async function exportOperatorDirections() {
+        if (!selectedScenario || selectedScenario.stops.length < 2 || isExportingOperatorPdf) return;
+        setIsExportingOperatorPdf(true);
+        try {
+            await exportRoutePlanner2OperatorDirectionsPdf(selectedScenario, {
+                projectName: project.name,
+                feasibility: selectedFeasibility,
+            });
+        } finally {
+            setIsExportingOperatorPdf(false);
+        }
+    }
+
+    const mapMetricItems = [
+        { label: 'Runtime', value: formatRuntime(selectedFeasibility?.oneWayRuntimeMinutes) },
+        { label: 'Cycle', value: formatRuntime(selectedFeasibility?.cycleTimeMinutes) },
+        { label: 'Recovery', value: formatRecovery(selectedFeasibility?.recoveryTimeMinutes, selectedFeasibility?.recoveryPercent) },
+        { label: 'Buses', value: formatBuses(selectedFeasibility?.busesRequired) },
+        {
+            label: 'Confidence',
+            value: selectedFeasibility?.confidence ?? 'not-ready',
+            description: confidenceDescription(selectedFeasibility?.confidence),
+        },
+    ];
+
+    const rightRailState = isRightRailOpen ? 'open' : 'closed';
+    const mapOverlayInsets = {
+        left: '2rem',
+        right: isRightRailOpen ? '26.5rem' : '8rem',
+    };
 
     return (
         <div className="h-full overflow-hidden bg-slate-100">
@@ -244,71 +508,62 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                             <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">Team: {teamId ?? 'not set'}</span>
                             <button type="button" disabled className="inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-bold opacity-60"><Save size={16} />Save later</button>
                             <button type="button" onClick={() => selectedScenario && setProject((current) => duplicateRoutePlanner2Scenario(current, selectedScenario.id))} className="inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-bold"><Copy size={16} />Duplicate</button>
+                            <button
+                                type="button"
+                                onClick={openGtfsImport}
+                                className="inline-flex items-center gap-2 rounded-xl border border-cyan-200 bg-cyan-50 px-3 py-2 text-sm font-bold text-cyan-800"
+                            >
+                                <Route size={16} />Import GTFS
+                            </button>
+                            <button
+                                type="button"
+                                onClick={exportOperatorDirections}
+                                disabled={!selectedScenario || selectedScenario.stops.length < 2 || isExportingOperatorPdf}
+                                className="inline-flex items-center gap-2 rounded-xl border border-cyan-200 bg-cyan-50 px-3 py-2 text-sm font-bold text-cyan-800 disabled:opacity-50"
+                            >
+                                <Download size={16} />{isExportingOperatorPdf ? 'Preparing PDF' : 'Operator PDF'}
+                            </button>
                             <button type="button" disabled className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-3 py-2 text-sm font-bold text-white opacity-60"><Download size={16} />Export later</button>
+                        </div>
+                    </div>
+                    <div className="mt-4 flex items-center gap-3 overflow-x-auto rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2">
+                        <div className="shrink-0 text-xs font-black uppercase tracking-wide text-slate-500">Route concepts</div>
+                        <button type="button" onClick={() => setProject((current) => addRoutePlanner2Scenario(current))} className="inline-flex shrink-0 items-center gap-1 rounded-full bg-cyan-50 px-3 py-1.5 text-xs font-bold text-cyan-700">
+                            <Plus size={12} /> Add route
+                        </button>
+                        <div className="flex min-w-0 gap-2">
+                            {project.scenarios.map((scenario) => {
+                                const summary = projectSummary.scenarioSummaries.find((item) => item.scenarioId === scenario.id);
+                                const isSelected = selectedScenario?.id === scenario.id;
+                                return (
+                                    <button
+                                        key={scenario.id}
+                                        type="button"
+                                        onClick={() => setProject((current) => selectRoutePlanner2Scenario(current, scenario.id))}
+                                        className={`min-w-[220px] rounded-2xl border px-3 py-2 text-left ${isSelected ? 'border-cyan-300 bg-white shadow-sm' : 'border-slate-200 bg-white/70 hover:bg-white'}`}
+                                    >
+                                        <div className="flex items-center justify-between gap-2">
+                                            <span className="truncate text-sm font-black text-slate-900">{scenario.name}</span>
+                                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase text-slate-700">{scenario.status}</span>
+                                        </div>
+                                        <div className="mt-1 flex items-center gap-3 text-xs text-slate-500">
+                                            <span>{scenario.stops.length} stops</span>
+                                            <span>{summary?.oneWayRuntimeLabel ?? 'Not ready'}</span>
+                                            <span>{scenario.routeShape === 'closed-loop' ? 'Closed loop' : scenario.routeShape === 'out-and-back' ? 'Out and back' : summary?.readinessLabel ?? 'Not ready'}</span>
+                                        </div>
+                                    </button>
+                                );
+                            })}
                         </div>
                     </div>
                 </header>
 
-                <main className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-auto p-4 xl:grid-cols-[320px_minmax(420px,1fr)_390px]">
-                    <aside className="space-y-4">
-                        <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
-                            <div className="mb-3 flex items-center justify-between">
-                                <h2 className="text-sm font-black text-slate-900">Project foundation</h2>
-                                <span className="rounded-full bg-cyan-50 px-2 py-1 text-[10px] font-bold uppercase text-cyan-700">MVP</span>
-                            </div>
-                            <p className="text-sm leading-6 text-slate-600">
-                                Local-first route concepts with stop authoring, feasibility estimates, comparison, and summary review.
-                                Firebase persistence and schedule handoff stay future work.
-                            </p>
-                            <div className="mt-4 grid grid-cols-2 gap-3">
-                                <div className="rounded-2xl bg-slate-50 p-3">
-                                    <div className="text-xs font-bold uppercase text-slate-500">Routes</div>
-                                    <div className="mt-1 text-lg font-black">{projectSummary.totalScenarios}</div>
-                                </div>
-                                <div className="rounded-2xl bg-slate-50 p-3">
-                                    <div className="text-xs font-bold uppercase text-slate-500">Comparable</div>
-                                    <div className="mt-1 text-lg font-black">{projectSummary.comparableScenarioCount}</div>
-                                </div>
-                            </div>
-                        </section>
-
-                        <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
-                            <div className="mb-3 flex items-center justify-between">
-                                <h2 className="text-sm font-black text-slate-900">Routes</h2>
-                                <button type="button" onClick={() => setProject((current) => addRoutePlanner2Scenario(current))} className="inline-flex items-center gap-1 rounded-full bg-cyan-50 px-2 py-1 text-xs font-bold text-cyan-700">
-                                    <Plus size={12} /> Add route
-                                </button>
-                            </div>
-                            <div className="space-y-2">
-                                {project.scenarios.map((scenario) => {
-                                    const summary = projectSummary.scenarioSummaries.find((item) => item.scenarioId === scenario.id);
-                                    const isSelected = selectedScenario?.id === scenario.id;
-                                    return (
-                                        <button
-                                            key={scenario.id}
-                                            type="button"
-                                            onClick={() => setProject((current) => selectRoutePlanner2Scenario(current, scenario.id))}
-                                            className={`w-full rounded-2xl border p-3 text-left ${isSelected ? 'border-cyan-300 bg-cyan-50' : 'border-slate-200 bg-white'}`}
-                                        >
-                                            <div className="flex items-center justify-between gap-2">
-                                                <span className="font-bold text-slate-900">{scenario.name}</span>
-                                                <span className="flex gap-1">
-                                                    {summary?.isPreferred && <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase text-emerald-700">Preferred</span>}
-                                                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase text-slate-700">{scenario.status}</span>
-                                                </span>
-                                            </div>
-                                            <div className="mt-2 grid grid-cols-3 gap-2 text-xs text-slate-500">
-                                                <span>{scenario.stops.length} stops</span>
-                                                <span>{summary?.oneWayRuntimeLabel ?? 'Not ready'}</span>
-                                                <span>{summary?.readinessLabel ?? 'Not ready'}</span>
-                                            </div>
-                                        </button>
-                                    );
-                                })}
-                            </div>
-                        </section>
-                    </aside>
-
+                <main
+                    data-testid="rp2-map-first-shell"
+                    data-layout="map-first"
+                    data-focus-mode={isDrawFocusMode ? 'draw' : 'standard'}
+                    className="relative min-h-0 flex-1 overflow-hidden bg-slate-100 p-4"
+                >
                     <RoutePlanner2MapCanvas
                         scenario={selectedScenario}
                         selectedStopId={selectedStopId}
@@ -317,12 +572,47 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                         onDeleteStop={deleteStop}
                         onMoveStop={moveStop}
                         onAddLineWaypoint={addLineWaypoint}
+                        onInsertStopOnLine={insertStopOnLine}
                         onMoveLineWaypoint={moveLineWaypoint}
+                        onDeleteLineWaypoint={deleteLineWaypoint}
                         onSegmentRuntimeEstimates={updateSegmentRuntimeEstimates}
+                        onRouteShapeChange={updateRouteShape}
+                        onSetTurnaroundStop={setTurnaroundStop}
                         onAddNextStop={() => addStop()}
+                        onEnterDrawFocus={enterDrawFocusMode}
+                        focusMode={isDrawFocusMode}
+                        metricItems={mapMetricItems}
+                        overlayInsets={mapOverlayInsets}
                     />
 
-                    <aside className="space-y-4">
+                    <div className="pointer-events-none absolute inset-x-4 top-4 z-30 flex items-start justify-between gap-3">
+                        <div />
+                        <div className="flex gap-2">
+                            {isDrawFocusMode && (
+                                <button
+                                    type="button"
+                                    onClick={exitDrawFocusMode}
+                                    className="pointer-events-auto rounded-full border border-cyan-200 bg-white/95 px-3 py-2 text-xs font-black text-cyan-700 shadow-lg hover:bg-cyan-50"
+                                >
+                                    Exit focus
+                                </button>
+                            )}
+                            <button
+                                type="button"
+                                onClick={toggleRightRail}
+                                className="pointer-events-auto rounded-full border border-slate-200 bg-white/95 px-3 py-2 text-xs font-black text-slate-700 shadow-lg hover:bg-slate-50"
+                            >
+                                {isRightRailOpen ? 'Hide details' : 'Show details'}
+                            </button>
+                        </div>
+                    </div>
+
+                    <aside
+                        data-testid="rp2-right-rail"
+                        data-state={rightRailState}
+                        aria-hidden={!isRightRailOpen}
+                        className={`absolute bottom-4 right-4 top-20 z-20 w-[390px] space-y-4 overflow-y-auto transition-all duration-200 ${isRightRailOpen ? 'translate-x-0 opacity-100' : 'pointer-events-none translate-x-[calc(100%+2rem)] opacity-0'}`}
+                    >
                         <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
                             <div className="flex items-center justify-between gap-3">
                                 <h2 className="text-sm font-black text-slate-900">Selected route</h2>
@@ -339,6 +629,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                     <div className="grid grid-cols-2 gap-3">
                                         <div className="rounded-2xl bg-slate-50 p-3"><div className="text-xs font-bold uppercase text-slate-500">Runtime</div><div className="mt-1 text-lg font-black">{formatRuntime(selectedFeasibility?.oneWayRuntimeMinutes)}</div></div>
                                         <div className="rounded-2xl bg-slate-50 p-3"><div className="text-xs font-bold uppercase text-slate-500">Cycle</div><div className="mt-1 text-lg font-black">{formatRuntime(selectedFeasibility?.cycleTimeMinutes)}</div></div>
+                                        <div className="rounded-2xl bg-slate-50 p-3"><div className="text-xs font-bold uppercase text-slate-500">Recovery</div><div className="mt-1 text-lg font-black">{formatRecovery(selectedFeasibility?.recoveryTimeMinutes, selectedFeasibility?.recoveryPercent)}</div></div>
                                         <div className="rounded-2xl bg-slate-50 p-3"><div className="text-xs font-bold uppercase text-slate-500">Buses</div><div className="mt-1 text-lg font-black">{formatBuses(selectedFeasibility?.busesRequired)}</div></div>
                                         <div className="rounded-2xl bg-slate-50 p-3"><div className="text-xs font-bold uppercase text-slate-500">Dwell</div><div className="mt-1 text-lg font-black">{formatRuntime(selectedFeasibility?.dwellTimeMinutes ?? 0)}</div></div>
                                         <div className="rounded-2xl bg-slate-50 p-3"><div className="text-xs font-bold uppercase text-slate-500">Confidence</div><div className={`mt-1 inline-flex rounded-full px-2 py-1 text-xs font-black uppercase ${confidenceClass(selectedFeasibility?.confidence ?? 'not-ready')}`}>{selectedFeasibility?.confidence ?? 'not-ready'}</div></div>
@@ -359,6 +650,8 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                             <label className="text-xs font-bold uppercase tracking-wide text-slate-500">First trip<input type="time" value={selectedScenario.service.firstTripTime} onChange={(event) => updateService({ firstTripTime: event.target.value })} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" /></label>
                                             <label className="text-xs font-bold uppercase tracking-wide text-slate-500">Last trip<input type="time" value={selectedScenario.service.lastTripTime} onChange={(event) => updateService({ lastTripTime: event.target.value })} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" /></label>
                                             <label className="text-xs font-bold uppercase tracking-wide text-slate-500">Frequency<input type="number" min="0" value={selectedScenario.service.frequencyMinutes} onChange={(event) => updateNumericServiceField('frequencyMinutes', event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" /></label>
+                                            <label className="text-xs font-bold uppercase tracking-wide text-slate-500">Runtime day<select value={runtimeDayType} onChange={(event) => updateRuntimeDayType(event.target.value as DayType)} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm">{DAY_TYPES.map((day) => <option key={day.id} value={day.id}>{day.label}</option>)}</select></label>
+                                            <label className="text-xs font-bold uppercase tracking-wide text-slate-500">Runtime period<select value={runtimePeriod} onChange={(event) => updateRuntimePeriod(event.target.value as TimePeriod)} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm">{TIME_PERIODS.map((period) => <option key={period.id} value={period.id}>{period.label}</option>)}</select></label>
                                             <label className="text-xs font-bold uppercase tracking-wide text-slate-500">Start layover<input type="number" value={selectedScenario.service.startTerminalLayoverMinutes} onChange={(event) => updateNumericServiceField('startTerminalLayoverMinutes', event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" /></label>
                                             <label className="text-xs font-bold uppercase tracking-wide text-slate-500">End layover<input type="number" value={selectedScenario.service.endTerminalLayoverMinutes} onChange={(event) => updateNumericServiceField('endTerminalLayoverMinutes', event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" /></label>
                                             <label className="text-xs font-bold uppercase tracking-wide text-slate-500">Dwell / stop sec<input type="number" min="0" value={selectedScenario.service.intermediateStopDwellSeconds ?? 0} onChange={(event) => updateNumericServiceField('intermediateStopDwellSeconds', event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" /></label>
@@ -388,6 +681,56 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                         ) : <p className="text-sm leading-6 text-slate-500">Add a stop from the map canvas, then mark terminal roles here.</p>}
                                     </div>
 
+                                    <div className="rounded-2xl border border-slate-200 bg-white p-3">
+                                        <div className="flex items-start justify-between gap-3">
+                                            <div>
+                                                <h3 className="text-sm font-black text-slate-900">Reassign stops</h3>
+                                                <p className="mt-1 text-xs leading-5 text-slate-500">Copy or move a contiguous stop range into another route concept.</p>
+                                            </div>
+                                            <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-black uppercase text-slate-500">Planning copy</span>
+                                        </div>
+                                        {transferTargetOptions.length === 0 ? (
+                                            <p className="mt-3 text-sm leading-6 text-slate-500">Create another route concept before reassigning stops.</p>
+                                        ) : selectedScenarioStops.length === 0 ? (
+                                            <p className="mt-3 text-sm leading-6 text-slate-500">Add stops to this route before reassigning them.</p>
+                                        ) : (
+                                            <div className="mt-3 space-y-3">
+                                                <div className="grid grid-cols-2 gap-3">
+                                                    <label className="text-xs font-bold uppercase tracking-wide text-slate-500" htmlFor="rp2-transfer-from">
+                                                        From stop
+                                                        <select id="rp2-transfer-from" value={transferFromSequence} onChange={(event) => setTransferFromSequence(Number(event.target.value))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-800">
+                                                            {selectedScenarioStops.map((stop) => <option key={stop.id} value={stop.sequence}>{stop.sequence}. {stop.name}</option>)}
+                                                        </select>
+                                                    </label>
+                                                    <label className="text-xs font-bold uppercase tracking-wide text-slate-500" htmlFor="rp2-transfer-to">
+                                                        To stop
+                                                        <select id="rp2-transfer-to" value={transferToSequence} onChange={(event) => setTransferToSequence(Number(event.target.value))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-800">
+                                                            {selectedScenarioStops.map((stop) => <option key={stop.id} value={stop.sequence}>{stop.sequence}. {stop.name}</option>)}
+                                                        </select>
+                                                    </label>
+                                                </div>
+                                                <label className="block text-xs font-bold uppercase tracking-wide text-slate-500" htmlFor="rp2-transfer-target">
+                                                    Target route
+                                                    <select id="rp2-transfer-target" value={transferTargetScenarioId} onChange={(event) => { setTransferTargetScenarioId(event.target.value); setTransferInsertAfterStopId('__end'); }} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-800">
+                                                        {transferTargetOptions.map((scenario) => <option key={scenario.id} value={scenario.id}>{scenario.name}</option>)}
+                                                    </select>
+                                                </label>
+                                                <label className="block text-xs font-bold uppercase tracking-wide text-slate-500" htmlFor="rp2-transfer-insert">
+                                                    Insert position
+                                                    <select id="rp2-transfer-insert" value={transferInsertAfterStopId} onChange={(event) => setTransferInsertAfterStopId(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-800">
+                                                        <option value="__start">At beginning</option>
+                                                        {transferTargetStops.map((stop) => <option key={stop.id} value={stop.id}>After {stop.sequence}. {stop.name}</option>)}
+                                                        <option value="__end">At end</option>
+                                                    </select>
+                                                </label>
+                                                <div className="grid grid-cols-2 gap-2">
+                                                    <button type="button" onClick={() => applyStopTransfer('copy')} className="rounded-xl border border-cyan-200 bg-cyan-50 px-3 py-2 text-sm font-black text-cyan-800">Copy stops</button>
+                                                    <button type="button" onClick={() => applyStopTransfer('move')} className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-black text-amber-800">Move stops</button>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+
                                     <div className={`rounded-2xl border p-3 ${(selectedFeasibility?.warnings.length ?? 0) > 0 ? 'border-amber-200 bg-amber-50' : 'border-emerald-200 bg-emerald-50'}`}>
                                         <h3 className="text-sm font-black text-amber-900">Feasibility warnings</h3>
                                         {(selectedFeasibility?.warnings.length ?? 0) > 0 ? (
@@ -413,8 +756,12 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                                         <div key={segment.id} className="rounded-xl bg-slate-50 p-2 text-xs text-slate-600">
                                                             <div className="font-bold text-slate-800">{fromStop?.name ?? 'Unknown'} to {toStop?.name ?? 'Unknown'}: {formatRuntime(segment.runtimeMinutes)}</div>
                                                             <div className="mt-1 flex flex-wrap items-center gap-2">
-                                                                <span>{segment.source} / {segment.confidence}</span>
+                                                                <span>{runtimeSourceLabel(segment.source)} / {segment.confidence}</span>
                                                                 {segment.distanceKm != null && <span>{segment.distanceKm.toFixed(2)} km</span>}
+                                                                {segment.sampleSize != null && <span>{segment.sampleSize} samples</span>}
+                                                                {segment.scheduledRuntimeMinutes != null && <span>Scheduled {segment.scheduledRuntimeMinutes} min</span>}
+                                                                {segment.observedRuntimeMinutes != null && <span>Observed {segment.observedRuntimeMinutes} min</span>}
+                                                                {segment.matchQuality && <span>Match: {segment.matchQuality}</span>}
                                                             </div>
                                                             <div className="mt-2 flex items-end gap-2">
                                                                 <label className="min-w-0 flex-1 font-bold uppercase tracking-wide text-slate-500">
@@ -463,8 +810,8 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                             ) : <p className="mt-3 text-sm text-slate-500">Select a route to edit details.</p>}
                         </section>
 
-                        <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
-                            <h2 className="text-sm font-black text-slate-900">Route comparison</h2>
+                        <details className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+                            <summary className="cursor-pointer text-sm font-black text-slate-900">Route comparison</summary>
                             <div className={`mt-3 rounded-2xl border p-3 ${readinessClass(projectSummary.preferredScenarioSummary?.readiness ?? 'not-ready')}`}>
                                 <div className="flex items-center justify-between gap-2">
                                     <h3 className="text-sm font-black">Preferred route summary</h3>
@@ -497,10 +844,19 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                     </tbody>
                                 </table>
                             </div>
-                        </section>
+                        </details>
                     </aside>
                 </main>
             </div>
+            <RoutePlanner2GtfsImportModal
+                open={isGtfsImportOpen}
+                patterns={gtfsPatterns}
+                loading={gtfsLoading}
+                error={gtfsError}
+                onClose={() => setIsGtfsImportOpen(false)}
+                onImport={importGtfsPatterns}
+                onRetry={loadGtfsPatterns}
+            />
         </div>
     );
 };

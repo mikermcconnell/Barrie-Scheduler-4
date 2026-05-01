@@ -13,6 +13,22 @@
 9. Duplicate the route to test another option.
 10. Compare route metrics.
 11. Review the on-screen summary.
+12. Export a professional operator turn-by-turn PDF for field review.
+
+## Imported GTFS Route Workflow
+
+A planner can start from an existing GTFS route instead of a blank concept.
+
+1. Open Route Planner 2.
+2. Click **Import GTFS route**.
+3. Select one or more full-route patterns. Partial/short-turn patterns are filtered out.
+4. Import them as new editable route concepts in the same workspace.
+5. Review each imported route line, stop sequence, terminal roles, and scheduled segment runtimes.
+6. Move, remove, add, or rename stops as needed.
+7. Adjust route line waypoints if the concept changes.
+8. Enter service assumptions and review feasibility.
+
+Imported GTFS routes are local planning copies. Editing them does not change the GTFS feed or create a fixed-route schedule draft.
 
 ## Project and Route Workflow
 
@@ -27,6 +43,19 @@ Required v1 actions:
 - select active route
 - mark one route as preferred when ready
 
+## Stop Reassignment Workflow
+
+When a planner is redesigning service coverage, they can reassign a contiguous stop range between route concepts.
+
+1. Open the source route concept.
+2. Use **Reassign stops** in the details panel.
+3. Choose the first and last stop in the range.
+4. Choose the target route concept.
+5. Choose whether to insert the stops at the beginning, after a target stop, or at the end.
+6. Use **Copy stops** to test coverage overlap or **Move stops** to transfer coverage.
+
+Moved stops are removed from the source route and copied into the target route with new local IDs. Existing route-line bend anchors and stale segment runtimes are cleaned up where the stop order changes.
+
 V1 may store this state locally only. The workflow should still use stable IDs and a structure that can later move to Firebase.
 
 Preferred route should be project-level state. Do not create competing “preferred” flags on multiple routes.
@@ -39,9 +68,15 @@ The planner should be able to:
 - reorder stops
 - remove stops
 - mark stop roles: regular stop, timed stop, start terminal, end terminal
+- choose a route shape: one-way, closed loop, or out-and-back
 - see warnings when terminal roles are missing or invalid
 
 The route line is useful, but stops and terminals are what make the concept operationally meaningful.
+
+Route shape workflow:
+- One-way keeps the stop order as drawn.
+- Closed loop adds the final segment from the last stop back to Stop 1. The planner should not redraw Stop 1.
+- Out-and-back adds the return trip automatically in reverse order from the turnaround stop back to Stop 1. The planner chooses the turnaround stop rather than redrawing the return.
 
 ## Service Assumption Workflow
 
@@ -81,3 +116,19 @@ The summary should include:
 - warnings and notes
 
 Future versions may turn this into a structured schedule handoff package.
+
+## Operator Direction Export Workflow
+
+When a route has at least two stops, the planner can export an operator-facing
+turn-by-turn PDF. The export should be clean enough for field review and should
+include:
+- route name, project name, generated date, and route type
+- stop sequence
+- runtime, cycle, recovery, buses, and confidence
+- segment-by-segment directions
+- a visible planning note reminding staff to confirm stop placement, safe turns,
+  road restrictions, construction, and supervisor approval before issuing
+
+When Mapbox turn-by-turn steps are available, use them. If not, export a clearly
+labelled planning-alignment fallback rather than pretending exact turns are
+known.

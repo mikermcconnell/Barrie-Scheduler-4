@@ -27,6 +27,7 @@ export function createRoutePlanner2Scenario(options: {
         id: options.id ?? createId('scenario'),
         name: options.name ?? 'Clean Concept A',
         status: 'draft',
+        routeShape: 'one-way',
         alignment: [],
         stops: [],
         service: { ...DEFAULT_SERVICE },

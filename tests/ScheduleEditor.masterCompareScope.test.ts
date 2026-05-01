@@ -22,10 +22,22 @@ describe('ScheduleEditor master compare scope matching', () => {
         )).toBe(false);
     });
 
+    it('does not pull same-direction baseline tables from other routes into the active route compare', () => {
+        expect(tableMatchesActiveCompareScope(
+            makeTable('7 (Weekday) (North)'),
+            [makeTable('2 (Weekday) (North)'), makeTable('2 (Weekday) (South)')]
+        )).toBe(false);
+    });
+
     it('keeps directionless loop or single-table baselines in scope', () => {
         expect(tableMatchesActiveCompareScope(
             makeTable('10 (Weekday)'),
             [makeTable('10 (Weekday) (North)')]
         )).toBe(true);
+
+        expect(tableMatchesActiveCompareScope(
+            makeTable('11 (Weekday)'),
+            [makeTable('10 (Weekday) (North)')]
+        )).toBe(false);
     });
 });

@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { NewScheduleWizard } from '../components/NewSchedule/NewScheduleWizard';
 import { getAllStopsWithCodes, getMasterSchedule } from '../utils/services/masterScheduleService';
+import { saveProject } from '../utils/services/newScheduleProjectService';
 import type { NewScheduleProject } from '../utils/services/newScheduleProjectService';
 import type { MasterRouteTable } from '../utils/parsers/masterScheduleParser';
 import type { TripBucketAnalysis, TimeBand } from '../utils/ai/runtimeAnalysis';
@@ -231,6 +232,7 @@ describe('NewScheduleWizard compare to master', () => {
     let root: Root | null = null;
 
     afterEach(() => {
+        vi.useRealTimers();
         if (root) {
             flushSync(() => {
                 root?.unmount();
@@ -290,6 +292,65 @@ describe('NewScheduleWizard compare to master', () => {
         expect(step4Spy.mock.calls.at(-1)?.[0].masterBaseline).toBeNull();
         expect(headerSpy.mock.calls.at(-1)?.[0].isMasterCompareActive).toBe(false);
         expect(toast.error).not.toHaveBeenCalled();
+    });
+
+    it('cloud auto-saves Step 4 schedule edits after the debounce delay', async () => {
+        vi.useFakeTimers();
+        vi.mocked(saveProject).mockResolvedValue('project-1');
+
+        renderWizard();
+        click('#load-generated-project');
+        await flushPromises();
+
+        await vi.advanceTimersByTimeAsync(1000);
+        await flushPromises();
+        vi.mocked(saveProject).mockClear();
+        saveMock.mockClear();
+
+        const currentProps = step4Spy.mock.calls.at(-1)?.[0];
+        expect(currentProps).toBeTruthy();
+
+        const editedSchedules: MasterRouteTable[] = [
+            {
+                routeName: '10 (Weekday) (North)',
+                stops: ['Terminal'],
+                stopIds: {},
+                trips: [{
+                    id: 'edited-trip',
+                    blockId: '10-1',
+                    direction: 'North',
+                    tripNumber: 1,
+                    startTime: 365,
+                    endTime: 395,
+                    travelTime: 30,
+                    recoveryTime: 0,
+                    cycleTime: 30,
+                    stops: { Terminal: '6:05 AM' },
+                    arrivalTimes: { Terminal: '6:05 AM' },
+                    recoveryTimes: {},
+                    startStopIndex: 0,
+                    endStopIndex: 0,
+                    isBlockStart: true,
+                    isBlockEnd: true,
+                }],
+            },
+        ] as MasterRouteTable[];
+
+        flushSync(() => {
+            currentProps.onUpdateSchedules(editedSchedules);
+        });
+
+        await vi.advanceTimersByTimeAsync(2000);
+        await flushPromises();
+
+        expect(saveMock).toHaveBeenCalled();
+        expect(saveProject).toHaveBeenCalledWith(
+            'user-1',
+            expect.objectContaining({
+                id: 'project-1',
+                generatedSchedules: editedSchedules,
+            })
+        );
     });
 
 });

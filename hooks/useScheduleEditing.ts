@@ -17,6 +17,7 @@ import { deepCloneSchedules, findTableAndTrip } from '../utils/schedule/schedule
 import { reassignBlocksForTables, MatchConfigPresets } from '../utils/blocks/blockAssignmentCore';
 import { getRouteConfig, parseRouteInfo } from '../utils/config/routeDirectionConfig';
 import { createTripLineageId } from '../utils/schedule/tripLineage';
+import { isMergedRouteBase } from '../utils/schedule/mergedRouteContinuity';
 
 export type CascadeMode = 'always' | 'within-trip' | 'none';
 
@@ -341,7 +342,9 @@ export function useScheduleEditing(
         const deltaEnd = newEndTime - oldEndTime;
         const baseName = getTrueBaseRoute(table.routeName);
 
-        if (deltaEnd !== 0 && cascadeMode === 'always') {
+        const shouldCascadeWholeBlock = cascadeMode === 'always' || (isMergedRouteBase(baseName) && cascadeMode !== 'none');
+
+        if (deltaEnd !== 0 && shouldCascadeWholeBlock) {
             const allBlockTrips = getOrderedBlockTrips(newScheds, baseName, trip.blockId);
             const startIdx = allBlockTrips.findIndex(item => item.trip.id === trip.id);
 
@@ -356,7 +359,9 @@ export function useScheduleEditing(
         }
 
         newScheds.forEach(t => validateRouteTable(t));
-        reassignBlocksForRelatedTables(newScheds, baseName);
+        if (!isMergedRouteBase(baseName)) {
+            reassignBlocksForRelatedTables(newScheds, baseName);
+        }
         onSchedulesChange(newScheds);
     }, [schedules, onSchedulesChange, cascadeMode, logAction, reassignBlocksForRelatedTables, getOrderedBlockTrips, cascadeWithinRoundTripRow]);
 
@@ -393,7 +398,9 @@ export function useScheduleEditing(
         validateRouteTable(table);
         const baseName = getTrueBaseRoute(table.routeName);
 
-        if (actualDelta !== 0 && cascadeMode === 'always') {
+        const shouldCascadeWholeBlock = cascadeMode === 'always' || (isMergedRouteBase(baseName) && cascadeMode !== 'none');
+
+        if (actualDelta !== 0 && shouldCascadeWholeBlock) {
             const allBlockTrips = getOrderedBlockTrips(newScheds, baseName, trip.blockId);
             const startIdx = allBlockTrips.findIndex(item => item.trip.id === trip.id);
 
@@ -407,7 +414,7 @@ export function useScheduleEditing(
             cascadeWithinRoundTripRow(newScheds, trip, baseName, actualDelta);
         }
 
-        if (!isTerminalRecoveryEdit) {
+        if (!isTerminalRecoveryEdit && !isMergedRouteBase(baseName)) {
             reassignBlocksForRelatedTables(newScheds, baseName);
         }
         onSchedulesChange(newScheds);

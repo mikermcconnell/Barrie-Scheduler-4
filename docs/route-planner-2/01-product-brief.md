@@ -48,7 +48,7 @@ Route Planner 2 v1 will not include:
 - population or employment coverage analysis
 - downstream schedule handoff package
 - old Route Planner migration
-- GTFS editing
+- GTFS feed editing or publishing; Route Planner 2 may import GTFS routes as local editable planning templates
 - public trip planning
 - dispatch or run cutting
 - automatic publishing

@@ -61,6 +61,7 @@ Responsibilities:
 - terminal and timed-stop roles
 - Mapbox display and click-to-author interactions
 - road-snapped display geometry using Mapbox Directions when a token is available, with straight-line fallback
+- copy/move contiguous stop ranges between route concepts for service redesign work
 
 ### Feasibility Engine
 
@@ -78,6 +79,25 @@ Outputs:
 - buses required
 - confidence
 - warnings
+
+
+### GTFS Template Import Adapter
+
+Owns conversion from GTFS route patterns into Route Planner 2 scenarios.
+
+Responsibilities:
+- fetch or receive parsed GTFS feed data
+- group trips into selectable full-route patterns and filter out partial/short-turn patterns
+- allow multiple selected GTFS patterns to import into the same local workspace as separate route concepts
+- convert GTFS stops into Route Planner 2 stops
+- convert GTFS shapes into editable route-line waypoints
+- convert GTFS `stop_times` into scheduled segment runtime evidence when adjacent stop times are available
+- attach source metadata so imported concepts are clearly labelled
+
+Rules:
+- do not create fixed-route schedule drafts
+- do not modify GTFS feeds
+- do not import old Route Planner controllers or services
 
 ### Runtime Evidence Adapter
 

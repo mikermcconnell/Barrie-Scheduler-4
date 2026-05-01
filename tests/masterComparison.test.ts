@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { MasterRouteTable, MasterTrip } from '../utils/parsers/masterScheduleParser';
 import {
     buildDetailedMasterComparison,
-    buildMasterComparison
+    buildMasterComparison,
+    buildTripKey
 } from '../utils/schedule/masterComparison';
 
 const makeTrip = (
@@ -79,6 +80,34 @@ describe('buildMasterComparison', () => {
         expect(result.unmatchedMasterTrips).toHaveLength(0);
     });
 
+    it('does not mark an exact-time trip as removed when other trips establish a larger global shift', () => {
+        const current = [
+            makeTable('2 (Weekday) (North)', [
+                makeTrip('draft-exact', 'North', 360),
+                makeTrip('draft-shifted-a', 'North', 434),
+                makeTrip('draft-shifted-b', 'North', 494),
+            ])
+        ];
+        const master = [
+            makeTable('2 (Weekday) (North)', [
+                makeTrip('master-exact', 'North', 360),
+                makeTrip('master-shifted-a', 'North', 420),
+                makeTrip('master-shifted-b', 'North', 480),
+            ])
+        ];
+
+        const result = buildDetailedMasterComparison(current, master);
+        const exactEntry = result.currentTripComparisons.get(buildTripKey('North', 'draft-exact', '2 (Weekday) (North)'));
+
+        expect(result.masterShiftByDir.North).toBe(14);
+        expect(exactEntry?.status).toBe('matched');
+        if (exactEntry?.status !== 'matched') throw new Error('Expected exact-time trip to match');
+        expect(exactEntry.masterTrip.id).toBe('master-exact');
+        expect(exactEntry.shiftMinutes).toBe(0);
+        expect(result.currentTripComparisons.get(buildTripKey('North', 'draft-shifted-a', '2 (Weekday) (North)'))?.status).toBe('matched');
+        expect(result.removedMasterTrips).toHaveLength(0);
+    });
+
     it('does not treat a single small timing difference as a global shift', () => {
         const current = [
             makeTable('10 (North)', [makeTrip('draft-a', 'North', 365)])
@@ -88,7 +117,7 @@ describe('buildMasterComparison', () => {
         ];
 
         const result = buildDetailedMasterComparison(current, master);
-        const entry = result.currentTripComparisons.get('North::draft-a');
+        const entry = result.currentTripComparisons.get(buildTripKey('North', 'draft-a', '10 (North)'));
 
         expect(entry?.status).toBe('matched');
         if (entry?.status !== 'matched') throw new Error('Expected matched trip');
@@ -107,8 +136,32 @@ describe('buildMasterComparison', () => {
 
         const result = buildDetailedMasterComparison(current, master);
 
-        expect(result.currentTripComparisons.get('North::draft-route-7')?.status).toBe('new');
+        expect(result.currentTripComparisons.get(buildTripKey('North', 'draft-route-7', '7 (North)'))?.status).toBe('new');
         expect(result.removedMasterTrips.map(entry => entry.masterTrip.id)).toEqual(['master-route-10']);
+    });
+
+    it('keeps same-direction trip IDs isolated across routes', () => {
+        const current = [
+            makeTable('7 (North)', [makeTrip('shared-trip', 'North', 360)]),
+            makeTable('10 (North)', [makeTrip('shared-trip', 'North', 480)]),
+        ];
+        const master = [
+            makeTable('7 (North)', [makeTrip('shared-trip', 'North', 360)]),
+            makeTable('10 (North)', [makeTrip('shared-trip', 'North', 420)]),
+        ];
+
+        const result = buildDetailedMasterComparison(current, master);
+        const route7Entry = result.currentTripComparisons.get(buildTripKey('North', 'shared-trip', '7 (North)'));
+        const route10Entry = result.currentTripComparisons.get(buildTripKey('North', 'shared-trip', '10 (North)'));
+
+        expect(route7Entry?.status).toBe('matched');
+        expect(route10Entry?.status).toBe('matched');
+        if (route7Entry?.status !== 'matched' || route10Entry?.status !== 'matched') {
+            throw new Error('Expected both route-scoped shared trip IDs to match');
+        }
+        expect(route7Entry.masterTrip.startTime).toBe(360);
+        expect(route10Entry.masterTrip.startTime).toBe(420);
+        expect(result.removedMasterTrips).toHaveLength(0);
     });
 
     it('adds possible replacement hints to unmatched master trips near new service', () => {
@@ -121,7 +174,7 @@ describe('buildMasterComparison', () => {
 
         const result = buildDetailedMasterComparison(current, master);
 
-        expect(result.currentTripComparisons.get('North::draft-later')?.status).toBe('new');
+        expect(result.currentTripComparisons.get(buildTripKey('North', 'draft-later', '10 (North)'))?.status).toBe('new');
         expect(result.removedMasterTrips).toHaveLength(1);
         expect(result.removedMasterTrips[0].possibleReplacements).toEqual([
             expect.objectContaining({
@@ -147,7 +200,7 @@ describe('buildMasterComparison', () => {
         ];
 
         const result = buildDetailedMasterComparison(current, master);
-        const entry = result.currentTripComparisons.get('North::draft-a');
+        const entry = result.currentTripComparisons.get(buildTripKey('North', 'draft-a', '10 (North)'));
 
         expect(entry?.status).toBe('matched');
         if (entry?.status !== 'matched') throw new Error('Expected a matched comparison entry');
@@ -206,7 +259,7 @@ describe('buildMasterComparison', () => {
         ];
 
         const result = buildDetailedMasterComparison(current, master);
-        const entry = result.currentTripComparisons.get('North::draft-a');
+        const entry = result.currentTripComparisons.get(buildTripKey('North', 'draft-a', '10 (North)'));
 
         expect(entry?.status).toBe('matched');
         if (entry?.status !== 'matched') {
@@ -233,8 +286,8 @@ describe('buildMasterComparison', () => {
 
         const result = buildDetailedMasterComparison(current, master);
 
-        expect(result.currentTripComparisons.get('North::draft-a')?.status).toBe('matched');
-        expect(result.currentTripComparisons.get('North::draft-b')?.status).toBe('new');
+        expect(result.currentTripComparisons.get(buildTripKey('North', 'draft-a', '10 (North)'))?.status).toBe('matched');
+        expect(result.currentTripComparisons.get(buildTripKey('North', 'draft-b', '10 (North)'))?.status).toBe('new');
         expect(result.removedMasterTrips).toHaveLength(0);
     });
 
@@ -250,7 +303,7 @@ describe('buildMasterComparison', () => {
         ];
 
         const result = buildDetailedMasterComparison(current, master);
-        const entry = result.currentTripComparisons.get('North::draft-a');
+        const entry = result.currentTripComparisons.get(buildTripKey('North', 'draft-a', '10 (North)'));
 
         expect(entry?.status).toBe('ambiguous');
         if (entry?.status !== 'ambiguous') {

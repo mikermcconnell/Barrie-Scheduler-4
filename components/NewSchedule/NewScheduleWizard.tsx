@@ -19,6 +19,7 @@ import { calculateTotalTripTimes, detectOutliers, calculateBands, hardenRuntimeA
 import { generateSchedule } from '../../utils/schedule/scheduleGenerator';
 import { copyNearestMasterRecoveryToGenerated } from '../../utils/schedule/masterRecoveryTransfer';
 import { computeSuggestedStrictCycle } from '../../utils/schedule/strictCycleSuggestion';
+import { validateMergedRouteBlockContinuity } from '../../utils/schedule/mergedRouteContinuity';
 import { MasterRouteTable } from '../../utils/parsers/masterScheduleParser';
 import { useWizardProgress } from '../../hooks/useWizardProgress';
 import { NewScheduleHeader } from './NewScheduleHeader';
@@ -1000,8 +1001,13 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
             }
         }
     }, [user?.uid, isSaving, buildFirebaseSaveData, projectName, resolveUniqueProjectName]);
+    const saveToFirebaseRef = useRef(saveToFirebase);
 
-    // Debounced auto-save to localStorage (2 second delay)
+    useEffect(() => {
+        saveToFirebaseRef.current = saveToFirebase;
+    }, [saveToFirebase]);
+
+    // Debounced auto-save to localStorage and cloud (2 second delay)
     useEffect(() => {
         // Skip auto-save when loading a project to avoid redundant write
         if (step >= 1 && hasProjectContent && !isLoadingProject) {
@@ -1012,6 +1018,11 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
             // Set new debounced save
             saveTimerRef.current = setTimeout(() => {
                 save(buildLocalSaveData());
+                if (user?.uid) {
+                    saveToFirebaseRef.current({ id: projectIdRef.current }).catch((error) => {
+                        console.error('Firebase auto-save failed:', error);
+                    });
+                }
                 saveTimerRef.current = null;
             }, 2000);
         }
@@ -1026,7 +1037,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                 }
             }
         };
-    }, [step, dayType, hasProjectContent, analysis, bands, approvedRuntimeContract, lastApprovedRuntimeModel, config, generatedSchedules, originalGeneratedSchedules, save, buildLocalSaveData, isLoadingProject]);
+    }, [step, dayType, hasProjectContent, analysis, bands, approvedRuntimeContract, lastApprovedRuntimeModel, config, generatedSchedules, originalGeneratedSchedules, save, buildLocalSaveData, isLoadingProject, user?.uid]);
 
     // Warn before navigating away if there are unsaved changes
     useEffect(() => {
@@ -1757,6 +1768,15 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         if (!hasTeam || !team || generatedSchedules.length === 0) return;
 
         try {
+            const continuityIssues = validateMergedRouteBlockContinuity(generatedSchedules);
+            if (continuityIssues.length > 0) {
+                toast.error(
+                    'Fix A/B Blocks First',
+                    continuityIssues.slice(0, 2).map(issue => issue.message).join(' ')
+                );
+                return;
+            }
+
             // Find north and south tables using centralized direction config
             const northTable = generatedSchedules.find(t => extractDirectionFromName(t.routeName) === 'North');
             const southTable = generatedSchedules.find(t => extractDirectionFromName(t.routeName) === 'South');
@@ -1792,6 +1812,16 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
 
         setIsUploading(true);
         try {
+            const continuityIssues = validateMergedRouteBlockContinuity(generatedSchedules);
+            if (continuityIssues.length > 0) {
+                toast.error(
+                    'Fix A/B Blocks First',
+                    continuityIssues.slice(0, 2).map(issue => issue.message).join(' ')
+                );
+                setIsUploading(false);
+                return;
+            }
+
             const northTable = generatedSchedules.find(t => extractDirectionFromName(t.routeName) === 'North')!;
             const southTable = generatedSchedules.find(t => extractDirectionFromName(t.routeName) === 'South')!;
 

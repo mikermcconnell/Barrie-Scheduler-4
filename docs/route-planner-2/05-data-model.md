@@ -13,8 +13,16 @@
 
 ```typescript
 type RoutePlanner2ScenarioStatus = 'draft' | 'review';
+type RoutePlanner2RouteShape = 'one-way' | 'closed-loop' | 'out-and-back';
 type RoutePlanner2StopRole = 'regular' | 'timed' | 'start-terminal' | 'end-terminal';
-type RoutePlanner2RuntimeSource = 'observed-proxy' | 'manual' | 'mapbox' | 'fallback' | 'missing';
+type RoutePlanner2RuntimeSource =
+  | 'observed-proxy'
+  | 'observed-scheduled-blend'
+  | 'scheduled-proxy'
+  | 'manual'
+  | 'mapbox'
+  | 'fallback'
+  | 'missing';
 ```
 
 ## Project
@@ -37,12 +45,30 @@ interface RoutePlanner2Project {
 ## Route / Scenario Internal Type
 
 ```typescript
+type RoutePlanner2ScenarioSource =
+  | { type: 'blank' }
+  | {
+      type: 'gtfs';
+      routeId?: string;
+      routeShortName?: string;
+      routeLongName?: string;
+      serviceId?: string;
+      directionId?: number;
+      tripHeadsign?: string;
+      shapeId?: string;
+      feedVersion?: string;
+      importedAt?: string;
+    };
+
 interface RoutePlanner2Scenario {
   id: string;
   name: string;
   status: RoutePlanner2ScenarioStatus;
+  routeShape: RoutePlanner2RouteShape;
+  source?: RoutePlanner2ScenarioSource;
   alignment: RoutePlanner2RoutePoint[];
   stops: RoutePlanner2Stop[];
+  turnaroundStopId?: string;
   service: RoutePlanner2ServiceAssumptions;
   runtimeEstimates?: RoutePlanner2SegmentRuntime[];
   runtimeOverrides?: Record<string, RoutePlanner2SegmentRuntimeOverride>;
@@ -52,6 +78,8 @@ interface RoutePlanner2Scenario {
   updatedAt: string;
 }
 ```
+
+`routeShape` defaults to `one-way` for new local draft routes and for older saved local data that does not yet include the field.
 
 ## Route Point
 
@@ -66,6 +94,13 @@ interface RoutePlanner2RoutePoint {
   segmentSequence?: number;
 }
 ```
+
+Route shape meaning:
+- `one-way`: stop sequence is used as drawn.
+- `closed-loop`: stop sequence is used as drawn, then the last stop connects back to Stop 1.
+- `out-and-back`: stop sequence runs from Stop 1 to the turnaround stop, then returns in reverse order to Stop 1.
+
+`turnaroundStopId` is used only for out-and-back routes. If absent, the final stop is treated as the turnaround.
 
 When `afterStopId` and `beforeStopId` are present, the route point is a route-line waypoint between two adjacent stops. `segmentSequence` orders multiple waypoints within that stop-to-stop segment. V1 creates waypoints by clicking the route line, then dragging the `+` handle to bend the path.
 
@@ -113,6 +148,8 @@ interface RoutePlanner2FeasibilitySummary {
   intermediateStopCount: number;
   cycleTimeMinutes: number | null;
   busesRequired: number | null;
+  recoveryTimeMinutes: number | null;
+  recoveryPercent: number | null;
   confidence: 'high' | 'medium' | 'low' | 'not-ready';
   segmentSummaries: RoutePlanner2SegmentRuntime[];
   warnings: RoutePlanner2Warning[];
@@ -129,6 +166,12 @@ interface RoutePlanner2SegmentRuntime {
   runtimeMinutes: number | null;
   source: RoutePlanner2RuntimeSource;
   sampleSize?: number;
+  scheduledRuntimeMinutes?: number;
+  observedRuntimeMinutes?: number;
+  matchQuality?: 'exact-code' | 'name' | 'nearby' | 'unmatched';
+  matchedFromStopId?: string;
+  matchedToStopId?: string;
+  matchedRoutes?: string[];
   confidence: 'high' | 'medium' | 'low' | 'missing';
   distanceKm?: number;
   durationSeconds?: number;
@@ -137,6 +180,24 @@ interface RoutePlanner2SegmentRuntime {
   fallbackReason?: string;
 }
 ```
+
+Runtime source values:
+- `manual`: planner-entered segment/runtime override.
+- `observed-proxy`: observed stop-to-stop runtime evidence.
+- `observed-scheduled-blend`: blended estimate from scheduled and observed runtime evidence.
+- `scheduled-proxy`: scheduled stop-to-stop runtime evidence.
+- `mapbox`: Mapbox Directions estimate for the shaped stop-to-stop path.
+- `fallback`: distance/default-speed estimate when stronger evidence is unavailable.
+- `missing`: no usable runtime estimate yet.
+
+Runtime evidence fields disclose how automatic estimates were produced:
+- `scheduledRuntimeMinutes`: scheduled stop-to-stop runtime used as evidence.
+- `observedRuntimeMinutes`: observed stop-to-stop runtime used as evidence.
+- `matchQuality`: stop matching method: exact stop code, normalized name, nearby coordinate, or unmatched.
+- `matchedFromStopId` / `matchedToStopId`: matched GTFS stop IDs used for evidence.
+- `matchedRoutes`: route IDs that contributed matching runtime evidence.
+
+`recoveryTimeMinutes` is the spare time between the estimated full runtime and the scheduled cycle window created by the selected frequency and required buses. Example: 24 minutes of estimated full runtime at 30-minute frequency with 1 bus leaves 6 minutes of recovery. `recoveryPercent` is recovery time divided by estimated full runtime.
 
 Mapbox-derived estimates are cached against a `pathFingerprint` built from the current stop and waypoint coordinates. If the planner moves a stop or line waypoint, stale segment estimates are ignored until the segment is recalculated.
 
