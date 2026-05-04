@@ -63,7 +63,7 @@ export interface Shift {
   id: string;
   driverName: string;
   zone: Zone;
-  startSlot: number; // 0-96 (15 min increments)
+  startSlot: number; // Active TOD planning-grid slot index.
   endSlot: number;
   breakStartSlot: number;
   breakDurationSlots: number;

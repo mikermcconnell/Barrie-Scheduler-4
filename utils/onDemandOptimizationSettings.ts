@@ -1,4 +1,5 @@
 import type { OnDemandChangeoffSettings } from './demandTypes';
+import { SLOT_MINUTES, minutesToSlotsCeil } from './demandConstants';
 import type { OnDemandDayType } from './onDemandShiftUtils';
 
 export type ShiftCountCapMode = 'hard' | 'guide';
@@ -43,7 +44,7 @@ export const DEFAULT_SOUTH_CHANGEOFF_MINUTES = 8;
 export const BREAK_DURATION_MINUTES_LIMITS = {
   min: 15,
   max: 90,
-  step: 15,
+  step: SLOT_MINUTES,
 } as const;
 export const CHANGEOFF_MINUTES_LIMITS = {
   min: 0,
@@ -78,8 +79,8 @@ export const normalizeBreakDurationMinutes = (
 };
 
 export const breakDurationMinutesToSlots = (minutes: number): number =>
-  Math.round(
-    normalizeBreakDurationMinutes(minutes, DEFAULT_BREAK_DURATION_MINUTES) / 15,
+  minutesToSlotsCeil(
+    normalizeBreakDurationMinutes(minutes, DEFAULT_BREAK_DURATION_MINUTES),
   );
 
 export const normalizeChangeoffMinutes = (
@@ -103,7 +104,7 @@ export const normalizeChangeoffMinutes = (
 };
 
 export const changeoffMinutesToSlots = (minutes: number): number =>
-  Math.ceil(normalizeChangeoffMinutes(minutes, 0) / 15);
+  minutesToSlotsCeil(normalizeChangeoffMinutes(minutes, 0));
 
 export const createDefaultShiftCountCaps = (
   fallback = DEFAULT_SHIFT_COUNT_CAP,

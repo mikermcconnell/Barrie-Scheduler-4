@@ -1,5 +1,9 @@
 import ExcelJS from 'exceljs';
-import { BREAK_THRESHOLD_HOURS } from '../demandConstants';
+import {
+    BREAK_THRESHOLD_HOURS,
+    slotDurationToHours,
+    slotToMinutes,
+} from '../demandConstants';
 import { Shift, Zone } from '../demandTypes';
 
 type PaddleActivityRow = {
@@ -100,8 +104,6 @@ const daySortWeight: Record<string, number> = {
     Sunday: 2,
 };
 
-const slotToMinutes = (slot: number): number => Math.max(0, Math.round(slot * 15));
-
 const formatMinutes = (totalMinutes: number): string => {
     const safe = Number.isFinite(totalMinutes) ? Math.max(0, Math.round(totalMinutes)) : 0;
     const hours = Math.floor(safe / 60);
@@ -164,7 +166,7 @@ const createConfig = (configOverrides: Partial<PaddleExportConfig>): PaddleExpor
 const buildPaddleTimeline = (shift: Shift, config: PaddleExportConfig): PaddleTimeline => {
     const driveStart = slotToMinutes(shift.startSlot);
     const driveEnd = slotToMinutes(shift.endSlot);
-    const breakMinutes = (shift.breakDurationSlots || 0) * 15;
+    const breakMinutes = slotToMinutes(shift.breakDurationSlots || 0);
     const deadheadMinutes = config.deadheadMinutesByZone[shift.zone];
     const serviceLocation = config.zoneServiceLocation[shift.zone];
     const yardDeparture = Math.max(0, driveStart - deadheadMinutes);
@@ -258,7 +260,7 @@ const buildPaddleNotes = (
     config: PaddleExportConfig,
 ): string[] => {
     const notes = [config.highlightNote];
-    const shiftDurationHours = (shift.endSlot - shift.startSlot) / 4;
+    const shiftDurationHours = slotDurationToHours(shift.endSlot - shift.startSlot);
 
     if (shift.breakDurationSlots > 0) {
         notes.unshift('Meal break shown inside the paid piece.');
@@ -356,7 +358,7 @@ const buildPaddleModels = (
         const meta = blockSeries[index];
         const busLabel = shift.driverName?.trim() || `Bus ${index + 1}`;
         const notes = buildPaddleNotes(shift, meta, config);
-        const breakPenalty = shift.breakDurationSlots === 0 && (shift.endSlot - shift.startSlot) / 4 > BREAK_THRESHOLD_HOURS
+        const breakPenalty = shift.breakDurationSlots === 0 && slotDurationToHours(shift.endSlot - shift.startSlot) > BREAK_THRESHOLD_HOURS
             ? formatDuration(config.breakPenaltyMinutes)
             : '';
 

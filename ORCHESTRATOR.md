@@ -47,6 +47,8 @@ This is a domain-heavy monolith:
 ### On-Demand
 Owns shift generation, optimization, validation, and saved-schedule workflows for demand-responsive planning.
 
+TOD slot math is centralized in `utils/demandConstants.ts` through the active slot-grid helpers (`SLOT_MINUTES`, `TIME_SLOTS_PER_DAY`, `hoursToSlots`, `minutesToSlotsCeil`, `slotDurationToHours`, `slotToMinutes`, `formatSlotToTime`). The active app grid is 5 minutes. Legacy saved TOD schedules without `slotGranularityMinutes` are treated as 15-minute data and converted on load by `utils/onDemandGridMigration.ts`; new saves include `slotGranularityMinutes: 5`.
+
 ### Fixed Route
 Owns the core fixed-route workflow:
 - CSV/runtime import

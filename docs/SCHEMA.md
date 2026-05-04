@@ -274,6 +274,7 @@ Transit On Demand workspace drafts are stored separately from fixed-route draft 
 interface SavedSchedule {
   name: string;
   status: 'draft' | 'published' | 'archived';
+  slotGranularityMinutes?: 5 | 15;
   shiftData: Shift[];
   masterScheduleData: Requirement[];
   schedulesData?: Record<string, Requirement[]>;
@@ -291,6 +292,8 @@ interface SavedSchedule {
   };
 }
 ```
+
+`slotGranularityMinutes` identifies the slot grid used by `shiftData`, `masterScheduleData`, and `schedulesData`. New TOD saves use 5-minute slots. Legacy records without this field are treated as 15-minute schedules when they have 96 daily requirement slots and are expanded to the active 5-minute grid on load.
 
 `shiftData` entries may include optional `handoffFromShiftId` and `handoffToShiftId` fields so TOD drafts can persist explicit driver-to-driver handoff links alongside the core shift timing fields. These links are intended to be reciprocal same-day North/South service-shift references; invalid or one-way links are treated as handoff issues during validation.
 

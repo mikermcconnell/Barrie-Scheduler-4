@@ -1,7 +1,10 @@
 import { Requirement, Shift, Zone } from "../demandTypes";
 import {
   SHIFT_DURATION_SLOTS,
-  BREAK_THRESHOLD_HOURS
+  BREAK_THRESHOLD_HOURS,
+  TIME_SLOTS_PER_DAY,
+  hoursToSlots,
+  slotDurationToHours,
 } from "../demandConstants";
 import { auth } from "../firebase";
 import {
@@ -319,7 +322,7 @@ function localOptimizationFallback(
   // Find peak hours (when demand is highest)
   const hourlyDemand: { hour: number; demand: number }[] = [];
   for (let hour = 0; hour < 24; hour++) {
-    const slot = hour * 4;
+    const slot = hoursToSlots(hour);
     const demand = requirements[slot]?.total || 0;
     hourlyDemand.push({ hour, demand });
   }
@@ -348,20 +351,20 @@ function localOptimizationFallback(
     if (usedStartHours.has(startHour)) continue;
     usedStartHours.add(startHour);
 
-    const startSlot = startHour * 4;
+    const startSlot = hoursToSlots(startHour);
     const duration = SHIFT_DURATION_SLOTS; // 8 hours default
-    const endSlot = Math.min(96, startSlot + duration);
+    const endSlot = Math.min(TIME_SLOTS_PER_DAY, startSlot + duration);
 
     const zones: Zone[] = [Zone.NORTH, Zone.SOUTH, Zone.FLOATER];
     const zone = zones[shiftCount % 3];
 
     // Calculate break (6 hours into shift, if shift is long enough)
-    const hours = duration / 4;
+    const hours = slotDurationToHours(duration);
     let breakStart = 0;
     let breakDuration = 0;
 
     if (hours > BREAK_THRESHOLD_HOURS) {
-      breakStart = startSlot + 24; // Break at hour 6
+      breakStart = startSlot + hoursToSlots(6); // Break at hour 6
       breakDuration = configuredBreakDurationSlots;
     }
 

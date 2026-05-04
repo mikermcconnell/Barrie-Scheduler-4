@@ -6,18 +6,23 @@ import {
   Zone,
   type OnDemandChangeoffSettings,
 } from './demandTypes';
-import { TIME_SLOTS_PER_DAY, SHIFT_DURATION_SLOTS, BREAK_DURATION_SLOTS } from './demandConstants';
+import {
+  BREAK_DURATION_SLOTS,
+  SHIFT_DURATION_SLOTS,
+  TIME_SLOTS_PER_DAY,
+  formatMinutesToTime,
+  formatSlotToTime as formatDemandSlotToTime,
+  hoursToSlots,
+  slotDurationToHours,
+  slotToMinutes,
+} from './demandConstants';
 import { buildShiftServiceWindowMap } from './onDemandHandoffs';
 
 // Helper to format minutes from midnight to HH:mm
-export const formatTime = (totalMinutes: number): string => {
-  const h = Math.floor(totalMinutes / 60) % 24;
-  const m = totalMinutes % 60;
-  return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
-};
+export const formatTime = formatMinutesToTime;
 
 export const formatSlotToTime = (slot: number): string => {
-  return formatTime(slot * 15);
+  return formatDemandSlotToTime(slot);
 };
 
 // 1. Generate Requirement Curve (Demand)
@@ -25,7 +30,7 @@ export const generateRequirements = (): Requirement[] => {
   const reqs: Requirement[] = [];
 
   for (let i = 0; i < TIME_SLOTS_PER_DAY; i++) {
-    const minutesFromMidnight = i * 15;
+    const minutesFromMidnight = slotToMinutes(i);
     const hour = minutesFromMidnight / 60;
 
     // Sinusoidal Requirement Logic
@@ -65,7 +70,7 @@ export const generateShifts = (requirements: Requirement[], optimized: boolean =
     // --- LEGACY / UNOPTIMIZED LOGIC (Naive Gap Filling) ---
     const rosterCounts = new Array(TIME_SLOTS_PER_DAY).fill(0);
 
-    for (let i = 0; i < TIME_SLOTS_PER_DAY - 16; i++) {
+    for (let i = 0; i < TIME_SLOTS_PER_DAY - hoursToSlots(4); i++) {
       const req = requirements[i].total;
       const currentStaff = rosterCounts[i];
 
@@ -111,8 +116,8 @@ export const generateShifts = (requirements: Requirement[], optimized: boolean =
       let maxScore = -Infinity;
 
       for (let start = 0; start <= TIME_SLOTS_PER_DAY - SHIFT_DURATION_SLOTS; start++) {
-        const minBreakOffset = 16;
-        const maxBreakOffset = 24;
+        const minBreakOffset = hoursToSlots(4);
+        const maxBreakOffset = hoursToSlots(6);
         const end = start + SHIFT_DURATION_SLOTS;
 
         for (let bOffset = minBreakOffset; bOffset <= maxBreakOffset; bOffset++) {
@@ -188,7 +193,7 @@ export const calculateSchedule = (
   const serviceWindowMap = buildShiftServiceWindowMap(shifts, changeoffSettings);
 
   for (let i = 0; i < TIME_SLOTS_PER_DAY; i++) {
-    const minutesFromMidnight = i * 15;
+    const minutesFromMidnight = slotToMinutes(i);
     const req = requirements[i];
 
     if (!req) continue;
@@ -352,21 +357,21 @@ export const calculateMetrics = (
 
   // 1. Calculate Demand (Master Hours)
   data.forEach(slot => {
-    // 15 min interval = 0.25 hours
-    totalReq += slot.totalRequirement * 0.25;
-    totalEffectiveCov += slot.totalEffectiveCoverage * 0.25;
+    const slotHours = slotDurationToHours(1);
+    totalReq += slot.totalRequirement * slotHours;
+    totalEffectiveCov += slot.totalEffectiveCoverage * slotHours;
     netDiff += (
       netDifferenceMode === 'raw'
         ? (slot.totalActiveCoverage - slot.totalRequirement)
         : slot.netDifference
-    ) * 0.25;
+    ) * slotHours;
   });
 
   // 2. Calculate Supply (Payable Hours) - PREFERRED METHOD
   // If shifts are provided, calculate exact payable time (end - start)
   let payableHours = totalEffectiveCov;
   if (shifts) {
-    payableHours = shifts.reduce((sum, s) => sum + ((s.endSlot - s.startSlot) * 0.25), 0);
+    payableHours = shifts.reduce((sum, s) => sum + slotDurationToHours(s.endSlot - s.startSlot), 0);
   }
 
   return {

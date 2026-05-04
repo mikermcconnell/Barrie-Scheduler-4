@@ -1,7 +1,12 @@
 import { Shift, Requirement, Zone } from '../demandTypes';
-import { TIME_SLOTS_PER_DAY } from '../demandConstants';
+import {
+    TIME_SLOTS_PER_DAY,
+    hoursToSlots,
+    minutesToSlot,
+    minutesToSlotsCeil,
+} from '../demandConstants';
 
-// Helper to parse time "HH:MM" or "HH:MM AM/PM" to slot index (0-95)
+// Helper to parse time "HH:MM" or "HH:MM AM/PM" to the active TOD slot index
 const parseTimeToSlot = (timeStr: string): number => {
     if (!timeStr) return 0;
 
@@ -34,10 +39,7 @@ const parseTimeToSlot = (timeStr: string): number => {
     if (isPM && hours < 12) hours += 12;
     if (isAM && hours === 12) hours = 0;
 
-    // Calculate slot
-    // Slot 0 = 00:00
-    // Slot 1 = 00:15
-    return Math.floor((hours * 60 + minutes) / 15);
+    return minutesToSlot(hours * 60 + minutes);
 };
 
 export const parseScheduleMaster = (csvText: string): Record<string, Requirement[]> => {
@@ -80,6 +82,16 @@ export const parseScheduleMaster = (csvText: string): Record<string, Requirement
                 timeColIndices[slot] = index;
             }
         });
+        const sortedHeaderSlots = Object.keys(timeColIndices)
+            .map(slot => parseInt(slot, 10))
+            .sort((a, b) => a - b);
+        const headerCoverageSlots = Math.max(
+            1,
+            sortedHeaderSlots
+                .slice(1)
+                .map((slot, index) => slot - sortedHeaderSlots[index])
+                .filter(delta => delta > 0)[0] ?? 1,
+        );
 
         for (let i = headerRowIndex + 1; i <= endRowIndex; i++) {
             const line = lines[i];
@@ -101,8 +113,13 @@ export const parseScheduleMaster = (csvText: string): Record<string, Requirement
                     const val = cols[colIdx];
 
                     if (val && val.trim() === '1') {
-                        requirements[slot][zone]++;
-                        requirements[slot].total++;
+                        for (let offset = 0; offset < headerCoverageSlots; offset++) {
+                            const activeSlot = slot + offset;
+                            if (activeSlot >= 0 && activeSlot < TIME_SLOTS_PER_DAY) {
+                                requirements[activeSlot][zone]++;
+                                requirements[activeSlot].total++;
+                            }
+                        }
                     }
                 }
             }
@@ -232,7 +249,7 @@ export const parseRideCo = (input: string | RowData[]): Shift[] => {
         let endSlot = parseTimeToSlot(endStr);
 
         // Handle overnight (end < start)
-        if (endSlot < startSlot) endSlot += 96; // Add 24 hours
+        if (endSlot < startSlot) endSlot += TIME_SLOTS_PER_DAY; // Add 24 hours
 
         // Parse Break
         let breakStartSlot = 0;
@@ -247,33 +264,32 @@ export const parseRideCo = (input: string | RowData[]): Shift[] => {
             const bStart = parseTimeToSlot(breakStartStr);
             let bEnd = parseTimeToSlot(breakEndStr);
 
-            if (bEnd < bStart) bEnd += 96; // Overnight break?
+            if (bEnd < bStart) bEnd += TIME_SLOTS_PER_DAY; // Overnight break?
 
             // Adjust break start if it looks like it's before shift start (overnight shift case)
-            if (bStart < startSlot && endSlot > 96) {
+            if (bStart < startSlot && endSlot > TIME_SLOTS_PER_DAY) {
                 // This is tricky without dates. Assuming break is within shift.
                 // If shift is 18:00 - 02:00 (72 - 104), and break is 22:00 (88), it works.
-                // If shift is 22:00 - 06:00 (88 - 120), and break is 02:00 (8), we need to add 96 to break.
+                // If shift crosses midnight and the break parses before the start, add a day.
                 // Let's use the logic: if break start < shift start, add 24h
                 // But only if shift crosses midnight.
             }
-            if (bStart < startSlot && endSlot >= 96) {
+            if (bStart < startSlot && endSlot >= TIME_SLOTS_PER_DAY) {
                 // Break is likely next day
                 // But wait, parseTimeToSlot handles 0-24h.
-                // If shift is 22:00 (88) to 06:00 (24+24=48? no 6*4=24. 96+24=120).
-                // Break at 02:00 is slot 8. 8 < 88. So add 96 -> 104. Correct.
+                // Example: break at 02:00 parses earlier than a 22:00 start, so add one day.
                 // What if shift is 08:00 to 16:00. Break at 12:00. 32 to 64. Break 48. 48 > 32. OK.
                 // So if bStart < startSlot, assume next day.
                 // EXCEPT if shift didn't cross midnight? No, start < end usually.
-                // If start > end, we added 96 to end.
+                // If start > end, we added one planning day to end.
                 // So if bStart < startSlot, it's probably next day.
                 // UNLESS it's a data error.
                 // Let's trust the "N/B" check first.
-                // If bStart < startSlot, add 96.
+                // If bStart < startSlot, add one planning day.
             }
 
             let finalBreakStart = bStart;
-            if (finalBreakStart < startSlot) finalBreakStart += 96;
+            if (finalBreakStart < startSlot) finalBreakStart += TIME_SLOTS_PER_DAY;
 
             breakStartSlot = finalBreakStart;
 
@@ -282,7 +298,7 @@ export const parseRideCo = (input: string | RowData[]): Shift[] => {
             if (explicitDurationStr) {
                 const minutes = parseFloat(explicitDurationStr);
                 if (!isNaN(minutes) && minutes > 0) {
-                    breakDurationSlots = Math.ceil(minutes / 15);
+                    breakDurationSlots = minutesToSlotsCeil(minutes);
                 } else {
                     // Fallback to window
                     breakDurationSlots = bEnd - bStart;
@@ -292,9 +308,9 @@ export const parseRideCo = (input: string | RowData[]): Shift[] => {
             }
 
             // Handle wrap around calculation and validate
-            if (breakDurationSlots < 0) breakDurationSlots += 96;
+            if (breakDurationSlots < 0) breakDurationSlots += TIME_SLOTS_PER_DAY;
             // If still negative or unreasonably large (> 4 hours), treat as no break
-            if (breakDurationSlots < 0 || breakDurationSlots > 16) {
+            if (breakDurationSlots < 0 || breakDurationSlots > hoursToSlots(4)) {
                 console.warn(`Invalid break duration (${breakDurationSlots} slots) for shift ${c}, resetting to 0`);
                 breakDurationSlots = 0;
                 breakStartSlot = startSlot;

@@ -5,12 +5,15 @@ import {
   MIN_SHIFT_HOURS,
   SHIFT_DURATION_SLOTS,
   TIME_SLOTS_PER_DAY,
+  hoursToSlots,
+  slotDurationToHours,
+  slotToMinutes,
 } from './demandConstants';
 import type { Shift } from './demandTypes';
 import { Zone } from './demandTypes';
 
-export const MIN_SHIFT_SLOTS = MIN_SHIFT_HOURS * 4;
-export const MAX_SHIFT_SLOTS = MAX_SHIFT_HOURS * 4;
+export const MIN_SHIFT_SLOTS = hoursToSlots(MIN_SHIFT_HOURS);
+export const MAX_SHIFT_SLOTS = hoursToSlots(MAX_SHIFT_HOURS);
 
 export type OnDemandShiftRuleViolationKind =
   | 'shift_out_of_bounds'
@@ -59,9 +62,9 @@ export function normalizeRequiredBreakStartSlot(
   startSlot: number,
   value: unknown,
 ): number {
-  const numericValue = roundFiniteNumber(value, startSlot + 20);
-  const minBreakSlot = startSlot + 16;
-  const maxBreakSlot = startSlot + 24;
+  const numericValue = roundFiniteNumber(value, startSlot + hoursToSlots(5));
+  const minBreakSlot = startSlot + hoursToSlots(4);
+  const maxBreakSlot = startSlot + hoursToSlots(6);
   return Math.min(Math.max(numericValue, minBreakSlot), maxBreakSlot);
 }
 
@@ -80,7 +83,7 @@ export function sanitizeOptimizerShift(
 ): SanitizedOnDemandShift {
   const durationSlots = normalizeShiftDurationSlots(shift.durationSlots);
   const startSlot = normalizeShiftStartSlot(shift.startSlot, durationSlots);
-  const requiresBreak = durationSlots / 4 > BREAK_THRESHOLD_HOURS;
+  const requiresBreak = slotDurationToHours(durationSlots) > BREAK_THRESHOLD_HOURS;
   const breakStartSlot = requiresBreak
     ? normalizeRequiredBreakStartSlot(startSlot, shift.breakStartSlot)
     : 0;
@@ -106,7 +109,7 @@ export function validateOnDemandShiftRules(
     const shiftId = shift.id || `shift-${index + 1}`;
     const driverName = shift.driverName || `Driver ${index + 1}`;
     const durationSlots = shift.endSlot - shift.startSlot;
-    const durationHours = durationSlots / 4;
+    const durationHours = slotDurationToHours(durationSlots);
 
     if (
       shift.startSlot < 0
@@ -145,12 +148,12 @@ export function validateOnDemandShiftRules(
           shiftId,
           driverName,
           kind: 'break_too_short',
-          message: `${driverName} needs a ${requiredBreakDurationSlots * 15}-minute break.`,
+          message: `${driverName} needs a ${slotToMinutes(requiredBreakDurationSlots)}-minute break.`,
         });
       }
 
-      const minBreakSlot = shift.startSlot + 16;
-      const maxBreakSlot = shift.startSlot + 24;
+      const minBreakSlot = shift.startSlot + hoursToSlots(4);
+      const maxBreakSlot = shift.startSlot + hoursToSlots(6);
       const breakEndSlot = shift.breakStartSlot + shift.breakDurationSlots;
 
       if (

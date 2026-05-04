@@ -2,15 +2,16 @@ import type { Requirement, Shift } from './demandTypes';
 import type { OnDemandOptimizationSettingsSnapshot } from './onDemandOptimizationSettings';
 import type { OnDemandScheduleValidation } from './onDemandValidation';
 import {
+  convertOnDemandScheduleGrid,
+  type OnDemandGridSchedulePayload,
+} from './onDemandGridMigration';
+import {
   filterShiftsByDay,
   normalizeOnDemandShifts,
   type OnDemandDayType,
 } from './onDemandShiftUtils';
 
-export interface OnDemandScheduleSnapshot {
-  shiftData?: Shift[];
-  schedulesData?: Record<string, Requirement[]>;
-  masterScheduleData: Requirement[];
+export interface OnDemandScheduleSnapshot extends OnDemandGridSchedulePayload {
   optimizationSettings?: OnDemandOptimizationSettingsSnapshot;
 }
 
@@ -71,20 +72,21 @@ export function resolveOnDemandScheduleState(
   schedule: OnDemandScheduleSnapshot,
   preferredDayType: OnDemandDayType,
 ): OnDemandResolvedScheduleState {
-  const allShifts = schedule.shiftData
-    ? normalizeOnDemandShifts(schedule.shiftData, preferredDayType)
+  const convertedSchedule = convertOnDemandScheduleGrid(schedule);
+  const allShifts = convertedSchedule.shiftData
+    ? normalizeOnDemandShifts(convertedSchedule.shiftData, preferredDayType)
     : [];
 
-  if (schedule.schedulesData) {
-    const resolvedDay = resolveOnDemandDay(schedule.schedulesData, preferredDayType);
+  if (convertedSchedule.schedulesData) {
+    const resolvedDay = resolveOnDemandDay(convertedSchedule.schedulesData, preferredDayType);
     if (resolvedDay) {
       return {
         allShifts,
         shifts: filterShiftsByDay(allShifts, resolvedDay.selectedDayType),
-        schedules: schedule.schedulesData,
+        schedules: convertedSchedule.schedulesData,
         selectedDayType: resolvedDay.selectedDayType,
         requirements: resolvedDay.requirements,
-        optimizationSettings: schedule.optimizationSettings ?? null,
+        optimizationSettings: convertedSchedule.optimizationSettings ?? null,
       };
     }
   }
@@ -92,10 +94,10 @@ export function resolveOnDemandScheduleState(
   return {
     allShifts,
     shifts: filterShiftsByDay(allShifts, preferredDayType),
-    schedules: schedule.schedulesData ?? null,
+    schedules: convertedSchedule.schedulesData ?? null,
     selectedDayType: preferredDayType,
-    requirements: schedule.masterScheduleData,
-    optimizationSettings: schedule.optimizationSettings ?? null,
+    requirements: convertedSchedule.masterScheduleData,
+    optimizationSettings: convertedSchedule.optimizationSettings ?? null,
   };
 }
 

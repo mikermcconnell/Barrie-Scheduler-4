@@ -4,6 +4,7 @@ import { GapChart } from '../GapChart';
 import { calculateSchedule, formatSlotToTime, calculateMetrics } from '../../utils/dataGenerator';
 import { Check, X, ArrowRight, AlertTriangle, Sparkles, CheckSquare, Square, Eye, EyeOff, BarChart } from 'lucide-react';
 import { SummaryCards } from '../SummaryCards';
+import { slotToMinutes } from '../../utils/demandConstants';
 
 interface Props {
     currentShifts: Shift[];
@@ -83,13 +84,13 @@ export const OptimizationReviewModal: React.FC<Props> = ({
                     } else if (Math.abs(curr.startSlot - opt.startSlot) > 0 && (curr.endSlot - curr.startSlot) === (opt.endSlot - opt.startSlot)) {
                         // Shift moved, duration same
                         const diff = opt.startSlot - curr.startSlot;
-                        const timeDiff = diff * 15;
+                        const timeDiff = slotToMinutes(diff);
                         specificReason = `Shift Moved ${diff > 0 ? '+' : ''}${timeDiff} min`;
                         impactType = 'Gap Fix';
                     } else if ((curr.endSlot - curr.startSlot) !== (opt.endSlot - opt.startSlot)) {
                         // Duration changed
-                        const oldDur = (curr.endSlot - curr.startSlot) * 15;
-                        const newDur = (opt.endSlot - opt.startSlot) * 15;
+                        const oldDur = slotToMinutes(curr.endSlot - curr.startSlot);
+                        const newDur = slotToMinutes(opt.endSlot - opt.startSlot);
                         const diff = newDur - oldDur;
                         specificReason = diff > 0 ? `Extended Shift (+${diff}m)` : `Shortened Shift (${diff}m)`;
                         impactType = diff > 0 ? 'Coverage Boost' : 'Reduce Surplus';

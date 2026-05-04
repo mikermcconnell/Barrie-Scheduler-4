@@ -8,7 +8,9 @@ import {
     MIN_SHIFT_HOURS,
     MAX_SHIFT_HOURS,
     BREAK_THRESHOLD_HOURS,
-    TIME_SLOTS_PER_DAY
+    TIME_SLOTS_PER_DAY,
+    hoursToSlots,
+    slotDurationToHours,
 } from '../../utils/demandConstants';
 import { X, Save, AlertTriangle, CheckCircle2, Clock, Coffee, GripHorizontal, ChevronLeft, ChevronRight, GripVertical, Plus, Trash2 } from 'lucide-react';
 
@@ -93,7 +95,7 @@ export const ShiftEditorModal: React.FC<Props> = ({
     // Validation Logic
     useEffect(() => {
         const durationSlots = currentShift.endSlot - currentShift.startSlot;
-        const durationHours = durationSlots / 4;
+        const durationHours = slotDurationToHours(durationSlots);
 
         if (!canUseShiftHandoffs && (currentShift.handoffFromShiftId || currentShift.handoffToShiftId)) {
             setValidationMsg('Floater shifts cannot use shift handoffs.');
@@ -116,8 +118,8 @@ export const ShiftEditorModal: React.FC<Props> = ({
             }
             const shiftStart = currentShift.startSlot;
             const breakStart = currentShift.breakStartSlot;
-            const fourthHour = shiftStart + 16;
-            const sixthHour = shiftStart + 24;
+            const fourthHour = shiftStart + hoursToSlots(4);
+            const sixthHour = shiftStart + hoursToSlots(6);
 
             if (breakStart < fourthHour || breakStart > sixthHour) {
                 const fourthHourTime = formatSlotToTime(fourthHour);
@@ -193,15 +195,15 @@ export const ShiftEditorModal: React.FC<Props> = ({
                 setCurrentShift(updated);
             }
         } else if (isDragging === 'start') {
-            if (clampedSlot < updated.endSlot - 4) {
+            if (clampedSlot < updated.endSlot - hoursToSlots(1)) {
                 updated.startSlot = clampedSlot;
                 if (updated.breakDurationSlots > 0 && updated.breakStartSlot < updated.startSlot) {
-                    updated.breakStartSlot = updated.startSlot + 4;
+                    updated.breakStartSlot = updated.startSlot + hoursToSlots(1);
                 }
                 setCurrentShift(updated);
             }
         } else if (isDragging === 'end') {
-            if (clampedSlot > updated.startSlot + 4) {
+            if (clampedSlot > updated.startSlot + hoursToSlots(1)) {
                 updated.endSlot = clampedSlot;
                 if (updated.breakDurationSlots > 0 && updated.breakStartSlot > updated.endSlot - updated.breakDurationSlots) {
                     updated.breakStartSlot = updated.endSlot - updated.breakDurationSlots;
@@ -252,7 +254,7 @@ export const ShiftEditorModal: React.FC<Props> = ({
         } else {
             // Add break using the configured duration at the 5th hour.
             updated.breakDurationSlots = requiredBreakDurationSlots;
-            updated.breakStartSlot = updated.startSlot + 20;
+            updated.breakStartSlot = updated.startSlot + hoursToSlots(5);
         }
         setCurrentShift(updated);
     };
@@ -282,7 +284,7 @@ export const ShiftEditorModal: React.FC<Props> = ({
                                 {currentShift.zone} Zone
                             </span>
                             <span className="px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider bg-gray-100 text-gray-600">
-                                {((currentShift.endSlot - currentShift.startSlot) / 4).toFixed(2)} Hrs
+                                {slotDurationToHours(currentShift.endSlot - currentShift.startSlot).toFixed(2)} Hrs
                             </span>
                         </div>
                         <div className="flex items-center gap-2 h-6">

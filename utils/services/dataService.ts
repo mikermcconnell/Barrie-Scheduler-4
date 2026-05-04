@@ -20,6 +20,7 @@ import {
 } from 'firebase/storage';
 import { db, storage } from '../firebase';
 import type { Shift, Requirement } from '../demandTypes';
+import type { SlotGranularityMinutes } from '../demandConstants';
 import type { MasterRouteTable } from '../parsers/masterScheduleParser';
 import type { OnDemandOptimizationSettingsSnapshot } from '../onDemandOptimizationSettings';
 
@@ -32,6 +33,7 @@ export interface SavedSchedule {
     shiftData: Shift[];
     masterScheduleData: Requirement[];
     schedulesData?: Record<string, Requirement[]>;
+    slotGranularityMinutes?: SlotGranularityMinutes;
     optimizationSettings?: OnDemandOptimizationSettingsSnapshot;
     createdAt: Date;
     updatedAt: Date;

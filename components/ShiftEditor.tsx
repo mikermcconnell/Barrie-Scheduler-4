@@ -4,6 +4,7 @@ import { formatSlotToTime } from '../utils/dataGenerator';
 import { Coffee, Trash2, Plus, Clock, ChevronRight, LayoutGrid, List, ArrowRightLeft } from 'lucide-react';
 import { SummaryCards } from './SummaryCards';
 import { buildShiftHandoffMap, buildShiftServiceWindowMap, type ShiftHandoffLinks } from '../utils/onDemandHandoffs';
+import { slotDurationToHours } from '../utils/demandConstants';
 
 interface Props {
   shifts: Shift[];
@@ -163,7 +164,7 @@ export const ShiftEditor: React.FC<Props> = ({
             const serviceWindow = serviceWindowMap.get(shift.id);
             const displayStartSlot = serviceWindow?.serviceStartSlot ?? shift.startSlot;
             const displayEndSlot = serviceWindow?.serviceEndSlot ?? shift.endSlot;
-            const drivingHours = ((displayEndSlot - displayStartSlot) / 4).toFixed(1);
+            const drivingHours = slotDurationToHours(displayEndSlot - displayStartSlot).toFixed(1);
             const handoffSummaries = getShiftHandoffSummaries(shift, handoffLinks);
 
             return (
@@ -261,7 +262,7 @@ export const ShiftEditor: React.FC<Props> = ({
                 const serviceWindow = serviceWindowMap.get(shift.id);
                 const displayStartSlot = serviceWindow?.serviceStartSlot ?? shift.startSlot;
                 const displayEndSlot = serviceWindow?.serviceEndSlot ?? shift.endSlot;
-                const drivingHours = ((displayEndSlot - displayStartSlot) / 4).toFixed(1);
+                const drivingHours = slotDurationToHours(displayEndSlot - displayStartSlot).toFixed(1);
                 const handoffSummaries = getShiftHandoffSummaries(shift, handoffLinks);
                 const handoffText = handoffSummaries.join(' | ');
 

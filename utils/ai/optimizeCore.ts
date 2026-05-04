@@ -1,5 +1,12 @@
 import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai';
-import { BREAK_THRESHOLD_HOURS } from '../demandConstants';
+import {
+  BREAK_THRESHOLD_HOURS,
+  MAX_SHIFT_HOURS,
+  MIN_SHIFT_HOURS,
+  SLOT_MINUTES,
+  TIME_SLOTS_PER_DAY,
+  hoursToSlots,
+} from '../demandConstants';
 import { calculateSchedule } from '../dataGenerator';
 import { validateOnDemandSchedule } from '../onDemandValidation';
 import {
@@ -109,8 +116,8 @@ const shiftItemSchema = {
   properties: {
     id: { type: SchemaType.STRING, description: 'Unique ID (Preserve if refining)' },
     driverName: { type: SchemaType.STRING, description: "Name like 'Driver 1'" },
-    startSlot: { type: SchemaType.INTEGER, description: 'Start time in 15-min slots (0-96)' },
-    durationSlots: { type: SchemaType.INTEGER, description: 'Total shift length in slots (20-44 slots / 5-11 hours)' },
+    startSlot: { type: SchemaType.INTEGER, description: `Start time in ${SLOT_MINUTES}-minute slots (0-${TIME_SLOTS_PER_DAY})` },
+    durationSlots: { type: SchemaType.INTEGER, description: `Total shift length in slots (${hoursToSlots(MIN_SHIFT_HOURS)}-${hoursToSlots(MAX_SHIFT_HOURS)} slots / ${MIN_SHIFT_HOURS}-${MAX_SHIFT_HOURS} hours)` },
     breakStartSlot: { type: SchemaType.INTEGER, description: 'Break start time (must be within shift). Use 0 if no break.' },
     handoffFromShiftId: { type: SchemaType.STRING, description: 'Optional incoming handoff shift ID to preserve when refining.' },
     handoffToShiftId: { type: SchemaType.STRING, description: 'Optional outgoing handoff shift ID to preserve when refining.' },
@@ -199,7 +206,7 @@ export function buildOptimizeCommonRules(
     - Maximum vehicles on the road at any time: 6.
     - Drivers on break or in changeoff do NOT count as vehicles on the road.
     - Break periods must be covered by other active shifts if demand requires coverage.
-    - Never return a schedule where more than 6 active, in-zone shifts are on the road in any 15-minute slot.
+    - Never return a schedule where more than 6 active, in-zone shifts are on the road in any ${SLOT_MINUTES}-minute slot.
     `
     : '';
   const shiftCountConstraintRules = buildShiftCountCapInstruction(
@@ -210,11 +217,11 @@ export function buildOptimizeCommonRules(
 
   return `
     PRIMARY OBJECTIVE:
-    Match the master schedule demand curve as closely as possible in every 15-minute slot.
+    Match the master schedule demand curve as closely as possible in every ${SLOT_MINUTES}-minute slot.
 
     UNION RULES:
     - Shift length rules apply to actual drive time between drive start and drive end.
-    - Shift Length: 5-11 hours (20-44 slots) of actual drive time.
+    - Shift Length: ${MIN_SHIFT_HOURS}-${MAX_SHIFT_HOURS} hours (${hoursToSlots(MIN_SHIFT_HOURS)}-${hoursToSlots(MAX_SHIFT_HOURS)} slots) of actual drive time.
     - Breaks: ${configuredBreakDurationMinutes}min (${configuredBreakDurationSlots} slots) if actual drive time > ${BREAK_THRESHOLD_HOURS}h.
     - Breaks must occur between hour 4 and 6 of the shift.
     - STRICT ZONE LOGIC: North covers North, South covers South, Floater covers Gaps/Breaks.
@@ -227,11 +234,11 @@ export function buildOptimizeCommonRules(
 
     SERVICE PRIORITIES (Follow these STRICTLY):
     1. Avoid coverage gaps.
-    2. A single-bus gap for 1-2 consecutive 15-minute slots is tolerable but discouraged ONLY if it clearly improves the overall schedule.
+    2. A single-bus gap for 1-2 consecutive ${SLOT_MINUTES}-minute slots is tolerable but discouraged ONLY if it clearly improves the overall schedule.
     3. A gap of 2+ buses is NOT acceptable.
     4. A gap lasting more than 2 consecutive slots is NOT acceptable.
     5. Peak-period gaps are much worse than off-peak surplus.
-    6. Minimize simultaneous driver changeoffs. Avoid stacking multiple changeoffs in the same 15-minute slot when another arrangement is feasible.
+    6. Minimize simultaneous driver changeoffs. Avoid stacking multiple changeoffs in the same ${SLOT_MINUTES}-minute slot when another arrangement is feasible.
     7. Do not create repeated short gaps across the day to save hours.
     8. Prefer a small surplus over recurring service gaps.
 
@@ -331,19 +338,19 @@ export async function optimizeImplementation({
   requestId = 'unknown',
   extendedPipeline,
 }: OptimizeImplementationArgs) {
-  const totalDemandCurve = new Array(96).fill(0);
-  const northDemandCurve = new Array(96).fill(0);
-  const southDemandCurve = new Array(96).fill(0);
+  const totalDemandCurve = new Array(TIME_SLOTS_PER_DAY).fill(0);
+  const northDemandCurve = new Array(TIME_SLOTS_PER_DAY).fill(0);
+  const southDemandCurve = new Array(TIME_SLOTS_PER_DAY).fill(0);
 
   requirements.forEach((r: any) => {
-    if (r.slotIndex >= 0 && r.slotIndex < 96) {
+    if (r.slotIndex >= 0 && r.slotIndex < TIME_SLOTS_PER_DAY) {
       totalDemandCurve[r.slotIndex] = r.total;
       northDemandCurve[r.slotIndex] = r.north;
       southDemandCurve[r.slotIndex] = r.south;
     }
   });
 
-  const floaterDemandCurve = new Array(96).fill(0).map(
+  const floaterDemandCurve = new Array(TIME_SLOTS_PER_DAY).fill(0).map(
     (_, i) => Math.max(0, totalDemandCurve[i] - northDemandCurve[i] - southDemandCurve[i]),
   );
 
@@ -463,7 +470,7 @@ export async function optimizeImplementation({
     ${commonRules}
     
     POLISHING TASKS:
-    1. **Strict Break Windows**: ENSURE every break is between the 4th and 6th hour (Slots: Start+16 to Start+24). MOVE them if they are off by even 1 slot.
+    1. **Strict Break Windows**: ENSURE every break is between the 4th and 6th hour (Slots: Start+${hoursToSlots(4)} to Start+${hoursToSlots(6)}). MOVE them if they are off by even 1 slot.
     2. **Gap Guardrail**: Do not leave any 2+ bus gap or any 1-bus gap longer than 2 consecutive slots.
     3. **Stagger Changeoffs**: If multiple changeoffs land in the same slot, spread them apart when coverage remains acceptable.
     4. **Trim Surpluses**: If a zone has sustained surplus and coverage remains acceptable, cut a shift earlier or start it later.
@@ -482,7 +489,7 @@ export async function optimizeImplementation({
 
     TASK:
     - Review every single shift for break compliance.
-    - Check every 15-min slot for unacceptable gaps, repeated shortfalls, and inefficient surpluses.
+    - Check every ${SLOT_MINUTES}-minute slot for unacceptable gaps, repeated shortfalls, and inefficient surpluses.
     - Output the polished list.
     `;
 

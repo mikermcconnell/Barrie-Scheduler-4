@@ -51,7 +51,7 @@ describe('on-demand optimization settings', () => {
     });
   });
 
-  it('normalizes break duration to valid 15-minute increments', () => {
+  it('normalizes break duration to valid active-grid increments', () => {
     expect(normalizeBreakDurationMinutes(61)).toBe(60);
     expect(normalizeBreakDurationMinutes(7)).toBe(BREAK_DURATION_MINUTES_LIMITS.min);
     expect(normalizeBreakDurationMinutes(120)).toBe(BREAK_DURATION_MINUTES_LIMITS.max);
@@ -59,16 +59,17 @@ describe('on-demand optimization settings', () => {
   });
 
   it('converts break duration minutes into schedule slots', () => {
-    expect(breakDurationMinutesToSlots(60)).toBe(4);
-    expect(breakDurationMinutesToSlots(45)).toBe(3);
+    expect(breakDurationMinutesToSlots(60)).toBe(12);
+    expect(breakDurationMinutesToSlots(45)).toBe(9);
+    expect(breakDurationMinutesToSlots(35)).toBe(7);
   });
 
   it('normalizes changeoff minutes and converts them into schedule slots', () => {
     expect(normalizeChangeoffMinutes(10.4, DEFAULT_NORTH_CHANGEOFF_MINUTES)).toBe(10);
     expect(normalizeChangeoffMinutes(-5, DEFAULT_SOUTH_CHANGEOFF_MINUTES)).toBe(CHANGEOFF_MINUTES_LIMITS.min);
     expect(normalizeChangeoffMinutes(80, DEFAULT_SOUTH_CHANGEOFF_MINUTES)).toBe(CHANGEOFF_MINUTES_LIMITS.max);
-    expect(changeoffMinutesToSlots(10)).toBe(1);
-    expect(changeoffMinutesToSlots(8)).toBe(1);
+    expect(changeoffMinutesToSlots(10)).toBe(2);
+    expect(changeoffMinutesToSlots(8)).toBe(2);
   });
 
   it('normalizes saved optimization settings snapshots', () => {

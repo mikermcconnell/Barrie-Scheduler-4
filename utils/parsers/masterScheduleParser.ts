@@ -852,7 +852,7 @@ export const buildRoundTripView = (
 // --- Conversion Logic for OnDemandWorkspace ---
 
 import { Requirement } from '../demandTypes';
-import { TIME_SLOTS_PER_DAY } from '../demandConstants';
+import { TIME_SLOTS_PER_DAY, minutesToSlot, minutesToSlotsCeil } from '../demandConstants';
 
 
 export const convertMasterRouteTablesToRequirements = (tables: MasterRouteTable[]): Record<string, Requirement[]> => {
@@ -877,12 +877,12 @@ export const convertMasterRouteTablesToRequirements = (tables: MasterRouteTable[
             // Check if trip is valid
             if (trip.startTime === undefined || trip.endTime === undefined) return;
 
-            // Convert minutes to slots
-            const startSlot = Math.floor(trip.startTime / 15);
-            const endSlot = Math.ceil(trip.endTime / 15); // Use ceiling to cover the full duration? Or floor?
+            // Convert minutes to the active TOD planning grid.
+            const startSlot = minutesToSlot(trip.startTime);
+            const endSlot = minutesToSlotsCeil(trip.endTime);
 
             // Actually, we should count it as active if it covers the slot.
-            // Requirement logic typically: Is a bus required during this 15 min window?
+            // Requirement logic typically: Is a bus required during this planning-grid window?
             // If trip is 8:00 (slot 32) to 8:15 (slot 33), it covers slot 32.
 
             for (let slot = startSlot; slot < endSlot; slot++) {

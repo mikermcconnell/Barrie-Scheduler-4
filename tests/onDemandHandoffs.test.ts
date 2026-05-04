@@ -124,20 +124,20 @@ describe('on-demand handoffs', () => {
 
     expect(serviceWindows.get('north-1')).toEqual({
       serviceStartSlot: 32,
-      serviceEndSlot: 39,
+      serviceEndSlot: 37,
       startChangeoffSlots: 0,
-      endChangeoffSlots: 1,
+      endChangeoffSlots: 3,
     });
     expect(serviceWindows.get('south-1')).toEqual({
-      serviceStartSlot: 41,
-      serviceEndSlot: 47,
-      startChangeoffSlots: 1,
-      endChangeoffSlots: 1,
+      serviceStartSlot: 42,
+      serviceEndSlot: 46,
+      startChangeoffSlots: 2,
+      endChangeoffSlots: 2,
     });
     expect(serviceWindows.get('north-2')).toEqual({
-      serviceStartSlot: 49,
+      serviceStartSlot: 51,
       serviceEndSlot: 56,
-      startChangeoffSlots: 1,
+      startChangeoffSlots: 3,
       endChangeoffSlots: 0,
     });
   });

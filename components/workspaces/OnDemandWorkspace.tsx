@@ -69,7 +69,14 @@ import {
     Wand2, Users, BarChart3, Sparkles, Loader2,
     Save, CloudDownload, Check, Edit3, RotateCcw, ArrowLeft, Star, X, Undo2, TriangleAlert
 } from 'lucide-react';
-import { SHIFT_DURATION_SLOTS, BREAK_THRESHOLD_HOURS } from '../../utils/demandConstants';
+import {
+    BREAK_THRESHOLD_HOURS,
+    SHIFT_DURATION_SLOTS,
+    SLOT_MINUTES,
+    hoursToSlots,
+    slotDurationToHours,
+    slotToMinutes,
+} from '../../utils/demandConstants';
 
 // Valid day types for shifts
 type DayType = OnDemandDayType;
@@ -189,9 +196,9 @@ const buildOptimizerSettingsInstruction = (settings: OptimizationSettings, dayTy
         || 'Do not apply a shift count cap.';
     const gapToleranceRule = settings.minorGapTolerance === 'none'
         ? 'Do not allow minor gaps.'
-        : 'Allow only rare one-vehicle gaps for at most one consecutive 15-minute slot, and only if the overall schedule is clearly better.';
+        : `Allow only rare one-vehicle gaps for at most one consecutive ${SLOT_MINUTES}-minute slot, and only if the overall schedule is clearly better.`;
     const breakRule = settings.breakProtection === 'strict'
-        ? 'Breaks should be cleanly backfilled with at least one overlapping 15-minute slot where possible.'
+        ? `Breaks should be cleanly backfilled with at least one overlapping ${SLOT_MINUTES}-minute slot where possible.`
         : 'Breaks should still be staggered carefully, but limited handoff overlap is acceptable if coverage holds.';
     const costRule = settings.costPriority === 'service'
         ? 'Prioritize service quality over trimming payable hours or surplus.'
@@ -963,9 +970,9 @@ export const OnDemandWorkspace: React.FC = () => {
             id: createScopedShiftId(selectedDayType),
             driverName: newName,
             zone: startZone,
-            startSlot: 32, // 08:00
-            endSlot: 32 + SHIFT_DURATION_SLOTS,
-            breakStartSlot: 32 + 16, // Break after 4 hours
+            startSlot: hoursToSlots(8), // 08:00
+            endSlot: hoursToSlots(8) + SHIFT_DURATION_SLOTS,
+            breakStartSlot: hoursToSlots(8) + hoursToSlots(4), // Break after 4 hours
             breakDurationSlots: requiredBreakDurationSlots,
             dayType: selectedDayType
         };
@@ -1310,6 +1317,7 @@ export const OnDemandWorkspace: React.FC = () => {
                 shiftData: allShifts, // Save ALL shifts from all days
                 masterScheduleData: requirements, // Save current view
                 ...(schedules ? { schedulesData: schedules } : {}), // Save all day requirements when available
+                slotGranularityMinutes: SLOT_MINUTES,
                 optimizationSettings,
             };
 
@@ -1935,7 +1943,7 @@ export const OnDemandWorkspace: React.FC = () => {
                                     <div className="flex justify-between items-center p-3 bg-gray-50 rounded-xl border-2 border-gray-200 mt-2">
                                         <span className="font-bold text-gray-600">Total Shift Hours</span>
                                         <span className="font-extrabold text-gray-800">
-                                            {Math.round(shifts.reduce((sum, s) => sum + (s.endSlot - s.startSlot) / 4, 0))}h
+                                            {Math.round(shifts.reduce((sum, s) => sum + slotDurationToHours(s.endSlot - s.startSlot), 0))}h
                                         </span>
                                     </div>
 
@@ -2124,13 +2132,13 @@ export const OnDemandWorkspace: React.FC = () => {
                                                 </div>
                                                 <div className="mt-2 text-xs text-gray-400 font-semibold">{metric.helper}</div>
                                                 <div className="mt-2 text-[11px] font-bold text-orange-700 bg-orange-50 border border-orange-100 rounded-lg px-2.5 py-1.5">
-                                                    Current setting uses {changeoffMinutesToSlots(optimizationSettings[metric.key])} planning slot{changeoffMinutesToSlots(optimizationSettings[metric.key]) === 1 ? '' : 's'} of changeoff time per side ({changeoffMinutesToSlots(optimizationSettings[metric.key]) * 15} minutes on the 15-minute grid).
+                                                    Current setting uses {changeoffMinutesToSlots(optimizationSettings[metric.key])} planning slot{changeoffMinutesToSlots(optimizationSettings[metric.key]) === 1 ? '' : 's'} of changeoff time per side ({slotToMinutes(changeoffMinutesToSlots(optimizationSettings[metric.key]))} minutes on the {SLOT_MINUTES}-minute grid).
                                                 </div>
                                             </label>
                                         ))}
                                     </div>
                                     <div className="text-xs text-gray-400 font-semibold mt-3">
-                                        The workspace only applies this travel time at an internal handoff between consecutive North or South shifts. The first piece of the day starts in-zone, and the last piece ends in-zone. Any non-zero value is rounded up onto the 15-minute planning grid.
+                                        The workspace only applies this travel time at an internal handoff between consecutive North or South shifts. The first piece of the day starts in-zone, and the last piece ends in-zone. Any non-zero value is rounded up onto the {SLOT_MINUTES}-minute planning grid.
                                     </div>
                                 </div>
                             </div>
@@ -2207,7 +2215,7 @@ export const OnDemandWorkspace: React.FC = () => {
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Use a hard shift cap when the number of pieces is fixed. Switch it to guide when you want the optimizer to prefer fewer shifts without blocking extra relief work that meaningfully improves the day.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Break duration sets the required long-shift break length, and the same value is used when you add or edit a shift manually.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">North and South changeoff travel only applies during a true mid-service handoff where one revenue piece ends and another begins. Morning pull-outs can happen before revenue time and final pull-ins happen after revenue time, so they do not create orange changeoff gaps.</p>
-                                    <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Changeoff minutes are enforced on the 15-minute planning grid. In practice, 1-15 minutes consumes one slot, 16-30 minutes consumes two slots, and so on.</p>
+                                    <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Changeoff minutes are enforced on the {SLOT_MINUTES}-minute planning grid. Any partial slot rounds up to the next planning slot.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Minor gap tolerance decides whether the optimizer can accept a very small shortfall in exchange for a meaningfully better full-day schedule.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Break protection controls how hard the optimizer should push for clean break relief and overlap coverage.</p>
                                     <p className="p-3 rounded-xl bg-gray-50 border-2 border-gray-200">Cost pressure controls how strongly the optimizer trims extra payable hours and surplus once service quality is acceptable.</p>

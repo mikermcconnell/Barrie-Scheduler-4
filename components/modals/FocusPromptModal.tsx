@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { AlertTriangle, Sparkles, X } from 'lucide-react';
+import { SLOT_MINUTES } from '../../utils/demandConstants';
 
 interface Props {
     onCancel: () => void;
@@ -56,9 +57,9 @@ export const FocusPromptModal: React.FC<Props> = ({ onCancel, onOptimize, initia
                         <span className="text-[10px] font-bold text-gray-400 uppercase mb-2 block">Quick Prompts</span>
                         <div className="flex flex-wrap gap-2">
                             {[
-                                { label: 'Match Master', text: 'Match the master schedule as closely as possible in every 15-minute slot.' },
+                                { label: 'Match Master', text: `Match the master schedule as closely as possible in every ${SLOT_MINUTES}-minute slot.` },
                                 { label: 'Peak Coverage', text: 'Eliminate peak-period gaps first, even if it means accepting small off-peak surplus.' },
-                                { label: 'Minor Gaps Only', text: 'Allow only rare 1-bus gaps for a maximum of 2 consecutive 15-minute slots, and only if the overall schedule is clearly better.' },
+                                { label: 'Minor Gaps Only', text: `Allow only rare 1-bus gaps for a maximum of 2 consecutive ${SLOT_MINUTES}-minute slots, and only if the overall schedule is clearly better.` },
                                 { label: 'Break Coverage', text: 'Keep breaks compliant and staggered without creating same-zone service gaps.' }
                             ].map((prompt) => (
                                 <button

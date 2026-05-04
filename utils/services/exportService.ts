@@ -1,5 +1,6 @@
 import { Shift } from '../demandTypes';
 import { formatSlotToTime } from '../dataGenerator';
+import { slotToMinutes } from '../demandConstants';
 
 export const generateRideCoCSV = (shifts: Shift[]): string => {
     if (!shifts || shifts.length === 0) return '';
@@ -47,7 +48,7 @@ export const generateRideCoCSV = (shifts: Shift[]): string => {
         // Handle overnight wrap for display if needed, but formatSlotToTime handles strict modulo. 
         // Ideally we might want "25:00" format? 
         // For now, formatSlotToTime (00:00-23:45) is standard.
-        // If endSlot > 96, formatSlotToTime wraps.
+        // If endSlot crosses the active planning day, formatSlotToTime wraps.
         matrix[16][col] = formatSlotToTime(shift.endSlot);
 
         // Row 18: Break Start Time
@@ -59,7 +60,7 @@ export const generateRideCoCSV = (shifts: Shift[]): string => {
             matrix[18][col] = formatSlotToTime(breakEndSlot);
 
             // Row 20: Break Duration (Minutes)
-            matrix[19][col] = (shift.breakDurationSlots * 15).toString();
+            matrix[19][col] = slotToMinutes(shift.breakDurationSlots).toString();
         } else {
             matrix[17][col] = 'N/B';
             matrix[18][col] = 'N/B';
