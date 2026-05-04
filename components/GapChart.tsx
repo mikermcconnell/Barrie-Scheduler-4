@@ -340,7 +340,7 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
   const [isExpanded, setIsExpanded] = React.useState(true);
 
   return (
-    <div className={`w-full bg-white p-6 rounded-3xl border-2 border-gray-200 shadow-sm relative overflow-hidden transition-all duration-300 ${isExpanded ? (fillHeight ? 'h-full' : 'h-[550px]') : 'h-auto'}`}>
+    <div className={`w-full bg-white p-6 rounded-3xl border-2 border-gray-200 shadow-sm relative overflow-hidden transition-all duration-300 ${isExpanded ? (fillHeight ? 'flex h-full min-h-[520px] flex-col' : 'flex h-[680px] flex-col') : 'h-auto'}`}>
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
         <div className="flex items-center gap-4">
           <button
@@ -447,12 +447,13 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
             </div>
           )}
 
-          <ResponsiveContainer width="100%" height="85%">
-            <ComposedChart
-              data={chartData}
-              margin={{ top: 20, right: 30, left: 0, bottom: 30 }}
-              barGap={0}
-            >
+          <div className="min-h-0 flex-1">
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart
+                data={chartData}
+                margin={{ top: 20, right: 30, left: 0, bottom: 30 }}
+                barGap={0}
+              >
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
               <XAxis
                 dataKey="timeLabel"
@@ -574,8 +575,9 @@ export const GapChart: React.FC<Props> = ({ data, zoneFilter, onZoneFilterChange
                 />
               )}
 
-            </ComposedChart>
-          </ResponsiveContainer>
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
         </>
       )}
     </div>

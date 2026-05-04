@@ -265,7 +265,7 @@ export const ShiftEditorModal: React.FC<Props> = ({
             onMouseUp={handleMouseUp}
             onMouseMove={handleMouseMove}
         >
-            <div className="bg-white w-full max-w-6xl h-[90vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden border border-gray-100">
+            <div className="bg-white w-full max-w-6xl h-[94vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden border border-gray-100">
 
                 {/* Header */}
                 <div className="flex justify-between items-center px-8 py-6 border-b border-gray-100 bg-white">
@@ -364,7 +364,7 @@ export const ShiftEditorModal: React.FC<Props> = ({
 
                     {/* Chart Section */}
                     {/* Updated to use local zone filter from shift */}
-                    <div className="flex-1 p-6 min-h-0">
+                    <div className="flex-1 p-4 min-h-0">
                         <div className="h-full">
                             <GapChart
                                 data={chartData}
@@ -376,7 +376,7 @@ export const ShiftEditorModal: React.FC<Props> = ({
                     </div>
 
                     {/* Controls Section (Fixed at Bottom) */}
-                    <div className="bg-white border-t border-gray-200 p-8 shadow-[0_-4px_20px_rgba(0,0,0,0.02)] z-10">
+                    <div className="bg-white border-t border-gray-200 p-6 shadow-[0_-4px_20px_rgba(0,0,0,0.02)] z-10">
 
                         {/* Timeline Visualizer - Aligned with Chart */}
                         {/* Chart has: margin={{ top: 20, right: 30, left: 0, bottom: 20 }} and padding inside container */}
