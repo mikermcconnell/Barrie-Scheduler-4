@@ -397,6 +397,8 @@ function buildGtfsScheduledRuntimeEstimates(
     stops: RoutePlanner2GtfsImportStop[],
     now: string,
     sampleSize: number,
+    routeShortName: string,
+    evidenceDayType?: 'weekday' | 'saturday' | 'sunday',
 ): RoutePlanner2SegmentRuntime[] {
     const estimates: RoutePlanner2SegmentRuntime[] = [];
 
@@ -421,6 +423,9 @@ function buildGtfsScheduledRuntimeEstimates(
             matchQuality: 'exact-code',
             matchedFromStopId: fromStop.gtfsStopId,
             matchedToStopId: toStop.gtfsStopId,
+            matchedRoutes: [routeShortName],
+            evidenceDayType,
+            evidencePeriod: 'full-day',
             updatedAt: now,
         });
     });
@@ -448,7 +453,15 @@ export function createRoutePlanner2ScenarioFromGtfsPattern(
         stopCode: stop.stopCode,
     }));
     const alignment = buildSegmentWaypoints(pattern.stops, pattern.shapePoints);
-    const runtimeEstimates = buildGtfsScheduledRuntimeEstimates(pattern.stops, now, pattern.tripCount);
+    const dayTypeLabel = pattern.dayTypeLabel.toLowerCase();
+    const evidenceDayType = dayTypeLabel.includes('saturday')
+        ? 'saturday'
+        : dayTypeLabel.includes('sunday')
+            ? 'sunday'
+            : dayTypeLabel.includes('weekday')
+                ? 'weekday'
+                : undefined;
+    const runtimeEstimates = buildGtfsScheduledRuntimeEstimates(pattern.stops, now, pattern.tripCount, pattern.routeShortName, evidenceDayType);
 
     return {
         id: options.id ?? createId('scenario-gtfs'),

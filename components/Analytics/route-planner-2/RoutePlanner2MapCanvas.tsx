@@ -48,7 +48,7 @@ interface RoutePlanner2MapCanvasProps {
     onAddNextStop?: () => void;
     onEnterDrawFocus?: () => void;
     focusMode?: boolean;
-    metricItems?: Array<{ label: string; value: string; description?: string }>;
+    metricItems?: Array<{ label: string; value: string; detail?: string; description?: string; onClick?: () => void }>;
     overlayInsets?: {
         left: string;
         right: string;
@@ -766,20 +766,47 @@ export function RoutePlanner2MapCanvas({
                         className="absolute bottom-4 right-4 grid max-w-3xl grid-cols-2 gap-2 rounded-3xl border border-slate-200 bg-white/95 p-3 shadow-xl sm:grid-cols-5"
                         style={{ right: 'var(--rp2-overlay-right)' }}
                     >
-                        {metricItems.map((item) => (
-                            <div key={item.label} className="group relative min-w-24 rounded-2xl bg-slate-50 px-3 py-2">
-                                <div className="text-[10px] font-black uppercase tracking-wide text-slate-500">{item.label}</div>
-                                <div className="mt-1 text-sm font-black text-slate-900">{item.value}</div>
-                                {item.description && (
-                                    <div
-                                        role="tooltip"
-                                        className="pointer-events-none absolute bottom-full right-0 z-40 mb-2 w-64 rounded-2xl border border-slate-200 bg-white p-3 text-xs font-semibold leading-5 text-slate-700 opacity-0 shadow-xl transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+                        {metricItems.map((item) => {
+                            const metricContent = (
+                                <>
+                                    <div className="text-[10px] font-black uppercase tracking-wide text-slate-500">{item.label}</div>
+                                    <div className="mt-1 text-sm font-black text-slate-900">{item.value}</div>
+                                    {item.detail && (
+                                        <div className="mt-1 text-[10px] font-bold leading-4 text-slate-500">{item.detail}</div>
+                                    )}
+                                    {item.description && (
+                                        <div
+                                            role="tooltip"
+                                            className="pointer-events-none absolute bottom-full right-0 z-40 mb-2 w-64 rounded-2xl border border-slate-200 bg-white p-3 text-xs font-semibold leading-5 text-slate-700 opacity-0 shadow-xl transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+                                        >
+                                            {item.description}
+                                        </div>
+                                    )}
+                                </>
+                            );
+                            const metricTestId = `rp2-map-metric-${item.label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+
+                            if (item.onClick) {
+                                return (
+                                    <button
+                                        key={item.label}
+                                        type="button"
+                                        onClick={item.onClick}
+                                        data-testid={metricTestId}
+                                        className="group relative min-w-24 rounded-2xl bg-slate-50 px-3 py-2 text-left transition hover:bg-cyan-50 focus:outline-none focus:ring-2 focus:ring-cyan-400"
+                                        aria-label={`Open ${item.label} source details`}
                                     >
-                                        {item.description}
-                                    </div>
-                                )}
-                            </div>
-                        ))}
+                                        {metricContent}
+                                    </button>
+                                );
+                            }
+
+                            return (
+                                <div key={item.label} data-testid={metricTestId} className="group relative min-w-24 rounded-2xl bg-slate-50 px-3 py-2">
+                                    {metricContent}
+                                </div>
+                            );
+                        })}
                     </div>
                 )}
 

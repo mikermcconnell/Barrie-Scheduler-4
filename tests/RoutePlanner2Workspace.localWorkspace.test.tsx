@@ -171,7 +171,36 @@ describe('RoutePlanner2Workspace local workspace', () => {
     expect(view.textContent).toContain('Barrie South GO');
     expect(view.textContent).toContain('Imported from GTFS as an editable planning copy');
     expect(view.textContent).toContain('Scheduled runtime / high');
+    expect(view.querySelector('[data-testid="rp2-map-metrics"]')?.textContent).toContain('Scheduled GTFS · Route 400');
+    expect(view.querySelector('[data-testid="rp2-map-metrics"]')?.textContent).toContain('Weekday · Full Day');
+    expect(view.textContent).toContain('Runtime source summary');
+    expect(view.textContent).toContain('1 segment');
     expect(view.textContent).toContain('Confidencehigh');
+  });
+
+  it('shows original scheduled source when a planner overrides a segment runtime', async () => {
+    const view = renderWorkspace();
+
+    flushSync(() => {
+      click(findButton(view, 'Import GTFS'));
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    flushSync(() => {
+      click(findButton(view, 'Route 400'));
+    });
+    flushSync(() => {
+      click(findButton(view, 'Import as editable route'));
+    });
+
+    const overrideInput = Array.from(view.querySelectorAll('input[aria-label^="Override runtime"]'))[0] as HTMLInputElement | undefined;
+    expect(overrideInput).toBeTruthy();
+
+    flushSync(() => {
+      setInputValue(overrideInput!, '30');
+    });
+
+    expect(view.textContent).toContain('Planner override');
+    expect(view.textContent).toContain('Original: Scheduled GTFS · Route 400');
   });
 
   it('renders runtime day and period controls in service assumptions', () => {
@@ -301,6 +330,50 @@ describe('RoutePlanner2Workspace local workspace', () => {
     expect(mapCanvas?.style.getPropertyValue('--rp2-overlay-left')).toBe('2rem');
     expect(mapCanvas?.style.getPropertyValue('--rp2-overlay-right')).toBe('26.5rem');
     expect(view.textContent).toContain('Hide details');
+  });
+
+  it('keeps the map-first workspace vertically scrollable on short screens', () => {
+    const view = renderWorkspace();
+    const workspaceShell = view.querySelector('[data-testid="rp2-map-first-shell"]') as HTMLElement | null;
+
+    expect(workspaceShell?.className).toContain('overflow-y-auto');
+    expect(workspaceShell?.className).not.toContain('overflow-hidden');
+  });
+
+  it('opens and scrolls to runtime source details from the map runtime data source', async () => {
+    const view = renderWorkspace();
+    const scrollIntoView = vi.fn();
+    const originalScrollIntoView = HTMLElement.prototype.scrollIntoView;
+    const originalRequestAnimationFrame = window.requestAnimationFrame;
+    HTMLElement.prototype.scrollIntoView = scrollIntoView;
+    window.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+      callback(0);
+      return 0;
+    }) as typeof window.requestAnimationFrame;
+
+    try {
+      const rightRail = view.querySelector('[data-testid="rp2-right-rail"]');
+      const runtimeMetric = view.querySelector('[data-testid="rp2-map-metric-runtime"]') as HTMLButtonElement | null;
+
+      expect(rightRail?.getAttribute('data-state')).toBe('closed');
+      expect(runtimeMetric?.textContent).toContain('Data source:');
+
+      flushSync(() => {
+        click(runtimeMetric);
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(rightRail?.getAttribute('data-state')).toBe('open');
+      expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' });
+      expect(view.querySelector('[data-testid="rp2-runtime-source-details"]')?.textContent).toContain('Scheduled GTFS is used when the segment matches');
+    } finally {
+      if (originalScrollIntoView) {
+        HTMLElement.prototype.scrollIntoView = originalScrollIntoView;
+      } else {
+        delete (HTMLElement.prototype as typeof HTMLElement.prototype & { scrollIntoView?: unknown }).scrollIntoView;
+      }
+      window.requestAnimationFrame = originalRequestAnimationFrame;
+    }
   });
 
   it('enters focused draw mode by hiding details and keeping metrics on the map', () => {

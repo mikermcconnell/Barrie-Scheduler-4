@@ -1,5 +1,6 @@
 import {
   getStatsForPeriod,
+  scopeStatsToRoute,
   type CorridorSpeedIndex,
   type CorridorSpeedSegment,
   type CorridorSpeedStats,
@@ -35,6 +36,50 @@ export interface RoutePlanner2RuntimeEvidenceInput {
 export interface RoutePlanner2RuntimeEvidenceOptions {
   gtfsStops?: readonly GtfsStopWithCoords[];
   now?: string;
+  runtimeBasis?: 'best-available' | 'scheduled';
+  onDiagnostic?: (diagnostic: RoutePlanner2RuntimeEvidenceDiagnostic) => void;
+}
+
+export type RoutePlanner2RuntimeEvidenceMissReason =
+  | 'matched'
+  | 'from-stop-unmatched'
+  | 'to-stop-unmatched'
+  | 'no-speed-segment-for-stop-pair'
+  | 'no-stats-for-selected-day-period'
+  | 'route-not-found-for-segment'
+  | 'scheduled-runtime-missing';
+
+export interface RoutePlanner2RuntimeEvidenceSegmentDiagnostic {
+  segmentId: string;
+  fromStopId: string;
+  fromStopName?: string;
+  toStopId: string;
+  toStopName?: string;
+  reason: RoutePlanner2RuntimeEvidenceMissReason;
+  fromGtfsMatch?: RoutePlanner2GtfsStopMatch;
+  toGtfsMatch?: RoutePlanner2GtfsStopMatch;
+  matchedSpeedSegmentId?: string;
+  matchedSegmentRoutes?: string[];
+  statRoutes?: string[];
+  scheduledRuntimeMin?: number | null;
+  routeScopedScheduledRuntimeMin?: number | null;
+  runtimeMinutes?: number;
+  source?: RoutePlanner2RuntimeSource;
+}
+
+export interface RoutePlanner2RuntimeEvidenceDiagnostic {
+  scenarioId: string;
+  scenarioName: string;
+  preferredRoute: string | null;
+  dayType: DayType;
+  period: TimePeriod;
+  runtimeBasis: 'best-available' | 'scheduled';
+  gtfsStopCount: number;
+  speedSegmentCount: number;
+  statsForSelectedPeriodCount: number;
+  segmentCount: number;
+  estimateCount: number;
+  segments: RoutePlanner2RuntimeEvidenceSegmentDiagnostic[];
 }
 
 type RoutePlanner2ResolvedEvidence = {
@@ -97,19 +142,14 @@ function resolveWeakerMatchQuality(
   return 'exact-code';
 }
 
-function findStatsForMatchedStops(
+function findSpeedSegmentForMatchedStops(
   speedIndex: CorridorSpeedIndex,
-  statsBySegmentId: ReadonlyMap<string, CorridorSpeedStats>,
   fromGtfsStopId: string,
   toGtfsStopId: string,
-): { segment: CorridorSpeedSegment; stats: CorridorSpeedStats } | null {
-  for (const segment of speedIndex.segments) {
-    if (segment.fromStopId !== fromGtfsStopId || segment.toStopId !== toGtfsStopId) continue;
-    const stats = statsBySegmentId.get(segment.id);
-    if (stats) return { segment, stats };
-  }
-
-  return null;
+): CorridorSpeedSegment | null {
+  return speedIndex.segments.find((segment) =>
+    segment.fromStopId === fromGtfsStopId && segment.toStopId === toGtfsStopId
+  ) ?? null;
 }
 
 function resolveMatchedRoutes(
@@ -126,11 +166,58 @@ function resolveMatchedRoutes(
 function addRuntimeDetailFields(
   estimate: RoutePlanner2SegmentRuntime,
   stats: CorridorSpeedStats,
+  options: { includeObservedRuntime?: boolean } = {},
 ): RoutePlanner2SegmentRuntime {
   return {
     ...estimate,
     ...(stats.scheduledRuntimeMin == null ? {} : { scheduledRuntimeMinutes: stats.scheduledRuntimeMin }),
-    ...(stats.observedRuntimeMin == null ? {} : { observedRuntimeMinutes: stats.observedRuntimeMin }),
+    ...(options.includeObservedRuntime === false || stats.observedRuntimeMin == null ? {} : { observedRuntimeMinutes: stats.observedRuntimeMin }),
+  };
+}
+
+function getScenarioSourceRoute(scenario: RoutePlanner2Scenario): string | null {
+  return scenario.source?.type === 'gtfs' && scenario.source.routeShortName
+    ? scenario.source.routeShortName
+    : null;
+}
+
+function resolveStatsForScenarioRoute(
+  matched: { segment: CorridorSpeedSegment; stats: CorridorSpeedStats },
+  preferredRoute: string | null,
+): { stats: CorridorSpeedStats; matchedRoutes: string[] } | null {
+  if (!preferredRoute) {
+    return {
+      stats: matched.stats,
+      matchedRoutes: resolveMatchedRoutes(matched.segment, matched.stats),
+    };
+  }
+
+  const routeStats = scopeStatsToRoute(matched.stats, preferredRoute);
+  if (routeStats) {
+    return {
+      stats: routeStats,
+      matchedRoutes: [preferredRoute],
+    };
+  }
+
+  if (matched.segment.routes.length === 1 && matched.segment.routes[0] === preferredRoute) {
+    return {
+      stats: matched.stats,
+      matchedRoutes: [preferredRoute],
+    };
+  }
+
+  return null;
+}
+
+function resolveScheduledRuntimeEvidenceSegment(
+  input: Pick<RoutePlanner2RuntimeEvidenceInput, 'scheduledRuntimeMin'>,
+): RoutePlanner2ResolvedEvidence | null {
+  if (input.scheduledRuntimeMin == null) return null;
+  return {
+    runtimeMinutes: Math.round(input.scheduledRuntimeMin),
+    source: 'scheduled-proxy',
+    confidence: 'medium',
   };
 }
 
@@ -153,28 +240,88 @@ export function deriveRoutePlanner2EvidenceRuntimeEstimates(
 
   const statsBySegmentId = getStatsForPeriod(speedIndex, dayType, period);
   const updatedAt = options.now ?? new Date().toISOString();
+  const runtimeBasis = options.runtimeBasis ?? 'best-available';
+  const preferredRoute = getScenarioSourceRoute(scenario);
   const estimates: RoutePlanner2SegmentRuntime[] = [];
+  const segmentDiagnostics: RoutePlanner2RuntimeEvidenceSegmentDiagnostic[] = [];
 
   for (const segmentPath of segmentPaths) {
+    const fromStop = routePlannerStopsById.get(segmentPath.fromStopId);
+    const toStop = routePlannerStopsById.get(segmentPath.toStopId);
     const fromMatch = matchByRoutePlannerStopId.get(segmentPath.fromStopId) ?? null;
     const toMatch = matchByRoutePlannerStopId.get(segmentPath.toStopId) ?? null;
-    if (!fromMatch || !toMatch) continue;
+    const diagnosticBase = {
+      segmentId: segmentPath.id,
+      fromStopId: segmentPath.fromStopId,
+      fromStopName: fromStop?.name,
+      toStopId: segmentPath.toStopId,
+      toStopName: toStop?.name,
+      ...(fromMatch ? { fromGtfsMatch: fromMatch } : {}),
+      ...(toMatch ? { toGtfsMatch: toMatch } : {}),
+    };
 
-    const matched = findStatsForMatchedStops(
-      speedIndex,
-      statsBySegmentId,
-      fromMatch.gtfsStopId,
-      toMatch.gtfsStopId,
-    );
-    if (!matched) continue;
+    if (!fromMatch) {
+      segmentDiagnostics.push({ ...diagnosticBase, reason: 'from-stop-unmatched' });
+      continue;
+    }
+    if (!toMatch) {
+      segmentDiagnostics.push({ ...diagnosticBase, reason: 'to-stop-unmatched' });
+      continue;
+    }
 
-    const resolved = resolveRoutePlanner2RuntimeEvidenceSegment({
-      scheduledRuntimeMin: matched.stats.scheduledRuntimeMin,
-      observedRuntimeMin: matched.stats.observedRuntimeMin,
-      sampleCount: matched.stats.sampleCount,
-      lowConfidence: matched.stats.lowConfidence,
-    });
-    if (!resolved) continue;
+    const matchedSegment = findSpeedSegmentForMatchedStops(speedIndex, fromMatch.gtfsStopId, toMatch.gtfsStopId);
+    if (!matchedSegment) {
+      segmentDiagnostics.push({ ...diagnosticBase, reason: 'no-speed-segment-for-stop-pair' });
+      continue;
+    }
+
+    const matchedStats = statsBySegmentId.get(matchedSegment.id);
+    if (!matchedStats) {
+      segmentDiagnostics.push({
+        ...diagnosticBase,
+        reason: 'no-stats-for-selected-day-period',
+        matchedSpeedSegmentId: matchedSegment.id,
+        matchedSegmentRoutes: matchedSegment.routes,
+      });
+      continue;
+    }
+
+    const matched = { segment: matchedSegment, stats: matchedStats };
+    const scopedEvidence = resolveStatsForScenarioRoute(matched, preferredRoute);
+    if (!scopedEvidence) {
+      segmentDiagnostics.push({
+        ...diagnosticBase,
+        reason: 'route-not-found-for-segment',
+        matchedSpeedSegmentId: matched.segment.id,
+        matchedSegmentRoutes: matched.segment.routes,
+        statRoutes: matched.stats.routeBreakdown.map((route) => route.route),
+        scheduledRuntimeMin: matched.stats.scheduledRuntimeMin,
+      });
+      continue;
+    }
+
+    const resolved = runtimeBasis === 'scheduled'
+      ? resolveScheduledRuntimeEvidenceSegment({
+        scheduledRuntimeMin: scopedEvidence.stats.scheduledRuntimeMin,
+      })
+      : resolveRoutePlanner2RuntimeEvidenceSegment({
+        scheduledRuntimeMin: scopedEvidence.stats.scheduledRuntimeMin,
+        observedRuntimeMin: scopedEvidence.stats.observedRuntimeMin,
+        sampleCount: scopedEvidence.stats.sampleCount,
+        lowConfidence: scopedEvidence.stats.lowConfidence,
+      });
+    if (!resolved) {
+      segmentDiagnostics.push({
+        ...diagnosticBase,
+        reason: 'scheduled-runtime-missing',
+        matchedSpeedSegmentId: matched.segment.id,
+        matchedSegmentRoutes: matched.segment.routes,
+        statRoutes: matched.stats.routeBreakdown.map((route) => route.route),
+        scheduledRuntimeMin: matched.stats.scheduledRuntimeMin,
+        routeScopedScheduledRuntimeMin: scopedEvidence.stats.scheduledRuntimeMin,
+      });
+      continue;
+    }
 
     estimates.push(addRuntimeDetailFields({
       id: segmentPath.id,
@@ -187,11 +334,40 @@ export function deriveRoutePlanner2EvidenceRuntimeEstimates(
       matchQuality: resolveWeakerMatchQuality(fromMatch.quality, toMatch.quality),
       matchedFromStopId: fromMatch.gtfsStopId,
       matchedToStopId: toMatch.gtfsStopId,
-      matchedRoutes: resolveMatchedRoutes(matched.segment, matched.stats),
+      matchedRoutes: scopedEvidence.matchedRoutes,
+      evidenceDayType: dayType,
+      evidencePeriod: period,
       pathFingerprint: segmentPath.pathFingerprint,
       updatedAt,
-    }, matched.stats));
+    }, scopedEvidence.stats, { includeObservedRuntime: runtimeBasis !== 'scheduled' }));
+
+    segmentDiagnostics.push({
+      ...diagnosticBase,
+      reason: 'matched',
+      matchedSpeedSegmentId: matched.segment.id,
+      matchedSegmentRoutes: matched.segment.routes,
+      statRoutes: matched.stats.routeBreakdown.map((route) => route.route),
+      scheduledRuntimeMin: matched.stats.scheduledRuntimeMin,
+      routeScopedScheduledRuntimeMin: scopedEvidence.stats.scheduledRuntimeMin,
+      runtimeMinutes: resolved.runtimeMinutes,
+      source: resolved.source,
+    });
   }
+
+  options.onDiagnostic?.({
+    scenarioId: scenario.id,
+    scenarioName: scenario.name,
+    preferredRoute,
+    dayType,
+    period,
+    runtimeBasis,
+    gtfsStopCount: gtfsStops.length,
+    speedSegmentCount: speedIndex.segments.length,
+    statsForSelectedPeriodCount: statsBySegmentId.size,
+    segmentCount: segmentPaths.length,
+    estimateCount: estimates.length,
+    segments: segmentDiagnostics,
+  });
 
   return estimates;
 }

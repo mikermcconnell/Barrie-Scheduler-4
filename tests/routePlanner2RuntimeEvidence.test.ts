@@ -170,33 +170,62 @@ describe('deriveRoutePlanner2EvidenceRuntimeEstimates', () => {
   });
 
   it('returns no estimates when Route Planner stops do not match GTFS stops', () => {
+    let diagnostic: unknown;
     const estimates = deriveRoutePlanner2EvidenceRuntimeEstimates(
       scenario,
       speedIndex,
       'weekday',
       'full-day',
-      { gtfsStops: [], now },
+      { gtfsStops: [], now, onDiagnostic: (value) => { diagnostic = value; } },
     );
 
     expect(estimates).toEqual([]);
+    expect(diagnostic).toMatchObject({
+      scenarioId: 'scenario-1',
+      preferredRoute: null,
+      dayType: 'weekday',
+      period: 'full-day',
+      gtfsStopCount: 0,
+      speedSegmentCount: 1,
+      statsForSelectedPeriodCount: 1,
+      segmentCount: 1,
+      estimateCount: 0,
+      segments: [{
+        segmentId: 'segment-rp-a-rp-b',
+        reason: 'from-stop-unmatched',
+      }],
+    });
   });
 
   it('returns no estimates when matched stops have no stats for the requested period', () => {
+    let diagnostic: unknown;
     const estimates = deriveRoutePlanner2EvidenceRuntimeEstimates(
       scenario,
       speedIndex,
       'weekday',
       'am-peak',
-      { gtfsStops, now },
+      { gtfsStops, now, onDiagnostic: (value) => { diagnostic = value; } },
     );
 
     expect(estimates).toEqual([]);
+    expect(diagnostic).toMatchObject({
+      dayType: 'weekday',
+      period: 'am-peak',
+      statsForSelectedPeriodCount: 0,
+      estimateCount: 0,
+      segments: [{
+        segmentId: 'segment-rp-a-rp-b',
+        reason: 'no-stats-for-selected-day-period',
+        matchedSpeedSegmentId: 'North|gtfs-a|gtfs-b',
+        matchedSegmentRoutes: ['8A'],
+      }],
+    });
   });
 
   it('falls back to route breakdown values when the matched corridor segment has no routes', () => {
     const speedIndexWithRouteBreakdownOnly: CorridorSpeedIndex = {
       ...speedIndex,
-      segments: speedIndex.segments.map((segment) => ({ ...segment, routes: [] })),
+      segments: speedIndex.segments.map((segment) => ({ ...segment, routes: [] as string[] })),
       statsBySegmentId: new Map([
         ['North|gtfs-a|gtfs-b', new Map([
           ['weekday', new Map([
@@ -221,5 +250,60 @@ describe('deriveRoutePlanner2EvidenceRuntimeEstimates', () => {
     );
 
     expect(estimates[0]?.matchedRoutes).toEqual(['8A', '8B']);
+  });
+
+  it('uses the selected time period and GTFS route when deriving scheduled runtime evidence', () => {
+    const routeScopedScenario: RoutePlanner2Scenario = {
+      ...scenario,
+      source: {
+        type: 'gtfs',
+        routeShortName: '8B',
+      },
+    };
+    const amPeakStats: CorridorSpeedStats = {
+      ...stats,
+      period: 'am-peak',
+      scheduledRuntimeMin: 15,
+      observedRuntimeMin: null,
+      sampleCount: 0,
+      routeBreakdown: [
+        { route: '8A', sampleCount: 0, scheduledRuntimeMin: 11, observedRuntimeMin: null, runtimeDeltaMin: null, runtimeDeltaPct: null, scheduledSpeedKmh: 5.5, observedSpeedKmh: null },
+        { route: '8B', sampleCount: 0, scheduledRuntimeMin: 19, observedRuntimeMin: null, runtimeDeltaMin: null, runtimeDeltaPct: null, scheduledSpeedKmh: 3.2, observedSpeedKmh: null },
+      ],
+    };
+    const routeScopedIndex: CorridorSpeedIndex = {
+      ...speedIndex,
+      segments: [{
+        ...speedIndex.segments[0]!,
+        routes: ['8A', '8B'],
+      }],
+      statsBySegmentId: new Map([
+        ['North|gtfs-a|gtfs-b', new Map([
+          ['weekday', new Map([
+            ['full-day', stats],
+            ['am-peak', amPeakStats],
+          ])],
+        ])],
+      ]),
+    };
+
+    const estimates = deriveRoutePlanner2EvidenceRuntimeEstimates(
+      routeScopedScenario,
+      routeScopedIndex,
+      'weekday',
+      'am-peak',
+      { gtfsStops, now, runtimeBasis: 'scheduled' },
+    );
+
+    expect(estimates).toHaveLength(1);
+    expect(estimates[0]).toMatchObject({
+      runtimeMinutes: 19,
+      source: 'scheduled-proxy',
+      scheduledRuntimeMinutes: 19,
+      matchedRoutes: ['8B'],
+      evidenceDayType: 'weekday',
+      evidencePeriod: 'am-peak',
+    });
+    expect(estimates[0]?.observedRuntimeMinutes).toBeUndefined();
   });
 });

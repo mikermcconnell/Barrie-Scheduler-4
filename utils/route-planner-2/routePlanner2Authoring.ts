@@ -593,6 +593,8 @@ function segmentRuntimeChanged(
         || current.matchedFromStopId !== next.matchedFromStopId
         || current.matchedToStopId !== next.matchedToStopId
         || !arraysMatch(current.matchedRoutes, next.matchedRoutes)
+        || current.evidenceDayType !== next.evidenceDayType
+        || current.evidencePeriod !== next.evidencePeriod
         || current.confidence !== next.confidence
         || current.distanceKm !== next.distanceKm
         || current.durationSeconds !== next.durationSeconds
@@ -624,19 +626,33 @@ export function updateRoutePlanner2SegmentRuntimeEstimates(
     scenarioId: string,
     estimates: RoutePlanner2SegmentRuntime[],
     now = new Date().toISOString(),
+    options: {
+        replaceForSegmentIds?: string[];
+        replaceSources?: RoutePlanner2SegmentRuntime['source'][];
+    } = {},
 ): RoutePlanner2Project {
-    if (estimates.length === 0) return project;
+    if (estimates.length === 0 && !options.replaceForSegmentIds?.length) return project;
 
     return updateScenario(project, scenarioId, (scenario) => {
         const currentEstimates = scenario.runtimeEstimates ?? [];
+        const replacementSegmentIds = new Set(options.replaceForSegmentIds ?? []);
+        const replacementSources = new Set(options.replaceSources ?? []);
         const estimatesToApply = estimates.filter((estimate) =>
             shouldReplaceRuntimeEstimate(currentEstimates.find((item) => item.id === estimate.id), estimate),
         );
-        if (estimatesToApply.length === 0) return scenario;
 
         const estimateIds = new Set(estimatesToApply.map((estimate) => estimate.id));
-        const retainedEstimates = currentEstimates.filter((estimate) => !estimateIds.has(estimate.id));
-        let changed = false;
+        const retainedEstimates = currentEstimates.filter((estimate) => {
+            if (estimateIds.has(estimate.id)) return false;
+            if (
+                replacementSegmentIds.has(estimate.id)
+                && (replacementSources.size === 0 || replacementSources.has(estimate.source))
+            ) {
+                return false;
+            }
+            return true;
+        });
+        let changed = retainedEstimates.length !== currentEstimates.length;
 
         estimatesToApply.forEach((estimate) => {
             const existing = currentEstimates.find((item) => item.id === estimate.id);
@@ -645,12 +661,14 @@ export function updateRoutePlanner2SegmentRuntimeEstimates(
 
         if (!changed) return scenario;
 
+        const nextRuntimeEstimates = [
+            ...retainedEstimates,
+            ...estimatesToApply.map((estimate) => ({ ...estimate, updatedAt: estimate.updatedAt ?? now })),
+        ];
+
         return {
             ...scenario,
-            runtimeEstimates: [
-                ...retainedEstimates,
-                ...estimatesToApply.map((estimate) => ({ ...estimate, updatedAt: estimate.updatedAt ?? now })),
-            ],
+            runtimeEstimates: nextRuntimeEstimates.length > 0 ? nextRuntimeEstimates : undefined,
             feasibility: undefined,
         };
     }, now);

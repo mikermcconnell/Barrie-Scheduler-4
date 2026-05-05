@@ -118,6 +118,8 @@ export interface RoutePlanner2SegmentRuntime {
     matchedFromStopId?: string;
     matchedToStopId?: string;
     matchedRoutes?: string[];
+    evidenceDayType?: 'weekday' | 'saturday' | 'sunday';
+    evidencePeriod?: 'am-peak' | 'midday' | 'pm-peak' | 'evening' | 'full-day';
     confidence: RoutePlanner2SegmentConfidence;
     distanceKm?: number;
     durationSeconds?: number;

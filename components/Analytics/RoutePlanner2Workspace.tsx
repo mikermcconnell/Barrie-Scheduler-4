@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, Copy, Download, Plus, Route, Save, Star, Trash2 } from 'lucide-react';
 
 import {
@@ -40,7 +40,11 @@ import { summarizeRoutePlanner2Project } from '../../utils/route-planner-2/route
 import { usePerformanceDataQuery, usePerformanceMetadataQuery } from '../../hooks/usePerformanceData';
 import { buildCorridorSpeedMapIndex } from '../../utils/gtfs/corridorSpeed';
 import { DAY_TYPES, TIME_PERIODS, type DayType, type TimePeriod } from '../../utils/gtfs/corridorHeadway';
-import { deriveRoutePlanner2EvidenceRuntimeEstimates } from '../../utils/route-planner-2/routePlanner2RuntimeEvidence';
+import {
+    deriveRoutePlanner2EvidenceRuntimeEstimates,
+    type RoutePlanner2RuntimeEvidenceDiagnostic,
+} from '../../utils/route-planner-2/routePlanner2RuntimeEvidence';
+import { buildRoutePlanner2StopSegmentPaths } from '../../utils/route-planner-2/routePlanner2Segments';
 import { RoutePlanner2MapCanvas } from './route-planner-2/RoutePlanner2MapCanvas';
 import { RoutePlanner2GtfsImportModal } from './route-planner-2/RoutePlanner2GtfsImportModal';
 import type {
@@ -93,6 +97,155 @@ function runtimeSourceLabel(source: RoutePlanner2SegmentRuntime['source']): stri
     return 'Missing runtime';
 }
 
+function conciseRuntimeSourceLabel(source: RoutePlanner2SegmentRuntime['source']): string {
+    if (source === 'scheduled-proxy') return 'Scheduled GTFS';
+    if (source === 'observed-proxy') return 'Observed';
+    if (source === 'observed-scheduled-blend') return 'Observed + schedule';
+    if (source === 'mapbox') return 'Mapbox';
+    if (source === 'manual') return 'Planner override';
+    if (source === 'fallback') return 'Distance fallback';
+    return 'Source not ready';
+}
+
+function formatRouteSource(routes: string[]): string {
+    const uniqueRoutes = [...new Set(routes.filter(Boolean))];
+    if (uniqueRoutes.length === 0) return '';
+    if (uniqueRoutes.length === 1) return `Route ${uniqueRoutes[0]}`;
+    return `Routes ${uniqueRoutes.join(', ')}`;
+}
+
+function getRuntimeSourceDetail(
+    feasibility: RoutePlanner2Project['scenarios'][number]['feasibility'] | null | undefined,
+): string {
+    const segments = feasibility?.segmentSummaries ?? [];
+    if (segments.length === 0) return 'Source not ready';
+
+    const sources = [...new Set(segments.map((segment) => segment.source))];
+    const sourceLabel = sources.length === 1 ? conciseRuntimeSourceLabel(sources[0]!) : 'Mixed sources';
+    const matchedRoutes = segments.flatMap((segment) => segment.matchedRoutes ?? []);
+    const routeLabel = formatRouteSource(matchedRoutes);
+
+    return routeLabel ? `${sourceLabel} · ${routeLabel}` : sourceLabel;
+}
+
+function getRuntimePeriodDetail(dayType: DayType, period: TimePeriod): string {
+    const dayLabel = DAY_TYPES.find((day) => day.id === dayType)?.label ?? dayType;
+    const periodLabel = TIME_PERIODS.find((item) => item.id === period)?.label ?? period;
+    return `${dayLabel} · ${periodLabel}`;
+}
+
+function getRuntimeSourceBadgeClass(source: RoutePlanner2SegmentRuntime['source']): string {
+    if (source === 'scheduled-proxy') return 'border-emerald-200 bg-emerald-50 text-emerald-800';
+    if (source === 'mapbox') return 'border-cyan-200 bg-cyan-50 text-cyan-800';
+    if (source === 'manual') return 'border-indigo-200 bg-indigo-50 text-indigo-800';
+    if (source === 'fallback') return 'border-amber-200 bg-amber-50 text-amber-800';
+    if (source === 'observed-proxy' || source === 'observed-scheduled-blend') return 'border-blue-200 bg-blue-50 text-blue-800';
+    return 'border-slate-200 bg-slate-50 text-slate-700';
+}
+
+function getSegmentSourceBadgeText(segment: RoutePlanner2SegmentRuntime, dayType: DayType, period: TimePeriod): string {
+    const routeLabel = formatRouteSource(segment.matchedRoutes ?? []);
+    const timeLabel = segment.evidenceDayType && segment.evidencePeriod
+        ? getRuntimePeriodDetail(segment.evidenceDayType, segment.evidencePeriod)
+        : getRuntimePeriodDetail(dayType, period);
+
+    if (segment.source === 'scheduled-proxy') {
+        return ['Scheduled GTFS', routeLabel, timeLabel].filter(Boolean).join(' · ');
+    }
+    if (segment.source === 'mapbox') return 'Mapbox estimate';
+    if (segment.source === 'manual') return 'Planner override';
+    if (segment.source === 'fallback') return 'Fallback estimate';
+    return [conciseRuntimeSourceLabel(segment.source), routeLabel, timeLabel].filter(Boolean).join(' · ');
+}
+
+function getRuntimeSourceSummaryItems(
+    segments: RoutePlanner2SegmentRuntime[],
+    dayType: DayType,
+    period: TimePeriod,
+): Array<{ key: string; label: string; count: number; source: RoutePlanner2SegmentRuntime['source'] }> {
+    const summary = new Map<string, { label: string; count: number; source: RoutePlanner2SegmentRuntime['source'] }>();
+
+    segments.forEach((segment) => {
+        const label = getSegmentSourceBadgeText(segment, dayType, period);
+        const existing = summary.get(label);
+        if (existing) {
+            existing.count += 1;
+            return;
+        }
+        summary.set(label, { label, count: 1, source: segment.source });
+    });
+
+    return Array.from(summary.entries()).map(([key, value]) => ({ key, ...value }));
+}
+
+function getScheduledGapMessage(
+    segment: RoutePlanner2SegmentRuntime,
+    scenario: RoutePlanner2Project['scenarios'][number] | null | undefined,
+    dayType: DayType,
+    period: TimePeriod,
+): string | null {
+    if (segment.source === 'scheduled-proxy' || segment.source === 'manual') return null;
+    const timeLabel = getRuntimePeriodDetail(dayType, period);
+    if (scenario?.source?.type === 'gtfs' && scenario.source.routeShortName) {
+        return `No scheduled GTFS runtime found for Route ${scenario.source.routeShortName} · ${timeLabel}; using ${segment.source === 'mapbox' ? 'Mapbox' : 'fallback'} estimate.`;
+    }
+    return `No scheduled GTFS route source is attached to this custom concept; using ${segment.source === 'mapbox' ? 'Mapbox' : 'fallback'} estimate.`;
+}
+
+function getOriginalRuntimeEstimate(
+    scenario: RoutePlanner2Project['scenarios'][number],
+    segment: RoutePlanner2SegmentRuntime,
+): RoutePlanner2SegmentRuntime | null {
+    if (segment.source !== 'manual') return null;
+    return scenario.runtimeEstimates?.find((estimate) =>
+        estimate.id === segment.id
+        || (estimate.fromStopId === segment.fromStopId && estimate.toStopId === segment.toStopId)
+    ) ?? null;
+}
+
+function shouldLogRoutePlanner2RuntimeDiagnostics(): boolean {
+    return Boolean(import.meta.env.DEV && import.meta.env.MODE !== 'test');
+}
+
+function logRoutePlanner2RuntimeDiagnostics(diagnostic: RoutePlanner2RuntimeEvidenceDiagnostic): void {
+    if (!shouldLogRoutePlanner2RuntimeDiagnostics()) return;
+
+    const missedSegments = diagnostic.segments.filter((segment) => segment.reason !== 'matched');
+    console.groupCollapsed(
+        `[RoutePlanner2 runtime diagnostics] ${diagnostic.scenarioName} · ${diagnostic.dayType}/${diagnostic.period} · ${diagnostic.estimateCount}/${diagnostic.segmentCount} scheduled estimates`,
+    );
+    console.info('Runtime evidence context', {
+        scenarioId: diagnostic.scenarioId,
+        preferredRoute: diagnostic.preferredRoute,
+        runtimeBasis: diagnostic.runtimeBasis,
+        gtfsStopCount: diagnostic.gtfsStopCount,
+        speedSegmentCount: diagnostic.speedSegmentCount,
+        statsForSelectedPeriodCount: diagnostic.statsForSelectedPeriodCount,
+    });
+    console.table(diagnostic.segments.map((segment) => ({
+        segmentId: segment.segmentId,
+        from: segment.fromStopName ?? segment.fromStopId,
+        to: segment.toStopName ?? segment.toStopId,
+        reason: segment.reason,
+        fromGtfs: segment.fromGtfsMatch
+            ? `${segment.fromGtfsMatch.gtfsStopId} (${segment.fromGtfsMatch.quality})`
+            : 'none',
+        toGtfs: segment.toGtfsMatch
+            ? `${segment.toGtfsMatch.gtfsStopId} (${segment.toGtfsMatch.quality})`
+            : 'none',
+        speedSegment: segment.matchedSpeedSegmentId ?? 'none',
+        segmentRoutes: segment.matchedSegmentRoutes?.join(', ') ?? '',
+        statRoutes: segment.statRoutes?.join(', ') ?? '',
+        scheduledMin: segment.scheduledRuntimeMin ?? '',
+        routeScopedScheduledMin: segment.routeScopedScheduledRuntimeMin ?? '',
+        output: segment.runtimeMinutes != null ? `${segment.runtimeMinutes} min ${segment.source ?? ''}` : '',
+    })));
+    if (missedSegments.length > 0) {
+        console.warn('Scheduled GTFS misses', missedSegments);
+    }
+    console.groupEnd();
+}
+
 function readinessClass(readiness: string): string {
     if (readiness === 'needs-review') return 'border-amber-200 bg-amber-50 text-amber-900';
     if (readiness === 'ready-for-review') return 'border-emerald-200 bg-emerald-50 text-emerald-900';
@@ -124,6 +277,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
     const [project, setProject] = useState<RoutePlanner2Project>(() => createRoutePlanner2Project());
     const [selectedStopId, setSelectedStopId] = useState<string | null>(null);
     const [isRightRailOpen, setIsRightRailOpen] = useState(false);
+    const runtimeSourceDetailsRef = useRef<HTMLDivElement | null>(null);
     const [isDrawFocusMode, setIsDrawFocusMode] = useState(false);
     const [isExportingOperatorPdf, setIsExportingOperatorPdf] = useState(false);
     const [isGtfsImportOpen, setIsGtfsImportOpen] = useState(false);
@@ -202,9 +356,17 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
             speedIndex,
             runtimeDayType,
             runtimePeriod,
+            {
+                runtimeBasis: 'scheduled',
+                onDiagnostic: logRoutePlanner2RuntimeDiagnostics,
+            },
         );
-        if (estimates.length === 0) return;
-        setProject((current) => updateRoutePlanner2SegmentRuntimeEstimates(current, selectedScenario.id, estimates));
+        if (estimates.length === 0 && runtimePeriod === 'full-day') return;
+        const currentSegmentIds = buildRoutePlanner2StopSegmentPaths(selectedScenario).map((segment) => segment.id);
+        setProject((current) => updateRoutePlanner2SegmentRuntimeEstimates(current, selectedScenario.id, estimates, undefined, {
+            replaceForSegmentIds: currentSegmentIds,
+            replaceSources: ['scheduled-proxy', 'observed-scheduled-blend', 'observed-proxy'],
+        }));
     }, [
         runtimeDayType,
         runtimePeriod,
@@ -449,6 +611,17 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
         setIsRightRailOpen((current) => !current);
     }
 
+    function openRuntimeSourceDetails() {
+        setIsDrawFocusMode(false);
+        setIsRightRailOpen(true);
+        const scrollToRuntimeDetails = () => runtimeSourceDetailsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        if (typeof window.requestAnimationFrame === 'function') {
+            window.requestAnimationFrame(scrollToRuntimeDetails);
+        } else {
+            window.setTimeout(scrollToRuntimeDetails, 0);
+        }
+    }
+
     async function exportOperatorDirections() {
         if (!selectedScenario || selectedScenario.stops.length < 2 || isExportingOperatorPdf) return;
         setIsExportingOperatorPdf(true);
@@ -463,7 +636,13 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
     }
 
     const mapMetricItems = [
-        { label: 'Runtime', value: formatRuntime(selectedFeasibility?.oneWayRuntimeMinutes) },
+        {
+            label: 'Runtime',
+            value: formatRuntime(selectedFeasibility?.oneWayRuntimeMinutes),
+            detail: `Data source: ${getRuntimeSourceDetail(selectedFeasibility)}`,
+            description: `Runtime source and selected time window: ${getRuntimePeriodDetail(runtimeDayType, runtimePeriod)}. Click to review segment-level source details.`,
+            onClick: openRuntimeSourceDetails,
+        },
         { label: 'Cycle', value: formatRuntime(selectedFeasibility?.cycleTimeMinutes) },
         { label: 'Recovery', value: formatRecovery(selectedFeasibility?.recoveryTimeMinutes, selectedFeasibility?.recoveryPercent) },
         { label: 'Buses', value: formatBuses(selectedFeasibility?.busesRequired) },
@@ -473,6 +652,11 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
             description: confidenceDescription(selectedFeasibility?.confidence),
         },
     ];
+    const runtimeSourceSummaryItems = getRuntimeSourceSummaryItems(
+        selectedFeasibility?.segmentSummaries ?? [],
+        runtimeDayType,
+        runtimePeriod,
+    );
 
     const rightRailState = isRightRailOpen ? 'open' : 'closed';
     const mapOverlayInsets = {
@@ -562,7 +746,7 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                     data-testid="rp2-map-first-shell"
                     data-layout="map-first"
                     data-focus-mode={isDrawFocusMode ? 'draw' : 'standard'}
-                    className="relative min-h-0 flex-1 overflow-hidden bg-slate-100 p-4"
+                    className="relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto bg-slate-100 p-4"
                 >
                     <RoutePlanner2MapCanvas
                         scenario={selectedScenario}
@@ -731,6 +915,32 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                         )}
                                     </div>
 
+                                    <div ref={runtimeSourceDetailsRef} data-testid="rp2-runtime-source-details" className="scroll-mt-24 rounded-2xl border border-slate-200 bg-white p-3">
+                                        <div className="flex items-center justify-between gap-3">
+                                            <h3 className="text-sm font-black text-slate-900">Runtime source summary</h3>
+                                            <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-black uppercase text-slate-500">
+                                                {selectedFeasibility?.segmentSummaries.length ?? 0} {(selectedFeasibility?.segmentSummaries.length ?? 0) === 1 ? 'segment' : 'segments'}
+                                            </span>
+                                        </div>
+                                        <p className="mt-2 text-xs leading-5 text-slate-500">Scheduled GTFS is used when the segment matches a GTFS route, stop pair, day, and time period. Mapbox fills any scheduled-data gaps.</p>
+                                        {runtimeSourceSummaryItems.length > 0 ? (
+                                            <div className="mt-3 space-y-2">
+                                                {runtimeSourceSummaryItems.map((item) => (
+                                                    <div key={item.key} className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2">
+                                                        <span className={`rounded-full border px-2 py-1 text-[11px] font-black ${getRuntimeSourceBadgeClass(item.source)}`}>
+                                                            {item.label}
+                                                        </span>
+                                                        <span className="shrink-0 text-xs font-bold text-slate-500">
+                                                            {item.count} {item.count === 1 ? 'segment' : 'segments'}
+                                                        </span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <p className="mt-2 text-sm leading-6 text-slate-500">Add at least two stops before runtime source coverage is available.</p>
+                                        )}
+                                    </div>
+
                                     <div className={`rounded-2xl border p-3 ${(selectedFeasibility?.warnings.length ?? 0) > 0 ? 'border-amber-200 bg-amber-50' : 'border-emerald-200 bg-emerald-50'}`}>
                                         <h3 className="text-sm font-black text-amber-900">Feasibility warnings</h3>
                                         {(selectedFeasibility?.warnings.length ?? 0) > 0 ? (
@@ -752,11 +962,19 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                                 {selectedFeasibility.segmentSummaries.map((segment) => {
                                                     const fromStop = selectedScenario.stops.find((stop) => stop.id === segment.fromStopId);
                                                     const toStop = selectedScenario.stops.find((stop) => stop.id === segment.toStopId);
+                                                    const originalEstimate = getOriginalRuntimeEstimate(selectedScenario, segment);
+                                                    const scheduledGapMessage = getScheduledGapMessage(segment, selectedScenario, runtimeDayType, runtimePeriod);
                                                     return (
                                                         <div key={segment.id} className="rounded-xl bg-slate-50 p-2 text-xs text-slate-600">
-                                                            <div className="font-bold text-slate-800">{fromStop?.name ?? 'Unknown'} to {toStop?.name ?? 'Unknown'}: {formatRuntime(segment.runtimeMinutes)}</div>
+                                                            <div className="flex flex-wrap items-center justify-between gap-2">
+                                                                <div className="font-bold text-slate-800">{fromStop?.name ?? 'Unknown'} to {toStop?.name ?? 'Unknown'}: {formatRuntime(segment.runtimeMinutes)}</div>
+                                                                <span className={`rounded-full border px-2 py-1 text-[11px] font-black ${getRuntimeSourceBadgeClass(segment.source)}`}>
+                                                                    {getSegmentSourceBadgeText(segment, runtimeDayType, runtimePeriod)}
+                                                                </span>
+                                                            </div>
                                                             <div className="mt-1 flex flex-wrap items-center gap-2">
                                                                 <span>{runtimeSourceLabel(segment.source)} / {segment.confidence}</span>
+                                                                {segment.matchedRoutes && segment.matchedRoutes.length > 0 && <span>{formatRouteSource(segment.matchedRoutes)}</span>}
                                                                 {segment.distanceKm != null && <span>{segment.distanceKm.toFixed(2)} km</span>}
                                                                 {segment.sampleSize != null && <span>{segment.sampleSize} samples</span>}
                                                                 {segment.scheduledRuntimeMinutes != null && <span>Scheduled {segment.scheduledRuntimeMinutes} min</span>}
@@ -791,6 +1009,14 @@ export const RoutePlanner2Workspace: React.FC<RoutePlanner2WorkspaceProps> = ({ 
                                                             )}
                                                             {segment.source === 'manual' && (
                                                                 <div className="mt-1 text-[11px] font-semibold text-emerald-700">Planner override</div>
+                                                            )}
+                                                            {originalEstimate && (
+                                                                <div className="mt-1 text-[11px] font-semibold text-indigo-700">
+                                                                    Original: {getSegmentSourceBadgeText(originalEstimate, runtimeDayType, runtimePeriod)} · {formatRuntime(originalEstimate.runtimeMinutes)}
+                                                                </div>
+                                                            )}
+                                                            {scheduledGapMessage && (
+                                                                <div className="mt-1 text-[11px] font-semibold text-amber-700">{scheduledGapMessage}</div>
                                                             )}
                                                             {segment.fallbackReason && (
                                                                 <div className="mt-1 text-[11px] font-semibold text-amber-700">{segment.fallbackReason}</div>

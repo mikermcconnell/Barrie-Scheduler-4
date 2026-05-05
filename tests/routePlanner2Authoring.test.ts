@@ -410,6 +410,23 @@ describe('Route Planner 2 authoring', () => {
     });
   });
 
+  it('can clear stale automatic runtime evidence for selected segments before applying a new time period', () => {
+    let project = projectWithRuntimeEstimate(runtimeEstimate({
+      runtimeMinutes: 6,
+      source: 'scheduled-proxy',
+      confidence: 'medium',
+      evidenceDayType: 'weekday',
+      evidencePeriod: 'am-peak',
+    }));
+
+    project = updateRoutePlanner2SegmentRuntimeEstimates(project, 'scenario-1', [], now, {
+      replaceForSegmentIds: [segmentId],
+      replaceSources: ['scheduled-proxy', 'observed-scheduled-blend', 'observed-proxy'],
+    });
+
+    expect(project.scenarios[0]?.runtimeEstimates).toBeUndefined();
+  });
+
   it('returns the original project for unknown scenario IDs', () => {
     const project = createRoutePlanner2Project({ id: 'project-1', scenarioId: 'scenario-1', now });
 

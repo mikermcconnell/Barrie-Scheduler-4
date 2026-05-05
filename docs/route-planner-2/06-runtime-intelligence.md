@@ -23,12 +23,13 @@ V1 should be designed for observed stop-to-stop proxy evidence. The current MVP 
 Use this priority order:
 
 1. manual segment/runtime override if planner provided one
-2. observed/scheduled runtime evidence for adjacent matched stops
+2. scheduled GTFS runtime evidence for the selected day type, time period, and source route when available
 3. Mapbox Directions estimate for the shaped stop-to-stop path
 4. fallback estimate from distance or simple default speed
 5. missing/not ready state
 
 Manual overrides stay first because Route Planner 2 is a planning workspace. Automatic evidence can suggest better estimates, but it must not silently override planner-entered segment assumptions.
+Mapbox should fill only gaps where scheduled GTFS evidence is not available for the current route/time selection.
 
 ## Segment-Level Disclosure
 
@@ -44,8 +45,13 @@ Each stop-to-stop segment should show:
 - observed runtime evidence if available
 - matched stop IDs, match quality, and matched route IDs when evidence is used
 - fallback reason if stronger data is missing
+- a visible source badge such as `Scheduled GTFS · Route 400 · AM Peak`, `Mapbox estimate`, `Fallback estimate`, or `Planner override`
+- when scheduled GTFS is missing and Mapbox/fallback is used, a direct explanation of the missing data gap
+- when a planner override is active, the original automatic source and runtime underneath the override
 
 The segment list should allow planners to enter or clear a manual runtime override. Manual overrides affect totals immediately and must not be overwritten by automatic Mapbox recalculation.
+
+The right rail should include a compact runtime-source summary showing how many segments came from scheduled GTFS, Mapbox, fallback, or planner override sources.
 
 ## Confidence Model
 
