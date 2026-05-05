@@ -38,12 +38,6 @@ import { buildStopNameToIdMap } from '../../utils/gtfs/gtfsStopLookup';
 import { resolveAutoRouteNumber } from './utils/routeInference';
 import { resolveStopOrderFromPerformance } from '../../utils/newSchedule/stopOrderResolver';
 import {
-    createMasterCompareScope,
-    extractMasterCompareBaseline,
-    shouldClearMasterCompare,
-    type MasterCompareScope,
-} from './utils/masterCompareState';
-import {
     buildCanonicalSegmentColumnsFromMasterStops,
     buildRuntimeDerivedCanonicalDirectionStops,
     buildSegmentsMapFromParsedData,
@@ -320,15 +314,6 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
     const [isPreparingStep4, setIsPreparingStep4] = useState(false);
     const [step4LoadingMessage, setStep4LoadingMessage] = useState('Generating schedule...');
 
-    // Compare to Master State (inline toggle, not modal)
-    const [isMasterCompareActive, setIsMasterCompareActive] = useState(false);
-    const [masterBaseline, setMasterBaseline] = useState<MasterRouteTable[] | null>(null);
-    const [isCompareLoading, setIsCompareLoading] = useState(false);
-    const masterCompareScopeRef = useRef<MasterCompareScope | null>(null);
-    const compareRequestTokenRef = useRef(0);
-    const currentConfiguredRouteIdentityRef = useRef<string | undefined>(undefined);
-    const step4EditorSessionKeyRef = useRef(0);
-
     // Connection scope: load all master stop codes so ConnectionsPanel validation
     // recognises stop IDs from other routes (mirrors editor workspace pattern).
     const [masterStopCodes, setMasterStopCodes] = useState<Record<string, string>>({});
@@ -378,9 +363,6 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
             : undefined
     ), [config.routeNumber, dayType]);
     const step2ImportMode = importMode === 'performance' ? 'performance' : 'csv';
-
-    currentConfiguredRouteIdentityRef.current = currentConfiguredRouteIdentity;
-    step4EditorSessionKeyRef.current = step4EditorSessionKey;
 
     const activeCanonicalSegmentColumns = useMemo(() => (
         currentConfiguredRouteIdentity && canonicalRouteIdentity === currentConfiguredRouteIdentity
@@ -774,18 +756,9 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
     const stateVersionRef = useRef(0);
     const lastSavedVersionRef = useRef(0);
 
-    const clearMasterCompare = useCallback(() => {
-        compareRequestTokenRef.current += 1;
-        masterCompareScopeRef.current = null;
-        setIsMasterCompareActive(false);
-        setMasterBaseline(null);
-        setIsCompareLoading(false);
-    }, []);
-
     const startNewStep4EditorSession = useCallback(() => {
-        clearMasterCompare();
         setStep4EditorSessionKey(prev => prev + 1);
-    }, [clearMasterCompare]);
+    }, []);
 
     const resolveUniqueProjectName = useCallback(async (
         requestedName: string,
@@ -1067,7 +1040,6 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         setGeneratedSchedules([]);
         setOriginalGeneratedSchedules([]);
         setConfig(createDefaultScheduleConfig());
-        clearMasterCompare();
         setCanonicalSegmentColumns(undefined);
         setCanonicalDirectionStops(undefined);
         setCanonicalRouteIdentity(undefined);
@@ -1076,19 +1048,7 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         setApprovedRuntimeContract(null);
         setLegacyApprovedRuntimeModel(null);
         setStep2WarningsAcknowledged(false);
-    }, [clearMasterCompare]);
-
-    useEffect(() => {
-        if (!shouldClearMasterCompare(
-            masterCompareScopeRef.current,
-            currentConfiguredRouteIdentity,
-            step4EditorSessionKey
-        )) {
-            return;
-        }
-
-        clearMasterCompare();
-    }, [clearMasterCompare, currentConfiguredRouteIdentity, step4EditorSessionKey]);
+    }, []);
 
     const applyRestoredWizardData = useCallback((restored: ReturnType<typeof normalizeRestoredWizardState>) => {
         setDayType(restored.dayType);
@@ -1687,14 +1647,13 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         setPerformanceLoadRouteId('all');
         setPerformanceConfig(createDefaultPerformanceConfig());
         setAutofillFromMaster(true);
-        clearMasterCompare();
         setApprovedRuntimeContract(null);
         setLegacyApprovedRuntimeModel(null);
         setStep2WarningsAcknowledged(false);
         setStep4EditorSessionKey(0);
         setShowUploadModal(false);
         setUploadConfirmation(null);
-    }, [clear, clearMasterCompare]);
+    }, [clear]);
 
     const handleNewProject = () => {
         if (files.length > 0 || step > 1) {
@@ -1702,64 +1661,6 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
         }
         resetWizardState();
         toast.info('New Project', 'Starting fresh');
-    };
-
-    // ========== COMPARE TO MASTER (INLINE TOGGLE) ==========
-
-    const handleToggleMasterCompare = async () => {
-        // Toggle OFF
-        if (isMasterCompareActive) {
-            clearMasterCompare();
-            return;
-        }
-
-        // Toggle ON - fetch master schedule
-        if (!team?.id) return;
-
-        const routeIdentity = currentConfiguredRouteIdentity || buildRouteIdentity(config.routeNumber, dayType);
-        const compareScope = createMasterCompareScope(routeIdentity, step4EditorSessionKey);
-        masterCompareScopeRef.current = compareScope;
-        const requestToken = compareRequestTokenRef.current + 1;
-        compareRequestTokenRef.current = requestToken;
-        setIsCompareLoading(true);
-        try {
-            const result = await getMasterSchedule(team.id, routeIdentity);
-
-            if (compareRequestTokenRef.current !== requestToken) return;
-
-            if (!result) {
-                clearMasterCompare();
-                toast.warning('No Master Found', `No Master schedule found for Route ${config.routeNumber} ${dayType}`);
-                return;
-            }
-
-            if (shouldClearMasterCompare(
-                compareScope,
-                currentConfiguredRouteIdentityRef.current,
-                step4EditorSessionKeyRef.current
-            )) {
-                clearMasterCompare();
-                return;
-            }
-
-            const baseline = extractMasterCompareBaseline(result);
-
-            if (!baseline) {
-                clearMasterCompare();
-                toast.warning('Master Incomplete', `Master compare needs at least one usable table for Route ${config.routeNumber} ${dayType}.`);
-                return;
-            }
-
-            setMasterBaseline(baseline);
-            setIsMasterCompareActive(true);
-        } catch (error) {
-            console.error('Error fetching master schedule:', error);
-            toast.error('Compare Failed', 'Could not fetch Master schedule');
-        } finally {
-            if (compareRequestTokenRef.current === requestToken) {
-                setIsCompareLoading(false);
-            }
-        }
     };
 
     // ========== MASTER SCHEDULE UPLOAD ==========
@@ -1918,10 +1819,6 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                     onRetrySave={handleSaveProgress}
                     routeNumber={step >= 3 ? config.routeNumber : undefined}
                     dayType={dayType}
-                    isMasterCompareActive={isMasterCompareActive}
-                    onToggleMasterCompare={handleToggleMasterCompare}
-                    isCompareLoading={isCompareLoading}
-                    compareAvailable={step === 4 && !!team?.id}
                 />
 
                 {/* Content Area */}
@@ -2008,7 +1905,8 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                                 targetHeadway={(!config.cycleMode || config.cycleMode === 'Strict') && config.blocks.length > 0 ? Math.round(config.cycleTime / config.blocks.length) : undefined}
                                 teamId={team?.id}
                                 userId={user?.uid}
-                                masterBaseline={isMasterCompareActive ? masterBaseline : null}
+                                routeIdentity={currentConfiguredRouteIdentity}
+                                routeLabel={config.routeNumber ? `Route ${config.routeNumber} · ${dayType}` : undefined}
                                 connectionScopeSchedules={connectionScopeSchedules}
                                 approvedRuntimeContract={currentApprovedRuntimeContract}
                                 approvedRuntimeModel={lastApprovedRuntimeModel}
@@ -2137,7 +2035,6 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                 onClose={() => setShowProjectManager(false)}
                 onLoadProject={async (project) => {
                     setIsLoadingProject(true);
-                    clearMasterCompare();
 
                     if (user?.uid) {
                         try {
@@ -2167,7 +2064,6 @@ export const NewScheduleWizard: React.FC<NewScheduleWizardProps> = ({
                 }}
                 onLoadGeneratedSchedule={(fullProject) => {
                     setIsLoadingProject(true);
-                    clearMasterCompare();
                     restoreProjectData(fullProject);
 
                     const nextStep = deriveWizardStepFromProject(fullProject);

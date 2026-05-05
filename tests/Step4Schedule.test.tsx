@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 
 const scheduleEditorSpy = vi.fn();
+const getMasterScheduleMock = vi.fn();
 
 vi.mock('../components/ScheduleEditor', () => ({
     ScheduleEditor: (props: any) => {
@@ -12,7 +13,52 @@ vi.mock('../components/ScheduleEditor', () => ({
     },
 }));
 
+vi.mock('../utils/services/masterScheduleService', () => ({
+    getMasterSchedule: (...args: unknown[]) => getMasterScheduleMock(...args),
+}));
+
 import { Step4Schedule } from '../components/NewSchedule/steps/Step4Schedule';
+import type { MasterRouteTable, MasterTrip } from '../utils/parsers/masterScheduleParser';
+
+const makeTrip = (
+    id: string,
+    direction: 'North' | 'South',
+    startTime: number,
+    overrides: Partial<MasterTrip> = {}
+): MasterTrip => ({
+    id,
+    blockId: '10-1',
+    direction,
+    tripNumber: 1,
+    rowId: startTime,
+    startTime,
+    endTime: startTime + 30,
+    travelTime: 30,
+    recoveryTime: 0,
+    cycleTime: 30,
+    stops: { Terminal: `${Math.floor(startTime / 60)}:${String(startTime % 60).padStart(2, '0')}` },
+    arrivalTimes: { Terminal: `${Math.floor(startTime / 60)}:${String(startTime % 60).padStart(2, '0')}` },
+    recoveryTimes: {},
+    startStopIndex: 0,
+    endStopIndex: 0,
+    isBlockStart: true,
+    isBlockEnd: true,
+    ...overrides,
+});
+
+const makeTable = (routeName: string, trips: MasterTrip[]): MasterRouteTable => ({
+    routeName,
+    stops: ['Terminal'],
+    stopIds: { Terminal: 'STOP-1' },
+    trips,
+});
+
+const flushAsyncUpdates = async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    flushSync(() => {});
+};
 
 describe('Step4Schedule', () => {
     let container: HTMLDivElement | null = null;
@@ -28,6 +74,164 @@ describe('Step4Schedule', () => {
         root = null;
         container = null;
         scheduleEditorSpy.mockReset();
+        getMasterScheduleMock.mockReset();
+    });
+
+    it('loads a published master comparison on demand and passes the baseline to the editor', async () => {
+        container = document.createElement('div');
+        document.body.appendChild(container);
+        root = createRoot(container);
+
+        const currentTable = makeTable('10 (Weekday) (North)', [
+            makeTrip('draft-a', 'North', 365),
+            makeTrip('draft-new', 'North', 430, { blockId: '10-2' }),
+        ]);
+        const masterTable = makeTable('10 (North)', [
+            makeTrip('master-a', 'North', 360),
+            makeTrip('master-removed', 'North', 500, { blockId: '10-9' }),
+        ]);
+        getMasterScheduleMock.mockResolvedValue({
+            content: {
+                northTable: masterTable,
+            },
+        });
+
+        flushSync(() => {
+            root?.render(
+                <Step4Schedule
+                    initialSchedules={[currentTable]}
+                    originalSchedules={[currentTable]}
+                    editorSessionKey={1}
+                    bands={[]}
+                    analysis={[]}
+                    segmentNames={[]}
+                    onUpdateSchedules={vi.fn()}
+                    projectName="Test Project"
+                    teamId="team-1"
+                    routeIdentity="10-Weekday"
+                    routeLabel="Route 10 · Weekday"
+                    approvedRuntimeContract={null}
+                    approvedRuntimeModel={null}
+                />
+            );
+        });
+
+        expect(container.textContent).toContain('Compare to master');
+        expect(scheduleEditorSpy.mock.calls.at(-1)?.[0].masterBaseline).toBeUndefined();
+
+        const loadButton = Array.from(container.querySelectorAll('button')).find(button => (
+            button.textContent?.includes('Load comparison')
+        )) as HTMLButtonElement | undefined;
+        expect(loadButton).toBeTruthy();
+
+        flushSync(() => {
+            loadButton?.click();
+        });
+        await flushAsyncUpdates();
+
+        expect(getMasterScheduleMock).toHaveBeenCalledWith('team-1', '10-Weekday');
+        expect(scheduleEditorSpy.mock.calls.at(-1)?.[0].masterBaseline).toEqual([masterTable]);
+        expect(container.textContent).toContain('Matched');
+        expect(container.textContent).toContain('New');
+        expect(container.textContent).toContain('Removed');
+    });
+
+    it('can hide loaded master deltas without discarding the comparison summary', async () => {
+        container = document.createElement('div');
+        document.body.appendChild(container);
+        root = createRoot(container);
+
+        const currentTable = makeTable('10 (Weekday) (North)', [makeTrip('draft-a', 'North', 365)]);
+        const masterTable = makeTable('10 (North)', [makeTrip('master-a', 'North', 360)]);
+        getMasterScheduleMock.mockResolvedValue({
+            content: {
+                northTable: masterTable,
+            },
+        });
+
+        flushSync(() => {
+            root?.render(
+                <Step4Schedule
+                    initialSchedules={[currentTable]}
+                    originalSchedules={[currentTable]}
+                    editorSessionKey={1}
+                    bands={[]}
+                    analysis={[]}
+                    segmentNames={[]}
+                    onUpdateSchedules={vi.fn()}
+                    projectName="Test Project"
+                    teamId="team-1"
+                    routeIdentity="10-Weekday"
+                    routeLabel="Route 10 · Weekday"
+                    approvedRuntimeContract={null}
+                    approvedRuntimeModel={null}
+                />
+            );
+        });
+
+        const loadButton = Array.from(container.querySelectorAll('button')).find(button => (
+            button.textContent?.includes('Load comparison')
+        )) as HTMLButtonElement | undefined;
+
+        flushSync(() => {
+            loadButton?.click();
+        });
+        await flushAsyncUpdates();
+
+        expect(scheduleEditorSpy.mock.calls.at(-1)?.[0].masterBaseline).toEqual([masterTable]);
+
+        const hideButton = Array.from(container.querySelectorAll('button')).find(button => (
+            button.textContent?.includes('Hide deltas')
+        )) as HTMLButtonElement | undefined;
+        expect(hideButton).toBeTruthy();
+
+        flushSync(() => {
+            hideButton?.click();
+        });
+
+        expect(scheduleEditorSpy.mock.calls.at(-1)?.[0].masterBaseline).toBeNull();
+        expect(container.textContent).toContain('Matched');
+    });
+
+    it('shows an unavailable state when no published master exists', async () => {
+        container = document.createElement('div');
+        document.body.appendChild(container);
+        root = createRoot(container);
+
+        const currentTable = makeTable('10 (Weekday) (North)', [makeTrip('draft-a', 'North', 365)]);
+        getMasterScheduleMock.mockResolvedValue(null);
+
+        flushSync(() => {
+            root?.render(
+                <Step4Schedule
+                    initialSchedules={[currentTable]}
+                    originalSchedules={[currentTable]}
+                    editorSessionKey={1}
+                    bands={[]}
+                    analysis={[]}
+                    segmentNames={[]}
+                    onUpdateSchedules={vi.fn()}
+                    projectName="Test Project"
+                    teamId="team-1"
+                    routeIdentity="10-Weekday"
+                    routeLabel="Route 10 · Weekday"
+                    approvedRuntimeContract={null}
+                    approvedRuntimeModel={null}
+                />
+            );
+        });
+
+        const loadButton = Array.from(container.querySelectorAll('button')).find(button => (
+            button.textContent?.includes('Load comparison')
+        )) as HTMLButtonElement | undefined;
+
+        flushSync(() => {
+            loadButton?.click();
+        });
+        await flushAsyncUpdates();
+
+        expect(container.textContent).toContain('No published master found');
+        expect(scheduleEditorSpy.mock.calls.at(-1)?.[0].masterBaseline).toBeUndefined();
     });
 
     it('prefers the approved runtime contract when handing data to the schedule editor', () => {

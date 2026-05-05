@@ -8,7 +8,6 @@ import {
     ArrowLeft,
     CheckCircle2,
     Save,
-    GitCompare,
     HardDrive,
     X
 } from 'lucide-react';
@@ -45,11 +44,6 @@ interface NewScheduleHeaderProps {
     routeNumber?: string;
     dayType?: string;
 
-    // Compare to Master (toggle)
-    isMasterCompareActive?: boolean;
-    onToggleMasterCompare?: () => void;
-    isCompareLoading?: boolean;
-    compareAvailable?: boolean;
 }
 
 export const NewScheduleHeader: React.FC<NewScheduleHeaderProps> = ({
@@ -71,11 +65,7 @@ export const NewScheduleHeader: React.FC<NewScheduleHeaderProps> = ({
     isAuthenticated,
     onRetrySave,
     routeNumber,
-    dayType,
-    isMasterCompareActive,
-    onToggleMasterCompare,
-    isCompareLoading,
-    compareAvailable
+    dayType
 }) => {
     const [isRenaming, setIsRenaming] = useState(false);
     const [renameValue, setRenameValue] = useState(projectName);
@@ -279,27 +269,6 @@ export const NewScheduleHeader: React.FC<NewScheduleHeaderProps> = ({
 
                 {/* Right Section: Project Actions + Save Status + Exit */}
                 <div className="flex items-center gap-3 w-1/4 justify-end">
-                    {/* Compare to Master Toggle */}
-                    {compareAvailable && onToggleMasterCompare && (
-                        <button
-                            onClick={onToggleMasterCompare}
-                            disabled={isCompareLoading}
-                            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-colors disabled:opacity-50 ${
-                                isMasterCompareActive
-                                    ? 'bg-indigo-100 text-indigo-800 border border-indigo-200'
-                                    : 'text-indigo-700 hover:text-indigo-900 hover:bg-indigo-50'
-                            }`}
-                            title={isMasterCompareActive ? 'Turn off Master comparison' : 'Compare to Master Schedule'}
-                        >
-                            {isCompareLoading ? (
-                                <Loader2 size={14} className="animate-spin" />
-                            ) : (
-                                <GitCompare size={14} />
-                            )}
-                            {isMasterCompareActive ? 'Master Diff ON' : 'Compare to Master'}
-                        </button>
-                    )}
-
                     {/* New Project Button */}
                     {onNewProject && (
                         <button

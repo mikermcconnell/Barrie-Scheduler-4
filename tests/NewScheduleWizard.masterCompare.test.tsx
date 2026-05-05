@@ -140,7 +140,7 @@ vi.mock('../components/NewSchedule/steps/Step4Schedule', () => ({
         return React.createElement(
             'div',
             { id: 'step-4-proxy' },
-            props.masterBaseline ? 'Master baseline active' : 'Master baseline inactive'
+            'Step 4 proxy'
         );
     },
 }));
@@ -148,15 +148,7 @@ vi.mock('../components/NewSchedule/steps/Step4Schedule', () => ({
 vi.mock('../components/NewSchedule/NewScheduleHeader', () => ({
     NewScheduleHeader: (props: any): React.ReactElement => {
         headerSpy(props);
-        return React.createElement(
-            'button',
-            {
-                id: 'toggle-master-compare',
-                disabled: !props.compareAvailable || props.isCompareLoading,
-                onClick: props.onToggleMasterCompare,
-            },
-            props.isMasterCompareActive ? 'Master compare on' : 'Master compare off'
-        );
+        return React.createElement('div', { id: 'header-proxy' }, 'Header proxy');
     },
 }));
 
@@ -272,7 +264,7 @@ describe('NewScheduleWizard compare to master', () => {
         await Promise.resolve();
     };
 
-    it('loads compare mode and turns it back off cleanly without refetching', async () => {
+    it('does not expose the old compare-to-master toggle in Step 4', async () => {
         vi.mocked(getAllStopsWithCodes).mockResolvedValue({ stops: [], stopCodes: {} });
         vi.mocked(getMasterSchedule).mockResolvedValue(completeMasterResult as any);
 
@@ -280,17 +272,11 @@ describe('NewScheduleWizard compare to master', () => {
         click('#load-generated-project');
         await flushPromises();
 
-        click('#toggle-master-compare');
-        await flushPromises();
-        const callsAfterEnable = vi.mocked(getMasterSchedule).mock.calls.length;
-        click('#toggle-master-compare');
-        await flushPromises();
-
-        expect(callsAfterEnable).toBeGreaterThan(0);
-        expect(vi.mocked(getMasterSchedule).mock.calls.length).toBe(callsAfterEnable);
-        expect(getMasterSchedule).toHaveBeenCalledWith('team-1', '10-Weekday');
-        expect(step4Spy.mock.calls.at(-1)?.[0].masterBaseline).toBeNull();
-        expect(headerSpy.mock.calls.at(-1)?.[0].isMasterCompareActive).toBe(false);
+        expect(container?.querySelector('#toggle-master-compare')).toBeNull();
+        expect(headerSpy.mock.calls.at(-1)?.[0].onToggleMasterCompare).toBeUndefined();
+        expect('masterBaseline' in step4Spy.mock.calls.at(-1)?.[0]).toBe(false);
+        expect(step4Spy.mock.calls.at(-1)?.[0].routeIdentity).toBe('10-Weekday');
+        expect(step4Spy.mock.calls.at(-1)?.[0].routeLabel).toBe('Route 10 · Weekday');
         expect(toast.error).not.toHaveBeenCalled();
     });
 
@@ -317,6 +303,7 @@ describe('NewScheduleWizard compare to master', () => {
                 stopIds: {},
                 trips: [{
                     id: 'edited-trip',
+                    rowId: 1,
                     blockId: '10-1',
                     direction: 'North',
                     tripNumber: 1,

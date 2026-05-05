@@ -117,6 +117,7 @@ High-value reminders:
 - Segment rounding, gap-based block assignment, trip pairing, cycle-time semantics, and post-midnight ordering are locked behavior.
 - AI suggests; planners decide.
 - New Schedule Step 2 is an internal workflow, not a hard human decision gate. Step 3 and Step 4 should still trust the approved runtime contract, but the UX may auto-approve on continue instead of forcing a separate approval decision.
+- New Schedule Step 4 exposes Compare to Master as a local planner review panel, not a header toggle. It loads the published master on demand, shows warning-only summary counts, and can show/hide editor deltas without blocking publish.
 - Route 8 sandbox work is intentionally isolated from live 8A/8B master/editor paths.
 - Brand-new added trips should not inherit delta-source fallback from template trips; compare-to-master deltas should only render when a real original/reference match exists.
 
