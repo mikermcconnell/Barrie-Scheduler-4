@@ -52,6 +52,7 @@ export const ShiftEditorModal: React.FC<Props> = ({
     const trackRef = useRef<HTMLDivElement>(null);
     const [isDragging, setIsDragging] = useState<'shift' | 'break' | 'start' | 'end' | 'breakStart' | 'breakEnd' | null>(null);
     const [dragOffset, setDragOffset] = useState(0);
+    const [editingShiftBoundary, setEditingShiftBoundary] = useState<'startSlot' | 'endSlot' | null>(null);
     const isPlaceholder = currentShift.isPlaceholder === true;
     const changeoffLocations = Object.keys(ON_DEMAND_CHANGEOFF_LOCATION_LABELS) as OnDemandChangeoffLocation[];
 
@@ -119,6 +120,12 @@ export const ShiftEditorModal: React.FC<Props> = ({
         }));
     };
 
+    const handleInlineTimeKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+        if (event.key === 'Enter' || event.key === 'Escape') {
+            event.currentTarget.blur();
+        }
+    };
+
     const getShiftTimeInputValue = (field: 'startSlot' | 'endSlot'): string => {
         if (!currentShift.isPlaceholder) {
             return formatSlotForInput(currentShift[field]);
@@ -133,6 +140,44 @@ export const ShiftEditorModal: React.FC<Props> = ({
         }
 
         return formatSlotForInput(currentShift[field]);
+    };
+
+    const renderShiftBoundaryControl = (field: 'startSlot' | 'endSlot') => {
+        const alignmentClass = field === 'startSlot' ? 'left-4' : 'right-4';
+        const label = field === 'startSlot' ? 'Shift start time' : 'Shift end time';
+
+        if (editingShiftBoundary === field) {
+            return (
+                <input
+                    type="time"
+                    autoFocus
+                    value={getShiftTimeInputValue(field)}
+                    onChange={(e) => setShiftBoundaryFromInput(field, e.target.value)}
+                    onBlur={() => setEditingShiftBoundary(null)}
+                    onKeyDown={handleInlineTimeKeyDown}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={(e) => e.stopPropagation()}
+                    className={`absolute ${alignmentClass} top-1/2 z-40 w-[72px] -translate-y-1/2 rounded-md border border-white/70 bg-white px-1 py-0.5 font-mono text-[11px] font-bold text-gray-900 shadow-sm outline-none focus:border-white focus:ring-2 focus:ring-white/60`}
+                    aria-label={label}
+                />
+            );
+        }
+
+        return (
+            <button
+                type="button"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                    e.stopPropagation();
+                    setEditingShiftBoundary(field);
+                }}
+                className={`absolute ${alignmentClass} top-1/2 z-40 -translate-y-1/2 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold text-white/95 hover:bg-white/20 focus:outline-none focus:ring-2 focus:ring-white/70`}
+                title={`Click to type ${field === 'startSlot' ? 'start' : 'end'} time`}
+                aria-label={`Edit ${label.toLowerCase()}`}
+            >
+                {formatSlotToTime(currentShift[field])}
+            </button>
+        );
     };
 
     const saveCurrentShift = () => {
@@ -548,12 +593,8 @@ export const ShiftEditorModal: React.FC<Props> = ({
                                     </div>
 
                                     {/* Time Labels on Bar */}
-                                    <div className="absolute left-4 top-1/2 -translate-y-1/2 text-[10px] font-bold text-white/90 pointer-events-none">
-                                        {formatSlotToTime(currentShift.startSlot)}
-                                    </div>
-                                    <div className="absolute right-4 top-1/2 -translate-y-1/2 text-[10px] font-bold text-white/90 pointer-events-none">
-                                        {formatSlotToTime(currentShift.endSlot)}
-                                    </div>
+                                    {renderShiftBoundaryControl('startSlot')}
+                                    {renderShiftBoundaryControl('endSlot')}
 
                                     {/* Resize Handle (Start) */}
                                     <div
